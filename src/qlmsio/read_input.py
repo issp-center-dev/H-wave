@@ -12,12 +12,6 @@ class QMLSInput():
         self.file_names = self._read_file_names(file_name_list)
         # Get ModPara file
         self.param["modpara"] = self._read_para("modpara")
-        self.param["calcmod"] = self._read_para("calcmod", start_line=0)
-        for k, v in self.param["calcmod"].items():
-            self.param["calcmod"][k] = int(v[0])
-        self.param["locspin"] = self._read_para("locspin")
-        for k, v in self.param["locspin"].items():
-            self.param["locspin"][k] = int(v[0])
         self.ham_param = CaseInsensitiveDict()
         self.ham_param["Transfer"] = self._read_ham("trans", value_type="complex")
         self.ham_param["CoulombInter"] = self._read_ham("coulombinter")
@@ -25,6 +19,8 @@ class QMLSInput():
         self.ham_param["PairHop"] = self._read_ham("parihop")
         self.ham_param["Hund"] = self._read_ham("hund")
         self.ham_param["Exchange"] = self._read_ham("exchange")
+        self.ham_param["Ising"] = self._read_ham("Ising")
+        self.ham_param["PairLift"] = self._read_ham("PairLift")
         self.ham_param["Interall"] = self._read_ham("interall", value_type="complex")
         self.ham_param["Initial"] = self._read_ham("initial", value_type="complex")
         # TODO Check Pair(Hermite or not)
@@ -32,7 +28,6 @@ class QMLSInput():
         # TODO Add validation function (ex.:Check site is smaller than defined lattics size)
         self.output = CaseInsensitiveDict()
         self.output["OneBodyG"] = self._read_green("onebodyg")
-        self.output["TwoBodyG"] = self._read_green("twobodyg")
 
     def get_param(self, key):
         if key == "param":
