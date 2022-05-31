@@ -1,0 +1,66 @@
+.. highlight:: none
+
+非制限Hartree-Fock法
+==========================
+
+Hartree-Fock近似
+*************************
+
+Hartree-Fock近似では一体の演算子の揺らぎについて一次のみを取り入れ、二体項を一体項へと近似します。
+一般的な二体相互作用については以下の近似を行うことに相当します。
+
+.. math::
+   \begin{aligned}
+   c_{i}^{\dagger}c_{j}^{\dagger}c_{k}c_{l} 
+   &\sim \langle c_{i}^{\dagger} c_l\rangle c_{j}^{\dagger} c_k   +  c_{i}^{\dagger} c_l \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle c_{j}^{\dagger} c_l -  c_{i}^{\dagger} c_k \langle c_{j}^{\dagger} c_l\rangle \nonumber\\
+   &-(\langle c_{i}^{\dagger} c_l\rangle \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle)
+   \end{aligned}
+
+H-waveでは以下の形式でな二体相互作用を定義しています。
+   
+.. math::
+   \begin{aligned}
+   \mathcal{H}_\text{InterAll} &= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} c^\dagger_{i\alpha\sigma_1} c_{j\beta\sigma_2} c^\dagger_{k\gamma\sigma_3} c_{l\delta\sigma_4} \nonumber\\
+   &= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} (c^\dagger_{i\alpha\sigma_1} c^\dagger_{k\gamma\sigma_3} c_{j\beta\sigma_2} c_{l\delta\sigma_4} -  c^\dagger_{i\alpha\sigma_1} c_{l\delta\sigma_4}\delta_{i,j}\delta_{\beta,\gamma}\delta_{\sigma_2,\sigma_3})
+   \end{aligned}
+
+そのため、上記のように一体項が存在することに注意が必要です。
+さて、一体項で与えられたハミルトニアンについては直接ハミルトニアンの対角化を行うことで、エネルギーを求めることができます。
+
+.. math::
+   \begin{aligned}
+   \mathcal{H}_\text{UHF} &= \sum_{ij\alpha\beta} \sum_{\sigma_1 \sigma_2}  H_{ij\alpha\beta} c^\dagger_{i\alpha\sigma_1} c_{j\beta\sigma_2}
+   \end{aligned}
+
+
+
+H-waveで定義される相互作用に対して、Hartree-Fock近似を適用すると以下のような形式になります。
+
+InterAll
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Coulomb Intra
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Coulomb Inter
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Hund
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+PairHop
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Exchange
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Ising
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+PairLift
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+波数空間への拡張
+*************************
+
