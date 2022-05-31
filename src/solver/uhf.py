@@ -231,13 +231,6 @@ class UHF(object):
             site1 = site_info[0] + site_info[1] * self.Nsize
             site2 = site_info[2] + site_info[3] * self.Nsize
             self.Ham_trans[site1][site2] += -value
-        # if self.param_ham["InterAll"] is not None:
-        #     site = np.zeros(4, int)
-        #     for site_info, value in self.param_ham["InterAll"].items():
-        #         for i in range(4):
-        #             site[i] = site_info[2 * i] + site_info[2 * i + 1] * self.Nsize
-        #         if site[1] == site[2]:
-        #             self.Ham_trans[site[0]][site[3]] += value
 
     def _makeham(self):
         self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)

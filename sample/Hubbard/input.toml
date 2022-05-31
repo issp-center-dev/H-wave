@@ -1,0 +1,11 @@
+[log]
+print_level = 1
+[file]
+[file.input]
+path_to_input = ""
+namelist = "namelist.def"
+[file.output]
+path_to_output = "output"
+energy = "energy.dat"
+eigen = "eigen.dat"
+green = "green.dat"
