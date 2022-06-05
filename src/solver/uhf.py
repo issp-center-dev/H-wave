@@ -117,7 +117,7 @@ class PairLift_UHF(Interact_UHF_base):
 # It is better to define solver class, since UHF-k and RPA mode will be added.
 
 class UHF(object):
-    def __init__(self, param, param_ham, info_log):
+    def __init__(self, param, param_ham, info_log, info_mode):
         self.param = param
         self.param_ham = param_ham
         self.info_log = info_log
@@ -151,7 +151,6 @@ class UHF(object):
 
         #The type of mix is float.
         self.param["ModPara"]["mix"] = float(self.param["ModPara"]["mix"][0])
-
         self.param["ModPara"]["EPS"] = pow(10, -self.param["ModPara"]["EPS"])
 
         output_str = "Show input parameters\n"
@@ -166,9 +165,7 @@ class UHF(object):
         # TwoSz = 0 if param_mod["2Sz"] is None else param_mod["2Sz"]
         self.green_list = {"free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
 
-        #ToDo: Add flag for considering Fock term
-        self.iflag_fock = True
-
+        self.iflag_fock = info_mode.get("flag_fock", True)
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
