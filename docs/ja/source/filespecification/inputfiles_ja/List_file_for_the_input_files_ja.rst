@@ -10,9 +10,7 @@
 
 ::
 
-    CalcMod  calcmod.def
     ModPara  modpara.def
-    LocSpin  zlocspn.def
     Trans    ztransfer.def
     InterAll zinterall.def
     OneBodyG zcisajs.def

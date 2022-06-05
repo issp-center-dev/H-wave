@@ -68,44 +68,35 @@ class QMLSInput():
         ham_info = {}
         if file_key in self.file_names:
             file_name = self.file_names[file_key]
+            data = np.loadtxt(file_name, skiprows = 5)
             if value_type == "real":
-                with open(file_name, "r") as f:
-                    lines = f.readlines()
-                    for line in lines[5:]:
-                        words = line.split()
-                        list = tuple([int(i) for i in words[:-1]])
-                        value = float(words[-1])
-                        if list in ham_info:
-                            ham_info[list] += value
-                        else:
-                            ham_info[list] = value
+                for _data in data:
+                    list = tuple([int(i) for i in _data[:-1]])
+                    value = float(_data[-1])
+                    if list in ham_info:
+                        ham_info[list] += value
+                    else:
+                        ham_info[list] = value
             if value_type == "complex":
-                with open(file_name, "r") as f:
-                    lines = f.readlines()
-                    for line in lines[5:]:
-                        words = line.split()
-                        list = tuple([int(i) for i in words[:-2]])
-                        value = float(words[-2]) + 1j * float(words[-1])
-                        if list in ham_info:
-                            ham_info[list] += value
-                        else:
-                            ham_info[list] = value
+                for _data in data:
+                    list = tuple([int(i) for i in _data[:-2]])
+                    value = float(_data[-2]) + 1j * float(_data[-1])
+                    if list in ham_info:
+                        ham_info[list] += value
+                    else:
+                        ham_info[list] = value
+
         else:
             return None
         return ham_info
 
     def _read_green(self, file_key):
-        list = []
         if file_key in self.file_names:
             file_name = self.file_names[file_key]
-            with open(file_name, "r") as f:
-                lines = f.readlines()
-                for line in lines[5:]:
-                    list.append(line.split())
+            data = np.loadtxt(file_name, skiprows = 5)
         else:
             return None
-        return list
-
+        return data
 
 if __name__ == '__main__':
     qml_input = QMLSInput("namelist.def")

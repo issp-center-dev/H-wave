@@ -190,7 +190,6 @@ class UHF(object):
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
-            self._determine_occupied_num()
             self._green()
             self._calc_energy()
             self._calc_phys()
@@ -290,9 +289,6 @@ class UHF(object):
             w, v = np.linalg.eigh(mat)
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
-
-    def _determine_occupied_num(self):
-        pass
 
     def _green(self):
         _green_list = self.green_list
@@ -428,15 +424,4 @@ class param():
 
     def output_phys(self):
         pass
-
-
-class UHF_SzFix(UHF):
-    def __init__(self, param, param_ham, totalsz):
-        super(UHF_SzFix, self).__init__(param, param_ham)
-        Ncond = self.Ncond
-        TwoSz = totalsz * 2
-        self.green_list = {
-            "up": {"label": [i for i in range(self.Nsize)], "value": 0.5, "occupied": int((self.Ncond + TwoSz) / 2)},
-            "down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
-                     "occupied": int((self.Ncond - TwoSz) / 2)}}
 
