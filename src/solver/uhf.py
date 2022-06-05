@@ -117,7 +117,7 @@ class PairLift_UHF(Interact_UHF_base):
 # It is better to define solver class, since UHF-k and RPA mode will be added.
 
 class UHF(object):
-    def __init__(self, param, param_ham, info_log):
+    def __init__(self, param, param_ham, info_log, info_mode):
         self.param = param
         self.param_ham = param_ham
         self.info_log = info_log
@@ -151,7 +151,6 @@ class UHF(object):
 
         #The type of mix is float.
         self.param["ModPara"]["mix"] = float(self.param["ModPara"]["mix"][0])
-
         self.param["ModPara"]["EPS"] = pow(10, -self.param["ModPara"]["EPS"])
 
         output_str = "Show input parameters\n"
@@ -166,9 +165,7 @@ class UHF(object):
         # TwoSz = 0 if param_mod["2Sz"] is None else param_mod["2Sz"]
         self.green_list = {"free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
 
-        #ToDo: Add flag for considering Fock term
-        self.iflag_fock = True
-
+        self.iflag_fock = info_mode.get("flag_fock", True)
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
@@ -378,8 +375,6 @@ class UHF(object):
                 fw.write(output_str)
 
         if "green" in info_outputfile.keys():
-            with open(os.path.join(path_to_output, info_outputfile["green"]), "w") as fw:
-                pass
             if "OneBodyG" in green_info:
                 _green_info = green_info["OneBodyG"]
                 _green_info = np.array(_green_info, dtype=np.int32)
@@ -390,6 +385,22 @@ class UHF(object):
                     output_str += "{} {} {} {} {} {}\n".format(info[0], info[1], info[2], info[3], self.Green[nsite1][nsite2].real, self.Green[nsite1][nsite2].imag)
                 with open(os.path.join(path_to_output, info_outputfile["green"]), "w") as fw:
                     fw.write(output_str)
+                    
+        if "initial" in info_outputfile.keys():
+            output_str = ""
+            output_str = "===============================\n"
+            green_nonzero = self.Green[np.where(abs(self.Green)>0)]
+            ncisajs = len(green_nonzero)
+            output_str += "NCisAjs {}\n".format(ncisajs)
+            output_str += "===============================\n"
+            output_str += "===============================\n"
+            output_str += "===============================\n"
+            for nsite1, nsite2 in itertools.product(range(2 * self.Nsize), range(2 * self.Nsize)):
+                if abs(self.Green[nsite1][nsite2])>0:
+                    output_str += "{} {} {} {} {} {}\n".format(nsite1%self.Nsize, nsite1//self.Nsize, nsite2%self.Nsize, nsite2//self.Nsize,
+                                                               self.Green[nsite1][nsite2].real, self.Green[nsite1][nsite2].imag)
+            with open(os.path.join(path_to_output, info_outputfile["initial"]), "w") as fw:
+                fw.write(output_str)
 
     def get_Ham(self):
         return self.Ham

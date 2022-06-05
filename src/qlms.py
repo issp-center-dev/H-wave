@@ -18,8 +18,11 @@ def main():
     info_log = toml_dict.get("log", {})
     info_log["print_level"] = info_log.get("print_level", 1)
     info_log["print_step"] = info_log.get("print_step", 1)
-    info_file = toml_dict.get("file", {"input":{}, "output":{}})
 
+    #Initialize information about mode
+    info_mode = toml_dict.get("mode", {})
+
+    info_file = toml_dict.get("file", {"input": {}, "output": {}})
     #Initialize information about input files
     info_inputfile = info_file.get("input", {})
     info_inputfile["path_to_input"] = info_inputfile.get("path_to_input", "")
@@ -48,7 +51,7 @@ def main():
     os.makedirs(path_to_output, exist_ok=True)
 
     logger.info("Start UHF calculation")
-    uhf = sol_uhf.UHF(param_info, ham_info, info_log)
+    uhf = sol_uhf.UHF(param_info, ham_info, info_log, info_mode)
     uhf.solve(path_to_output)
 
     logger.info("Save calculation results.")
