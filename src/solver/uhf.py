@@ -375,8 +375,6 @@ class UHF(object):
                 fw.write(output_str)
 
         if "green" in info_outputfile.keys():
-            with open(os.path.join(path_to_output, info_outputfile["green"]), "w") as fw:
-                pass
             if "OneBodyG" in green_info:
                 _green_info = green_info["OneBodyG"]
                 _green_info = np.array(_green_info, dtype=np.int32)
@@ -387,6 +385,22 @@ class UHF(object):
                     output_str += "{} {} {} {} {} {}\n".format(info[0], info[1], info[2], info[3], self.Green[nsite1][nsite2].real, self.Green[nsite1][nsite2].imag)
                 with open(os.path.join(path_to_output, info_outputfile["green"]), "w") as fw:
                     fw.write(output_str)
+                    
+        if "initial" in info_outputfile.keys():
+            output_str = ""
+            output_str = "===============================\n"
+            green_nonzero = self.Green[np.where(abs(self.Green)>0)]
+            ncisajs = len(green_nonzero)
+            output_str += "NCisAjs {}\n".format(ncisajs)
+            output_str += "===============================\n"
+            output_str += "===============================\n"
+            output_str += "===============================\n"
+            for nsite1, nsite2 in itertools.product(range(2 * self.Nsize), range(2 * self.Nsize)):
+                if abs(self.Green[nsite1][nsite2])>0:
+                    output_str += "{} {} {} {} {} {}\n".format(nsite1%self.Nsize, nsite1//self.Nsize, nsite2%self.Nsize, nsite2//self.Nsize,
+                                                               self.Green[nsite1][nsite2].real, self.Green[nsite1][nsite2].imag)
+            with open(os.path.join(path_to_output, info_outputfile["initial"]), "w") as fw:
+                fw.write(output_str)
 
     def get_Ham(self):
         return self.Ham
