@@ -163,7 +163,14 @@ class UHF(object):
         param_mod = self.param["Modpara"]
         self.Ncond = param_mod["Ncond"]
         # TwoSz = 0 if param_mod["2Sz"] is None else param_mod["2Sz"]
-        self.green_list = {"free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
+        TwoSz = param["ModPara"]["2Sz"]
+        if TwoSz is None:
+            self.green_list = {"free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
+        else:
+            self.green_list = {
+                "up": {"label": [i for i in range(self.Nsize)], "value": 0.5, "occupied": int((self.Ncond + TwoSz) / 2)},
+                "down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
+                         "occupied": int((self.Ncond - TwoSz) / 2)}}
 
         self.iflag_fock = info_mode.get("flag_fock", True)
 
@@ -435,4 +442,3 @@ class param():
 
     def output_phys(self):
         pass
-
