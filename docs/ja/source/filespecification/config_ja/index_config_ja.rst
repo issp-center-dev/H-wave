@@ -21,7 +21,8 @@
     [mode]
     mode = "UHF"
     flag_fock = "True"
-    output_inital = "True"
+    [mode.param]
+    T = 0.1
     [log]
     print_level = 1
     print_step = 20
@@ -56,6 +57,16 @@ toml形式
   **形式 :** string型 (デフォルトは ``True`` )
 
   **説明 :** ``True`` の場合にはFock項を考慮し、 ``False`` の場合にはHartree項のみ取り扱います。
+
+
+``mode.param`` セクション
+=======================
+
+- ``T``
+
+  **形式 :** float型 (デフォルトは0)
+
+  **説明 :** 温度を指定します。
 
 
 ``log`` セクション

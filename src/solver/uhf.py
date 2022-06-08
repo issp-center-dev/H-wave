@@ -173,7 +173,9 @@ class UHF(object):
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
         self.iflag_fock = info_mode.get("flag_fock", True)
-        self.T = info_mode.get("temp", 0)
+        info_mode_param = info_mode.get("param", {})
+        self.T = info_mode_param.get("T", 0)
+
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
