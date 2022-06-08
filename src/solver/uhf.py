@@ -165,11 +165,11 @@ class UHF(object):
         # TwoSz = 0 if param_mod["2Sz"] is None else param_mod["2Sz"]
         TwoSz = param["ModPara"]["2Sz"]
         if TwoSz is None:
-            self.green_list = {"free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
+            self.green_list = {"sz-free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
         else:
             self.green_list = {
-                "up": {"label": [i for i in range(self.Nsize)], "value": 0.5, "occupied": int((self.Ncond + TwoSz) / 2)},
-                "down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
+                "spin-up": {"label": [i for i in range(self.Nsize)], "value": 0.5, "occupied": int((self.Ncond + TwoSz) / 2)},
+                "spin-down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
         self.iflag_fock = info_mode.get("flag_fock", True)
@@ -372,14 +372,10 @@ class UHF(object):
                 fw.write(output_str)
 
         if "eigen" in info_outputfile.keys():
-            output_str = ""
             for key, _green_list in self.green_list.items():
                 eigenvalue = _green_list["eigenvalue"]
-                #output_str += "{}, {}\n".format(key, eigenvalue.shape[0])
-                for idx, value in enumerate(eigenvalue):
-                    output_str += "{}, {}\n".format(idx, value)
-            with open(os.path.join(path_to_output, info_outputfile["eigen"]), "w") as fw:
-                fw.write(output_str)
+                eigenvector = _green_list["eigenvector"]
+                np.savez(os.path.join(path_to_output, key+"_"+info_outputfile["eigen"]), eigenvalue = eigenvalue, eigenvector=eigenvector)
 
         if "green" in info_outputfile.keys():
             if "OneBodyG" in green_info:
@@ -394,7 +390,6 @@ class UHF(object):
                     fw.write(output_str)
                     
         if "initial" in info_outputfile.keys():
-            output_str = ""
             output_str = "===============================\n"
             green_nonzero = self.Green[np.where(abs(self.Green)>0)]
             ncisajs = len(green_nonzero)
