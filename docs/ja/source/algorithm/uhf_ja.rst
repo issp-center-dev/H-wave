@@ -70,7 +70,15 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 
 ここで、 :math:`\alpha` は0から1までの定数を表します。現在のH-waveでは実装していませんが、simple-mixing以外の更新方法としては、Anderson-mixingなどもあります。
 なお、H-waveの実空間UHFでは、全ての相互作用をInterAll形式にマップした後に解析を行う仕様になっています。
+有限温度のフリーエネルギーは
 
+.. math::
+   \begin{aligned}
+   F &= \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(E_k - \mu)) \right] \nonumber\\
+     &- \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_l\rangle \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle)
+   \end{aligned}
+
+で与えられます。
 
 波数空間への拡張
 *************************

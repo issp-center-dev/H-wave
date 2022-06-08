@@ -2,8 +2,8 @@ import itertools
 import logging
 import numpy as np
 import itertools
-from requests.structures import CaseInsensitiveDict
 import os
+from requests.structures import CaseInsensitiveDict
 
 logger = logging.getLogger("qlms").getChild("uhf")
 
@@ -173,6 +173,7 @@ class UHF(object):
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
         self.iflag_fock = info_mode.get("flag_fock", True)
+        self.T = info_mode.get("temp", 0)
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
@@ -300,30 +301,61 @@ class UHF(object):
         # L_SLT = U^T in _green
         R_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         L_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        for k, block_g_info in _green_list.items():
-            g_label = block_g_info["label"]
-            # occupied: return the occupied number
-            occupied_number = block_g_info["occupied"]
-            eigenvec = self.green_list[k]["eigenvector"]
-            eigen_start = self.green_list[k]["eigen_start"]
-            for eigen_i in range(occupied_number):
-                evec_i = eigenvec[:, eigen_i]
-                for idx, org_site in enumerate(g_label):
-                    R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
-                    L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
         # Copy Green_old
         self.Green_old = self.Green.copy()
-        RMat = np.dot(R_SLT, L_SLT)
-        self.Green = RMat.copy()
+        if self.T == 0:
+            for k, block_g_info in _green_list.items():
+                g_label = block_g_info["label"]
+                # occupied: return the occupied number
+                occupied_number = block_g_info["occupied"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                eigen_start = self.green_list[k]["eigen_start"]
+                for eigen_i in range(occupied_number):
+                    evec_i = eigenvec[:, eigen_i]
+                    for idx, org_site in enumerate(g_label):
+                        R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
+                        L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
+            RMat = np.dot(R_SLT, L_SLT)
+            self.Green = RMat.copy()
+        else: # for finite temperatures
+            from scipy import optimize
+            def _calc_delta_n(myu):
+                n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec)
+                fermi = np.array(1.0/(np.exp((eigenvalue-myu)/self.T)+1.0))
+                return np.dot(n_eigen, fermi)-occupied_number
+
+            self.Green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
+            for k, block_g_info in _green_list.items():
+                g_label = block_g_info["label"]
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                occupied_number = block_g_info["occupied"]
+                #determine myu
+                myu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
+                self.green_list[k]["myu"] = myu
+                fermi = np.array(1.0 / (np.exp((eigenvalue - myu) / self.T) + 1.0))
+                tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
+                for idx1, org_site1 in enumerate(g_label):
+                    for idx2, org_site2 in enumerate(g_label):
+                        self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
 
     def _calc_energy(self):
         _green_list = self.green_list
         Ene = {}
         Ene["band"] = 0
-        for k, block_g_info in _green_list.items():
-            eigenvalue = self.green_list[k]["eigenvalue"]
-            occupied_number = block_g_info["occupied"]
-            Ene["band"] += np.sum(eigenvalue[:occupied_number])
+        if self.T == 0:
+            for k, block_g_info in _green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                occupied_number = block_g_info["occupied"]
+                Ene["band"] += np.sum(eigenvalue[:occupied_number])
+        else:
+            for k, block_g_info in _green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                myu = self.green_list[k]["myu"]
+                fermi = np.array(1.0 / (np.exp((eigenvalue - myu) / self.T) + 1.0))
+                tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
+                Ene["band"] += myu*np.sum(tmp_n) - self.T * np.sum(np.log1p(np.exp(-(eigenvalue - myu) / self.T)))
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
@@ -364,7 +396,7 @@ class UHF(object):
 
         if "energy" in info_outputfile.keys():
             output_str  = "Energy_total = {}\n".format(self.physics["Ene"]["Total"].real)
-            output_str += "Energy_band = {}\n".format(self.physics["Ene"]["band"])
+            output_str += "Energy_band = {}\n".format(self.physics["Ene"]["band"].real)
             output_str += "Energy_interall = {}\n".format(self.physics["Ene"]["InterAll"].real)
             output_str += "NCond = {}\n".format(self.physics["NCond"])
             output_str += "Sz = {}\n".format(self.physics["Sz"])
@@ -408,32 +440,3 @@ class UHF(object):
         return self.Ham
 
 
-class param():
-    def __init__(self):
-        self.para = CaseInsensitiveDict({
-            "Nsite": 0,
-            "Ne": 0,
-            "Ncond": 0,
-            "2Sz": None,
-            "Mix": 0.5,
-            "EPS": 8,
-            "Print": 0,
-            "IterationMax": 20000,
-            "RndSeed": 0,
-            "EpsSlater": 6,
-            "NMPTrans": 1,
-        })
-
-    def set_param(self, param):
-        for k, v in param.items():
-            self.para[k] = v
-        return self.para
-
-    def print_param(self):
-        print("########Input parameters ###########")
-        for key in ["tmp_eps", "eps_int", "mix", "print"]:
-            print("{} {}".format(key, self.para[key]))
-        print("####################################")
-
-    def output_phys(self):
-        pass
