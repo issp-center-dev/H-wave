@@ -113,57 +113,26 @@ class PairLift_UHF(Interact_UHF_base):
             param_tmp[site_info] = value
         return param_tmp
 
+from .base import solver_base
 
-# It is better to define solver class, since UHF-k and RPA mode will be added.
-
-class UHF(object):
-    def __init__(self, param, param_ham, info_log, info_mode):
-        self.param = param
-        self.param_ham = param_ham
-        self.info_log = info_log
+class UHF(solver_base):
+    def __init__(self, param_ham, info_log, info_mode, param_mod=None):
+        super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
-        self.output_list = ["energy", "eigen", "green"]
-        # initial values
-        para_init = CaseInsensitiveDict({
-            "Nsite": 0,
-            "Ne": 0,
-            "Ncond": 0,
-            "2Sz": None,
-            "Mix": 0.5,
-            "EPS": 6,
-            "Print": 0,
-            "IterationMax": 20000,
-            "RndSeed": 1234,
-            "EpsSlater": 6
-        })
-
-        for k, v in para_init.items():
-            self.param["ModPara"].setdefault(k, v)
-
-        # set initial values
-        for key in ["CDataFileHead", "CParaFileHead"]:
-            if self.param["ModPara"][key] is not None and type(self.param["ModPara"][key]) == type([]):
-                self.param["ModPara"][key] = str(self.param["ModPara"][key][0])
-
-        for key in ["nsite", "ne", "2Sz", "ncond", "eps", "IterationMax", "Print", "RndSeed", "EpsSlater"]:
-            if self.param["ModPara"][key] is not None and type(self.param["ModPara"][key]) == type([]):
-                self.param["ModPara"][key] = int(self.param["ModPara"][key][0])
-
-        #The type of mix is float.
-        self.param["ModPara"]["mix"] = float(self.param["ModPara"]["mix"][0])
-        self.param["ModPara"]["EPS"] = pow(10, -self.param["ModPara"]["EPS"])
 
         output_str = "Show input parameters\n"
-        for k, v in self.param["ModPara"].items():
+        for k, v in self.param_mod.items():
             output_str += "{}: {}\n".format(k, v)
         logger.debug(output_str)
 
-        self.Nsize = self.param["ModPara"]["nsite"]
-        # Define list
-        param_mod = self.param["Modpara"]
-        self.Ncond = param_mod["Ncond"]
-        # TwoSz = 0 if param_mod["2Sz"] is None else param_mod["2Sz"]
-        TwoSz = param["ModPara"]["2Sz"]
+        self.iflag_fock = info_mode.get("flag_fock", True)
+        self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
+        self.T = self.param_mod.get("T", 0)
+
+        # Make a list for generating Hamiltonian
+        self.Nsize = self.param_mod["nsite"]
+        self.Ncond = self.param_mod["Ncond"]
+        TwoSz = self.param_mod["2Sz"]
         if TwoSz is None:
             self.green_list = {"sz-free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
         else:
@@ -171,11 +140,6 @@ class UHF(object):
                 "spin-up": {"label": [i for i in range(self.Nsize)], "value": 0.5, "occupied": int((self.Ncond + TwoSz) / 2)},
                 "spin-down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
-
-        self.iflag_fock = info_mode.get("flag_fock", True)
-        info_mode_param = info_mode.get("param", {})
-        self.T = info_mode_param.get("T", 0)
-
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
@@ -188,7 +152,7 @@ class UHF(object):
             label += len(self.green_list[k]["label"])
         self.Green = self._initial_G()
         logger.info("Start UHF calculations")
-        param_mod = self.param["Modpara"]
+        param_mod = self.param_mod
 
         if print_level > 0:
             logger.info("step, rest, energy, NCond, Sz")
@@ -222,7 +186,7 @@ class UHF(object):
                 site2 = site_info[2] + site_info[3] * self.Nsize
                 green[site1][site2] = value
         else:
-            np.random.seed(self.param["ModPara"]["RndSeed"])
+            np.random.seed(self.param_mod["RndSeed"])
             rand = np.random.rand(2 * self.Nsize * 2 * self.Nsize).reshape(2 * self.Nsize, 2 * self.Nsize)
             for k, info in _green_list.items():
                 v = info["label"]
@@ -297,6 +261,15 @@ class UHF(object):
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
 
+    def _fermi(self, myu, eigenvalue):
+        fermi = np.zeros(eigenvalue.shape)
+        for idx, value in enumerate(eigenvalue):
+            if (value - myu) / self.T > self.ene_cutoff:
+                fermi[idx] = 0
+            else:
+                fermi[idx] = 1.0 / (np.exp((value - myu) / self.T) + 1.0)
+        return fermi
+
     def _green(self):
         _green_list = self.green_list
         # R_SLT = U^{*} in _green
@@ -321,9 +294,10 @@ class UHF(object):
             self.Green = RMat.copy()
         else: # for finite temperatures
             from scipy import optimize
+
             def _calc_delta_n(myu):
-                n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec)
-                fermi = np.array(1.0/(np.exp((eigenvalue-myu)/self.T)+1.0))
+                n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec).real
+                fermi = self._fermi(myu, eigenvalue)
                 return np.dot(n_eigen, fermi)-occupied_number
 
             self.Green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
@@ -335,7 +309,7 @@ class UHF(object):
                 #determine myu
                 myu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
                 self.green_list[k]["myu"] = myu
-                fermi = np.array(1.0 / (np.exp((eigenvalue - myu) / self.T) + 1.0))
+                fermi = self._fermi(myu, eigenvalue)
                 tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
                 for idx1, org_site1 in enumerate(g_label):
                     for idx2, org_site2 in enumerate(g_label):
@@ -351,13 +325,21 @@ class UHF(object):
                 occupied_number = block_g_info["occupied"]
                 Ene["band"] += np.sum(eigenvalue[:occupied_number])
         else:
+
             for k, block_g_info in _green_list.items():
                 eigenvalue = self.green_list[k]["eigenvalue"]
                 eigenvec = self.green_list[k]["eigenvector"]
                 myu = self.green_list[k]["myu"]
-                fermi = np.array(1.0 / (np.exp((eigenvalue - myu) / self.T) + 1.0))
+                fermi = self._fermi(myu, eigenvalue)
+
+                ln_Ene = np.zeros(eigenvalue.shape)
+                for idx, value in enumerate(eigenvalue):
+                    if (value - myu) / self.T > self.ene_cutoff:
+                        ln_Ene[idx] = np.log1p(np.exp(-(value - myu) / self.T))
+                    else:
+                        ln_Ene[idx] = -(value - myu) / self.T
                 tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
-                Ene["band"] += myu*np.sum(tmp_n) - self.T * np.sum(np.log1p(np.exp(-(eigenvalue - myu) / self.T)))
+                Ene["band"] += myu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
@@ -383,7 +365,7 @@ class UHF(object):
         self.physics["Sz"] = (0.5 * sz).real
 
         rest = 0.0
-        mix = self.param["ModPara"]["mix"]
+        mix = self.param_mod["mix"]
         for site1, site2 in itertools.product(range(2 * self.Nsize), range(2 * self.Nsize)):
             rest += abs(self.Green[site1][site2] - self.Green_old[site1][site2])**2
             self.Green[site1][site2] = self.Green_old[site1][site2] * (1.0 - mix) + mix * self.Green[site1][site2]

@@ -11,7 +11,7 @@ class QMLSInput():
         self.param = CaseInsensitiveDict()
         self.file_names = self._read_file_names(file_name_list)
         # Get ModPara file
-        self.param["modpara"] = self._read_para("modpara")
+        self.mod_param = self._read_para("modpara")
         self.ham_param = CaseInsensitiveDict()
         self.ham_param["Transfer"] = self._read_ham("trans", value_type="complex")
         self.ham_param["CoulombInter"] = self._read_ham("coulombinter")
@@ -30,15 +30,15 @@ class QMLSInput():
         self.output["OneBodyG"] = self._read_green("onebodyg")
 
     def get_param(self, key):
-        if key == "param":
-            return self.param
+        if key == "mod":
+            return self.mod_param
         elif key == "ham":
             return self.ham_param
         elif key == "output":
             return self.output
         else:
             # Add error message
-            logger.error("Get_param: key must be param or ham or output.")
+            logger.error("Get_param: key must be mod or ham or output.")
             return None
 
     def _read_file_names(self, file_name_list):

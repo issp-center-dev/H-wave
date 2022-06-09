@@ -2,44 +2,42 @@
 
 .. _subsec:eigen.dat:
 
-eigen.dat
+eigen
 ~~~~~~~~~~
 
-収束したハミルトニアンの固有値が低エネルギー順に出力されます。
-以下にファイル例を記載します。
+収束したハミルトニアンの固有値、固有ベクトルをnpz形式で出力します。
+ファイル名は環境設定ファイルの ``file.output`` セクション ``eigen`` で指定されたストリング (以下、 ``eigen_str`` ) を用いて、
+``key_eigen_str.npz`` という名前で出力されます。
+ここで、 ``key`` は
 
-::
+- ``mode.param`` セクションで ``Sz`` を指定しない場合: ``free``
+- ``mode.param`` セクションで ``Sz`` を指定した場合: ``spin_up`` , ``spin_up``
 
-    0, -1.4330804705460427
-    1, -1.4330775519300982
-    2, 0.32326944941464825
-    3, 0.3232694494155258
-    4, 0.323269449420004
-    5, 0.32326944942497615
-    6, 0.3232694494449527
-    ...
+となります ( ``Sz`` を指定した場合には2つのファイルが吐き出されます)。
+以下、データを読み込む例となります。
 
-ファイル形式
-^^^^^^^^^^^^
+.. code-block:: python
 
-:math:`[`\ int01\ :math:`]` :math:`[`\ double01\ :math:`]`
+    import numpy as np
+    data = np.load("key_eigen_str.npz")
+    eigenvalue = data["eigenvalue"]
+    eigenvector = data["eigenvector"]
 
-パラメータ
-^^^^^^^^^^
+``eigenvalue`` には固有値が低い順に格納されます。 ``N`` を全サイト数とした場合、
 
--  :math:`[`\ int01\ :math:`]`
+- ``mode.param`` セクションで ``Sz`` を指定しない場合: 2 ``N``
+- ``mode.param`` セクションで ``Sz`` を指定した場合: ``N``
 
-   **形式 :** int型
+分の固有値が出力されます。
 
-   **説明 :**
-   ハミルトニアンの固有値のindex。
+``eigenvector`` には対応する固有ベクトルが格納されます。
+第1列目のindexは  ``n_site`` をサイトのindex、 ``n_spin`` をスピンのindex(upの場合に0, downの場合に1)として、
 
--  :math:`[`\ double01\ :math:`]`
+- ``mode.param`` セクションで ``Sz`` を指定しない場合: ``n_site`` + ``n_spin`` * ``N``
+- ``mode.param`` セクションで ``Sz`` を指定した場合: ``n_site``
 
-   **形式 :** double型
+に対応し、第2列目のindexは固有値のindexに対応します。
 
-   **説明 :**    ハミルトニアンの固有値。
-   
 .. raw:: latex
 
    \newpage
