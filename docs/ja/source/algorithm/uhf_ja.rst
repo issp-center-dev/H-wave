@@ -25,7 +25,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
    \end{aligned}
 
 そのため、上記のように一体項が存在することに注意が必要です。
-さて、一体項で与えられたハミルトニアンは、一体項のハミルトニアンは一般的に以下のように書けます。
+さて、一体項で与えられたハミルトニアンは一般的に以下のように書けます。
 
 .. math::
    \begin{aligned}
@@ -62,7 +62,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
    N = \sum_{i} \langle c_i^{\dagger} c_i \rangle
    \end{aligned}
 
-を満たすように、各ステップで :math:`\mu` を決定・更新しながら計算を進めます。H-waveでは、更新に対してはsimple-mixingを現在行っています。simple-mixingでは :math:`n` 番目のステップの一体グリーン関数を :math:`\langle c_{i}^\dagger c_{j}\rangle^{(n)}`  とした場合に、 :math:`n` 番目の一体グリーン関数と :math:`n+1` 番目のステップに求められた一体グリーン関数を混ぜた上で更新を行います：
+を満たすように、各ステップで :math:`\mu` を決定・更新しながら計算を進めます。H-waveでは、更新に対してはsimple-mixingを現在行っています。simple-mixingでは :math:`n` 番目のステップの一体グリーン関数を :math:`\langle c_{i}^\dagger c_{j}\rangle^{(n)}`  とした場合に、 :math:`n` 番目の一体グリーン関数と :math:`n+1` 番目のステップで求められた一体グリーン関数を混ぜた上で更新を行います：
 
 .. math::
    \begin{aligned}
@@ -75,7 +75,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 
 .. math::
    \begin{aligned}
-   F &= \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(E_k - \mu)) \right] \nonumber\\
+   F &= \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(\xi_k - \mu)) \right] \nonumber\\
      &- \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_j\rangle \langle c_{k}^{\dagger} c_l\rangle - \langle c_{i}^{\dagger} c_l\rangle \langle c_{k}^{\dagger} c_j\rangle)
    \end{aligned}
 
