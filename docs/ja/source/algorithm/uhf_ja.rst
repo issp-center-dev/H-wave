@@ -13,7 +13,7 @@ Hartree-Fock近似では一体の演算子の揺らぎについて一次のみ�
    \begin{aligned}
    c_{i}^{\dagger}c_{j}^{\dagger}c_{k}c_{l} 
    &\sim \langle c_{i}^{\dagger} c_l\rangle c_{j}^{\dagger} c_k   +  c_{i}^{\dagger} c_l \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle c_{j}^{\dagger} c_l -  c_{i}^{\dagger} c_k \langle c_{j}^{\dagger} c_l\rangle \nonumber\\
-   &-(\langle c_{i}^{\dagger} c_l\rangle \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle)
+   &\qquad -(\langle c_{i}^{\dagger} c_l\rangle \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle)
    \end{aligned}
 
 H-waveでは以下の形式でな二体相互作用を定義しています。
@@ -21,7 +21,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 .. math::
    \begin{aligned}
    \mathcal{H}_\text{InterAll} &= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} c^\dagger_{i\alpha\sigma_1} c_{j\beta\sigma_2} c^\dagger_{k\gamma\sigma_3} c_{l\delta\sigma_4} \nonumber\\
-   &= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} (c^\dagger_{i\alpha\sigma_1} c^\dagger_{k\gamma\sigma_3} c_{j\beta\sigma_2} c_{l\delta\sigma_4} -  c^\dagger_{i\alpha\sigma_1} c_{l\delta\sigma_4}\delta_{i,j}\delta_{\beta,\gamma}\delta_{\sigma_2,\sigma_3})
+   &= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} (c^\dagger_{i\alpha\sigma_1} c^\dagger_{k\gamma\sigma_3} c_{l\gamma\sigma_4} c_{j\beta\sigma_2} + c^\dagger_{i\alpha\sigma_1} c_{l\delta\sigma_4}\delta_{j,k}\delta_{\beta,\gamma}\delta_{\sigma_2,\sigma_3})
    \end{aligned}
 
 そのため、上記のように一体項が存在することに注意が必要です。
@@ -32,7 +32,8 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
    \mathcal{H}_\text{UHF} &= \sum_{ij} H_{ij} c^\dagger_{i} c_{j} = \hat{c}^\dagger H \hat{c}
    \end{aligned}
 
-ここで、簡単化のため、 :math:`i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)` 、 :math:`H` は :math:`H_{ij}` を成分に持つ行列、 :math:`\hat{c}` は :math:`c_{i}` を成分にもつ行ベクトルを表します。このとき、 :math:`H` はエルミート行列なので、 :math:`\hat{\xi}` を :math:`H` の固有値を対角成分に持つ行列、:math:`U` は各固有ベクトルに対応する行列として、:math:`H=U^\dagger \hat{\xi} U` のように変形できることから、:math:`d = Uc` とすると、
+ここで、簡単化のため、 :math:`i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)` 、 :math:`H` は :math:`H_{ij}` を成分に持つ行列、 :math:`\hat{c}` は :math:`c_{i}` を成分にもつ行ベクトルを表します。
+このとき、 :math:`H` はエルミート行列なので、 :math:`\hat{\xi}` を :math:`H` の固有値を対角成分に持つ行列、:math:`U` は各固有ベクトルに対応する行列として、:math:`H=U \hat{\xi} U^\dagger` のように変形できることから、:math:`\hat{d} = U^\dagger \hat{c}` とすると、
 
 .. math::
    \begin{aligned}
@@ -50,7 +51,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 
 .. math::
    \begin{aligned}
-   \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}U_{jl}^\dagger \langle d_l^\dagger d_l \rangle = \sum_{l}  \frac{U_{il}U_{jl}^\dagger}{1+\exp^{-\beta(\xi_l -\mu)}}
+   \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}^* U_{jl} \langle d_l^\dagger d_l \rangle = \sum_{l} \frac{U_{il}^* U_{jl}}{1+\exp^{-\beta(\xi_l -\mu)}}
    \end{aligned}
 
 の関係から一体グリーン関数を更新し、一体グリーン関数が収束するまで計算を繰り返します。ただし、上式において :math:`\beta` は逆温度 :math:`1/ k_B T` , :math:`\mu` は化学ポテンシャルとしました。 
@@ -75,7 +76,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 .. math::
    \begin{aligned}
    F &= \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(E_k - \mu)) \right] \nonumber\\
-     &- \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_l\rangle \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle)
+     &- \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_j\rangle \langle c_{k}^{\dagger} c_l\rangle - \langle c_{i}^{\dagger} c_l\rangle \langle c_{k}^{\dagger} c_j\rangle)
    \end{aligned}
 
 で与えられます。
