@@ -2,6 +2,7 @@ import logging
 import tomli
 import qlmsio
 import solver.uhf as sol_uhf
+import solver.uhfk as sol_uhfk
 import sys
 import os
 import pprint
@@ -34,28 +35,50 @@ def main():
     path_to_output = info_outputfile["path_to_output"]
 
     logger = logging.getLogger("qlms")
-    fmt = "%(asctime)s %(levelname)s %(name)s :%(message)s"
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     # logging.basicConfig(level=logging.DEBUG, format=fmt)
     logging.basicConfig(level=logging.INFO, format=fmt)
 
-    logger.info("Read def files")
-    read_io = qlmsio.read_input.QMLSInput(path_to_namelist)
-    logger.info("Get Parameters information")
-    mod_param_info = read_io.get_param("mod")
-    pprint.pprint(mod_param_info, width = 1)
-    logger.info("Get Hamiltonian information")
-    ham_info = read_io.get_param("ham")
-    logger.info("Get Output information")
-    green_info = read_io.get_param("output")
-    os.makedirs(path_to_output, exist_ok=True)
-
     mode = info_mode.get("mode", None)
     if mode == "UHF":
-      solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
-      #solver = sol_uhf.UHF(ham_info, info_log, info_mode)
+        logger.info("Read def files")
+        read_io = qlmsio.read_input.QMLSInput(path_to_namelist)
+
+        logger.info("Get Parameters information")
+        mod_param_info = read_io.get_param("mod")
+        pprint.pprint(mod_param_info, width = 1)
+
+        logger.info("Get Hamiltonian information")
+        ham_info = read_io.get_param("ham")
+
+        logger.info("Get Output information")
+        green_info = read_io.get_param("output")
+        os.makedirs(path_to_output, exist_ok=True)
+
+        solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
+
+    elif mode == "UHFk":
+        logger.info("Read definitions from files")
+        read_io = qlmsio.read_input_k.QMLSkInput(info_inputfile)
+
+        # logger.info("Get parameter information")
+        # mod_param_info = info_mode #read_io.get_param("mod")
+        # pprint.pprint(mod_param_info, width = 1)
+
+        logger.info("Get Hamiltonian information")
+        ham_info = read_io.get_param("ham")
+
+        logger.info("Get output information")
+        green_info = read_io.get_param("output")
+        os.makedirs(path_to_output, exist_ok=True)
+
+        pprint.pprint(info_mode, width = 1)
+        
+        solver = sol_uhfk.UHFk(ham_info, info_log, info_mode)
+
     else:
-      logger.warning("mode is incorrect: mode={}.".format(mode))
-      exit(0)
+        logger.warning("mode is incorrect: mode={}.".format(mode))
+        exit(0)
 
     logger.info("Start UHF calculation")
     solver.solve(path_to_output)
