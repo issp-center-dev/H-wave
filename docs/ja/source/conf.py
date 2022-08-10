@@ -150,12 +150,12 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    ('index', 'userguide_H-wave_ja.tex', u'H\\(\\Phi\\) Documentation',
-     u'University of Tokyo', 'manual', 'True'),
+    ('index', 'userguide_H-wave_ja.tex', u'H-wave Documentation',
+     u'ISSP, University of Tokyo', 'manual', 'True'),
 ]
 
 # latex_docclass =  {'manual': 'jsbook'}
-latex_logo = "../../figs/logo.png"
+#latex_logo = "../../figs/logo.png"
 
 # -- Options for manual page output ---------------------------------------
 

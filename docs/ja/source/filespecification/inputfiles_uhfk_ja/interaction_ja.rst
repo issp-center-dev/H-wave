@@ -6,14 +6,14 @@
 ハミルトニアンの一体項および二体相互作用項を次の形で表したとき、その係数をWannier90形式で記述します。
 
 .. math::
-   \begin{align}
+   \begin{aligned}
      \mathcal{H}_\text{Trans} &= \sum_{ij\alpha\beta}
      T_{\alpha\beta}(r_{ij})\,c_{i\alpha\sigma}^\dagger c_{j\beta\sigma^\prime}^{\phantom{\dagger}} \\
      \mathcal{H}_\text{Inter} &= \sum_{ij\alpha\beta}
      J_{\alpha\beta}(r_{ij})\,
      c_{i\alpha\sigma_1}^\dagger c_{j\beta\sigma_2}^\dagger 
-     c_{j\beta\sigma_3}^{\phantom{\dagger}} c_{i\alpha\sigma_4}^{\phantom{\dagger}} \\
-   \end{align}
+     c_{j\beta\sigma_3}^{\phantom{\dagger}} c_{i\alpha\sigma_4}^{\phantom{\dagger}}
+   \end{aligned}
 
 以下にファイル例を示します。
 
