@@ -12,11 +12,30 @@ class UHFk(solver_base):
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
         # parameters
-        nx, ny, nz = self.param_mod["CellShape"]
+        nx, ny, nz = self.param_mod.get("CellShape", [1,1,1])
         nvol = nx * ny * nz
 
         self.shape = (nx, ny, nz)
         self.nvol = nvol
+
+        # sublattice
+        bx, by, bz = self.param_mod.get("SubShape", [1,1,1])
+        self.subshape = (bx, by, bz)
+
+        # check consistency
+        # XXX use reciprocal lattice
+        err = 0
+        for i in range(3):
+            if self.shape[i] % self.subshape[i] != 0:
+                err += 1
+        if err > 0:
+            logger.info("SubShape is not compatible with CellShape")
+            logger.info("abort.")
+            exit(1)
+
+        if any([ _ > 1 for _ in self.subshape]):
+            logger.info("enable sublattice")
+
 
         norb = self.param_ham["Geometry"]["norb"]
         ns = 2
@@ -560,7 +579,20 @@ class UHFk(solver_base):
             occupied_number = self.Ncond
 
             # find mu s.t. <n>(mu) = N0
-            mu = optimize.bisect(_calc_delta_n, ev[0], ev[-1])
+            is_converged = False
+
+            if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+                logger.info("+++ find mu: try bisection")
+                mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+                is_converged = r.converged
+            if not is_converged:
+                logger.info("+++ find mu: try newton")
+                mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+                is_converged = r.converged
+            if not is_converged:
+                logger.info("+++ find mu: not converged. abort")
+                exit(1)
+
             self._green_list["mu"] = mu
 
             logger.info("mu = {}".format(mu))
