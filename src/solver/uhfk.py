@@ -11,22 +11,57 @@ class UHFk(solver_base):
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
-        # parameters
-        nx, ny, nz = self.param_mod.get("CellShape", [1,1,1])
-        nvol = nx * ny * nz
+        self.init_lattice()
+        self.init_orbit()
+        self.init_param()
 
-        self.shape = (nx, ny, nz)
-        self.nvol = nvol
+        #self.dump_param_ham()
 
-        # sublattice
-        bx, by, bz = self.param_mod.get("SubShape", [1,1,1])
-        self.subshape = (bx, by, bz)
+        self.init_interaction()
+
+        #self.dump_param_ham()
+
+        self.show_param()
+
+        # local data
+        self.physics = {
+            "Ene": { "Total": 0.0, "Band": 0.0 },
+            "NCond": 0.0,
+            "Sz": 0.0,
+            "Rest": 1.0
+        }
+
+        nvol = self.nvol
+        nd = self.nd
+        
+        self._green_list = {
+            "eigenvalue":  np.zeros((nvol,nd), dtype=np.complex128),
+            "eigenvector": np.zeros((nvol,nd,nd), dtype=np.complex128)
+        }
+
+        #self.Green = np.zeros((nvol,ns,norb,ns,norb), dtype=np.complex128),
+
+        # work area
+        self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
+
+    def init_lattice(self):
+        # check parameters
+        if not "CellShape" in self.param_mod:
+            logger.info("CellShape is missing. abort")
+            exit(1)
+            
+        Lx,Ly,Lz = self.param_mod.get("CellShape")
+        self.cellshape = (Lx,Ly,Lz)
+
+        Bx,By,Bz = self.param_mod.get("SubShape", [1,1,1])
+        self.subshape = (Bx,By,Bz)
+        self.subvol = Bx * By * Bz
 
         # check consistency
         # XXX use reciprocal lattice
         err = 0
         for i in range(3):
-            if self.shape[i] % self.subshape[i] != 0:
+            if self.cellshape[i] % self.subshape[i] != 0:
                 err += 1
         if err > 0:
             logger.info("SubShape is not compatible with CellShape")
@@ -35,26 +70,43 @@ class UHFk(solver_base):
 
         if any([ _ > 1 for _ in self.subshape]):
             logger.info("enable sublattice")
+            self.has_sublattice = True
+        else:
+            self.has_sublattice = False
 
+        # replace by lattice of supercells
+        nx, ny, nz = Lx//Bx, Ly//By, Lz//Bz
+        nvol = nx * ny * nz
 
+        self.shape = (nx, ny, nz)
+        self.nvol = nvol
+
+    def init_orbit(self):
         norb = self.param_ham["Geometry"]["norb"]
-        ns = 2
-        nd = norb * ns
+        ns = 2  # spin dof
 
-        self.norb = norb
-        self.nd = nd
+        # take account of supercell
+        self.norb_orig = norb
+        self.norb = norb * self.subvol
+
+        self.nd = self.norb * ns
         self.ns = ns
 
+    def init_param(self):
         Ncond = self.param_mod["Ncond"]
         self.Ncond = Ncond
 
         self.T = self.param_mod.get("T", 0.0)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
 
+    def show_param(self):
         logger.info("Show parameters")
-        logger.info("    Cell Shape  = {}".format(self.shape))
-        logger.info("    Cell volume = {}".format(self.nvol))
-        logger.info("    Num orbit   = {}".format(self.norb))
+        logger.info("    Cell Shape  = {}".format(self.cellshape))
+        logger.info("    Sub Shape   = {}".format(self.subshape))
+        logger.info("    Block       = {}".format(self.shape))
+        logger.info("    Block volume= {}".format(self.nvol))
+        logger.info("    Num orbit   = {}".format(self.norb_orig))
+        logger.info("    Num orbit eff= {}".format(self.norb))
         logger.info("    nspin       = {}".format(self.ns))
         logger.info("    nd          = {}".format(self.nd))
 
@@ -67,23 +119,50 @@ class UHFk(solver_base):
         logger.info("    IterationMax= {}".format(self.param_mod["IterationMax"]))
         logger.info("    EPS         = {}".format(self.param_mod["EPS"]))
 
-        # local data
-        self.physics = {
-            "Ene": { "Total": 0.0, "Band": 0.0 },
-            "NCond": 0.0,
-            "Sz": 0.0,
-            "Rest": 1.0
-        }
+    def init_interaction(self):
+        # reinterpret interaction coefficient on sublattice
+        if self.has_sublattice:
+            Bx,By,Bz = self.subshape
+            
+            for type in self.param_ham.keys():
+                if type in ["Geometry", "Initial"]:
+                    pass
+                else:
+                    tbl = {}
+                    for (irvec,orbvec), v in self.param_ham[type].items():
 
-        self._green_list = {
-            "eigenvalue": np.zeros((nvol,nd), dtype=np.complex128),
-            "eigenvector": np.zeros((nvol,nd,nd), dtype=np.complex128)
-        }
+                        rx,ry,rz = irvec
+                        Rx = rx // Bx
+                        Ry = ry // By
+                        Rz = rz // Bz
+                        rx0 = rx % Bx
+                        ry0 = ry % By
+                        rz0 = rz % Bz
+                        rr = rx0 + Bx * (ry0 + By * (rz0))
 
-        #self.Green = np.zeros((nvol,ns,norb,ns,norb), dtype=np.complex128),
+                        alpha,beta = orbvec
 
-        # work area
-        self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
+                        irvec2 = (Rx,Ry,Rz)
+                        orbvec2 = (alpha, beta + rr * self.norb_orig)
+
+                        tbl[(irvec2,orbvec2)] = v
+
+                    # replace
+                    self.param_ham[type] = tbl
+
+    def dump_param_ham(self):
+        for type in self.param_ham.keys():
+            if type in ["Geometry"]:
+                print("type =", type)
+                print(self.param_ham[type])
+            elif type in ["Initial"]:
+                print("type =", type)
+            else:
+                print("type =", type)
+
+                for (irvec,orbvec), v in self.param_ham[type].items():
+                    print("\t",irvec,orbvec," = ",v)
+                
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
