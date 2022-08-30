@@ -183,28 +183,28 @@ class UHFk(solver_base):
         self.spin_table = {}
         
         #----------------
-        # Coulomb Intra and Coulomb Inter (zvo_ur.dat)
+        # Coulomb Intra and Coulomb Inter
         #----------------
         if 'Coulomb' in self.param_ham.keys():
+            # assume zvo_ur.dat
+            # divide into r=0 (coulomb intra) and r!=0 (coulomb inter)
+
             # coulomb intra: diagonal part of r=0 cell
-            ua_r = np.zeros((norb), dtype=np.complex128)
+            uab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             # coulomb inter: off-diagonal part
             vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
-            # for (irvec,orbvec), v in self.param_ham["Coulomb"].items():
-            #     vab_r[(*irvec,alpha,beta)] = v
-
             for (irvec,orbvec), v in self.param_ham["Coulomb"].items():
                 alpha, beta = orbvec
                 if irvec == (0,0,0) and alpha == beta:
-                    ua_r[alpha] = v
+                    uab_r[(*irvec,alpha,beta)] = v
                 else:
                     vab_r[(*irvec,alpha,beta)] = v
 
             # coulomb intra
             # interaction coeffs
-            self.inter_table["CoulombIntra"] = ua_r # r=0 component
+            self.inter_table["CoulombIntra"] = uab_r # r=0 component
             # spin combination
             self.spin_table["CoulombIntra"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["CoulombIntra"][0,1,1,0] = 1
@@ -230,12 +230,53 @@ class UHFk(solver_base):
             self.spin_table["CoulombInter"][1,1,1,1] = 1
             self.spin_table["CoulombInter"][0,1,1,0] = 1
             self.spin_table["CoulombInter"][1,0,0,1] = 1
+
         else:
             self.inter_table["CoulombIntra"] = None
             self.inter_table["CoulombInter"] = None
 
+            # coulomb intra
+            if 'CoulombIntra' in self.param_ham.keys():
+                uab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+
+                # only r=0 and a=b component
+                for (irvec,orbvec), v in self.param_ham["CoulombIntra"].items():
+                    alpha, beta = orbvec
+                    if irvec == (0,0,0) and alpha == beta:
+                        uab_r[(*irvec, *orbvec)] = v
+
+                # interaction coeffs
+                self.inter_table["CoulombIntra"] = uab_r
+                # spin combination
+                self.spin_table["CoulombIntra"] = np.zeros((2,2,2,2), dtype=int)
+                self.spin_table["CoulombIntra"][0,1,1,0] = 1
+                self.spin_table["CoulombIntra"][1,0,0,1] = 1
+
+            if 'CoulombInter' in self.param_ham.keys():
+                vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+
+                for (irvec,orbvec), v in self.param_ham["CoulombInter"].items():
+                    if irvec != (0,0,0):
+                        vab_r[(*irvec, *orbvec)] = v
+
+                vba = np.conjugate(
+                    np.transpose(
+                        np.flip(np.roll(vab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        (0,1,2,4,3)
+                    )
+                )
+
+                # interaction coeffs
+                self.inter_table["CoulombInter"] = vab_r + vba
+                # spin combination
+                self.spin_table["CoulombInter"] = np.zeros((2,2,2,2), dtype=int)
+                self.spin_table["CoulombInter"][0,0,0,0] = 1
+                self.spin_table["CoulombInter"][1,1,1,1] = 1
+                self.spin_table["CoulombInter"][0,1,1,0] = 1
+                self.spin_table["CoulombInter"][1,0,0,1] = 1
+
         #----------------
-        # Hund (zvo_jr.dat)
+        # Hund
         #----------------        
         if 'Hund' in self.param_ham.keys():
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
@@ -381,7 +422,7 @@ class UHFk(solver_base):
         ham -= self.ham_trans
         
         # interaction term: Coulomb type
-        for type in ['CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
+        for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
             if self.inter_table[type] is not None:
                 logger.info(type)
 
@@ -406,32 +447,32 @@ class UHFk(solver_base):
 
                 ham -= hh2.reshape(nvol, nd, nd)
 
-        for type in ['CoulombIntra']:
-            if self.inter_table[type] is not None:
-                logger.info(type)
+        # for type in ['CoulombIntra']:
+        #     if self.inter_table[type] is not None:
+        #         logger.info(type)
 
-                # coefficient U_a
-                ua = self.inter_table[type]
-                # spin combination
-                spin = self.spin_table[type]
+        #         # coefficient U_a
+        #         ua = self.inter_table[type]
+        #         # spin combination
+        #         spin = self.spin_table[type]
 
-                # non-cross term
-                #   sum_r U_{a} G_{aa,uv}(0) Spin{s,u,v,t}
-                hh = np.einsum('a, uva, suvt -> ast', ua, gbb, spin)
-                hh0 = np.transpose(
-                    np.broadcast_to(hh, (norb,norb,ns,ns)),
-                    (2,0,3,1)).reshape(nd,nd)
+        #         # non-cross term
+        #         #   sum_r U_{a} G_{aa,uv}(0) Spin{s,u,v,t}
+        #         hh = np.einsum('a, uva, suvt -> ast', ua, gbb, spin)
+        #         hh0 = np.transpose(
+        #             np.broadcast_to(hh, (norb,norb,ns,ns)),
+        #             (2,0,3,1)).reshape(nd,nd)
 
-                ham += np.broadcast_to(hh0, (nvol,nd,nd))
+        #         ham += np.broadcast_to(hh0, (nvol,nd,nd))
 
-                # cross term
-                #   - sum_r U_{a} G_{aa,uv}(0) Spin{s,u,t,v}
-                hh = np.einsum('a, uva, sutv -> ast', ua, gbb, spin)
-                hh0 = np.transpose(
-                    np.broadcast_to(hh, (norb,norb,ns,ns)),
-                    (2,0,3,1)).reshape(nd,nd)
+        #         # cross term
+        #         #   - sum_r U_{a} G_{aa,uv}(0) Spin{s,u,t,v}
+        #         hh = np.einsum('a, uva, sutv -> ast', ua, gbb, spin)
+        #         hh0 = np.transpose(
+        #             np.broadcast_to(hh, (norb,norb,ns,ns)),
+        #             (2,0,3,1)).reshape(nd,nd)
 
-                ham -= np.broadcast_to(hh0, (nvol,nd,nd))
+        #         ham -= np.broadcast_to(hh0, (nvol,nd,nd))
 
         # interaction term: PairHop type
         for type in ['PairHop']:
@@ -444,8 +485,11 @@ class UHFk(solver_base):
                 spin = self.spin_table[type]
 
                 # green function G_{ab,st}(-r)
-                gab_mr = np.flip(np.roll(
-                    gab_r.reshape(nx,ny,nz,norb,norb), -1, axis=(0,1,2)), axis=(0,1,2))
+                gab_mr = np.flip(
+                    np.roll(
+                        gab_r.reshape(nx,ny,nz,ns,norb,ns,norb), -1, axis=(0,1,2)
+                    ), axis=(0,1,2)
+                ).reshape(nvol,ns,norb,ns,norb)
 
                 # non-cross term
                 #   sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
