@@ -30,6 +30,7 @@ class UHFk(solver_base):
         self.Ncond = Ncond
 
         self.T = self.param_mod.get("T", 0.0)
+        self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
 
         logger.info("Show parameters")
         logger.info("    Cell Shape  = {}".format(self.shape))
@@ -40,6 +41,7 @@ class UHFk(solver_base):
 
         logger.info("    Ncond       = {}".format(self.Ncond))
         logger.info("    T           = {}".format(self.T))
+        logger.info("    E_cutoff    = {}".format(self.ene_cutoff))
 
         logger.info("    Mix         = {}".format(self.param_mod["Mix"]))
         logger.info("    RndSeed     = {}".format(self.param_mod["RndSeed"]))
@@ -545,7 +547,9 @@ class UHFk(solver_base):
             from scipy import optimize
 
             def _fermi(t, mu, ev):
-                return 1.0 / (1.0 + np.exp((ev - mu) / t))
+                w = (ev - mu) / t
+                v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
+                return v
 
             def _calc_delta_n(mu):
                 ff = _fermi(self.T, mu, w)
@@ -645,7 +649,9 @@ class UHFk(solver_base):
             T = self.T
 
             def _fermi(t, mu, ev):
-                return 1.0 / (1.0 + np.exp((ev - mu) / t))
+                w = (ev - mu) / t
+                v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
+                return v
 
             ln_e = np.log1p(np.exp(-(w - mu) / T))
 
