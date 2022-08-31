@@ -57,7 +57,7 @@ class solver_base():
         return exit_code
 
     def _check_param_mod(self):
-        exit_code = 0
+        error_code = 0
         param_mod = self.param_mod
         min_list = {"T": 0, "2Sz": -param_mod["Nsite"],
                       "Nsite": 1, "Ncond": 1, "IterationMax":0,
@@ -66,17 +66,22 @@ class solver_base():
                     "Ncond": param_mod["Nsite"],
                     "EPS": 1.0, "Mix":1}
 
+        if pram_mod["2Sz"] is not None:
+            if (param_mod["Ncond"] % 2 == 0 and param_mod["2Sz"] %2 ==1) or (param_mod["Ncond"] % 2 == 1 and param_mod["2Sz"] % 2 == 0):
+                print("Error: 2Sz must be even(odd) when Ncond is even(odd).")
+                error_code += 1
+
         for key, value in min_list.items():
             if param_mod[key] < value:
-                print("Warning: value of {} must be greater than {}.".format(key, value))
-                exit_code += 1
+                print("Error: value of {} must be greater than {}.".format(key, value))
+                error_code += 1
 
         for key, value in max_list.items():
             if param_mod[key] > value:
-                print("Warning: value of {} must be smaller than {}.".format(key, value))
-                exit_code += 1
+                print("Error: value of {} must be smaller than {}.".format(key, value))
+                error_code += 1
 
-        return exit_code
+        return error_code
 
     def solve(self, path_to_output):
         pass
