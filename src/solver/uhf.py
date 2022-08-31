@@ -435,8 +435,8 @@ class UHF(solver_base):
                         for int_j in range(Ns):
                             tmp = 0.0
                             for int_n in range(int(Ne/2)):
-                                tmp += eigenvector[int_i][2*int_n-1]-eigenvector[int_j][2*int_n]
-                                tmp += -1.0*eigenvector[int_j][2*int_n-1]-eigenvector[int_i][2*int_n]
+                                tmp +=      eigenvector[int_i][2*int_n-1]*eigenvector[int_j][2*int_n]
+                                tmp += -1.0*eigenvector[int_j][2*int_n-1]*eigenvector[int_i][2*int_n]
                             output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
                     with open(os.path.join(path_to_output, "%s_fij.dat"%(key)), "w") as fw:
                         fw.write(output_str)
@@ -455,11 +455,10 @@ class UHF(solver_base):
                         for int_j in range(Ns):
                             tmp = 0.0
                             for int_n in range(int(Ne/2)):
-                                tmp += up_eigenvector[int_i][int_n]*down_eigenvector[int_i][int_n]
+                                tmp += up_eigenvector[int_i][int_n]*down_eigenvector[int_j][int_n]
                             output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
                     with open(os.path.join(path_to_output, "Sz0_fij.dat"), "w") as fw:
                         fw.write(output_str)
-                    Ne   = round(self.physics["NCond"])
                 else: 
                     logger.warning("NOT IMPLEMNETED: Sz !=0 but Sz even: this case will be implemented in near future")
 
