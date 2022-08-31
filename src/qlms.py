@@ -21,7 +21,6 @@ def main():
 
     #Initialize information about mode
     info_mode = toml_dict.get("mode", {})
-
     info_file = toml_dict.get("file", {"input": {}, "output": {}})
     #Initialize information about input files
     info_inputfile = info_file.get("input", {})
@@ -42,20 +41,26 @@ def main():
     logger.info("Read def files")
     read_io = qlmsio.read_input.QMLSInput(path_to_namelist)
     logger.info("Get Parameters information")
-    param_info = read_io.get_param("param")
-    pprint.pprint(param_info, width = 1)
+    mod_param_info = read_io.get_param("mod")
+    pprint.pprint(mod_param_info, width = 1)
     logger.info("Get Hamiltonian information")
     ham_info = read_io.get_param("ham")
     logger.info("Get Output information")
     green_info = read_io.get_param("output")
     os.makedirs(path_to_output, exist_ok=True)
 
-    logger.info("Start UHF calculation")
-    uhf = sol_uhf.UHF(param_info, ham_info, info_log, info_mode)
-    uhf.solve(path_to_output)
+    mode = info_mode.get("mode", None)
+    if mode == "UHF":
+      solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
+      #solver = sol_uhf.UHF(ham_info, info_log, info_mode)
+    else:
+      logger.warning("mode is incorrect: mode={}.".format(mode))
+      exit(0)
 
+    logger.info("Start UHF calculation")
+    solver.solve(path_to_output)
     logger.info("Save calculation results.")
-    uhf.save_results(info_outputfile , green_info)
+    solver.save_results(info_outputfile , green_info)
     logger.info("All procedures are finished.")
 
 if __name__ == "__main__":

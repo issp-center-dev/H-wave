@@ -2,7 +2,7 @@
 
 .. _subsec:energy.dat:
 
-energy.dat
+energy
 ~~~~~~~~~~
 
 UHF法で求めたエネルギー、粒子数、スピンに関する計算結果を出力します。

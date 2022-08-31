@@ -2,7 +2,7 @@
 
 .. _Subsec:cgcisajs:
 
-green.dat
+green
 ~~~~~~~~~~
 
 OneBodyGで指定された一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の計算結果を出力します。

@@ -2,8 +2,8 @@ import itertools
 import logging
 import numpy as np
 import itertools
-from requests.structures import CaseInsensitiveDict
 import os
+from requests.structures import CaseInsensitiveDict
 
 logger = logging.getLogger("qlms").getChild("uhf")
 
@@ -113,59 +113,33 @@ class PairLift_UHF(Interact_UHF_base):
             param_tmp[site_info] = value
         return param_tmp
 
+from .base import solver_base
 
-# It is better to define solver class, since UHF-k and RPA mode will be added.
-
-class UHF(object):
-    def __init__(self, param, param_ham, info_log, info_mode):
-        self.param = param
-        self.param_ham = param_ham
-        self.info_log = info_log
+class UHF(solver_base):
+    def __init__(self, param_ham, info_log, info_mode, param_mod=None):
+        super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
-        self.output_list = ["energy", "eigen", "green"]
-        # initial values
-        para_init = CaseInsensitiveDict({
-            "Nsite": 0,
-            "Ne": 0,
-            "Ncond": 0,
-            "2Sz": None,
-            "Mix": 0.5,
-            "EPS": 6,
-            "Print": 0,
-            "IterationMax": 20000,
-            "RndSeed": 1234,
-            "EpsSlater": 6
-        })
-
-        for k, v in para_init.items():
-            self.param["ModPara"].setdefault(k, v)
-
-        # set initial values
-        for key in ["CDataFileHead", "CParaFileHead"]:
-            if self.param["ModPara"][key] is not None and type(self.param["ModPara"][key]) == type([]):
-                self.param["ModPara"][key] = str(self.param["ModPara"][key][0])
-
-        for key in ["nsite", "ne", "2Sz", "ncond", "eps", "IterationMax", "Print", "RndSeed", "EpsSlater"]:
-            if self.param["ModPara"][key] is not None and type(self.param["ModPara"][key]) == type([]):
-                self.param["ModPara"][key] = int(self.param["ModPara"][key][0])
-
-        #The type of mix is float.
-        self.param["ModPara"]["mix"] = float(self.param["ModPara"]["mix"][0])
-        self.param["ModPara"]["EPS"] = pow(10, -self.param["ModPara"]["EPS"])
 
         output_str = "Show input parameters\n"
-        for k, v in self.param["ModPara"].items():
+        for k, v in self.param_mod.items():
             output_str += "{}: {}\n".format(k, v)
         logger.debug(output_str)
 
-        self.Nsize = self.param["ModPara"]["nsite"]
-        # Define list
-        param_mod = self.param["Modpara"]
-        self.Ncond = param_mod["Ncond"]
-        # TwoSz = 0 if param_mod["2Sz"] is None else param_mod["2Sz"]
-        self.green_list = {"free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
-
         self.iflag_fock = info_mode.get("flag_fock", True)
+        self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
+        self.T = self.param_mod.get("T", 0)
+
+        # Make a list for generating Hamiltonian
+        self.Nsize = self.param_mod["nsite"]
+        self.Ncond = self.param_mod["Ncond"]
+        TwoSz = self.param_mod["2Sz"]
+        if TwoSz is None:
+            self.green_list = {"sz-free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
+        else:
+            self.green_list = {
+                "spin-up": {"label": [i for i in range(self.Nsize)], "value": 0.5, "occupied": int((self.Ncond + TwoSz) / 2)},
+                "spin-down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
+                         "occupied": int((self.Ncond - TwoSz) / 2)}}
 
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
@@ -178,7 +152,7 @@ class UHF(object):
             label += len(self.green_list[k]["label"])
         self.Green = self._initial_G()
         logger.info("Start UHF calculations")
-        param_mod = self.param["Modpara"]
+        param_mod = self.param_mod
 
         if print_level > 0:
             logger.info("step, rest, energy, NCond, Sz")
@@ -212,7 +186,7 @@ class UHF(object):
                 site2 = site_info[2] + site_info[3] * self.Nsize
                 green[site1][site2] = value
         else:
-            np.random.seed(self.param["ModPara"]["RndSeed"])
+            np.random.seed(self.param_mod["RndSeed"])
             rand = np.random.rand(2 * self.Nsize * 2 * self.Nsize).reshape(2 * self.Nsize, 2 * self.Nsize)
             for k, info in _green_list.items():
                 v = info["label"]
@@ -287,36 +261,101 @@ class UHF(object):
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
 
+    def _fermi(self, mu, eigenvalue):
+        fermi = np.zeros(eigenvalue.shape)
+        for idx, value in enumerate(eigenvalue):
+            if (value - mu) / self.T > self.ene_cutoff:
+                fermi[idx] = 0
+            else:
+                fermi[idx] = 1.0 / (np.exp((value - mu) / self.T) + 1.0)
+        return fermi
+
     def _green(self):
         _green_list = self.green_list
         # R_SLT = U^{*} in _green
         # L_SLT = U^T in _green
         R_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         L_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        for k, block_g_info in _green_list.items():
-            g_label = block_g_info["label"]
-            # occupied: return the occupied number
-            occupied_number = block_g_info["occupied"]
-            eigenvec = self.green_list[k]["eigenvector"]
-            eigen_start = self.green_list[k]["eigen_start"]
-            for eigen_i in range(occupied_number):
-                evec_i = eigenvec[:, eigen_i]
-                for idx, org_site in enumerate(g_label):
-                    R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
-                    L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
         # Copy Green_old
         self.Green_old = self.Green.copy()
-        RMat = np.dot(R_SLT, L_SLT)
-        self.Green = RMat.copy()
+        if self.T == 0:
+            for k, block_g_info in _green_list.items():
+                g_label = block_g_info["label"]
+                # occupied: return the occupied number
+                occupied_number = block_g_info["occupied"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                eigen_start = self.green_list[k]["eigen_start"]
+                for eigen_i in range(occupied_number):
+                    evec_i = eigenvec[:, eigen_i]
+                    for idx, org_site in enumerate(g_label):
+                        R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
+                        L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
+            RMat = np.dot(R_SLT, L_SLT)
+            self.Green = RMat.copy()
+        else: # for finite temperatures
+            from scipy import optimize
+
+            def _calc_delta_n(mu):
+                n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec).real
+                fermi = self._fermi(mu, eigenvalue)
+                return np.dot(n_eigen, fermi)-occupied_number
+
+            self.Green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
+            for k, block_g_info in _green_list.items():
+                g_label = block_g_info["label"]
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                occupied_number = block_g_info["occupied"]
+
+                #determine mu
+                mu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
+
+                is_converged = False
+
+                if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+                    logger.info("+++ find mu: try bisection")
+                    mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.info("+++ find mu: try newton")
+                    mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.info("+++ find mu: not converged. abort")
+                    exit(1)
+
+                self.green_list[k]["mu"] = mu
+                fermi = self._fermi(mu, eigenvalue)
+                tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
+                for idx1, org_site1 in enumerate(g_label):
+                    for idx2, org_site2 in enumerate(g_label):
+                        self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
 
     def _calc_energy(self):
         _green_list = self.green_list
         Ene = {}
         Ene["band"] = 0
-        for k, block_g_info in _green_list.items():
-            eigenvalue = self.green_list[k]["eigenvalue"]
-            occupied_number = block_g_info["occupied"]
-            Ene["band"] += np.sum(eigenvalue[:occupied_number])
+        if self.T == 0:
+            for k, block_g_info in _green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                occupied_number = block_g_info["occupied"]
+                Ene["band"] += np.sum(eigenvalue[:occupied_number])
+        else:
+
+            for k, block_g_info in _green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                mu = self.green_list[k]["mu"]
+                fermi = self._fermi(mu, eigenvalue)
+
+                ln_Ene = np.zeros(eigenvalue.shape)
+                for idx, value in enumerate(eigenvalue):
+                    if (value - mu) / self.T > self.ene_cutoff:
+                        ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
+                    else:
+                        ln_Ene[idx] = -(value - mu) / self.T
+                tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
+                Ene["band"] += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
@@ -342,7 +381,7 @@ class UHF(object):
         self.physics["Sz"] = (0.5 * sz).real
 
         rest = 0.0
-        mix = self.param["ModPara"]["mix"]
+        mix = self.param_mod["mix"]
         for site1, site2 in itertools.product(range(2 * self.Nsize), range(2 * self.Nsize)):
             rest += abs(self.Green[site1][site2] - self.Green_old[site1][site2])**2
             self.Green[site1][site2] = self.Green_old[site1][site2] * (1.0 - mix) + mix * self.Green[site1][site2]
@@ -357,7 +396,7 @@ class UHF(object):
 
         if "energy" in info_outputfile.keys():
             output_str  = "Energy_total = {}\n".format(self.physics["Ene"]["Total"].real)
-            output_str += "Energy_band = {}\n".format(self.physics["Ene"]["band"])
+            output_str += "Energy_band = {}\n".format(self.physics["Ene"]["band"].real)
             output_str += "Energy_interall = {}\n".format(self.physics["Ene"]["InterAll"].real)
             output_str += "NCond = {}\n".format(self.physics["NCond"])
             output_str += "Sz = {}\n".format(self.physics["Sz"])
@@ -365,14 +404,10 @@ class UHF(object):
                 fw.write(output_str)
 
         if "eigen" in info_outputfile.keys():
-            output_str = ""
             for key, _green_list in self.green_list.items():
                 eigenvalue = _green_list["eigenvalue"]
-                #output_str += "{}, {}\n".format(key, eigenvalue.shape[0])
-                for idx, value in enumerate(eigenvalue):
-                    output_str += "{}, {}\n".format(idx, value)
-            with open(os.path.join(path_to_output, info_outputfile["eigen"]), "w") as fw:
-                fw.write(output_str)
+                eigenvector = _green_list["eigenvector"]
+                np.savez(os.path.join(path_to_output, key+"_"+info_outputfile["eigen"]), eigenvalue = eigenvalue, eigenvector=eigenvector)
 
         if "green" in info_outputfile.keys():
             if "OneBodyG" in green_info:
@@ -387,7 +422,6 @@ class UHF(object):
                     fw.write(output_str)
                     
         if "initial" in info_outputfile.keys():
-            output_str = ""
             output_str = "===============================\n"
             green_nonzero = self.Green[np.where(abs(self.Green)>0)]
             ncisajs = len(green_nonzero)
@@ -405,34 +439,4 @@ class UHF(object):
     def get_Ham(self):
         return self.Ham
 
-
-class param():
-    def __init__(self):
-        self.para = CaseInsensitiveDict({
-            "Nsite": 0,
-            "Ne": 0,
-            "Ncond": 0,
-            "2Sz": None,
-            "Mix": 0.5,
-            "EPS": 8,
-            "Print": 0,
-            "IterationMax": 20000,
-            "RndSeed": 0,
-            "EpsSlater": 6,
-            "NMPTrans": 1,
-        })
-
-    def set_param(self, param):
-        for k, v in param.items():
-            self.para[k] = v
-        return self.para
-
-    def print_param(self):
-        print("########Input parameters ###########")
-        for key in ["tmp_eps", "eps_int", "mix", "print"]:
-            print("{} {}".format(key, self.para[key]))
-        print("####################################")
-
-    def output_phys(self):
-        pass
 
