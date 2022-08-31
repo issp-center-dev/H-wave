@@ -420,6 +420,49 @@ class UHF(solver_base):
             with open(os.path.join(path_to_output, info_outputfile["initial"]), "w") as fw:
                 fw.write(output_str)
 
+        if "fij" in info_outputfile.keys():
+            Ns = round(self.Nsize)
+            Ne = round(self.Ncond)
+            print(Ns,Ne)
+            if key == "sz-free":
+                eigenvector = self.green_list[key]["eigenvector"]
+                if Ne%2 == 1:
+                    print("Ne=%d Ne should be even for calculating fij"%(Ne))
+                else:
+                    output_str = ""
+                    for int_i in range(Ns):
+                        for int_j in range(Ns):
+                            tmp = 0.0
+                            for int_n in range(int(Ne/2)):
+                                tmp += eigenvector[int_i][2*int_n-1]-eigenvector[int_j][2*int_n]
+                                tmp += -1.0*eigenvector[int_j][2*int_n-1]-eigenvector[int_i][2*int_n]
+                            output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
+                    with open(os.path.join(path_to_output, "%s_fij.dat"%(key)), "w") as fw:
+                        fw.write(output_str)
+            else:
+                up_key           = list(self.green_list.keys())[0]
+                down_key         = list(self.green_list.keys())[1]
+                up_eigenvector   = self.green_list[up_key]["eigenvector"]
+                down_eigenvector = self.green_list[down_key]["eigenvector"]
+                Sz               = round(self.physics["Sz"])
+                print(key)
+                if Sz%2 == 1:
+                    print("Sz=%d Sz should be even for calculating fij"%(Sz))
+                elif Sz == 0:
+                    output_str = ""
+                    for int_i in range(Ns):
+                        for int_j in range(Ns):
+                            tmp = 0.0
+                            for int_n in range(int(Ne/2)):
+                                tmp += up_eigenvector[int_i][int_n]*down_eigenvector[int_i][int_n]
+                            output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
+                    with open(os.path.join(path_to_output, "Sz0_fij.dat"), "w") as fw:
+                        fw.write(output_str)
+                    Ne   = round(self.physics["NCond"])
+                else: 
+                    print("Sz !=0 but Sz even: this case will be implemented in near future")
+
+
     def get_Ham(self):
         return self.Ham
 

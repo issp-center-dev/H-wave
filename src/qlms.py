@@ -31,6 +31,7 @@ def main():
 
     #Initialize information about output files
     info_outputfile = info_file.get("output",{})
+    print(info_outputfile["fij"])
     info_outputfile["path_to_output"] = info_file.get("path_to_output", "output")
     path_to_output = info_outputfile["path_to_output"]
 
