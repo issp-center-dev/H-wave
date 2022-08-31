@@ -75,7 +75,7 @@ class solver_base():
             if param_mod[key] > value:
                 print("Warning: value of {} must be smaller than {}.".format(key, value))
                 exit_code += 1
-                
+
         return exit_code
 
     def solve(self, path_to_output):
