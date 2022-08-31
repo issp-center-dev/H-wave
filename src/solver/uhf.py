@@ -158,6 +158,7 @@ class UHF(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
+        import time
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
@@ -203,10 +204,12 @@ class UHF(solver_base):
             self.Ham_trans[site1][site2] += -value
 
     def _makeham(self):
+        import time
         self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         self.Ham = self.Ham_trans.copy()
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
-        self.Ham += np.dot(self.Ham_local, green_local).reshape((2 * self.Nsize), (2 * self.Nsize))
+        ham_dot_green = np.dot(self.Ham_local, green_local)
+        self.Ham += ham_dot_green.reshape((2 * self.Nsize), (2 * self.Nsize))
 
     def _makeham_mat(self):
         # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
