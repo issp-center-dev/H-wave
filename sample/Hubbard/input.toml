@@ -1,5 +1,6 @@
 [log]
 print_level = 1
+print_step = 20
 [mode]
 mode = "UHF"
 [file]
