@@ -25,9 +25,45 @@ def read_geom(name_in):
     data = {"norb": norb, "rvec": rvec, "center": center}
     return data
 
+def read_geometry(name_in):
+    info_geometry = {}
+    unit_vec_line_end = 3
+    cell_vec_line_start = 4
+    cell_vec_line_end = 7
+    n_kpath_line = 2
+    with open(name_in, "r") as fr:
+        lines = fr.readlines()
+        info_geometry["unit_vec"] = np.array([data.split() for data in lines[0:unit_vec_line_end]], dtype=np.float)
+        info_geometry["degree"] = np.array(lines[unit_vec_line_end].split(), dtype=np.float)
+        info_geometry["cell_vec"] = np.array([data.split() for data in lines[cell_vec_line_start:cell_vec_line_end]], dtype=np.float)
+        info_geometry["site2vec"] = {}
+        for idx, data in enumerate(lines[cell_vec_line_end:]):
+            if len(data.split()) == n_kpath_line:
+                break
+            else:
+                vector = np.array(data.split(), dtype=np.int32)
+                info_geometry["site2vec"][idx] = vector
+        norb = 0
+        for idx, vec in info_geometry["site2vec"].items():
+            if [vec[0], vec[1], vec[2]] == [0, 0, 0]:
+                norb += 1
+        info_geometry["n_orb"] = norb
+    return info_geometry
+
+def write_geom(name_out, info_geometry):
+    with open(name_out, "w") as fw:
+        #Unit_cell
+        for vec in info_geometry["unit_vec"]:
+            fw.write("{} {} {}\n".format(vec[0], vec[1], vec[2]))
+        #norb
+        n_orb = info_geometry["n_orb"]
+        fw.write("{}\n".format(n_orb))
+        #wannier_center (temporary)
+        for idx in range(n_orb):
+            pos = idx*1.0/(n_orb+1)
+            fw.write("{} {} {}\n".format(pos, pos, pos))
 
 def read_w90(name_in):
-
     with open(name_in, 'r') as f:
         # skip header
         l_strip = [s.strip() for s in f.readlines()[1:]]
@@ -51,6 +87,25 @@ def read_w90(name_in):
         data[(irvec, orbvec)] = float(values[5]) + 1J * float(values[6])
 
     return data
+
+def write_w90(name_in, info_int, info_geometry, interact_shape):
+    with open(name_in, "w") as fw:
+        fw.write("# wannier90 format\n")
+        norb = info_int["n_orb"]
+        fw.write("{}\n".format(norb))
+        Nlattice = interact_shape[0]*interact_shape[1]*interact_shape[2]
+        fw.write("{}\n".format((Nlattice*norb)**2))
+        for idx in range((Nlattice*norb)**2):
+            fw.write("1 ")
+            if (idx+1)%15 == 0:
+                fw.write("\n")
+        if (idx+1)%15 != 0:
+            fw.write("\n")
+        for idx, value in info_int["interaction"].items():
+            site = info_geometry["site2vec"][idx]
+            site_org = value[0]
+            int_value = value[1]
+            fw.write("{} {} {} {} {} {} {}\n".format(site_org, site[0], site[1], site[2]+1, site[3]+1, int_value.real, int_value.imag))
 
 if __name__ == "__main__":
     path_to_sample = "../../sample/dir-model"
