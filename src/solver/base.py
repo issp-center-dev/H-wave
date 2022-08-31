@@ -19,7 +19,6 @@ class solver_base():
                 "Print": 0,
                 "IterationMax": 20000,
                 "RndSeed": 1234,
-                "EpsSlater": 6,
                 "CDataFileHead": "zvo",
                 "CParaFileHead": "zqp",
             })
@@ -32,7 +31,7 @@ class solver_base():
                 if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
                     self.param_mod[key] = str(self.param_mod[key][0])
 
-            for key in ["nsite", "ne", "2Sz", "ncond", "eps", "IterationMax", "Print", "RndSeed", "EpsSlater"]:
+            for key in ["nsite", "ne", "2Sz", "ncond", "eps", "IterationMax", "Print", "RndSeed"]:
                 if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
                     self.param_mod[key] = int(self.param_mod[key][0])
 
