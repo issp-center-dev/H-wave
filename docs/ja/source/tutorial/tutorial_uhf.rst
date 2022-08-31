@@ -83,6 +83,8 @@ StdFaceライブラリではあらかじめ決められた格子模型やWannier
     [log]
     print_level = 1
     print_step = 20
+    [mode]
+    mode = "UHF"
     [file]
     [file.input]
     path_to_input = ""
