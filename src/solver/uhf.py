@@ -423,12 +423,13 @@ class UHF(solver_base):
         if "fij" in info_outputfile.keys():
             Ns = round(self.Nsize)
             Ne = round(self.Ncond)
-            print(Ns,Ne)
+            #print(Ns,Ne)
             if key == "sz-free":
                 eigenvector = self.green_list[key]["eigenvector"]
                 if Ne%2 == 1:
-                    print("Ne=%d Ne should be even for calculating fij"%(Ne))
+                    logger.warning("FATAL: Ne=%d Ne should be even for calculating fij"%(Ne))
                 else:
+                    logger.info("Calculations of fij for free-Sz ")
                     output_str = ""
                     for int_i in range(Ns):
                         for int_j in range(Ns):
@@ -444,11 +445,11 @@ class UHF(solver_base):
                 down_key         = list(self.green_list.keys())[1]
                 up_eigenvector   = self.green_list[up_key]["eigenvector"]
                 down_eigenvector = self.green_list[down_key]["eigenvector"]
-                Sz               = round(self.physics["Sz"])
-                print(key)
+                Sz               = round(2*self.physics["Sz"])
                 if Sz%2 == 1:
-                    print("Sz=%d Sz should be even for calculating fij"%(Sz))
+                    logger.warning("FATAL: Sz=%d Sz should be even for calculating fij"%(Sz))
                 elif Sz == 0:
+                    logger.info("Calculations of fij for 2Sz=0 ")
                     output_str = ""
                     for int_i in range(Ns):
                         for int_j in range(Ns):
@@ -460,7 +461,7 @@ class UHF(solver_base):
                         fw.write(output_str)
                     Ne   = round(self.physics["NCond"])
                 else: 
-                    print("Sz !=0 but Sz even: this case will be implemented in near future")
+                    logger.warning("NOT IMPLEMNETED: Sz !=0 but Sz even: this case will be implemented in near future")
 
 
     def get_Ham(self):
