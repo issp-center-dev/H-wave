@@ -2,13 +2,12 @@
   print_level = 1
 
 [mode]
-  #mode = "UHF"
   mode = "UHFk"
-  # flag_fock = True
+  flag_fock = true
 
 [mode.param]
   Nsite = 8
-  # 2Sz = 0
+  2Sz = 0
   Ncond = 1280
   IterationMax = 20
   EPS = 8

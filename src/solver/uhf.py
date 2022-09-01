@@ -117,6 +117,7 @@ from .base import solver_base
 
 class UHF(solver_base):
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
+        self.name = "uhf"
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
 

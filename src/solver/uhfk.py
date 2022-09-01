@@ -7,8 +7,8 @@ from .base import solver_base
 logger = logging.getLogger("qlms").getChild("uhfk")
 
 class UHFk(solver_base):
-
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
+        self.name = "uhfk"
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
         self.init_lattice()

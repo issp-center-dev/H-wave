@@ -75,7 +75,7 @@ TOML形式
 
 - ``2Sz``
 
-  **形式 :** float型 (デフォルトはNone)
+  **形式 :** int型 (デフォルトはNone)
 
   **説明 :**
   スピンのz成分 ``Sz`` を固定したい場合に使用します。スピン空間をupとdownに分けた上で計算を実施します。
@@ -116,7 +116,9 @@ TOML形式
 
   **形式 :** float型
 
-  **説明 :** 更新時にGreen関数の古い値と新しく得られた値を混ぜる(simple-mixing)割合を指定します。simple-mixingについてはAppendixをご覧ください。
+  **説明 :** Green関数の更新時に、古い値と新しく得られた値を混ぜる(simple-mixing)割合 :math:`\alpha` を指定します。
+  0以上から1以下の実数で指定してください。1 にすると古い値は使われません。
+  simple-mixingについては :ref:`アルゴリズムの章 <algorithm_sec>` をご覧ください。
 
 
 - ``RndSeed``
