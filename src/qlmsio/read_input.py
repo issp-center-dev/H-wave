@@ -15,7 +15,7 @@ class QMLSInput():
         self.ham_param["Transfer"] = self._read_ham("trans", value_type="complex")
         self.ham_param["CoulombInter"] = self._read_ham("coulombinter")
         self.ham_param["CoulombIntra"] = self._read_ham("coulombintra")
-        self.ham_param["PairHop"] = self._read_ham("parihop")
+        self.ham_param["PairHop"] = self._read_ham("pairhop")
         self.ham_param["Hund"] = self._read_ham("hund")
         self.ham_param["Exchange"] = self._read_ham("exchange")
         self.ham_param["Ising"] = self._read_ham("Ising")
