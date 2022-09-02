@@ -177,10 +177,22 @@ class UHFk(solver_base):
 
         self.Green = self._initial_green()
 
+        print("initial")
+        print("ham_trans =")
+        print(self.ham_trans)
+        print("inter_table =", self.inter_table)
+        print("spin_table =", self.spin_table)
+        print("green =")
+        print(self.Green)
+
         is_converged = False
 
         for i_step in range(self.param_mod["IterationMax"]):
             self._make_ham()
+
+            print("ham =")
+            print(self.ham)
+
             self._diag()
             self._green()
             self._calc_energy()
@@ -356,7 +368,7 @@ class UHFk(solver_base):
                 vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
                 for (irvec,orbvec), v in self.param_ham["CoulombInter"].items():
-                    if irvec != (0,0,0):
+#                    if irvec != (0,0,0):
                         vab_r[(*irvec, *orbvec)] = v
 
                 vba = np.conjugate(
@@ -533,8 +545,9 @@ class UHFk(solver_base):
 
                 # non-cross term
                 #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
-                hh = np.einsum('rab, uvb, suvt -> rsatb', jab_r, gbb, spin)
-                hh0 = np.sum(hh, axis=0).reshape(nd,nd)
+                hh1 = np.einsum('rab, uvb, suvt -> rsta', jab_r, gbb, spin)
+                hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb, norb))
+                hh0 = np.sum(hh2, axis=0).reshape(nd,nd)
 
                 ham += np.broadcast_to(hh0, (nvol,nd,nd))
                 
@@ -774,19 +787,20 @@ class UHFk(solver_base):
             energy_total += energy["Band"]
             logger.info("energy: Band = {}".format(e_band))
 
+        print("green=")
+        print(np.where(np.abs(self.Green) > 1.0e-5, self.Green, 0.0).reshape(nvol,nd,nd))
+
         for type in self.inter_table.keys():
             if self.inter_table[type] is not None:
                 jab_r = self.inter_table[type].reshape(nvol,norb,norb)
-                spin = self.spin_table[type]
-
+                spin  = self.spin_table[type]
                 gab_r = self.Green
-                gbb = np.diagonal(gab_r, axis1=2, axis2=4)[0,:,:,:]  # gbb(s,t,b)
+                
+                w1 = np.einsum('stuv, rvbsa, rubta -> rab', spin, gab_r, gab_r)
+                w2 = np.einsum('stuv, rubsa, rvbta -> rab', spin, gab_r, gab_r)
+                ee = np.einsum('rab, rab->', jab_r, w1-w2)
+                energy[type] = -ee/2.0
 
-                e1 = np.einsum('sta,uvb,suvt->ab', gbb, gbb, spin)
-                e2 = np.einsum('rtbsa,rubva,sutv->rab', np.conjugate(gab_r), gab_r, spin)
-                ee = np.broadcast_to(e1, (nvol,norb,norb)) - e2
-
-                energy[type] = np.einsum('rab,rab->', jab_r, ee)
                 energy_total += energy[type].real
                 logger.info("energy: {} = {}".format(type, energy[type]))
             else:
