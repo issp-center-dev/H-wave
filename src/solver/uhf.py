@@ -50,8 +50,8 @@ class CoulombIntra_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class CoulombInter_UHF(Interact_UHF_base):
@@ -59,8 +59,8 @@ class CoulombInter_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                param_tmp[site_info] = value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value
         return param_tmp
 
 class Hund_UHF(Interact_UHF_base):
@@ -68,28 +68,28 @@ class Hund_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i in range(2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
-                param_tmp[site_info] = -value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
+                param_tmp[sinfo] = -value
         return param_tmp
 
 class PairHop_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
-            param_tmp[site_info] += value
-            site_info = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Exchange_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Ising_UHF(Interact_UHF_base):
@@ -97,20 +97,20 @@ class Ising_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
                 if spin_i != spin_j:
                     value *= -1.0
-                param_tmp[site_info] = value * (1-2*spin_i) * (1-2*spin_j)
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
         return param_tmp
 
 class PairLift_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 from .base import solver_base
