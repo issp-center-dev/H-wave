@@ -24,6 +24,7 @@ class Interact_UHF_base():
             for i in range(4):
                 site[i] = site_info[2 * i] + site_info[2 * i + 1] * self.Nsize
             # Diagonal Fock term
+            print("hartree:", site, value)
             self.Ham_tmp[site[0]][site[1]][site[2]][site[3]] += value
             self.Ham_tmp[site[2]][site[3]][site[0]][site[1]] += value
             if site[1] == site[2]:
@@ -50,8 +51,8 @@ class CoulombIntra_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class CoulombInter_UHF(Interact_UHF_base):
@@ -59,8 +60,8 @@ class CoulombInter_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                param_tmp[site_info] = value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value
         return param_tmp
 
 class Hund_UHF(Interact_UHF_base):
@@ -68,28 +69,28 @@ class Hund_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i in range(2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
-                param_tmp[site_info] = -value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
+                param_tmp[sinfo] = -value
         return param_tmp
 
 class PairHop_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
-            param_tmp[site_info] += value
-            site_info = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Exchange_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Ising_UHF(Interact_UHF_base):
@@ -97,20 +98,20 @@ class Ising_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
                 if spin_i != spin_j:
                     value *= -1.0
-                param_tmp[site_info] = value * (1-2*spin_i) * (1-2*spin_j)
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
         return param_tmp
 
 class PairLift_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 from .base import solver_base
@@ -151,6 +152,11 @@ class UHF(solver_base):
             self.green_list[k]["eigen_start"] = label
             label += len(self.green_list[k]["label"])
         self.Green = self._initial_G()
+
+        print("green =")
+        print(self.Green)
+        #print(np.where(np.abs(self.Green) > 1.0e-5, self.Green, 0.0))
+
         logger.info("Start UHF calculations")
         param_mod = self.param_mod
 
@@ -158,8 +164,19 @@ class UHF(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
+
+        print("ham_trans=")
+        print(self.Ham_trans)
+        print("ham_local=")
+        print(self.Ham_local)
+
+
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
+
+            print("ham = ")
+            print(self.Ham)
+
             self._diag()
             self._green()
             self._calc_energy()
@@ -345,6 +362,9 @@ class UHF(solver_base):
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
         Ene["InterAll"] -= np.dot(green_local.T, np.dot(self.Ham_local, green_local))/2.0
 
+        print("green=")
+        print(np.where(np.abs(self.Green) > 1.0e-5, self.Green, 0.0))
+        
         ene = 0
         for value in Ene.values():
             ene += value
