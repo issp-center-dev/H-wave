@@ -24,7 +24,6 @@ class Interact_UHF_base():
             for i in range(4):
                 site[i] = site_info[2 * i] + site_info[2 * i + 1] * self.Nsize
             # Diagonal Fock term
-            print("hartree:", site, value)
             self.Ham_tmp[site[0]][site[1]][site[2]][site[3]] += value
             self.Ham_tmp[site[2]][site[3]][site[0]][site[1]] += value
             if site[1] == site[2]:
@@ -99,8 +98,8 @@ class Ising_UHF(Interact_UHF_base):
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
                 sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                if spin_i != spin_j:
-                    value *= -1.0
+                #if spin_i != spin_j:
+                #    value *= -1.0
                 param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
         return param_tmp
 
@@ -169,6 +168,14 @@ class UHF(solver_base):
         print(self.Ham_trans)
         print("ham_local=")
         print(self.Ham_local)
+
+        x=self.Ham_local.reshape((self.Nsize*2),(self.Nsize*2),(self.Nsize*2),(self.Nsize*2))
+        for i in range(self.Nsize*2):
+            for j in range(self.Nsize*2):
+                for k in range(self.Nsize*2):
+                    for l in range(self.Nsize*2):
+                        if abs(x[i,j,k,l]) > 1.0e-6:
+                            print([i,j,k,l],x[i,j,k,l])
 
 
         for i_step in range(param_mod["IterationMax"]):
