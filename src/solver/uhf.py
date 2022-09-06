@@ -98,8 +98,6 @@ class Ising_UHF(Interact_UHF_base):
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
                 sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                if spin_i != spin_j:
-                    value *= -1.0
                 param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
         return param_tmp
 
