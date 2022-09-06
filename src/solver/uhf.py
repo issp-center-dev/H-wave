@@ -50,8 +50,8 @@ class CoulombIntra_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class CoulombInter_UHF(Interact_UHF_base):
@@ -59,8 +59,8 @@ class CoulombInter_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                param_tmp[site_info] = value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value
         return param_tmp
 
 class Hund_UHF(Interact_UHF_base):
@@ -68,28 +68,28 @@ class Hund_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i in range(2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
-                param_tmp[site_info] = -value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
+                param_tmp[sinfo] = -value
         return param_tmp
 
 class PairHop_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
-            param_tmp[site_info] += value
-            site_info = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Exchange_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Ising_UHF(Interact_UHF_base):
@@ -97,20 +97,18 @@ class Ising_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                if spin_i != spin_j:
-                    value *= -1.0
-                param_tmp[site_info] = value * (1-2*spin_i) * (1-2*spin_j)
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
         return param_tmp
 
 class PairLift_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 from .base import solver_base
@@ -261,13 +259,13 @@ class UHF(solver_base):
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
 
-    def _fermi(self, myu, eigenvalue):
+    def _fermi(self, mu, eigenvalue):
         fermi = np.zeros(eigenvalue.shape)
         for idx, value in enumerate(eigenvalue):
-            if (value - myu) / self.T > self.ene_cutoff:
+            if (value - mu) / self.T > self.ene_cutoff:
                 fermi[idx] = 0
             else:
-                fermi[idx] = 1.0 / (np.exp((value - myu) / self.T) + 1.0)
+                fermi[idx] = 1.0 / (np.exp((value - mu) / self.T) + 1.0)
         return fermi
 
     def _green(self):
@@ -295,9 +293,9 @@ class UHF(solver_base):
         else: # for finite temperatures
             from scipy import optimize
 
-            def _calc_delta_n(myu):
+            def _calc_delta_n(mu):
                 n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec).real
-                fermi = self._fermi(myu, eigenvalue)
+                fermi = self._fermi(mu, eigenvalue)
                 return np.dot(n_eigen, fermi)-occupied_number
 
             self.Green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
@@ -306,10 +304,26 @@ class UHF(solver_base):
                 eigenvalue = self.green_list[k]["eigenvalue"]
                 eigenvec = self.green_list[k]["eigenvector"]
                 occupied_number = block_g_info["occupied"]
-                #determine myu
-                myu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
-                self.green_list[k]["myu"] = myu
-                fermi = self._fermi(myu, eigenvalue)
+
+                #determine mu
+                mu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
+
+                is_converged = False
+
+                if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+                    logger.info("+++ find mu: try bisection")
+                    mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.info("+++ find mu: try newton")
+                    mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.info("+++ find mu: not converged. abort")
+                    exit(1)
+
+                self.green_list[k]["mu"] = mu
+                fermi = self._fermi(mu, eigenvalue)
                 tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
                 for idx1, org_site1 in enumerate(g_label):
                     for idx2, org_site2 in enumerate(g_label):
@@ -329,17 +343,17 @@ class UHF(solver_base):
             for k, block_g_info in _green_list.items():
                 eigenvalue = self.green_list[k]["eigenvalue"]
                 eigenvec = self.green_list[k]["eigenvector"]
-                myu = self.green_list[k]["myu"]
-                fermi = self._fermi(myu, eigenvalue)
+                mu = self.green_list[k]["mu"]
+                fermi = self._fermi(mu, eigenvalue)
 
                 ln_Ene = np.zeros(eigenvalue.shape)
                 for idx, value in enumerate(eigenvalue):
-                    if (value - myu) / self.T > self.ene_cutoff:
-                        ln_Ene[idx] = np.log1p(np.exp(-(value - myu) / self.T))
+                    if (value - mu) / self.T > self.ene_cutoff:
+                        ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
                     else:
-                        ln_Ene[idx] = -(value - myu) / self.T
+                        ln_Ene[idx] = -(value - mu) / self.T
                 tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
-                Ene["band"] += myu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
+                Ene["band"] += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
