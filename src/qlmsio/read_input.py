@@ -5,6 +5,7 @@ from requests.structures import CaseInsensitiveDict
 
 logger = logging.getLogger("qlms").getChild("read_input")
 
+
 class QMLSInput():
     def __init__(self, file_name_list, solver_type="UHF"):
         self.param = CaseInsensitiveDict()
@@ -23,8 +24,8 @@ class QMLSInput():
         self.ham_param["Interall"] = self._read_ham("interall", value_type="complex")
         self.ham_param["Initial"] = self._read_ham("initial", value_type="complex")
         # TODO Check Pair(Hermite or not)
-        # TODO Check site is larger than defined lattice size
-        # TODO Add validation function (ex.:Check site is smaller than defined lattice size)
+        # TODO Check site is larger than defined lattics size
+        # TODO Add validation function (ex.:Check site is smaller than defined lattics size)
         self.output = CaseInsensitiveDict()
         self.output["OneBodyG"] = self._read_green("onebodyg")
 
@@ -84,6 +85,7 @@ class QMLSInput():
                         ham_info[list] += value
                     else:
                         ham_info[list] = value
+
         else:
             return None
         return ham_info
