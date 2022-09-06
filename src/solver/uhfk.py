@@ -356,7 +356,7 @@ class UHFk(solver_base):
                 vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
                 for (irvec,orbvec), v in self.param_ham["CoulombInter"].items():
-                    if irvec != (0,0,0):
+#                    if irvec != (0,0,0):
                         vab_r[(*irvec, *orbvec)] = v
 
                 vba = np.conjugate(
@@ -490,8 +490,16 @@ class UHFk(solver_base):
             for (irvec,orbvec), v in self.param_ham["PairHop"].items():
                 jab_r[(*irvec, *orbvec)] = v
 
+            # J~ab(r) = Jab(r) + Jba(-r)
+            jba = np.conjugate(
+                np.transpose(
+                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    (0,1,2,4,3)
+                )
+            )
+
             # interaction coeffs
-            self.inter_table["PairHop"] = jab_r
+            self.inter_table["PairHop"] = jab_r + jba
             # spin combination
             self.spin_table["PairHop"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["PairHop"][0,1,1,0] = 1
@@ -533,19 +541,22 @@ class UHFk(solver_base):
 
                 # non-cross term
                 #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
-                hh = np.einsum('rab, uvb, suvt -> rsatb', jab_r, gbb, spin)
-                hh0 = np.sum(hh, axis=0).reshape(nd,nd)
+                hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
+                #hh1 = np.einsum('rab, uvb, suvt -> rsta', jab_r, gbb, spin)
+                hh1 = np.einsum('rab, stb -> rsta', jab_r, hh0)
+                hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb, norb))
+                hh3 = np.sum(hh2, axis=0).reshape(nd,nd)
 
-                ham += np.broadcast_to(hh0, (nvol,nd,nd))
+                ham += np.broadcast_to(hh3, (nvol,nd,nd))
                 
                 # cross term
                 #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
-                hh = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
+                hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
 
                 #   fourier transform: sum_r (*) e^{ikr}
-                hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
-                ham -= hh2.reshape(nvol, nd, nd)
+                ham -= hh5.reshape(nvol, nd, nd)
 
         # for type in ['CoulombIntra']:
         #     if self.inter_table[type] is not None:
@@ -591,21 +602,28 @@ class UHFk(solver_base):
                     ), axis=(0,1,2)
                 ).reshape(nvol,ns,norb,ns,norb)
 
-                # non-cross term
-                #   sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
-                hh = np.einsum('rab, ruavb, suvt -> rsatb', jab_r, gab_mr, spin)
-                #   fourier transform: sum_r (*) e^{ikr}
-                hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                # # non-cross term
+                # #   sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
+                # hh = np.einsum('rab, ruavb, suvt -> rsatb', jab_r, gab_mr, spin)
+                # #   fourier transform: sum_r (*) e^{ikr}
+                # hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
-                ham += hh2.reshape(nvol, nd, nd)
+                # ham += hh2.reshape(nvol, nd, nd)
                 
-                # cross term
-                #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
-                hh = np.einsum('rab, ruavb, sutv -> rsatb', jab_r, gab_mr, spin)
-                #   fourier transform: sum_r (*) e^{ikr}
-                hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                # # cross term
+                # #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
+                # hh = np.einsum('rab, ruavb, sutv -> rsatb', jab_r, gab_mr, spin)
+                # #   fourier transform: sum_r (*) e^{ikr}
+                # hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
-                ham -= hh2.reshape(nvol, nd, nd)
+                # ham -= hh2.reshape(nvol, nd, nd)
+
+                hh1 = np.einsum('ruavb, suvt -> rsatb', gab_mr, spin)
+                hh2 = np.einsum('ruavb, sutv -> rsatb', gab_mr, spin)
+                hh3 = np.einsum('rab, rsatb -> rsatb', jab_r, (hh1 - hh2))
+                hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+
+                ham += hh4.reshape(nvol, nd, nd)
 
         # store
         self.ham = ham
@@ -720,7 +738,7 @@ class UHFk(solver_base):
 
         # residue
         rest = np.linalg.norm(self.Green - self.Green_prev)
-        self.physics["Rest"] = rest / np.size(self.Green)
+        self.physics["Rest"] = rest / np.size(self.Green) * 2
 
         logger.info("rest = {}".format(rest))
 
@@ -777,16 +795,21 @@ class UHFk(solver_base):
         for type in self.inter_table.keys():
             if self.inter_table[type] is not None:
                 jab_r = self.inter_table[type].reshape(nvol,norb,norb)
-                spin = self.spin_table[type]
-
+                spin  = self.spin_table[type]
                 gab_r = self.Green
-                gbb = np.diagonal(gab_r, axis1=2, axis2=4)[0,:,:,:]  # gbb(s,t,b)
 
-                e1 = np.einsum('sta,uvb,suvt->ab', gbb, gbb, spin)
-                e2 = np.einsum('rtbsa,rubva,sutv->rab', np.conjugate(gab_r), gab_r, spin)
-                ee = np.broadcast_to(e1, (nvol,norb,norb)) - e2
+                if type == "PairHop":
+                    w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
+                    w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
+                    ee = np.einsum('rab, rab ->', jab_r, w1-w2)
+                    energy[type] = -ee/2.0
 
-                energy[type] = np.einsum('rab,rab->', jab_r, ee)
+                else:
+                    w1 = np.einsum('stuv, rvasa, rubtb -> rab', spin, gab_r, gab_r)
+                    w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
+                    ee = np.einsum('rab, rab->', jab_r, w1-w2)
+                    energy[type] = -ee/2.0
+
                 energy_total += energy[type].real
                 logger.info("energy: {} = {}".format(type, energy[type]))
             else:
@@ -853,7 +876,6 @@ class UHFk(solver_base):
         return data
 
     def _save_green(self, file_name):
-        np.savez(file_name,
-                 green = self.Green)
-        logger.info("save_results: save green function to file {}".format(file_name))
+        np.savez(file_name, green = self.Green)
+
 
