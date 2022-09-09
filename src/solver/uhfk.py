@@ -11,17 +11,14 @@ class UHFk(solver_base):
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
-        self.init_lattice()
-        self.init_orbit()
-        self.init_param()
+        self._init_param()
+        self._init_lattice()
+        self._init_orbit()
+        self._dump_param_ham()
+        self._init_interaction()
+        self._dump_param_ham()
 
-        #self.dump_param_ham()
-
-        self.init_interaction()
-
-        #self.dump_param_ham()
-
-        self.show_param()
+        self._show_param()
 
         # local data
         self.physics = {
@@ -44,18 +41,35 @@ class UHFk(solver_base):
         # work area
         self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
 
-    def init_lattice(self):
-        # check parameters
+    def _init_param(self):
+        # check and store parameters
+        
         if not "CellShape" in self.param_mod:
-            logger.info("CellShape is missing. abort")
+            logger.error("CellShape is missing. abort")
             exit(1)
-            
+
+        if "Ncond" in self.param_mod:
+            ncond = self.param_mod["Ncond"]
+        elif "Nelec" in self.param_mod:
+            ncond = self.param_mod["Nelec"]
+        else:
+            logger.error("Ncond or Nelec is missing. abort")
+            exit(1)
+
+        self.Ncond = ncond
+
+        self.T = self.param_mod.get("T", 0.0)
+        self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
+
+    def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
         self.cellshape = (Lx,Ly,Lz)
 
         Bx,By,Bz = self.param_mod.get("SubShape", [1,1,1])
         self.subshape = (Bx,By,Bz)
         self.subvol = Bx * By * Bz
+
+        self.has_sublattice = (self.subvol > 1)
 
         # check consistency
         # XXX use reciprocal lattice
@@ -64,15 +78,8 @@ class UHFk(solver_base):
             if self.cellshape[i] % self.subshape[i] != 0:
                 err += 1
         if err > 0:
-            logger.info("SubShape is not compatible with CellShape")
-            logger.info("abort.")
+            logger.error("SubShape is not compatible with CellShape. abort")
             exit(1)
-
-        if any([ _ > 1 for _ in self.subshape]):
-            logger.info("enable sublattice")
-            self.has_sublattice = True
-        else:
-            self.has_sublattice = False
 
         # replace by lattice of supercells
         nx, ny, nz = Lx//Bx, Ly//By, Lz//Bz
@@ -81,7 +88,7 @@ class UHFk(solver_base):
         self.shape = (nx, ny, nz)
         self.nvol = nvol
 
-    def init_orbit(self):
+    def _init_orbit(self):
         norb = self.param_ham["Geometry"]["norb"]
         ns = 2  # spin dof
 
@@ -92,65 +99,207 @@ class UHFk(solver_base):
         self.nd = self.norb * ns
         self.ns = ns
 
-    def init_param(self):
-        Ncond = self.param_mod["Ncond"]
-        self.Ncond = Ncond
-
-        self.T = self.param_mod.get("T", 0.0)
-        self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
-
-    def show_param(self):
+    def _show_param(self):
         logger.info("Show parameters")
-        logger.info("    Cell Shape  = {}".format(self.cellshape))
-        logger.info("    Sub Shape   = {}".format(self.subshape))
-        logger.info("    Block       = {}".format(self.shape))
-        logger.info("    Block volume= {}".format(self.nvol))
-        logger.info("    Num orbit   = {}".format(self.norb_orig))
-        logger.info("    Num orbit eff= {}".format(self.norb))
-        logger.info("    nspin       = {}".format(self.ns))
-        logger.info("    nd          = {}".format(self.nd))
+        logger.info("    Cell Shape     = {}".format(self.cellshape))
+        logger.info("    Sub Shape      = {}".format(self.subshape))
+        logger.info("    Block          = {}".format(self.shape))
+        logger.info("    Block volume   = {}".format(self.nvol))
+        logger.info("    Num orbit      = {}".format(self.norb_orig))
+        logger.info("    Num orbit eff  = {}".format(self.norb))
+        logger.info("    nspin          = {}".format(self.ns))
+        logger.info("    nd             = {}".format(self.nd))
 
-        logger.info("    Ncond       = {}".format(self.Ncond))
-        logger.info("    T           = {}".format(self.T))
-        logger.info("    E_cutoff    = {}".format(self.ene_cutoff))
+        logger.info("    Ncond          = {}".format(self.Ncond))
+        logger.info("    T              = {}".format(self.T))
+        logger.info("    E_cutoff       = {}".format(self.ene_cutoff))
 
-        logger.info("    Mix         = {}".format(self.param_mod["Mix"]))
-        logger.info("    RndSeed     = {}".format(self.param_mod["RndSeed"]))
-        logger.info("    IterationMax= {}".format(self.param_mod["IterationMax"]))
-        logger.info("    EPS         = {}".format(self.param_mod["EPS"]))
+        logger.info("    Mix            = {}".format(self.param_mod["Mix"]))
+        logger.info("    RndSeed        = {}".format(self.param_mod["RndSeed"]))
+        logger.info("    IterationMax   = {}".format(self.param_mod["IterationMax"]))
+        logger.info("    EPS            = {}".format(self.param_mod["EPS"]))
 
-    def init_interaction(self):
+    def _reshape_geometry(self, geom):
+        Bx,By,Bz = self.subshape
+        bvol = Bx * By * Bz
+
+        norb = geom['norb']
+
+        geom_new = {}
+        geom_new['norb'] = geom['norb'] * bvol
+        geom_new['rvec'] = np.matmul(np.diag([Bx, By, Bz]), geom['rvec'])
+
+        sc = np.array([1.0/Bx, 1.0/By, 1.0/Bz])
+        cw = [ sc * geom['center'][k] for k in range(norb) ]
+
+        centerv = np.zeros((norb * bvol, 3), dtype=np.double)
+        k = 0
+        for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
+            for i in range(norb):
+                centerv[k] = cw[i] + np.array([bx, by, bz]) * sc
+                k += 1
+        geom_new['center'] = centerv
+
+        return geom_new
+
+    def _reshape_interaction(self, ham):
+        Bx,By,Bz = self.subshape
+        nx,ny,nz = self.shape
+
+        def _reshape_orbit(a, x):
+            return a + self.norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+
+        def _round(x, n):
+            return x % n if x >= 0 else x % -n
+
+        ham_new = {}
+        for (irvec,orbvec), v in ham.items():
+            rx,ry,rz = irvec
+            alpha,beta = orbvec
+
+            for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
+
+                # original cell index of both endes
+                #   x0 -> x1=x0+r
+                x0,y0,z0 = bx, by, bz
+                x1,y1,z1 = x0 + rx, y0 + ry, z0 + rz
+
+                # decompose into supercell-index and cell-index within supercell
+                #   x0 = 0 + x0
+                #   x1 = X + xr
+                xx1,xr1 = x1 // Bx, x1 % Bx
+                yy1,yr1 = y1 // By, y1 % By
+                zz1,zr1 = z1 // Bz, z1 % Bz
+
+                # find orbital index within supercell
+                aa = _reshape_orbit(alpha,(x0,y0,z0))
+                bb = _reshape_orbit(beta, (xr1,yr1,zr1))
+
+                # check wrap-around: maybe overwritten by duplicate entries
+                ir = (_round(xx1, nx), _round(yy1, ny), _round(zz1, nz))
+                ov = (aa, bb)
+                
+                ham_new[(ir, ov)] = v
+        
+        return ham_new
+
+    def _reshape_green(self, green):
+        # convert green function into sublattice
+
+        Lx,Ly,Lz = self.cellshape
+        Lvol = Lx * Ly * Lz
+        Bx,By,Bz = self.subshape
+        Bvol = Bx * By * Bz
+        Nx,Ny,Nz = self.shape
+        Nvol = Nx * Ny * Nz
+
+        norb_orig = self.norb_orig
+        norb = self.norb
+        ns = self.ns
+
+        def _pack_index(x, n):
+            _ix, _iy, _iz = x
+            _nx, _ny, _nz = n
+            return _ix + _nx * (_iy + _ny * (_iz))
+
+        def _unpack_index(x, n):
+            _nx, _ny, _nz = n
+            _ix = x % _nx
+            _iy = (x // _nx) % _ny
+            _iz = (x // (_nx * _ny)) % _nz
+            return (_ix, _iy, _iz)
+
+        green_sub = np.zeros((Nvol,ns,norb,ns,norb), dtype=np.complex128)
+
+        for isite in range(Nvol):
+            ixx, iyy, izz = _unpack_index(isite, (Nx,Ny,Nz))
+            ix0, iy0, iz0 = ixx * Bx, iyy * By, izz * Bz
+
+            for aa, bb in itertools.product(range(norb), range(norb)):
+                a, ri = aa % norb_orig, aa // norb_orig
+                b, rj = bb % norb_orig, bb // norb_orig
+
+                rix, riy, riz = _unpack_index(ri, (Bx,By,Bz))
+                rjx, rjy, rjz = _unpack_index(rj, (Bx,By,Bz))
+
+                ix = (ix0 + rjx - rix) % Lx
+                iy = (iy0 + rjy - riy) % Ly
+                iz = (iz0 + rjz - riz) % Lz
+
+                jsite = _pack_index((ix,iy,iz), (Lx,Ly,Lz))
+
+                for s, t in itertools.product(range(ns), range(ns)):
+                    green_sub[isite, s, aa, t, bb] = green[jsite, s, a, t, b]
+
+        return green_sub
+
+    def _deflate_green(self, green_sub):
+        # convert green function back to original lattice
+        Lx,Ly,Lz = self.cellshape
+        Lvol = Lx * Ly * Lz
+        Bx,By,Bz = self.subshape
+        Bvol = Bx * By * Bz
+        Nx,Ny,Nz = self.shape
+        Nvol = Nx * Ny * Nz
+
+        norb_orig = self.norb_orig
+        norb = self.norb
+        ns = self.ns
+
+        def _pack_index(x, n):
+            _ix, _iy, _iz = x
+            _nx, _ny, _nz = n
+            return _ix + _nx * (_iy + _ny * (_iz))
+
+        def _unpack_index(x, n):
+            _nx, _ny, _nz = n
+            _ix = x % _nx
+            _iy = (x // _nx) % _ny
+            _iz = (x // (_nx * _ny)) % _nz
+            return (_ix, _iy, _iz)
+
+        green = np.zeros((Lvol,ns,norb_orig,ns,norb_orig), dtype=np.complex128)
+
+        for jsite in range(Lvol):
+            ix, iy, iz = _unpack_index(jsite, (Lx,Ly,Lz))
+
+            ixx, irx = ix // Bx, ix % Bx
+            iyy, iry = iy // By, iy % By
+            izz, irz = iz // Bz, iz % Bz
+
+            isite = _pack_index((ixx,iyy,izz), (Nx,Ny,Nz))
+            ir = _pack_index((irx,iry,irz), (Bx,By,Bz))
+
+            for a, b in itertools.product(range(norb_orig), range(norb_orig)):
+                aa = a
+                bb = b + norb_orig * ir
+
+                for s, t in itertools.product(range(ns), range(ns)):
+                    green[jsite, s, a, t, b] = green_sub[isite, s, aa, t, bb]
+
+        return green
+
+    def _init_interaction(self):
         # reinterpret interaction coefficient on sublattice
         if self.has_sublattice:
-            Bx,By,Bz = self.subshape
-            
+            # backup
+            self.param_ham_orig = {}
+
             for type in self.param_ham.keys():
-                if type in ["Geometry", "Initial"]:
+                if type in ["Initial"]:
                     pass
+                elif type in ["Geometry"]:
+                    self.param_ham_orig[type] = self.param_ham[type]
+                    tbl = self._reshape_geometry(self.param_ham[type])
+                    # replace
+                    self.param_ham[type] = tbl
                 else:
-                    tbl = {}
-                    for (irvec,orbvec), v in self.param_ham[type].items():
-
-                        rx,ry,rz = irvec
-                        Rx = rx // Bx
-                        Ry = ry // By
-                        Rz = rz // Bz
-                        rx0 = rx % Bx
-                        ry0 = ry % By
-                        rz0 = rz % Bz
-                        rr = rx0 + Bx * (ry0 + By * (rz0))
-
-                        alpha,beta = orbvec
-
-                        irvec2 = (Rx,Ry,Rz)
-                        orbvec2 = (alpha, beta + rr * self.norb_orig)
-
-                        tbl[(irvec2,orbvec2)] = v
-
+                    self.param_ham_orig[type] = self.param_ham[type]
+                    tbl = self._reshape_interaction(self.param_ham[type])
                     # replace
                     self.param_ham[type] = tbl
 
-    def dump_param_ham(self):
+    def _dump_param_ham(self):
         for type in self.param_ham.keys():
             if type in ["Geometry"]:
                 print("type =", type)
@@ -181,6 +330,7 @@ class UHFk(solver_base):
 
         for i_step in range(self.param_mod["IterationMax"]):
             self._make_ham()
+
             self._diag()
             self._green()
             self._calc_energy()
@@ -558,33 +708,6 @@ class UHFk(solver_base):
 
                 ham -= hh5.reshape(nvol, nd, nd)
 
-        # for type in ['CoulombIntra']:
-        #     if self.inter_table[type] is not None:
-        #         logger.info(type)
-
-        #         # coefficient U_a
-        #         ua = self.inter_table[type]
-        #         # spin combination
-        #         spin = self.spin_table[type]
-
-        #         # non-cross term
-        #         #   sum_r U_{a} G_{aa,uv}(0) Spin{s,u,v,t}
-        #         hh = np.einsum('a, uva, suvt -> ast', ua, gbb, spin)
-        #         hh0 = np.transpose(
-        #             np.broadcast_to(hh, (norb,norb,ns,ns)),
-        #             (2,0,3,1)).reshape(nd,nd)
-
-        #         ham += np.broadcast_to(hh0, (nvol,nd,nd))
-
-        #         # cross term
-        #         #   - sum_r U_{a} G_{aa,uv}(0) Spin{s,u,t,v}
-        #         hh = np.einsum('a, uva, sutv -> ast', ua, gbb, spin)
-        #         hh0 = np.transpose(
-        #             np.broadcast_to(hh, (norb,norb,ns,ns)),
-        #             (2,0,3,1)).reshape(nd,nd)
-
-        #         ham -= np.broadcast_to(hh0, (nvol,nd,nd))
-
         # interaction term: PairHop type
         for type in ['PairHop']:
             if self.inter_table[type] is not None:
@@ -601,22 +724,6 @@ class UHFk(solver_base):
                         gab_r.reshape(nx,ny,nz,ns,norb,ns,norb), -1, axis=(0,1,2)
                     ), axis=(0,1,2)
                 ).reshape(nvol,ns,norb,ns,norb)
-
-                # # non-cross term
-                # #   sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
-                # hh = np.einsum('rab, ruavb, suvt -> rsatb', jab_r, gab_mr, spin)
-                # #   fourier transform: sum_r (*) e^{ikr}
-                # hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
-
-                # ham += hh2.reshape(nvol, nd, nd)
-                
-                # # cross term
-                # #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
-                # hh = np.einsum('rab, ruavb, sutv -> rsatb', jab_r, gab_mr, spin)
-                # #   fourier transform: sum_r (*) e^{ikr}
-                # hh2 = np.fft.ifftn(hh.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
-
-                # ham -= hh2.reshape(nvol, nd, nd)
 
                 hh1 = np.einsum('ruavb, suvt -> rsatb', gab_mr, spin)
                 hh2 = np.einsum('ruavb, sutv -> rsatb', gab_mr, spin)
@@ -687,7 +794,7 @@ class UHFk(solver_base):
                 mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
                 is_converged = r.converged
             if not is_converged:
-                logger.info("+++ find mu: not converged. abort")
+                logger.error("+++ find mu: not converged. abort")
                 exit(1)
 
             self._green_list["mu"] = mu
@@ -876,6 +983,8 @@ class UHFk(solver_base):
         return data
 
     def _save_green(self, file_name):
-        np.savez(file_name, green = self.Green)
-
-
+        if self.has_sublattice:
+            green_orig = self._deflate_green(self.Green)
+            np.savez(file_name, green = green_orig, green_sublattice = self.Green)
+        else:
+            np.savez(file_name, green = self.Green)
