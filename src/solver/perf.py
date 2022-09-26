@@ -8,7 +8,7 @@ class PerfDB:
     def __del__(self):
         print("--------------------------------------------------------------------------------")
         print("Statistics")
-        print("  function                 :  total elapsed  : average elapsed : ncalls")
+        print("  function                         :  total elapsed  : average elapsed : ncalls")
         print("--------------------------------------------------------------------------------")
         for item in self._db_count.keys():
             print("  {:32s} : {:10.3f} msec : {:10.3f} msec : {:6d}".format(
