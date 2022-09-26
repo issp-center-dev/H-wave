@@ -14,9 +14,9 @@ class UHFk(solver_base):
         self._init_param()
         self._init_lattice()
         self._init_orbit()
-        self._dump_param_ham()
+        # self._dump_param_ham()
         self._init_interaction()
-        self._dump_param_ham()
+        # self._dump_param_ham()
 
         self._show_param()
 
@@ -60,6 +60,9 @@ class UHFk(solver_base):
 
         self.T = self.param_mod.get("T", 0.0)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
+
+        # cutoff of green function elements
+        self.threshold = self.param_mod.get("threshold", 1.0e-12)
 
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
@@ -273,7 +276,6 @@ class UHFk(solver_base):
             for a, b in itertools.product(range(norb_orig), range(norb_orig)):
                 aa = a
                 bb = b + norb_orig * ir
-
                 for s, t in itertools.product(range(ns), range(ns)):
                     green[jsite, s, a, t, b] = green_sub[isite, s, aa, t, bb]
 
@@ -300,6 +302,9 @@ class UHFk(solver_base):
                     self.param_ham[type] = tbl
 
     def _dump_param_ham(self):
+        if logger.getEffectiveLevel() < logging.INFO:
+            return
+
         for type in self.param_ham.keys():
             if type in ["Geometry"]:
                 print("type =", type)
@@ -312,7 +317,6 @@ class UHFk(solver_base):
                 for (irvec,orbvec), v in self.param_ham[type].items():
                     print("\t",irvec,orbvec," = ",v)
                 
-
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
 
@@ -330,7 +334,6 @@ class UHFk(solver_base):
 
         for i_step in range(self.param_mod["IterationMax"]):
             self._make_ham()
-
             self._diag()
             self._green()
             self._calc_energy()
@@ -374,9 +377,15 @@ class UHFk(solver_base):
             logger.info("initialize green function with random numbers")
             
             np.random.seed(self.param_mod["RndSeed"])
-            rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+            #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+            #green = 0.01 * (rand - 0.5)
 
-            green = 0.01 * (rand - 0.5)
+            # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
+            x1 = np.random.rand(nvol * nd * nvol * nd).reshape(ns,nvol,norb,ns,nvol,norb)
+            x2 = np.transpose(x1,(1,4,0,2,3,5))
+            x3 = x2[0].reshape(nvol,ns,norb,ns,norb)  # take average?
+
+            green = 0.01 * (x3 - 0.5)
 
         return green
 
@@ -473,7 +482,7 @@ class UHFk(solver_base):
             )
 
             # interaction coeffs
-            self.inter_table["CoulombInter"] = vab_r + vba
+            self.inter_table["CoulombInter"] = (vab_r + vba)/2
             # spin combination
             self.spin_table["CoulombInter"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["CoulombInter"][0,0,0,0] = 1
@@ -517,7 +526,7 @@ class UHFk(solver_base):
                 )
 
                 # interaction coeffs
-                self.inter_table["CoulombInter"] = vab_r + vba
+                self.inter_table["CoulombInter"] = (vab_r + vba)/2
                 # spin combination
                 self.spin_table["CoulombInter"] = np.zeros((2,2,2,2), dtype=int)
                 self.spin_table["CoulombInter"][0,0,0,0] = 1
@@ -543,7 +552,7 @@ class UHFk(solver_base):
             )
 
             # interaction coeffs : -J^{Hund} by convention
-            self.inter_table["Hund"] = -(jab_r + jba)
+            self.inter_table["Hund"] = -(jab_r + jba)/2
             # spin combination
             self.spin_table["Hund"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Hund"][0,0,0,0] = 1
@@ -569,7 +578,7 @@ class UHFk(solver_base):
             )
 
             # interaction coeffs
-            self.inter_table["Ising"] = jab_r + jba
+            self.inter_table["Ising"] = (jab_r + jba)/2
             # spin combination
             self.spin_table["Ising"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Ising"][0,0,0,0] = 1
@@ -597,7 +606,7 @@ class UHFk(solver_base):
             )
 
             # interaction coeffs
-            self.inter_table["PairLift"] = jab_r + jba
+            self.inter_table["PairLift"] = (jab_r + jba)/2
             # spin combination
             self.spin_table["PairLift"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["PairLift"][0,0,1,1] = 1
@@ -623,7 +632,7 @@ class UHFk(solver_base):
             )
 
             # interaction coeffs : -J^{Ex} by convention
-            self.inter_table["Exchange"] = -(jab_r + jba)
+            self.inter_table["Exchange"] = -(jab_r + jba)/2
             # spin combination
             self.spin_table["Exchange"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Exchange"][0,1,0,1] = 1
@@ -649,7 +658,7 @@ class UHFk(solver_base):
             )
 
             # interaction coeffs
-            self.inter_table["PairHop"] = jab_r + jba
+            self.inter_table["PairHop"] = (jab_r + jba)/2
             # spin combination
             self.spin_table["PairHop"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["PairHop"][0,1,1,0] = 1
@@ -675,9 +684,9 @@ class UHFk(solver_base):
         # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
         ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
 
-        # transfer term  -T_{ab}(k)
+        # transfer term  T_{ab}(k) (note convention)
         logger.info("Transfer")
-        ham -= self.ham_trans
+        ham += self.ham_trans
         
         # interaction term: Coulomb type
         for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
@@ -692,7 +701,6 @@ class UHFk(solver_base):
                 # non-cross term
                 #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
                 hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
-                #hh1 = np.einsum('rab, uvb, suvt -> rsta', jab_r, gbb, spin)
                 hh1 = np.einsum('rab, stb -> rsta', jab_r, hh0)
                 hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb, norb))
                 hh3 = np.sum(hh2, axis=0).reshape(nd,nd)
@@ -718,16 +726,13 @@ class UHFk(solver_base):
                 # and its spin combination  Spin(s1,s2,s3,s4)
                 spin = self.spin_table[type]
 
-                # green function G_{ab,st}(-r)
-                gab_mr = np.flip(
-                    np.roll(
-                        gab_r.reshape(nx,ny,nz,ns,norb,ns,norb), -1, axis=(0,1,2)
-                    ), axis=(0,1,2)
-                ).reshape(nvol,ns,norb,ns,norb)
+                # non-cross and cross term
+                #   + sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
+                #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
 
-                hh1 = np.einsum('ruavb, suvt -> rsatb', gab_mr, spin)
-                hh2 = np.einsum('ruavb, sutv -> rsatb', gab_mr, spin)
-                hh3 = np.einsum('rab, rsatb -> rsatb', jab_r, (hh1 - hh2))
+                hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
+                hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
                 hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
                 ham += hh4.reshape(nvol, nd, nd)
@@ -762,16 +767,53 @@ class UHFk(solver_base):
 
         if self.T == 0:
             # fill lowest Ncond eigenmodes
-            ev = np.sort(w.flatten())
-            ev0 = ev[self.Ncond]
+            #ev = np.sort(w.flatten())
+            #ev0 = ev[self.Ncond]
 
-            dist = np.where(w < ev0, 1.0, 0.0)
+            #dist = np.where(w < ev0, 1.0, 0.0)
+
+            def _ksq_table():
+                nx,ny,nz = self.shape
+
+                kx = np.roll( (np.arange(nx) - nx//2), -nx//2) ** 2
+                ky = np.roll( (np.arange(ny) - ny//2), -ny//2) ** 2
+                kz = np.roll( (np.arange(nz) - nz//2), -nz//2) ** 2
+
+                rr = np.zeros((nx,ny,nz))
+                rr += np.broadcast_to(kx.reshape(nx,1,1),(nx,ny,nz))
+                rr += np.broadcast_to(ky.reshape(1,ny,1),(nx,ny,nz))
+                rr += np.broadcast_to(kz.reshape(1,1,nz),(nx,ny,nz))
+
+                nvol = self.nvol
+                nd = self.nd
+
+                return np.broadcast_to(rr.reshape(nvol,1), (nvol,nd))
+
+            ww = w.reshape(nvol * nd)
+
+            # fill lowest Ncond eigenmodes.
+            # if degenerate, components with smaller k^2 will be used.
+            k_sq = _ksq_table().reshape(nvol*nd)
+
+            #spn = np.broadcast_to(np.array([-1,1]).reshape(1,ns,1), (nvol,ns,norb)).reshape(nvol*nd)
+
+            ev_idx = np.lexsort((k_sq, ww))[0:self.Ncond]
+
+            dist = np.zeros(nvol * nd)
+            dist[ev_idx] = 1.0
+
+            dist = dist.reshape(nvol, nd)
+
         else:
             from scipy import optimize
 
             def _fermi(t, mu, ev):
                 w = (ev - mu) / t
-                v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
+                mask_ = w < self.ene_cutoff
+                w1 = np.where( mask_, w, 0.0 )
+                v1 = 1.0 / (1.0 + np.exp(w1))
+                v = np.where( mask_, v1, 0.0 )
+                #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
                 return v
 
             def _calc_delta_n(mu):
@@ -827,7 +869,7 @@ class UHFk(solver_base):
         # expectation value of Ncond
         gab_r = self.Green.reshape(nvol,nd,nd)
 
-        n = np.sum(np.diagonal(gab_r, axis1=1, axis2=2))
+        n = np.sum(np.diagonal(gab_r[0])) * nvol
         self.physics["NCond"] = n.real
 
         logger.info("ncond = {}".format(n))
@@ -854,8 +896,7 @@ class UHFk(solver_base):
 
         g_new = (1.0 - mix) * self.Green_prev + mix * self.Green
 
-        tol = self.param_mod.get("tolerance", 1.0e-12)
-        g_new[np.where(abs(g_new) < tol)] = 0.0
+        g_new[np.where(abs(g_new) < self.threshold)] = 0.0
 
         self.Green = g_new
 
@@ -886,7 +927,11 @@ class UHFk(solver_base):
 
             def _fermi(t, mu, ev):
                 w = (ev - mu) / t
-                v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
+                mask_ = w < self.ene_cutoff
+                w1 = np.where( mask_, w, 0.0 )
+                v1 = 1.0 / (1.0 + np.exp(w1))
+                v = np.where( mask_, v1, 0.0 )
+                #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
                 return v
 
             ln_e = np.log1p(np.exp(-(w - mu) / T))
@@ -909,13 +954,18 @@ class UHFk(solver_base):
                     w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
                     w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
                     ee = np.einsum('rab, rab ->', jab_r, w1-w2)
-                    energy[type] = -ee/2.0
+                    energy[type] = -ee/2.0*nvol
 
                 else:
-                    w1 = np.einsum('stuv, rvasa, rubtb -> rab', spin, gab_r, gab_r)
+                    # w1 = np.einsum('stuv, rvasa, rubtb -> rab', spin, gab_r, gab_r)
+                    # w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
+                    # ee = np.einsum('rab, rab->', jab_r, w1-w2)
+                    w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
+                    w1b = np.broadcast_to(w1, (nvol,norb,norb))
                     w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
-                    ee = np.einsum('rab, rab->', jab_r, w1-w2)
-                    energy[type] = -ee/2.0
+                    ee = np.einsum('rab, rab->', jab_r, w1b-w2)
+
+                    energy[type] = -ee/2.0*nvol
 
                 energy_total += energy[type].real
                 logger.info("energy: {} = {}".format(type, energy[type]))
