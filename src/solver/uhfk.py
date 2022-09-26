@@ -3,11 +3,13 @@ import logging
 import numpy as np
 import os
 from .base import solver_base
+from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhfk")
 
 class UHFk(solver_base):
 
+    @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
@@ -41,6 +43,7 @@ class UHFk(solver_base):
         # work area
         self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
 
+    @do_profile
     def _init_param(self):
         # check and store parameters
         
@@ -64,6 +67,7 @@ class UHFk(solver_base):
         # cutoff of green function elements
         self.threshold = self.param_mod.get("threshold", 1.0e-12)
 
+    @do_profile
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
         self.cellshape = (Lx,Ly,Lz)
@@ -91,6 +95,7 @@ class UHFk(solver_base):
         self.shape = (nx, ny, nz)
         self.nvol = nvol
 
+    @do_profile
     def _init_orbit(self):
         norb = self.param_ham["Geometry"]["norb"]
         ns = 2  # spin dof
@@ -102,6 +107,7 @@ class UHFk(solver_base):
         self.nd = self.norb * ns
         self.ns = ns
 
+    @do_profile
     def _show_param(self):
         logger.info("Show parameters")
         logger.info("    Cell Shape     = {}".format(self.cellshape))
@@ -122,6 +128,7 @@ class UHFk(solver_base):
         logger.info("    IterationMax   = {}".format(self.param_mod["IterationMax"]))
         logger.info("    EPS            = {}".format(self.param_mod["EPS"]))
 
+    @do_profile
     def _reshape_geometry(self, geom):
         Bx,By,Bz = self.subshape
         bvol = Bx * By * Bz
@@ -145,6 +152,7 @@ class UHFk(solver_base):
 
         return geom_new
 
+    @do_profile
     def _reshape_interaction(self, ham):
         Bx,By,Bz = self.subshape
         nx,ny,nz = self.shape
@@ -186,6 +194,7 @@ class UHFk(solver_base):
         
         return ham_new
 
+    @do_profile
     def _reshape_green(self, green):
         # convert green function into sublattice
 
@@ -236,6 +245,7 @@ class UHFk(solver_base):
 
         return green_sub
 
+    @do_profile
     def _deflate_green(self, green_sub):
         # convert green function back to original lattice
         Lx,Ly,Lz = self.cellshape
@@ -281,6 +291,7 @@ class UHFk(solver_base):
 
         return green
 
+    @do_profile
     def _init_interaction(self):
         # reinterpret interaction coefficient on sublattice
         if self.has_sublattice:
@@ -301,6 +312,7 @@ class UHFk(solver_base):
                     # replace
                     self.param_ham[type] = tbl
 
+    @do_profile
     def _dump_param_ham(self):
         if logger.getEffectiveLevel() < logging.INFO:
             return
@@ -317,6 +329,7 @@ class UHFk(solver_base):
                 for (irvec,orbvec), v in self.param_ham[type].items():
                     print("\t",irvec,orbvec," = ",v)
                 
+    @do_profile
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
 
@@ -357,6 +370,7 @@ class UHFk(solver_base):
             logger.info("UHFk calculation failed: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
             
+    @do_profile
     def _initial_green(self):
         logger.info(">>> _initial_green")
 
@@ -389,6 +403,7 @@ class UHFk(solver_base):
 
         return green
 
+    @do_profile
     def _make_ham_trans(self):
         logger.info(">>> _make_ham_trans")
         
@@ -427,6 +442,7 @@ class UHFk(solver_base):
         # store
         self.ham_trans = ham
 
+    @do_profile
     def _make_ham_inter(self):
         logger.info(">>> _make_ham_inter")
 
@@ -666,6 +682,7 @@ class UHFk(solver_base):
         else:
             self.inter_table["PairHop"] = None
 
+    @do_profile
     def _make_ham(self):
         logger.info(">>> _make_ham")
 
@@ -740,6 +757,7 @@ class UHFk(solver_base):
         # store
         self.ham = ham
 
+    @do_profile
     def _diag(self):
         logger.info(">>> _diag")
 
@@ -753,6 +771,7 @@ class UHFk(solver_base):
         self._green_list["eigenvalue"] = w
         self._green_list["eigenvector"] = v
 
+    @do_profile
     def _green(self):
         logger.info(">>> _green")
 
@@ -857,6 +876,7 @@ class UHFk(solver_base):
         self.Green_prev = self.Green
         self.Green = gab_r.reshape(nvol,ns,norb,ns,norb)
 
+    @do_profile
     def _calc_phys(self):
         logger.info(">>> _calc_phys")
 
@@ -900,6 +920,7 @@ class UHFk(solver_base):
 
         self.Green = g_new
 
+    @do_profile
     def _calc_energy(self):
         logger.info(">>> _calc_energy")
 
@@ -976,9 +997,11 @@ class UHFk(solver_base):
         energy["Total"] = energy_total
         self.physics["Ene"] = energy.copy()
 
+    @do_profile
     def get_results(self):
         return (self.physics, self.Green)
 
+    @do_profile
     def save_results(self, info_outputfile, green_info):
         path_to_output = info_outputfile["path_to_output"]
 
@@ -1019,6 +1042,7 @@ class UHFk(solver_base):
             logger.info("save_results: save initial is not supported")
             pass
 
+    @do_profile
     def _read_green(self, file_name):
         try:
             v = np.load(file_name)
@@ -1032,6 +1056,7 @@ class UHFk(solver_base):
             data = None
         return data
 
+    @do_profile
     def _save_green(self, file_name):
         if self.has_sublattice:
             green_orig = self._deflate_green(self.Green)
