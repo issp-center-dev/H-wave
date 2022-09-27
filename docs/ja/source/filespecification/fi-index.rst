@@ -4,7 +4,7 @@
 .. toctree::
    :maxdepth: 2
 
-   config_ja/index_config_ja
-   inputfiles_ja/index_inputfiles_ja
-   inputfiles_uhfk_ja/index_inputfiles_uhfk_ja
-   outputfiles_ja/index_outputfiles_ja
+   config/index_config
+   inputfiles/index_inputfiles
+   inputfiles_uhfk/index_inputfiles_uhfk
+   outputfiles/index_outputfiles

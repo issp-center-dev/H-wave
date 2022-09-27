@@ -50,15 +50,15 @@ H-waveで使用する入力ファイル(\*def)に関して説明します。
 .. toctree::
    :maxdepth: 1
 
-   List_file_for_the_input_files_ja
-   ModPara_file_ja
-   Trans_file_ja
-   InterAll_file_ja
-   CoulombIntra_file_ja
-   CoulombInter_file_ja
-   Hund_file_ja
-   PairHop_file_ja
-   Exchange_file_ja
-   PairLift_file_ja
-   Initial_file_ja
-   OneBodyG_file_ja
+   List_file_for_the_input_files
+   ModPara_file
+   Trans_file
+   InterAll_file
+   CoulombIntra_file
+   CoulombInter_file
+   Hund_file
+   PairHop_file
+   Exchange_file
+   PairLift_file
+   Initial_file
+   OneBodyG_file

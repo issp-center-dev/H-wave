@@ -10,7 +10,7 @@
 .. toctree::
    :maxdepth: 1
 	      
-   energy_ja
-   eigen_ja
-   green_ja
-   green_uhfk_ja
+   energy
+   eigen
+   green
+   green_uhfk
