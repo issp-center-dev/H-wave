@@ -51,7 +51,7 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 
 .. math::
    \begin{aligned}
-   \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}^* U_{jl} \langle d_l^\dagger d_l \rangle = \sum_{l} \frac{U_{il}^* U_{jl}}{1+\exp^{-\beta(\xi_l -\mu)}}
+   \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}^* U_{jl} \langle d_l^\dagger d_l \rangle = \sum_{l} \frac{U_{il}^* U_{jl}}{1+\exp^{\beta(\xi_l -\mu)}}
    \end{aligned}
 
 の関係から一体グリーン関数を更新し、一体グリーン関数が収束するまで計算を繰り返します。ただし、上式において :math:`\beta` は逆温度 :math:`1/ k_B T` , :math:`\mu` は化学ポテンシャルとしました。 
@@ -84,3 +84,21 @@ H-waveでは以下の形式でな二体相互作用を定義しています。
 波数空間への拡張
 *************************
 
+一体項で与えられたハミルトニアンについて、Fourier変換 :math:`c_i = \dfrac{1}{\sqrt{V}} \sum_k e^{ikr_i} c_k` を用いて
+波数表示に書き換えます。
+
+.. math::
+   \begin{aligned}
+   \mathcal{H}_\text{UHF}
+   &=
+   \sum_{k\alpha\beta\sigma\sigma^\prime}
+   h_{\alpha\beta\sigma\sigma^\prime}(k)\,
+   c_{k\alpha\sigma}^\dagger c_{k\beta\sigma^\prime}^{\phantom\dagger}
+   \end{aligned}
+
+相互作用は並進対称性を仮定し、係数 :math:`J_{ij\alpha\beta}` は空間座標について並進ベクトル :math:`r_{ij}=r_j - r_i` のみに
+依存するとします。なお、波数空間版UHFでは一般化された InterAll 形式の相互作用は扱いません。
+
+波数空間表示のハミルトニアンは波数 :math:`k` について対角的なので、固有値・固有ベクトルの計算は、
+:math:`N_\text{site}N_\text{orbit} \times N_\text{site}N_\text{orbit}` 行列の対角化から、
+:math:`N_\text{site}` 個の :math:`N_\text{orbit} \times N_\text{orbit}` 行列の対角化に計算量を抑えることができます。

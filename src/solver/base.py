@@ -7,7 +7,7 @@ class solver_base():
         self.info_log = info_log
         info_mode_param = info_mode.get("param", CaseInsensitiveDict({}))
 
-        if param_mod != None:
+        if param_mod is not None:
             # initial values
             para_init = CaseInsensitiveDict({
                 "Nsite": 0,
@@ -19,7 +19,8 @@ class solver_base():
                 "Print": 0,
                 "IterationMax": 20000,
                 "RndSeed": 1234,
-                "EpsSlater": 6
+                "CDataFileHead": "zvo",
+                "CParaFileHead": "zqp",
             })
 
             for k, v in para_init.items():
@@ -30,18 +31,23 @@ class solver_base():
                 if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
                     self.param_mod[key] = str(self.param_mod[key][0])
 
-            for key in ["nsite", "ne", "2Sz", "ncond", "eps", "IterationMax", "Print", "RndSeed", "EpsSlater"]:
+            for key in ["nsite", "ne", "2Sz", "ncond", "eps", "IterationMax", "Print", "RndSeed"]:
                 if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
                     self.param_mod[key] = int(self.param_mod[key][0])
 
             #The type of mix is float.
-            self.param_mod["mix"] = float(self.param_mod["mix"][0])
-            self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
+            for key in ["mix"]:
+                if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
+                    self.param_mod[key] = float(self.param_mod[key][0])
 
+            # overwrite by info_mode_param
             for key, value in info_mode_param.items():
                 self.param_mod[key] = value
         else:
-            self.param_mod = info_mode_param
+            self.param_mod = CaseInsensitiveDict(info_mode_param)
+
+        # canonicalize
+        self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
 
     def solve(self, path_to_output):
         pass

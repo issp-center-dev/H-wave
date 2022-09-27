@@ -4,6 +4,7 @@ import numpy as np
 import itertools
 import os
 from requests.structures import CaseInsensitiveDict
+from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhf")
 
@@ -105,6 +106,7 @@ class PairLift_UHF(Interact_UHF_base):
 from .base import solver_base
 
 class UHF(solver_base):
+    @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
@@ -130,6 +132,7 @@ class UHF(solver_base):
                 "spin-down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
+    @do_profile
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
@@ -140,6 +143,7 @@ class UHF(solver_base):
             self.green_list[k]["eigen_start"] = label
             label += len(self.green_list[k]["label"])
         self.Green = self._initial_G()
+
         logger.info("Start UHF calculations")
         param_mod = self.param_mod
 
@@ -147,6 +151,7 @@ class UHF(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
+
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
@@ -165,16 +170,19 @@ class UHF(solver_base):
         else:
             logger.warning("UHF calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
 
+    @do_profile
     def _initial_G(self):
         _green_list = self.green_list
         green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         if self.param_ham["Initial"] is not None:
+            logger.info("Load initial green function")
             g_info = self.param_ham["Initial"]
             for site_info, value in g_info.items():
                 site1 = site_info[0] + site_info[1] * self.Nsize
                 site2 = site_info[2] + site_info[3] * self.Nsize
                 green[site1][site2] = value
         else:
+            logger.info("Initialize green function by random numbers")
             np.random.seed(self.param_mod["RndSeed"])
             rand = np.random.rand(2 * self.Nsize * 2 * self.Nsize).reshape(2 * self.Nsize, 2 * self.Nsize)
             for k, info in _green_list.items():
@@ -183,6 +191,7 @@ class UHF(solver_base):
                     green[site1][site2] = 0.01 * (rand[site1][site2] - 0.5)
         return green
 
+    @do_profile
     def _makeham_const(self):
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
@@ -191,12 +200,14 @@ class UHF(solver_base):
             site2 = site_info[2] + site_info[3] * self.Nsize
             self.Ham_trans[site1][site2] += -value
 
+    @do_profile
     def _makeham(self):
         self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         self.Ham = self.Ham_trans.copy()
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
         self.Ham += np.dot(self.Ham_local, green_local).reshape((2 * self.Nsize), (2 * self.Nsize))
 
+    @do_profile
     def _makeham_mat(self):
         # TODO Add Hund, Exchange,  PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
@@ -232,6 +243,7 @@ class UHF(solver_base):
 
         self.Ham_local = self.Ham_local.reshape((2 * self.Nsize) ** 2, (2 * self.Nsize) ** 2)
 
+    @do_profile
     def _diag(self):
         _green_list = self.green_list
         for k, block_g_info in _green_list.items():
@@ -248,6 +260,7 @@ class UHF(solver_base):
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
 
+    @do_profile
     def _fermi(self, mu, eigenvalue):
         fermi = np.zeros(eigenvalue.shape)
         for idx, value in enumerate(eigenvalue):
@@ -257,6 +270,7 @@ class UHF(solver_base):
                 fermi[idx] = 1.0 / (np.exp((value - mu) / self.T) + 1.0)
         return fermi
 
+    @do_profile
     def _green(self):
         _green_list = self.green_list
         # R_SLT = U^{*} in _green
@@ -318,6 +332,7 @@ class UHF(solver_base):
                     for idx2, org_site2 in enumerate(g_label):
                         self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
 
+    @do_profile
     def _calc_energy(self):
         _green_list = self.green_list
         Ene = {}
@@ -355,6 +370,7 @@ class UHF(solver_base):
         self.physics["Ene"] = Ene
         logger.debug(Ene)
 
+    @do_profile
     def _calc_phys(self):
         n = 0
         for site in range(2 * self.Nsize):
@@ -375,9 +391,11 @@ class UHF(solver_base):
         self.physics["Rest"] = np.sqrt(rest) / (2.0 * self.Nsize * self.Nsize)
         self.Green[np.where(abs(self.Green) < 1e-12)] = 0
 
+    @do_profile
     def get_results(self):
         return (self.physics, self.Green)
 
+    @do_profile
     def save_results(self, info_outputfile, green_info):
         path_to_output = info_outputfile["path_to_output"]
 
@@ -423,6 +441,7 @@ class UHF(solver_base):
             with open(os.path.join(path_to_output, info_outputfile["initial"]), "w") as fw:
                 fw.write(output_str)
 
+    @do_profile
     def get_Ham(self):
         return self.Ham
 
