@@ -114,7 +114,9 @@ TOML形式
 
   **形式 :** float型
 
-  **説明 :** 更新時の simple-mixing のパラメータを指定します。
+  **説明 :** Green関数の更新時に、古い値と新しく得られた値を混ぜる(simple-mixing)割合 :math:`\alpha` を指定します。
+  0以上から1以下の実数で指定してください。1にすると古い値は使われません。
+  simple-mixingについては :ref:`アルゴリズムの章 <algorithm_sec>` をご覧ください。
 
 
 - ``RndSeed``

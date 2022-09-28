@@ -1,5 +1,7 @@
 .. highlight:: none
 
+.. _algorithm_sec:
+
 非制限Hartree-Fock法
 ==========================
 
