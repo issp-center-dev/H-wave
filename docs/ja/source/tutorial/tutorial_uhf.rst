@@ -34,6 +34,7 @@ StdFaceライブラリではあらかじめ決められた格子模型やWannier
     $ cd StdFace
     $ mkdir build && cd build
     $ cmake -DUHF=ON ../
+    $ make
 
 コンパイルに成功すると、 ``src`` ディレクトリに実行ファイル ``uhf_dry.out`` ができます。
 
@@ -66,7 +67,7 @@ StdFaceライブラリではあらかじめ決められた格子模型やWannier
 
     $ cd path_to_Hwave/sample/Hubbard
     $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ uhf_dry.out stan.in
+    $ ./uhf_dry.out stan.in
 
 実行終了後、実行ディレクトリに入力ファイルリストファイル、基本パラメータ用ファイル、Hamiltonian作成用ファイルが生成されます。
 

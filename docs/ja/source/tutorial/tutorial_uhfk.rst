@@ -37,7 +37,7 @@ H-waveを波数空間モードで実行するには、入力ファイルとし�
      path_to_input = ""
      # initial = "green_init.dat.npz"
    [file.input.interaction]
-     path_to_input = "dir-model"
+     path_to_input = "../dir-model"
      Geometry = "zvo_geom.dat"
      Transfer = "zvo_hr.dat"
      Hund = "zvo_jr.dat"
