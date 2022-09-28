@@ -10,8 +10,8 @@ eigen
 ``key_eigen_str.npz`` という名前で出力されます。
 ここで、 ``key`` は
 
-- ``mode.param`` セクションで ``Sz`` を指定しない場合: ``free``
-- ``mode.param`` セクションで ``Sz`` を指定した場合: ``spin_up`` , ``spin_up``
+- ``mode.param`` セクションで ``Sz`` を指定しない場合: ``sz-free``
+- ``mode.param`` セクションで ``Sz`` を指定した場合: ``spin-up`` , ``spin-up``
 
 となります ( ``Sz`` を指定した場合には2つのファイルが吐き出されます)。
 以下、データを読み込む例となります。
