@@ -20,14 +20,11 @@ ModParaファイル
     Nsite          16   
     Ncond          16    
     2Sz            0    
-    Lanczos_max    1000 
-    initial_iv     12   
-    exct           1    
-    LanczosEps     14   
-    LanczosTarget  2    
-    LargeValue     12   
-    NumAve         5    
-    ExpecInterval  20   
+    IterationMax   1000
+    EPS            10   
+    Mix            0.5
+    RndSeed        123456789
+
 
 ファイル形式
 ^^^^^^^^^^^^
@@ -83,13 +80,6 @@ ModParaファイル
 共通パラメータ
 ^^^^^^^^^^^^^^
 
--  ``CDataFileHead``
-
-   **形式 :** string型 (空白不可)
-
-   **説明 :**
-   アウトプットファイルのヘッダ。例えば、一体のGreen関数の出力ファイル名が\ **xxx\_Lanczos\_cisajs.dat**\ として出力されます(xxxに\ ``CDataFileHead``\ で指定した文字が記載)。
-
 -  ``Nsite``
 
    **形式 :** int型 (自然数)
@@ -110,7 +100,7 @@ ModParaファイル
    **説明 :**
    :math:`2S_z`\ を指定する整数。グランドカノニカルの場合には使用されません。
 
--  ``initial_iv``
+-  ``RndSeed``
 
    **形式 :** int型 (整数)
 
@@ -119,7 +109,7 @@ ModParaファイル
 UHF法で使用するパラメータ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
--  ``Iteration_max``
+-  ``IterationMax``
 
    **形式 :** int型 (自然数)
 
