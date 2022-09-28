@@ -8,6 +8,7 @@ Basic usage of H-wave
 
     - python 3.x
     - numpy モジュール
+    - scipy モジュール
     - requests モジュール
     - tomli モジュール
 
