@@ -2,7 +2,7 @@
 
 .. _Subsec:green_uhfk:
 
-green (UHFk)
+green
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の計算結果をnpz形式で出力します。
@@ -16,6 +16,8 @@ green (UHFk)
 -  ``s``, ``t``: スピンのインデックス :math:`\sigma, \sigma^\prime`
 
 出力ファイルは、``file.input`` セクションの ``initial`` で指定するグリーン関数の初期データとして使用できます。
+
+副格子を指定している場合は、上記に加えて、副格子を単位としたグリーン関数の値がキー ``green_sublattice`` にバインドされます。並進ベクトルおよび軌道のインデックスは副格子に読み替えます。
    
 .. raw:: latex
 
