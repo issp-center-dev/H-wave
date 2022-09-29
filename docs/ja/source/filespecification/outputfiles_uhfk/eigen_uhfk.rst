@@ -18,7 +18,7 @@ eigen
     eigenvector = data["eigenvector"]
 
 ``eigenvalue`` には波数ごとの固有値 :math:`\lambda_l(\vec{k})` が格納されます。
-副格子を指定している場合は、スーパーセルを単位とした値になります。
+副格子を指定している場合は、副格子を単位とした値になります。
 データ形式は numpy ndarray で、データの並びは ``eigenvalue[k][l]`` です。
 ``k`` は波数ベクトル :math:`\vec{k}` を一次元化したインデックス、
 ``l`` はセル内の固有値のインデックスです。

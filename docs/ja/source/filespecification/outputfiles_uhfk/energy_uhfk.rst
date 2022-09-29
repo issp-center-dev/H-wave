@@ -20,49 +20,49 @@ energy
 ファイル形式
 ^^^^^^^^^^^^
 
--  Energy :math:`[`\ double01\ :math:`]`
+-  Energy_Total = :math:`[`\ energy_total\ :math:`]`
 
--  Energy_band :math:`[`\ double02\ :math:`]`
+-  Energy_Band = :math:`[`\ energy_band\ :math:`]`
 
--  Energy_{type} :math:`[`\ double03\ :math:`]`
+-  Energy_{type} = :math:`[`\ energy_type\ :math:`]`
 
--  NCond :math:`[`\ double04\ :math:`]`
+-  NCond = :math:`[`\ ncond\ :math:`]`
 
--  Sz :math:`[`\ double05\ :math:`]`
+-  Sz = :math:`[`\ sz\ :math:`]`
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ double01\ :math:`]`
+-  :math:`[`\ energy_total\ :math:`]`
 
-   **形式 :** double型
+   **形式 :** float型
 
    **説明 :**
    UHF法で求めた固有ベクトルを用い計算した全エネルギー。
 
--  :math:`[`\ double02\ :math:`]`
+-  :math:`[`\ energy_band\ :math:`]`
 
-   **形式 :** double型
+   **形式 :** float型
 
    **説明 :** UHF法で求めたハミルトニアン行列の固有値のみ考慮した場合のエネルギー。
 
 
--  :math:`[`\ double03\ :math:`]`
+-  :math:`[`\ energy_type\ :math:`]`
 
-   **形式 :** double型
+   **形式 :** float型
 
    **説明 :** 相互作用分のエネルギー。相互作用のタイプごとに出力される。
 
--  :math:`[`\ double04\ :math:`]`
+-  :math:`[`\ ncond\ :math:`]`
 
-   **形式 :** double型
+   **形式 :** float型
 
    **説明 :** 全粒子数。
     :math:`\sum_{i}\langle n_{i}\rangle`
 
--  :math:`[`\ double04\ :math:`]`
+-  :math:`[`\ sz\ :math:`]`
 
-   **形式 :** double型
+   **形式 :** float型
 
    **説明 :** 全 :math:`S_z` 。
     :math:`\sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2`

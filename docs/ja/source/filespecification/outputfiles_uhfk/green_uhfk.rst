@@ -5,7 +5,7 @@
 green
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の計算結果をnpz形式で出力します。
+一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom{\dagger}}\rangle`\ の計算結果をnpz形式で出力します。
 ファイル名は環境設定ファイルの中の ``file.output`` セクションでキーワード ``green`` を用いて指定されます。
 
 データはキー ``green`` にバインドされます。
@@ -13,7 +13,7 @@ green
 
 -  ``r``: 並進ベクトル :math:`[r_x\ r_y\ r_z]` を1次元化したインデックス
 -  ``a``, ``b``: 軌道のインデックス :math:`\alpha, \beta`
--  ``s``, ``t``: スピンのインデックス :math:`\sigma, \sigma^\prime`
+-  ``s``, ``t``: スピンのインデックス :math:`\sigma_1, \sigma_2`
 
 出力ファイルは、``file.input`` セクションの ``initial`` で指定するグリーン関数の初期データとして使用できます。
 
