@@ -14,11 +14,11 @@ H-waveで使用する入力ファイル(\*def)に関して説明します。
 
 (2) Basic parameters:
     
-    **ModPara**: 計算時に必要な基本的なパラメーター(サイトの数、電子数、Iteration回数の上限など)を設定します。
+    **ModPara**: 計算時に必要な基本的なパラメーター(サイトの数、電子数、反復回数の上限など)を設定します。
 
 (3) Hamiltonian:
     
-    :math:`{\mathcal H}\Phi` のHamiltonianを電子系の表式により指定します。
+    Hamiltonianを電子系の表式により指定します。
     具体的には以下のファイルで指定されます。
     
     | **Trans**:
