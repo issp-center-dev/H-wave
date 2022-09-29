@@ -12,8 +12,8 @@ T. B. A.
 ライセンス
 ~~~~~~~~~~
 
-| 本ソフトウェアのプログラムパッケージおよびソースコード一式はGNU
-  General Public License version 3（GPL v3）に準じて配布されています。
+| 本ソフトウェアのプログラムパッケージおよびソースコード一式は GNU
+  General Public License version 3 (GPL v3) に準じて配布されています。
   
 コピーライト
 ~~~~~~~~~~~~
@@ -54,5 +54,6 @@ T. B. A.
 
 以下の環境で動作することを確認しています。
 
--  Mac + gcc
+- Mac + python3 (brew)
 
+- Ubuntu Linux + python3 (miniconda)
