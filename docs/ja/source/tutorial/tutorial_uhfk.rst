@@ -8,7 +8,7 @@ H-waveを波数空間モード(UHFk)で実行するには、入力ファイル�
 
 を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。
 
-以下では、 ``sample/UHFk`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
+以下では、 ``sample/Hubbard_square/UHFk`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
 相互作用定義ファイルは StdFace ライブラリを用いて生成します。
 
 
@@ -44,7 +44,7 @@ StdFaceライブラリのコンパイルと実行
     t = 1.0
     V = 4.0
     Ncond = 16
-    eps = 10
+    eps = 8
     calcmode = "uhfk"
     exportall = 0
 
@@ -81,14 +81,14 @@ StdFaceライブラリのコンパイルと実行
    [mode]
      mode = "UHFk"
    [mode.param]
-     2Sz = "free"
+     # 2Sz = 0
      Ncond = 16
      IterationMax = 1000
      EPS = 8
      Mix = 0.5
      RndSeed = 123456789
-     T = 1.0
      # ene_cutoff = 1.0e+2
+     T = 0.0
      CellShape = [ 4, 4, 1 ]
      SubShape = [ 2, 2, 1 ]
    [file]
@@ -96,9 +96,9 @@ StdFaceライブラリのコンパイルと実行
      path_to_input = ""
      # initial = "green_init.dat.npz"
    [file.input.interaction]
-     path_to_input = ""
-     Geometry = "zvo_geom.dat"
-     Transfer = "zvo_hr.dat"
+     path_to_input = "./"
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
      CoulombInter = "coulombinter.dat"
    [file.output]
      path_to_output = "output"
@@ -112,7 +112,7 @@ StdFaceライブラリのコンパイルと実行
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ログ出力に関する設定を行います。
-``print_level`` で標準出力のレベル、``print_step`` でログ出力を行う繰り返し間隔を指定します。
+``print_level`` で標準出力のレベル、 ``print_step`` でログ出力を行う繰り返し間隔を指定します。
 
 ``[mode]`` セクション
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
