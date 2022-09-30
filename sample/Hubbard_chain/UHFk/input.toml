@@ -15,8 +15,9 @@
   RndSeed = 123456789
   T = 0.0
   # ene_cutoff = 1.0e+2
-  CellShape = [ 6, 1, 1 ]
-  SubShape = [ 2, 1, 1 ]
+  # N.B. chain extends along y-axis by convention
+  CellShape = [ 1, 6, 1 ]
+  SubShape = [ 1, 2, 1 ]
 
 [file]
 [file.input]
