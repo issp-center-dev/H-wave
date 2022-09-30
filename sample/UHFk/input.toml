@@ -2,44 +2,32 @@
   print_level = 1
 
 [mode]
-  #mode = "UHF"
   mode = "UHFk"
   # flag_fock = True
 
 [mode.param]
-  Nsite = 8
   # 2Sz = 0
-  Ncond = 1280
-  IterationMax = 20
+  Ncond = 128
+  IterationMax = 1000
   EPS = 8
   Mix = 0.5
   RndSeed = 123456789
-  # EpsSlater = 6
-  # NMPTrans = 0
-  # CDataFileHead = "zvo"
-  # CParaFileHead = "zqp"
   # ene_cutoff = 1.0e+2
-  T = 1.0
+  T = 0.0
   CellShape = [ 8, 8, 8 ]
+  #SubShape = [ 2, 2, 2 ]
 
 [file]
 [file.input]
   path_to_input = ""
-  # namelist = "namelist.def"
   # initial = "green_init.dat.npz"
 
 [file.input.interaction]
-  path_to_input = "dir-model"
+  path_to_input = "../dir-model"
   Geometry = "zvo_geom.dat"
   Transfer = "zvo_hr.dat"
   Hund = "zvo_jr.dat"
-  # Coulomb = "zvo_ur.dat"
-  # CoulombIntra = "coulomb_intra.dat"
-  # CoulombInter = "coulomb_inter.dat"
-  # Ising = "ising.dat"
-  # Exchange = "exchange.dat"
-  # PairLift = "pairlift.dat"
-  # PairHop = "pairhop.dat"
+  Coulomb = "zvo_ur.dat"
 
 [file.output]
   path_to_output = "output"
