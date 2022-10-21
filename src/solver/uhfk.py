@@ -17,6 +17,7 @@ class UHFk(solver_base):
         self._init_lattice()
         self._init_orbit()
         # self._dump_param_ham()
+        self._check_cellsize()
         self._init_interaction()
         # self._dump_param_ham()
 
@@ -329,6 +330,38 @@ class UHFk(solver_base):
                 for (irvec,orbvec), v in self.param_ham[type].items():
                     print("\t",irvec,orbvec," = ",v)
                 
+    @do_profile
+    def _check_cellsize(self):
+        err = 0
+        for k in self.param_ham.keys():
+            if k in ["Geometry", "Initial"]:
+                pass
+            else:
+                min_r, max_r = [0,0,0], [0,0,0]
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    for i in range(3):
+                        min_r[i] = irvec[i] if irvec[i] < min_r[i] else min_r[i]
+                        max_r[i] = irvec[i] if irvec[i] > max_r[i] else max_r[i]
+                width_r = [ max_r[i]-min_r[i]+1 for i in range(3) ]
+
+                logger.debug(
+                    k+": range=({},{})({},{})({},{}), width={},{},{}, cellshape={},{},{}".format(
+                        min_r[0], max_r[0],
+                        min_r[1], max_r[1],
+                        min_r[2], max_r[2],
+                        width_r[0], width_r[1], width_r[2],
+                        self.cellshape[0], self.cellshape[1], self.cellshape[2]
+                ))
+
+                if all([ width_r[i] <= self.cellshape[i] for i in range(3) ]):
+                    logger.debug("range check for {} ok.".format(k))
+                else:
+                    err += 1
+                    logger.error("range check for {} failed.".format(k))
+        if err > 0:
+            logger.error("_check_cellsize failed. interaction range exceeds cell shape.")
+            exit(1)
+
     @do_profile
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
