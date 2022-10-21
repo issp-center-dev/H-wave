@@ -20,7 +20,7 @@
 
     [mode]
     mode = "UHF"
-    flag_fock = "True"
+    flag_fock = true
     [mode.param]
     T = 0.1
     2Sz = 0
@@ -56,9 +56,9 @@ TOML形式
 
 - ``flag_fock``
 
-  **形式 :** string型 (デフォルトは ``True`` )
+  **形式 :** boolean型 (デフォルトは ``true`` )
 
-  **説明 :** ``True`` の場合にはFock項を考慮し、 ``False`` の場合にはHartree項のみ取り扱います。
+  **説明 :** ``true`` の場合にはFock項を考慮し、 ``false`` の場合にはHartree項のみ取り扱います。
 
 
 ``mode.param`` セクション
