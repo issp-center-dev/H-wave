@@ -1,21 +1,23 @@
 [log]
   print_level = 1
+  print_step = 1
 
 [mode]
   mode = "UHFk"
-  flag_fock = true
+  #flag_fock = "True"
 
 [mode.param]
   # 2Sz = 0
-  Ncond = 128
-  IterationMax = 1000
-  EPS = 8
+  Ncond = 6
+  IterationMax = 500
+  EPS = 10
   Mix = 0.5
   RndSeed = 123456789
-  # ene_cutoff = 1.0e+2
   T = 0.0
-  CellShape = [ 8, 8, 8 ]
-  #SubShape = [ 2, 2, 2 ]
+  # ene_cutoff = 1.0e+2
+  # N.B. chain extends along y-axis by convention
+  CellShape = [ 1, 6, 1 ]
+  SubShape = [ 1, 2, 1 ]
 
 [file]
 [file.input]
@@ -23,11 +25,10 @@
   # initial = "green_init.dat.npz"
 
 [file.input.interaction]
-  path_to_input = "../dir-model"
-  Geometry = "zvo_geom.dat"
-  Transfer = "zvo_hr.dat"
-  Hund = "zvo_jr.dat"
-  Coulomb = "zvo_ur.dat"
+  path_to_input = "./"
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
 
 [file.output]
   path_to_output = "output"

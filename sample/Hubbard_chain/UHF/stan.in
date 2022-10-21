@@ -1,0 +1,9 @@
+model = "Hubbard"
+lattice = "chain"
+L = 6
+t = 1.0
+//J = 8.0
+U = 8.0
+Ncond = 6
+//calcmode = "uhfk"
+//exportall = 0
