@@ -62,7 +62,6 @@ class QMLSInput():
                 if not match:
                     words = line.split()
                     value[words[0]] = words[1:]
-                    print(words,value[words[0]])
         return value
 
     def _read_ham(self, file_key, value_type="real"):

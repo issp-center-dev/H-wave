@@ -1,5 +1,7 @@
 [log]
 print_level = 1
+[mode]
+mode = "UHF"
 [file]
 [file.input]
 path_to_input = ""
@@ -9,3 +11,4 @@ path_to_output = "output"
 energy = "energy.dat"
 eigen = "eigen.dat"
 green = "green.dat"
+fij = "fij.dat"
