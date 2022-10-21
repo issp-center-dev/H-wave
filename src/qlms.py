@@ -39,7 +39,10 @@ def main():
     # logging.basicConfig(level=logging.DEBUG, format=fmt)
     logging.basicConfig(level=logging.INFO, format=fmt)
 
-    mode = info_mode.get("mode", None)
+    if "mode" not in info_mode:
+        logger.error("mode is not defined in [mode].")
+        exit(1)
+    mode = info_mode["mode"]
     if mode == "UHF":
         logger.info("Read def files")
         read_io = qlmsio.read_input.QMLSInput(path_to_namelist)

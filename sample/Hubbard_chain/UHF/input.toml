@@ -5,7 +5,7 @@ print_step = 1
 mode = "UHF"
 [file]
 [file.input]
-path_to_input = ""
+path_to_input = "./"
 namelist = "namelist.def"
 [file.output]
 path_to_output = "output"

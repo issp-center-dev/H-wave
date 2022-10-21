@@ -37,7 +37,6 @@ H-waveで使用する入力ファイル(\*def)に関して説明します。
       :math:`c_ {i \uparrow}^{\dagger}c_{j\uparrow}c_{i \downarrow}^{\dagger}c_{j  \downarrow}`\ で表される相互作用を指定します。
     | **Exchange**:
       :math:`S_i^+ S_j^-`\ で表される相互作用を指定します。  
-    | **Ising**: :math:`S_i^z S_j^z`\ で表される相互作用を指定します。  
     | **PairLift**:
       :math:`c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}`\ で表される相互作用を指定します。	    
 	    
@@ -60,7 +59,6 @@ H-waveで使用する入力ファイル(\*def)に関して説明します。
    Hund_file_ja
    PairHop_file_ja
    Exchange_file_ja
-   Ising_file_ja
    PairLift_file_ja
    Initial_file_ja
    OneBodyG_file_ja
