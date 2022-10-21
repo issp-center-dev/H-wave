@@ -108,6 +108,7 @@ from .base import solver_base
 class UHF(solver_base):
     @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
+        self.name = "uhf"
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
 
@@ -151,7 +152,7 @@ class UHF(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
-
+        import time
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
@@ -202,10 +203,12 @@ class UHF(solver_base):
 
     @do_profile
     def _makeham(self):
+        import time
         self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         self.Ham = self.Ham_trans.copy()
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
-        self.Ham += np.dot(self.Ham_local, green_local).reshape((2 * self.Nsize), (2 * self.Nsize))
+        ham_dot_green = np.dot(self.Ham_local, green_local)
+        self.Ham += ham_dot_green.reshape((2 * self.Nsize), (2 * self.Nsize))
 
     @do_profile
     def _makeham_mat(self):

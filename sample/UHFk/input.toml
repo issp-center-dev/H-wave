@@ -3,7 +3,7 @@
 
 [mode]
   mode = "UHFk"
-  # flag_fock = True
+  flag_fock = true
 
 [mode.param]
   # 2Sz = 0
