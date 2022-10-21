@@ -4,6 +4,7 @@ import numpy as np
 import itertools
 import os
 from requests.structures import CaseInsensitiveDict
+from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhf")
 
@@ -50,8 +51,8 @@ class CoulombIntra_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 0, site_info[0], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class CoulombInter_UHF(Interact_UHF_base):
@@ -59,8 +60,8 @@ class CoulombInter_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                param_tmp[site_info] = value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value
         return param_tmp
 
 class Hund_UHF(Interact_UHF_base):
@@ -68,28 +69,28 @@ class Hund_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i in range(2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
-                param_tmp[site_info] = -value
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_i, site_info[1], spin_i])
+                param_tmp[sinfo] = -value
         return param_tmp
 
 class PairHop_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
-            param_tmp[site_info] += value
-            site_info = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[0], 1, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[0], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Exchange_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[1], 0, site_info[1], 1, site_info[0], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[0], 1, site_info[1], 1, site_info[1], 0, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 class Ising_UHF(Interact_UHF_base):
@@ -97,25 +98,24 @@ class Ising_UHF(Interact_UHF_base):
         param_tmp = {}
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
-                site_info = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                if spin_i != spin_j:
-                    value *= -1.0
-                param_tmp[site_info] = value * (1-2*spin_i) * (1-2*spin_j)
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
         return param_tmp
 
 class PairLift_UHF(Interact_UHF_base):
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
-            site_info = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
-            param_tmp[site_info] = value
-            site_info = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
-            param_tmp[site_info] = value
+            sinfo = tuple([site_info[0], 0, site_info[0], 1, site_info[1], 0, site_info[1], 1])
+            param_tmp[sinfo] = value
+            sinfo = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
+            param_tmp[sinfo] = value
         return param_tmp
 
 from .base import solver_base
 
 class UHF(solver_base):
+    @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
@@ -141,6 +141,7 @@ class UHF(solver_base):
                 "spin-down": {"label": [i for i in range(self.Nsize, 2 * self.Nsize)], "value": -0.5,
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
+    @do_profile
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
@@ -151,6 +152,7 @@ class UHF(solver_base):
             self.green_list[k]["eigen_start"] = label
             label += len(self.green_list[k]["label"])
         self.Green = self._initial_G()
+
         logger.info("Start UHF calculations")
         param_mod = self.param_mod
 
@@ -158,6 +160,7 @@ class UHF(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
+
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
@@ -176,16 +179,19 @@ class UHF(solver_base):
         else:
             logger.warning("UHF calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
 
+    @do_profile
     def _initial_G(self):
         _green_list = self.green_list
         green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         if self.param_ham["Initial"] is not None:
+            logger.info("Load initial green function")
             g_info = self.param_ham["Initial"]
             for site_info, value in g_info.items():
                 site1 = site_info[0] + site_info[1] * self.Nsize
                 site2 = site_info[2] + site_info[3] * self.Nsize
                 green[site1][site2] = value
         else:
+            logger.info("Initialize green function by random numbers")
             np.random.seed(self.param_mod["RndSeed"])
             rand = np.random.rand(2 * self.Nsize * 2 * self.Nsize).reshape(2 * self.Nsize, 2 * self.Nsize)
             for k, info in _green_list.items():
@@ -194,6 +200,7 @@ class UHF(solver_base):
                     green[site1][site2] = 0.01 * (rand[site1][site2] - 0.5)
         return green
 
+    @do_profile
     def _makeham_const(self):
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
@@ -202,12 +209,14 @@ class UHF(solver_base):
             site2 = site_info[2] + site_info[3] * self.Nsize
             self.Ham_trans[site1][site2] += -value
 
+    @do_profile
     def _makeham(self):
         self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         self.Ham = self.Ham_trans.copy()
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
         self.Ham += np.dot(self.Ham_local, green_local).reshape((2 * self.Nsize), (2 * self.Nsize))
 
+    @do_profile
     def _makeham_mat(self):
         # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
@@ -245,6 +254,7 @@ class UHF(solver_base):
 
         self.Ham_local = self.Ham_local.reshape((2 * self.Nsize) ** 2, (2 * self.Nsize) ** 2)
 
+    @do_profile
     def _diag(self):
         _green_list = self.green_list
         for k, block_g_info in _green_list.items():
@@ -261,15 +271,17 @@ class UHF(solver_base):
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
 
-    def _fermi(self, myu, eigenvalue):
+    @do_profile
+    def _fermi(self, mu, eigenvalue):
         fermi = np.zeros(eigenvalue.shape)
         for idx, value in enumerate(eigenvalue):
-            if (value - myu) / self.T > self.ene_cutoff:
+            if (value - mu) / self.T > self.ene_cutoff:
                 fermi[idx] = 0
             else:
-                fermi[idx] = 1.0 / (np.exp((value - myu) / self.T) + 1.0)
+                fermi[idx] = 1.0 / (np.exp((value - mu) / self.T) + 1.0)
         return fermi
 
+    @do_profile
     def _green(self):
         _green_list = self.green_list
         # R_SLT = U^{*} in _green
@@ -295,9 +307,9 @@ class UHF(solver_base):
         else: # for finite temperatures
             from scipy import optimize
 
-            def _calc_delta_n(myu):
+            def _calc_delta_n(mu):
                 n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec).real
-                fermi = self._fermi(myu, eigenvalue)
+                fermi = self._fermi(mu, eigenvalue)
                 return np.dot(n_eigen, fermi)-occupied_number
 
             self.Green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
@@ -306,15 +318,32 @@ class UHF(solver_base):
                 eigenvalue = self.green_list[k]["eigenvalue"]
                 eigenvec = self.green_list[k]["eigenvector"]
                 occupied_number = block_g_info["occupied"]
-                #determine myu
-                myu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
-                self.green_list[k]["myu"] = myu
-                fermi = self._fermi(myu, eigenvalue)
+
+                #determine mu
+                mu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
+
+                is_converged = False
+
+                if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+                    logger.info("+++ find mu: try bisection")
+                    mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.info("+++ find mu: try newton")
+                    mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.info("+++ find mu: not converged. abort")
+                    exit(1)
+
+                self.green_list[k]["mu"] = mu
+                fermi = self._fermi(mu, eigenvalue)
                 tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
                 for idx1, org_site1 in enumerate(g_label):
                     for idx2, org_site2 in enumerate(g_label):
                         self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
 
+    @do_profile
     def _calc_energy(self):
         _green_list = self.green_list
         Ene = {}
@@ -329,17 +358,17 @@ class UHF(solver_base):
             for k, block_g_info in _green_list.items():
                 eigenvalue = self.green_list[k]["eigenvalue"]
                 eigenvec = self.green_list[k]["eigenvector"]
-                myu = self.green_list[k]["myu"]
-                fermi = self._fermi(myu, eigenvalue)
+                mu = self.green_list[k]["mu"]
+                fermi = self._fermi(mu, eigenvalue)
 
                 ln_Ene = np.zeros(eigenvalue.shape)
                 for idx, value in enumerate(eigenvalue):
-                    if (value - myu) / self.T > self.ene_cutoff:
-                        ln_Ene[idx] = np.log1p(np.exp(-(value - myu) / self.T))
+                    if (value - mu) / self.T > self.ene_cutoff:
+                        ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
                     else:
-                        ln_Ene[idx] = -(value - myu) / self.T
+                        ln_Ene[idx] = -(value - mu) / self.T
                 tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
-                Ene["band"] += myu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
+                Ene["band"] += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
@@ -352,6 +381,7 @@ class UHF(solver_base):
         self.physics["Ene"] = Ene
         logger.debug(Ene)
 
+    @do_profile
     def _calc_phys(self):
         n = 0
         for site in range(2 * self.Nsize):
@@ -372,9 +402,11 @@ class UHF(solver_base):
         self.physics["Rest"] = np.sqrt(rest) / (2.0 * self.Nsize * self.Nsize)
         self.Green[np.where(abs(self.Green) < 1e-12)] = 0
 
+    @do_profile
     def get_results(self):
         return (self.physics, self.Green)
 
+    @do_profile
     def save_results(self, info_outputfile, green_info):
         path_to_output = info_outputfile["path_to_output"]
 
@@ -462,8 +494,6 @@ class UHF(solver_base):
                 else: 
                     logger.warning("NOT IMPLEMENTED: Sz !=0 but Sz even: this case will be implemented in near future")
 
-
+    @do_profile
     def get_Ham(self):
         return self.Ham
-
-
