@@ -419,7 +419,7 @@ class UHFk(solver_base):
             
     @do_profile
     def _initial_green(self):
-        logger.info(">>> _initial_green")
+        logger.debug(">>> _initial_green")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -452,7 +452,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _make_ham_trans(self):
-        logger.info(">>> _make_ham_trans")
+        logger.debug(">>> _make_ham_trans")
         
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -491,7 +491,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _make_ham_inter(self):
-        logger.info(">>> _make_ham_inter")
+        logger.debug(">>> _make_ham_inter")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -731,7 +731,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _make_ham(self):
-        logger.info(">>> _make_ham")
+        logger.debug(">>> _make_ham")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -749,13 +749,13 @@ class UHFk(solver_base):
         ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
 
         # transfer term  T_{ab}(k) (note convention)
-        logger.info("Transfer")
+        logger.debug("Transfer")
         ham += self.ham_trans
         
         # interaction term: Coulomb type
         for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
             if self.inter_table[type] is not None:
-                logger.info(type)
+                logger.debug(type)
 
                 # coefficient of interaction term J_{ab}(r)
                 jab_r = self.inter_table[type].reshape(nvol,norb,norb)
@@ -783,7 +783,7 @@ class UHFk(solver_base):
         # interaction term: PairHop type
         for type in ['PairHop']:
             if self.inter_table[type] is not None:
-                logger.info(type)
+                logger.debug(type)
 
                 # coefficient of interaction term J_{ab}(r)
                 jab_r = self.inter_table[type].reshape(nvol,norb,norb)
@@ -806,7 +806,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _diag(self):
-        logger.info(">>> _diag")
+        logger.debug(">>> _diag")
 
         # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
         mat = self.ham
@@ -820,7 +820,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _green(self):
-        logger.info(">>> _green")
+        logger.debug(">>> _green")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -894,20 +894,20 @@ class UHFk(solver_base):
             is_converged = False
 
             if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
-                logger.info("+++ find mu: try bisection")
+                logger.debug("+++ find mu: try bisection")
                 mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
                 is_converged = r.converged
             if not is_converged:
-                logger.info("+++ find mu: try newton")
+                logger.debug("+++ find mu: try newton")
                 mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
                 is_converged = r.converged
             if not is_converged:
-                logger.error("+++ find mu: not converged. abort")
+                logger.error("find mu: not converged. abort")
                 exit(1)
 
             self._green_list["mu"] = mu
 
-            logger.info("mu = {}".format(mu))
+            logger.debug("mu = {}".format(mu))
 
             dist = _fermi(self.T, mu, w)
 
@@ -925,7 +925,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _calc_phys(self):
-        logger.info(">>> _calc_phys")
+        logger.debug(">>> _calc_phys")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -939,7 +939,7 @@ class UHFk(solver_base):
         n = np.sum(np.diagonal(gab_r[0])) * nvol
         self.physics["NCond"] = n.real
 
-        logger.info("ncond = {}".format(n))
+        logger.debug("ncond = {}".format(n))
 
         # expectation value of Sz
         gab_r = self.Green
@@ -950,13 +950,13 @@ class UHFk(solver_base):
 
         self.physics["Sz"] = 0.5 * sz.real
 
-        logger.info("sz = {}".format(sz))
+        logger.debug("sz = {}".format(sz))
 
         # residue
         rest = np.linalg.norm(self.Green - self.Green_prev)
         self.physics["Rest"] = rest / np.size(self.Green) * 2
 
-        logger.info("rest = {}".format(rest))
+        logger.debug("rest = {}".format(rest))
 
         # update
         mix = self.param_mod["Mix"]
@@ -969,7 +969,7 @@ class UHFk(solver_base):
 
     @do_profile
     def _calc_energy(self):
-        logger.info(">>> _calc_energy")
+        logger.debug(">>> _calc_energy")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
@@ -985,7 +985,7 @@ class UHFk(solver_base):
         if self.T == 0:
             ev = np.sort(self._green_list["eigenvalue"].flatten())
             energy["Band"] = np.sum(ev[:occupied_number])
-            logger.info("energy: Band = {}".format(energy["Band"]))
+            logger.debug("energy: Band = {}".format(energy["Band"]))
             energy_total += energy["Band"]
         else:
             w = self._green_list["eigenvalue"]
@@ -1010,7 +1010,7 @@ class UHFk(solver_base):
 
             energy["Band"] = e_band.real
             energy_total += energy["Band"]
-            logger.info("energy: Band = {}".format(e_band))
+            logger.debug("energy: Band = {}".format(e_band))
 
         for type in self.inter_table.keys():
             if self.inter_table[type] is not None:
@@ -1036,7 +1036,7 @@ class UHFk(solver_base):
                     energy[type] = -ee/2.0*nvol
 
                 energy_total += energy[type].real
-                logger.info("energy: {} = {}".format(type, energy[type]))
+                logger.debug("energy: {} = {}".format(type, energy[type]))
             else:
                 # logger.info("energy: {} skip".format(type))
                 pass
