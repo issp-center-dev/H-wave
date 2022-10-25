@@ -365,11 +365,14 @@ class UHFk(solver_base):
     @do_profile
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
+        print_check = self.info_log.get("print_check", None)
 
         logger.info("Start UHFk calculations")
 
         if print_level > 0:
             logger.info("step, rest, energy, NCond, Sz")
+        if print_check is not None:
+            fch = open(os.path.join(path_to_output, print_check), "w")
 
         self._make_ham_trans() # T_ab(k)
         self._make_ham_inter() # J_ab(r)
@@ -392,6 +395,14 @@ class UHFk(solver_base):
                             self.physics["Ene"]["Total"],
                             self.physics["NCond"],
                             self.physics["Sz"]))
+            if print_check is not None:
+                fch.write("{}, {:.8g}, {:.8g}, {:.4g}, {:.4g}\n"
+                          .format(i_step,
+                                  self.physics["Rest"],
+                                  self.physics["Ene"]["Total"],
+                                  self.physics["NCond"],
+                                  self.physics["Sz"]))
+
             if self.physics["Rest"] < self.param_mod["eps"]:
                 is_converged = True
                 break
@@ -402,6 +413,9 @@ class UHFk(solver_base):
         else:
             logger.info("UHFk calculation failed: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
+
+        if print_check is not None:
+            fch.close()
             
     @do_profile
     def _initial_green(self):

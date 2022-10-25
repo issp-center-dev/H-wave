@@ -137,6 +137,9 @@ class UHF(solver_base):
     def solve(self, path_to_output):
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
+        print_check = self.info_log.get("print_check", None)
+        if print_check is not None:
+            fch = open(os.path.join(path_to_output, print_check), "w")
         logger.info("Set Initial Green's functions")
         # Get label for eigenvalues
         label = 0
@@ -163,6 +166,13 @@ class UHF(solver_base):
                 logger.info(
                     "{}, {:.8g}, {:.8g}, {:.4g}, {:.4g} ".format(i_step, self.physics["Rest"], self.physics["Ene"]["Total"],
                                                                  self.physics["NCond"], self.physics["Sz"]))
+            if print_check is not None:
+                fch.write(
+                    "{}, {:.8g}, {:.8g}, {:.4g}, {:.4g}\n".format(i_step,
+                                                                 self.physics["Rest"],
+                                                                 self.physics["Ene"]["Total"],
+                                                                 self.physics["NCond"],
+                                                                 self.physics["Sz"]))
             if self.physics["Rest"] < param_mod["eps"]:
                 break
 
@@ -170,6 +180,9 @@ class UHF(solver_base):
             logger.info("UHF calculation is succeeded: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
         else:
             logger.warning("UHF calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
+
+        if print_check is not None:
+            fch.close()
 
     @do_profile
     def _initial_G(self):
