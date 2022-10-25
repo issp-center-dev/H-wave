@@ -325,20 +325,16 @@ class UHF(solver_base):
                 occupied_number = block_g_info["occupied"]
 
                 #determine mu
-                mu = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1])
-
                 is_converged = False
 
-                if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
-                    logger.info("+++ find mu: try bisection")
-                    mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+                if (_calc_delta_n(eigenvalue[0]) * _calc_delta_n(eigenvalue[-1])) < 0.0:
+                    mu, r = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1], full_output=True, disp=False)
                     is_converged = r.converged
                 if not is_converged:
-                    logger.info("+++ find mu: try newton")
-                    mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+                    mu, r = optimize.newton(_calc_delta_n, eigenvalue[0], full_output=True)
                     is_converged = r.converged
                 if not is_converged:
-                    logger.info("+++ find mu: not converged. abort")
+                    logger.error("find mu: not converged. abort")
                     exit(1)
 
                 self.green_list[k]["mu"] = mu
