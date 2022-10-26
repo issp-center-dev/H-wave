@@ -364,10 +364,7 @@ class UHF(solver_base):
 
                 ln_Ene = np.zeros(eigenvalue.shape)
                 for idx, value in enumerate(eigenvalue):
-                    if (value - mu) / self.T > self.ene_cutoff:
-                        ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
-                    else:
-                        ln_Ene[idx] = -(value - mu) / self.T
+                    ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
                 tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
                 Ene["band"] += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
 
