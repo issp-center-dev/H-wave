@@ -1002,7 +1002,9 @@ class UHFk(solver_base):
                 #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
                 return v
 
-            ln_e = np.log1p(np.exp(-(w - mu) / T))
+            wt = -(w - mu) / T
+            mask_ = wt < self.ene_cutoff
+            ln_e = np.where( mask_, np.log1p(np.exp(wt)), wt)
 
             nn = np.einsum('kal,kl,kal->', np.conjugate(v), _fermi(T, mu, w), v)
 
