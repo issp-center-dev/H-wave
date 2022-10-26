@@ -10,9 +10,9 @@ Trans指定ファイル
   .. math::
 
      \begin{aligned}
-     \mathcal{H} +=-\sum_{ij\sigma_1\sigma_2} t_{ij\sigma_1\sigma_2}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\end{aligned}
+     \mathcal{H} = -\sum_{ij\sigma_1\sigma_2} t_{ij\sigma_1\sigma_2}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\end{aligned}
 
-に対するTransfer積分\ :math:`t_{ij\sigma_1\sigma_2}`\ を指定します。以下にファイル名を記載します。
+に対するTransfer積分\ :math:`t_{ij\sigma_1\sigma_2}`\ を指定します。以下にファイル例を記載します。
 
 ::
 
@@ -44,52 +44,50 @@ Trans指定ファイル
 
 -  1行: ヘッダ(何が書かれても問題ありません)。
 
--  2行: [string01] [int01]
+-  2行: [ntransfer] [count]
 
 -  3-5行: ヘッダ(何が書かれても問題ありません)。
 
--  6行以降: [int02]  [int03]  [int04]  [int05]  [double01]  [double02]
+-  6行以降: [i]  [s1]  [j]  [s2]  [v.real]  [v.imag]
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ string01\ :math:`]`
+-  :math:`[`\ ntransfer\ :math:`]`
 
    **形式 :** string型 (空白不可)
 
    **説明 :** Transfer総数のキーワード名を指定します(任意)。
 
--  :math:`[`\ int01\ :math:`]`
+-  :math:`[`\ count\ :math:`]`
 
    **形式 :** int型 (空白不可)
 
    **説明 :** Transferの総数を指定します。
 
--  :math:`[`\ int02\ :math:`]`, :math:`[`\ int04\ :math:`]`
+-  :math:`[`\ i\ :math:`]`, :math:`[`\ j\ :math:`]`
 
    **形式 :** int型 (空白不可)
 
    **説明 :**
    サイト番号を指定する整数。0以上\ ``Nsite``\ 未満で指定します。
 
--  :math:`[`\ int03\ :math:`]`, :math:`[`\ int05\ :math:`]`
+-  :math:`[`\ s1\ :math:`]`, :math:`[`\ s2\ :math:`]`
 
    **形式 :** int型 (空白不可)
 
-   | **説明 :** スピンを指定する整数。
-   | 0: アップスピン
-   | 1: ダウンスピン
-   | を選択することが出来ます。
+   **説明 :** スピンを指定する整数。
+   0=アップスピン, 1=ダウンスピン のいずれかの値を取ります。
 
--  :math:`[`\ double01\ :math:`]`
+-  :math:`[`\ v.real\ :math:`]`
 
-   **形式 :** double型 (空白不可)
+   **形式 :** float型 (空白不可)
 
    **説明 :** :math:`t_{ij\sigma_1\sigma_2}`\ の実部を指定します。
 
--  :math:`[`\ double02\ :math:`]`
+-  :math:`[`\ v.imag\ :math:`]`
 
-   **形式 :** double型 (空白不可)
+   **形式 :** float型 (空白不可)
 
    **説明 :** :math:`t_{ij\sigma_1\sigma_2}`\ の虚部を指定します。
 
@@ -106,7 +104,7 @@ Trans指定ファイル
 
 -  :math:`[`\ int01\ :math:`]`\ と定義されているTrasferの総数が異なる場合はエラー終了します。
 
--  :math:`[`\ int02\ :math:`]`-:math:`[`\ int05\ :math:`]`\ を指定する際、範囲外の整数を指定した場合はエラー終了します。
+-  :math:`[`\ i\ :math:`]`, :math:`[`\ j\ :math:`]`, :math:`[`\ s1\ :math:`]`, :math:`[`\ s2\ :math:`]`\ を指定する際、範囲外の整数を指定した場合はエラー終了します。
 
 
 .. raw:: latex

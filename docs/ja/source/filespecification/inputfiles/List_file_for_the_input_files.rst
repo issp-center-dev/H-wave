@@ -20,18 +20,18 @@
 ファイル形式
 ^^^^^^^^^^^^
 
-[string01] [string02]
+[keyword] [filename]
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ string01\ :math:`]`
+-  :math:`[`\ keyword\ :math:`]`
 
    **形式 :** string型 (固定)
 
    **説明 :** キーワードを指定します。
 
--  :math:`[`\ string02\ :math:`]`
+-  :math:`[`\ filename\ :math:`]`
 
    **形式 :** string型
 

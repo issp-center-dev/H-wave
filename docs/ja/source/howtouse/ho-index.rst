@@ -2,12 +2,13 @@
 Basic usage of H-wave
 ***********************************
 
-- 要件
+- 必要なライブラリ・環境
 
-    H-waveを利用するには、以下の環境が必要です。
+    H-waveを利用するには、以下のプログラムとライブラリが必要です。
 
     - python 3.x
     - numpy モジュール
+    - scipy モジュール
     - requests モジュール
     - tomli モジュール
 
@@ -17,7 +18,7 @@ Basic usage of H-wave
 
 - ダウンロード方法
 
-    gitを持っている場合には、以下のコマンドでH-waveをダウンロードすることができます。
+    gitを利用できる場合は、以下のコマンドでH-waveをダウンロードすることができます。
 
     .. code-block:: bash
 
@@ -49,7 +50,8 @@ Basic usage of H-wave
       |   |   |-- std.in
       |   |-- UHFk/
       |   |   |-- input.toml
-      |   |   |-- dir-model/
+      |   |   |-- std.in
+      |   |-- dir-model/
 
        
 - 基本的な使用方法
@@ -61,7 +63,7 @@ Basic usage of H-wave
      計算条件、Hamiltonianなどを指定する入力ファイルを作成する必要があります。
      後者は、`StdFaceライブラリ <https://github.com/issp-center-dev/StdFace>`_ の利用が便利です。
      各ファイルの簡単な紹介はチュートリアルの章に記載されています。
-     それ以上の入力ファイルの詳細については、ファイルフォーマットの章を参照してください。
+     詳細についてはファイルフォーマットの章を参照してください。
 
   #. コマンドの実行
 
