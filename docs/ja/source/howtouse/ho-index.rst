@@ -37,8 +37,8 @@ Basic usage of H-wave
       |   |-- solver/
       |   |   |-- __init__.py
       |   |   |-- base.py
-      |   |   |-- uhf.h
-      |   |   |-- uhfk.h
+      |   |   |-- uhf.py
+      |   |   |-- uhfk.py
       |   |-- qlmsio/
       |   |   |-- __init__.py
       |   |   |-- read_input.py

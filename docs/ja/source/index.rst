@@ -57,8 +57,8 @@ Contents
 
    introduction
    howtouse/ho-index
-   tutorial/tu-index
-   filespecification/fi-index
+   uhfr/index
+   uhfk/index
    algorithm/al-index
    acknowledgement
    
