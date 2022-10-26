@@ -58,7 +58,7 @@
    **形式 :** float型
 
    **説明 :**
-   各軌道のWannier center :math:`\vec{v}_i` を指定します。
+   各軌道のWannier center :math:`\vec{v}_i` を fractional coordinate 表記で指定します。
 
 使用ルール
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

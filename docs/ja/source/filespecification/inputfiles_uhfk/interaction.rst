@@ -3,17 +3,25 @@
 相互作用指定ファイル
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-ハミルトニアンの一体項および二体相互作用項を次の形で表したとき、その係数をWannier90形式で記述します。
+ハミルトニアンの一体項および二体相互作用項を次の形で表したとき、その係数 :math:`T_{\alpha\beta}(r_{ij})` および :math:`J_{\alpha\beta}(r_{ij})`, :math:`V_{\alpha\beta}(r_{ij})`, :math:`U_{\alpha}` を共通のWannier90形式で記述します。
+なお、一般化二体相互作用 InterAll 形式には対応していません。
 
-.. math::
-   \begin{aligned}
-     \mathcal{H}_\text{Trans} &= \sum_{ij\alpha\beta}
-     T_{\alpha\beta}(r_{ij})\,c_{i\alpha\sigma}^\dagger c_{j\beta\sigma^\prime}^{\phantom{\dagger}} \\
-     \mathcal{H}_\text{Inter} &= \sum_{ij\alpha\beta}
-     J_{\alpha\beta}(r_{ij})\,
-     c_{i\alpha\sigma_1}^\dagger c_{j\beta\sigma_2}^\dagger 
-     c_{j\beta\sigma_3}^{\phantom{\dagger}} c_{i\alpha\sigma_4}^{\phantom{\dagger}}
-   \end{aligned}
+    
+    **Transfer**:
+      :math:`\sum_{ij\alpha\beta\sigma} T_{\alpha\beta}(r_{ij})\,c_{i\alpha\sigma}^{\dagger}c_{j\beta\sigma}^{\phantom{\dagger}}`
+    **CoulombIntra**:
+      :math:`\sum_{i\alpha} U_\alpha\,n_ {i\alpha\uparrow} n_{i\alpha\downarrow}` (\ :math:`n_{i\alpha\sigma}=c_{i\alpha\sigma}^{\dagger}c_{i\alpha\sigma}^{\phantom{\dagger}}`)
+    **CoulombInter**:
+      :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}` (\ :math:`n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`)
+    **Hund**:
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+    **PairHop**:
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
+    **Exchange**:
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
+    **PairLift**:
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}`
+
 
 以下にファイル例を示します。
 
@@ -56,7 +64,7 @@
      :math:`n_1\ n_2\ ...`
 
 -  :math:`\lceil N_\text{pts} / 15 \rceil + 4` 行以降:
-     :math:`r_x\ \ r_y\ \ r_z\ \ \alpha\ \ \beta\ \ J_r\ \ J_i`
+     :math:`r_x\ \ r_y\ \ r_z\ \ \alpha\ \ \beta\ \ \mathop{Re}J\ \ \mathop{Im}J`
 
 パラメータ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -73,23 +81,23 @@
    **形式 :** int型
 
    **説明 :**
-   suprecell の数を指定します。
+   セルの総数を指定します。
 
 -  :math:`n_1, n_2, ...`
 
    **形式 :** int型
 
    **説明 :**
-   各supercellの縮重度を指定します(通常は 1)。一行あたり15点を列挙します。
+   各セルの縮重度を指定します(通常は 1)。一行あたり15点を列挙します。
 
--  :math:`r_x\ \ r_y\ \ r_z`
+-  :math:`r_x,\ \ r_y,\ \ r_z`
 
    **形式 :** int型
 
    **説明 :**
-   supercellの並進ベクトルを指定します。
+   並進ベクトルを指定します。
    
--  :math:`\alpha\ \ \beta`
+-  :math:`\alpha,\ \ \beta`
 
    **形式 :** int型
 
@@ -97,7 +105,7 @@
    軌道のインデックスを指定します。
    :math:`\alpha` が元のセル内の軌道、:math:`\beta` が :math:`\vec{r}` 離れたセル内の軌道を指します。
 
--  :math:`J_r\ \ J_i`
+-  :math:`\mathop{Re}J,\ \ \mathop{Im}J`
 
    **形式 :** float型
 

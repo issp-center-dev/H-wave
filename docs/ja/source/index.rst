@@ -55,12 +55,12 @@ Contents
    :maxdepth: 3
    :numbered: 3
 
-   introduction_ja
+   introduction
    howtouse/ho-index
    tutorial/tu-index
    filespecification/fi-index
    algorithm/al-index
-   acknowledgement_ja
+   acknowledgement
    
 
 .. Indices and tables

@@ -8,7 +8,7 @@ PairLift指定ファイル
 PairLiftカップリングをハミルトニアンに付け加えます
 (:math:`S=1/2`\ の系でのみ使用可能)。 付け加える項は以下で与えられます。
 
-.. math:: \mathcal{H}+=\sum_{i,j}J_{ij}^{\rm PairLift} (c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}+c_ {i \downarrow}^{\dagger}c_{i\uparrow}c_{j \downarrow}^{\dagger}c_{j \uparrow})
+.. math:: \mathcal{H} = \sum_{i,j}J_{ij}^{\rm PairLift} (c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}+c_ {i \downarrow}^{\dagger}c_{i\uparrow}c_{j \downarrow}^{\dagger}c_{j \uparrow})
 
 以下にファイル例を記載します。
 
@@ -33,38 +33,38 @@ PairLiftカップリングをハミルトニアンに付け加えます
 
 -  1行: ヘッダ(何が書かれても問題ありません)。
 
--  2行: [string01] [int01]
+-  2行: [npairlift] [count]
 
 -  3-5行: ヘッダ(何が書かれても問題ありません)。
 
--  6行以降: [int02] [int03] [double01]
+-  6行以降: [i] [j] [val]
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ string01\ :math:`]`
+-  :math:`[`\ npairlift\ :math:`]`
 
    **形式 :** string型 (空白不可)
 
    **説明 :**
    PairLiftカップリングの総数のキーワード名を指定します(任意)。
 
--  :math:`[`\ int01\ :math:`]`
+-  :math:`[`\ count\ :math:`]`
 
    **形式 :** int型 (空白不可)
 
    **説明 :** PairLiftカップリングの総数を指定します。
 
--  :math:`[`\ int02\ :math:`]`, :math:`[`\ int03\ :math:`]`
+-  :math:`[`\ i\ :math:`]`, :math:`[`\ j\ :math:`]`
 
    **形式 :** int型 (空白不可)
 
    **説明 :**
    サイト番号を指定する整数。0以上\ ``Nsite``\ 未満で指定します。
 
--  :math:`[`\ double01\ :math:`]`
+-  :math:`[`\ val\ :math:`]`
 
-   **形式 :** double型 (空白不可)
+   **形式 :** float型 (空白不可)
 
    **説明 :** :math:`J_{ij}^{\rm PairLift}`\ を指定します。
 
@@ -79,9 +79,9 @@ PairLiftカップリングをハミルトニアンに付け加えます
 
 -  成分が重複して指定された場合にはエラー終了します。
 
--  :math:`[`\ int01\ :math:`]`\ と定義されているPairLiftカップリングの総数が異なる場合はエラー終了します。
+-  :math:`[`\ count\ :math:`]`\ と定義されているPairLiftカップリングの総数が異なる場合はエラー終了します。
 
--  :math:`[`\ int02\ :math:`]`-:math:`[`\ int03\ :math:`]`\ を指定する際、範囲外の整数を指定した場合はエラー終了します。
+-  :math:`[`\ i\ :math:`]`, :math:`[`\ j\ :math:`]`\ を指定する際、範囲外の整数を指定した場合はエラー終了します。
 
 .. raw:: latex
 

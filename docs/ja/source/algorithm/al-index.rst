@@ -5,8 +5,8 @@
 .. toctree::
    :maxdepth: 2
    
-   uhf_ja
+   uhf
 ..
-   rpa_ja
-   eliashberg_ja
+   rpa
+   eliashberg
  

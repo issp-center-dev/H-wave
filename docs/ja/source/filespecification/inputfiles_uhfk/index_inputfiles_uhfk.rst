@@ -41,6 +41,6 @@ UHFk用入力ファイル
 .. toctree::
   :maxdepth: 1
 
-  geometry_ja
-  interaction_ja
+  geometry
+  interaction
 
