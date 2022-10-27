@@ -1,0 +1,10 @@
+model = "Hubbard"
+lattice = "orthorhombic"
+W = 4
+L = 4
+Height = 4
+t = 1.0
+U = 8.0
+calcmode = "uhfk"
+exportall = 0
+EPS = 10
