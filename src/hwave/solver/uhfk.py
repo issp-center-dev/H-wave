@@ -1099,10 +1099,23 @@ class UHFk(solver_base):
             logger.info("_read_green: file {} not found".format(file_name))
             return None
             
-        if "green" in v.files:
-            data = v["green"]
+        if self.has_sublattice:
+            if "green_sublattice" in v.files:
+                logger.debug("_read_green: read green_sublattice")
+                data = v["green_sublattice"]
+            elif "green" in v.files:
+                logger.debug("_read_green: read green and reshape")
+                data = self._reshape_green(v["green"])
+            else:
+                logger.debug("_read_green: no data found")
+                data = None
         else:
-            data = None
+            if "green" in v.files:
+                logger.debug("_read_green: read green")
+                data = v["green"]
+            else:
+                logger.debug("_read_green: no data found")
+                data = None
         return data
 
     @do_profile
