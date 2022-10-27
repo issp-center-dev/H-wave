@@ -15,6 +15,7 @@ packages = [
 [tool.poetry.dependencies]
 python = "^3.7"
 numpy = "^1.14"
+scipy = "^1.7"
 requests = "^2.28.1"
 tomli = "^2.0.1"
 
