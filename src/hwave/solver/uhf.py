@@ -364,7 +364,7 @@ class UHF(solver_base):
 
                 ln_Ene = np.zeros(eigenvalue.shape)
                 for idx, value in enumerate(eigenvalue):
-                    if (value - mu) / self.T > self.ene_cutoff:
+                    if -(value - mu) / self.T < self.ene_cutoff:
                         ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
                     else:
                         ln_Ene[idx] = -(value - mu) / self.T
