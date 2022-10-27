@@ -1,0 +1,37 @@
+[log]
+  print_level = 0
+  print_step = 1
+
+[mode]
+  mode = "UHFk"
+  # flag_fock = true
+
+[mode.param]
+  # 2Sz = 0
+  Ncond = 1728
+  IterationMax = 1000
+  EPS = 10
+  Mix = 0.5
+  RndSeed = 123456789
+  # ene_cutoff = 1.0e+2
+  T = 0.1
+  CellShape = [ 12, 12, 12 ]
+  SubShape = [ 2, 2, 2 ]
+
+[file]
+[file.input]
+  path_to_input = ""
+  #initial = "green_init.dat.npz"
+  initial = "initial.dat.npz"
+
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+
+[file.output]
+  path_to_output = ""
+  energy = "energy.dat"
+  eigen = "eigen.dat"
+  green = "green.dat"
