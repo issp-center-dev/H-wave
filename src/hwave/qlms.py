@@ -107,6 +107,3 @@ def main():
         exit(1)
     run(input_file=args[1])
 
-
-if __name__ == "__main__":
-    main()
