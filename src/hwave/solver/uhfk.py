@@ -70,6 +70,7 @@ class UHFk(solver_base):
 
         # strict hermiticity check
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
+        self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
     @do_profile
     def _init_lattice(self):
@@ -453,6 +454,28 @@ class UHFk(solver_base):
 
         return green
 
+    def _check_hermite(self, tab_r):
+        max_print = 32
+        t = np.conjugate(
+            np.transpose(
+                np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                (0,1,2,4,3)
+            )
+        )
+        if not np.allclose(t, tab_r, atol=0.0, rtol=self.hermite_tolerance):
+            if self.strict_hermite:
+                logger.error("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+
+                errlist = np.array(np.nonzero(~np.isclose(t, tab_r, atol=0.0, rtol=self.hermite_tolerance))).transpose()
+                for idx in errlist[:max_print]:
+                    logger.error("    index={}, T_ab={}, T_ba^*={}".format(idx, tab_r[tuple(idx)], t[tuple(idx)]))
+                if len(errlist) > max_print:
+                    logger.error("    ...")
+                logger.error("{} entries".format(len(errlist)))
+                exit(1)
+            else:
+                logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+
     @do_profile
     def _make_ham_trans(self):
         logger.debug(">>> _make_ham_trans")
@@ -468,20 +491,9 @@ class UHFk(solver_base):
         for (irvec,orbvec), v in self.param_ham["Transfer"].items():
             tab_r[(*irvec, *orbvec)] = v
 
-        # check hermiticity
-        t = np.conjugate(
-            np.transpose(
-                np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
-                (0,1,2,4,3)
-            )
-        )
-        if not np.allclose(t, tab_r):
-            if self.strict_hermite:
-                logger.error("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
-                exit(1)
-            else:
-                logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
-
+        # check
+        self._check_hermite(tab_r)
+        
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
 
