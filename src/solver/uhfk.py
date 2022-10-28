@@ -473,7 +473,7 @@ class UHFk(solver_base):
             )
         )
         if not np.allclose(t, tab_r):
-            logger.info("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+            logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
 
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
