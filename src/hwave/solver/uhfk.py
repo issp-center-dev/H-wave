@@ -473,7 +473,7 @@ class UHFk(solver_base):
             )
         )
         if not np.allclose(t, tab_r):
-            logger.info("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+            logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
 
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -1002,7 +1002,9 @@ class UHFk(solver_base):
                 #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
                 return v
 
-            ln_e = np.log1p(np.exp(-(w - mu) / T))
+            wt = -(w - mu) / T
+            mask_ = wt < self.ene_cutoff
+            ln_e = np.where( mask_, np.log1p(np.exp(wt)), wt)
 
             nn = np.einsum('kal,kl,kal->', np.conjugate(v), _fermi(T, mu, w), v)
 
@@ -1097,10 +1099,23 @@ class UHFk(solver_base):
             logger.info("_read_green: file {} not found".format(file_name))
             return None
             
-        if "green" in v.files:
-            data = v["green"]
+        if self.has_sublattice:
+            if "green_sublattice" in v.files:
+                logger.debug("_read_green: read green_sublattice")
+                data = v["green_sublattice"]
+            elif "green" in v.files:
+                logger.debug("_read_green: read green and reshape")
+                data = self._reshape_green(v["green"])
+            else:
+                logger.debug("_read_green: no data found")
+                data = None
         else:
-            data = None
+            if "green" in v.files:
+                logger.debug("_read_green: read green")
+                data = v["green"]
+            else:
+                logger.debug("_read_green: no data found")
+                data = None
         return data
 
     @do_profile

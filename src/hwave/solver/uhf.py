@@ -14,10 +14,23 @@ class Interact_UHF_base():
         self.Ham_tmp = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         self.Ham_trans_tmp = np.zeros(tuple([(2 * self.Nsize) for i in range(2)]), dtype=complex)
         self.param_ham = self._transform_interall(ham_info)
+        if not self._range_check():
+            logger.error("range check failed for {}".format(self.__name__))
+            exit(1)
 
     #Change interaction to interall type
     def _transform_interall(self, ham_info):
         return ham_info
+
+    def _range_check(self):
+        for site_info, value in self.param_ham.items():
+            for i in range(4):
+                if not 0 <= site_info[2*i] < self.Nsize:
+                    return False
+            for i in range(4):
+                if not 0 <= site_info[2*i+1] < 2:
+                    return False
+        return True
 
     def _calc_hartree(self):
         site = np.zeros(4, dtype=np.int32)
@@ -48,6 +61,9 @@ class Interact_UHF_base():
         return self.Ham_tmp, self.Ham_trans_tmp
 
 class CoulombIntra_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "CoulombIntra"
+        super().__init__(ham_info, Nsize)
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
@@ -56,6 +72,9 @@ class CoulombIntra_UHF(Interact_UHF_base):
         return param_tmp
 
 class CoulombInter_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "CoulombInter"
+        super().__init__(ham_info, Nsize)
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
@@ -65,6 +84,9 @@ class CoulombInter_UHF(Interact_UHF_base):
         return param_tmp
 
 class Hund_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "Hund"
+        super().__init__(ham_info, Nsize)
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
@@ -74,6 +96,9 @@ class Hund_UHF(Interact_UHF_base):
         return param_tmp
 
 class PairHop_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "PairHop"
+        super().__init__(ham_info, Nsize)
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
@@ -84,6 +109,9 @@ class PairHop_UHF(Interact_UHF_base):
         return param_tmp
 
 class Exchange_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "Exchange"
+        super().__init__(ham_info, Nsize)
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
@@ -94,6 +122,9 @@ class Exchange_UHF(Interact_UHF_base):
         return param_tmp
 
 class PairLift_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "PairLift"
+        super().__init__(ham_info, Nsize)
     def _transform_interall(self, ham_info):
         param_tmp = {}
         for site_info, value in ham_info.items():
@@ -102,6 +133,29 @@ class PairLift_UHF(Interact_UHF_base):
             sinfo = tuple([site_info[1], 1, site_info[1], 0, site_info[0], 1, site_info[0], 0])
             param_tmp[sinfo] = value
         return param_tmp
+
+class InterAll_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "InterAll"
+        super().__init__(ham_info, Nsize)
+    def _transform_interall(self, ham_info):
+        # hermite check
+        err = 0
+        for site_info, value in ham_info.items():
+            list = tuple([site_info[i] for i in [6,7,4,5,2,3,0,1]])
+            if not list in ham_info:
+                logger.error("entry not found: {}".format(list))
+                err += 1
+            elif not np.close(value, ham_info[list].conjugate()):
+                logger.error("not hermite for {}".format(site_info))
+                err += 1
+            else:
+                pass
+        if err > 0:
+            logger.error("hermite check failed")
+            return None
+
+        return ham_info
 
 from .base import solver_base
 
@@ -191,10 +245,27 @@ class UHF(solver_base):
         if self.param_ham["Initial"] is not None:
             logger.info("Load initial green function")
             g_info = self.param_ham["Initial"]
+
             for site_info, value in g_info.items():
+                # range check
+                if not (0 <= site_info[0] < self.Nsize and
+                        0 <= site_info[2] < self.Nsize and
+                        0 <= site_info[1] < 2 and
+                        0 <= site_info[3] < 2):
+                    logger.error("range check failed for Initial")
+                    exit(1)
+
+                # set value
                 site1 = site_info[0] + site_info[1] * self.Nsize
                 site2 = site_info[2] + site_info[3] * self.Nsize
                 green[site1][site2] = value
+
+            # hermite check
+            t = np.conjugate(np.transpose(green))
+            if not np.allclose(t, green):
+                logger.error("hermite check failed for Initial")
+                exit(1)
+
         else:
             logger.info("Initialize green function by random numbers")
             np.random.seed(self.param_mod["RndSeed"])
@@ -210,9 +281,24 @@ class UHF(solver_base):
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
         for site_info, value in self.param_ham["Transfer"].items():
+            # range check
+            if not (0 <= site_info[0] < self.Nsize and
+                    0 <= site_info[2] < self.Nsize and
+                    0 <= site_info[1] < 2 and
+                    0 <= site_info[3] < 2):
+                logger.error("range check failed for Transfer")
+                exit(1)
+
+            # set value
             site1 = site_info[0] + site_info[1] * self.Nsize
             site2 = site_info[2] + site_info[3] * self.Nsize
             self.Ham_trans[site1][site2] += -value
+
+        # hermite check
+        t = np.conjugate(np.transpose(self.Ham_trans))
+        if not np.allclose(t, self.Ham_trans):
+            logger.error("hermite check failed for Transfer")
+            exit(1)
 
     @do_profile
     def _makeham(self):
@@ -248,7 +334,7 @@ class UHF(solver_base):
                 elif key == "PairLift":
                     ham_uhf = PairLift_UHF(param_ham, self.Nsize)
                 elif key == "InterAll":
-                    ham_uhf = Interact_UHF_base(param_ham, self.Nsize)
+                    ham_uhf = InterAll_UHF(param_ham, self.Nsize)
                 else:
                     logger.warning("key {} is wrong!".format(key))
                     exit(1)
@@ -364,7 +450,7 @@ class UHF(solver_base):
 
                 ln_Ene = np.zeros(eigenvalue.shape)
                 for idx, value in enumerate(eigenvalue):
-                    if (value - mu) / self.T > self.ene_cutoff:
+                    if -(value - mu) / self.T < self.ene_cutoff:
                         ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
                     else:
                         ln_Ene[idx] = -(value - mu) / self.T
