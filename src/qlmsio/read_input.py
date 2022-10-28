@@ -107,11 +107,14 @@ class QMLSInput():
                     data[list] = value
 
         # check
+        err = 0
         if len(data) != count:
             logger.error("incorrect number of lines in {}: expected={}, found={}".format(file_name, count, len(data)))
-            exit(1)
+            err += 1
         if ndup > 0:
             logger.error("duplicate items found in {}".format(file_name))
+            err += 1
+        if err > 0:
             exit(1)
 
         return data
