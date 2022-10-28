@@ -18,9 +18,9 @@ python3 finiteT.py -u 12 -g 31 --max 5
 python3 finiteT.py -u 24 -g 31 --max 7
 ```
 
-After running the commands above, the result files `mag_U***.dat` and `Tneel_U12.0.dat` are outputted.
+After running the commands above, the result files `mag_U***.dat` and `Tneel_U***.dat` are outputted.
 In `mag_U***.dat`, the first and second columns denote the temperature $T/t$ and the magnetic moment $m_z$, respectively.
-The Neel temperature $T_N$ is written in `Tneel_U***.dat`, which is defined as the lowest temperature where $m_z$ is smaller than $10^{-4}$ in the script.
+The N\acute{e}el temperature $T_N$ is written in `Tneel_U***.dat`, which is defined as the lowest temperature where $m_z$ is smaller than $10^{-4}$ in the script.
 
 `plot.plt` is a gnuplot script to plot $T$-dependence of $m_z$:
 
