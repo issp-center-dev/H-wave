@@ -1,9 +1,8 @@
 model = "Hubbard"
 lattice = "chain"
-L = 6
+L = 16
 t = 1.0
-//J = 8.0
-U = 8.0
-Ncond = 6
+//U = 8.0
+Ncond = 16
 calcmode = "uhfk"
 exportall = 0
