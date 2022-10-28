@@ -1,0 +1,4 @@
+CoulombIntra in wannier90-like format for uhfk
+1
+1
+ 1
