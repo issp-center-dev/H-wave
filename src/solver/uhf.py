@@ -245,10 +245,27 @@ class UHF(solver_base):
         if self.param_ham["Initial"] is not None:
             logger.info("Load initial green function")
             g_info = self.param_ham["Initial"]
+
             for site_info, value in g_info.items():
+                # range check
+                if not (0 <= site_info[0] < self.Nsize and
+                        0 <= site_info[2] < self.Nsize and
+                        0 <= site_info[1] < 2 and
+                        0 <= site_info[3] < 2):
+                    logger.error("range check failed for Initial")
+                    exit(1)
+
+                # set value
                 site1 = site_info[0] + site_info[1] * self.Nsize
                 site2 = site_info[2] + site_info[3] * self.Nsize
                 green[site1][site2] = value
+
+            # hermite check
+            t = np.conjugate(np.transpose(green))
+            if not np.allclose(t, green):
+                logger.error("hermite check failed for Initial")
+                exit(1)
+
         else:
             logger.info("Initialize green function by random numbers")
             np.random.seed(self.param_mod["RndSeed"])
@@ -264,7 +281,6 @@ class UHF(solver_base):
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
         for site_info, value in self.param_ham["Transfer"].items():
-
             # range check
             if not (0 <= site_info[0] < self.Nsize and
                     0 <= site_info[2] < self.Nsize and
