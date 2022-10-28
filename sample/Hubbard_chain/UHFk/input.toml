@@ -8,7 +8,7 @@
 
 [mode.param]
   # 2Sz = 0
-  Ncond = 6
+  Ncond = 16
   IterationMax = 500
   EPS = 10
   Mix = 0.5
@@ -16,8 +16,8 @@
   T = 0.0
   # ene_cutoff = 1.0e+2
   # N.B. chain extends along y-axis by convention
-  CellShape = [ 1, 6, 1 ]
-  SubShape = [ 1, 2, 1 ]
+  CellShape = [ 1, 16, 1 ]
+  SubShape = [ 1, 1, 1 ]
 
 [file]
 [file.input]
@@ -28,7 +28,7 @@
   path_to_input = "./"
   Geometry = "geom.dat"
   Transfer = "transfer.dat"
-  CoulombIntra = "coulombintra.dat"
+  #CoulombIntra = "coulombintra.dat"
 
 [file.output]
   path_to_output = "output"
