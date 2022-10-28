@@ -68,6 +68,9 @@ class UHFk(solver_base):
         # cutoff of green function elements
         self.threshold = self.param_mod.get("threshold", 1.0e-12)
 
+        # strict hermiticity check
+        self.strict_hermite = self.param_mod.get("strict_hermite", False)
+
     @do_profile
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
@@ -473,7 +476,11 @@ class UHFk(solver_base):
             )
         )
         if not np.allclose(t, tab_r):
-            logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+            if self.strict_hermite:
+                logger.error("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+                exit(1)
+            else:
+                logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
 
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
