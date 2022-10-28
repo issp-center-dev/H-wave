@@ -65,30 +65,11 @@ class QMLSInput():
         return value
 
     def _read_ham(self, file_key, value_type="real"):
-        ham_info = {}
         if file_key in self.file_names:
             file_name = self.file_names[file_key]
-            data = np.loadtxt(file_name, skiprows = 5)
-            if value_type == "real":
-                for _data in data:
-                    list = tuple([int(i) for i in _data[:-1]])
-                    value = float(_data[-1])
-                    if list in ham_info:
-                        ham_info[list] += value
-                    else:
-                        ham_info[list] = value
-            if value_type == "complex":
-                for _data in data:
-                    list = tuple([int(i) for i in _data[:-2]])
-                    value = float(_data[-2]) + 1j * float(_data[-1])
-                    if list in ham_info:
-                        ham_info[list] += value
-                    else:
-                        ham_info[list] = value
-
+            return self._load_text(file_name, value_type)
         else:
             return None
-        return ham_info
 
     def _read_green(self, file_key):
         if file_key in self.file_names:
@@ -96,6 +77,46 @@ class QMLSInput():
             data = np.loadtxt(file_name, skiprows = 5)
         else:
             return None
+        return data
+
+    def _load_text(self, file_name, value_type):
+        if value_type == "real":
+            value_width = 1
+            _make_value = lambda v: float(v[0])
+        elif value_type == "complex":
+            value_width = 2
+            _make_value = lambda v: float(v[0]) + 1j * float(v[1])
+        else:
+            value_width = 0
+            _make_value = lambda v: None
+
+        data = {}
+        with open(file_name, "r") as f:
+            lines = f.readlines()
+            count = int(lines[1].split()[1])
+            data = {}
+            ndup = 0
+            for line in lines[5:]:
+                values = line.split()
+                list = tuple([int(i) for i in values[:-value_width]])
+                value = _make_value(values[-value_width:])
+                if list in data:
+                    ndup += 1
+                    data[list] += value
+                else:
+                    data[list] = value
+
+        # check
+        err = 0
+        if len(data) != count:
+            logger.error("incorrect number of lines in {}: expected={}, found={}".format(file_name, count, len(data)))
+            err += 1
+        if ndup > 0:
+            logger.error("duplicate items found in {}".format(file_name))
+            err += 1
+        if err > 0:
+            exit(1)
+
         return data
 
 if __name__ == '__main__':
