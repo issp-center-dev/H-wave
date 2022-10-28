@@ -1,5 +1,5 @@
 ***********************************
-Basic usage of H-wave
+基本的な使用方法
 ***********************************
 
 - 必要なライブラリ・環境
@@ -37,8 +37,8 @@ Basic usage of H-wave
       |   |-- solver/
       |   |   |-- __init__.py
       |   |   |-- base.py
-      |   |   |-- uhf.h
-      |   |   |-- uhfk.h
+      |   |   |-- uhf.py
+      |   |   |-- uhfk.py
       |   |-- qlmsio/
       |   |   |-- __init__.py
       |   |   |-- read_input.py
