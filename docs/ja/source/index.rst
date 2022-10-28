@@ -36,7 +36,32 @@ UHF近似では揺らぎ :math:`\delta A \equiv A-\langle A \rangle` の一次�
 --------------
 本ソフトウェアのプログラムパッケージおよびソースコード一式はGNU General Public License version 3（GPL v3）に準じて配布されています。
 
+開発貢献者
+--------------
 
+本ソフトウェアは以下の開発貢献者により開発されています。
+
+-  ver.1.0 (2022/xx/xxリリース)
+
+   -  開発者
+
+      -  吉見 一慶 (東京大学 物性研究所)
+
+      -  青山 龍美 (東京大学 物性研究所)
+
+      -  本山 裕一 (東京大学 物性研究所)
+
+      -  三澤 貴宏 (北京量子信息科学研究院)
+
+      -  井戸 康太 (東京大学 物性研究所)
+
+      -  小林 晃人 (名古屋大学 理学研究科)
+
+      -  川村 泰喜 (名古屋大学 理学研究科)
+
+   -  プロジェクトコーディネーター
+
+      -  加藤 岳生 (東京大学 物性研究所)
 
 コピーライト
 ------------------
@@ -45,20 +70,27 @@ UHF近似では揺らぎ :math:`\delta A \equiv A-\langle A \rangle` の一次�
 
 本ソフトウェアは2022年度 東京大学物性研究所 ソフトウェア高度化プロジェクトの支援を受け開発されており、その著作権は東京大学が所持しています。
 
-ダウンロード
-------------------
+動作環境
+--------
+
+以下の環境で動作することを確認しています。
+
+- Mac + python3 (brew)
+
+- Ubuntu Linux + python3 (miniconda)
 
 
 Contents
---------
+-----------
+
+
 .. toctree::
    :maxdepth: 3
    :numbered: 3
 
-   introduction
    howtouse/ho-index
-   tutorial/tu-index
-   filespecification/fi-index
+   uhfr/uhfr-index
+   uhfk/uhfk-index
    algorithm/al-index
    acknowledgement
    
