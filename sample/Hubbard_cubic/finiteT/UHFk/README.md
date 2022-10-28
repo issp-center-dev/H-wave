@@ -1,4 +1,4 @@
-# Sample for plotting band
+# Sample for calculating temperature dependence of magnetic properties
 
 ## What's this sample?
 
