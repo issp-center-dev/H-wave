@@ -18,6 +18,7 @@ class UHFk(solver_base):
         self._init_orbit()
         # self._dump_param_ham()
         self._check_cellsize()
+        self._check_hermite()
         self._init_interaction()
         # self._dump_param_ham()
 
@@ -132,6 +133,8 @@ class UHFk(solver_base):
         logger.info("    RndSeed        = {}".format(self.param_mod["RndSeed"]))
         logger.info("    IterationMax   = {}".format(self.param_mod["IterationMax"]))
         logger.info("    EPS            = {}".format(self.param_mod["EPS"]))
+        logger.info("    strict_hermite = {}".format(self.strict_hermite))
+        logger.info("    hermite_tol    = {}".format(self.hermite_tolerance))
 
     @do_profile
     def _reshape_geometry(self, geom):
@@ -454,27 +457,37 @@ class UHFk(solver_base):
 
         return green
 
-    def _check_hermite(self, tab_r):
+    def _check_hermite(self):
         max_print = 32
-        t = np.conjugate(
-            np.transpose(
-                np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
-                (0,1,2,4,3)
-            )
-        )
-        if not np.allclose(t, tab_r, atol=0.0, rtol=self.hermite_tolerance):
-            if self.strict_hermite:
-                logger.error("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
 
-                errlist = np.array(np.nonzero(~np.isclose(t, tab_r, atol=0.0, rtol=self.hermite_tolerance))).transpose()
-                for idx in errlist[:max_print]:
-                    logger.error("    index={}, T_ab={}, T_ba^*={}".format(idx, tab_r[tuple(idx)], t[tuple(idx)]))
-                if len(errlist) > max_print:
-                    logger.error("    ...")
-                logger.error("{} entries".format(len(errlist)))
-                exit(1)
-            else:
-                logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
+        if "Transfer" in self.param_ham:
+            nx,ny,nz = self.param_mod.get("CellShape")
+            norb = self.norb
+
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec, *orbvec)] = v
+
+            t = np.conjugate(
+                    np.transpose(
+                        np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        (0,1,2,4,3)
+                    )
+                )
+
+            if not np.allclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0):
+                msg = "Hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r)))
+                if self.strict_hermite:
+                    logger.error(msg)
+                    errlist = np.array(np.nonzero(~np.isclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0))).transpose()
+                    for idx in errlist[:max_print]:
+                        logger.error("    index={}, T_ab={}, T_ba^*={}".format(idx, tab_r[tuple(idx)], t[tuple(idx)]))
+                    if len(errlist) > max_print:
+                        logger.error("    ...")
+                    logger.error("{} entries".format(len(errlist)))
+                    exit(1)
+                else:
+                    logger.warn(msg)
 
     @do_profile
     def _make_ham_trans(self):
@@ -491,9 +504,6 @@ class UHFk(solver_base):
         for (irvec,orbvec), v in self.param_ham["Transfer"].items():
             tab_r[(*irvec, *orbvec)] = v
 
-        # check
-        self._check_hermite(tab_r)
-        
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
 
