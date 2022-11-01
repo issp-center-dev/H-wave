@@ -35,8 +35,8 @@ class UHFk(solver_base):
         nd = self.nd
         
         self._green_list = {
-            "eigenvalue":  np.zeros((nvol,nd), dtype=np.complex128),
-            "eigenvector": np.zeros((nvol,nd,nd), dtype=np.complex128)
+#            "eigenvalue":  np.zeros((nvol,nd), dtype=np.complex128),
+#            "eigenvector": np.zeros((nvol,nd,nd), dtype=np.complex128)
         }
 
         #self.Green = np.zeros((nvol,ns,norb,ns,norb), dtype=np.complex128),
@@ -60,7 +60,15 @@ class UHFk(solver_base):
             logger.error("Ncond or Nelec is missing. abort")
             exit(1)
 
-        self.Ncond = ncond
+        # self.Ncond = ncond
+
+        if self.param_mod["2Sz"] is None:
+            self.sz_free = True
+            self.Nconds = [ ncond ]
+        else:
+            self.sz_free = False
+            twosz = self.param_mod["2Sz"]
+            self.Nconds = [ (ncond + twosz)//2, (ncond - twosz)//2 ]
 
         self.T = self.param_mod.get("T", 0.0)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
@@ -120,7 +128,7 @@ class UHFk(solver_base):
         logger.info("    nspin          = {}".format(self.ns))
         logger.info("    nd             = {}".format(self.nd))
 
-        logger.info("    Ncond          = {}".format(self.Ncond))
+        logger.info("    Ncond          = {}".format(self.Nconds))
         logger.info("    T              = {}".format(self.T))
         logger.info("    E_cutoff       = {}".format(self.ene_cutoff))
 
@@ -128,6 +136,7 @@ class UHFk(solver_base):
         logger.info("    RndSeed        = {}".format(self.param_mod["RndSeed"]))
         logger.info("    IterationMax   = {}".format(self.param_mod["IterationMax"]))
         logger.info("    EPS            = {}".format(self.param_mod["EPS"]))
+        logger.info("    2Sz            = {}".format(self.param_mod["2Sz"]))
 
     @do_profile
     def _reshape_geometry(self, geom):
@@ -808,8 +817,19 @@ class UHFk(solver_base):
     def _diag(self):
         logger.debug(">>> _diag")
 
-        # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
-        mat = self.ham
+        nx,ny,nz = self.shape
+        nvol     = self.nvol
+        nd       = self.nd
+        norb     = self.norb
+        ns       = self.ns
+
+        if self.sz_free:
+            # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
+            mat = self.ham.reshape(1,nvol,nd,nd)
+            # note: number of spin blocks = 1
+        else:
+            # hamiltonian H_{ab}(k, spin) : ham(s,k,(a,b)) : spin-diagonal
+            mat = np.einsum('ksasb->skab', self.ham.reshape(nvol,ns,norb,ns,norb))
 
         # diagonalize
         w,v = np.linalg.eigh(mat)
@@ -817,6 +837,18 @@ class UHFk(solver_base):
         # store
         self._green_list["eigenvalue"] = w
         self._green_list["eigenvector"] = v
+
+    def _find_dist(self):
+        if self.T == 0:
+            return self._find_dist_zero_t()
+        else:
+            return self._find_dist_nonzero_t()
+
+    def _find_dist_zero_t(self):
+        pass
+
+    def _find_dist_nonzero_t(self):
+        pass
 
     @do_profile
     def _green(self):
@@ -828,8 +860,11 @@ class UHFk(solver_base):
         norb     = self.norb
         ns       = self.ns
 
-        w = self._green_list["eigenvalue"]
-        v = self._green_list["eigenvector"]
+        ws = self._green_list["eigenvalue"]
+        vs = self._green_list["eigenvector"]
+        nconds = self.Nconds
+
+        self._green_list["mu"] = np.zeros(ws.shape[0], dtype=float)
 
         if self.T == 0:
             # fill lowest Ncond eigenmodes
@@ -838,8 +873,9 @@ class UHFk(solver_base):
 
             #dist = np.where(w < ev0, 1.0, 0.0)
 
-            def _ksq_table():
+            def _ksq_table(width):
                 nx,ny,nz = self.shape
+                nvol = self.nvol
 
                 kx = np.roll( (np.arange(nx) - nx//2), -nx//2) ** 2
                 ky = np.roll( (np.arange(ny) - ny//2), -ny//2) ** 2
@@ -850,74 +886,94 @@ class UHFk(solver_base):
                 rr += np.broadcast_to(ky.reshape(1,ny,1),(nx,ny,nz))
                 rr += np.broadcast_to(kz.reshape(1,1,nz),(nx,ny,nz))
 
-                nvol = self.nvol
-                nd = self.nd
+                return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
 
-                return np.broadcast_to(rr.reshape(nvol,1), (nvol,nd))
+            k_sq = _ksq_table(ws.shape[2]).flatten()
 
-            ww = w.reshape(nvol * nd)
+            gg = []
+            for k in range(ws.shape[0]):
+                w = ws[k]
+                v = vs[k]
+                ncond = nconds[k]
 
-            # fill lowest Ncond eigenmodes.
-            # if degenerate, components with smaller k^2 will be used.
-            k_sq = _ksq_table().reshape(nvol*nd)
+                ww = w.flatten()
+                ev_idx = np.lexsort((k_sq, ww))[0:ncond]
 
-            #spn = np.broadcast_to(np.array([-1,1]).reshape(1,ns,1), (nvol,ns,norb)).reshape(nvol*nd)
+                dist = np.zeros(ww.size)
+                dist[ev_idx] = 1.0
+                dist = dist.reshape(w.shape)
 
-            ev_idx = np.lexsort((k_sq, ww))[0:self.Ncond]
+                # G_ab(k) = sum_l v_al(k)^* v_bl(k) where ev_l(k) < ev0
+                gg.append(
+                    np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+                )
 
-            dist = np.zeros(nvol * nd)
-            dist[ev_idx] = 1.0
+            # merge spin-diagonal blocks
+            gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
 
-            dist = dist.reshape(nvol, nd)
+            #gab_k = gab_k.reshape(nx,ny,nz,nd,nd)
+
+            # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
+            gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
+                
 
         else:
             from scipy import optimize
 
-            def _fermi(t, mu, ev):
-                w = (ev - mu) / t
-                mask_ = w < self.ene_cutoff
-                w1 = np.where( mask_, w, 0.0 )
-                v1 = 1.0 / (1.0 + np.exp(w1))
-                v = np.where( mask_, v1, 0.0 )
-                #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
-                return v
+            gg = []
 
-            def _calc_delta_n(mu):
-                ff = _fermi(self.T, mu, w)
-                nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
-                return nn.real - occupied_number
+            # for each spin-block
+            for k in range(ws.shape[0]):
+                v = vs[k]
+                w = ws[k]
 
-            ev = np.sort(w.flatten())
-            occupied_number = self.Ncond
+                ev = np.sort(w.flatten())
+                occupied_number = nconds[k]
 
-            # find mu s.t. <n>(mu) = N0
-            is_converged = False
+                def _fermi(t, mu, ev):
+                    w_ = (ev - mu) / t
+                    mask_ = w_ < self.ene_cutoff
+                    w1_ = np.where( mask_, w_, 0.0 )
+                    v1_ = 1.0 / (1.0 + np.exp(w1_))
+                    v_ = np.where( mask_, v1_, 0.0 )
+                    return v_
 
-            if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
-                logger.debug("+++ find mu: try bisection")
-                mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
-                is_converged = r.converged
-            if not is_converged:
-                logger.debug("+++ find mu: try newton")
-                mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
-                is_converged = r.converged
-            if not is_converged:
-                logger.error("find mu: not converged. abort")
-                exit(1)
+                def _calc_delta_n(mu):
+                    ff = _fermi(self.T, mu, w)
+                    nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
+                    return nn.real - occupied_number
 
-            self._green_list["mu"] = mu
+                # find mu s.t. <n>(mu) = N0
+                is_converged = False
+                if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+                    logger.debug("+++ find mu: try bisection")
+                    mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.debug("+++ find mu: try newton")
+                    mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+                    is_converged = r.converged
+                if not is_converged:
+                    logger.error("find mu: not converged. abort")
+                    exit(1)
 
-            logger.debug("mu = {}".format(mu))
+                self._green_list["mu"][k] = mu
+                logger.debug("mu[{}] = {}".format(k,mu))
 
-            dist = _fermi(self.T, mu, w)
+                dist = _fermi(self.T, mu, w)
 
-        # G_ab(k) = sum_l v_al(k)^* v_bl(k) where ev_l(k) < ev0
-        gab_k = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+                # G_ab(k) = sum_l v_al(k)^* v_bl(k) where ev_l(k) < ev0
+                gg.append(
+                    np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+                )
 
-        gab_k = gab_k.reshape(nx,ny,nz,nd,nd)
+            # merge spin-diagonal blocks
+            gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
 
-        # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-        gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
+            #gab_k = gab_k.reshape(nx,ny,nz,nd,nd)
+
+            # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
+            gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
 
         # store
         self.Green_prev = self.Green
@@ -977,38 +1033,49 @@ class UHFk(solver_base):
         norb     = self.norb
         ns       = self.ns
 
-        occupied_number = self.Ncond
-
         energy = {}
         energy_total = 0.0
 
         if self.T == 0:
-            ev = np.sort(self._green_list["eigenvalue"].flatten())
-            energy["Band"] = np.sum(ev[:occupied_number])
+            ws = self._green_list["eigenvalue"]
+
+            e_band = 0.0
+            for k in range(ws.shape[0]):
+                w = ws[k]
+                ev = np.sort(w.flatten())
+                e_band += np.sum(ev[:self.Nconds[k]])
+
+            energy["Band"] = e_band
             logger.debug("energy: Band = {}".format(energy["Band"]))
             energy_total += energy["Band"]
         else:
-            w = self._green_list["eigenvalue"]
-            v = self._green_list["eigenvector"]
-            mu = self._green_list["mu"]
+            ws = self._green_list["eigenvalue"]
+            vs = self._green_list["eigenvector"]
+            mus = self._green_list["mu"]
             T = self.T
 
-            def _fermi(t, mu, ev):
-                w = (ev - mu) / t
-                mask_ = w < self.ene_cutoff
-                w1 = np.where( mask_, w, 0.0 )
-                v1 = 1.0 / (1.0 + np.exp(w1))
-                v = np.where( mask_, v1, 0.0 )
-                #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
-                return v
+            e_band = 0.0
+            for k in range(ws.shape[0]):
+                w = ws[k]
+                v = vs[k]
+                mu = mus[k]
+            
+                def _fermi(t, mu, ev):
+                    w = (ev - mu) / t
+                    mask_ = w < self.ene_cutoff
+                    w1 = np.where( mask_, w, 0.0 )
+                    v1 = 1.0 / (1.0 + np.exp(w1))
+                    v = np.where( mask_, v1, 0.0 )
+                    #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
+                    return v
 
-            wt = -(w - mu) / T
-            mask_ = wt < self.ene_cutoff
-            ln_e = np.where( mask_, np.log1p(np.exp(wt)), wt)
+                wt = -(w - mu) / T
+                mask_ = wt < self.ene_cutoff
+                ln_e = np.where( mask_, np.log1p(np.exp(wt)), wt)
 
-            nn = np.einsum('kal,kl,kal->', np.conjugate(v), _fermi(T, mu, w), v)
+                nn = np.einsum('kal,kl,kal->', np.conjugate(v), _fermi(T, mu, w), v)
 
-            e_band = mu * nn - T * np.sum(ln_e)
+                e_band += mu * nn - T * np.sum(ln_e)
 
             energy["Band"] = e_band.real
             energy_total += energy["Band"]
@@ -1027,9 +1094,6 @@ class UHFk(solver_base):
                     energy[type] = -ee/2.0*nvol
 
                 else:
-                    # w1 = np.einsum('stuv, rvasa, rubtb -> rab', spin, gab_r, gab_r)
-                    # w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
-                    # ee = np.einsum('rab, rab->', jab_r, w1-w2)
                     w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
                     w1b = np.broadcast_to(w1, (nvol,norb,norb))
                     w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
