@@ -838,18 +838,6 @@ class UHFk(solver_base):
         self._green_list["eigenvalue"] = w
         self._green_list["eigenvector"] = v
 
-    def _find_dist(self):
-        if self.T == 0:
-            return self._find_dist_zero_t()
-        else:
-            return self._find_dist_nonzero_t()
-
-    def _find_dist_zero_t(self):
-        pass
-
-    def _find_dist_nonzero_t(self):
-        pass
-
     @do_profile
     def _green(self):
         logger.debug(">>> _green")
@@ -866,118 +854,99 @@ class UHFk(solver_base):
 
         self._green_list["mu"] = np.zeros(ws.shape[0], dtype=float)
 
-        if self.T == 0:
-            # fill lowest Ncond eigenmodes
-            #ev = np.sort(w.flatten())
-            #ev0 = ev[self.Ncond]
+        gg = []
+        for k in range(ws.shape[0]):
+            w = ws[k]
+            v = vs[k]
+            ncond = nconds[k]
 
-            #dist = np.where(w < ev0, 1.0, 0.0)
+            dist, mu = self._find_dist(w, v, ncond)
 
-            def _ksq_table(width):
-                nx,ny,nz = self.shape
-                nvol = self.nvol
+            self._green_list["mu"][k] = mu
+            logger.debug("mu[{}] = {}".format(k,mu))
 
-                kx = np.roll( (np.arange(nx) - nx//2), -nx//2) ** 2
-                ky = np.roll( (np.arange(ny) - ny//2), -ny//2) ** 2
-                kz = np.roll( (np.arange(nz) - nz//2), -nz//2) ** 2
+            # G_ab(k) = sum_l v_al(k)^* v_bl(k) f(ev(k))
+            gg.append(
+                np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+            )
 
-                rr = np.zeros((nx,ny,nz))
-                rr += np.broadcast_to(kx.reshape(nx,1,1),(nx,ny,nz))
-                rr += np.broadcast_to(ky.reshape(1,ny,1),(nx,ny,nz))
-                rr += np.broadcast_to(kz.reshape(1,1,nz),(nx,ny,nz))
+        # merge spin-diagonal blocks
+        gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
 
-                return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
-
-            k_sq = _ksq_table(ws.shape[2]).flatten()
-
-            gg = []
-            for k in range(ws.shape[0]):
-                w = ws[k]
-                v = vs[k]
-                ncond = nconds[k]
-
-                ww = w.flatten()
-                ev_idx = np.lexsort((k_sq, ww))[0:ncond]
-
-                dist = np.zeros(ww.size)
-                dist[ev_idx] = 1.0
-                dist = dist.reshape(w.shape)
-
-                # G_ab(k) = sum_l v_al(k)^* v_bl(k) where ev_l(k) < ev0
-                gg.append(
-                    np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
-                )
-
-            # merge spin-diagonal blocks
-            gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
-
-            #gab_k = gab_k.reshape(nx,ny,nz,nd,nd)
-
-            # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-            gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
-                
-
-        else:
-            from scipy import optimize
-
-            gg = []
-
-            # for each spin-block
-            for k in range(ws.shape[0]):
-                v = vs[k]
-                w = ws[k]
-
-                ev = np.sort(w.flatten())
-                occupied_number = nconds[k]
-
-                def _fermi(t, mu, ev):
-                    w_ = (ev - mu) / t
-                    mask_ = w_ < self.ene_cutoff
-                    w1_ = np.where( mask_, w_, 0.0 )
-                    v1_ = 1.0 / (1.0 + np.exp(w1_))
-                    v_ = np.where( mask_, v1_, 0.0 )
-                    return v_
-
-                def _calc_delta_n(mu):
-                    ff = _fermi(self.T, mu, w)
-                    nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
-                    return nn.real - occupied_number
-
-                # find mu s.t. <n>(mu) = N0
-                is_converged = False
-                if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
-                    logger.debug("+++ find mu: try bisection")
-                    mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
-                    is_converged = r.converged
-                if not is_converged:
-                    logger.debug("+++ find mu: try newton")
-                    mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
-                    is_converged = r.converged
-                if not is_converged:
-                    logger.error("find mu: not converged. abort")
-                    exit(1)
-
-                self._green_list["mu"][k] = mu
-                logger.debug("mu[{}] = {}".format(k,mu))
-
-                dist = _fermi(self.T, mu, w)
-
-                # G_ab(k) = sum_l v_al(k)^* v_bl(k) where ev_l(k) < ev0
-                gg.append(
-                    np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
-                )
-
-            # merge spin-diagonal blocks
-            gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
-
-            #gab_k = gab_k.reshape(nx,ny,nz,nd,nd)
-
-            # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-            gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
-
+        # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
+        gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
+            
         # store
         self.Green_prev = self.Green
         self.Green = gab_r.reshape(nvol,ns,norb,ns,norb)
+
+    def _find_dist(self, w, v, ncond):
+        if self.T == 0:
+            return self._find_dist_zero_t(w, v, ncond)
+        else:
+            return self._find_dist_nonzero_t(w, v, ncond)
+
+    def _find_dist_zero_t(self, w, v, ncond):
+        def _ksq_table(width):
+            nx,ny,nz = self.shape
+            nvol = self.nvol
+
+            kx = np.roll( (np.arange(nx) - nx//2), -nx//2) ** 2
+            ky = np.roll( (np.arange(ny) - ny//2), -ny//2) ** 2
+            kz = np.roll( (np.arange(nz) - nz//2), -nz//2) ** 2
+
+            rr = np.zeros((nx,ny,nz))
+            rr += np.broadcast_to(kx.reshape(nx,1,1),(nx,ny,nz))
+            rr += np.broadcast_to(ky.reshape(1,ny,1),(nx,ny,nz))
+            rr += np.broadcast_to(kz.reshape(1,1,nz),(nx,ny,nz))
+
+            return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
+
+        k_sq = _ksq_table(w.shape[1]).flatten()
+
+        ww = w.flatten()
+        ev_idx = np.lexsort((k_sq, ww))[0:ncond]
+
+        dist = np.zeros(w.size)
+        dist[ev_idx] = 1.0
+
+        return dist.reshape(w.shape), 0.0
+
+    def _find_dist_nonzero_t(self, w, v, ncond):
+        from scipy import optimize
+
+        ev = np.sort(w.flatten())
+        occupied_number = ncond
+
+        def _fermi(t, mu, ev):
+            w_ = (ev - mu) / t
+            mask_ = w_ < self.ene_cutoff
+            w1_ = np.where( mask_, w_, 0.0 )
+            v1_ = 1.0 / (1.0 + np.exp(w1_))
+            v_ = np.where( mask_, v1_, 0.0 )
+            return v_
+
+        def _calc_delta_n(mu):
+            ff = _fermi(self.T, mu, w)
+            nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
+            return nn.real - occupied_number
+
+        # find mu s.t. <n>(mu) = N0
+        is_converged = False
+        if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+            logger.debug("+++ find mu: try bisection")
+            mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+            is_converged = r.converged
+        if not is_converged:
+            logger.debug("+++ find mu: try newton")
+            mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+            is_converged = r.converged
+        if not is_converged:
+            logger.error("find mu: not converged. abort")
+            exit(1)
+
+        dist = _fermi(self.T, mu, w)
+        return dist, mu
 
     @do_profile
     def _calc_phys(self):
