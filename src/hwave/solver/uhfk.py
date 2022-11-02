@@ -20,6 +20,7 @@ class UHFk(solver_base):
         self._check_cellsize()
         self._init_interaction()
         # self._dump_param_ham()
+        self._init_wavevec()
 
         self._show_param()
 
@@ -312,6 +313,29 @@ class UHFk(solver_base):
                     tbl = self._reshape_interaction(self.param_ham[type])
                     # replace
                     self.param_ham[type] = tbl
+
+    def _init_wavevec(self):
+        # wave vectors on sublatticed geometry
+        def _klist(n):
+            return np.roll( (np.arange(n)-(n//2)), -(n//2) )
+        geom = self.param_ham["Geometry"]
+        rvec = geom["rvec"]
+        omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
+        kvec = np.array([ np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg for i in range(3) ])
+
+        nx,ny,nz = self.shape
+
+        self.wave_table = np.zeros((nx,ny,nz,3), dtype=float)
+        for ix, kx in enumerate(_klist(nx)):
+            vx = kvec[0] * kx / nx
+            for iy, ky in enumerate(_klist(ny)):
+                vy = kvec[1] * ky / ny
+                for iz, kz in enumerate(_klist(nz)):
+                    vz = kvec[2] * kz / nz
+                    self.wave_table[ix,iy,iz] = np.pi*2*(vx + vy + vz)
+        #for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
+        #    print(ix,iy,iz,self.wave_table[ix,iy,iz])
+        self.kvec = kvec
 
     @do_profile
     def _dump_param_ham(self):
@@ -1078,7 +1102,9 @@ class UHFk(solver_base):
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
                      eigenvalue  = self._green_list["eigenvalue"],
-                     eigenvector = self._green_list["eigenvector"])
+                     eigenvector = self._green_list["eigenvector"],
+                     wavevec = self.wave_table,
+                     )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
         if "green" in info_outputfile.keys():
