@@ -1117,6 +1117,9 @@ class UHFk(solver_base):
             logger.info("save_results: save initial is not supported")
             pass
 
+        if "export_hamiltonian" in info_outputfile.keys():
+            self._export_hamiltonian(path_to_output, info_outputfile["export_hamiltonian"])
+
     @do_profile
     def _read_green(self, file_name):
         try:
@@ -1151,3 +1154,62 @@ class UHFk(solver_base):
             np.savez(file_name, green = green_orig, green_sublattice = self.Green)
         else:
             np.savez(file_name, green = self.Green)
+
+    def _export_geometry(self, file_name):
+        geom = self.param_ham["Geometry"]
+        with open(file_name, "w") as fw:
+            # write unit vector
+            rvec = geom["rvec"]
+            for k in range(3):
+                fw.write("{:.8f} {:.8f} {:.8f}\n".format(rvec[k][0], rvec[k][1], rvec[k][2]))
+            # write number of orbitals
+            fw.write("{}\n".format(geom["norb"]))
+            # write center coordinates in fractional coordinates
+            center = geom["center"]
+            for k in range(len(center)):
+                fw.write("{:.8f} {:.8f} {:.8f}\n".format(center[k][0], center[k][1], center[k][2]))
+
+    def _export_interaction(self, type, file_name):
+        intr = self.param_ham[type]
+
+        rmin = [0,0,0]
+        rmax = [0,0,0]
+        for (irvec,orbvec), v in self.param_ham[type].items():
+            for k in range(3):
+                rmin[k] = irvec[k] if irvec[k] < rmin[k] else rmin[k]
+                rmax[k] = irvec[k] if irvec[k] > rmax[k] else rmax[k]
+        rshape = [ rmax[i]-rmin[i]+1 for i in range(3) ]
+        rsize = rshape[0] * rshape[1] * rshape[2]
+
+        with open(file_name, "w") as fw:
+            # write header
+            fw.write("{} with sublattice for uhfk\n".format(type))
+            # write number of orbitals
+            fw.write("{}\n".format(self.norb))
+            # write number of points of box enclosing transport vectors
+            fw.write("{}\n".format(rsize))
+            # write multiplicity factors (nominal)
+            for i in range(rsize):
+                if i > 0 and i % 15 == 0:
+                    fw.write("\n")
+                fw.write(" 1")
+            fw.write("\n")
+            # write index and elements
+            for (irvec,orbvec), v in self.param_ham[type].items():
+                if (abs(v) > 1.0e-12):
+                    fw.write("{:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
+                        *irvec, *orbvec, v.real, v.imag
+                    ))
+
+    def _export_hamiltonian(self, path_to_output, prefix):
+        for type in self.param_ham.keys():
+            if type in ["Geometry"]:
+                file_name = os.path.join(path_to_output, prefix + type + ".dat")
+                self._export_geometry(file_name)
+                logger.info("export Geometry to {}".format(file_name))
+            elif type in ["Initial"]:
+                pass
+            else:
+                file_name = os.path.join(path_to_output, prefix + type + ".dat")
+                self._export_interaction(type, file_name)
+                logger.info("export {} to {}".format(type, file_name))
