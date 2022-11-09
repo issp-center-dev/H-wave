@@ -540,46 +540,50 @@ class UHF(solver_base):
                 fw.write(output_str)
 
         if "fij" in info_outputfile.keys():
-            Ns = round(self.Nsize)
-            Ne = round(self.Ncond)
-            #print(Ns,Ne)
-            if key == "sz-free":
-                eigenvector = self.green_list[key]["eigenvector"]
-                if Ne%2 == 1:
-                    logger.warning("FATAL: Ne=%d Ne should be even for calculating fij"%(Ne))
+            Ns = self.Nsize
+            Ne = self.Ncond
+
+            if self.param_mod["2Sz"] is None:
+                if Ne % 2 == 1:
+                    logger.warning("FATAL: Ne={}. Ne should be even for calculating fij".format(Ne))
                 else:
-                    logger.info("Calculations of fij for free-Sz ")
+                    logger.info("Calculations of fij for free-Sz")
+
+                    key = "sz-free"
+                    ev = self.green_list[key]["eigenvector"]
+
                     output_str = ""
-                    for int_i in range(Ns):
-                        for int_j in range(Ns):
-                            tmp = 0.0
-                            for int_n in range(int(Ne/2)):
-                                tmp +=      eigenvector[int_i][2*int_n-1]*eigenvector[int_j][2*int_n]
-                                tmp += -1.0*eigenvector[int_j][2*int_n-1]*eigenvector[int_i][2*int_n]
-                            output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
+                    for i, j in itertools.product(range(Ns), range(Ns)):
+                        fij = 0.0
+                        for n in range(Ne//2):
+                            fij += ev[i][n*2] * ev[j][n*2+1] - ev[i][n*2+1] * ev[j][n*2]
+                        output_str += " {:3} {:3}  {:.12f} {:.12f}\n".format(
+                            i, j, np.real(fij), np.imag(fij))
+
                     with open(os.path.join(path_to_output, key+"_"+info_outputfile["fij"]), "w") as fw:
                         fw.write(output_str)
             else:
-                up_key           = list(self.green_list.keys())[0]
-                down_key         = list(self.green_list.keys())[1]
-                up_eigenvector   = self.green_list[up_key]["eigenvector"]
-                down_eigenvector = self.green_list[down_key]["eigenvector"]
-                Sz               = round(2*self.physics["Sz"])
-                if Sz%2 == 1:
-                    logger.warning("FATAL: Sz=%d Sz should be even for calculating fij"%(Sz))
-                elif Sz == 0:
-                    logger.info("Calculations of fij for 2Sz=0 ")
+                TwoSz = self.param_mod["2Sz"]
+                if TwoSz % 2 == 1:
+                    logger.warning("FATAL: 2Sz={}. 2Sz should be even for calculating fij".format(TwoSz))
+                elif TwoSz == 0:
+                    logger.info("Calculations of fij for Sz=0")
+
+                    ev_up = self.green_list["spin-up"]["eigenvector"]
+                    ev_dn = self.green_list["spin-down"]["eigenvector"]
+
                     output_str = ""
-                    for int_i in range(Ns):
-                        for int_j in range(Ns):
-                            tmp = 0.0
-                            for int_n in range(int(Ne/2)):
-                                tmp += up_eigenvector[int_i][int_n]*down_eigenvector[int_j][int_n]
-                            output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
+                    for i, j in itertools.product(range(Ns), range(Ns)):
+                        fij = 0.0
+                        for n in range(Ne//2):
+                            fij += ev_up[i][n] * ev_dn[j][n]
+                        output_str += " {:3} {:3} {:.12f} {:.12f}\n".format(
+                            i, j, np.real(fij), np.imag(fij))
+
                     with open(os.path.join(path_to_output, "Sz0_"+info_outputfile["fij"]), "w") as fw:
                         fw.write(output_str)
-                else: 
-                    logger.warning("NOT IMPLEMENTED: Sz !=0 but Sz even: this case will be implemented in near future")
+                else:
+                    logger.warning("NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future")
 
     @do_profile
     def get_Ham(self):
