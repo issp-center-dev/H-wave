@@ -2,5 +2,5 @@
          LocSpin  locspn.def
            Trans  trans.def
     CoulombIntra  coulombintra.def
-    	    Hund  hund.def
+            Hund  hund.def
         OneBodyG  greenone.def

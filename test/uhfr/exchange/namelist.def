@@ -2,5 +2,5 @@
          LocSpin  locspn.def
            Trans  trans.def
     CoulombIntra  coulombintra.def
-    Exchange      exchange.def
+        Exchange  exchange.def
         OneBodyG  greenone.def
