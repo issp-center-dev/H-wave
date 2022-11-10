@@ -1172,13 +1172,13 @@ class UHFk(solver_base):
     def _export_interaction(self, type, file_name):
         intr = self.param_ham[type]
 
-        rmin = [0,0,0]
-        rmax = [0,0,0]
+        min_r = [0,0,0]
+        max_r = [0,0,0]
         for (irvec,orbvec), v in self.param_ham[type].items():
             for k in range(3):
-                rmin[k] = irvec[k] if irvec[k] < rmin[k] else rmin[k]
-                rmax[k] = irvec[k] if irvec[k] > rmax[k] else rmax[k]
-        rshape = [ rmax[i]-rmin[i]+1 for i in range(3) ]
+                min_r[k] = irvec[k] if irvec[k] < min_r[k] else min_r[k]
+                max_r[k] = irvec[k] if irvec[k] > max_r[k] else max_r[k]
+        rshape = [ max_r[i]-min_r[i]+1 for i in range(3) ]
         rsize = rshape[0] * rshape[1] * rshape[2]
 
         with open(file_name, "w") as fw:
