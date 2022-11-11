@@ -5,6 +5,15 @@
 [mode]
   mode = "UHF"
 
+[mode.param]
+  Nsite = 32
+  Ncond = 32
+  # 2Sz = 0
+  IterationMax = 1000
+  EPS = 8
+  Mix = 0.5
+  RndSeed = 123456789
+
 [file]
 [file.input]
   path_to_input = ""
