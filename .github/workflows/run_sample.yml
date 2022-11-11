@@ -43,4 +43,4 @@ jobs:
         python -m pip install .
     - name: Test
       run: |
-        sh .github/workflows/run_sample.sh sample ../StdFace/usr/bin/uhf_dry.out
+        sh ${GITHUB_WORKSPACE}/h-wave/.github/workflows/run_sample.sh ${GITHUB_WORKSPACE}/h-wave/sample ${GITHUB_WORKSPACE}/StdFace/usr/bin/uhf_dry.out
