@@ -73,6 +73,7 @@ class UHFk(solver_base):
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
         self.cellshape = (Lx,Ly,Lz)
+        self.cellvol = Lx * Ly * Lz
 
         Bx,By,Bz = self.param_mod.get("SubShape", [1,1,1])
         self.subshape = (Bx,By,Bz)
@@ -452,27 +453,71 @@ class UHFk(solver_base):
         ns       = self.ns
 
         # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
+        # green = np.zeros((nvol,ns,norb,ns,norb),dtype=np.complex128)
 
-        if self.param_ham["Initial"] is not None:
-            file_name = self.param_ham["Initial"]
+        if self.param_ham["Initial"] is not None and "uhfk" in self.param_ham["Initial"]:
+            file_name = self.param_ham["Initial"]["uhfk"]
             logger.info("read green function from file {}".format(file_name))
-            green = self._read_green(file_name)
+            return self._read_green(file_name)
+
+        elif self.param_ham["Initial"] is not None and "uhf" in self.param_ham["Initial"]:
+            if not "geometry" in self.param_ham["Initial"]:
+                logger.error("initial_uhf requires geometry_uhf")
+                exit(1)
+            return self._initial_green_uhf(self.param_ham["Initial"]["uhf"], self.param_ham["Initial"]["geometry"])
 
         else:
             logger.info("initialize green function with random numbers")
-            
-            np.random.seed(self.param_mod["RndSeed"])
-            #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
-            #green = 0.01 * (rand - 0.5)
+            return self._initial_green_random()
 
-            # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
-            x1 = np.random.rand(nvol * nd * nvol * nd).reshape(ns,nvol,norb,ns,nvol,norb)
-            x2 = np.transpose(x1,(1,4,0,2,3,5))
-            x3 = x2[0].reshape(nvol,ns,norb,ns,norb)  # take average?
+    def _initial_green_random(self):
+        lx,ly,lz = self.cellshape
+        lvol     = self.cellvol
+        norb     = self.norb
+        nd       = self.nd
+        ns       = self.ns
 
-            green = 0.01 * (x3 - 0.5)
+        np.random.seed(self.param_mod["RndSeed"])
+        #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+        #green = 0.01 * (rand - 0.5)
 
-        return green
+        # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
+        x1 = np.random.rand(lvol * nd * lvol * nd).reshape(ns,lvol,norb,ns,lvol,norb)
+        x2 = np.transpose(x1,(1,4,0,2,3,5))
+        x3 = x2[0].reshape(lvol,ns,norb,ns,norb)  # take average?
+
+        green = 0.01 * (x3 - 0.5)
+
+        if self.has_sublattice:
+            return self._reshape_green(green)
+        else:
+            return green
+
+    def _initial_green_uhf(self, info, geom):
+        lx,ly,lz = self.cellshape
+        lvol     = self.cellvol
+        norb     = self.norb
+        nd       = self.nd
+        ns       = self.ns
+
+        def _pack_site(ix,iy,iz):
+            return ix + lx * (iy + ly * iz)
+
+        tbl = {}
+        for idx, (ix,iy,iz,a) in geom["site2vec"].items():
+            site = _pack_site(ix,iy,iz)
+            tbl[idx] = (site, a)
+
+        green_uhf = np.zeros((lvol,lvol,ns,norb,ns,norb),dtype=np.complex128)
+        for (i,s,j,t),v in info.items():
+            isite, a = tbl[i]
+            jsite, b = tbl[j]
+            green_uhf[isite,jsite,s,a,t,b] = v
+
+        if self.has_sublattice:
+            return self._reshape_green(green_uhf[0])
+        else:
+            return green_uhf[0]
 
     @do_profile
     def _make_ham_trans(self):
@@ -1112,9 +1157,13 @@ class UHFk(solver_base):
             self._save_green(file_name)
             logger.info("save_results: save green function in file {}".format(file_name))
 
+        if "greenone" in info_outputfile.keys():
+            file_name = os.path.join(path_to_output, info_outputfile["greenone"])
+            self._save_greenone(file_name)
+            logger.info("save_results: save greenone to file {}".format(file_name))
+
         if "initial" in info_outputfile.keys():
-            #XXX
-            logger.info("save_results: save initial is not supported")
+            logger.warn("save_results: save initial is not supported")
             pass
 
         if "export_hamiltonian" in info_outputfile.keys():
@@ -1154,6 +1203,48 @@ class UHFk(solver_base):
             np.savez(file_name, green = green_orig, green_sublattice = self.Green)
         else:
             np.savez(file_name, green = self.Green)
+
+    @do_profile
+    def _save_greenone(self, file_name):
+        if self.param_ham["Initial"] is None or not "geometry" in self.param_ham["Initial"]:
+            logger.error("_save_greenone: geometry_uhf required")
+            return
+
+        if self.has_sublattice:
+            gr = self._deflate_green(self.Green)
+        else:
+            gr = self.Green
+
+        geom = self.param_ham["Initial"]["geometry"]
+        greenone = self.param_ham["Initial"]["greenone"]
+
+        lx,ly,lz = self.cellshape
+        lvol     = self.cellvol
+        norb     = self.norb
+        nd       = self.nd
+        ns       = self.ns
+
+        tbl = geom["site2vec"]
+
+        def _pack_site(ix,iy,iz):
+            return ix + lx * (iy + ly * iz)
+
+        with open(file_name, "w") as fw:
+            # G(i,a,s; j,b,t) := G(a,s;b,t;j-i)
+            for (i,s,j,t) in greenone:
+                (ix,iy,iz,a) = tbl[i]
+                (jx,jy,jz,b) = tbl[j]
+
+                kx = (jx - ix + lx) % lx
+                ky = (jy - iy + ly) % ly
+                kz = (jz - iz + lz) % lz
+                idx = _pack_site(kx,ky,kz)
+
+                v = gr[idx,s,a,t,b]
+
+                fw.write("{:3} {:3} {:3} {:3}  {:.12e} {:.12e}\n".format(
+                    i, s, j, t, v.real, v.imag
+                ))
 
     def _export_geometry(self, file_name):
         geom = self.param_ham["Geometry"]
