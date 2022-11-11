@@ -1155,12 +1155,10 @@ class UHFk(solver_base):
         if "green" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["green"])
             self._save_green(file_name)
-            logger.info("save_results: save green function in file {}".format(file_name))
 
         if "greenone" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["greenone"])
             self._save_greenone(file_name)
-            logger.info("save_results: save greenone to file {}".format(file_name))
 
         if "initial" in info_outputfile.keys():
             logger.warn("save_results: save initial is not supported")
@@ -1203,6 +1201,7 @@ class UHFk(solver_base):
             np.savez(file_name, green = green_orig, green_sublattice = self.Green)
         else:
             np.savez(file_name, green = self.Green)
+        logger.info("save_results: save green function to file {}".format(file_name))
 
     @do_profile
     def _save_greenone(self, file_name):
@@ -1245,6 +1244,8 @@ class UHFk(solver_base):
                 fw.write("{:3} {:3} {:3} {:3}  {:.12e} {:.12e}\n".format(
                     i, s, j, t, v.real, v.imag
                 ))
+
+        logger.info("save_results: save greenone to file {}".format(file_name))
 
     def _export_geometry(self, file_name):
         geom = self.param_ham["Geometry"]
