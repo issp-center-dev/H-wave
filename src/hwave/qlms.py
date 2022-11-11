@@ -3,7 +3,7 @@ from typing import Optional
 
 import sys
 import os
-import pprint
+# import pprint
 import logging
 
 import tomli
@@ -86,7 +86,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         green_info = read_io.get_param("output")
         os.makedirs(path_to_output, exist_ok=True)
 
-        pprint.pprint(info_mode, width=1)
+        # pprint.pprint(info_mode, width=1)
 
         solver = sol_uhfk.UHFk(ham_info, info_log, info_mode)
 

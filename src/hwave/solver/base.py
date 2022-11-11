@@ -1,7 +1,7 @@
 import logging
 from requests.structures import CaseInsensitiveDict
 
-from pprint import pprint
+# from pprint import pprint
 
 class solver_base():
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
@@ -25,6 +25,17 @@ class solver_base():
             "ene_cutoff": 1.0e+2,
             "threshold": 1.0e-12,
         })
+
+        range_list = {
+            "T":     [ 0, None ],
+            # "2Sz":   [ -param_mod["Nsite"], param_mod["Nsite"] ],
+            # "Nsite": [ 1, None ],
+            "Ncond": [ 1, None ],
+            "IterationMax": [ 0, None ],
+            "Mix":   [ 0.0, 1.0 ],
+            # "print_step": [ 1, None ],
+            "EPS":   [ 0, None ],
+        }
 
         if param_mod is not None:
             for k, v in para_init.items():
@@ -53,6 +64,9 @@ class solver_base():
         if self._check_info_mode(info_mode) != 0:
             logger.error("Parameter check failed for info_mode.")
             exit(1)
+        if self._check_param_range(self.param_mod, range_list) != 0:
+            logger.error("Parameter range check failed for param_mod.")
+            exit(1)
         if self._check_param_mod(self.param_mod) != 0:
             logger.error("Parameter check failed for param_mod.")
             exit(1)
@@ -61,7 +75,7 @@ class solver_base():
         self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
 
         # debug
-        pprint(self.param_mod)
+        # pprint(self.param_mod)
 
     def _check_info_mode(self, info_mode):
         logger = logging.getLogger("qlms").getChild(self.name)
@@ -84,16 +98,18 @@ class solver_base():
     def _check_param_mod(self, param_mod):
         logger = logging.getLogger("qlms").getChild(self.name)
 
-        range_list = {
-            "T":     [ 0, None ],
-            # "2Sz":   [ -param_mod["Nsite"], param_mod["Nsite"] ],
-            # "Nsite": [ 1, None ],
-            "Ncond": [ 1, None ],
-            "IterationMax": [ 0, None ],
-            "Mix":   [ 0.0, 1.0 ],
-            # "print_step": [ 1, None ],
-            "EPS":   [ 0, None ],
-        }
+        error_code = 0
+        if "2Sz" in param_mod and param_mod["2Sz"] is not None:
+            ncond_eo = param_mod["Ncond"] % 2
+            twosz_eo = param_mod["2Sz"] % 2
+            if ((ncond_eo == 0 and twosz_eo == 1) or
+                (ncond_eo == 1 and twosz_eo == 0)):
+                logger.error("mode.param.2Sz must be even(odd) when Ncond is even(odd).")
+                error_code += 1
+        return error_code
+
+    def _check_param_range(self, param_mod, range_list):
+        logger = logging.getLogger("qlms").getChild(self.name)
 
         error_code = 0
         for key, [ vmin, vmax ] in range_list.items():
@@ -107,15 +123,6 @@ class solver_base():
                 if vmax is not None and param_mod[key] > vmax:
                     logger.warning("mode.param.{} must be smaller than {}.".format(key, vmax))
                     error_code += 1
-
-        if "2Sz" in param_mod and param_mod["2Sz"] is not None:
-            ncond_eo = param_mod["Ncond"] % 2
-            twosz_eo = param_mod["2Sz"] % 2
-            if ((ncond_eo == 0 and twosz_eo == 1) or
-                (ncond_eo == 1 and twosz_eo == 0)):
-                logger.error("mode.param.2Sz must be even(odd) when Ncond is even(odd).")
-                error_code += 1
-
         return error_code
 
     def solve(self, path_to_output):
