@@ -3,7 +3,7 @@ from typing import Optional
 
 import sys
 import os
-import pprint
+# import pprint
 import logging
 
 import tomli
@@ -57,9 +57,9 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         logger.info("Read def files")
         read_io = qlmsio.read_input.QMLSInput(path_to_namelist)
 
-        logger.info("Get Parameters information")
-        mod_param_info = read_io.get_param("mod")
-        pprint.pprint(mod_param_info, width=1)
+        # logger.info("Get Parameters information")
+        # mod_param_info = read_io.get_param("mod")
+        # pprint.pprint(mod_param_info, width=1)
 
         logger.info("Get Hamiltonian information")
         ham_info = read_io.get_param("ham")
@@ -68,7 +68,8 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         green_info = read_io.get_param("output")
         os.makedirs(path_to_output, exist_ok=True)
 
-        solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
+        # solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
+        solver = sol_uhf.UHF(ham_info, info_log, info_mode)
 
     elif mode == "UHFk":
         logger.info("Read definitions from files")
@@ -85,7 +86,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         green_info = read_io.get_param("output")
         os.makedirs(path_to_output, exist_ok=True)
 
-        pprint.pprint(info_mode, width=1)
+        # pprint.pprint(info_mode, width=1)
 
         solver = sol_uhfk.UHFk(ham_info, info_log, info_mode)
 
