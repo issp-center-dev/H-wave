@@ -10,8 +10,10 @@ logger = logging.getLogger("qlms").getChild("read_input")
 
 
 class QMLSkInput():
+    valid_namelist = [s.lower() for s in ["path_to_input", "Geometry", "Transfer", "CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop"]]
+
     def __init__(self, info_inputfile, solver_type="UHFk"):
-        logger.info(">>> QMLSkInput init")
+        logger.debug(">>> QMLSkInput init")
 
         # [file.input]
         #   path_to_input
@@ -27,6 +29,16 @@ class QMLSkInput():
         files = info_inputfile.get("interaction", {})
 
         input_dir = files.get("path_to_input", "")
+
+        # check if keyword is valid
+        err = 0
+        for k, v in files.items():
+            if k.lower() not in self.valid_namelist:
+                logger.error("Unknown keyword {}".format(k))
+                err += 1
+        if err > 0:
+            logger.fatal("Invalid input.")
+            exit(1)
 
         for k, v in files.items():
             if k == "path_to_input":
