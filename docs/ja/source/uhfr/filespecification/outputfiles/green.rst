@@ -7,7 +7,7 @@ green
 
 OneBodyGで指定された一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の計算結果を出力します。
 ファイル名は環境設定ファイルの中の ``file.output`` セクションでキーワード ``green`` を用いて指定することができます。
-以下にファイル例を記載します。
+以下に出力例を記載します。
 
 ::
 

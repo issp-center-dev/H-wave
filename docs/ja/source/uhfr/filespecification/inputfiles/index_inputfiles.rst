@@ -5,18 +5,14 @@
 UHF用入力ファイル
 --------------------------------
 
-H-waveで使用する入力ファイル(\*def)に関して説明します。
+H-waveで使用する入力ファイル(\*.def)に関して説明します。
 入力ファイルの種別は以下の4つで分類されます。
 
 (1) List:
     
-    キーワード指定なし: 使用するinput fileの名前のリストを書きます。なお、ファイル名は任意に指定することができます。
+    使用する入力ファイルの名前のリストを書きます。なお、ファイル名は任意に指定することができます。
 
-(2) Basic parameters:
-    
-    **ModPara**: 計算時に必要な基本的なパラメーター(サイトの数、電子数、反復回数の上限など)を設定します。
-
-(3) Hamiltonian:
+(2) Hamiltonian:
     
     Hamiltonianを電子系の表式により指定します。
     具体的には以下のファイルで指定されます。
@@ -40,7 +36,7 @@ H-waveで使用する入力ファイル(\*def)に関して説明します。
     | **PairLift**:
       :math:`c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}`\ で表される相互作用を指定します。	    
 	    
-(4) Green functions:
+(3) Green functions:
 
     | **Initial** :初期値として入力する一体Green関数を指定します。
       :math:`\langle c^{\dagger}_{i\sigma_1}c_{j\sigma_2}\rangle`\ を入力します。  
@@ -51,7 +47,6 @@ H-waveで使用する入力ファイル(\*def)に関して説明します。
    :maxdepth: 1
 
    List_file_for_the_input_files
-   ModPara_file
    Trans_file
    InterAll_file
    CoulombIntra_file
