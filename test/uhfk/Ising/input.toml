@@ -27,7 +27,7 @@
   path_to_input = "./"
   Geometry = "geom.dat"
   Transfer = "transfer.dat"
-  CoulombIntara = "coulombintra.dat"
+  CoulombIntra = "coulombintra.dat"
   Ising = "ising.dat"
 
 [file.output]
