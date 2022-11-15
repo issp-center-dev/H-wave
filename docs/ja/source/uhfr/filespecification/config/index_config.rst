@@ -56,7 +56,7 @@ TOML形式
 
 - ``flag_fock``
 
-  **形式 :** boolean型 (デフォルトは ``true`` )
+  **形式 :** bool型 (デフォルトは ``true`` )
 
   **説明 :** ``true`` の場合にはFock項を考慮し、 ``false`` の場合にはHartree項のみ取り扱います。
 
@@ -133,6 +133,18 @@ TOML形式
   **形式 :** float型
 
   **説明 :** Fermi分布関数を計算する際に overflow を避けるためのカットオフを指定します。
+
+- ``strict_hermite``
+
+  **形式 :** bool型
+
+  **説明 :** 相互作用定義ファイルの読み込み時に Hermiticity を厳密にチェックします。true の場合、 ``hermite_tolerance`` 以上のズレが見つかったときはエラーで終了します。false の場合は warning を表示して実行を継続します。デフォルトは false です。
+
+- ``hermite_tolerance``
+
+  **形式 :** float型
+
+  **説明 :** Hermiticity の許容値 :math:`|t_{ij} - t_{ji}^*| < \varepsilon` を指定します。デフォルトは :math:`10^{-8}` です。
 
 ``log`` セクション
 ================================
