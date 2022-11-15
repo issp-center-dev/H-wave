@@ -55,7 +55,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     mode = info_mode["mode"]
     if mode == "UHF":
         logger.info("Read def files")
-        read_io = qlmsio.read_input.QMLSInput(path_to_namelist)
+        read_io = qlmsio.read_input.QLMSInput(path_to_namelist)
 
         # logger.info("Get Parameters information")
         # mod_param_info = read_io.get_param("mod")
@@ -73,7 +73,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
     elif mode == "UHFk":
         logger.info("Read definitions from files")
-        read_io = qlmsio.read_input_k.QMLSkInput(info_inputfile)
+        read_io = qlmsio.read_input_k.QLMSkInput(info_inputfile)
 
         # logger.info("Get parameter information")
         # mod_param_info = info_mode #read_io.get_param("mod")

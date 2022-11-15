@@ -9,9 +9,9 @@ from . import wan90
 logger = logging.getLogger("qlms").getChild("read_input")
 
 
-class QMLSkInput():
+class QLMSkInput():
     def __init__(self, info_inputfile, solver_type="UHFk"):
-        logger.info(">>> QMLSkInput init")
+        logger.info(">>> QLMSkInput init")
 
         # [file.input]
         #   path_to_input
@@ -33,11 +33,11 @@ class QMLSkInput():
                 pass
             elif k == "Geometry":
                 f = os.path.join(input_dir, v)
-                logger.info("QMLSkInput: read Gemoetry from {}".format(f))
+                logger.info("QLMSkInput: read Gemoetry from {}".format(f))
                 self.ham_param[k] = wan90.read_geom(f)
             else:
                 f = os.path.join(input_dir, v)
-                logger.info("QMLSkInput: read interaction {} from {}".format(k, f))
+                logger.info("QLMSkInput: read interaction {} from {}".format(k, f))
                 self.ham_param[k] = wan90.read_w90(f)
 
         # filename for initial green function
@@ -53,4 +53,4 @@ class QMLSkInput():
             return None
 
 if __name__ == '__main__':
-    qml_input = QMLSInput("namelist.def")
+    qml_input = QLMSInput("namelist.def")
