@@ -59,6 +59,10 @@ class QMLSkInput():
     def get_param(self, key):
         if key == "ham":
             return self.ham_param
+        elif key == "mod":
+            return None
+        elif key == "output":
+            return None
         else:
             # Add error message
             logger.error("Get_param: key must be mod or ham or output.")
