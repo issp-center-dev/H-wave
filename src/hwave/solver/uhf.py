@@ -192,7 +192,7 @@ class UHF(solver_base):
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
     @do_profile
-    def solve(self, path_to_output):
+    def solve(self, green_info, path_to_output):
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
         print_check = self.info_log.get("print_check", None)
@@ -204,7 +204,7 @@ class UHF(solver_base):
         for k, v in self.green_list.items():
             self.green_list[k]["eigen_start"] = label
             label += len(self.green_list[k]["label"])
-        self.Green = self._initial_G()
+        self.Green = self._initial_G(green_info)
 
         logger.info("Start UHF calculations")
         param_mod = self.param_mod
@@ -243,12 +243,12 @@ class UHF(solver_base):
             fch.close()
 
     @do_profile
-    def _initial_G(self):
+    def _initial_G(self, green_info):
         _green_list = self.green_list
         green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        if self.param_ham["Initial"] is not None:
+        if green_info["Initial"] is not None:
             logger.info("Load initial green function")
-            g_info = self.param_ham["Initial"]
+            g_info = green_info["Initial"]
 
             for site_info, value in g_info.items():
                 # range check
