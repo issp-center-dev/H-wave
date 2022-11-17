@@ -23,6 +23,7 @@ class QLMSkInput():
         #   (and other interaction terms)
 
         self.ham_param = CaseInsensitiveDict()
+        self.green = CaseInsensitiveDict()
 
         files = info_inputfile.get("interaction", {})
 
@@ -41,12 +42,16 @@ class QLMSkInput():
                 self.ham_param[k] = wan90.read_w90(f)
 
         # filename for initial green function
-        self.ham_param["Initial"] = info_inputfile.get("initial", None)
+        self.green["Initial"] = info_inputfile.get("initial", None)
 
 
     def get_param(self, key):
-        if key == "ham":
+        if key == "mod" or key == "parameter":
+            return None
+        elif key == "ham" or key == "hamiltonian":
             return self.ham_param
+        elif key == "output" or key == "green":
+            return self.green
         else:
             # Add error message
             logger.error("Get_param: key must be mod or ham or output.")

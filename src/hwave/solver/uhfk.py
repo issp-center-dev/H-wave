@@ -363,7 +363,7 @@ class UHFk(solver_base):
             exit(1)
 
     @do_profile
-    def solve(self, path_to_output):
+    def solve(self, green_info, path_to_output):
         print_level = self.info_log["print_level"]
         print_check = self.info_log.get("print_check", None)
 
@@ -377,7 +377,7 @@ class UHFk(solver_base):
         self._make_ham_trans() # T_ab(k)
         self._make_ham_inter() # J_ab(r)
 
-        self.Green = self._initial_green()
+        self.Green = self._initial_green(green_info)
 
         is_converged = False
 
@@ -418,7 +418,7 @@ class UHFk(solver_base):
             fch.close()
             
     @do_profile
-    def _initial_green(self):
+    def _initial_green(self, green_info):
         logger.debug(">>> _initial_green")
 
         nx,ny,nz = self.shape
@@ -429,8 +429,8 @@ class UHFk(solver_base):
 
         # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
 
-        if self.param_ham["Initial"] is not None:
-            file_name = self.param_ham["Initial"]
+        if green_info["Initial"] is not None:
+            file_name = green_info["Initial"]
             logger.info("read green function from file {}".format(file_name))
             green = self._read_green(file_name)
 
