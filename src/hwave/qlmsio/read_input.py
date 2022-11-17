@@ -6,7 +6,7 @@ from requests.structures import CaseInsensitiveDict
 logger = logging.getLogger("qlms").getChild("read_input")
 
 
-class QMLSInput():
+class QLMSInput():
     valid_namelist = ["modpara", "trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg", "locspin"]
     def __init__(self, file_name_list, solver_type="UHF"):
         self.param = CaseInsensitiveDict()
@@ -131,4 +131,4 @@ class QMLSInput():
         return data
 
 if __name__ == '__main__':
-    qml_input = QMLSInput("namelist.def")
+    qml_input = QLMSInput("namelist.def")
