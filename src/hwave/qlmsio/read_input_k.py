@@ -9,9 +9,9 @@ from . import wan90
 logger = logging.getLogger("qlms").getChild("read_input")
 
 
-class QMLSkInput():
+class QLMSkInput():
     def __init__(self, info_inputfile, solver_type="UHFk"):
-        logger.info(">>> QMLSkInput init")
+        logger.info(">>> QLMSkInput init")
 
         # [file.input]
         #   path_to_input
@@ -34,11 +34,11 @@ class QMLSkInput():
                 pass
             elif k == "Geometry":
                 f = os.path.join(input_dir, v)
-                logger.info("QMLSkInput: read Gemoetry from {}".format(f))
+                logger.info("QLMSkInput: read Gemoetry from {}".format(f))
                 self.ham_param[k] = wan90.read_geom(f)
             else:
                 f = os.path.join(input_dir, v)
-                logger.info("QMLSkInput: read interaction {} from {}".format(k, f))
+                logger.info("QLMSkInput: read interaction {} from {}".format(k, f))
                 self.ham_param[k] = wan90.read_w90(f)
 
         # filename for initial green function
@@ -52,15 +52,15 @@ class QMLSkInput():
                 exit(1)
             else:
                 f = os.path.join(input_dir, info_inputfile["initial_uhf"])
-                logger.info("QMLSkInput: read initial_uhf from {}".format(f))
+                logger.info("QLMSkInput: read initial_uhf from {}".format(f))
                 self.initial["uhf"] = self._read_data(f, "complex")
         if "geometry_uhf" in info_inputfile:
             f = os.path.join(input_dir, info_inputfile["geometry_uhf"])
-            logger.info("QMLSkInput: read geometry_uhf from {}".format(f))
+            logger.info("QLMSkInput: read geometry_uhf from {}".format(f))
             self.initial["geometry"] = wan90.read_geometry(f)
         if "greenone_uhf" in info_inputfile:
             f = os.path.join(input_dir, info_inputfile["greenone_uhf"])
-            logger.info("QMLSkInput: read greenone_uhf from {}".format(f))
+            logger.info("QLMSkInput: read greenone_uhf from {}".format(f))
             self.initial["greenone"] = self._read_green(f)
 
         if len(self.initial) > 0:
@@ -94,4 +94,4 @@ class QMLSkInput():
             return None
 
 if __name__ == '__main__':
-    qml_input = QMLSkInput({ "Geometry": "geometry.dat" })
+    qml_input = QLMSkInput({ "Geometry": "geometry.dat" })

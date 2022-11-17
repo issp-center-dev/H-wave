@@ -6,6 +6,7 @@
   mode = "UHF"
 
 [mode.param]
+  Nsite = 64
   # 2Sz = 0
   Ncond = 64
   IterationMax = 1000
