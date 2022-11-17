@@ -83,7 +83,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         ham_info = read_io.get_param("ham")
 
         logger.info("Get output information")
-        green_info = read_io.get_param("output")
+        green_info = read_io.get_param("green")
         os.makedirs(path_to_output, exist_ok=True)
 
         # pprint.pprint(info_mode, width=1)
@@ -95,7 +95,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         exit(0)
 
     logger.info("Start UHF calculation")
-    solver.solve(path_to_output)
+    solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")
     solver.save_results(info_outputfile, green_info)
     logger.info("All procedures are finished.")

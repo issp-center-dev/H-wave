@@ -388,7 +388,7 @@ class UHFk(solver_base):
             exit(1)
 
     @do_profile
-    def solve(self, path_to_output):
+    def solve(self, green_info, path_to_output):
         print_level = self.info_log["print_level"]
         print_check = self.info_log.get("print_check", None)
 
@@ -402,7 +402,7 @@ class UHFk(solver_base):
         self._make_ham_trans() # T_ab(k)
         self._make_ham_inter() # J_ab(r)
 
-        self.Green = self._initial_green()
+        self.Green = self._initial_green(green_info)
 
         is_converged = False
 
@@ -443,32 +443,24 @@ class UHFk(solver_base):
             fch.close()
             
     @do_profile
-    def _initial_green(self):
+    def _initial_green(self, green_info):
         logger.debug(">>> _initial_green")
 
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
-        norb     = self.norb
-        nd       = self.nd
-        ns       = self.ns
-
-        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
-        # green = np.zeros((nvol,ns,norb,ns,norb),dtype=np.complex128)
-
-        if self.param_ham["Initial"] is not None and "uhfk" in self.param_ham["Initial"]:
-            file_name = self.param_ham["Initial"]["uhfk"]
-            logger.info("read green function from file {}".format(file_name))
-            return self._read_green(file_name)
-
-        elif self.param_ham["Initial"] is not None and "uhf" in self.param_ham["Initial"]:
-            if not "geometry" in self.param_ham["Initial"]:
-                logger.error("initial_uhf requires geometry_uhf")
+        _data = None
+        if "initial" in green_info and green_info["initial"] is not None:
+            logger.info("load initial green function from file")
+            _data = self._read_green_from_data(green_info["initial"])
+        elif "initial_uhf" in green_info:
+            if not "geometry_uhf" in green_info:
+                logger.error("initial green function in coord space requires geometry.dat")
                 exit(1)
-            return self._initial_green_uhf(self.param_ham["Initial"]["uhf"], self.param_ham["Initial"]["geometry"])
+            logger.info("load initial green function in coord space from file")
+            _data = self._initial_green_uhf(green_info["initial_uhf"], green_info["geometry_uhf"])
 
-        else:
+        if _data is None:
             logger.info("initialize green function with random numbers")
-            return self._initial_green_random()
+            _data = self._initial_green_random()
+        return _data
 
     def _initial_green_random(self):
         lx,ly,lz = self.cellshape
@@ -1156,9 +1148,9 @@ class UHFk(solver_base):
             file_name = os.path.join(path_to_output, info_outputfile["green"])
             self._save_green(file_name)
 
-        if "greenone" in info_outputfile.keys():
-            file_name = os.path.join(path_to_output, info_outputfile["greenone"])
-            self._save_greenone(file_name)
+        if "onebodyg" in info_outputfile.keys():
+            file_name = os.path.join(path_to_output, info_outputfile["onebodyg"])
+            self._save_greenone(file_name, green_info)
 
         if "initial" in info_outputfile.keys():
             logger.warn("save_results: save initial is not supported")
@@ -1174,21 +1166,23 @@ class UHFk(solver_base):
         except FileNotFoundError:
             logger.info("_read_green: file {} not found".format(file_name))
             return None
+        return self._read_green_from_data(v)
             
+    def _read_green_from_data(self, ginfo):
         if self.has_sublattice:
-            if "green_sublattice" in v.files:
+            if "green_sublattice" in ginfo.files:
                 logger.debug("_read_green: read green_sublattice")
-                data = v["green_sublattice"]
-            elif "green" in v.files:
+                data = ginfo["green_sublattice"]
+            elif "green" in ginfo.files:
                 logger.debug("_read_green: read green and reshape")
-                data = self._reshape_green(v["green"])
+                data = self._reshape_green(ginfo["green"])
             else:
                 logger.debug("_read_green: no data found")
                 data = None
         else:
-            if "green" in v.files:
+            if "green" in ginfo.files:
                 logger.debug("_read_green: read green")
-                data = v["green"]
+                data = ginfo["green"]
             else:
                 logger.debug("_read_green: no data found")
                 data = None
@@ -1204,18 +1198,18 @@ class UHFk(solver_base):
         logger.info("save_results: save green function to file {}".format(file_name))
 
     @do_profile
-    def _save_greenone(self, file_name):
-        if self.param_ham["Initial"] is None or not "geometry" in self.param_ham["Initial"]:
-            logger.error("_save_greenone: geometry_uhf required")
-            return
+    def _save_greenone(self, file_name, green_info):
+        if not "onebodyg_uhf" in green_info or not "geometry_uhf" in green_info:
+            logger.error("_save_greenone: onebodyg_uhf and geometry_uhf are required")
+            return None
 
         if self.has_sublattice:
             gr = self._deflate_green(self.Green)
         else:
             gr = self.Green
 
-        geom = self.param_ham["Initial"]["geometry"]
-        greenone = self.param_ham["Initial"]["greenone"]
+        geom = green_info["geometry_uhf"]
+        greenone = green_info["onebodyg_uhf"]
 
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
