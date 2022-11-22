@@ -20,7 +20,7 @@ python3 finiteT.py -u 24 -g 31 --max 7
 
 After running the commands above, the result files `mag_U***.dat` and `Tneel_U***.dat` are outputted.
 In `mag_U***.dat`, the first and second columns denote the temperature $T/t$ and the magnetic moment $m_z$, respectively.
-The N\acute{e}el temperature $T_N$ is written in `Tneel_U***.dat`, which is defined as the lowest temperature where $m_z$ is smaller than $10^{-4}$ in the script.
+The ${\rm N\acute{e}el}$ temperature $T_N$ is written in `Tneel_U***.dat`, which is defined as the lowest temperature where $m_z$ is smaller than $10^{-4}$ in the script.
 
 `plot.plt` is a gnuplot script to plot $T$-dependence of $m_z$:
 
@@ -48,3 +48,12 @@ optional arguments:
 
 end
 ```
+
+Note that $T_N$ obtained by using UHF is qualitatively incorrect in the strong coupling limit: 
+$T_N$ increases with the increment of the interaction $U/t$ while the quantum Monte carlo results show that $T_N$ decreases.
+See also the following references where $T_N$ obtained by other numerical methods is plotted.
+
+## References
+- Y. Kakehashi and H. Hasegawa, Phys. Rev. B **36**, 4066(R)
+- G. Rohringer, A. Toschi, A. Katanin, and K. Held, Phys. Rev. Lett. **107**, 256402 (2011).
+- A. Mukherjee, N. D. Patel, S. Dong, S. Johnston, A. Moreo, and E. Dagotto, Phys. Rev. B **90**, 205133 (2014).

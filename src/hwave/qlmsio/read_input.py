@@ -11,8 +11,8 @@ class QLMSInput():
     def __init__(self, file_name_list, solver_type="UHF"):
         self.param = CaseInsensitiveDict()
         self.file_names = self._read_file_names(file_name_list)
-        # Get ModPara file
-        self.mod_param = self._read_para("modpara")
+        ## Get ModPara file
+        #self.mod_param = self._read_para("modpara")
         self.ham_param = CaseInsensitiveDict()
         self.ham_param["Transfer"] = self._read_ham("trans", value_type="complex")
         self.ham_param["CoulombInter"] = self._read_ham("coulombinter")
@@ -32,7 +32,8 @@ class QLMSInput():
 
     def get_param(self, key):
         if key == "mod":
-            return self.mod_param
+            #return self.mod_param
+            return None
         elif key == "ham":
             return self.ham_param
         elif key == "output":

@@ -229,10 +229,14 @@ class UHF(solver_base):
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
 
-        output_str = "Show input parameters\n"
+        output_str = "Show input parameters"
         for k, v in self.param_mod.items():
-            output_str += "{}: {}\n".format(k, v)
-        logger.debug(output_str)
+            output_str += "\n  {:<20s}: {}".format(k, v)
+        logger.info(output_str)
+
+        if self._check_param_range(self.param_mod, { "Nsite": [1, None]}) != 0:
+            logger.error("parameter range check failed.")
+            exit(1)
 
         self.iflag_fock = info_mode.get("flag_fock", True)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
