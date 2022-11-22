@@ -138,8 +138,6 @@ StdFaceライブラリではあらかじめ決められた格子模型やWannier
     EPS            8
     Mix            0.5000000000
     RndSeed        123456789
-    EpsSlater      6
-    NMPTrans       0
 
 このファイルでは、サイト数、伝導電子の数、トータル :math:`S_z` や最大ステップ数などを指定します。
 ModParaファイルの詳細はセクション :ref:`Subsec:modpara` をご覧ください。
@@ -157,8 +155,8 @@ Hamiltonianの指定
 
 .. math::
 
-   \mathcal{H} = -\sum_{ij\sigma_1\sigma2}
-   t_{ij\sigma_1\sigma2}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}.
+   \mathcal{H} = -\sum_{ij\sigma_1\sigma_2}
+   t_{ij\sigma_1\sigma_2}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}.
    
 を指定します。ファイルの中身は下記の通りです。
 
@@ -254,7 +252,7 @@ Transファイルの詳細はセクション :ref:`Subsec:Trans` をご覧くだ
 
     2022-05-26 16:27:17,584 INFO qlms :Read def files
     2022-05-26 16:27:17,585 INFO qlms :Get Parameters information
-    {'modpara': {'CDataFileHead': ['zvo'], 'CParaFileHead': ['zqp'], '--------------------': [], 'Nsite': ['8'], '2Sz': ['0'], 'Ncond': ['8'], 'IterationMax': ['1000'], 'EPS': ['8'], 'Mix': ['0.5000000000'], 'RndSeed': ['123456789'], 'EpsSlater': ['6'], 'NMPTrans': ['0']}}
+    {'modpara': {'CDataFileHead': ['zvo'], 'CParaFileHead': ['zqp'], '--------------------': [], 'Nsite': ['8'], '2Sz': ['0'], 'Ncond': ['8'], 'IterationMax': ['1000'], 'EPS': ['8'], 'Mix': ['0.5000000000'], 'RndSeed': ['123456789']}}
     2022-05-26 16:27:17,585 INFO qlms :Get Hamiltonian information
     2022-05-26 16:27:17,585 INFO qlms :Get Output information
     2022-05-26 16:27:17,585 INFO qlms :Start UHF calculation
