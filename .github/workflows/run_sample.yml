@@ -26,6 +26,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install setuptools wheel
+        python -m pip install pytest
     - name: Install StdFace
       run: |
         cd ${GITHUB_WORKSPACE}
@@ -43,4 +44,5 @@ jobs:
         python -m pip install .
     - name: Test
       run: |
-        sh ${GITHUB_WORKSPACE}/h-wave/.github/workflows/run_sample.sh ${GITHUB_WORKSPACE}/h-wave/sample ${GITHUB_WORKSPACE}/StdFace/usr/bin/uhf_dry.out
+	sh ${GITHUB_WORKSPACE}/h-wave/.github/workflows/run_sample.sh ${GITHUB_WORKSPACE}/h-wave/sample ${GITHUB_WORKSPACE}/StdFace/usr/bin/uhf_dry.out
+	cd ${GITHUB_WORKSPACE}/h-wave && pytest
