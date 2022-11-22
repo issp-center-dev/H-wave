@@ -8,7 +8,7 @@ enable_testing()
 foreach(test_type coulombintra coulombinter exchange hund pairhop pairlift)
   add_test(
     NAME UHFr_${test_type}
-    COMMAND bash ${CMAKE_SOURCE_DIR}/test/runtest.sh test/uhfr/${test_type} ${CMAKE_SOURCE_DIR}
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/runtest.sh tests/uhfr/${test_type} ${CMAKE_SOURCE_DIR}
     )
 endforeach()
 
@@ -16,6 +16,6 @@ endforeach()
 foreach(test_type CoulombIntra CoulombInter Exchange Ising PairHop PairLift)
   add_test(
     NAME UHFk_${test_type}
-    COMMAND bash ${CMAKE_SOURCE_DIR}/test/runtest.sh test/uhfk/${test_type} ${CMAKE_SOURCE_DIR}
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/runtest.sh tests/uhfk/${test_type} ${CMAKE_SOURCE_DIR}
     )
 endforeach()

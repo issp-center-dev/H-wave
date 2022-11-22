@@ -34,4 +34,4 @@ if [ -f output/energy.dat ]; then
 fi
 
 # check results
-python3 ${root_dir}/test/compfile.py output_ref/energy.dat output/energy.dat
+python3 ${root_dir}/tests/compfile.py output_ref/energy.dat output/energy.dat
