@@ -17,7 +17,7 @@ class UHFk(solver_base):
         self._init_lattice()
         self._init_orbit()
         # self._dump_param_ham()
-        self._check_cellsize()
+        self._check_interaction()
         self._init_interaction()
         # self._dump_param_ham()
 
@@ -67,6 +67,10 @@ class UHFk(solver_base):
 
         # cutoff of green function elements
         self.threshold = self.param_mod.get("threshold", 1.0e-12)
+
+        # strict hermiticity check
+        self.strict_hermite = self.param_mod.get("strict_hermite", False)
+        self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
     @do_profile
     def _init_lattice(self):
@@ -128,6 +132,8 @@ class UHFk(solver_base):
         logger.info("    RndSeed        = {}".format(self.param_mod["RndSeed"]))
         logger.info("    IterationMax   = {}".format(self.param_mod["IterationMax"]))
         logger.info("    EPS            = {}".format(self.param_mod["EPS"]))
+        logger.info("    strict_hermite = {}".format(self.strict_hermite))
+        logger.info("    hermite_tol    = {}".format(self.hermite_tolerance))
 
     @do_profile
     def _reshape_geometry(self, geom):
@@ -329,8 +335,13 @@ class UHFk(solver_base):
 
                 for (irvec,orbvec), v in self.param_ham[type].items():
                     print("\t",irvec,orbvec," = ",v)
-                
+
     @do_profile
+    def _check_interaction(self):
+        self._check_cellsize()
+        self._check_orbital_index()
+        self._check_hermite()
+
     def _check_cellsize(self):
         err = 0
         for k in self.param_ham.keys():
@@ -361,6 +372,62 @@ class UHFk(solver_base):
         if err > 0:
             logger.error("_check_cellsize failed. interaction range exceeds cell shape.")
             exit(1)
+
+    def _check_orbital_index(self):
+        norb = self.param_ham["Geometry"]["norb"]
+        err = 0
+        for k in self.param_ham.keys():
+            if k in ["Geometry", "Initial"]:
+                pass
+            else:
+                fail = 0
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
+                        fail += 1
+                if k == "CoulombIntra":
+                    for (irvec,orbvec), v in self.param_ham[k].items():
+                        if not orbvec[0] == orbvec[1]:
+                            fail += 1
+                if fail > 0:
+                    logger.error("orbital index check failed for {}.".format(k))
+                    err += 1
+                else:
+                    logger.debug("orbital index check for {} ok.".format(k))
+        if err > 0:
+            logger.error("_check_orbital_index failed. invalid orbital index found in interaction definitions.")
+            exit(1)
+
+    def _check_hermite(self):
+        max_print = 32
+
+        if "Transfer" in self.param_ham:
+            nx,ny,nz = self.param_mod.get("CellShape")
+            norb = self.norb
+
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec, *orbvec)] = v
+
+            t = np.conjugate(
+                    np.transpose(
+                        np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        (0,1,2,4,3)
+                    )
+                )
+
+            if not np.allclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0):
+                msg = "Hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r)))
+                if self.strict_hermite:
+                    logger.error(msg)
+                    errlist = np.array(np.nonzero(~np.isclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0))).transpose()
+                    for idx in errlist[:max_print]:
+                        logger.error("    index={}, T_ab={}, T_ba^*={}".format(idx, tab_r[tuple(idx)], t[tuple(idx)]))
+                    if len(errlist) > max_print:
+                        logger.error("    ...")
+                    logger.error("{} entries".format(len(errlist)))
+                    exit(1)
+                else:
+                    logger.warn(msg)
 
     @do_profile
     def solve(self, path_to_output):
@@ -464,16 +531,6 @@ class UHFk(solver_base):
 
         for (irvec,orbvec), v in self.param_ham["Transfer"].items():
             tab_r[(*irvec, *orbvec)] = v
-
-        # check hermiticity
-        t = np.conjugate(
-            np.transpose(
-                np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
-                (0,1,2,4,3)
-            )
-        )
-        if not np.allclose(t, tab_r):
-            logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
 
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
