@@ -7,6 +7,7 @@ logger = logging.getLogger("qlms").getChild("read_input")
 
 
 class QLMSInput():
+    valid_namelist = ["modpara", "trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg", "locspin"]
     def __init__(self, file_name_list, solver_type="UHF"):
         self.param = CaseInsensitiveDict()
         self.file_names = self._read_file_names(file_name_list)
@@ -44,12 +45,22 @@ class QLMSInput():
 
     def _read_file_names(self, file_name_list):
         file_names = CaseInsensitiveDict()
+        err = 0
         with open(file_name_list, "r") as f:
             lines = f.readlines()
             for line in lines:
+                line = re.sub(r'#.*$', '', line)
                 words = line.split()
-                file_names[words[0]] = words[1]
+                if len(words) >= 2:
+                    if words[0].lower() in self.valid_namelist:
+                        file_names[words[0]] = words[1]
+                    else:
+                        logger.error("Unknown keyword in namelist: {}".format(words[0]))
+                        err += 1
         # TODO Check essential files
+        if err > 0:
+            logger.fatal("Invalid namelist.")
+            exit(1)
         return file_names
 
     def _read_para(self, file_key, start_line=5):
