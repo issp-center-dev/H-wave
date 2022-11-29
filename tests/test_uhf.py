@@ -53,8 +53,8 @@ class TestUHFr(unittest.TestCase):
     def test_Hund(self):
         return runtest(self, "tests/uhfr/hund")
 
-    # def test_Ising(self):
-    #     return runtest(self, "tests/uhfr/ising")
+    def test_Ising(self):
+        return runtest(self, "tests/uhfr/ising")
 
     def test_PairLift(self):
         return runtest(self, "tests/uhfr/pairlift")

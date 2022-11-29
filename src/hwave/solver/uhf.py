@@ -141,6 +141,18 @@ class Exchange_UHF(Interact_UHF_base):
             param_tmp[sinfo] = value
         return param_tmp
 
+class Ising_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "Ising"
+        super().__init__(ham_info, Nsize)
+    def _transform_interall(self, ham_info):
+        param_tmp = {}
+        for site_info, value in ham_info.items():
+            for spin_i, spin_j in itertools.product([0,1], repeat=2):
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j) / 4
+        return param_tmp
+
 class PairLift_UHF(Interact_UHF_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "PairLift"
@@ -364,14 +376,14 @@ class UHF(solver_base):
 
     @do_profile
     def _makeham_mat(self):
-        # TODO Add Hund, Exchange,  PairHop, and PairLift
+        # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         if self.iflag_fock is True:
             type = "hartreefock"
         else:
             type = "hartree"
 
-        for key in ["CoulombIntra", "CoulombInter", "Hund", "Exchange", "PairHop", "PairLift", "InterAll"]:
+        for key in ["CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising", "PairHop", "PairLift", "InterAll"]:
             if self.param_ham[key] is not None:
                 param_ham = self.param_ham[key]
                 if key == "CoulombIntra":
@@ -382,6 +394,8 @@ class UHF(solver_base):
                     ham_uhf = Hund_UHF(param_ham, self.Nsize)
                 elif key == "Exchange":
                     ham_uhf = Exchange_UHF(param_ham, self.Nsize)
+                elif key == "Ising":
+                    ham_uhf = Ising_UHF(param_ham, self.Nsize)
                 elif key == "PairHop":
                     ham_uhf = PairHop_UHF(param_ham, self.Nsize)
                 elif key == "PairLift":
