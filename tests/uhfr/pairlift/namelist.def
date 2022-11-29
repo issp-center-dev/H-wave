@@ -4,3 +4,4 @@
     CoulombIntra  coulombintra.def
         PairLift  pairlift.def
         OneBodyG  greenone.def
+         Initial  output_ref/green_init.dat

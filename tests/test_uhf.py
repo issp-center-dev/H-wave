@@ -9,7 +9,7 @@ from requests.structures import CaseInsensitiveDict
 
 import hwave.qlms
 
-tolerance = 1.0e-12
+tolerance = 1.0e-8
 
 def readfile(filename):
     tbl = CaseInsensitiveDict()
