@@ -6,6 +6,7 @@ for itinerant electron systems.
 The UHF method approximates two-body interaction terms into one-body ones by
 taking account of the fluctuations up to the first order. The wave functions
 and energies are determined self-consistently by an iterative method.
+
 H-wave treats two types of UHF approximation: one is real-space and the other is
 wavenumber-space UHF methods using translational symmetry. In the wavenumber space
 UHF method, the input file defining the one-body and two-body interactions is
@@ -42,7 +43,7 @@ of The Institute for Solid State Physics, The University of Tokyo.
 ## Official page
 
 - [H-wave project site](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en)
-- [Software repository](https://github.com/issp-center-dev/hwave)
+- [Software repository](https://github.com/issp-center-dev/H-wave)
 - [User Manual](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
 
 ## Authors
