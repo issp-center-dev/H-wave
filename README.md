@@ -6,7 +6,6 @@ for itinerant electron systems.
 The UHF method approximates two-body interaction terms into one-body ones by
 taking account of the fluctuations up to the first order. The wave functions
 and energies are determined self-consistently by an iterative method.
-
 H-wave treats two types of UHF approximation: one is real-space and the other is
 wavenumber-space UHF methods using translational symmetry. In the wavenumber space
 UHF method, the input file defining the one-body and two-body interactions is
@@ -27,7 +26,7 @@ Python3 with numpy, scipy, and other library packages
 
 ## Install
 You can install H-wave and also get a manual for H-wave from a
-[release page](https://github.com/issp-center-dev/hwave/releases).
+[release page](https://github.com/issp-center-dev/H-wave/releases).
 
 ## License
 The distribution of the program package and the source codes for H-wave follow
