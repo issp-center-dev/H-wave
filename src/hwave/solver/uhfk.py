@@ -697,8 +697,8 @@ class UHFk(solver_base):
                 )
             )
 
-            # interaction coeffs
-            self.inter_table["Ising"] = (jab_r + jba)/2
+            # interaction coeffs: J_ij Sz_i Sz_j where Sz = 1/2 sigma, sigma=+1,-1
+            self.inter_table["Ising"] = (jab_r + jba)/2 / 4
             # spin combination
             self.spin_table["Ising"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Ising"][0,0,0,0] = 1
