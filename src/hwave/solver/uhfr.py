@@ -6,9 +6,9 @@ import os
 from requests.structures import CaseInsensitiveDict
 from .perf import do_profile
 
-logger = logging.getLogger("qlms").getChild("uhf")
+logger = logging.getLogger("qlms").getChild("uhfr")
 
-class Interact_UHF_base():
+class Interact_UHFr_base():
     def __init__(self, ham_info, Nsize):
         self.Nsize = Nsize
         self.Ham_tmp = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
@@ -80,7 +80,7 @@ class Interact_UHF_base():
     def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
         self._check_hermite(strict_hermite, tolerance)
 
-class CoulombIntra_UHF(Interact_UHF_base):
+class CoulombIntra_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "CoulombIntra"
         super().__init__(ham_info, Nsize)
@@ -91,7 +91,7 @@ class CoulombIntra_UHF(Interact_UHF_base):
             param_tmp[sinfo] = value
         return param_tmp
 
-class CoulombInter_UHF(Interact_UHF_base):
+class CoulombInter_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "CoulombInter"
         super().__init__(ham_info, Nsize)
@@ -103,7 +103,7 @@ class CoulombInter_UHF(Interact_UHF_base):
                 param_tmp[sinfo] = value
         return param_tmp
 
-class Hund_UHF(Interact_UHF_base):
+class Hund_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "Hund"
         super().__init__(ham_info, Nsize)
@@ -115,7 +115,7 @@ class Hund_UHF(Interact_UHF_base):
                 param_tmp[sinfo] = -value
         return param_tmp
 
-class PairHop_UHF(Interact_UHF_base):
+class PairHop_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "PairHop"
         super().__init__(ham_info, Nsize)
@@ -128,7 +128,7 @@ class PairHop_UHF(Interact_UHF_base):
             param_tmp[sinfo] = value
         return param_tmp
 
-class Exchange_UHF(Interact_UHF_base):
+class Exchange_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "Exchange"
         super().__init__(ham_info, Nsize)
@@ -141,7 +141,7 @@ class Exchange_UHF(Interact_UHF_base):
             param_tmp[sinfo] = value
         return param_tmp
 
-class Ising_UHF(Interact_UHF_base):
+class Ising_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "Ising"
         super().__init__(ham_info, Nsize)
@@ -153,7 +153,7 @@ class Ising_UHF(Interact_UHF_base):
                 param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j) / 4
         return param_tmp
 
-class PairLift_UHF(Interact_UHF_base):
+class PairLift_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "PairLift"
         super().__init__(ham_info, Nsize)
@@ -166,7 +166,7 @@ class PairLift_UHF(Interact_UHF_base):
             param_tmp[sinfo] = value
         return param_tmp
 
-class InterAll_UHF(Interact_UHF_base):
+class InterAll_UHFr(Interact_UHFr_base):
     def __init__(self, ham_info, Nsize, strict_hermite, tolerance):
         self.__name__ = "InterAll"
         super().__init__(ham_info, Nsize)
@@ -221,12 +221,12 @@ class Term_base:
     def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
         self._check_hermite(strict_hermite, tolerance)
 
-class Transfer_UHF(Term_base):
+class Transfer_UHFr(Term_base):
     def __init__(self, term_info, Nsize):
         self.__name__ = "Transfer"
         super().__init__(term_info, Nsize, coeff=-1.0)
 
-class Green_UHF(Term_base):
+class Green_UHFr(Term_base):
     def __init__(self, term_info, Nsize):
         self.__name__ = "Green"
         super().__init__(term_info, Nsize, coeff=1.0)
@@ -234,10 +234,10 @@ class Green_UHF(Term_base):
 
 from .base import solver_base
 
-class UHF(solver_base):
+class UHFr(solver_base):
     @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
-        self.name = "uhf"
+        self.name = "uhfr"
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
 
@@ -284,7 +284,7 @@ class UHF(solver_base):
             label += len(self.green_list[k]["label"])
         self.Green = self._initial_G(green_info)
 
-        logger.info("Start UHF calculations")
+        logger.info("Start UHFr calculations")
         param_mod = self.param_mod
 
         if print_level > 0:
@@ -313,9 +313,9 @@ class UHF(solver_base):
                 break
 
         if self.physics["Rest"] < param_mod["eps"]:
-            logger.info("UHF calculation is succeeded: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
+            logger.info("UHFr calculation is succeeded: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
         else:
-            logger.warning("UHF calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
+            logger.warning("UHFr calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
 
         if print_check is not None:
             fch.close()
@@ -361,7 +361,7 @@ class UHF(solver_base):
     def _makeham_const(self):
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
-        trans = Transfer_UHF(self.param_ham["Transfer"], self.Nsize)
+        trans = Transfer_UHFr(self.param_ham["Transfer"], self.Nsize)
         trans.check_hermite(self.strict_hermite, self.hermite_tolerance)
         self.Ham_trans = trans.get_data()
 
@@ -387,27 +387,27 @@ class UHF(solver_base):
             if self.param_ham[key] is not None:
                 param_ham = self.param_ham[key]
                 if key == "CoulombIntra":
-                    ham_uhf = CoulombIntra_UHF(param_ham, self.Nsize)
+                    ham_uhfr = CoulombIntra_UHFr(param_ham, self.Nsize)
                 elif key == "CoulombInter":
-                    ham_uhf = CoulombInter_UHF(param_ham, self.Nsize)
+                    ham_uhfr = CoulombInter_UHFr(param_ham, self.Nsize)
                 elif key == "Hund":
-                    ham_uhf = Hund_UHF(param_ham, self.Nsize)
+                    ham_uhfr = Hund_UHFr(param_ham, self.Nsize)
                 elif key == "Exchange":
-                    ham_uhf = Exchange_UHF(param_ham, self.Nsize)
+                    ham_uhfr = Exchange_UHFr(param_ham, self.Nsize)
                 elif key == "Ising":
-                    ham_uhf = Ising_UHF(param_ham, self.Nsize)
+                    ham_uhfr = Ising_UHFr(param_ham, self.Nsize)
                 elif key == "PairHop":
-                    ham_uhf = PairHop_UHF(param_ham, self.Nsize)
+                    ham_uhfr = PairHop_UHFr(param_ham, self.Nsize)
                 elif key == "PairLift":
-                    ham_uhf = PairLift_UHF(param_ham, self.Nsize)
+                    ham_uhfr = PairLift_UHFr(param_ham, self.Nsize)
                 elif key == "InterAll":
-                    ham_uhf = InterAll_UHF(param_ham, self.Nsize,
+                    ham_uhfr = InterAll_UHFr(param_ham, self.Nsize,
                                            self.strict_hermite, self.hermite_tolerance)
                 else:
                     logger.warning("key {} is wrong!".format(key))
                     exit(1)
 
-                Ham_local_tmp, Ham_trans_tmp = ham_uhf.get_ham(type=type)
+                Ham_local_tmp, Ham_trans_tmp = ham_uhfr.get_ham(type=type)
                 self.Ham_local += Ham_local_tmp
                 self.Ham_trans += Ham_trans_tmp
 

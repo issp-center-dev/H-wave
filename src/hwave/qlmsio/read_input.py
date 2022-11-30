@@ -8,7 +8,7 @@ logger = logging.getLogger("qlms").getChild("read_input")
 
 class QLMSInput():
     valid_namelist = ["modpara", "trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg", "locspin"]
-    def __init__(self, file_name_list, solver_type="UHF"):
+    def __init__(self, file_name_list, solver_type="UHFr"):
         self.file_names = self._read_file_names(file_name_list)
         ## Get ModPara file
         #self.mod_param = self._read_para("modpara")

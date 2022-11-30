@@ -81,7 +81,7 @@ class solver_base():
         logger = logging.getLogger("qlms").getChild(self.name)
 
         fix_list = {
-            "mode": ["UHF", "UHFk"],
+            "mode": ["UHFr", "UHFk"],
             # "flag_fock": [True, False]
         }
 

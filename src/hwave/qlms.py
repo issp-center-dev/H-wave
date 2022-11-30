@@ -9,7 +9,7 @@ import logging
 import tomli
 
 import hwave.qlmsio as qlmsio
-import hwave.solver.uhf as sol_uhf
+import hwave.solver.uhfr as sol_uhfr
 import hwave.solver.uhfk as sol_uhfk
 
 
@@ -54,7 +54,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         logger.error("mode is not defined in [mode].")
         exit(1)
     mode = info_mode["mode"]
-    if mode == "UHF":
+    if mode == "UHFr":
         logger.info("Read def files")
         read_io = qlmsio.read_input.QLMSInput(path_to_namelist)
 
@@ -69,7 +69,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         green_info = read_io.get_param("green")
 
         # solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
-        solver = sol_uhf.UHF(ham_info, info_log, info_mode)
+        solver = sol_uhfr.UHFr(ham_info, info_log, info_mode)
 
     elif mode == "UHFk":
         logger.info("Read definitions from files")
