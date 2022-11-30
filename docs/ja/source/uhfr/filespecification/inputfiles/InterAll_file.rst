@@ -10,7 +10,7 @@ InterAll指定ファイル
 .. math::
 
    \mathcal{H} = \sum_{i,j,k,l}\sum_{\sigma_1,\sigma_2, \sigma_3, \sigma_4}
-   I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}c_{k\sigma_3}^{\dagger}c_{l\sigma_4}
+   I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom{\dagger}}c_{k\sigma_3}^{\dagger}c_{l\sigma_4}^{\phantom{\dagger}}
 
 以下にファイル例を記載します。
 
