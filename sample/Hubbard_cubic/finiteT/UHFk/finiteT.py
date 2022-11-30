@@ -3,6 +3,7 @@ import subprocess
 import numpy as np
 import argparse
 import os
+import hwave.qlms
 
 
 parser = argparse.ArgumentParser(
@@ -79,8 +80,7 @@ for Tidx, T in enumerate(Tround_list):
     tomli_w.dump(toml_dict, fp)
 
   #UHFk runs 
-  uhfk_cmd = ["python3", "qlms.py", ifile]
-  subprocess.run(uhfk_cmd)
+  hwave.qlms.run(input_dict=toml_dict)
 
   #calc magnetic moment 
   path2g_file = os.path.join(output_T, g_file)
