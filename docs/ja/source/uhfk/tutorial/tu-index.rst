@@ -19,7 +19,7 @@ StdFaceライブラリのコンパイルと実行
 
 .. code-block:: bash
 
-    $ git clone -b develop http://github.com/aoymt/StdFace.git
+    $ git clone https://github.com/issp-center-dev/StdFace.git
 
 ダウンロード終了後、以下のコマンドでコンパイルを行います。
 
