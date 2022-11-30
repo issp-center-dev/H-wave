@@ -9,7 +9,6 @@ logger = logging.getLogger("qlms").getChild("read_input")
 class QLMSInput():
     valid_namelist = ["modpara", "trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg", "locspin"]
     def __init__(self, file_name_list, solver_type="UHF"):
-        self.param = CaseInsensitiveDict()
         self.file_names = self._read_file_names(file_name_list)
         ## Get ModPara file
         #self.mod_param = self._read_para("modpara")
@@ -23,21 +22,21 @@ class QLMSInput():
         self.ham_param["Ising"] = self._read_ham("Ising")
         self.ham_param["PairLift"] = self._read_ham("PairLift")
         self.ham_param["Interall"] = self._read_ham("interall", value_type="complex")
-        self.ham_param["Initial"] = self._read_ham("initial", value_type="complex")
         # TODO Check Pair(Hermite or not)
         # TODO Check site is larger than defined lattics size
         # TODO Add validation function (ex.:Check site is smaller than defined lattics size)
-        self.output = CaseInsensitiveDict()
-        self.output["OneBodyG"] = self._read_green("onebodyg")
+        self.green = CaseInsensitiveDict()
+        self.green["Initial"] = self._read_ham("initial", value_type="complex")
+        self.green["OneBodyG"] = self._read_green("onebodyg")
 
     def get_param(self, key):
-        if key == "mod":
+        if key == "mod" or key == "parameter":
             #return self.mod_param
             return None
-        elif key == "ham":
+        elif key == "ham" or key == "hamiltonian":
             return self.ham_param
-        elif key == "output":
-            return self.output
+        elif key == "output" or key == "green":
+            return self.green
         else:
             # Add error message
             logger.error("Get_param: key must be mod or ham or output.")

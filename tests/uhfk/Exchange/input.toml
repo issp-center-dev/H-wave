@@ -21,7 +21,7 @@
 [file]
 [file.input]
   path_to_input = ""
-  # initial = "green_init.dat.npz"
+  initial = "./output_ref/green.dat.npz"
 
 [file.input.interaction]
   path_to_input = "./"

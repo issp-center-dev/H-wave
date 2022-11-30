@@ -1,6 +1,6 @@
-Energy_Total        = -8.094856088583118
-Energy_Band         = -12.906380972088087
-Energy_CoulombIntra = -1.7176776749925353
-Energy_Exchange     = 6.529202558497504
-NCond   = 15.999999999999996
-Sz      = 0.0
+Energy_Total        = -8.094876229492897
+Energy_Band         = -12.906758117244323
+Energy_CoulombIntra = -1.7175094577119105
+Energy_Exchange     = 6.5293913454633365
+NCond   = 16.0
+Sz      = 8.881784197001252e-16

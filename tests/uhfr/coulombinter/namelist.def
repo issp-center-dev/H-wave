@@ -3,3 +3,4 @@
            Trans  trans.def
     CoulombInter  coulombinter.def
         OneBodyG  greenone.def
+         Initial  output_ref/green_init.dat

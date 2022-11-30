@@ -150,7 +150,7 @@ class Ising_UHF(Interact_UHF_base):
         for site_info, value in ham_info.items():
             for spin_i, spin_j in itertools.product([0,1], repeat=2):
                 sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
-                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j)
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j) / 4
         return param_tmp
 
 class PairLift_UHF(Interact_UHF_base):
@@ -270,7 +270,7 @@ class UHF(solver_base):
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
     @do_profile
-    def solve(self, path_to_output):
+    def solve(self, green_info, path_to_output):
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
         print_check = self.info_log.get("print_check", None)
@@ -282,7 +282,7 @@ class UHF(solver_base):
         for k, v in self.green_list.items():
             self.green_list[k]["eigen_start"] = label
             label += len(self.green_list[k]["label"])
-        self.Green = self._initial_G()
+        self.Green = self._initial_G(green_info)
 
         logger.info("Start UHF calculations")
         param_mod = self.param_mod
@@ -321,14 +321,32 @@ class UHF(solver_base):
             fch.close()
 
     @do_profile
-    def _initial_G(self):
+    def _initial_G(self, green_info):
         _green_list = self.green_list
         green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        if self.param_ham["Initial"] is not None:
+        if green_info["Initial"] is not None:
             logger.info("Load initial green function")
-            g_info = Green_UHF(self.param_ham["Initial"], self.Nsize)
-            g_info.check_hermite(self.strict_hermite, self.hermite_tolerance)
-            green = g_info.get_data()
+            g_info = green_info["Initial"]
+
+            for site_info, value in g_info.items():
+                # range check
+                if not (0 <= site_info[0] < self.Nsize and
+                        0 <= site_info[2] < self.Nsize and
+                        0 <= site_info[1] < 2 and
+                        0 <= site_info[3] < 2):
+                    logger.error("range check failed for Initial")
+                    exit(1)
+
+                # set value
+                site1 = site_info[0] + site_info[1] * self.Nsize
+                site2 = site_info[2] + site_info[3] * self.Nsize
+                green[site1][site2] = value
+
+            # hermite check
+            t = np.conjugate(np.transpose(green))
+            if not np.allclose(t, green):
+                logger.error("hermite check failed for Initial")
+                exit(1)
         else:
             logger.info("Initialize green function by random numbers")
             np.random.seed(self.param_mod["RndSeed"])
