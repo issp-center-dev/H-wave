@@ -191,58 +191,74 @@ CoulombItra, CoulombInter, Hund, Ising, Exchange, PairLift, PairHop が定義さ
 
 .. code-block:: bash
 
-    $ python3 path_to_H-wave/qlms.py input.toml
+    $ hwave input.toml
 
 計算が開始されると以下のようなログが出力されます。
 
 ::
 
-   2022-09-26 20:10:40,670 INFO qlms: Read definitions from files
-   2022-09-26 20:10:40,670 INFO qlms.read_input: >>> QMLSkInput init
-   2022-09-26 20:10:40,670 INFO qlms.read_input: QMLSkInput: read Gemoetry from geom.dat
-   2022-09-26 20:10:40,670 INFO qlms.read_input: QMLSkInput: read interaction Transfer from transfer.dat
-   2022-09-26 20:10:40,670 INFO qlms.read_input: QMLSkInput: read interaction CoulombInter from coulombinter.dat
-   2022-09-26 20:10:40,670 INFO qlms: Get Hamiltonian information
-   2022-09-26 20:10:40,670 INFO qlms: Get output information
-   2022-09-26 20:10:40,670 ERROR qlms.read_input: Get_param: key must be mod or ham or output.
-   2022-09-26 20:10:40,676 INFO qlms.uhfk: Show parameters
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Cell Shape     = (4, 4, 1)
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Sub Shape      = (2, 2, 1)
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Block          = (2, 2, 1)
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Block volume   = 4
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Num orbit      = 1
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Num orbit eff  = 4
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     nspin          = 2
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     nd             = 8
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Ncond          = 16
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     T              = 0.0
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     E_cutoff       = 100.0
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     Mix            = 0.5
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     RndSeed        = 123456789
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     IterationMax   = 1000
-   2022-09-26 20:10:40,677 INFO qlms.uhfk:     EPS            = 1e-10
-   2022-09-26 20:10:40,677 INFO qlms: Start UHF calculation
-   2022-09-26 20:10:40,677 INFO qlms.uhfk: Start UHFk calculations
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: step, rest, energy, NCond, Sz
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: >>> _make_ham_trans
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: >>> _make_ham_inter
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: >>> _initial_green
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: initialize green function with random numbers
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: >>> _make_ham
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: Transfer
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: CoulombInter
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: >>> _diag
-   2022-09-26 20:10:40,678 INFO qlms.uhfk: >>> _green
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: >>> _calc_energy
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: energy: Band = -23.667008125494903
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: energy: CoulombInter = (-110.6624082612382+0j)
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: >>> _calc_phys
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: ncond = (16+0j)
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: sz = (-0.20286136558082468+0j)
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: rest = 1.9972424769561912
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: 0, 0.015603457, -134.32942, 16, -0.1014 
-   2022-09-26 20:10:40,679 INFO qlms.uhfk: >>> _make_ham
-   ...
+   2022-11-30 16:11:12,247 INFO qlms: Read definitions from files
+   2022-11-30 16:11:12,247 INFO qlms.read_input: QLMSkInput: read Gemoetry from ./geom.dat
+   2022-11-30 16:11:12,248 INFO qlms.read_input: QLMSkInput: read interaction Transfer from ./transfer.dat
+   2022-11-30 16:11:12,248 INFO qlms.read_input: QLMSkInput: read interaction CoulombInter from ./coulombinter.dat
+   2022-11-30 16:11:12,248 INFO qlms: Get Hamiltonian information
+   2022-11-30 16:11:12,248 INFO qlms: Get output information
+   2022-11-30 16:11:12,273 INFO qlms.uhfk: Show parameters
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Cell Shape     = (4, 4, 1)
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Sub Shape      = (2, 2, 1)
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Block          = (2, 2, 1)
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Block volume   = 4
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Num orbit      = 1
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Num orbit eff  = 4
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     nspin          = 2
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     nd             = 8
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Ncond          = 16
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     T              = 0.0
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     E_cutoff       = 100.0
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Mix            = 0.5
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     RndSeed        = 123456789
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     IterationMax   = 1000
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     EPS            = 1e-08
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     strict_hermite = False
+   2022-11-30 16:11:12,274 INFO qlms.uhfk:     hermite_tol    = 1e-08
+   2022-11-30 16:11:12,274 INFO qlms: Start UHF calculation
+   2022-11-30 16:11:12,274 INFO qlms.uhfk: Start UHFk calculations
+   2022-11-30 16:11:12,274 INFO qlms.uhfk: step, rest, energy, NCond, Sz
+   2022-11-30 16:11:12,275 INFO qlms.uhfk: initialize green function with random numbers
+   2022-11-30 16:11:12,276 INFO qlms.uhfk: 0, 0.015603457, -134.32942, 16, -0.1014 
+   2022-11-30 16:11:12,277 INFO qlms.uhfk: 1, 0.009136596, 17.586903, 16, -0.004959 
+   2022-11-30 16:11:12,278 INFO qlms.uhfk: 2, 0.0069729985, 61.752822, 16, -0.0003201 
+   2022-11-30 16:11:12,279 INFO qlms.uhfk: 3, 0.0046446653, 42.249693, 16, -4.867e-05 
+   2022-11-30 16:11:12,280 INFO qlms.uhfk: 4, 0.0028262152, 23.372007, 16, -1.118e-05 
+   2022-11-30 16:11:12,280 INFO qlms.uhfk: 5, 0.0016658533, 11.802401, 16, -3.039e-06 
+   2022-11-30 16:11:12,281 INFO qlms.uhfk: 6, 0.00097001226, 5.323952, 16, -8.918e-07 
+   2022-11-30 16:11:12,281 INFO qlms.uhfk: 7, 0.00056204443, 1.8036884, 16, -2.716e-07 
+   2022-11-30 16:11:12,281 INFO qlms.uhfk: 8, 0.00032495798, -0.086915084, 16, -8.424e-08 
+   2022-11-30 16:11:12,282 INFO qlms.uhfk: 9, 0.00018766379, -1.0980839, 16, -2.638e-08 
+   2022-11-30 16:11:12,282 INFO qlms.uhfk: 10, 0.00010828012, -1.6386377, 16, -8.301e-09 
+   2022-11-30 16:11:12,282 INFO qlms.uhfk: 11, 6.2421462e-05, -1.9280351, 16, -2.619e-09 
+   2022-11-30 16:11:12,283 INFO qlms.uhfk: 12, 3.5950741e-05, -2.0833667, 16, -8.274e-10 
+   2022-11-30 16:11:12,283 INFO qlms.uhfk: 13, 2.0684522e-05, -2.1670024, 16, -2.616e-10 
+   2022-11-30 16:11:12,283 INFO qlms.uhfk: 14, 1.1888736e-05, -2.2121899, 16, -8.273e-11 
+   2022-11-30 16:11:12,284 INFO qlms.uhfk: 15, 6.8262407e-06, -2.2366916, 16, -2.617e-11 
+   2022-11-30 16:11:12,284 INFO qlms.uhfk: 16, 3.9155959e-06, -2.2500245, 16, -8.278e-12 
+   2022-11-30 16:11:12,284 INFO qlms.uhfk: 17, 2.2439187e-06, -2.2573051, 16, -2.62e-12 
+   2022-11-30 16:11:12,285 INFO qlms.uhfk: 18, 1.2848038e-06, -2.2612942, 16, -8.286e-13 
+   2022-11-30 16:11:12,285 INFO qlms.uhfk: 19, 7.3504993e-07, -2.263487, 16, -2.627e-13 
+   2022-11-30 16:11:12,285 INFO qlms.uhfk: 20, 4.202209e-07, -2.264696, 16, -8.304e-14 
+   2022-11-30 16:11:12,286 INFO qlms.uhfk: 21, 2.4007623e-07, -2.2653645, 16, -2.62e-14 
+   2022-11-30 16:11:12,286 INFO qlms.uhfk: 22, 1.3707554e-07, -2.2657351, 16, -7.55e-15 
+   2022-11-30 16:11:12,286 INFO qlms.uhfk: 23, 7.8223428e-08, -2.2659411, 16, -2.442e-15 
+   2022-11-30 16:11:12,287 INFO qlms.uhfk: 24, 4.4617436e-08, -2.2660558, 16, -2.109e-15 
+   2022-11-30 16:11:12,287 INFO qlms.uhfk: 25, 2.5438176e-08, -2.2661199, 16, -7.772e-16 
+   2022-11-30 16:11:12,287 INFO qlms.uhfk: 26, 1.449778e-08, -2.2661557, 16, -1.11e-15 
+   2022-11-30 16:11:12,288 INFO qlms.uhfk: 27, 8.2598064e-09, -2.2661758, 16, 3.331e-16 
+   2022-11-30 16:11:12,288 INFO qlms.uhfk: UHFk calculation succeeded: rest=8.25980636858871e-09, eps=1e-08.
+   2022-11-30 16:11:12,288 INFO qlms: Save calculation results.
+   2022-11-30 16:11:12,288 INFO qlms.uhfk: save_results: save energy in file output/energy.dat
+   2022-11-30 16:11:12,288 INFO qlms.uhfk: save_results: save eigenvalues and eigenvectors in file output/eigen.dat
+   2022-11-30 16:11:12,288 INFO qlms.uhfk: save_results: save green function in file output/green.dat
+   2022-11-30 16:11:12,288 INFO qlms: All procedures are finished.
 
 入力ファイル読み込みに関するログが出力されたあと、波数空間UHF計算の計算過程に関する情報が出力されます。
 出力ファイルは ``input.toml`` の ``[file.output]`` セクションの指定に従い、
