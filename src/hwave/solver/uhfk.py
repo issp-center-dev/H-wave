@@ -1086,11 +1086,8 @@ class UHFk(solver_base):
 
         # expectation value of Sz
         gab_r = self.Green
-
-        sz = 0.0
-        sz += np.sum(np.diagonal(gab_r[:,0,:,0,:], axis1=1, axis2=2))
-        sz -= np.sum(np.diagonal(gab_r[:,1,:,1,:], axis1=1, axis2=2))
-
+        sigma_z = np.array(np.array([[1,0],[0,-1]]))
+        sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
         self.physics["Sz"] = 0.5 * sz.real
 
         logger.debug("sz = {}".format(sz))
