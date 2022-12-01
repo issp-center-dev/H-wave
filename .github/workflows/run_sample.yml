@@ -29,7 +29,7 @@ jobs:
     - name: Install StdFace
       run: |
         cd ${GITHUB_WORKSPACE}
-        git clone --branch develop --depth 1 https://github.com/aoymt/StdFace
+        git clone --branch develop --depth 1 https://github.com/issp-center-dev/StdFace
         mkdir StdFace/build
         cd StdFace/build
         cmake ../ \

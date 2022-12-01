@@ -7,11 +7,9 @@ logger = logging.getLogger("qlms").getChild("read_input")
 
 
 class QLMSInput():
-    valid_namelist = ["modpara", "trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg", "locspin"]
-    def __init__(self, file_name_list, solver_type="UHF"):
-        self.file_names = self._read_file_names(file_name_list)
-        ## Get ModPara file
-        #self.mod_param = self._read_para("modpara")
+    valid_namelist = ["trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg"]
+    def __init__(self, file_name_list, solver_type="UHFr"):
+        self.file_names = file_name_list
         self.ham_param = CaseInsensitiveDict()
         self.ham_param["Transfer"] = self._read_ham("trans", value_type="complex")
         self.ham_param["CoulombInter"] = self._read_ham("coulombinter")
@@ -41,26 +39,6 @@ class QLMSInput():
             # Add error message
             logger.error("Get_param: key must be mod or ham or output.")
             return None
-
-    def _read_file_names(self, file_name_list):
-        file_names = CaseInsensitiveDict()
-        err = 0
-        with open(file_name_list, "r") as f:
-            lines = f.readlines()
-            for line in lines:
-                line = re.sub(r'#.*$', '', line)
-                words = line.split()
-                if len(words) >= 2:
-                    if words[0].lower() in self.valid_namelist:
-                        file_names[words[0]] = words[1]
-                    else:
-                        logger.error("Unknown keyword in namelist: {}".format(words[0]))
-                        err += 1
-        # TODO Check essential files
-        if err > 0:
-            logger.fatal("Invalid namelist.")
-            exit(1)
-        return file_names
 
     def _read_para(self, file_key, start_line=5):
         file_name = self.file_names[file_key]
@@ -131,4 +109,4 @@ class QLMSInput():
         return data
 
 if __name__ == '__main__':
-    qml_input = QLMSInput("namelist.def")
+    qml_input = QLMSInput({"trans": "trans.def"})
