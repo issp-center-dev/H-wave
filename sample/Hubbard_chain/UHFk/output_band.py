@@ -1,5 +1,13 @@
 import numpy as np
 import tomli
+import hwave.qlms
+
+#read toml file
+with open("input.toml", "rb") as fp:
+  toml_dict = tomli.load(fp)
+
+#UHFk runs 
+hwave.qlms.run(input_dict=toml_dict)
 
 #get eigenvalues
 data = np.load("output/eigen.dat.npz") 
