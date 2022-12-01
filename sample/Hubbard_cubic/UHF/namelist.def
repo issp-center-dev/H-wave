@@ -1,6 +1,0 @@
-         ModPara  modpara.def
-         LocSpin  locspn.def
-           Trans  trans.def
-    CoulombIntra  coulombintra.def
-        OneBodyG  greenone.def
-        Initial initial.dat

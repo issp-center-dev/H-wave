@@ -3,7 +3,7 @@
   print_step = 1
 
 [mode]
-  mode = "UHF"
+  mode = "UHFr"
 
 [mode.param]
   Nsite = 16
@@ -19,7 +19,12 @@
 [file]
 [file.input]
   path_to_input = ""
-
+  OneBodyG = "greenone.def"
+  Initial = "output_ref/green_init.dat"
+[file.input.interaction]
+  Trans = "trans.def"
+  CoulombIntra = "coulombintra.def"
+  Ising = "ising.def"
 [file.output]
   path_to_output = "output"
   energy = "energy.dat"

@@ -2,7 +2,7 @@
 print_level = 1
 print_step = 20
 [mode]
-mode = "UHF"
+mode = "UHFr"
 [mode.param]
 Nsite = 8
 2Sz = 0
@@ -14,7 +14,10 @@ T = 0.0
 [file]
 [file.input]
 path_to_input = ""
-namelist = "namelist.def"
+OneBodyG = "greenone.def"
+[file.input.interaction]
+Trans = "trans.def"
+CoulombIntra = "coulombintra.def"
 [file.output]
 path_to_output = "output"
 energy = "energy.dat"

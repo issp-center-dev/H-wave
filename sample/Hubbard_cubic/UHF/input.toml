@@ -19,9 +19,14 @@
 [file]
 [file.input]
   path_to_input = ""
+  onebodyg = "greenone.def"
+[file.input.interaction]
+  trans = "trans.def"
+  coulombintra = "coulombIntra.def"
 
 [file.output]
   path_to_output = "output"
   energy = "energy.dat"
   eigen = "eigen.dat"
   green = "green.dat"
+  initial = "initial.dat"

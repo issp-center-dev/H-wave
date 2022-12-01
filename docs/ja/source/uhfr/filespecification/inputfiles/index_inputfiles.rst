@@ -2,17 +2,13 @@
 
 .. _Ch:HowToExpert:
 
-UHF用入力ファイル
+UHFr用入力ファイル
 --------------------------------
 
 H-waveで使用する入力ファイル(\*.def)に関して説明します。
-入力ファイルの種別は以下の4つで分類されます。
+入力ファイルの種別は以下の2つで分類されます。
 
-(1) List:
-    
-    使用する入力ファイルの名前のリストを書きます。なお、ファイル名は任意に指定することができます。
-
-(2) Hamiltonian:
+(1) Hamiltonian:
     
     Hamiltonianを電子系の表式により指定します。
     具体的には以下のファイルで指定されます。
@@ -32,23 +28,25 @@ H-waveで使用する入力ファイル(\*.def)に関して説明します。
     | **PairHop**:
       :math:`c_ {i \uparrow}^{\dagger}c_{j\uparrow}c_{i \downarrow}^{\dagger}c_{j  \downarrow}`\ で表される相互作用を指定します。
     | **Exchange**:
-      :math:`S_i^+ S_j^-`\ で表される相互作用を指定します。  
+      :math:`S_i^+ S_j^-`\ で表される相互作用を指定します。
     | **Ising**:
-      :math:`S_i^z S_j^z`\ で表される相互作用を指定します。  
+      :math:`S_i^z S_j^z`\ で表される相互作用を指定します。
     | **PairLift**:
-      :math:`c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}`\ で表される相互作用を指定します。	    
+      :math:`c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}`\ で表される相互作用を指定します。
 	    
-(3) Green functions:
+(2) Green functions:
 
     | **Initial** :初期値として入力する一体Green関数を指定します。
-      :math:`\langle c^{\dagger}_{i\sigma_1}c_{j\sigma_2}\rangle`\ を入力します。  
+      :math:`\langle c^{\dagger}_{i\sigma_1}c_{j\sigma_2}\rangle`\ を入力します。
     | **OneBodyG** :出力する一体Green関数を指定します。
-      :math:`\langle c^{\dagger}_{i\sigma_1}c_{j\sigma_2}\rangle`\ が出力されます。  
+      :math:`\langle c^{\dagger}_{i\sigma_1}c_{j\sigma_2}\rangle`\ が出力されます。
+
+以下、各入力ファイルのファイルフォーマットについて詳細を記載します。
 
 .. toctree::
    :maxdepth: 1
+   :caption: Contents:
 
-   List_file_for_the_input_files
    Trans_file
    InterAll_file
    CoulombIntra_file
