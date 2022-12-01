@@ -9,7 +9,7 @@ H-waveを波数空間モード(UHFk)で実行するには、入力ファイル�
 
 を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。
 
-以下では、 ``sample/Hubbard_square/UHFk`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
+以下では、 ``docs/tutorial/Hubbard/UHFr`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
 相互作用定義ファイルは StdFace ライブラリを用いて生成します。
 
 StdFaceライブラリのコンパイルと実行
@@ -162,8 +162,7 @@ Hamiltonianを構築するための格子の幾何情報および相互作用係
 Transferに指定するファイルは、電子系のTransferに相当するHamiltonianの係数を格納します。
 また、二体相互作用の係数は相互作用のタイプごとに係数を格納するファイルを指定します。
 
-相互作用のタイプは、実空間版UHFの入力であるExpertModeに合わせて、
-CoulombItra, CoulombInter, Hund, Ising, Exchange, PairLift, PairHop が定義されています。
+相互作用のタイプは、実空間版UHFの入力ファイル形式と対応して、CoulombItra, CoulombInter, Hund, Ising, Exchange, PairLift, PairHop が定義されています。
 
 これらのファイルはWannier90(-like)形式で記述されます。以下に例を示します。
 ::

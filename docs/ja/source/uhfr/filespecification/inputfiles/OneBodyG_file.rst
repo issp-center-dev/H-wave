@@ -5,7 +5,7 @@
 OneBodyG指定ファイル
 ~~~~~~~~~~~~~~~~~~~~
 
-一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ を計算します。以下にファイル例を記載します。
+計算する一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ を指定します。以下にファイル例を記載します。
 
 ::
 
