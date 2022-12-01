@@ -34,54 +34,6 @@ else
   echo ${sample_name} finished.
 fi
 
-sample_name="Hubbard_square/UHF"
-echo start $sample_name
-cd ${sample_dir}/${sample_name}
-$uhfdry_out stan.in && hwave ./input.toml
-if [ $? -ne 0 ]; then
-  echo ${sample_name} failed.
-  failed_dirs="${failed_dirs} ${sample_name}"
-  nfails=`echo "$nfails + 1" | bc`
-else
-  echo ${sample_name} finished.
-fi
-
-sample_name="Hubbard_square/UHFk"
-echo start $sample_name
-cd ${sample_dir}/${sample_name}
-$uhfdry_out stan.in && hwave ./input.toml
-if [ $? -ne 0 ]; then
-  echo ${sample_name} failed.
-  failed_dirs="${failed_dirs} ${sample_name}"
-  nfails=`echo "$nfails + 1" | bc`
-else
-  echo ${sample_name} finished.
-fi
-
-sample_name="Hubbard_honeycomb/UHF"
-echo start $sample_name
-cd ${sample_dir}/${sample_name}
-$uhfdry_out stan.in && hwave ./input.toml
-if [ $? -ne 0 ]; then
-  echo ${sample_name} failed.
-  failed_dirs="${failed_dirs} ${sample_name}"
-  nfails=`echo "$nfails + 1" | bc`
-else
-  echo ${sample_name} finished.
-fi
-
-sample_name="Hubbard_honeycomb/UHFk"
-echo start $sample_name
-cd ${sample_dir}/${sample_name}
-$uhfdry_out stan.in && hwave ./input.toml
-if [ $? -ne 0 ]; then
-  echo ${sample_name} failed.
-  failed_dirs="${failed_dirs} ${sample_name}"
-  nfails=`echo "$nfails + 1" | bc`
-else
-  echo ${sample_name} finished.
-fi
-
 sample_name="Hubbard_cubic/UHF"
 echo start $sample_name
 cd ${sample_dir}/${sample_name}
