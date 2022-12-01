@@ -12,7 +12,6 @@ Make sure that both `hwave` package (this project) and `uhf_dry.out` of `StdFace
 
 ```bash
 uhf_dry.out stan.in
-python3 qlms.py input.toml
 python3 output_band.py  
 ```
 
