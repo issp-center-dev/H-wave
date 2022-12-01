@@ -125,7 +125,7 @@ TOML形式
 
 - ``strict_hermite``
 
-  **形式 :** bool型; (デフォルトは false)
+  **形式 :** bool型 (デフォルトは false)
 
   **説明 :** 相互作用定義ファイルの読み込み時に Hermiticity を厳密にチェックします。true の場合、 ``hermite_tolerance`` 以上のズレが見つかったときはエラーで終了します。false の場合は warning を表示して実行を継続します。
 

@@ -211,7 +211,7 @@ Transファイルの詳細はセクション :ref:`Subsec:Trans` をご覧くだ
 入力ファイル読み込みに関するログが出力されたあと、UHF計算の計算過程に関する情報が出力されます。
 出力ファイルは ``input.toml`` の ``file.output`` セクションでの設定にしたがい、
 ``output`` ディレクトリに 固有値が記載された ``energy.dat`` ,
-固有ベクトルが記載された ``spin-down_eigen.dat.npz``, ``spin-up_eigen.dat.npz``,
+固有ベクトルが記載された ``spin-down_eigen.npz``, ``spin-up_eigen.npz``,
 一体グリーン関数の値が記載された ``green.dat`` ファイルが出力されます。
 出力ファイルの詳細についてはファイルフォーマットの章をご覧ください。
 
