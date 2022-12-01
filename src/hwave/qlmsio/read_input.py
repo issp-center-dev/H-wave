@@ -7,11 +7,9 @@ logger = logging.getLogger("qlms").getChild("read_input")
 
 
 class QLMSInput():
-    valid_namelist = ["modpara", "trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg", "locspin"]
+    valid_namelist = ["trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall", "initial", "onebodyg"]
     def __init__(self, file_name_list, solver_type="UHFr"):
-        self.file_names = self._read_file_names(file_name_list)
-        ## Get ModPara file
-        #self.mod_param = self._read_para("modpara")
+        self.file_names = file_name_list
         self.ham_param = CaseInsensitiveDict()
         self.ham_param["Transfer"] = self._read_ham("trans", value_type="complex")
         self.ham_param["CoulombInter"] = self._read_ham("coulombinter")

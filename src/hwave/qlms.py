@@ -11,7 +11,7 @@ import tomli
 import hwave.qlmsio as qlmsio
 import hwave.solver.uhfr as sol_uhfr
 import hwave.solver.uhfk as sol_uhfk
-
+from requests.structures import CaseInsensitiveDict
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     if input_dict is None:
@@ -34,10 +34,6 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     # Initialize information about input files
     info_inputfile = info_file.get("input", {})
     info_inputfile["path_to_input"] = info_inputfile.get("path_to_input", "")
-    info_inputfile["namelist"] = info_inputfile.get("namelist", "namelist.def")
-    path_to_namelist = os.path.join(
-        info_inputfile["path_to_input"], info_inputfile["namelist"]
-    )
 
     # Initialize information about output files
     info_outputfile = info_file.get("output", {})
@@ -56,11 +52,17 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     mode = info_mode["mode"]
     if mode == "UHFr":
         logger.info("Read def files")
-        read_io = qlmsio.read_input.QLMSInput(path_to_namelist)
-
-        # logger.info("Get Parameters information")
-        # mod_param_info = read_io.get_param("mod")
-        # pprint.pprint(mod_param_info, width=1)
+        file_list = CaseInsensitiveDict()
+        #interaction files
+        for key, file_name in info_inputfile["interaction"].items():
+            file_list[key] = os.path.join(info_inputfile["path_to_input"], file_name)
+        #initial and green
+        for key, file_name in info_inputfile.items():
+            if key.lower() == "initial":
+                file_list[key] = os.path.join(info_inputfile["path_to_input"], file_name)
+            elif key.lower() == "onebodyg":
+                file_list[key] = os.path.join(info_inputfile["path_to_input"], file_name)
+        read_io = qlmsio.read_input.QLMSInput(file_list)
 
         logger.info("Get Hamiltonian information")
         ham_info = read_io.get_param("ham")
