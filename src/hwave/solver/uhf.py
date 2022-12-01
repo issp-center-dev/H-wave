@@ -581,7 +581,7 @@ class UHF(solver_base):
                 np.savez(os.path.join(path_to_output, key+"_"+info_outputfile["eigen"]), eigenvalue = eigenvalue, eigenvector=eigenvector)
 
         if "green" in info_outputfile.keys():
-            if "OneBodyG" in green_info:
+            if "OneBodyG" in green_info and green_info["OneBodyG"] is not None:
                 _green_info = green_info["OneBodyG"]
                 _green_info = np.array(_green_info, dtype=np.int32)
                 output_str = ""
@@ -591,6 +591,8 @@ class UHF(solver_base):
                     output_str += "{} {} {} {} {} {}\n".format(info[0], info[1], info[2], info[3], self.Green[nsite1][nsite2].real, self.Green[nsite1][nsite2].imag)
                 with open(os.path.join(path_to_output, info_outputfile["green"]), "w") as fw:
                     fw.write(output_str)
+            else:
+                logger.error("OneBodyG is required to output green function.")
                     
         if "initial" in info_outputfile.keys():
             output_str = "===============================\n"
