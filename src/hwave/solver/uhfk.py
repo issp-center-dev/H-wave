@@ -17,9 +17,10 @@ class UHFk(solver_base):
         self._init_lattice()
         self._init_orbit()
         # self._dump_param_ham()
-        self._check_cellsize()
+        self._check_interaction()
         self._init_interaction()
         # self._dump_param_ham()
+        self._init_wavevec()
 
         self._show_param()
 
@@ -76,10 +77,15 @@ class UHFk(solver_base):
         # cutoff of green function elements
         self.threshold = self.param_mod.get("threshold", 1.0e-12)
 
+        # strict hermiticity check
+        self.strict_hermite = self.param_mod.get("strict_hermite", False)
+        self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
+
     @do_profile
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
         self.cellshape = (Lx,Ly,Lz)
+        self.cellvol = Lx * Ly * Lz
 
         Bx,By,Bz = self.param_mod.get("SubShape", [1,1,1])
         self.subshape = (Bx,By,Bz)
@@ -137,6 +143,8 @@ class UHFk(solver_base):
         logger.info("    IterationMax   = {}".format(self.param_mod["IterationMax"]))
         logger.info("    EPS            = {}".format(self.param_mod["EPS"]))
         logger.info("    2Sz            = {}".format(self.param_mod["2Sz"]))
+        logger.info("    strict_hermite = {}".format(self.strict_hermite))
+        logger.info("    hermite_tol    = {}".format(self.hermite_tolerance))
 
     @do_profile
     def _reshape_geometry(self, geom):
@@ -322,6 +330,29 @@ class UHFk(solver_base):
                     # replace
                     self.param_ham[type] = tbl
 
+    def _init_wavevec(self):
+        # wave vectors on sublatticed geometry
+        def _klist(n):
+            return np.roll( (np.arange(n)-(n//2)), -(n//2) )
+        geom = self.param_ham["Geometry"]
+        rvec = geom["rvec"]
+        omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
+        kvec = np.array([ np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg for i in range(3) ])
+
+        nx,ny,nz = self.shape
+
+        self.wave_table = np.zeros((nx,ny,nz,3), dtype=float)
+        for ix, kx in enumerate(_klist(nx)):
+            vx = kvec[0] * kx / nx
+            for iy, ky in enumerate(_klist(ny)):
+                vy = kvec[1] * ky / ny
+                for iz, kz in enumerate(_klist(nz)):
+                    vz = kvec[2] * kz / nz
+                    self.wave_table[ix,iy,iz] = np.pi*2*(vx + vy + vz)
+        #for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
+        #    print(ix,iy,iz,self.wave_table[ix,iy,iz])
+        self.kvec = kvec
+
     @do_profile
     def _dump_param_ham(self):
         if logger.getEffectiveLevel() < logging.INFO:
@@ -338,8 +369,13 @@ class UHFk(solver_base):
 
                 for (irvec,orbvec), v in self.param_ham[type].items():
                     print("\t",irvec,orbvec," = ",v)
-                
+
     @do_profile
+    def _check_interaction(self):
+        self._check_cellsize()
+        self._check_orbital_index()
+        self._check_hermite()
+
     def _check_cellsize(self):
         err = 0
         for k in self.param_ham.keys():
@@ -371,8 +407,64 @@ class UHFk(solver_base):
             logger.error("_check_cellsize failed. interaction range exceeds cell shape.")
             exit(1)
 
+    def _check_orbital_index(self):
+        norb = self.param_ham["Geometry"]["norb"]
+        err = 0
+        for k in self.param_ham.keys():
+            if k in ["Geometry", "Initial"]:
+                pass
+            else:
+                fail = 0
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
+                        fail += 1
+                if k == "CoulombIntra":
+                    for (irvec,orbvec), v in self.param_ham[k].items():
+                        if not orbvec[0] == orbvec[1]:
+                            fail += 1
+                if fail > 0:
+                    logger.error("orbital index check failed for {}.".format(k))
+                    err += 1
+                else:
+                    logger.debug("orbital index check for {} ok.".format(k))
+        if err > 0:
+            logger.error("_check_orbital_index failed. invalid orbital index found in interaction definitions.")
+            exit(1)
+
+    def _check_hermite(self):
+        max_print = 32
+
+        if "Transfer" in self.param_ham:
+            nx,ny,nz = self.param_mod.get("CellShape")
+            norb = self.norb
+
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec, *orbvec)] = v
+
+            t = np.conjugate(
+                    np.transpose(
+                        np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        (0,1,2,4,3)
+                    )
+                )
+
+            if not np.allclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0):
+                msg = "Hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r)))
+                if self.strict_hermite:
+                    logger.error(msg)
+                    errlist = np.array(np.nonzero(~np.isclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0))).transpose()
+                    for idx in errlist[:max_print]:
+                        logger.error("    index={}, T_ab={}, T_ba^*={}".format(idx, tab_r[tuple(idx)], t[tuple(idx)]))
+                    if len(errlist) > max_print:
+                        logger.error("    ...")
+                    logger.error("{} entries".format(len(errlist)))
+                    exit(1)
+                else:
+                    logger.warn(msg)
+
     @do_profile
-    def solve(self, path_to_output):
+    def solve(self, green_info, path_to_output):
         print_level = self.info_log["print_level"]
         print_check = self.info_log.get("print_check", None)
 
@@ -386,7 +478,7 @@ class UHFk(solver_base):
         self._make_ham_trans() # T_ab(k)
         self._make_ham_inter() # J_ab(r)
 
-        self.Green = self._initial_green()
+        self.Green = self._initial_green(green_info)
 
         is_converged = False
 
@@ -427,37 +519,73 @@ class UHFk(solver_base):
             fch.close()
             
     @do_profile
-    def _initial_green(self):
+    def _initial_green(self, green_info):
         logger.debug(">>> _initial_green")
 
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
+        _data = None
+        if "initial" in green_info and green_info["initial"] is not None:
+            logger.info("load initial green function from file")
+            _data = self._read_green_from_data(green_info["initial"])
+        elif "initial_uhf" in green_info:
+            if not "geometry_uhf" in green_info:
+                logger.error("initial green function in coord space requires geometry.dat")
+                exit(1)
+            logger.info("load initial green function in coord space from file")
+            _data = self._initial_green_uhf(green_info["initial_uhf"], green_info["geometry_uhf"])
+
+        if _data is None:
+            logger.info("initialize green function with random numbers")
+            _data = self._initial_green_random()
+        return _data
+
+    def _initial_green_random(self):
+        lx,ly,lz = self.cellshape
+        lvol     = self.cellvol
         norb     = self.norb
         nd       = self.nd
         ns       = self.ns
 
-        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
+        np.random.seed(self.param_mod["RndSeed"])
+        #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+        #green = 0.01 * (rand - 0.5)
 
-        if self.param_ham["Initial"] is not None:
-            file_name = self.param_ham["Initial"]
-            logger.info("read green function from file {}".format(file_name))
-            green = self._read_green(file_name)
+        # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
+        x1 = np.random.rand(lvol * nd * lvol * nd).reshape(ns,lvol,norb,ns,lvol,norb)
+        x2 = np.transpose(x1,(1,4,0,2,3,5))
+        x3 = x2[0].reshape(lvol,ns,norb,ns,norb)  # take average?
 
+        green = 0.01 * (x3 - 0.5)
+
+        if self.has_sublattice:
+            return self._reshape_green(green)
         else:
-            logger.info("initialize green function with random numbers")
-            
-            np.random.seed(self.param_mod["RndSeed"])
-            #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
-            #green = 0.01 * (rand - 0.5)
+            return green
 
-            # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
-            x1 = np.random.rand(nvol * nd * nvol * nd).reshape(ns,nvol,norb,ns,nvol,norb)
-            x2 = np.transpose(x1,(1,4,0,2,3,5))
-            x3 = x2[0].reshape(nvol,ns,norb,ns,norb)  # take average?
+    def _initial_green_uhf(self, info, geom):
+        lx,ly,lz = self.cellshape
+        lvol     = self.cellvol
+        norb     = self.norb
+        nd       = self.nd
+        ns       = self.ns
 
-            green = 0.01 * (x3 - 0.5)
+        def _pack_site(ix,iy,iz):
+            return ix + lx * (iy + ly * iz)
 
-        return green
+        tbl = {}
+        for idx, (ix,iy,iz,a) in geom["site2vec"].items():
+            site = _pack_site(ix,iy,iz)
+            tbl[idx] = (site, a)
+
+        green_uhf = np.zeros((lvol,lvol,ns,norb,ns,norb),dtype=np.complex128)
+        for (i,s,j,t),v in info.items():
+            isite, a = tbl[i]
+            jsite, b = tbl[j]
+            green_uhf[isite,jsite,s,a,t,b] = v
+
+        if self.has_sublattice:
+            return self._reshape_green(green_uhf[0])
+        else:
+            return green_uhf[0]
 
     @do_profile
     def _make_ham_trans(self):
@@ -473,16 +601,6 @@ class UHFk(solver_base):
 
         for (irvec,orbvec), v in self.param_ham["Transfer"].items():
             tab_r[(*irvec, *orbvec)] = v
-
-        # check hermiticity
-        t = np.conjugate(
-            np.transpose(
-                np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
-                (0,1,2,4,3)
-            )
-        )
-        if not np.allclose(t, tab_r):
-            logger.warn("hermiticity check failed: |T_ba(-r)^* - T_ab(r)| = {}".format(np.sum(np.abs(t - tab_r))) )
 
         # fourier transform
         tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -649,8 +767,8 @@ class UHFk(solver_base):
                 )
             )
 
-            # interaction coeffs
-            self.inter_table["Ising"] = (jab_r + jba)/2
+            # interaction coeffs: J_ij Sz_i Sz_j where Sz = 1/2 sigma, sigma=+1,-1
+            self.inter_table["Ising"] = (jab_r + jba)/2 / 4
             # spin combination
             self.spin_table["Ising"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Ising"][0,0,0,0] = 1
@@ -1111,18 +1229,25 @@ class UHFk(solver_base):
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
                      eigenvalue  = self._green_list["eigenvalue"],
-                     eigenvector = self._green_list["eigenvector"])
+                     eigenvector = self._green_list["eigenvector"],
+                     wavevec = self.wave_table,
+                     )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
         if "green" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["green"])
             self._save_green(file_name)
-            logger.info("save_results: save green function in file {}".format(file_name))
+
+        if "onebodyg" in info_outputfile.keys():
+            file_name = os.path.join(path_to_output, info_outputfile["onebodyg"])
+            self._save_greenone(file_name, green_info)
 
         if "initial" in info_outputfile.keys():
-            #XXX
-            logger.info("save_results: save initial is not supported")
+            logger.warn("save_results: save initial is not supported")
             pass
+
+        if "export_hamiltonian" in info_outputfile.keys():
+            self._export_hamiltonian(path_to_output, info_outputfile["export_hamiltonian"])
 
     @do_profile
     def _read_green(self, file_name):
@@ -1131,21 +1256,23 @@ class UHFk(solver_base):
         except FileNotFoundError:
             logger.info("_read_green: file {} not found".format(file_name))
             return None
+        return self._read_green_from_data(v)
             
+    def _read_green_from_data(self, ginfo):
         if self.has_sublattice:
-            if "green_sublattice" in v.files:
+            if "green_sublattice" in ginfo.files:
                 logger.debug("_read_green: read green_sublattice")
-                data = v["green_sublattice"]
-            elif "green" in v.files:
+                data = ginfo["green_sublattice"]
+            elif "green" in ginfo.files:
                 logger.debug("_read_green: read green and reshape")
-                data = self._reshape_green(v["green"])
+                data = self._reshape_green(ginfo["green"])
             else:
                 logger.debug("_read_green: no data found")
                 data = None
         else:
-            if "green" in v.files:
+            if "green" in ginfo.files:
                 logger.debug("_read_green: read green")
-                data = v["green"]
+                data = ginfo["green"]
             else:
                 logger.debug("_read_green: no data found")
                 data = None
@@ -1158,3 +1285,107 @@ class UHFk(solver_base):
             np.savez(file_name, green = green_orig, green_sublattice = self.Green)
         else:
             np.savez(file_name, green = self.Green)
+        logger.info("save_results: save green function to file {}".format(file_name))
+
+    @do_profile
+    def _save_greenone(self, file_name, green_info):
+        if not "onebodyg_uhf" in green_info or not "geometry_uhf" in green_info:
+            logger.error("_save_greenone: onebodyg_uhf and geometry_uhf are required")
+            return None
+
+        if self.has_sublattice:
+            gr = self._deflate_green(self.Green)
+        else:
+            gr = self.Green
+
+        geom = green_info["geometry_uhf"]
+        greenone = green_info["onebodyg_uhf"]
+
+        lx,ly,lz = self.cellshape
+        lvol     = self.cellvol
+        norb     = self.norb
+        nd       = self.nd
+        ns       = self.ns
+
+        tbl = geom["site2vec"]
+
+        def _pack_site(ix,iy,iz):
+            return ix + lx * (iy + ly * iz)
+
+        with open(file_name, "w") as fw:
+            # G(i,a,s; j,b,t) := G(a,s;b,t;j-i)
+            for (i,s,j,t) in greenone:
+                (ix,iy,iz,a) = tbl[i]
+                (jx,jy,jz,b) = tbl[j]
+
+                kx = (jx - ix + lx) % lx
+                ky = (jy - iy + ly) % ly
+                kz = (jz - iz + lz) % lz
+                idx = _pack_site(kx,ky,kz)
+
+                v = gr[idx,s,a,t,b]
+
+                fw.write("{:3} {:3} {:3} {:3}  {:.12e} {:.12e}\n".format(
+                    i, s, j, t, v.real, v.imag
+                ))
+
+        logger.info("save_results: save greenone to file {}".format(file_name))
+
+    def _export_geometry(self, file_name):
+        geom = self.param_ham["Geometry"]
+        with open(file_name, "w") as fw:
+            # write unit vector
+            rvec = geom["rvec"]
+            for k in range(3):
+                fw.write("{:.8f} {:.8f} {:.8f}\n".format(rvec[k][0], rvec[k][1], rvec[k][2]))
+            # write number of orbitals
+            fw.write("{}\n".format(geom["norb"]))
+            # write center coordinates in fractional coordinates
+            center = geom["center"]
+            for k in range(len(center)):
+                fw.write("{:.8f} {:.8f} {:.8f}\n".format(center[k][0], center[k][1], center[k][2]))
+
+    def _export_interaction(self, type, file_name):
+        intr = self.param_ham[type]
+
+        min_r = [0,0,0]
+        max_r = [0,0,0]
+        for (irvec,orbvec), v in self.param_ham[type].items():
+            for k in range(3):
+                min_r[k] = irvec[k] if irvec[k] < min_r[k] else min_r[k]
+                max_r[k] = irvec[k] if irvec[k] > max_r[k] else max_r[k]
+        rshape = [ max_r[i]-min_r[i]+1 for i in range(3) ]
+        rsize = rshape[0] * rshape[1] * rshape[2]
+
+        with open(file_name, "w") as fw:
+            # write header
+            fw.write("{} with sublattice for uhfk\n".format(type))
+            # write number of orbitals
+            fw.write("{}\n".format(self.norb))
+            # write number of points of box enclosing transport vectors
+            fw.write("{}\n".format(rsize))
+            # write multiplicity factors (nominal)
+            for i in range(rsize):
+                if i > 0 and i % 15 == 0:
+                    fw.write("\n")
+                fw.write(" 1")
+            fw.write("\n")
+            # write index and elements
+            for (irvec,orbvec), v in self.param_ham[type].items():
+                if (abs(v) > 1.0e-12):
+                    fw.write("{:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
+                        *irvec, *orbvec, v.real, v.imag
+                    ))
+
+    def _export_hamiltonian(self, path_to_output, prefix):
+        for type in self.param_ham.keys():
+            if type in ["Geometry"]:
+                file_name = os.path.join(path_to_output, prefix + type + ".dat")
+                self._export_geometry(file_name)
+                logger.info("export Geometry to {}".format(file_name))
+            elif type in ["Initial"]:
+                pass
+            else:
+                file_name = os.path.join(path_to_output, prefix + type + ".dat")
+                self._export_interaction(type, file_name)
+                logger.info("export {} to {}".format(type, file_name))

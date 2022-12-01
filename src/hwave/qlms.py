@@ -3,7 +3,7 @@ from typing import Optional
 
 import sys
 import os
-import pprint
+# import pprint
 import logging
 
 import tomli
@@ -43,6 +43,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     info_outputfile = info_file.get("output", {})
     info_outputfile["path_to_output"] = info_outputfile.get("path_to_output", "output")
     path_to_output = info_outputfile["path_to_output"]
+    os.makedirs(path_to_output, exist_ok=True)
 
     logger = logging.getLogger("qlms")
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -55,24 +56,24 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     mode = info_mode["mode"]
     if mode == "UHF":
         logger.info("Read def files")
-        read_io = qlmsio.read_input.QMLSInput(path_to_namelist)
+        read_io = qlmsio.read_input.QLMSInput(path_to_namelist)
 
-        logger.info("Get Parameters information")
-        mod_param_info = read_io.get_param("mod")
-        pprint.pprint(mod_param_info, width=1)
+        # logger.info("Get Parameters information")
+        # mod_param_info = read_io.get_param("mod")
+        # pprint.pprint(mod_param_info, width=1)
 
         logger.info("Get Hamiltonian information")
         ham_info = read_io.get_param("ham")
 
-        logger.info("Get Output information")
-        green_info = read_io.get_param("output")
-        os.makedirs(path_to_output, exist_ok=True)
+        logger.info("Get Green function information")
+        green_info = read_io.get_param("green")
 
-        solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
+        # solver = sol_uhf.UHF(ham_info, info_log, info_mode, mod_param_info)
+        solver = sol_uhf.UHF(ham_info, info_log, info_mode)
 
     elif mode == "UHFk":
         logger.info("Read definitions from files")
-        read_io = qlmsio.read_input_k.QMLSkInput(info_inputfile)
+        read_io = qlmsio.read_input_k.QLMSkInput(info_inputfile)
 
         # logger.info("Get parameter information")
         # mod_param_info = info_mode #read_io.get_param("mod")
@@ -81,11 +82,10 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         logger.info("Get Hamiltonian information")
         ham_info = read_io.get_param("ham")
 
-        logger.info("Get output information")
-        green_info = read_io.get_param("output")
-        os.makedirs(path_to_output, exist_ok=True)
+        logger.info("Get Green function information")
+        green_info = read_io.get_param("green")
 
-        pprint.pprint(info_mode, width=1)
+        # pprint.pprint(info_mode, width=1)
 
         solver = sol_uhfk.UHFk(ham_info, info_log, info_mode)
 
@@ -94,7 +94,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         exit(0)
 
     logger.info("Start UHF calculation")
-    solver.solve(path_to_output)
+    solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")
     solver.save_results(info_outputfile, green_info)
     logger.info("All procedures are finished.")

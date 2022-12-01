@@ -10,10 +10,8 @@ InterAll指定ファイル
 .. math::
 
    \mathcal{H} = \sum_{i,j,k,l}\sum_{\sigma_1,\sigma_2, \sigma_3, \sigma_4}
-   I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}c_{k\sigma_3}^{\dagger}c_{l\sigma_4}
+   I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom{\dagger}}c_{k\sigma_3}^{\dagger}c_{l\sigma_4}^{\phantom{\dagger}}
 
-
-なお、スピンに関して計算する場合には、\ :math:`i=j, k=l`\ となるよう設定してください。
 以下にファイル例を記載します。
 
 ::
@@ -112,8 +110,6 @@ InterAll指定ファイル
 -  Hamiltonianがエルミートという制限から\ :math:`I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}=I_{lkji\sigma_4\sigma_3\sigma_2\sigma_1}^{\dagger}`\ の関係を満たす必要があります。上記の関係が成立しない場合にはエラー終了します。
    また、エルミート共役の形式は\ :math:`I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}c_{k\sigma_3}^{\dagger}c_{l\sigma_4}`\ に対して、\ :math:`I_{lkji\sigma_4\sigma_3\sigma_2\sigma_1}`
    :math:`c_{l\sigma_4}^{\dagger}c_{k\sigma_3}c_{j\sigma_2}^{\dagger}c_{i\sigma_1}`\ を満たすように入力してください。
-
--  スピンに関して計算する場合、\ :math:`i=j, k=l`\ を満たさないペアが存在するとエラー終了します。
 
 -  成分が重複して指定された場合にはエラー終了します。
 

@@ -14,23 +14,11 @@ class Interact_UHF_base():
         self.Ham_tmp = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         self.Ham_trans_tmp = np.zeros(tuple([(2 * self.Nsize) for i in range(2)]), dtype=complex)
         self.param_ham = self._transform_interall(ham_info)
-        if not self._range_check():
-            logger.error("range check failed for {}".format(self.__name__))
-            exit(1)
+        self._check_range()
 
     #Change interaction to interall type
     def _transform_interall(self, ham_info):
         return ham_info
-
-    def _range_check(self):
-        for site_info, value in self.param_ham.items():
-            for i in range(4):
-                if not 0 <= site_info[2*i] < self.Nsize:
-                    return False
-            for i in range(4):
-                if not 0 <= site_info[2*i+1] < 2:
-                    return False
-        return True
 
     def _calc_hartree(self):
         site = np.zeros(4, dtype=np.int32)
@@ -59,6 +47,38 @@ class Interact_UHF_base():
         if type == "hartreefock":
             self._calc_fock()
         return self.Ham_tmp, self.Ham_trans_tmp
+
+    # check input
+    def _check_range(self):
+        err = 0
+        for site_info, value in self.param_ham.items():
+            for i in range(4):
+                if not 0 <= site_info[2*i] < self.Nsize:
+                    err += 1
+                if not 0 <= site_info[2*i+1] < 2:
+                    err += 1
+        if err > 0:
+            logger.error("Range check failed for {}".format(self.__name__))
+            exit(1)
+
+    def _check_hermite(self, strict_hermite, tolerance):
+        err = 0
+        for site_info, value in self.param_ham.items():
+            list = tuple([site_info[i] for i in [6,7,4,5,2,3,0,1]])
+            vv = self.param_ham.get(list, 0.0).conjugate()
+            if not np.isclose(value, vv, atol=tolerance, rtol=0.0):
+                logger.info("  index={}, value={}, index={}, value^*={}".format(site_info, value, list, vv))
+                err += 1
+        if err > 0:
+            msg = "Hermite check failed for {}".format(self.__name__)
+            if strict_hermite:
+                logger.error(msg)
+                exit(1)
+            else:
+                logger.warn(msg)
+
+    def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
+        self._check_hermite(strict_hermite, tolerance)
 
 class CoulombIntra_UHF(Interact_UHF_base):
     def __init__(self, ham_info, Nsize):
@@ -121,6 +141,18 @@ class Exchange_UHF(Interact_UHF_base):
             param_tmp[sinfo] = value
         return param_tmp
 
+class Ising_UHF(Interact_UHF_base):
+    def __init__(self, ham_info, Nsize):
+        self.__name__ = "Ising"
+        super().__init__(ham_info, Nsize)
+    def _transform_interall(self, ham_info):
+        param_tmp = {}
+        for site_info, value in ham_info.items():
+            for spin_i, spin_j in itertools.product([0,1], repeat=2):
+                sinfo = tuple([site_info[0], spin_i, site_info[0], spin_i, site_info[1], spin_j, site_info[1], spin_j])
+                param_tmp[sinfo] = value * (1-2*spin_i) * (1-2*spin_j) / 4
+        return param_tmp
+
 class PairLift_UHF(Interact_UHF_base):
     def __init__(self, ham_info, Nsize):
         self.__name__ = "PairLift"
@@ -135,27 +167,70 @@ class PairLift_UHF(Interact_UHF_base):
         return param_tmp
 
 class InterAll_UHF(Interact_UHF_base):
-    def __init__(self, ham_info, Nsize):
+    def __init__(self, ham_info, Nsize, strict_hermite, tolerance):
         self.__name__ = "InterAll"
         super().__init__(ham_info, Nsize)
+        self._check_hermite(strict_hermite, tolerance)
     def _transform_interall(self, ham_info):
-        # hermite check
-        err = 0
-        for site_info, value in ham_info.items():
-            list = tuple([site_info[i] for i in [6,7,4,5,2,3,0,1]])
-            if not list in ham_info:
-                logger.error("entry not found: {}".format(list))
-                err += 1
-            elif not np.close(value, ham_info[list].conjugate()):
-                logger.error("not hermite for {}".format(site_info))
-                err += 1
-            else:
-                pass
-        if err > 0:
-            logger.error("hermite check failed")
-            return None
-
         return ham_info
+
+class Term_base:
+    def __init__(self, term_info, Nsize, coeff=1.0):
+        self.Nsize = Nsize
+        self.term_info = term_info
+        self.coeff = coeff
+        self._check_range()
+
+    def get_data(self):
+        data = np.zeros(tuple([(2 * self.Nsize) for i in range(2)]), dtype=complex)
+        for site_info, value in self.term_info.items():
+            # set value
+            site1 = site_info[0] + site_info[1] * self.Nsize
+            site2 = site_info[2] + site_info[3] * self.Nsize
+            data[site1][site2] += self.coeff * value
+        return data
+
+    def _check_range(self):
+        err = 0
+        for site_info, value in self.term_info.items():
+            for i in range(2):
+                if not 0 <= site_info[2*i] < self.Nsize:
+                    err += 1
+                if not 0 <= site_info[2*i+1] < 2:
+                    err += 1
+        if err > 0:
+            logger.error("Range check failed for Transfer")
+            exit(1)
+
+    def _check_hermite(self, strict_hermite, tolerance):
+        err = 0
+        for site_info, value in self.term_info.items():
+            list = tuple([site_info[i] for i in [2,3,0,1]])
+            vv = self.term_info.get(list, 0.0).conjugate()
+            if not np.isclose(value, vv, atol=tolerance, rtol=0.0):
+                logger.debug("  index={}, value={}, index={}, value^*={}".format(site_info, value, list, vv))
+                err += 1
+        if err > 0:
+            msg = "Hermite check failed for {}".format(self.__name__)
+            if strict_hermite:
+                logger.error(msg)
+                exit(1)
+            else:
+                logger.warn(msg)
+
+    def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
+        self._check_hermite(strict_hermite, tolerance)
+
+class Transfer_UHF(Term_base):
+    def __init__(self, term_info, Nsize):
+        self.__name__ = "Transfer"
+        super().__init__(term_info, Nsize, coeff=-1.0)
+
+class Green_UHF(Term_base):
+    def __init__(self, term_info, Nsize):
+        self.__name__ = "Green"
+        super().__init__(term_info, Nsize, coeff=1.0)
+
 
 from .base import solver_base
 
@@ -166,14 +241,21 @@ class UHF(solver_base):
         super().__init__(param_ham, info_log, info_mode, param_mod)
         self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
 
-        output_str = "Show input parameters\n"
+        output_str = "Show input parameters"
         for k, v in self.param_mod.items():
-            output_str += "{}: {}\n".format(k, v)
-        logger.debug(output_str)
+            output_str += "\n  {:<20s}: {}".format(k, v)
+        logger.info(output_str)
+
+        if self._check_param_range(self.param_mod, { "Nsite": [1, None]}) != 0:
+            logger.error("parameter range check failed.")
+            exit(1)
 
         self.iflag_fock = info_mode.get("flag_fock", True)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
         self.T = self.param_mod.get("T", 0)
+
+        self.strict_hermite = self.param_mod.get("strict_hermite", False)
+        self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
         # Make a list for generating Hamiltonian
         self.Nsize = self.param_mod["nsite"]
@@ -188,7 +270,7 @@ class UHF(solver_base):
                          "occupied": int((self.Ncond - TwoSz) / 2)}}
 
     @do_profile
-    def solve(self, path_to_output):
+    def solve(self, green_info, path_to_output):
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
         print_check = self.info_log.get("print_check", None)
@@ -200,7 +282,7 @@ class UHF(solver_base):
         for k, v in self.green_list.items():
             self.green_list[k]["eigen_start"] = label
             label += len(self.green_list[k]["label"])
-        self.Green = self._initial_G()
+        self.Green = self._initial_G(green_info)
 
         logger.info("Start UHF calculations")
         param_mod = self.param_mod
@@ -239,12 +321,12 @@ class UHF(solver_base):
             fch.close()
 
     @do_profile
-    def _initial_G(self):
+    def _initial_G(self, green_info):
         _green_list = self.green_list
         green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        if self.param_ham["Initial"] is not None:
+        if green_info["Initial"] is not None:
             logger.info("Load initial green function")
-            g_info = self.param_ham["Initial"]
+            g_info = green_info["Initial"]
 
             for site_info, value in g_info.items():
                 # range check
@@ -265,7 +347,6 @@ class UHF(solver_base):
             if not np.allclose(t, green):
                 logger.error("hermite check failed for Initial")
                 exit(1)
-
         else:
             logger.info("Initialize green function by random numbers")
             np.random.seed(self.param_mod["RndSeed"])
@@ -280,25 +361,9 @@ class UHF(solver_base):
     def _makeham_const(self):
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
-        for site_info, value in self.param_ham["Transfer"].items():
-            # range check
-            if not (0 <= site_info[0] < self.Nsize and
-                    0 <= site_info[2] < self.Nsize and
-                    0 <= site_info[1] < 2 and
-                    0 <= site_info[3] < 2):
-                logger.error("range check failed for Transfer")
-                exit(1)
-
-            # set value
-            site1 = site_info[0] + site_info[1] * self.Nsize
-            site2 = site_info[2] + site_info[3] * self.Nsize
-            self.Ham_trans[site1][site2] += -value
-
-        # hermite check
-        t = np.conjugate(np.transpose(self.Ham_trans))
-        if not np.allclose(t, self.Ham_trans):
-            logger.error("hermite check failed for Transfer")
-            exit(1)
+        trans = Transfer_UHF(self.param_ham["Transfer"], self.Nsize)
+        trans.check_hermite(self.strict_hermite, self.hermite_tolerance)
+        self.Ham_trans = trans.get_data()
 
     @do_profile
     def _makeham(self):
@@ -311,14 +376,14 @@ class UHF(solver_base):
 
     @do_profile
     def _makeham_mat(self):
-        # TODO Add Hund, Exchange,  PairHop, and PairLift
+        # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         if self.iflag_fock is True:
             type = "hartreefock"
         else:
             type = "hartree"
 
-        for key in ["CoulombIntra", "CoulombInter", "Hund", "Exchange", "PairHop", "PairLift", "InterAll"]:
+        for key in ["CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising", "PairHop", "PairLift", "InterAll"]:
             if self.param_ham[key] is not None:
                 param_ham = self.param_ham[key]
                 if key == "CoulombIntra":
@@ -329,12 +394,15 @@ class UHF(solver_base):
                     ham_uhf = Hund_UHF(param_ham, self.Nsize)
                 elif key == "Exchange":
                     ham_uhf = Exchange_UHF(param_ham, self.Nsize)
+                elif key == "Ising":
+                    ham_uhf = Ising_UHF(param_ham, self.Nsize)
                 elif key == "PairHop":
                     ham_uhf = PairHop_UHF(param_ham, self.Nsize)
                 elif key == "PairLift":
                     ham_uhf = PairLift_UHF(param_ham, self.Nsize)
                 elif key == "InterAll":
-                    ham_uhf = InterAll_UHF(param_ham, self.Nsize)
+                    ham_uhf = InterAll_UHF(param_ham, self.Nsize,
+                                           self.strict_hermite, self.hermite_tolerance)
                 else:
                     logger.warning("key {} is wrong!".format(key))
                     exit(1)
@@ -540,46 +608,50 @@ class UHF(solver_base):
                 fw.write(output_str)
 
         if "fij" in info_outputfile.keys():
-            Ns = round(self.Nsize)
-            Ne = round(self.Ncond)
-            #print(Ns,Ne)
-            if key == "sz-free":
-                eigenvector = self.green_list[key]["eigenvector"]
-                if Ne%2 == 1:
-                    logger.warning("FATAL: Ne=%d Ne should be even for calculating fij"%(Ne))
+            Ns = self.Nsize
+            Ne = self.Ncond
+
+            if self.param_mod["2Sz"] is None:
+                if Ne % 2 == 1:
+                    logger.warning("FATAL: Ne={}. Ne should be even for calculating fij".format(Ne))
                 else:
-                    logger.info("Calculations of fij for free-Sz ")
+                    logger.info("Calculations of fij for free-Sz")
+
+                    key = "sz-free"
+                    ev = self.green_list[key]["eigenvector"]
+
                     output_str = ""
-                    for int_i in range(Ns):
-                        for int_j in range(Ns):
-                            tmp = 0.0
-                            for int_n in range(int(Ne/2)):
-                                tmp +=      eigenvector[int_i][2*int_n-1]*eigenvector[int_j][2*int_n]
-                                tmp += -1.0*eigenvector[int_j][2*int_n-1]*eigenvector[int_i][2*int_n]
-                            output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
+                    for i, j in itertools.product(range(Ns), range(Ns)):
+                        fij = 0.0
+                        for n in range(Ne//2):
+                            fij += ev[i][n*2] * ev[j][n*2+1] - ev[i][n*2+1] * ev[j][n*2]
+                        output_str += " {:3} {:3}  {:.12f} {:.12f}\n".format(
+                            i, j, np.real(fij), np.imag(fij))
+
                     with open(os.path.join(path_to_output, key+"_"+info_outputfile["fij"]), "w") as fw:
                         fw.write(output_str)
             else:
-                up_key           = list(self.green_list.keys())[0]
-                down_key         = list(self.green_list.keys())[1]
-                up_eigenvector   = self.green_list[up_key]["eigenvector"]
-                down_eigenvector = self.green_list[down_key]["eigenvector"]
-                Sz               = round(2*self.physics["Sz"])
-                if Sz%2 == 1:
-                    logger.warning("FATAL: Sz=%d Sz should be even for calculating fij"%(Sz))
-                elif Sz == 0:
-                    logger.info("Calculations of fij for 2Sz=0 ")
+                TwoSz = self.param_mod["2Sz"]
+                if TwoSz % 2 == 1:
+                    logger.warning("FATAL: 2Sz={}. 2Sz should be even for calculating fij".format(TwoSz))
+                elif TwoSz == 0:
+                    logger.info("Calculations of fij for Sz=0")
+
+                    ev_up = self.green_list["spin-up"]["eigenvector"]
+                    ev_dn = self.green_list["spin-down"]["eigenvector"]
+
                     output_str = ""
-                    for int_i in range(Ns):
-                        for int_j in range(Ns):
-                            tmp = 0.0
-                            for int_n in range(int(Ne/2)):
-                                tmp += up_eigenvector[int_i][int_n]*down_eigenvector[int_j][int_n]
-                            output_str += " %d %d %.12f %.12f \n" % (int_i,int_j,np.real(tmp),np.imag(tmp))
+                    for i, j in itertools.product(range(Ns), range(Ns)):
+                        fij = 0.0
+                        for n in range(Ne//2):
+                            fij += ev_up[i][n] * ev_dn[j][n]
+                        output_str += " {:3} {:3} {:.12f} {:.12f}\n".format(
+                            i, j, np.real(fij), np.imag(fij))
+
                     with open(os.path.join(path_to_output, "Sz0_"+info_outputfile["fij"]), "w") as fw:
                         fw.write(output_str)
-                else: 
-                    logger.warning("NOT IMPLEMENTED: Sz !=0 but Sz even: this case will be implemented in near future")
+                else:
+                    logger.warning("NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future")
 
     @do_profile
     def get_Ham(self):

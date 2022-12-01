@@ -5,8 +5,7 @@
 PairLift指定ファイル
 ~~~~~~~~~~~~~~~~~~~~
 
-PairLiftカップリングをハミルトニアンに付け加えます
-(:math:`S=1/2`\ の系でのみ使用可能)。 付け加える項は以下で与えられます。
+PairLiftカップリングをハミルトニアンに付け加えます。 付け加える項は以下で与えられます。
 
 .. math:: \mathcal{H} = \sum_{i,j}J_{ij}^{\rm PairLift} (c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}+c_ {i \downarrow}^{\dagger}c_{i\uparrow}c_{j \downarrow}^{\dagger}c_{j \uparrow})
 
@@ -72,8 +71,6 @@ PairLiftカップリングをハミルトニアンに付け加えます
 ^^^^^^^^^^
 
 本ファイルを使用するにあたってのルールは以下の通りです。
-
--  スピン系のみで使用可能です。電子系、近藤系で指定した場合は計算に使用されません。
 
 -  行数固定で読み込みを行う為、ヘッダの省略はできません。
 
