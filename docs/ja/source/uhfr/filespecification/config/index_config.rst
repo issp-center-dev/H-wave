@@ -18,23 +18,30 @@
 
 ::
 
-    [mode]
-    mode = "UHF"
-    flag_fock = true
-    [mode.param]
-    T = 0.1
-    2Sz = 0
     [log]
     print_level = 1
     print_step = 20
+    [mode]
+    mode = "UHFr"
+    [mode.param]
+    Nsite = 8
+    2Sz = 0
+    Ncond = 8
+    IterationMax = 1000
+    EPS = 8
+    RndSeed = 123456789
+    T = 0.0
     [file]
     [file.input]
     path_to_input = ""
-    namelist = "namelist.def"
+    OneBodyG = "greenone.def"
+    [file.input.interaction]
+    Trans = "trans.def"
+    CoulombIntra = "coulombintra.def"
     [file.output]
     path_to_output = "output"
     energy = "energy.dat"
-    eigen = "eigen.dat"
+    eigen = "eigen"
     green = "green.dat"
 
 ファイル形式
@@ -52,7 +59,7 @@ TOML形式
 
   **形式 :** string型
 
-  **説明 :** 計算モードを指定します。実空間版UHFを利用する場合には ``UHF`` と入力して下さい。
+  **説明 :** 計算モードを指定します。実空間版UHFを利用する場合には ``UHFr`` と入力して下さい。
 
 - ``flag_fock``
 
@@ -183,12 +190,74 @@ TOML形式
 
   **説明 :** 入力ファイルの格納されているディレクトリを指定します。
 
-- ``namelist``
+- ``Initial``
 
-  **形式 :** str型 (デフォルトは "namelist.def")
+  **形式 :** str型 (デフォルトは "")
 
-  **説明 :** 入力ファイルリストファイルの名前を指定します。
+  **説明 :** 初期配置を指定する入力ファイル名を指定します。
 
+- ``OneBodyG``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** 出力したい一体グリーン関数を指定する入力ファイル名を指定します。
+
+``file.input.interaction`` セクション
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ``Trans``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** 一般的一体相互作用に関する設定をします。
+
+- ``InterAll``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** 一般的二体相互作用に関する設定をします。
+
+- ``CoulombIntra``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** 内部クーロン相互作用に関する設定をします。
+
+- ``CoulombInter``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** サイト間クーロン相互作用に関する設定をします。
+
+- ``Hund``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** フント結合に関する設定をします。
+
+- ``PairHop``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** ペアホッピングに関する設定をします。
+
+- ``Exchange``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** 交換相互作用に関する設定をします。
+
+- ``Ising``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** イジング相互作用に関する設定をします。
+
+- ``PairLift``
+
+  **形式 :** str型 (デフォルトは "")
+
+  **説明 :** ペアリフト相互作用に関する設定をします。
 
 ``file.output`` セクション
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
