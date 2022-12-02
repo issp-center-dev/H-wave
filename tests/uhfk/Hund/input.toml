@@ -16,7 +16,8 @@
   # ene_cutoff = 1.0e+2
   T = 0.0
   CellShape = [ 4, 4, 1 ]
-  SubShape = [ 2, 2, 1 ]
+  #SubShape = [ 2, 2, 1 ]
+  SubShape = [ 4, 4, 1 ]
 
 [file]
 [file.input]
@@ -27,7 +28,8 @@
   path_to_input = "./"
   Geometry = "geom.dat"
   Transfer = "transfer.dat"
-  CoulombInter = "coulombinter.dat"
+  #CoulombIntra = "coulombintra.dat"
+  Hund = "hund.dat"
 
 [file.output]
   path_to_output = "output"
