@@ -4,7 +4,7 @@
 
 H-waveを波数空間モード(UHFk)で実行するには、入力ファイルとして
 
-1. 入力パラメータファイル
+1. 環境設定入力ファイル
 2. 相互作用定義ファイル
 
 を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。
@@ -12,54 +12,11 @@ H-waveを波数空間モード(UHFk)で実行するには、入力ファイル�
 以下では、 ``docs/tutorial/Hubbard/UHFk`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
 相互作用定義ファイルは StdFace ライブラリを用いて生成します。
 
-StdFaceライブラリのコンパイルと実行
-----------------------------------------------------------------
-
-波数空間UHFの入力ファイル形式に対応した StdFace ライブラリは以下から取得できます。
-
-.. code-block:: bash
-
-    $ git clone https://github.com/issp-center-dev/StdFace.git
-
-ダウンロード終了後、以下のコマンドでコンパイルを行います。
-
-.. code-block:: bash
-
-    $ cd StdFace
-    $ mkdir build && cd build
-    $ cmake -DUHF=ON ..
-    $ make
-
-コンパイルに成功すると、 ``src`` ディレクトリに実行ファイル ``uhf_dry.out`` ができます。
-
-``uhf_dry.out`` の入力ファイルはサンプルディレクトリ内の ``stan.in`` ファイルです。
-ファイルの内容は以下のとおりです。
-
-.. literalinclude:: ../sample/stan.in
-
-- ``model`` は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 ``Hubbard`` のみに対応しています。
-- ``lattice`` は結晶構造を指定するキーワードです。 ここでは正方格子 ``square`` を選択しています。 ``W``, ``L`` は格子のサイズです。
-- ``t`` はホッピング、 ``V`` は隣接サイトクーロン相互作用のパラメータです。
-- ``calcmode = "uhfk"`` は波数空間UHF向けに Wannier90(-like)形式での出力を指定します。 ``exportall = 0`` は出力をコンパクトにするオプションです。
-
-入力ファイルの詳細については、セクション :ref:`Ch:HowToWannier90` を参照してください。
-
-上記のファイルを入力ファイルとして、 ``uhf_dry.out`` を以下のコマンドで実行します。
-
-.. code-block:: bash
-
-    $ cd path_to_Hwave/sample/UHFk
-    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ ./uhf_dry.out stan.in
-
-実行終了後、実行ディレクトリに幾何情報ファイル ``geom.dat`` 、相互作用定義ファイル ``transfer.dat``, ``coulombinter.dat`` が生成されます。
-
-
-入力パラメータファイルの作成
+環境設定入力ファイルの作成
 --------------------------------
 
-入力パラメータファイルには、基本パラメータの指定と入出力を制御する情報を記述します。
-ディレクトリ内に ``input.toml`` というファイルがありますが、これが入力パラメータファイルになります。
+環境設定入力ファイルには、基本パラメータの指定と入出力を制御する情報を記述します。
+``docs/tutorial/Hubbard/UHFk`` ディレクトリ内に ``input.toml`` というファイルがありますが、これが入力パラメータファイルになります。
 以下、ファイルの内容を記載します。
 
 .. literalinclude:: ../sample/input.toml
@@ -144,3 +101,49 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 ``output`` ディレクトリに ``energy.dat`` , ``eigen.dat.npz``, ``green.dat.npz`` ファイルが出力されます。
 
 出力ファイルの詳細についてはファイルフォーマットの章をご覧ください。
+
+StdFaceライブラリのコンパイルと実行
+----------------------------------------------------------------
+
+相互作用定義ファイルは、StdFaceライブラリを使用することで簡単に作成することができます。
+以下ではStdFaceライブラリを使用した入力ファイルの作成を行う方法を記載します。
+
+波数空間UHFの入力ファイル形式に対応した StdFace ライブラリは以下から取得できます。
+
+.. code-block:: bash
+
+    $ git clone https://github.com/issp-center-dev/StdFace.git
+
+ダウンロード終了後、以下のコマンドでコンパイルを行います。
+
+.. code-block:: bash
+
+    $ cd StdFace
+    $ mkdir build && cd build
+    $ cmake -DUHF=ON ..
+    $ make
+
+コンパイルに成功すると、 ``src`` ディレクトリに実行ファイル ``uhf_dry.out`` ができます。
+
+``uhf_dry.out`` の入力ファイルはサンプルディレクトリ内の ``stan.in`` ファイルです。
+ファイルの内容は以下のとおりです。
+
+.. literalinclude:: ../sample/stan.in
+
+- ``model`` は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 ``Hubbard`` のみに対応しています。
+- ``lattice`` は結晶構造を指定するキーワードです。 ここでは正方格子 ``square`` を選択しています。 ``W``, ``L`` は格子のサイズです。
+- ``t`` はホッピング、 ``V`` は隣接サイトクーロン相互作用のパラメータです。
+- ``calcmode = "uhfk"`` は波数空間UHF向けに Wannier90(-like)形式での出力を指定します。 ``exportall = 0`` は出力をコンパクトにするオプションです。
+
+入力ファイルの詳細については、セクション :ref:`Ch:HowToWannier90` を参照してください。
+
+上記のファイルを入力ファイルとして、 ``uhf_dry.out`` を以下のコマンドで実行します。
+
+.. code-block:: bash
+
+    $ cd path_to_Hwave/sample/UHFk
+    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
+    $ ./uhf_dry.out stan.in
+
+実行終了後、実行ディレクトリに幾何情報ファイル ``geom.dat`` 、相互作用定義ファイル ``transfer.dat``, ``coulombinter.dat`` が生成されます。
+
