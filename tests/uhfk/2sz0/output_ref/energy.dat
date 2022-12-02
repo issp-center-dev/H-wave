@@ -1,5 +1,5 @@
-Energy_Total        = -7.389615698515604
-Energy_Band         = -1.0131401796410027
-Energy_CoulombIntra = -6.376475518874601
+Energy_Total        = -7.389619911405164
+Energy_Band         = -1.0131452419072962
+Energy_CoulombIntra = -6.376474669497869
 NCond   = 16.0
-Sz      = 0.0
+Sz      = 2.220446049250313e-16
