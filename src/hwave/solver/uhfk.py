@@ -76,7 +76,7 @@ class UHFk(solver_base):
         self.cellshape = (Lx,Ly,Lz)
         self.cellvol = Lx * Ly * Lz
 
-        Bx,By,Bz = self.param_mod.get("SubShape", [1,1,1])
+        Bx,By,Bz = self.param_mod.get("SubShape", [Lx,Ly,Lz])
         self.subshape = (Bx,By,Bz)
         self.subvol = Bx * By * Bz
 
