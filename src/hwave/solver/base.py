@@ -12,6 +12,9 @@ class solver_base():
         self.info_log = info_log
         info_mode_param = info_mode.get("param", CaseInsensitiveDict({}))
 
+        # constants
+        self.threshold = 1.0e-12  # cutoff on elements of green function
+
         # default values
         para_init = CaseInsensitiveDict({
             "Nsite":  0,
@@ -23,7 +26,6 @@ class solver_base():
             "RndSeed": 1234,
             "T":      0.0,
             "ene_cutoff": 1.0e+2,
-            "threshold": 1.0e-12,
         })
 
         range_list = {
@@ -46,7 +48,7 @@ class solver_base():
                 if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
                     self.param_mod[key] = int(self.param_mod[key][0])
             # float parameters
-            for key in ["Mix", "T", "ene_cutoff", "threshold"]:
+            for key in ["Mix", "T", "ene_cutoff"]:
                 if self.param_mod[key] is not None and type(self.param_mod[key]) == type([]):
                     self.param_mod[key] = float(self.param_mod[key][0])
 

@@ -66,9 +66,6 @@ class UHFk(solver_base):
         self.T = self.param_mod.get("T", 0.0)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
 
-        # cutoff of green function elements
-        self.threshold = self.param_mod.get("threshold", 1.0e-12)
-
         # strict hermiticity check
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
         self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
