@@ -69,7 +69,3 @@ energy
 
 
 .. raw:: latex
-
-   \newpage
-
-

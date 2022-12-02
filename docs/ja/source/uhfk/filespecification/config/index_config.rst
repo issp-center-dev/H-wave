@@ -16,26 +16,8 @@
 
 以下、ファイル例を記載します。
 
-::
+.. literalinclude:: ../../sample/input.toml
 
-    [mode]
-    mode = "UHF"
-    flag_fock = true
-    [mode.param]
-    T = 0.1
-    2Sz = 0
-    [log]
-    print_level = 1
-    print_step = 20
-    [file]
-    [file.input]
-    path_to_input = ""
-    namelist = "namelist.def"
-    [file.output]
-    path_to_output = "output"
-    energy = "energy.dat"
-    eigen = "eigen.dat"
-    green = "green.dat"
 
 ファイル形式
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -116,12 +98,6 @@ TOML形式
   **形式 :** float型 (デフォルトは100.0)
 
   **説明 :** Fermi分布関数を計算する際に overflow を避けるためのカットオフを指定します。
-
-- ``threshold``
-
-  **形式 :** float型 (デフォルトは :math:`10^{-12}` )
-
-  **説明 :** Green関数の更新時に、要素に対するカットオフを指定します。
 
 - ``strict_hermite``
 

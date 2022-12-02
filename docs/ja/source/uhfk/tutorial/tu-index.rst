@@ -35,22 +35,11 @@ StdFaceライブラリのコンパイルと実行
 ``uhf_dry.out`` の入力ファイルはサンプルディレクトリ内の ``stan.in`` ファイルです。
 ファイルの内容は以下のとおりです。
 
-::
-
-    model = "Hubbard"
-    lattice = "square"
-    W = 4
-    L = 4
-    t = 1.0
-    V = 4.0
-    Ncond = 16
-    eps = 8
-    calcmode = "uhfk"
-    exportall = 0
+.. literalinclude:: ../sample/stan.in
 
 - ``model`` は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 ``Hubbard`` のみに対応しています。
 - ``lattice`` は結晶構造を指定するキーワードです。 ここでは正方格子 ``square`` を選択しています。 ``W``, ``L`` は格子のサイズです。
-- ``t`` はホッピング、 ``V`` は隣接サイトクーロン相互作用、 ``Ncond`` は全電子数、 ``eps`` は収束条件 :math:`10^{-{\rm eps}}` のパラメータです。
+- ``t`` はホッピング、 ``V`` は隣接サイトクーロン相互作用のパラメータです。
 - ``calcmode = "uhfk"`` は波数空間UHF向けに Wannier90(-like)形式での出力を指定します。 ``exportall = 0`` は出力をコンパクトにするオプションです。
 
 入力ファイルの詳細については、セクション :ref:`Ch:HowToWannier90` を参照してください。
@@ -73,38 +62,7 @@ StdFaceライブラリのコンパイルと実行
 ディレクトリ内に ``input.toml`` というファイルがありますが、これが入力パラメータファイルになります。
 以下、ファイルの内容を記載します。
 
-::
-
-   [log]
-     print_level = 1
-     print_step = 1
-   [mode]
-     mode = "UHFk"
-   [mode.param]
-     # 2Sz = 0
-     Ncond = 16
-     IterationMax = 1000
-     EPS = 8
-     Mix = 0.5
-     RndSeed = 123456789
-     # ene_cutoff = 1.0e+2
-     T = 0.0
-     CellShape = [ 4, 4, 1 ]
-     SubShape = [ 2, 2, 1 ]
-   [file]
-   [file.input]
-     path_to_input = ""
-     # initial = "green_init.dat.npz"
-   [file.input.interaction]
-     path_to_input = "./"
-     Geometry = "geom.dat"
-     Transfer = "transfer.dat"
-     CoulombInter = "coulombinter.dat"
-   [file.output]
-     path_to_output = "output"
-     energy = "energy.dat"
-     eigen = "eigen.dat"
-     green = "green.dat"
+.. literalinclude:: ../sample/input.toml
 
 このファイルはTOML形式で記述され、内容ごとにセクションに分類されています。
 
@@ -146,13 +104,7 @@ Hamiltonianを構築するための格子の幾何情報および相互作用係
 
 格子の幾何情報を記述します。ファイル例を以下に示します。
 
-::
-
-   1.000000000000   0.000000000000   0.000000000000
-   0.000000000000   1.000000000000   0.000000000000
-   0.000000000000   0.000000000000   1.000000000000
-   1
-   0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+.. literalinclude:: ../sample/geom.dat
 
 基本ベクトル(1〜3行目)、軌道の数(4行目)、各軌道のWannier center(5行目以降)を記載します。
 
@@ -165,17 +117,8 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 相互作用のタイプは、実空間版UHFの入力ファイル形式と対応して、CoulombItra, CoulombInter, Hund, Ising, Exchange, PairLift, PairHop が定義されています。
 
 これらのファイルはWannier90(-like)形式で記述されます。以下に例を示します。
-::
 
-    Transfer in wannier90-like format for uhfk
-    1
-    9
-      1 1 1 1 1 1 1 1 1
-      -1    0    0    1    1  -1.000000000000  -0.000000000000
-       0   -1    0    1    1  -1.000000000000  -0.000000000000
-       0    1    0    1    1  -1.000000000000   0.000000000000
-       1    0    0    1    1  -1.000000000000   0.000000000000
-
+.. literalinclude:: ../sample/transfer.dat
 
 コメント行(1行目)、軌道の数(2行目)、並進ベクトルをすべて収める直方体内のセルの総数 ``nrpts`` (3行目)、
 縮重度 ( ``nrpts`` 個を1行あたり15個ずつ)、係数行列の要素を記載します。
@@ -194,70 +137,7 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 
 計算が開始されると以下のようなログが出力されます。
 
-::
-
-   2022-11-30 16:11:12,247 INFO qlms: Read definitions from files
-   2022-11-30 16:11:12,247 INFO qlms.read_input: QLMSkInput: read Gemoetry from ./geom.dat
-   2022-11-30 16:11:12,248 INFO qlms.read_input: QLMSkInput: read interaction Transfer from ./transfer.dat
-   2022-11-30 16:11:12,248 INFO qlms.read_input: QLMSkInput: read interaction CoulombInter from ./coulombinter.dat
-   2022-11-30 16:11:12,248 INFO qlms: Get Hamiltonian information
-   2022-11-30 16:11:12,248 INFO qlms: Get output information
-   2022-11-30 16:11:12,273 INFO qlms.uhfk: Show parameters
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Cell Shape     = (4, 4, 1)
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Sub Shape      = (2, 2, 1)
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Block          = (2, 2, 1)
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Block volume   = 4
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Num orbit      = 1
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Num orbit eff  = 4
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     nspin          = 2
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     nd             = 8
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Ncond          = 16
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     T              = 0.0
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     E_cutoff       = 100.0
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     Mix            = 0.5
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     RndSeed        = 123456789
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     IterationMax   = 1000
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     EPS            = 1e-08
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     strict_hermite = False
-   2022-11-30 16:11:12,274 INFO qlms.uhfk:     hermite_tol    = 1e-08
-   2022-11-30 16:11:12,274 INFO qlms: Start UHF calculation
-   2022-11-30 16:11:12,274 INFO qlms.uhfk: Start UHFk calculations
-   2022-11-30 16:11:12,274 INFO qlms.uhfk: step, rest, energy, NCond, Sz
-   2022-11-30 16:11:12,275 INFO qlms.uhfk: initialize green function with random numbers
-   2022-11-30 16:11:12,276 INFO qlms.uhfk: 0, 0.015603457, -134.32942, 16, -0.1014 
-   2022-11-30 16:11:12,277 INFO qlms.uhfk: 1, 0.009136596, 17.586903, 16, -0.004959 
-   2022-11-30 16:11:12,278 INFO qlms.uhfk: 2, 0.0069729985, 61.752822, 16, -0.0003201 
-   2022-11-30 16:11:12,279 INFO qlms.uhfk: 3, 0.0046446653, 42.249693, 16, -4.867e-05 
-   2022-11-30 16:11:12,280 INFO qlms.uhfk: 4, 0.0028262152, 23.372007, 16, -1.118e-05 
-   2022-11-30 16:11:12,280 INFO qlms.uhfk: 5, 0.0016658533, 11.802401, 16, -3.039e-06 
-   2022-11-30 16:11:12,281 INFO qlms.uhfk: 6, 0.00097001226, 5.323952, 16, -8.918e-07 
-   2022-11-30 16:11:12,281 INFO qlms.uhfk: 7, 0.00056204443, 1.8036884, 16, -2.716e-07 
-   2022-11-30 16:11:12,281 INFO qlms.uhfk: 8, 0.00032495798, -0.086915084, 16, -8.424e-08 
-   2022-11-30 16:11:12,282 INFO qlms.uhfk: 9, 0.00018766379, -1.0980839, 16, -2.638e-08 
-   2022-11-30 16:11:12,282 INFO qlms.uhfk: 10, 0.00010828012, -1.6386377, 16, -8.301e-09 
-   2022-11-30 16:11:12,282 INFO qlms.uhfk: 11, 6.2421462e-05, -1.9280351, 16, -2.619e-09 
-   2022-11-30 16:11:12,283 INFO qlms.uhfk: 12, 3.5950741e-05, -2.0833667, 16, -8.274e-10 
-   2022-11-30 16:11:12,283 INFO qlms.uhfk: 13, 2.0684522e-05, -2.1670024, 16, -2.616e-10 
-   2022-11-30 16:11:12,283 INFO qlms.uhfk: 14, 1.1888736e-05, -2.2121899, 16, -8.273e-11 
-   2022-11-30 16:11:12,284 INFO qlms.uhfk: 15, 6.8262407e-06, -2.2366916, 16, -2.617e-11 
-   2022-11-30 16:11:12,284 INFO qlms.uhfk: 16, 3.9155959e-06, -2.2500245, 16, -8.278e-12 
-   2022-11-30 16:11:12,284 INFO qlms.uhfk: 17, 2.2439187e-06, -2.2573051, 16, -2.62e-12 
-   2022-11-30 16:11:12,285 INFO qlms.uhfk: 18, 1.2848038e-06, -2.2612942, 16, -8.286e-13 
-   2022-11-30 16:11:12,285 INFO qlms.uhfk: 19, 7.3504993e-07, -2.263487, 16, -2.627e-13 
-   2022-11-30 16:11:12,285 INFO qlms.uhfk: 20, 4.202209e-07, -2.264696, 16, -8.304e-14 
-   2022-11-30 16:11:12,286 INFO qlms.uhfk: 21, 2.4007623e-07, -2.2653645, 16, -2.62e-14 
-   2022-11-30 16:11:12,286 INFO qlms.uhfk: 22, 1.3707554e-07, -2.2657351, 16, -7.55e-15 
-   2022-11-30 16:11:12,286 INFO qlms.uhfk: 23, 7.8223428e-08, -2.2659411, 16, -2.442e-15 
-   2022-11-30 16:11:12,287 INFO qlms.uhfk: 24, 4.4617436e-08, -2.2660558, 16, -2.109e-15 
-   2022-11-30 16:11:12,287 INFO qlms.uhfk: 25, 2.5438176e-08, -2.2661199, 16, -7.772e-16 
-   2022-11-30 16:11:12,287 INFO qlms.uhfk: 26, 1.449778e-08, -2.2661557, 16, -1.11e-15 
-   2022-11-30 16:11:12,288 INFO qlms.uhfk: 27, 8.2598064e-09, -2.2661758, 16, 3.331e-16 
-   2022-11-30 16:11:12,288 INFO qlms.uhfk: UHFk calculation succeeded: rest=8.25980636858871e-09, eps=1e-08.
-   2022-11-30 16:11:12,288 INFO qlms: Save calculation results.
-   2022-11-30 16:11:12,288 INFO qlms.uhfk: save_results: save energy in file output/energy.dat
-   2022-11-30 16:11:12,288 INFO qlms.uhfk: save_results: save eigenvalues and eigenvectors in file output/eigen.dat
-   2022-11-30 16:11:12,288 INFO qlms.uhfk: save_results: save green function in file output/green.dat
-   2022-11-30 16:11:12,288 INFO qlms: All procedures are finished.
+.. literalinclude:: ../sample/run.log
 
 入力ファイル読み込みに関するログが出力されたあと、波数空間UHF計算の計算過程に関する情報が出力されます。
 出力ファイルは ``input.toml`` の ``[file.output]`` セクションの指定に従い、
