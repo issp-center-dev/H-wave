@@ -1,6 +1,6 @@
 [log]
 print_level = 1
-print_step = 10
+print_step = 20
 [mode]
 mode = "UHFr"
 [mode.param]

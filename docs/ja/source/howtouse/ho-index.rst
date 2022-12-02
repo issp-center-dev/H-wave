@@ -14,7 +14,7 @@
 
 - Official Page
 
-    `GitHubリポジトリ <git@github.com:issp-center-dev/H-wave.git>`_
+    `GitHubリポジトリ <https://github.com/issp-center-dev/H-wave>`_
 
 - ダウンロード方法
 
@@ -58,17 +58,11 @@
       |   |   |   |-- uhfk.py
       |   |   |   |-- perf.py
       |-- sample/
-      |   |-- Hubbard/
-      |   |-- Hubbard_chain/
-      |   |-- Hubbard_square/
-      |   |-- Hubbard_honeycomb/
-      |   |-- Hubbard_cubic/
-      |   |   |-- UHF/
-      |   |   |-- UHFk/
+      |   |-- UHFk/
+      |   |   |-- CDW_SDW/
+      |   |   |-- band_plot/
       |   |   |-- finiteT/
-      |   |   |    |-- UHFk/
-      |   |-- CDW_SDW/
-      |-- test/
+      |-- tests/
 
        
 - 基本的な使用方法
