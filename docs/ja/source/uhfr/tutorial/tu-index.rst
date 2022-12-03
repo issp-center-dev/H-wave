@@ -275,7 +275,7 @@ StdFaceライブラリでは、あらかじめ決められた格子模型やWann
 
 .. code-block:: bash
 
-    $ cd path_to_Hwave/sample/Hubbard
+    $ cd path_to_Hwave/docs/tutorial/Hubbard/UHFr
     $ ln -s path_to_Stdface/build/src/uhf_dry.out .
     $ ./uhf_dry.out stan.in
 

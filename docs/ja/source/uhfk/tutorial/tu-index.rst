@@ -141,7 +141,7 @@ StdFaceライブラリのコンパイルと実行
 
 .. code-block:: bash
 
-    $ cd path_to_Hwave/sample/UHFk
+    $ cd path_to_Hwave/docs/tutorial/Hubbard/UHFk
     $ ln -s path_to_Stdface/build/src/uhf_dry.out .
     $ ./uhf_dry.out stan.in
 
