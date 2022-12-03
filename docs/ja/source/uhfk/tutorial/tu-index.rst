@@ -98,7 +98,7 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 
 入力ファイル読み込みに関するログが出力されたあと、波数空間UHF計算の計算過程に関する情報が出力されます。
 出力ファイルは ``input.toml`` の ``[file.output]`` セクションの指定に従い、
-``output`` ディレクトリに ``energy.dat`` , ``eigen.dat.npz``, ``green.dat.npz`` ファイルが出力されます。
+``output`` ディレクトリに ``energy.dat`` , ``eigen.npz``, ``green.npz`` ファイルが出力されます。
 
 出力ファイルの詳細についてはファイルフォーマットの章をご覧ください。
 
