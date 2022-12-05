@@ -1,0 +1,41 @@
+2022-12-02 13:48:24,961 INFO qlms: Read def files
+2022-12-02 13:48:24,962 INFO qlms: Get Hamiltonian information
+2022-12-02 13:48:24,962 INFO qlms: Get Green function information
+2022-12-02 13:48:24,963 INFO qlms.uhfr: Show input parameters
+  Nsite               : 8
+  Ncond               : 8
+  2Sz                 : 0
+  Mix                 : 0.5
+  EPS                 : 1e-08
+  IterationMax        : 1000
+  RndSeed             : 123456789
+  T                   : 0.0
+  ene_cutoff          : 100.0
+2022-12-02 13:48:24,963 INFO qlms: Start UHF calculation
+2022-12-02 13:48:24,963 INFO qlms.uhfr: Set Initial Green's functions
+2022-12-02 13:48:24,963 INFO qlms.uhfr: Initialize green function by random numbers
+2022-12-02 13:48:24,963 INFO qlms.uhfr: Start UHFr calculations
+2022-12-02 13:48:24,963 INFO qlms.uhfr: step, rest, energy, NCond, Sz
+2022-12-02 13:48:24,992 INFO qlms.uhfr: 0, 0.022144468, -27.16081+0j, 8, -1.145e-15 
+2022-12-02 13:48:25,008 INFO qlms.uhfr: 10, 0.0029457017, -0.2505405+0j, 8, -1.11e-16 
+2022-12-02 13:48:25,021 INFO qlms.uhfr: 20, 1.2083848e-05, -3.399532+0j, 8, -1.998e-15 
+2022-12-02 13:48:25,034 INFO qlms.uhfr: 30, 3.4323965e-08, -3.4081718+0j, 8, -6.661e-16 
+2022-12-02 13:48:25,037 INFO qlms.uhfr: UHFr calculation is succeeded: rest=5.755284861051456e-09, eps=1e-08.
+2022-12-02 13:48:25,037 INFO qlms: Save calculation results.
+2022-12-02 13:48:25,038 INFO qlms: All procedures are finished.
+--------------------------------------------------------------------------------
+Statistics
+  function                         :  total elapsed  : average elapsed : ncalls
+--------------------------------------------------------------------------------
+  hwave.solver.uhfr.__init__       :      0.100 msec :      0.100 msec :      1
+  hwave.solver.uhfr._initial_G     :      0.078 msec :      0.078 msec :      1
+  hwave.solver.uhfr._makeham_const :      0.785 msec :      0.785 msec :      1
+  hwave.solver.uhfr._makeham_mat   :      0.534 msec :      0.534 msec :      1
+  hwave.solver.uhfr._makeham       :     34.527 msec :      1.015 msec :     34
+  hwave.solver.uhfr._diag          :      4.569 msec :      0.134 msec :     34
+  hwave.solver.uhfr._green         :      4.359 msec :      0.128 msec :     34
+  hwave.solver.uhfr._calc_energy   :      9.207 msec :      0.271 msec :     34
+  hwave.solver.uhfr._calc_phys     :     19.838 msec :      0.583 msec :     34
+  hwave.solver.uhfr.solve          :     74.726 msec :     74.726 msec :      1
+  hwave.solver.uhfr.save_results   :      0.588 msec :      0.588 msec :      1
+--------------------------------------------------------------------------------

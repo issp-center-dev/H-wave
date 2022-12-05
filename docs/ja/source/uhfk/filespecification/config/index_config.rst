@@ -16,26 +16,8 @@
 
 以下、ファイル例を記載します。
 
-::
+.. literalinclude:: ../../sample/input.toml
 
-    [mode]
-    mode = "UHF"
-    flag_fock = true
-    [mode.param]
-    T = 0.1
-    2Sz = 0
-    [log]
-    print_level = 1
-    print_step = 20
-    [file]
-    [file.input]
-    path_to_input = ""
-    namelist = "namelist.def"
-    [file.output]
-    path_to_output = "output"
-    energy = "energy.dat"
-    eigen = "eigen.dat"
-    green = "green.dat"
 
 ファイル形式
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -67,9 +49,9 @@ TOML形式
 
 - ``SubShape``
 
-  **形式 :** int array型
+  **形式 :** int array型 (デフォルトは ``[`` Lx, Ly, Lz ``]``)
 
-  **説明 :** 副格子の形状 Bx, By, Bz を指定します。デフォルトは ``[1,1,1]`` です。
+  **説明 :** 副格子の形状 Bx, By, Bz を指定します。
 
 - ``T``
 
@@ -85,7 +67,7 @@ TOML形式
 
 - ``IterationMax``
 
-  **形式 :** int型
+  **形式 :** int型 (デフォルトは20000)
 
   **説明 :** 反復回数の上限を指定します。0以上の値を指定してください。
 
@@ -107,33 +89,27 @@ TOML形式
 
 - ``RndSeed``
 
-  **形式 :** int型
+  **形式 :** int型 (デフォルトは1234)
 
   **説明 :** 乱数のシード(種)を指定します。
 
 - ``ene_cutoff``
 
-  **形式 :** float型
+  **形式 :** float型 (デフォルトは100.0)
 
   **説明 :** Fermi分布関数を計算する際に overflow を避けるためのカットオフを指定します。
 
-- ``threshold``
-
-  **形式 :** float型
-
-  **説明 :** Green関数の更新時に、要素に対するカットオフを指定します。デフォルトは :math:`10^{-12}` です。
-
 - ``strict_hermite``
 
-  **形式 :** bool型
+  **形式 :** bool型 (デフォルトは false)
 
-  **説明 :** 相互作用定義ファイルの読み込み時に Hermiticity を厳密にチェックします。true の場合、 ``hermite_tolerance`` 以上のズレが見つかったときはエラーで終了します。false の場合は warning を表示して実行を継続します。デフォルトは false です。
+  **説明 :** 相互作用定義ファイルの読み込み時に Hermiticity を厳密にチェックします。true の場合、 ``hermite_tolerance`` 以上のズレが見つかったときはエラーで終了します。false の場合は warning を表示して実行を継続します。
 
 - ``hermite_tolerance``
 
-  **形式 :** float型
+  **形式 :** float型 (デフォルトは :math:`10^{-8}` )
 
-  **説明 :** Hermiticity の許容値 :math:`|t_{ij} - t_{ji}^*| < \varepsilon` を指定します。デフォルトは :math:`10^{-8}` です。
+  **説明 :** Hermiticity の許容値 :math:`|t_{ij} - t_{ji}^*| < \varepsilon` を指定します。
 
 ``log`` セクション
 ================================

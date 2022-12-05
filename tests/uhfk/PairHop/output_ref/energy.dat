@@ -1,6 +1,6 @@
-Energy_Total        = -7.034029832342027
-Energy_Band         = -0.8456650029230635
-Energy_CoulombIntra = -5.846896625138953
-Energy_PairHop      = -0.3414682042800106
+Energy_Total        = -7.034029832342021
+Energy_Band         = -0.8456650029230555
+Energy_CoulombIntra = -5.846896625138955
+Energy_PairHop      = -0.3414682042800107
 NCond   = 16.0
-Sz      = 1.1102230246251565e-16
+Sz      = 1.1102230246251565e-15

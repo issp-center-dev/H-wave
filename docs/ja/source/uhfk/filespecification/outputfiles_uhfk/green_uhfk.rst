@@ -6,7 +6,7 @@ green
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom{\dagger}}\rangle`\ の計算結果をnpz形式で出力します。
-ファイル名は環境設定ファイルの中の ``file.output`` セクションでキーワード ``green`` を用いて指定されます。
+ファイル名は、環境設定ファイルの中の ``file.output`` セクションでキーワード ``green`` を用いて指定された文字列(以下、 ``green_str``)を用いて、 ``green_str.npz`` という名前で出力されます。
 
 データはキー ``green`` にバインドされます。
 データ配列は ``ndarray(r, s, a, t, b)`` で、インデックスは以下のとおりです。
@@ -19,6 +19,12 @@ green
 
 副格子を指定している場合は、上記に加えて、副格子を単位としたグリーン関数の値がキー ``green_sublattice`` にバインドされます。並進ベクトルおよび軌道のインデックスは副格子に読み替えます。
    
-.. raw:: latex
+以下、データを読み込む例となります。
 
-   \newpage
+.. code-block:: python
+
+    import numpy as np
+    data = np.load("green.dat.npz")
+    green = data["green"]
+
+.. raw:: latex

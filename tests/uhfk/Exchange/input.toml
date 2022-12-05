@@ -10,7 +10,7 @@
   # 2Sz = 0
   Ncond = 16
   IterationMax = 10000
-  EPS = 8
+  EPS = 12
   Mix = 0.5
   RndSeed = 12345
   # ene_cutoff = 1.0e+2

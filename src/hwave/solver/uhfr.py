@@ -555,7 +555,7 @@ class UHFr(solver_base):
             rest += abs(self.Green[site1][site2] - self.Green_old[site1][site2])**2
             self.Green[site1][site2] = self.Green_old[site1][site2] * (1.0 - mix) + mix * self.Green[site1][site2]
         self.physics["Rest"] = np.sqrt(rest) / (2.0 * self.Nsize * self.Nsize)
-        self.Green[np.where(abs(self.Green) < 1e-12)] = 0
+        self.Green[np.where(abs(self.Green) < self.threshold)] = 0
 
     @do_profile
     def get_results(self):

@@ -57,19 +57,15 @@ energy
 
    **形式 :** float型
 
-   **説明 :** 全粒子数。
+   **説明 :** 全粒子数の期待値。
     :math:`\sum_{i}\langle n_{i}\rangle`
 
 -  :math:`[`\ sz\ :math:`]`
 
    **形式 :** float型
 
-   **説明 :** 全 :math:`S_z` 。
+   **説明 :** 全スピンの :math:`z` 成分 :math:`S_z` の期待値。
     :math:`\sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2`
 
 
 .. raw:: latex
-
-   \newpage
-
-
