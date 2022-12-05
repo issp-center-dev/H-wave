@@ -1,0 +1,66 @@
+2022-12-02 13:48:11,641 INFO qlms: Read definitions from files
+2022-12-02 13:48:11,641 INFO qlms.read_input: QLMSkInput: read Gemoetry from ./geom.dat
+2022-12-02 13:48:11,641 INFO qlms.read_input: QLMSkInput: read interaction Transfer from ./transfer.dat
+2022-12-02 13:48:11,641 INFO qlms.read_input: QLMSkInput: read interaction CoulombInter from ./coulombinter.dat
+2022-12-02 13:48:11,641 INFO qlms: Get Hamiltonian information
+2022-12-02 13:48:11,641 INFO qlms: Get Green function information
+2022-12-02 13:48:11,667 INFO qlms.uhfk: Show parameters
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Cell Shape     = (4, 4, 1)
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Sub Shape      = (2, 2, 1)
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Block          = (2, 2, 1)
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Block volume   = 4
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Num orbit      = 1
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Num orbit eff  = 4
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     nspin          = 2
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     nd             = 8
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Ncond          = 16
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     T              = 0.0
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     E_cutoff       = 100.0
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     Mix            = 0.5
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     RndSeed        = 123456789
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     IterationMax   = 1000
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     EPS            = 1e-08
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     strict_hermite = False
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     hermite_tol    = 1e-08
+2022-12-02 13:48:11,669 INFO qlms: Start UHF calculation
+2022-12-02 13:48:11,670 INFO qlms.uhfk: Start UHFk calculations
+2022-12-02 13:48:11,670 INFO qlms.uhfk: step, rest, energy, NCond, Sz
+2022-12-02 13:48:11,671 INFO qlms.uhfk: initialize green function with random numbers
+2022-12-02 13:48:11,673 INFO qlms.uhfk: 0, 0.015588886, -139.86928, 16, 1.732e-14 
+2022-12-02 13:48:11,684 INFO qlms.uhfk: 10, 0.00043101981, 91.751578, 16, -1.029e-11 
+2022-12-02 13:48:11,690 INFO qlms.uhfk: 20, 0.00097917933, 92.129093, 16, -0.0001693 
+2022-12-02 13:48:11,694 INFO qlms.uhfk: 30, 0.0002328601, -0.49699902, 16, -2.492e-09 
+2022-12-02 13:48:11,697 INFO qlms.uhfk: 40, 8.9087396e-07, -2.2626401, 16, -2.354e-14 
+2022-12-02 13:48:11,699 INFO qlms.uhfk: UHFk calculation succeeded: rest=9.905239155412216e-09, eps=1e-08.
+2022-12-02 13:48:11,699 INFO qlms: Save calculation results.
+2022-12-02 13:48:11,699 INFO qlms.uhfk: save_results: save energy in file output/energy.dat
+2022-12-02 13:48:11,699 INFO qlms.uhfk: save_results: save eigenvalues and eigenvectors in file output/eigen.dat
+2022-12-02 13:48:11,699 INFO qlms.uhfk: save_results: save green function to file output/green.dat
+2022-12-02 13:48:11,700 INFO qlms: All procedures are finished.
+--------------------------------------------------------------------------------
+Statistics
+  function                         :  total elapsed  : average elapsed : ncalls
+--------------------------------------------------------------------------------
+  hwave.solver.uhfk._init_param    :      0.004 msec :      0.004 msec :      1
+  hwave.solver.uhfk._init_lattice  :      0.004 msec :      0.004 msec :      1
+  hwave.solver.uhfk._init_orbit    :      0.001 msec :      0.001 msec :      1
+  hwave.solver.uhfk._check_interaction :      0.176 msec :      0.176 msec :      1
+  hwave.solver.uhfk._reshape_geometry :     23.000 msec :     23.000 msec :      1
+  hwave.solver.uhfk._reshape_interaction :      0.222 msec :      0.111 msec :      2
+  hwave.solver.uhfk._init_interaction :     23.313 msec :     23.313 msec :      1
+  hwave.solver.uhfk._show_param    :      2.149 msec :      2.149 msec :      1
+  hwave.solver.uhfk.__init__       :     28.129 msec :     28.129 msec :      1
+  hwave.solver.uhfk._make_ham_trans :      0.501 msec :      0.501 msec :      1
+  hwave.solver.uhfk._make_ham_inter :      0.414 msec :      0.414 msec :      1
+  hwave.solver.uhfk._reshape_green :      0.202 msec :      0.202 msec :      1
+  hwave.solver.uhfk._initial_green :      0.494 msec :      0.494 msec :      1
+  hwave.solver.uhfk._make_ham      :      6.999 msec :      0.143 msec :     49
+  hwave.solver.uhfk._diag          :      3.533 msec :      0.072 msec :     49
+  hwave.solver.uhfk._green         :      8.698 msec :      0.178 msec :     49
+  hwave.solver.uhfk._calc_energy   :      3.960 msec :      0.081 msec :     49
+  hwave.solver.uhfk._calc_phys     :      3.559 msec :      0.073 msec :     49
+  hwave.solver.uhfk.solve          :     29.349 msec :     29.349 msec :      1
+  hwave.solver.uhfk._deflate_green :      0.035 msec :      0.035 msec :      1
+  hwave.solver.uhfk._save_green    :      0.202 msec :      0.202 msec :      1
+  hwave.solver.uhfk.save_results   :      0.559 msec :      0.559 msec :      1
+--------------------------------------------------------------------------------

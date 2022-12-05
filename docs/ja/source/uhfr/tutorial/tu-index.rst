@@ -243,7 +243,7 @@ StdFaceライブラリでは、あらかじめ決められた格子模型やWann
 
 コンパイルに成功すると、 ``src`` ディレクトリに実行ファイル ``uhf_dry.out`` ができます。
 
-以下、 ``sample/Hubbard`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
+以下、 ``docs/tutorial/Hubbard/UHFr`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
 ディレクトリ内に ``stan.in`` というファイルがありますが、これが ``uhf_dry.out`` の入力ファイルになります。
 ファイルの内容は以下のとおりです。
 
@@ -275,7 +275,7 @@ StdFaceライブラリでは、あらかじめ決められた格子模型やWann
 
 .. code-block:: bash
 
-    $ cd path_to_Hwave/sample/Hubbard
+    $ cd path_to_Hwave/docs/tutorial/Hubbard/UHFr
     $ ln -s path_to_Stdface/build/src/uhf_dry.out .
     $ ./uhf_dry.out stan.in
 

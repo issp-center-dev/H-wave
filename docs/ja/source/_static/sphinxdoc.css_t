@@ -338,4 +338,5 @@ div.code-block-caption {
     background-color: #ddd;
     color: #222;
     border: 1px solid #ccc;
+    font-size: 0.9em;
 }
