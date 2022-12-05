@@ -20,8 +20,6 @@ onebodyg = "greenone.def"
 [file.input.interaction]
 trans = "trans.def"
 coulombintra = "coulombintra.def"
-locspin = "locspn.def"
-onebodyg = "greenone.def"
 [file.output]
 path_to_output = "output"
 energy = "energy.dat"
