@@ -4,7 +4,7 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
     <title>2.3.1. energy &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
@@ -12,7 +12,9 @@
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
     <script src="../../../_static/jquery.js"></script>
     <script src="../../../_static/underscore.js"></script>
+    <script src="../../../_static/_sphinx_javascript_frameworks_compat.js"></script>
     <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
     <script src="../../../_static/translations.js"></script>
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../../../genindex.html" />
@@ -36,7 +38,7 @@
           <div class="body" role="main">
             
   <section id="energy">
-<span id="subsec-energy-uhfk-dat"></span><h1><span class="section-number">2.3.1. </span>energy<a class="headerlink" href="#energy" title="このヘッドラインへのパーマリンク">¶</a></h1>
+<span id="subsec-energy-uhfk-dat"></span><h1><span class="section-number">2.3.1. </span>energy<a class="headerlink" href="#energy" title="この見出しへのパーマリンク">¶</a></h1>
 <p>波数空間版UHF法で求めたエネルギー、粒子数、スピンに関する計算結果を出力します。
 ファイル名は環境設定ファイルの中の <code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションでキーワード <code class="docutils literal notranslate"><span class="pre">energy</span></code> を用いて指定することができます。
 以下にファイル例を記載します。</p>
@@ -48,7 +50,7 @@ Sz = 3.2822430107160017e-07
 </pre></div>
 </div>
 <section id="id1">
-<h2>ファイル形式<a class="headerlink" href="#id1" title="このヘッドラインへのパーマリンク">¶</a></h2>
+<h2>ファイル形式<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h2>
 <ul class="simple">
 <li><p>Energy_Total = <span class="math notranslate nohighlight">\([\)</span>energy_total<span class="math notranslate nohighlight">\(]\)</span></p></li>
 <li><p>Energy_Band = <span class="math notranslate nohighlight">\([\)</span>energy_band<span class="math notranslate nohighlight">\(]\)</span></p></li>
@@ -58,7 +60,7 @@ Sz = 3.2822430107160017e-07
 </ul>
 </section>
 <section id="id2">
-<h2>パラメータ<a class="headerlink" href="#id2" title="このヘッドラインへのパーマリンク">¶</a></h2>
+<h2>パラメータ<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
 <ul>
 <li><p><span class="math notranslate nohighlight">\([\)</span>energy_total<span class="math notranslate nohighlight">\(]\)</span></p>
 <p><strong>形式 :</strong> float型</p>
@@ -115,7 +117,7 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
 <h3>ナビゲーション</h3>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">実空間UHF(UHFr)</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">波数空間UHF(UHFk)</a><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">1. チュートリアル</a></li>
 <li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">2. ファイルフォーマット</a><ul class="current">
@@ -126,8 +128,8 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">3. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">4. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">2. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">3. 謝辞</a></li>
 </ul>
 
 <div class="relations">
@@ -154,7 +156,7 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
     </form>
     </div>
 </div>
-<script>$('#searchbox').show(0);</script>
+<script>document.getElementById('searchbox').style.display = "block"</script>
 
 
 
@@ -171,7 +173,7 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
       &copy;2022-, The University of Tokyo.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.5.0</a>
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 5.3.0</a>
       &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
       
       |

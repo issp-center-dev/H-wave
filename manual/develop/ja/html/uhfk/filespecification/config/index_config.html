@@ -4,7 +4,7 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
     <title>2.1. 環境設定ファイル &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
@@ -12,7 +12,9 @@
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
     <script src="../../../_static/jquery.js"></script>
     <script src="../../../_static/underscore.js"></script>
+    <script src="../../../_static/_sphinx_javascript_frameworks_compat.js"></script>
     <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
     <script src="../../../_static/translations.js"></script>
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../../../genindex.html" />
@@ -36,7 +38,7 @@
           <div class="body" role="main">
             
   <section id="ch-config">
-<span id="id1"></span><h1><span class="section-number">2.1. </span>環境設定ファイル<a class="headerlink" href="#ch-config" title="このヘッドラインへのパーマリンク">¶</a></h1>
+<span id="id1"></span><h1><span class="section-number">2.1. </span>環境設定ファイル<a class="headerlink" href="#ch-config" title="この見出しへのパーマリンク">¶</a></h1>
 <p>このファイルでは、TOML形式でH-waveに関する環境を設定します。
 本ファイルは以下の3つのセクションから構成されます。</p>
 <ol class="arabic simple">
@@ -78,13 +80,13 @@
 </pre></div>
 </div>
 <section id="id2">
-<h2><span class="section-number">2.1.1. </span>ファイル形式<a class="headerlink" href="#id2" title="このヘッドラインへのパーマリンク">¶</a></h2>
+<h2><span class="section-number">2.1.1. </span>ファイル形式<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
 <p>TOML形式</p>
 </section>
 <section id="id3">
-<h2><span class="section-number">2.1.2. </span>パラメータ<a class="headerlink" href="#id3" title="このヘッドラインへのパーマリンク">¶</a></h2>
+<h2><span class="section-number">2.1.2. </span>パラメータ<a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h2>
 <section id="mode">
-<h3><code class="docutils literal notranslate"><span class="pre">mode</span></code> セクション<a class="headerlink" href="#mode" title="このヘッドラインへのパーマリンク">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">mode</span></code> セクション<a class="headerlink" href="#mode" title="この見出しへのパーマリンク">¶</a></h3>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p>
 <p><strong>形式 :</strong> string型</p>
@@ -93,7 +95,7 @@
 </ul>
 </section>
 <section id="mode-param">
-<h3><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> セクション<a class="headerlink" href="#mode-param" title="このヘッドラインへのパーマリンク">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> セクション<a class="headerlink" href="#mode-param" title="この見出しへのパーマリンク">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> セクションでは計算用のパラメータを指定します。</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">CellShape</span></code></p>
@@ -147,7 +149,7 @@ simple-mixingについては <a class="reference internal" href="../../../algori
 </ul>
 </section>
 <section id="log">
-<h3><code class="docutils literal notranslate"><span class="pre">log</span></code> セクション<a class="headerlink" href="#log" title="このヘッドラインへのパーマリンク">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">log</span></code> セクション<a class="headerlink" href="#log" title="この見出しへのパーマリンク">¶</a></h3>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">print_level</span></code></p>
 <p><strong>形式 :</strong> int型 (デフォルトは1)</p>
@@ -164,12 +166,12 @@ simple-mixingについては <a class="reference internal" href="../../../algori
 </ul>
 </section>
 <section id="file">
-<h3><code class="docutils literal notranslate"><span class="pre">file</span></code> セクション<a class="headerlink" href="#file" title="このヘッドラインへのパーマリンク">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">file</span></code> セクション<a class="headerlink" href="#file" title="この見出しへのパーマリンク">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">input</span></code> と <code class="docutils literal notranslate"><span class="pre">output</span></code> のサブセクションからなります。
 前者は入力ファイルに関する情報(格納場所やファイル名の指定など)、後者は出力ファイルに関する情報(格納場所など)について指定します。
 以下、順に説明します。</p>
 <section id="file-input">
-<h4><code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクション<a class="headerlink" href="#file-input" title="このヘッドラインへのパーマリンク">¶</a></h4>
+<h4><code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクション<a class="headerlink" href="#file-input" title="この見出しへのパーマリンク">¶</a></h4>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">path_to_input</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
@@ -184,7 +186,7 @@ simple-mixingについては <a class="reference internal" href="../../../algori
 </ul>
 </section>
 <section id="file-input-interaction">
-<h4><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code> セクション<a class="headerlink" href="#file-input-interaction" title="このヘッドラインへのパーマリンク">¶</a></h4>
+<h4><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code> セクション<a class="headerlink" href="#file-input-interaction" title="この見出しへのパーマリンク">¶</a></h4>
 <p>波数空間版UHFで、幾何情報や相互作用のタイプと定義ファイルとの対応付けを行います。</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">path_to_input</span></code></p>
@@ -202,7 +204,7 @@ simple-mixingについては <a class="reference internal" href="../../../algori
 </ul>
 </section>
 <section id="file-output">
-<h4><code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクション<a class="headerlink" href="#file-output" title="このヘッドラインへのパーマリンク">¶</a></h4>
+<h4><code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクション<a class="headerlink" href="#file-output" title="この見出しへのパーマリンク">¶</a></h4>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">path_to_output</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは &quot;output&quot; )</p>
@@ -250,7 +252,7 @@ simple-mixingについては <a class="reference internal" href="../../../algori
 <h3>ナビゲーション</h3>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">実空間UHF(UHFr)</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">波数空間UHF(UHFk)</a><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">1. チュートリアル</a></li>
 <li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">2. ファイルフォーマット</a><ul class="current">
@@ -261,8 +263,8 @@ simple-mixingについては <a class="reference internal" href="../../../algori
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">3. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">4. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">2. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">3. 謝辞</a></li>
 </ul>
 
 <div class="relations">
@@ -287,7 +289,7 @@ simple-mixingについては <a class="reference internal" href="../../../algori
     </form>
     </div>
 </div>
-<script>$('#searchbox').show(0);</script>
+<script>document.getElementById('searchbox').style.display = "block"</script>
 
 
 
@@ -304,7 +306,7 @@ simple-mixingについては <a class="reference internal" href="../../../algori
       &copy;2022-, The University of Tokyo.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.5.0</a>
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 5.3.0</a>
       &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
       
       |
