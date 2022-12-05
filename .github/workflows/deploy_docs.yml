@@ -39,7 +39,7 @@ jobs:
 
     - name: Build
       run: |
-        for lang in ja en; do
+        for lang in ja; do
           cd ${GITHUB_WORKSPACE}/main/docs/${lang}
           make html
         done
@@ -58,7 +58,7 @@ jobs:
         TARGET_NAME: ${{ env.GITHUB_REF_SLUG }}
       run: |
           cd ${GITHUB_WORKSPACE}
-          for lang in ja en; do
+          for lang in ja; do
             rm -rf "gh-pages/manual/${TARGET_NAME}/${lang}"
             mkdir -p "gh-pages/manual/${TARGET_NAME}/${lang}"
             cp -r "main/docs/${lang}/build/html" "gh-pages/manual/${TARGET_NAME}/${lang}"
