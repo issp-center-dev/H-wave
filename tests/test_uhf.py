@@ -62,6 +62,12 @@ class TestUHFr(unittest.TestCase):
     def test_PairHop(self):
         return runtest(self, "tests/uhfr/pairhop")
 
+    def test_2sz0(self):
+        return runtest(self, "tests/uhfr/2sz0")
+
+    def test_2sz1(self):
+        return runtest(self, "tests/uhfr/2sz1")
+
 
 class TestUHFk(unittest.TestCase):
     def test_CoulombIntra(self):
@@ -85,6 +91,13 @@ class TestUHFk(unittest.TestCase):
     def test_PairHop(self):
         return runtest(self, "tests/uhfk/PairHop")
 
+    def test_2sz0(self):
+        return runtest(self, "tests/uhfk/2sz0")
+
+    def test_2sz1(self):
+        return runtest(self, "tests/uhfk/2sz1")
+
+    
 
 if __name__ == "__main__":
     unittest.main()
