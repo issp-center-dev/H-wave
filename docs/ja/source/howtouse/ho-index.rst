@@ -41,6 +41,10 @@
       .
       |-- LICENSE
       |-- README.md
+      |-- pyproject.toml
+      |-- docs/
+      |   |-- ja/
+      |   |-- tutorial/
       |-- src/
       |   |-- qlms.py
       |   |-- hwave/
@@ -63,7 +67,6 @@
       |   |   |-- band_plot/
       |   |   |-- finiteT/
       |-- tests/
-
        
 - 基本的な使用方法
 
