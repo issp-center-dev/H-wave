@@ -1,0 +1,358 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>2.1. 環境設定ファイル &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/jquery.js"></script>
+    <script src="../../../_static/underscore.js"></script>
+    <script src="../../../_static/_sphinx_javascript_frameworks_compat.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <script src="../../../_static/translations.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../../genindex.html" />
+    <link rel="search" title="検索" href="../../../search.html" />
+    <link rel="next" title="2.2. UHFr用入力ファイル" href="../inputfiles/index_inputfiles.html" />
+    <link rel="prev" title="2. ファイルフォーマット" href="../fi-index.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="ch-config-uhfr">
+<span id="id1"></span><h1><span class="section-number">2.1. </span>環境設定ファイル<a class="headerlink" href="#ch-config-uhfr" title="この見出しへのパーマリンク">¶</a></h1>
+<p>このファイルでは、TOML形式でH-waveに関する環境を設定します。
+本ファイルは以下の3つのセクションから構成されます。</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code> セクション: 計算モードに関する設定を指定するセクション。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">log</span></code> セクション: 標準出力に関する設定を指定するセクション。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">file</span></code> セクション: 入出力ファイルのパスなどを設定するセクションで、 <code class="docutils literal notranslate"><span class="pre">input</span></code> , <code class="docutils literal notranslate"><span class="pre">output</span></code> のサブセクションで構成される。</p></li>
+</ol>
+<p>以下、ファイル例を記載します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+print_level = 1
+print_step = 20
+[mode]
+mode = &quot;UHFr&quot;
+[mode.param]
+Nsite = 8
+2Sz = 0
+Ncond = 8
+IterationMax = 1000
+EPS = 8
+RndSeed = 123456789
+T = 0.0
+[file]
+[file.input]
+path_to_input = &quot;&quot;
+OneBodyG = &quot;greenone.def&quot;
+[file.input.interaction]
+Trans = &quot;trans.def&quot;
+CoulombIntra = &quot;coulombintra.def&quot;
+[file.output]
+path_to_output = &quot;output&quot;
+energy = &quot;energy.dat&quot;
+eigen = &quot;eigen&quot;
+green = &quot;green.dat&quot;
+</pre></div>
+</div>
+<section id="id2">
+<h2><span class="section-number">2.1.1. </span>ファイル形式<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<p>TOML形式</p>
+</section>
+<section id="id3">
+<h2><span class="section-number">2.1.2. </span>パラメータ<a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h2>
+<section id="mode">
+<h3><code class="docutils literal notranslate"><span class="pre">mode</span></code> セクション<a class="headerlink" href="#mode" title="この見出しへのパーマリンク">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p>
+<p><strong>形式 :</strong> string型</p>
+<p><strong>説明 :</strong> 計算モードを指定します。実空間版UHFを利用する場合には <code class="docutils literal notranslate"><span class="pre">UHFr</span></code> と入力して下さい。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flag_fock</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは <code class="docutils literal notranslate"><span class="pre">true</span></code> )</p>
+<p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">true</span></code> の場合にはFock項を考慮し、 <code class="docutils literal notranslate"><span class="pre">false</span></code> の場合にはHartree項のみ取り扱います。</p>
+</li>
+</ul>
+</section>
+<section id="mode-param">
+<h3><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> セクション<a class="headerlink" href="#mode-param" title="この見出しへのパーマリンク">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> セクションでは計算用のパラメータを指定します。</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは0)</p>
+<p><strong>説明 :</strong> 温度を指定します。0以上の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">2Sz</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトはNone)</p>
+<p><strong>説明 :</strong>
+スピンのz成分 <code class="docutils literal notranslate"><span class="pre">Sz</span></code> を固定したい場合に使用し、固定する <code class="docutils literal notranslate"><span class="pre">Sz</span></code> の2倍の値を指定します。
+その場合はスピン空間をupとdownに分けた上で計算を実施します。
+何も指定しない場合 ( <code class="docutils literal notranslate"><span class="pre">None</span></code> ) または <code class="docutils literal notranslate"><span class="pre">&quot;free&quot;</span></code> を指定した場合は、スピン空間を分けずに計算を実施します。
+<code class="docutils literal notranslate"><span class="pre">Sz</span></code> が保存しないような場合(スピン軌道相互作用がある場合など)には指定しないようにしてください。
+<code class="docutils literal notranslate"><span class="pre">-Nsite</span></code> から <code class="docutils literal notranslate"><span class="pre">Nsite</span></code> の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Nsite</span></code></p>
+<p><strong>形式 :</strong> int型</p>
+<p><strong>説明 :</strong> サイトの数を指定します。1以上の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ncond</span></code></p>
+<p><strong>形式 :</strong> int型</p>
+<p><strong>説明 :</strong> 伝導電子の数を指定します。1以上の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは20000)</p>
+<p><strong>説明 :</strong> 反復回数の上限を指定します。0以上の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EPS</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは6)</p>
+<p><strong>説明 :</strong> 収束条件を指定します。一つ前のステップとのグリーン関数の差のノルムが <span class="math notranslate nohighlight">\(10^{\rm -EPS}\)</span> 以下になった場合に収束したと判定します。
+残差は <span class="math notranslate nohighlight">\(R = \sum_{i,j}^{N}\sqrt{ \left| G_{ij}^{\rm new} - G_{ij}^{\rm old} \right|^2} / 2N^2\)</span> で定義されます。
+0以上の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Mix</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは0.5)</p>
+<p><strong>説明 :</strong> Green関数の更新時に、古い値と新しく得られた値を混ぜる(simple-mixing)割合 <span class="math notranslate nohighlight">\(\alpha\)</span> を指定します。
+0以上から1以下の実数で指定してください。1にすると古い値は使われません。
+simple-mixingについては <a class="reference internal" href="../../../algorithm/uhf.html#algorithm-sec"><span class="std std-ref">アルゴリズムの章</span></a> をご覧ください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RndSeed</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは1234)</p>
+<p><strong>説明 :</strong> 乱数のシード(種)を指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ene_cutoff</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは100.0)</p>
+<p><strong>説明 :</strong> Fermi分布関数を計算する際に overflow を避けるためのカットオフを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">strict_hermite</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
+<p><strong>説明 :</strong> 相互作用定義ファイルの読み込み時に Hermiticity を厳密にチェックします。true の場合、 <code class="docutils literal notranslate"><span class="pre">hermite_tolerance</span></code> 以上のズレが見つかったときはエラーで終了します。false の場合は warning を表示して実行を継続します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">hermite_tolerance</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは <span class="math notranslate nohighlight">\(10^{-8}\)</span>)</p>
+<p><strong>説明 :</strong> Hermiticity の許容値 <span class="math notranslate nohighlight">\(|t_{ij} - t_{ji}^*| &lt; \varepsilon\)</span> を指定します。</p>
+</li>
+</ul>
+</section>
+<section id="log">
+<h3><code class="docutils literal notranslate"><span class="pre">log</span></code> セクション<a class="headerlink" href="#log" title="この見出しへのパーマリンク">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">print_level</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは1)</p>
+<p><strong>説明 :</strong> 標準出力のレベルを指定します。1にすると詳細な情報が出力されます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">print_step</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは1)</p>
+<p><strong>説明 :</strong> 反復計算の途中に計算ログを標準出力に書き出す間隔を指定します。1以上の値を指定してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">print_check</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> 反復計算の途中に計算ログをファイルに書き出す場合、出力先ファイル名を指定します。無指定のときは出力しません。</p>
+</li>
+</ul>
+</section>
+<section id="file">
+<h3><code class="docutils literal notranslate"><span class="pre">file</span></code> セクション<a class="headerlink" href="#file" title="この見出しへのパーマリンク">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">input</span></code> と <code class="docutils literal notranslate"><span class="pre">output</span></code> のサブセクションからなります。
+前者は入力ファイルに関する情報(格納場所やファイル名の指定など)、後者は出力ファイルに関する情報(格納場所など)について指定します。
+以下、順に説明します。</p>
+<section id="file-input">
+<h4><code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクション<a class="headerlink" href="#file-input" title="この見出しへのパーマリンク">¶</a></h4>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">path_to_input</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> 入力ファイルの格納されているディレクトリを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Initial</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> 初期配置を指定する入力ファイル名を指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> 出力したい一体グリーン関数を指定する入力ファイル名を指定します。</p>
+</li>
+</ul>
+</section>
+<section id="file-input-interaction">
+<h4><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code> セクション<a class="headerlink" href="#file-input-interaction" title="この見出しへのパーマリンク">¶</a></h4>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">Trans</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> 一般的一体相互作用を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> 一般的二体相互作用を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> サイト内クーロン相互作用を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> サイト間クーロン相互作用を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> フント結合を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> ペアホッピングを記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> 交換相互作用を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> イジング相互作用を記述するファイルを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;&quot;)</p>
+<p><strong>説明 :</strong> ペアリフト相互作用を記述するファイルを指定します。</p>
+</li>
+</ul>
+</section>
+<section id="file-output">
+<h4><code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクション<a class="headerlink" href="#file-output" title="この見出しへのパーマリンク">¶</a></h4>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">path_to_output</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;output&quot;)</p>
+<p><strong>説明 :</strong> 出力ファイルを格納するディレクトリを指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">energy</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> エネルギーを出力するファイル名を指定します。このキーワードがない場合には情報は出力されません。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigen</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> ハミルトニアンの固有値を出力するファイル名を指定します。このキーワードがない場合には情報は出力されません。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> 一体グリーン関数の出力ファイル名を指定します。このキーワードがない場合には情報は出力されません。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">initial</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> 初期状態読み込み用の一体グリーン関数の出力ファイル名を指定します。このキーワードがない場合には情報は出力されません。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fij</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> ペア軌道因子fijの出力ファイル名を指定します。このキーワードがない場合には情報は出力されません。</p>
+</li>
+</ul>
+</section>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../../index.html">
+    <img class="logo" src="../../../_static/logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfr-index.html">実空間UHF(UHFr)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3 current"><a class="current reference internal" href="#">2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../inputfiles/index_inputfiles.html">2.2. UHFr用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">2.3. UHFrの出力ファイル</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">2. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">3. 謝辞</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../uhfr-index.html">実空間UHF(UHFr)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">2. </span>ファイルフォーマット</a><ul>
+      <li>Previous: <a href="../fi-index.html" title="前の章へ"><span class="section-number">2. </span>ファイルフォーマット</a></li>
+      <li>Next: <a href="../inputfiles/index_inputfiles.html" title="次の章へ"><span class="section-number">2.2. </span>UHFr用入力ファイル</a></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 5.3.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../../../_sources/uhfr/filespecification/config/index_config.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
