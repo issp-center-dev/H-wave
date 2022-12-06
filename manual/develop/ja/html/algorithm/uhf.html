@@ -6,7 +6,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
-    <title>2.1. 非制限Hartree-Fock法 &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
+    <title>3.1. 非制限Hartree-Fock法 &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
     <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
     <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
@@ -19,8 +19,8 @@
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="検索" href="../search.html" />
-    <link rel="next" title="3. 謝辞" href="../acknowledgement.html" />
-    <link rel="prev" title="2. アルゴリズム" href="al-index.html" />
+    <link rel="next" title="4. 謝辞" href="../acknowledgement.html" />
+    <link rel="prev" title="3. アルゴリズム" href="al-index.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
   
@@ -38,72 +38,72 @@
           <div class="body" role="main">
             
   <section id="hartree-fock">
-<span id="algorithm-sec"></span><h1><span class="section-number">2.1. </span>非制限Hartree-Fock法<a class="headerlink" href="#hartree-fock" title="この見出しへのパーマリンク">¶</a></h1>
+<span id="algorithm-sec"></span><h1><span class="section-number">3.1. </span>非制限Hartree-Fock法<a class="headerlink" href="#hartree-fock" title="この見出しへのパーマリンク">¶</a></h1>
 <section id="id1">
-<h2><span class="section-number">2.1.1. </span>概要<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h2>
+<h2><span class="section-number">3.1.1. </span>概要<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h2>
 <p>非制限Hartree-Fock(UHF)近似では一体の演算子の揺らぎについて一次のみを取り入れ、二体項を一体項へと近似します。
 一般的な二体相互作用については以下の近似を行うことに相当します。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-0">
-<span class="eqno">(2.11)<a class="headerlink" href="#equation-algorithm-uhf-0" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(3.1)<a class="headerlink" href="#equation-algorithm-uhf-0" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
 c_{i}^{\dagger}c_{j}^{\dagger}c_{k}c_{l}
 &amp;\sim \langle c_{i}^{\dagger} c_l\rangle c_{j}^{\dagger} c_k   +  c_{i}^{\dagger} c_l \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle c_{j}^{\dagger} c_l -  c_{i}^{\dagger} c_k \langle c_{j}^{\dagger} c_l\rangle \nonumber\\
 &amp;\qquad -(\langle c_{i}^{\dagger} c_l\rangle \langle c_{j}^{\dagger} c_k\rangle - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle)
 \end{aligned}\end{split}\]</div>
 <p>H-waveでは以下の形式で二体相互作用を定義しています。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-1">
-<span class="eqno">(2.12)<a class="headerlink" href="#equation-algorithm-uhf-1" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(3.2)<a class="headerlink" href="#equation-algorithm-uhf-1" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
 \mathcal{H}_\text{InterAll} &amp;= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} c^\dagger_{i\alpha\sigma_1} c_{j\beta\sigma_2} c^\dagger_{k\gamma\sigma_3} c_{l\delta\sigma_4} \nonumber\\
 &amp;= \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}  I_{ijkl\alpha\beta\gamma\delta} (c^\dagger_{i\alpha\sigma_1} c^\dagger_{k\gamma\sigma_3} c_{l\gamma\sigma_4} c_{j\beta\sigma_2} + c^\dagger_{i\alpha\sigma_1} c_{l\delta\sigma_4}\delta_{j,k}\delta_{\beta,\gamma}\delta_{\sigma_2,\sigma_3})
 \end{aligned}\end{split}\]</div>
 <p>ここで、上式の第2項のように一体項が存在することに注意が必要です。
 さて、一体項で与えられたハミルトニアンは一般的に以下のように書けます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-2">
-<span class="eqno">(2.13)<a class="headerlink" href="#equation-algorithm-uhf-2" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.3)<a class="headerlink" href="#equation-algorithm-uhf-2" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \sum_{ij} H_{ij} c^\dagger_{i} c_{j} = \hat{c}^\dagger H \hat{c}
 \end{aligned}\]</div>
 <p>ここで、簡単化のため、 <span class="math notranslate nohighlight">\(i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)\)</span> 、 <span class="math notranslate nohighlight">\(H\)</span> は <span class="math notranslate nohighlight">\(H_{ij}\)</span> を成分に持つ行列、 <span class="math notranslate nohighlight">\(\hat{c}\)</span> は <span class="math notranslate nohighlight">\(c_{i}\)</span> を成分にもつ行ベクトルを表します。
 このとき、 <span class="math notranslate nohighlight">\(H\)</span> はエルミート行列なので、 <span class="math notranslate nohighlight">\(\hat{\xi}\)</span> を <span class="math notranslate nohighlight">\(H\)</span> の固有値を対角成分に持つ行列、<span class="math notranslate nohighlight">\(U\)</span> は各固有ベクトルに対応する行列として、<span class="math notranslate nohighlight">\(H=U \hat{\xi} U^\dagger\)</span> のように変形できることから、<span class="math notranslate nohighlight">\(\hat{d} = U^\dagger \hat{c}\)</span> とすると、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-3">
-<span class="eqno">(2.14)<a class="headerlink" href="#equation-algorithm-uhf-3" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.4)<a class="headerlink" href="#equation-algorithm-uhf-3" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \hat{d}^\dagger \hat{\xi} \hat{d} =  \sum_{k} \xi_k d_k^\dagger d_k
 \end{aligned}\]</div>
 <p>のように書き直すことが出来ます。したがって、UHF近似の一体相互作用からくるエネルギーは</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-4">
-<span class="eqno">(2.15)<a class="headerlink" href="#equation-algorithm-uhf-4" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.5)<a class="headerlink" href="#equation-algorithm-uhf-4" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 E_\text{UHF} = \langle \mathcal{H}_\text{UHF} \rangle = \sum_{k} \xi_k \langle d_k^\dagger d_k \rangle
 \end{aligned}\]</div>
 <p>として求められます。実際の数値計算では、<span class="math notranslate nohighlight">\(H\)</span> はUHF近似を通して一体グリーン関数 <span class="math notranslate nohighlight">\(\langle c_{i}^\dagger c_{j}\rangle\)</span> に依存するため、一体グリーン関数を最初に初期値として与え、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-5">
-<span class="eqno">(2.16)<a class="headerlink" href="#equation-algorithm-uhf-5" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.6)<a class="headerlink" href="#equation-algorithm-uhf-5" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}^* U_{jl} \langle d_l^\dagger d_l \rangle = \sum_{l} \frac{U_{il}^* U_{jl}}{1+\exp^{\beta(\xi_l -\mu)}}
 \end{aligned}\]</div>
 <p>の関係から一体グリーン関数を更新し、一体グリーン関数が収束するまで計算を繰り返します。ただし、上式において <span class="math notranslate nohighlight">\(\beta\)</span> は逆温度 <span class="math notranslate nohighlight">\(1/ k_B T\)</span> , <span class="math notranslate nohighlight">\(\mu\)</span> は化学ポテンシャルとしました。
 なお、粒子数を固定するカノニカル計算では、粒子数を <span class="math notranslate nohighlight">\(N\)</span> とした場合に、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-6">
-<span class="eqno">(2.17)<a class="headerlink" href="#equation-algorithm-uhf-6" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.7)<a class="headerlink" href="#equation-algorithm-uhf-6" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 N = \sum_{i} \langle c_i^{\dagger} c_i \rangle
 \end{aligned}\]</div>
 <p>を満たすように、各ステップで <span class="math notranslate nohighlight">\(\mu\)</span> を決定・更新しながら計算を進めます。H-waveでは、更新に対してはsimple-mixingを現在行っています。simple-mixingでは <span class="math notranslate nohighlight">\(n\)</span> 番目のステップの一体グリーン関数を <span class="math notranslate nohighlight">\(\langle c_{i}^\dagger c_{j}\rangle^{(n)}\)</span>  とした場合に、 <span class="math notranslate nohighlight">\(n\)</span> 番目の一体グリーン関数と <span class="math notranslate nohighlight">\(n+1\)</span> 番目のステップで求められた一体グリーン関数を混ぜた上で更新を行います：</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-7">
-<span class="eqno">(2.18)<a class="headerlink" href="#equation-algorithm-uhf-7" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.8)<a class="headerlink" href="#equation-algorithm-uhf-7" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 \langle c_{i}^\dagger c_{j}\rangle^{(n+1)} = (1-\alpha) \langle c_{i}^\dagger c_{j}\rangle^{(n)} +  \alpha \langle c_{i}^\dagger c_{j}\rangle^{(n+1)}
 \end{aligned}\]</div>
 <p>ここで、 <span class="math notranslate nohighlight">\(\alpha\)</span> は0から1までの定数を表します。現在のH-waveでは実装していませんが、simple-mixing以外の更新方法としては、Anderson-mixingなどもあります。
 なお、H-waveの実空間UHFでは、全ての相互作用をInterAll形式にマップした後に解析を行う仕様になっています。
 有限温度の自由エネルギーは</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-8">
-<span class="eqno">(2.19)<a class="headerlink" href="#equation-algorithm-uhf-8" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.9)<a class="headerlink" href="#equation-algorithm-uhf-8" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 F = \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(\xi_k - \mu)) \right]
  - \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_j\rangle \langle c_{k}^{\dagger} c_l\rangle - \langle c_{i}^{\dagger} c_l\rangle \langle c_{k}^{\dagger} c_j\rangle)
 \end{aligned}\]</div>
 <p>で与えられます。</p>
 </section>
 <section id="id2">
-<h2><span class="section-number">2.1.2. </span>波数空間への拡張<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<h2><span class="section-number">3.1.2. </span>波数空間への拡張<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
 <p>一体項で与えられたハミルトニアンについて、Fourier変換 <span class="math notranslate nohighlight">\(c_i = \dfrac{1}{\sqrt{V}} \sum_k e^{ikr_i} c_k\)</span> を用いて
 波数表示に書き換えます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-9">
-<span class="eqno">(2.20)<a class="headerlink" href="#equation-algorithm-uhf-9" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(3.10)<a class="headerlink" href="#equation-algorithm-uhf-9" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF}
 &amp;=
 \sum_{k\alpha\beta\sigma\sigma^\prime}
@@ -143,25 +143,25 @@ c_{k\alpha\sigma}^\dagger c_{k\beta\sigma^\prime}^{\phantom\dagger}
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">実空間UHF(UHFr)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">波数空間UHF(UHFk)</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">2. アルゴリズム</a><ul class="current">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2.1. 非制限Hartree-Fock法</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#id1">2.1.1. 概要</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id2">2.1.2. 波数空間への拡張</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">2. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">3. アルゴリズム</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">3.1. 非制限Hartree-Fock法</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id1">3.1.1. 概要</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id2">3.1.2. 波数空間への拡張</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">3. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">4. 謝辞</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
-  <li><a href="al-index.html"><span class="section-number">2. </span>アルゴリズム</a><ul>
-      <li>Previous: <a href="al-index.html" title="前の章へ"><span class="section-number">2. </span>アルゴリズム</a></li>
-      <li>Next: <a href="../acknowledgement.html" title="次の章へ"><span class="section-number">3. </span>謝辞</a></li>
+  <li><a href="al-index.html"><span class="section-number">3. </span>アルゴリズム</a><ul>
+      <li>Previous: <a href="al-index.html" title="前の章へ"><span class="section-number">3. </span>アルゴリズム</a></li>
+      <li>Next: <a href="../acknowledgement.html" title="次の章へ"><span class="section-number">4. </span>謝辞</a></li>
   </ul></li>
   </ul></li>
 </ul>
