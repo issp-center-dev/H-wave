@@ -68,5 +68,3 @@
 -  軌道のインデックスは暗黙的に Wannier center の並び順に 1〜 :math:`N_\text{orbit}` で与えられます。
 
 .. raw:: latex
-
-   \newpage

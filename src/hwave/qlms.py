@@ -55,7 +55,11 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         file_list = CaseInsensitiveDict()
         #interaction files
         for key, file_name in info_inputfile["interaction"].items():
-            file_list[key] = os.path.join(info_inputfile["path_to_input"], file_name)
+            if key.lower() in ["trans", "coulombinter", "coulombintra", "pairhop", "hund", "exchange", "ising", "pairlift", "interall"]:
+                file_list[key] = os.path.join(info_inputfile["path_to_input"], file_name)
+            else:
+                logging.error("Keyword {} is incorrect.".format(key))
+                exit(1)
         #initial and green
         for key, file_name in info_inputfile.items():
             if key.lower() == "initial":

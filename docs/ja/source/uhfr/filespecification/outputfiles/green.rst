@@ -44,7 +44,7 @@ OneBodyGで指定された一体グリーン関数\ :math:`\langle c_{i\sigma_1}
    **形式 :** int型
 
    **説明 :**
-   スピンを指定する整数。\ :math:`[`\ s1\ :math:`]`\ が\ :math:`\sigma_1`\ 、\ :math:`[`\ j\ :math:`]`\ が\ :math:`\sigma_2`\ に対応します。
+   スピンを指定する整数。\ :math:`[`\ s1\ :math:`]`\ が\ :math:`\sigma_1`\ 、\ :math:`[`\ s2\ :math:`]`\ が\ :math:`\sigma_2`\ に対応します。
    0=アップスピン, 1=ダウンスピン を表します。
 
 -  :math:`[`\ v.real\ :math:`]`, :math:`[`\ v.imag\ :math:`]`
