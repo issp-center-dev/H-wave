@@ -1,0 +1,188 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>energy &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/jquery.js"></script>
+    <script src="../../../_static/underscore.js"></script>
+    <script src="../../../_static/_sphinx_javascript_frameworks_compat.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <script src="../../../_static/translations.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../../genindex.html" />
+    <link rel="search" title="検索" href="../../../search.html" />
+    <link rel="next" title="eigen" href="eigen_uhfk.html" />
+    <link rel="prev" title="3.2.3. UHFkの出力ファイル" href="index_outputfiles_uhfk.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="energy">
+<span id="subsec-energy-uhfk-dat"></span><h1>energy<a class="headerlink" href="#energy" title="この見出しへのパーマリンク">¶</a></h1>
+<p>波数空間版UHF法で求めたエネルギー、粒子数、スピンに関する計算結果を出力します。
+ファイル名は環境設定ファイルの中の <code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションでキーワード <code class="docutils literal notranslate"><span class="pre">energy</span></code> を用いて指定することができます。
+以下にファイル例を記載します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Energy_Total = -5.88984624257707
+Energy_Band = -0.9265413257740396
+Energy_Coulomb = -4.963304916803031
+NCond = 8.000000000000007
+Sz = 3.2822430107160017e-07
+</pre></div>
+</div>
+<section id="id1">
+<h2>ファイル形式<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h2>
+<ul class="simple">
+<li><p>Energy_Total = <span class="math notranslate nohighlight">\([\)</span>energy_total<span class="math notranslate nohighlight">\(]\)</span></p></li>
+<li><p>Energy_Band = <span class="math notranslate nohighlight">\([\)</span>energy_band<span class="math notranslate nohighlight">\(]\)</span></p></li>
+<li><p>Energy_{type} = <span class="math notranslate nohighlight">\([\)</span>energy_type<span class="math notranslate nohighlight">\(]\)</span></p></li>
+<li><p>NCond = <span class="math notranslate nohighlight">\([\)</span>ncond<span class="math notranslate nohighlight">\(]\)</span></p></li>
+<li><p>Sz = <span class="math notranslate nohighlight">\([\)</span>sz<span class="math notranslate nohighlight">\(]\)</span></p></li>
+</ul>
+</section>
+<section id="id2">
+<h2>パラメータ<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<ul>
+<li><p><span class="math notranslate nohighlight">\([\)</span>energy_total<span class="math notranslate nohighlight">\(]\)</span></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong>
+UHF法で求めた固有ベクトルを用い計算した全エネルギー。</p>
+</li>
+<li><p><span class="math notranslate nohighlight">\([\)</span>energy_band<span class="math notranslate nohighlight">\(]\)</span></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong> UHF法で求めたハミルトニアン行列の固有値のみ考慮した場合のエネルギー。</p>
+</li>
+<li><p><span class="math notranslate nohighlight">\([\)</span>energy_type<span class="math notranslate nohighlight">\(]\)</span></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong> 相互作用分のエネルギー。相互作用のタイプごとに出力される。</p>
+</li>
+<li><p><span class="math notranslate nohighlight">\([\)</span>ncond<span class="math notranslate nohighlight">\(]\)</span></p>
+<p><strong>形式 :</strong> float型</p>
+<dl class="simple">
+<dt><strong>説明 :</strong> 全粒子数の期待値。</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{i}\langle n_{i}\rangle\)</span></p>
+</dd>
+</dl>
+</li>
+<li><p><span class="math notranslate nohighlight">\([\)</span>sz<span class="math notranslate nohighlight">\(]\)</span></p>
+<p><strong>形式 :</strong> float型</p>
+<dl class="simple">
+<dt><strong>説明 :</strong> 全スピンの <span class="math notranslate nohighlight">\(z\)</span> 成分 <span class="math notranslate nohighlight">\(S_z\)</span> の期待値。</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2\)</span></p>
+</dd>
+</dl>
+</li>
+</ul>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../../index.html">
+    <img class="logo" src="../../../_static/logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">3. 波数空間UHF(UHFk)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">3.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">3.2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">3.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../inputfiles_uhfk/index_inputfiles_uhfk.html">3.2.2. UHFk用入力ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_outputfiles_uhfk.html">3.2.3. UHFkの出力ファイル</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">4. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">5. 謝辞</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../uhfk-index.html"><span class="section-number">3. </span>波数空間UHF(UHFk)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">3.2. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_outputfiles_uhfk.html"><span class="section-number">3.2.3. </span>UHFkの出力ファイル</a><ul>
+      <li>Previous: <a href="index_outputfiles_uhfk.html" title="前の章へ"><span class="section-number">3.2.3. </span>UHFkの出力ファイル</a></li>
+      <li>Next: <a href="eigen_uhfk.html" title="次の章へ">eigen</a></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 5.3.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../../../_sources/uhfk/filespecification/outputfiles_uhfk/energy_uhfk.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
