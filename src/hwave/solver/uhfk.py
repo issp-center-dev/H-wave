@@ -224,6 +224,9 @@ class UHFk(solver_base):
         norb = self.norb
         ns = self.ns
 
+        # check array size
+        assert(green.shape == (Lvol,ns,norb_orig,ns,norb_orig))
+
         def _pack_index(x, n):
             _ix, _iy, _iz = x
             _nx, _ny, _nz = n
@@ -533,14 +536,15 @@ class UHFk(solver_base):
         if _data is None:
             logger.info("initialize green function with random numbers")
             _data = self._initial_green_random()
+            # _data = self._initial_green_random_reshape()
         return _data
 
-    def _initial_green_random(self):
+    def _initial_green_random_reshape(self):
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
-        norb     = self.norb
-        nd       = self.nd
+        norb     = self.norb_orig if self.has_sublattice else self.norb
         ns       = self.ns
+        nd = ns * norb
 
         np.random.seed(self.param_mod["RndSeed"])
         #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
@@ -549,7 +553,7 @@ class UHFk(solver_base):
         # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
         x1 = np.random.rand(lvol * nd * lvol * nd).reshape(ns,lvol,norb,ns,lvol,norb)
         x2 = np.transpose(x1,(1,4,0,2,3,5))
-        x3 = x2[0].reshape(lvol,ns,norb,ns,norb)  # take average?
+        x3 = np.average(x2,axis=0).reshape(lvol,ns,norb,ns,norb)
 
         green = 0.01 * (x3 - 0.5)
 
@@ -557,6 +561,25 @@ class UHFk(solver_base):
             return self._reshape_green(green)
         else:
             return green
+
+    def _initial_green_random(self):
+        nvol     = self.nvol
+        norb     = self.norb
+        ns       = self.ns
+        nd = ns * norb
+
+        np.random.seed(self.param_mod["RndSeed"])
+        #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+        #green = 0.01 * (rand - 0.5)
+
+        # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
+        x1 = np.random.rand(nvol * nd * nvol * nd).reshape(ns,nvol,norb,ns,nvol,norb)
+        x2 = np.transpose(x1,(1,4,0,2,3,5))
+        x3 = np.average(x2,axis=0).reshape(nvol,ns,norb,ns,norb)
+
+        green = 0.01 * (x3 - 0.5)
+
+        return green
 
     def _initial_green_uhf(self, info, geom):
         lx,ly,lz = self.cellshape
