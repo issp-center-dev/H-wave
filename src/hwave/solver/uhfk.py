@@ -1220,11 +1220,21 @@ class UHFk(solver_base):
             logger.info("save_results: save energy in file {}".format(file_name))
 
         if "eigen" in info_outputfile.keys():
+
+            # eigenvalue[spin_block,k,eigen_index] -> [k,spin_block*eigen_index]
+            eg = self._green_list["eigenvalue"]
+            egs = eg.shape
+            egg = np.transpose(eg,(1,0,2)).reshape(egs[1],egs[0]*egs[2])
+
+            ev = self._green_list["eigenvector"]
+            evs = ev.shape
+            evv = np.transpose(ev,(1,2,0,3)).reshape(evs[1],evs[2],evs[0]*evs[3])
+
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
-                     eigenvalue  = self._green_list["eigenvalue"],
-                     eigenvector = self._green_list["eigenvector"],
-                     wavevec = self.wave_table,
+                     eigenvalue  = egg,
+                     eigenvector = evv,
+                     wavevec = self.wave_table
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
