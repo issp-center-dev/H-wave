@@ -331,24 +331,27 @@ class UHFk(solver_base):
         # wave vectors on sublatticed geometry
         def _klist(n):
             return np.roll( (np.arange(n)-(n//2)), -(n//2) )
+
         geom = self.param_ham["Geometry"]
         rvec = geom["rvec"]
         omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
         kvec = np.array([ np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg for i in range(3) ])
 
-        nx,ny,nz = self.shape
+        self.kvec = kvec  # store reciprocal lattice vectors
 
-        self.wave_table = np.zeros((nx,ny,nz,3), dtype=float)
+        nx,ny,nz = self.shape
+        nvol = self.nvol
+
+        wtable = np.zeros((nx,ny,nz), dtype=float)
         for ix, kx in enumerate(_klist(nx)):
             vx = kvec[0] * kx / nx
             for iy, ky in enumerate(_klist(ny)):
                 vy = kvec[1] * ky / ny
                 for iz, kz in enumerate(_klist(nz)):
                     vz = kvec[2] * kz / nz
-                    self.wave_table[ix,iy,iz] = np.pi*2*(vx + vy + vz)
-        #for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
-        #    print(ix,iy,iz,self.wave_table[ix,iy,iz])
-        self.kvec = kvec
+                    v = vx + vy + vz
+                    wtable[ix,iy,iz] = np.linalg.norm(v) * np.pi * 2
+        self.wave_table = wtable.reshape(nvol)
 
     @do_profile
     def _dump_param_ham(self):
@@ -1230,11 +1233,16 @@ class UHFk(solver_base):
             evs = ev.shape
             evv = np.transpose(ev,(1,2,0,3)).reshape(evs[1],evs[2],evs[0]*evs[3])
 
+            # wavevec[k,eigen_index] = |\vec(k)|
+            wv = self.wave_table
+            wvs = wv.shape
+            wvv = np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0])).T
+
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
                      eigenvalue  = egg,
                      eigenvector = evv,
-                     wavevec = self.wave_table
+                     wavevec = wvv,
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
