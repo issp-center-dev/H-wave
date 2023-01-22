@@ -60,6 +60,11 @@ class solver_base():
             for key, value in info_mode_param.items():
                 self.param_mod[key] = value
 
+        # relax parameter checks
+        self.relax_checks = self.param_mod.get("trustme", False)
+        if self.relax_checks:
+            logger.warning("TRUST-ME mode enabled. parameter checks are relaxed")
+
         if "2Sz" in self.param_mod and self.param_mod["2Sz"] == "free":
             self.param_mod["2Sz"] = None
 
@@ -67,11 +72,19 @@ class solver_base():
             logger.error("Parameter check failed for info_mode.")
             exit(1)
         if self._check_param_range(self.param_mod, range_list) != 0:
-            logger.error("Parameter range check failed for param_mod.")
-            exit(1)
+            msg = "Parameter range check failed for param_mod."
+            if self.relax_checks:
+                logger.warning(msg)
+            else:
+                logger.error(msg)
+                exit(1)
         if self._check_param_mod(self.param_mod) != 0:
-            logger.error("Parameter check failed for param_mod.")
-            exit(1)
+            msg = "Parameter check failed for param_mod."
+            if self.relax_checks:
+                logger.warning(msg)
+            else:
+                logger.error(msg)
+                exit(1)
 
         # canonicalize
         self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])

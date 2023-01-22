@@ -78,6 +78,9 @@ class UHFk(solver_base):
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
         self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
+        if self.relax_checks:
+            self.strict_hermite = False
+
     @do_profile
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
@@ -399,10 +402,18 @@ class UHFk(solver_base):
                     logger.debug("range check for {} ok.".format(k))
                 else:
                     err += 1
-                    logger.error("range check for {} failed.".format(k))
+                    msg = "range check for {} failed.".format(k)
+                    if self.relax_checks:
+                        logger.warning(msg)
+                    else:
+                        logger.error(msg)
         if err > 0:
-            logger.error("_check_cellsize failed. interaction range exceeds cell shape.")
-            exit(1)
+            msg = "_check_cellsize failed. interaction range exceeds cell shape."
+            if self.relax_checks:
+                logger.warning(msg)
+            else:
+                logger.error(msg)
+                exit(1)
 
     def _check_orbital_index(self):
         norb = self.param_ham["Geometry"]["norb"]
