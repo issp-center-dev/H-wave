@@ -345,7 +345,7 @@ class UHFk(solver_base):
         nx,ny,nz = self.shape
         nvol = self.nvol
 
-        wtable = np.zeros((nx,ny,nz), dtype=float)
+        wtable = np.zeros((nx,ny,nz,3), dtype=float)
         for ix, kx in enumerate(_klist(nx)):
             vx = kvec[0] * kx / nx
             for iy, ky in enumerate(_klist(ny)):
@@ -353,8 +353,8 @@ class UHFk(solver_base):
                 for iz, kz in enumerate(_klist(nz)):
                     vz = kvec[2] * kz / nz
                     v = vx + vy + vz
-                    wtable[ix,iy,iz] = np.linalg.norm(v) * np.pi * 2
-        self.wave_table = wtable.reshape(nvol)
+                    wtable[ix,iy,iz] = v * np.pi * 2
+        self.wave_table = wtable.reshape(nvol,3)
 
     @do_profile
     def _dump_param_ham(self):
@@ -1256,10 +1256,10 @@ class UHFk(solver_base):
             evs = ev.shape
             evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
 
-            # wavevec[k,eigen_index] = |\vec(k)|
+            # wavevec[k,eigen_index] = \vec(k)
             wv = self.wave_table
             wvs = wv.shape
-            wvv = np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0])).T
+            wvv = np.transpose(np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0],wvs[1])), (1,0,2))
 
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
