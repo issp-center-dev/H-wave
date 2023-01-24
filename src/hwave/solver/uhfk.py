@@ -1231,7 +1231,7 @@ class UHFk(solver_base):
 
             ev = self._green_list["eigenvector"]
             evs = ev.shape
-            evv = np.transpose(ev,(1,2,0,3)).reshape(evs[1],evs[2],evs[0]*evs[3])
+            evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
 
             # wavevec[k,eigen_index] = |\vec(k)|
             wv = self.wave_table
