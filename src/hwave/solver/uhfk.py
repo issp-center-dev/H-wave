@@ -1244,8 +1244,8 @@ class UHFk(solver_base):
             np.savez(file_name,
                      eigenvalue  = egg,
                      eigenvector = evv,
-                     wavevec_unit = self.kvec,
-                     wavevec_index = self.wavenum_table,
+                     wavevector_unit = self.kvec,
+                     wavevector_index = self.wavenum_table,
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
