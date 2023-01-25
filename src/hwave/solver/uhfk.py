@@ -342,6 +342,8 @@ class UHFk(solver_base):
         nx,ny,nz = self.shape
         nvol = self.nvol
 
+        self.wavenum_table = np.array([(i,j,k) for i in _klist(nx) for j in _klist(ny) for k in _klist(nz)])
+
         wtable = np.zeros((nx,ny,nz,3), dtype=float)
         for ix, kx in enumerate(_klist(nx)):
             vx = kvec[0] * kx / nx
@@ -1233,16 +1235,17 @@ class UHFk(solver_base):
             evs = ev.shape
             evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
 
-            # wavevec[k,eigen_index] = \vec(k)
-            wv = self.wave_table
-            wvs = wv.shape
-            wvv = np.transpose(np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0],wvs[1])), (1,0,2))
+            # # wavevec[k,eigen_index] = \vec(k)
+            # wv = self.wave_table
+            # wvs = wv.shape
+            # wvv = np.transpose(np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0],wvs[1])), (1,0,2))
 
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
                      eigenvalue  = egg,
                      eigenvector = evv,
-                     wavevec = wvv,
+                     wavevec_unit = self.kvec,
+                     wavevec_index = self.wavenum_table,
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
