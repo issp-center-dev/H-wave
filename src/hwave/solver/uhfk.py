@@ -335,7 +335,9 @@ class UHFk(solver_base):
         geom = self.param_ham["Geometry"]
         rvec = geom["rvec"]
         omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
-        kvec = np.array([ np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg for i in range(3) ])
+        kvec = np.array([
+            np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg * 2*np.pi/self.shape[i]
+            for i in range(3) ])
 
         self.kvec = kvec  # store reciprocal lattice vectors
 
@@ -346,13 +348,10 @@ class UHFk(solver_base):
 
         wtable = np.zeros((nx,ny,nz,3), dtype=float)
         for ix, kx in enumerate(_klist(nx)):
-            vx = kvec[0] * kx / nx
             for iy, ky in enumerate(_klist(ny)):
-                vy = kvec[1] * ky / ny
                 for iz, kz in enumerate(_klist(nz)):
-                    vz = kvec[2] * kz / nz
-                    v = vx + vy + vz
-                    wtable[ix,iy,iz] = v * np.pi * 2
+                    v = kvec[0] * kx + kvec[1] * ky + kvec[2] * kz
+                    wtable[ix,iy,iz] = v
         self.wave_table = wtable.reshape(nvol,3)
 
     @do_profile
