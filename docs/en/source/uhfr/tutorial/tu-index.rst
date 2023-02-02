@@ -69,7 +69,7 @@ See File format section for the details.
 Create definition files for Hamiltonian
 ---------------------------------------
 
-Next, we will create input files that defines the Hamiltonian.
+Next, we will create input files that define the Hamiltonian.
 
 Transfer term
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

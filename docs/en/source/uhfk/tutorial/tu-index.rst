@@ -49,7 +49,7 @@ The calculation parameters are specified in ``[mode.param]`` subsection.
 ``[file.input]`` subsection contains settings
 on the directory for the input files by ``path_to_input``,
 and the filename for the initial configuration by ``initial``.
-If it is not specified, a random configuration will be generated.
+If the latter is not specified, a random configuration will be generated.
 
 ``[file.input.interaction]`` subsection contains a list of files
 associated with the geometry information and the interactions distinguished by the keywords.
@@ -100,7 +100,7 @@ It contains
 a comment (line 1),
 the number of orbitals (line 2),
 the number of cells ``nrpts`` of the rectangular cuboid that accommodates translation vectors (line 3),
-the multiplicity factors (``nrpts`` elements with 15 points a line),
+the multiplicity factors (``nrpts`` elements, with 15 elements per line),
 and the elements of the coefficient matrix.
 
 Each element of the matrix consists of
@@ -168,7 +168,7 @@ which reads:
 
 - ``t`` and ``V`` denote parameters of the hopping and the neighbor-site Coulomb interaction, respectively.
 
-- ``calcmode = "uhfk""`` specifies the output to be in the Wannier90(-like) format.
+- ``calcmode = "uhfk"`` specifies the output to be in the Wannier90(-like) format.
   If ``exportall = 0`` is given, the outputs are compactified with zero components omitted.
 
 See Section :ref:`Ch:HowToWannier90` for the details of input files.
@@ -181,8 +181,7 @@ Then, run ``uhf_dry.out`` with the file above as an input:
     $ ln -s path_to_Stdface/build/src/uhf_dry.out .
     $ ./uhf_dry.out stan.in
 
-When the program finishes, there are generated
-a geometry information file ``geom.dat``
+When the program finishes, a geometry information file ``geom.dat``
 and interaction definition files ``transfer.dat`` and ``coulombinter.dat``,
-in the current directory.
+are generated in the current directory.
 

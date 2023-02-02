@@ -3,7 +3,7 @@
 Exchange file
 ~~~~~~~~~~~~~~~~~~~~
 
-This file determines the coefficients of the Exchange couplings given by
+This file determines the coefficients of the exchange couplings given by
 
 .. math::
    \mathcal{H} = \sum_{i,j} J_{ij}^{\rm Ex}
@@ -46,7 +46,7 @@ Parameters
    String (blank is not allowed)
 
    **Description :**
-   An arbitrary keyword for the total number of the Exchange couplings.
+   An arbitrary keyword for the total number of the exchange couplings.
 
 -  ``[count]``
 
@@ -54,7 +54,7 @@ Parameters
    Integer (blank is not allowed)
 
    **Description :**
-   An integer giving the total number of the Exchange couplings.
+   An integer giving the total number of the exchange couplings.
 
 -  ``[i]``, ``[j]``
 

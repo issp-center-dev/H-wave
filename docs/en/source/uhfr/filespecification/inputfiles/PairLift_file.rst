@@ -5,7 +5,7 @@
 PairLift file
 ~~~~~~~~~~~~~~~~~~~~
 
-This file determines the coefficients of the PairLift couplings given by
+This file determines the coefficients of the pair-lift couplings given by
 
 .. math::
    \mathcal{H} = \sum_{i,j} J_{ij}^{\rm PairLift}
@@ -48,7 +48,7 @@ Parameters
    String (blank is not allowed)
 
    **Description :**
-   An arbitrary keyword for the total number of the PairLift couplings.
+   An arbitrary keyword for the total number of the pair-lift couplings.
 
 -  ``[count]``
 
@@ -56,7 +56,7 @@ Parameters
    Integer (blank is not allowed)
 
    **Description :**
-   An integer giving the total number of the PairLift couplings.
+   An integer giving the total number of the pair-lift couplings.
 
 -  ``[i]``, ``[j]``
 

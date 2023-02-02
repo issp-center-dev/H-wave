@@ -66,7 +66,7 @@ Parameters
    Float
 
    **Description :**
-   The expectation value of the number of particles
+   The expectation value of the number of particles,
    :math:`\sum_{i}\langle n_{i}\rangle` .
 
 -  ``[sz]``
@@ -75,7 +75,7 @@ Parameters
    Float
 
    **Description :**
-   The expectation value of the :math:`z` component of the total spin
+   The expectation value of the :math:`z` component of the total spin,
    :math:`S_z = \sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2` .
 
 

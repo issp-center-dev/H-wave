@@ -3,7 +3,7 @@
 PairHop file
 ~~~~~~~~~~~~~~~~~~~
 
-This file determines the coefficients of the PairHop couplings
+This file determines the coefficients of the pair-hopping couplings
 given by
 
 .. math::
@@ -46,7 +46,7 @@ Parameters
    String (blank is not allowed)
 
    **Description :**
-   An arbitrary keyword for the total number of the PairHop couplings.
+   An arbitrary keyword for the total number of the pair-hopping couplings.
 
 -  ``[count]``
 
@@ -54,7 +54,7 @@ Parameters
    Integer (blank is not allowed)
 
    **Description :**
-   An integer giving the total number of the PairHop couplings.
+   An integer giving the total number of the pair-hopping couplings.
 
 -  ``[i]``, ``[j]``
 

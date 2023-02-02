@@ -56,6 +56,7 @@ Basic usage
       |-- pyproject.toml
       |-- docs/
       |   |-- en/
+      |   |-- ja/
       |   |-- tutorial/
       |-- src/
       |   |-- qlms.py

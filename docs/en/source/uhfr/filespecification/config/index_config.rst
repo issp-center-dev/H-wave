@@ -330,7 +330,7 @@ while the latter on output files, as described below.
   String (default value is ``""``)
 
   **Description :**
-  This parameter specifies the input file for pairlift interaction term.
+  This parameter specifies the input file for pair-lift interaction term.
 
 ``file.output`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
