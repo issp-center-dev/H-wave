@@ -56,58 +56,56 @@
 
 -  1行: ヘッダ(何が書かれても問題ありません)。
 
--  2行:
-     :math:`N_\text{orbit}`
+-  2行: ``[Norbit]``
 
--  3行:
-     :math:`N_\text{pts}`
+-  3行: ``[Npts]``
 
 -  4 - :math:`\lceil N_\text{pts} / 15 \rceil + 3` 行:
-     :math:`n_1\ n_2\ ...`
+   ``[n_1] [n_2] ...``
 
 -  :math:`\lceil N_\text{pts} / 15 \rceil + 4` 行以降:
-     :math:`r_x\ \ r_y\ \ r_z\ \ \alpha\ \ \beta\ \ \mathop{Re}J\ \ \mathop{Im}J`
+   ``[r_x] [r_x] [r_x] [alpha] [beta] [J.real] [J.imag]``
 
 パラメータ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
--  :math:`N_\text{orbit}`
+-  ``[Norbit]``
 
    **形式 :** int型
 
    **説明 :**
-   ユニットセル内の軌道の数を指定します。
+   ユニットセル内の軌道の数\ :math:`N_\text{orbit}`\ を指定します。
 
--  :math:`N_\text{pts}`
+-  ``[Npts]``
 
    **形式 :** int型
 
    **説明 :**
    並進ベクトル全体が入る直方体に含まれるセルの数を指定します。
 
--  :math:`n_1, n_2, ...`
+-  ``[n1]``, ``[n1]``, ...
 
    **形式 :** int型
 
    **説明 :**
    各セルの縮重度を指定します(通常は 1)。一行あたり15点を列挙します。
 
--  :math:`r_x,\ \ r_y,\ \ r_z`
+-  ``[r_x]``, ``[r_y]``, ``[r_z]``
 
    **形式 :** int型
 
    **説明 :**
    並進ベクトルを指定します。
    
--  :math:`\alpha,\ \ \beta`
+-  ``[alpha]``, ``[beta]``
 
    **形式 :** int型
 
    **説明 :**
    軌道のインデックスを指定します。
-   :math:`\alpha` が元のセル内の軌道、:math:`\beta` が :math:`\vec{r}` 離れたセル内の軌道を指します。
+   ``[alpha]`` が元のセル内の軌道、``[beta]`` が :math:`\vec{r}` 離れたセル内の軌道を指します。
 
--  :math:`\mathop{Re}J,\ \ \mathop{Im}J`
+-  ``[J.real]``, ``[J.imag]``
 
    **形式 :** float型
 
