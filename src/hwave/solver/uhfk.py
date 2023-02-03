@@ -13,6 +13,7 @@ class UHFk(solver_base):
         self.name = "uhfk"
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
+        self._init_mode(info_mode)
         self._init_param()
         self._init_lattice()
         self._init_orbit()
@@ -44,6 +45,9 @@ class UHFk(solver_base):
 
         # work area
         self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
+
+    def _init_mode(self, param):
+        self.iflag_fock = param.get('flag_fock', True)
 
     @do_profile
     def _init_param(self):
@@ -122,6 +126,7 @@ class UHFk(solver_base):
     @do_profile
     def _show_param(self):
         logger.info("Show parameters")
+        logger.info("    Enable Fock    = {}".format(self.iflag_fock))
         logger.info("    Cell Shape     = {}".format(self.cellshape))
         logger.info("    Sub Shape      = {}".format(self.subshape))
         logger.info("    Block          = {}".format(self.shape))
@@ -924,12 +929,13 @@ class UHFk(solver_base):
                 
                 # cross term
                 #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
-                hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
+                if self.iflag_fock:
+                    hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
 
-                #   fourier transform: sum_r (*) e^{ikr}
-                hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                    #   fourier transform: sum_r (*) e^{ikr}
+                    hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
-                ham -= hh5.reshape(nvol, nd, nd)
+                    ham -= hh5.reshape(nvol, nd, nd)
 
         # interaction term: PairHop type
         for type in ['PairHop']:
@@ -945,10 +951,15 @@ class UHFk(solver_base):
                 #   + sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
                 #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
 
-                hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
-                hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
-                hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
-                hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                if self.iflag_fock:
+                    hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                    hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
+                    hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
+                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                else:
+                    hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                    hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, hh1)
+                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
                 ham += hh4.reshape(nvol, nd, nd)
 
@@ -1196,17 +1207,25 @@ class UHFk(solver_base):
                 gab_r = self.Green
 
                 if type == "PairHop":
-                    w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
-                    w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
-                    ee = np.einsum('rab, rab ->', jab_r, w1-w2)
+                    if self.iflag_fock:
+                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
+                        w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
+                        ee = np.einsum('rab, rab ->', jab_r, w1-w2)
+                    else:
+                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
+                        ee = np.einsum('rab, rab ->', jab_r, w1)
                     energy[type] = -ee/2.0*nvol
 
                 else:
-                    w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
-                    w1b = np.broadcast_to(w1, (nvol,norb,norb))
-                    w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
-                    ee = np.einsum('rab, rab->', jab_r, w1b-w2)
-
+                    if self.iflag_fock:
+                        w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
+                        w1b = np.broadcast_to(w1, (nvol,norb,norb))
+                        w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
+                        ee = np.einsum('rab, rab->', jab_r, w1b-w2)
+                    else:
+                        w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
+                        w1b = np.broadcast_to(w1, (nvol,norb,norb))
+                        ee = np.einsum('rab, rab->', jab_r, w1b)
                     energy[type] = -ee/2.0*nvol
 
                 energy_total += energy[type].real
