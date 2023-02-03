@@ -25,6 +25,9 @@ The wave number is taken in unit of sublattice when the sublattice is considered
 The data format is a numpy ndarray with the layout as ``eigenvalue[k][l]``, where
 ``k`` refers to the linearlized index of the wave number vector :math:`\vec{k}`,
 and ``l`` refers to the index of eigenvalues in a cell.
+The indices of the wave number vector ``(kx, ky, kz)`` is packed into the linearlized index
+``k`` by ``k = kz + Nz * (ky + Ny * kx)``.
+
 
 ``eigenvector`` contains the corresponding eigenvectors.
 The data format is a numpy ndarray with the layout as ``eigenvector[k][l][j]``, where

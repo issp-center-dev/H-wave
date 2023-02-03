@@ -16,6 +16,7 @@ The data is bound to the key ``green``. The data format is a numpy ndarray
 with the layout ``ndarray(r, s, a, t, b)``, where
 
 - ``r`` denotes a linearlinzed index of translation vector :math:`[r_x\ r_y\ r_z]`,
+  where the indices are packed into ``r`` by ``r`` :math:`= r_z + N_z \cdot (r_y + N_y r_x)`.
 - ``a``, ``b`` denote the indices of the orbitals :math:`\alpha, \beta`,
 - ``s``, ``t`` denote the indices of the spins :math:`\sigma_1, \sigma_2`.
 

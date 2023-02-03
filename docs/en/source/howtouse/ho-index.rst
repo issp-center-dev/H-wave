@@ -88,7 +88,7 @@ Basic usage
      First, you need to create input files for H-wave that are an input file that specify calculation conditions, and the definition files for the Hamiltonian.
      To generate the definition files, it will be convenient to use `StdFace library <https://github.com/issp-center-dev/StdFace>`_. 
      A brief description of these files is given in Tutorial section.
-     You may consult File format section for the details.
+     You may consult File format sections for the details.
 
   #. Run
 
@@ -105,4 +105,4 @@ Basic usage
         $ python3 path_to_H-wave/qlms.py input.toml
 
      When the calculation is completed, the results will be written in the output directory.
-     See File format section for the details of the output files.
+     See File format sections for the details of the output files.

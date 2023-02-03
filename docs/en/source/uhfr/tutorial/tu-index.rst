@@ -63,7 +63,7 @@ In the ``file.input.interaction`` section, the input files to define Hamiltonian
 In the ``file.output`` section, ``path_to_output`` specifies the directory to which the results will be written. ``energy`` specifies the filename for the energy, ``eigen`` specifies the filename for the eigenvalues and eigenvectors of the Hamiltonian, and ``green`` specifies the filename for the one-body Green's function.
 If these keywords are missing, the corresponding results will not be exported.
 
-See File format section for the details.
+See :ref:`Ch:Config_UHFR` section for the details.
 
 
 Create definition files for Hamiltonian
@@ -229,7 +229,7 @@ The results are written in the ``output`` directory, according to the settings i
 ``energy.dat`` for the eigenvalues,
 ``spin-up_eigen.npz`` and ``spin-down_eigen.npz`` for the eigenvectors, and
 ``green.dat`` for the one-body Green's functions.
-See File format section for the details of the output files.
+See :ref:`Sec:outputfile` section for the details of the output files.
 
 Generate input files using StdFace library
 ----------------------------------------------

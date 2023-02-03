@@ -60,7 +60,7 @@ for the eigenvalues and eigenvectors of the Hamiltonian by ``eigen``,
 and for the one-body Green's functions by ``green``.
 If they are not specified, the corresponding data will not be outputted.
 
-See File format section for the details.
+See :ref:`Ch:Config` section for the details.
 
 
 Create interaction definition files
@@ -128,7 +128,7 @@ the wave-number space UHF calculation.
 The program will yield, according to the settings in ``[file.output]`` section,
 the output files ``energy.dat``, ``eigen.npz``, and ``green.npz`` in ``output`` directory.
 
-See File format section for the details of the output files.
+See :ref:`Sec:outputfile_uhfk` section for the details of the output files.
 
 Compile and run StdFace library
 ----------------------------------------------------------------
