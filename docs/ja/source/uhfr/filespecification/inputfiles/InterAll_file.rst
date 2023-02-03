@@ -107,7 +107,7 @@ InterAll指定ファイル
 
 -  行数固定で読み込みを行う為、ヘッダの省略はできません。
 
--  Hamiltonianがエルミートという制限から\ :math:`I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}=I_{lkji\sigma_4\sigma_3\sigma_2\sigma_1}^{\dagger}`\ の関係を満たす必要があります。上記の関係が成立しない場合にはエラー終了します。
+-  Hamiltonianがエルミートという制限から\ :math:`I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}=I_{lkji\sigma_4\sigma_3\sigma_2\sigma_1}^{\dagger}`\ の関係を満たす必要があります。上記の関係が成立しない場合には、 ``strict_hermite`` パラメータの値に応じて、エラー終了またはメッセージを表示します。
    また、エルミート共役の形式は\ :math:`I_{ijkl\sigma_1\sigma_2\sigma_3\sigma_4}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}c_{k\sigma_3}^{\dagger}c_{l\sigma_4}`\ に対して、\ :math:`I_{lkji\sigma_4\sigma_3\sigma_2\sigma_1}`
    :math:`c_{l\sigma_4}^{\dagger}c_{k\sigma_3}c_{j\sigma_2}^{\dagger}c_{i\sigma_1}`\ を満たすように入力してください。
 

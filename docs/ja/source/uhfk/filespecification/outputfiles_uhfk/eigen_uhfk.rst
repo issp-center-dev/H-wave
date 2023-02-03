@@ -16,15 +16,18 @@ eigen
     data = np.load("eigen_str.npz")
     eigenvalue = data["eigenvalue"]
     eigenvector = data["eigenvector"]
-    wavevec = data["wavevec"]
+    
+    wavevector_unit = data["wavevector_unit"]
+    wavevector_index = data["wavevector_index"]
+
 
 ``eigenvalue`` には波数ごとの固有値 :math:`\lambda_l(\vec{k})` が格納されます。
 副格子を指定している場合は、副格子を単位とした値になります。
 データ形式は numpy ndarray で、データの並びは ``eigenvalue[k][l]`` です。
 ``k`` は波数ベクトル :math:`\vec{k}` を一次元化したインデックス、
 ``l`` はセル内の固有値のインデックスです。
-Sz固定の場合は、固有値のインデックスは軌道 ``a`` とスピン ``s`` (up-spin は 0, down-spin は 1)
-に対して ``a + Norb * s`` となります。 ``Norb`` はセル内の軌道数です。
+Sz固定の場合は、固有値のインデックスは軌道部分 ``l'`` とスピン ``s`` (up-spin は 0, down-spin は 1)
+に対して ``l' + Norb * s`` となります。 ``Norb`` はセル内の軌道数です。
 
 ``eigenvector`` には対応する固有ベクトルが格納されます。
 データ形式は numpy ndarray で、データの並びは ``eigenvector[k][l][j]`` です。
@@ -32,9 +35,14 @@ Sz固定の場合は、固有値のインデックスは軌道 ``a`` とスピ�
 ``j`` はセル内の軌道・スピンのインデックスです。
 
 ファイルには波数の情報も出力されます。
-``wavevec`` には波数と固有値のインデックスに対応する波数ベクトルの大きさが
-格納されます。データ形式は numpy ndarray で、データの並びは ``wavevec[k][l]`` です。
-``k`` は波数ベクトル :math:`\vec{k}` を一次元化したインデックス、
-``l`` はセル内の固有値のインデックスです。
+``wavevector_unit`` には逆格子ベクトル :math:`\vec{b}_i` を用いて
+:math:`2\pi\vec{b}_i/N_i` で表される単位波数ベクトルが格納されます。
+``wavevector_index`` には波数のインデックスと1次元化したインデックスとの対応が格納されます。
+インデックス ``k`` に対応する波数ベクトルは以下で求められます。
 
+.. code-block:: python
+
+    k_vec = np.dot(wavevector_index[k], wavevector_unit)
+
+		
 .. raw:: latex
