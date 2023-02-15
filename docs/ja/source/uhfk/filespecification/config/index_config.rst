@@ -111,7 +111,7 @@ TOML形式
 
   **説明 :** Hermiticity の許容値 :math:`|t_{ij} - t_{ji}^*| < \varepsilon` を指定します。
 
-- ``trustme``
+- ``trustme_interaction_range``
 
   **形式 :** bool型 (デフォルトは false)
 
