@@ -67,27 +67,23 @@
       |   |-- en/
       |   |-- ja/
       |   |-- tutorial/
+      |
       |-- src/
       |   |-- qlms.py
       |   |-- hwave/
-      |   |   |-- __init__.py
-      |   |   |-- qlms.py
-      |   |   |-- qlmsio/
-      |   |   |   |-- __init__.py
-      |   |   |   |-- read_input.py
-      |   |   |   |-- read_input_k.py
-      |   |   |   |-- wan90.py
-      |   |   |-- solver/
-      |   |   |   |-- __init__.py
-      |   |   |   |-- base.py
-      |   |   |   |-- uhf.py
-      |   |   |   |-- uhfk.py
-      |   |   |   |-- perf.py
-      |-- sample/
-      |   |-- UHFk/
-      |   |   |-- CDW_SDW/
-      |   |   |-- band_plot/
-      |   |   |-- finiteT/
+      |       |-- __init__.py
+      |       |-- qlms.py
+      |       |-- qlmsio/
+      |       |   |-- __init__.py
+      |       |   |-- read_input.py
+      |       |   |-- read_input_k.py
+      |       |   |-- wan90.py
+      |       |-- solver/
+      |           |-- __init__.py
+      |           |-- base.py
+      |           |-- uhf.py
+      |           |-- uhfk.py
+      |           |-- perf.py
       |-- tests/
        
 - 基本的な使用方法
