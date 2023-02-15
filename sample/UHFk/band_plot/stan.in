@@ -1,8 +1,0 @@
-model = "Hubbard"
-lattice = "chain"
-L = 16
-t = 1.0
-//U = 8.0
-Ncond = 16
-calcmode = "uhfk"
-exportall = 0
