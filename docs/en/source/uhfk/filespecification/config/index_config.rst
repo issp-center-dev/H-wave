@@ -153,8 +153,8 @@ Parameters
 
   **Description :**
 
-  Relaxes range checks on parameter and interaction definitions;
-  if true, warns and continues execution, otherwise stops.
+  Relax the checks that the distances of hopping and interaction are within the halves of ``CellShape``;
+  if true, warn and continue execution, otherwise stop.
 
 ``log`` section
 ================================
