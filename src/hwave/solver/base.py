@@ -61,7 +61,7 @@ class solver_base():
                 self.param_mod[key] = value
 
         # relax parameter checks
-        self.relax_checks = self.param_mod.get("trustme", False)
+        self.relax_checks = self.param_mod.get("trustme_interaction_range", False)
         if self.relax_checks:
             logger.warning("TRUST-ME mode enabled. parameter checks are relaxed")
 
