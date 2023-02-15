@@ -88,7 +88,7 @@ Operating environment
 
 H-wave was tested on the following platforms
 
-- Mac + python3 (brew)
+- macOS + python3 (brew)
 
 - Ubuntu Linux + python3 (miniconda)
 

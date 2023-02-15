@@ -146,6 +146,16 @@ Parameters
   This parameter specifies the tolerance for the Hermiticity condition
   :math:`|t_{ij} - t_{ji}^*| < \varepsilon`.
 
+- ``trustme_interaction_range``
+
+  **Type :**
+  Boolean (default value is false)
+
+  **Description :**
+
+  Relaxes range checks on parameter and interaction definitions;
+  if true, warns and continues execution, otherwise stops.
+
 ``log`` section
 ================================
 
