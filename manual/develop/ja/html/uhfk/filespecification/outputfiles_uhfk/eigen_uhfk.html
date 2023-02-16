@@ -56,7 +56,7 @@
 Sz固定の場合は、固有値のインデックスは軌道部分 <code class="docutils literal notranslate"><span class="pre">l'</span></code> とスピン <code class="docutils literal notranslate"><span class="pre">s</span></code> (up-spin は 0, down-spin は 1)
 に対して <code class="docutils literal notranslate"><span class="pre">l'</span> <span class="pre">+</span> <span class="pre">Norb</span> <span class="pre">*</span> <span class="pre">s</span></code> となります。 <code class="docutils literal notranslate"><span class="pre">Norb</span></code> はセル内の軌道数です。</p>
 <p><code class="docutils literal notranslate"><span class="pre">eigenvector</span></code> には対応する固有ベクトルが格納されます。
-データ形式は numpy ndarray で、データの並びは <code class="docutils literal notranslate"><span class="pre">eigenvector[k][l][j]</span></code> です。
+データ形式は numpy ndarray で、データの並びは <code class="docutils literal notranslate"><span class="pre">eigenvector[k][j][l]</span></code> です。
 <code class="docutils literal notranslate"><span class="pre">k</span></code>, <code class="docutils literal notranslate"><span class="pre">l</span></code> は対応する波数および固有値のインデックス、
 <code class="docutils literal notranslate"><span class="pre">j</span></code> はセル内の軌道・スピンのインデックスです。</p>
 <p>ファイルには波数の情報も出力されます。
