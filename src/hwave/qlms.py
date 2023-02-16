@@ -11,6 +11,7 @@ import tomli
 import hwave.qlmsio as qlmsio
 import hwave.solver.uhfr as sol_uhfr
 import hwave.solver.uhfk as sol_uhfk
+import hwave.solver.rpa as sol_rpa
 from requests.structures import CaseInsensitiveDict
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
@@ -44,7 +45,8 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     logger = logging.getLogger("qlms")
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     # logging.basicConfig(level=logging.DEBUG, format=fmt)
-    logging.basicConfig(level=logging.INFO, format=fmt)
+    # logging.basicConfig(level=logging.INFO, format=fmt)
+    logging.basicConfig(format=fmt)
 
     if "mode" not in info_mode:
         logger.error("mode is not defined in [mode].")
@@ -95,6 +97,24 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
         solver = sol_uhfk.UHFk(ham_info, info_log, info_mode)
 
+    elif mode == "RPA":
+        logger.info("RPA mode")
+
+        logger.info("Read interaction definitions from files")
+        read_io = qlmsio.read_input_k.QLMSkInput(info_inputfile)
+        ham_info = read_io.get_param("ham")
+
+        solver = sol_rpa.RPA(ham_info, info_log, info_mode)
+
+        green_info = {}
+        # logger.info("Start RPA calculation")
+        # solver.solve(green_info, path_to_output)
+
+        # logger.info("Save calculation results")
+        # solver.save_results(info_outputfile, green_info)
+
+        # logger.info("all done.")
+
     else:
         logger.warning("mode is incorrect: mode={}.".format(mode))
         exit(0)
@@ -107,9 +127,15 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
 
 def main():
-    args = sys.argv
-    if len(args) != 2:
-        print("Usage: python3 qlms.py input.toml")
-        exit(1)
-    run(input_file=args[1])
 
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--verbose", help="increase verbosity", action="count", default=0)
+    parser.add_argument("-q", "--quiet", help="decrease verbosity", action="count", default=0)
+    parser.add_argument("input_file", nargs='?', default="input.toml", help="parameter file in TOML format")
+    args = parser.parse_args()
+
+    log_level = logging.INFO - (args.verbose - args.quiet) * 10
+    logging.basicConfig(level=log_level)
+
+    run(input_file=args.input_file)
