@@ -576,17 +576,18 @@ class RPA:
         # 1 / (iw_{n} - (e_i(k) - mu)) -> g[n,k,i]
         g = 1.0 / (np.tile(1j * iomega, (nd,nvol,1)).T - np.tile((ew - mu), (nmat,1,1)))
 
-        # G_ab(k,iw_n) = sum_i d_{a,i} d_{b,i}^* / (iw_{n} - (e_i(k) - mu))
-        green = np.einsum('kai,kbi,lki->lkab', ev, np.conj(ev), g)
+        # G_ab^j(k,iw_n) = d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
+        green = np.einsum('kaj,kbj,lkj->jlkab', ev, np.conj(ev), g)
 
         return green
 
     def _calc_chi0q(self, green_kw, beta):
         # green function
-        #   green_kw[l,k,a,b]: G_ab(k,ie)
+        #   green_kw[j,l,k,a,b]: G_ab^j(k,ie)
         #     l : matsubara freq i\epsilon_l = i\pi(2*l+1-N)/\beta for l=0..N-1
         #     k : wave number kx,ky,kz
         #     a,b : orbital and spin index a=(s,alpha) b=(t,beta)
+        #     j : diagnoalized orbital index
 
         logger.debug(">>> RPA._calc_chi0q")
 
@@ -596,81 +597,24 @@ class RPA:
         nmat = self.nmat
 
         # Fourier transform from wave number space to coordinate space
-        green_rw = FFT.ifftn(green_kw.reshape(nmat,nx,ny,nz,nd*nd), axes=(1,2,3))
+        green_rw = FFT.ifftn(green_kw.reshape(nd,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
 
         # Fourier transform from matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
-        green_rt = np.einsum('tv,t->tv',
-                             FFT.fft(green_rw.reshape(nmat,nvol*nd*nd), axis=0),
-                             omg).reshape(nmat,nx,ny,nz,nd,nd)
+        green_rt = np.einsum('jtv,t->jtv',
+                             FFT.fft(green_rw.reshape(nd,nmat,nvol*nd*nd), axis=1),
+                             omg).reshape(nd,nmat,nx,ny,nz,nd,nd)
 
         # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
-        green_rev = np.flip(np.roll(green_rt, -1, axis=(0,1,2,3)), axis=(0,1,2,3)).reshape(nmat,nvol,nd,nd)
+        green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nd,nmat,nvol,nd,nd)
 
         sgn = np.full(nmat, -1)
         sgn[0] = 1
 
-        #lam = np.einsum('ab,cd->abcd', np.eye(nd), np.eye(nd))
-        #lam = np.full(nd**4, 1).reshape(nd,nd,nd,nd)
-        
-#        chi0_rt = np.einsum('lrab,lrdc,acbd,l->lracbd',
-        chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
-                            green_rt.reshape(nmat,nvol,nd,nd),
+        chi0_rt = np.einsum('jlrab,jlrdc,l->lracbd',
+                            green_rt.reshape(nd,nmat,nvol,nd,nd),
                             green_rev,
-#                            lam,
-                            sgn)
-
-        # Fourier transform to wave number space
-        chi0_qt = FFT.fftn(chi0_rt.reshape(nmat,nx,ny,nz,nd**4), axes=(1,2,3))
-
-        # Fourier transform to matsubara freq
-        omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
-
-        chi0_qw = FFT.ifft(
-            np.einsum('tv,t->tv', chi0_qt.reshape(nmat,nvol*nd**4), omg),
-            axis=0).reshape(nmat,nvol,nd,nd,nd,nd) * (-1.0/beta)
-
-        return chi0_qw
-
-    def _calc_chi0q_AB(self, greenA_kw, greenB_kw, beta):
-        # green function
-        #   green{A,B}_kw[l,k,a,b]: G_ab(k,ie)
-        #     l : matsubara freq i\epsilon_l = i\pi(2*l+1-N)/\beta for l=0..N-1
-        #     k : wave number kx,ky,kz
-        #     a,b : orbital and spin index a=(s,alpha) b=(t,beta)
-
-        logger.debug(">>> RPA._calc_chi0q_AB")
-
-        nx,ny,nz = self.lattice.shape
-        nvol = self.lattice.nvol
-        nd = self.nd
-        nmat = self.nmat
-
-        # Fourier transform from wave number space to coordinate space
-        greenA_rw = FFT.ifftn(greenA_kw.reshape(nmat,nx,ny,nz,nd*nd), axes=(1,2,3)) * nvol
-        greenB_rw = FFT.ifftn(greenB_kw.reshape(nmat,nx,ny,nz,nd*nd), axes=(1,2,3)) * nvol
-
-        # Fourier transform from matsubara freq to imaginary time
-        omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
-
-        greenA_rt = np.einsum('tv,t->tv',
-                              FFT.fft(greenA_rw.reshape(nmat,nvol*nd*nd), axis=0),
-                              omg).reshape(nmat,nx,ny,nz,nd,nd)
-
-        greenB_rt = np.einsum('tv,t->tv',
-                              FFT.fft(greenB_rw.reshape(nmat,nvol*nd*nd), axis=0),
-                              omg).reshape(nmat,nx,ny,nz,nd,nd)
-
-        # calculate chi0(r,t)[a,a',b,b'] = G_A(r,t)[a,b] * G_B(-r,-t)[b',a']
-        greenB_rev = np.flip(np.roll(greenB_rt, -1, axis=(0,1,2,3)), axis=(0,1,2,3)).reshape(nmat,nvol,nd,nd)
-
-        sgn = np.full(nmat, -1)
-        sgn[0] = 1
-
-        chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
-                            greenA_rt.reshape(nmat,nvol,nd,nd),
-                            greenB_rev,
                             sgn)
 
         # Fourier transform to wave number space
@@ -693,7 +637,7 @@ class RPA:
 
         # 1 - X^0(l,k,aa,bb) W(k,bb,cc)
         mat  = np.tile(np.eye(ndx, dtype=np.complex128), (nmat,nvol,1,1))
-        mat -= np.einsum('lkab,kbc->lkac',
+        mat += np.einsum('lkab,kbc->lkac',
                          chi0q.reshape(nmat,nvol,ndx,ndx),
                          ham.reshape(nvol,ndx,ndx))
         
