@@ -78,6 +78,9 @@ class UHFk(solver_base):
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
         self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
+        if self.relax_checks:
+            self.strict_hermite = False
+
     @do_profile
     def _init_lattice(self):
         Lx,Ly,Lz = self.param_mod.get("CellShape")
@@ -224,6 +227,9 @@ class UHFk(solver_base):
         norb = self.norb
         ns = self.ns
 
+        # check array size
+        assert(green.shape == (Lvol,ns,norb_orig,ns,norb_orig))
+
         def _pack_index(x, n):
             _ix, _iy, _iz = x
             _nx, _ny, _nz = n
@@ -331,24 +337,28 @@ class UHFk(solver_base):
         # wave vectors on sublatticed geometry
         def _klist(n):
             return np.roll( (np.arange(n)-(n//2)), -(n//2) )
+
         geom = self.param_ham["Geometry"]
         rvec = geom["rvec"]
         omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
-        kvec = np.array([ np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg for i in range(3) ])
+        kvec = np.array([
+            np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg * 2*np.pi/self.shape[i]
+            for i in range(3) ])
+
+        self.kvec = kvec  # store reciprocal lattice vectors
 
         nx,ny,nz = self.shape
+        nvol = self.nvol
 
-        self.wave_table = np.zeros((nx,ny,nz,3), dtype=float)
+        self.wavenum_table = np.array([(i,j,k) for i in _klist(nx) for j in _klist(ny) for k in _klist(nz)])
+
+        wtable = np.zeros((nx,ny,nz,3), dtype=float)
         for ix, kx in enumerate(_klist(nx)):
-            vx = kvec[0] * kx / nx
             for iy, ky in enumerate(_klist(ny)):
-                vy = kvec[1] * ky / ny
                 for iz, kz in enumerate(_klist(nz)):
-                    vz = kvec[2] * kz / nz
-                    self.wave_table[ix,iy,iz] = np.pi*2*(vx + vy + vz)
-        #for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
-        #    print(ix,iy,iz,self.wave_table[ix,iy,iz])
-        self.kvec = kvec
+                    v = kvec[0] * kx + kvec[1] * ky + kvec[2] * kz
+                    wtable[ix,iy,iz] = v
+        self.wave_table = wtable.reshape(nvol,3)
 
     @do_profile
     def _dump_param_ham(self):
@@ -399,10 +409,18 @@ class UHFk(solver_base):
                     logger.debug("range check for {} ok.".format(k))
                 else:
                     err += 1
-                    logger.error("range check for {} failed.".format(k))
+                    msg = "range check for {} failed.".format(k)
+                    if self.relax_checks:
+                        logger.warning(msg)
+                    else:
+                        logger.error(msg)
         if err > 0:
-            logger.error("_check_cellsize failed. interaction range exceeds cell shape.")
-            exit(1)
+            msg = "_check_cellsize failed. interaction range exceeds cell shape."
+            if self.relax_checks:
+                logger.warning(msg)
+            else:
+                logger.error(msg)
+                exit(1)
 
     def _check_orbital_index(self):
         norb = self.param_ham["Geometry"]["norb"]
@@ -533,14 +551,15 @@ class UHFk(solver_base):
         if _data is None:
             logger.info("initialize green function with random numbers")
             _data = self._initial_green_random()
+            # _data = self._initial_green_random_reshape()
         return _data
 
-    def _initial_green_random(self):
+    def _initial_green_random_reshape(self):
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
-        norb     = self.norb
-        nd       = self.nd
+        norb     = self.norb_orig if self.has_sublattice else self.norb
         ns       = self.ns
+        nd = ns * norb
 
         np.random.seed(self.param_mod["RndSeed"])
         #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
@@ -549,7 +568,7 @@ class UHFk(solver_base):
         # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
         x1 = np.random.rand(lvol * nd * lvol * nd).reshape(ns,lvol,norb,ns,lvol,norb)
         x2 = np.transpose(x1,(1,4,0,2,3,5))
-        x3 = x2[0].reshape(lvol,ns,norb,ns,norb)  # take average?
+        x3 = np.average(x2,axis=0).reshape(lvol,ns,norb,ns,norb)
 
         green = 0.01 * (x3 - 0.5)
 
@@ -557,6 +576,25 @@ class UHFk(solver_base):
             return self._reshape_green(green)
         else:
             return green
+
+    def _initial_green_random(self):
+        nvol     = self.nvol
+        norb     = self.norb
+        ns       = self.ns
+        nd = ns * norb
+
+        np.random.seed(self.param_mod["RndSeed"])
+        #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+        #green = 0.01 * (rand - 0.5)
+
+        # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
+        x1 = np.random.rand(nvol * nd * nvol * nd).reshape(ns,nvol,norb,ns,nvol,norb)
+        x2 = np.transpose(x1,(1,4,0,2,3,5))
+        x3 = np.average(x2,axis=0).reshape(nvol,ns,norb,ns,norb)
+
+        green = 0.01 * (x3 - 0.5)
+
+        return green
 
     def _initial_green_uhf(self, info, geom):
         lx,ly,lz = self.cellshape
@@ -1220,11 +1258,27 @@ class UHFk(solver_base):
             logger.info("save_results: save energy in file {}".format(file_name))
 
         if "eigen" in info_outputfile.keys():
+
+            # eigenvalue[spin_block,k,eigen_index] -> [k,spin_block*eigen_index]
+            eg = self._green_list["eigenvalue"]
+            egs = eg.shape
+            egg = np.transpose(eg,(1,0,2)).reshape(egs[1],egs[0]*egs[2])
+
+            ev = self._green_list["eigenvector"]
+            evs = ev.shape
+            evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
+
+            # # wavevec[k,eigen_index] = \vec(k)
+            # wv = self.wave_table
+            # wvs = wv.shape
+            # wvv = np.transpose(np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0],wvs[1])), (1,0,2))
+
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
-                     eigenvalue  = self._green_list["eigenvalue"],
-                     eigenvector = self._green_list["eigenvector"],
-                     wavevec = self.wave_table,
+                     eigenvalue  = egg,
+                     eigenvector = evv,
+                     wavevector_unit = self.kvec,
+                     wavevector_index = self.wavenum_table,
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 
