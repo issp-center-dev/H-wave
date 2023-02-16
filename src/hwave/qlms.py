@@ -45,8 +45,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     logger = logging.getLogger("qlms")
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     # logging.basicConfig(level=logging.DEBUG, format=fmt)
-    # logging.basicConfig(level=logging.INFO, format=fmt)
-    logging.basicConfig(format=fmt)
+    logging.basicConfig(level=logging.INFO, format=fmt)
 
     if "mode" not in info_mode:
         logger.error("mode is not defined in [mode].")
@@ -127,15 +126,9 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
 
 def main():
+    args = sys.argv
+    if len(args) != 2:
+        print("Usage: python3 qlms.py input.toml")
+        sys.exit(1)
+    run(input_file=args[1])
 
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--verbose", help="increase verbosity", action="count", default=0)
-    parser.add_argument("-q", "--quiet", help="decrease verbosity", action="count", default=0)
-    parser.add_argument("input_file", nargs='?', default="input.toml", help="parameter file in TOML format")
-    args = parser.parse_args()
-
-    log_level = logging.INFO - (args.verbose - args.quiet) * 10
-    logging.basicConfig(level=log_level)
-
-    run(input_file=args.input_file)
