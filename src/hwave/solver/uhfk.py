@@ -526,10 +526,10 @@ class UHFk(solver_base):
         if is_converged:
             logger.info("UHFk calculation succeeded: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
+            logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
         else:
             logger.info("UHFk calculation failed: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
-
         if print_check is not None:
             fch.close()
             
