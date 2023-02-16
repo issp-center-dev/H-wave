@@ -35,15 +35,15 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
 .. math::
     \begin{aligned}
-     {\cal H}&=\sum_{\bf{k}\alpha\beta}
-     (\varepsilon_{\alpha\beta}(\bf{k})c_{\bf{k}\alpha}^{\dagger}
-     c_{\bf{k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
-    &+\frac{1}{2N_L}\sum_{\bf{k}\bf{k}'\bf{q}}\sum_{\alpha\beta\alpha'\beta'}
-     W^{\beta\beta',\alpha\alpha'}_{\bf{q}}
-     c_{\bf{k}+\bf{q},\alpha}^{\dagger}
-      c_{\bf{k},\alpha'}^{\mathstrut}
-      c_{\bf{k}'-\bf{q},\beta'}^{\dagger}
-      c_{\bf{k}',\beta}^{\mathstrut}
+     {\cal H}&=\sum_{{\bf k}\alpha\beta}
+     (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
+     c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
+    &+\frac{1}{2N_L}\sum_{{\bf k} {\bf k}'{\bf q}}\sum_{\alpha\beta\alpha'\beta'}
+     W^{\beta\beta',\alpha\alpha'}_{{\bf q}}
+     c_{{\bf k}+{\bf q},\alpha}^{\dagger}
+      c_{{\bf k},\alpha'}^{\mathstrut}
+      c_{{\bf k}'-{\bf q},\beta'}^{\dagger}
+      c_{{\bf k}',\beta}^{\mathstrut}
     \end{aligned}
 
 として求められます。さて、RPA近似では :math:`{\cal H}_0` に対して、電子相関効果による密度揺らぎを検出します。
@@ -107,4 +107,4 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
 なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 [1]_ を参考にしてください。
 
-.. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. {\bf 78}, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
+.. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
