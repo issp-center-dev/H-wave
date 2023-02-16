@@ -111,6 +111,13 @@ TOML形式
 
   **説明 :** Hermiticity の許容値 :math:`|t_{ij} - t_{ji}^*| < \varepsilon` を指定します。
 
+- ``trustme_interaction_range``
+
+  **形式 :** bool型 (デフォルトは false)
+
+  **説明 :** ホッピングや相互作用の距離が ``CellShape`` の半分以内におさまっているかのチェックを緩和します。
+  true の場合、warning を表示して実行を継続し、 false の場合、エラー終了します。
+
 ``log`` セクション
 ================================
 

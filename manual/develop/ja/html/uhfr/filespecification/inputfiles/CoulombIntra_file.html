@@ -6,7 +6,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
-    <title>2.2.3. CoulombIntra指定ファイル &#8212; H-waveマニュアル 0.2-dev ドキュメント</title>
+    <title>CoulombIntra指定ファイル &#8212; H-waveマニュアル 0.2.0-dev ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
     <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
@@ -16,8 +16,8 @@
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="検索" href="../../../search.html" />
-    <link rel="next" title="2.2.4. CoulombInter指定ファイル" href="CoulombInter_file.html" />
-    <link rel="prev" title="2.2.2. InterAll指定ファイル" href="InterAll_file.html" />
+    <link rel="next" title="CoulombInter指定ファイル" href="CoulombInter_file.html" />
+    <link rel="prev" title="InterAll指定ファイル" href="InterAll_file.html" />
    
   <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
   
@@ -35,10 +35,10 @@
           <div class="body" role="main">
             
   <section id="coulombintra">
-<h1><span class="section-number">2.2.3. </span>CoulombIntra指定ファイル<a class="headerlink" href="#coulombintra" title="この見出しへのパーマリンク">¶</a></h1>
+<h1>CoulombIntra指定ファイル<a class="headerlink" href="#coulombintra" title="この見出しへのパーマリンク">¶</a></h1>
 <p>オンサイトクーロン相互作用をハミルトニアンに付け加えます。付け加える項は以下で与えられます。</p>
 <div class="math notranslate nohighlight" id="equation-uhfr-filespecification-inputfiles-coulombintra-file-0">
-<span class="eqno">(2.3)<a class="headerlink" href="#equation-uhfr-filespecification-inputfiles-coulombintra-file-0" title="この数式へのパーマリンク">¶</a></span>\[\mathcal{H} = \sum_{i}U_i n_{i \uparrow}n_{i \downarrow}\]</div>
+<span class="eqno">(2.5)<a class="headerlink" href="#equation-uhfr-filespecification-inputfiles-coulombintra-file-0" title="この数式へのパーマリンク">¶</a></span>\[\mathcal{H} = \sum_{i}U_i n_{i \uparrow}n_{i \downarrow}\]</div>
 <p>以下にファイル例を記載します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>======================
 NCoulombIntra 6
@@ -58,29 +58,29 @@ NCoulombIntra 6
 <p>以下のように行数に応じ異なる形式をとります。</p>
 <ul class="simple">
 <li><p>1行: ヘッダ(何が書かれても問題ありません)。</p></li>
-<li><p>2行: [ncoulombintra] [count]</p></li>
+<li><p>2行: <code class="docutils literal notranslate"><span class="pre">[ncoulombintra]</span> <span class="pre">[count]</span></code></p></li>
 <li><p>3-5行: ヘッダ(何が書かれても問題ありません)。</p></li>
-<li><p>6行以降: [i] [val]</p></li>
+<li><p>6行以降: <code class="docutils literal notranslate"><span class="pre">[i]</span> <span class="pre">[val]</span></code></p></li>
 </ul>
 </section>
 <section id="id2">
 <h2>パラメータ<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
 <ul>
-<li><p><span class="math notranslate nohighlight">\([\)</span>ncoulombintra<span class="math notranslate nohighlight">\(]\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[ncoulombintra]</span></code></p>
 <p><strong>形式 :</strong> string型 (空白不可)</p>
 <p><strong>説明 :</strong>
 オンサイトクーロン相互作用の総数のキーワード名を指定します(任意)。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\([\)</span>count<span class="math notranslate nohighlight">\(]\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[count]</span></code></p>
 <p><strong>形式 :</strong> int型 (空白不可)</p>
 <p><strong>説明 :</strong> オンサイトクーロン相互作用の総数を指定します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\([\)</span>i<span class="math notranslate nohighlight">\(]\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[i]</span></code></p>
 <p><strong>形式 :</strong> int型 (空白不可)</p>
 <p><strong>説明 :</strong>
 サイト番号を指定する整数。0以上<code class="docutils literal notranslate"><span class="pre">Nsite</span></code>未満で指定します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\([\)</span>val<span class="math notranslate nohighlight">\(]\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[val]</span></code></p>
 <p><strong>形式 :</strong> float型 (空白不可)</p>
 <p><strong>説明 :</strong> <span class="math notranslate nohighlight">\(U_i\)</span>を指定します。</p>
 </li>
@@ -92,8 +92,8 @@ NCoulombIntra 6
 <ul class="simple">
 <li><p>行数固定で読み込みを行う為、ヘッダの省略はできません。</p></li>
 <li><p>成分が重複して指定された場合にはエラー終了します。</p></li>
-<li><p><span class="math notranslate nohighlight">\([\)</span>count<span class="math notranslate nohighlight">\(]\)</span>と定義されているオンサイトクーロン相互作用の総数が異なる場合はエラー終了します。</p></li>
-<li><p><span class="math notranslate nohighlight">\([\)</span>i<span class="math notranslate nohighlight">\(]\)</span>を指定する際、範囲外の整数を指定した場合はエラー終了します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[count]</span></code>と定義されているオンサイトクーロン相互作用の総数が異なる場合はエラー終了します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[i]</span></code>を指定する際、範囲外の整数を指定した場合はエラー終了します。</p></li>
 </ul>
 </section>
 </section>
@@ -122,30 +122,30 @@ NCoulombIntra 6
 <h3>ナビゲーション</h3>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="../../uhfr-index.html">実空間UHF(UHFr)</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">1. チュートリアル</a></li>
-<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">2. ファイルフォーマット</a><ul class="current">
-<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">2.1. 環境設定ファイル</a></li>
-<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">2.2. UHFr用入力ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">2.3. UHFrの出力ファイル</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfr-index.html">2. 実空間UHF(UHFr)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">2.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">2.2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">2.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">2.2.2. UHFr用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">2.2.3. UHFrの出力ファイル</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">波数空間UHF(UHFk)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">2. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">3. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">3. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">4. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">5. 謝辞</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../../../index.html">Documentation overview</a><ul>
-  <li><a href="../../uhfr-index.html">実空間UHF(UHFr)</a><ul>
-  <li><a href="../fi-index.html"><span class="section-number">2. </span>ファイルフォーマット</a><ul>
-  <li><a href="index_inputfiles.html"><span class="section-number">2.2. </span>UHFr用入力ファイル</a><ul>
-      <li>Previous: <a href="InterAll_file.html" title="前の章へ"><span class="section-number">2.2.2. </span>InterAll指定ファイル</a></li>
-      <li>Next: <a href="CoulombInter_file.html" title="次の章へ"><span class="section-number">2.2.4. </span>CoulombInter指定ファイル</a></li>
+  <li><a href="../../uhfr-index.html"><span class="section-number">2. </span>実空間UHF(UHFr)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">2.2. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_inputfiles.html"><span class="section-number">2.2.2. </span>UHFr用入力ファイル</a><ul>
+      <li>Previous: <a href="InterAll_file.html" title="前の章へ">InterAll指定ファイル</a></li>
+      <li>Next: <a href="CoulombInter_file.html" title="次の章へ">CoulombInter指定ファイル</a></li>
   </ul></li>
   </ul></li>
   </ul></li>

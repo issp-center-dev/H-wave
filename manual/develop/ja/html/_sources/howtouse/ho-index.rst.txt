@@ -26,13 +26,34 @@
 
 - インストール方法
 
-    pipを使ってインストールできます。H-waveをダウンロード後、以下のコマンドを実行します。
-    H-waveが利用するライブラリも必要に応じてインストールされます。
+    - PyPI から
 
-    .. code-block:: bash
+      H-wave は PyPI ソフトウェアリポジトリに登録されています。以下のコマンドで H-wave を
+      インストールできます。
 
-       $ cd ./H-wave
-       $ pip install .
+      .. code-block:: bash
+
+        $ pip install h-wave
+
+    - ソースパッケージから
+
+      H-wave のソースパッケージは配布サイトから取得できます。
+
+      https://github.com/issp-center-dev/H-wave/releases
+
+      また、git を用いて最新版を開発サイトからダウンロードできます。
+
+      .. code-block:: bash
+
+        $ git clone https://github.com/issp-center-dev/H-wave.git
+
+      H-waveをダウンロード後、以下のコマンドを実行してインストールします。
+      H-waveが利用するライブラリも必要に応じてインストールされます。
+
+      .. code-block:: bash
+
+        $ cd ./H-wave
+        $ pip install .
 
 - ディレクトリ構成
 
@@ -43,29 +64,26 @@
       |-- README.md
       |-- pyproject.toml
       |-- docs/
+      |   |-- en/
       |   |-- ja/
       |   |-- tutorial/
+      |
       |-- src/
       |   |-- qlms.py
       |   |-- hwave/
-      |   |   |-- __init__.py
-      |   |   |-- qlms.py
-      |   |   |-- qlmsio/
-      |   |   |   |-- __init__.py
-      |   |   |   |-- read_input.py
-      |   |   |   |-- read_input_k.py
-      |   |   |   |-- wan90.py
-      |   |   |-- solver/
-      |   |   |   |-- __init__.py
-      |   |   |   |-- base.py
-      |   |   |   |-- uhf.py
-      |   |   |   |-- uhfk.py
-      |   |   |   |-- perf.py
-      |-- sample/
-      |   |-- UHFk/
-      |   |   |-- CDW_SDW/
-      |   |   |-- band_plot/
-      |   |   |-- finiteT/
+      |       |-- __init__.py
+      |       |-- qlms.py
+      |       |-- qlmsio/
+      |       |   |-- __init__.py
+      |       |   |-- read_input.py
+      |       |   |-- read_input_k.py
+      |       |   |-- wan90.py
+      |       |-- solver/
+      |           |-- __init__.py
+      |           |-- base.py
+      |           |-- uhf.py
+      |           |-- uhfk.py
+      |           |-- perf.py
       |-- tests/
        
 - 基本的な使用方法
