@@ -5,7 +5,6 @@ import sys, os
 import numpy as np
 import numpy.fft as FFT
 import itertools
-import toml
 from requests.structures import CaseInsensitiveDict
 
 import logging
@@ -807,6 +806,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=log_level, format=fmt)
 
     try:
+        import toml
         params = toml.load(args.input_file)
     except Exception as e:
         print(e)
