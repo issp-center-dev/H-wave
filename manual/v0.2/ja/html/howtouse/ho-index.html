@@ -1,0 +1,228 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>1. 基本的な使用方法 &#8212; H-waveマニュアル 0.2 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <script src="../_static/sphinx_highlight.js"></script>
+    <script src="../_static/translations.js"></script>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="検索" href="../search.html" />
+    <link rel="next" title="2. 実空間UHF(UHFr)" href="../uhfr/uhfr-index.html" />
+    <link rel="prev" title="H-waveのドキュメントへようこそ！" href="../index.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="id1">
+<h1><span class="section-number">1. </span>基本的な使用方法<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h1>
+<ul>
+<li><p>必要なライブラリ・環境</p>
+<blockquote>
+<div><p>H-waveを利用するには、以下のプログラムとライブラリが必要です。</p>
+<ul class="simple">
+<li><p>python 3.x</p></li>
+<li><p>numpy モジュール</p></li>
+<li><p>scipy モジュール</p></li>
+<li><p>requests モジュール</p></li>
+<li><p>tomli モジュール</p></li>
+</ul>
+</div></blockquote>
+</li>
+<li><p>Official Page</p>
+<blockquote>
+<div><ul class="simple">
+<li><p><a class="reference external" href="https://github.com/issp-center-dev/H-wave">GitHubリポジトリ</a></p></li>
+<li><p><a class="reference external" href="https://isspns-gitlab.issp.u-tokyo.ac.jp/hwave-dev/hwave-gallery">サンプル・チュートリアル</a></p></li>
+</ul>
+</div></blockquote>
+</li>
+<li><p>ダウンロード方法</p>
+<blockquote>
+<div><p>gitを利用できる場合は、以下のコマンドでH-waveをダウンロードすることができます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/issp-center-dev/H-wave.git
+</pre></div>
+</div>
+</div></blockquote>
+</li>
+<li><p>インストール方法</p>
+<blockquote>
+<div><ul>
+<li><p>PyPI から</p>
+<p>H-wave は PyPI ソフトウェアリポジトリに登録されています。以下のコマンドで H-wave を
+インストールできます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>h-wave
+</pre></div>
+</div>
+</li>
+<li><p>ソースパッケージから</p>
+<p>H-wave のソースパッケージは配布サイトから取得できます。</p>
+<p><a class="reference external" href="https://github.com/issp-center-dev/H-wave/releases">https://github.com/issp-center-dev/H-wave/releases</a></p>
+<p>また、git を用いて最新版を開発サイトからダウンロードできます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/issp-center-dev/H-wave.git
+</pre></div>
+</div>
+<p>H-waveをダウンロード後、以下のコマンドを実行してインストールします。
+H-waveが利用するライブラリも必要に応じてインストールされます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>./H-wave
+$<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>.
+</pre></div>
+</div>
+</li>
+</ul>
+</div></blockquote>
+</li>
+<li><p>ディレクトリ構成</p>
+<blockquote>
+<div><div class="highlight-none notranslate"><div class="highlight"><pre><span></span>.
+|-- LICENSE
+|-- README.md
+|-- pyproject.toml
+|-- docs/
+|   |-- en/
+|   |-- ja/
+|   |-- tutorial/
+|
+|-- src/
+|   |-- qlms.py
+|   |-- hwave/
+|       |-- __init__.py
+|       |-- qlms.py
+|       |-- qlmsio/
+|       |   |-- __init__.py
+|       |   |-- read_input.py
+|       |   |-- read_input_k.py
+|       |   |-- wan90.py
+|       |-- solver/
+|           |-- __init__.py
+|           |-- base.py
+|           |-- uhf.py
+|           |-- uhfk.py
+|           |-- perf.py
+|-- tests/
+</pre></div>
+</div>
+</div></blockquote>
+</li>
+<li><p>基本的な使用方法</p>
+<ol class="arabic">
+<li><p>入力ファイルの作成</p>
+<p>最初にH-wave用の入力ファイルを作成します。計算条件や入出力ファイル・ディレクトリなどの指定と、Hamiltonianの定義ファイルなどを作成する必要があります。
+後者は、<a class="reference external" href="https://github.com/issp-center-dev/StdFace">StdFaceライブラリ</a> の利用が便利です。
+各ファイルの簡単な紹介はチュートリアルの章に記載されています。
+詳細についてはファイルフォーマットの章を参照してください。</p>
+</li>
+<li><p>コマンドの実行</p>
+<p>入力ファイルのあるディレクトリで、以下のコマンドを実行することで、計算が行われます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>または、</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>path_to_H-wave/qlms.py<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>計算終了後、計算結果が出力ディレクトリに出力されます。
+出力ファイルの詳細については、ファイルフォーマットの章を参照してください。</p>
+</li>
+</ol>
+</li>
+</ul>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../index.html">
+    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">1. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">3. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">4. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">5. 謝辞</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="../index.html" title="前の章へ">H-waveのドキュメントへようこそ！</a></li>
+      <li>Next: <a href="../uhfr/uhfr-index.html" title="次の章へ"><span class="section-number">2. </span>実空間UHF(UHFr)</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.1.3</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../_sources/howtouse/ho-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

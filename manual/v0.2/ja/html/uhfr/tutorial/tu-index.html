@@ -1,0 +1,359 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>2.1. チュートリアル &#8212; H-waveマニュアル 0.2 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <script src="../../_static/translations.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="検索" href="../../search.html" />
+    <link rel="next" title="2.2. ファイルフォーマット" href="../filespecification/fi-index.html" />
+    <link rel="prev" title="2. 実空間UHF(UHFr)" href="../uhfr-index.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="id1">
+<h1><span class="section-number">2.1. </span>チュートリアル<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h1>
+<p>H-waveでは、入力ファイルとして</p>
+<ol class="arabic simple">
+<li><p>環境設定入力ファイル</p></li>
+<li><p>Hamiltonian作成用ファイル</p></li>
+<li><p>出力結果指定用ファイル</p></li>
+</ol>
+<p>を用意した後、計算を行います。以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。</p>
+<section id="id2">
+<h2><span class="section-number">2.1.1. </span>環境設定入力ファイルの作成<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<p>環境設定入力ファイルでは、入出力を制御する情報を記載します。
+<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code> ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> というファイルがありますが、これが環境設定入力ファイルになります。
+以下、ファイルの中身を記載します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+print_level = 1
+print_step = 20
+[mode]
+mode = &quot;UHFr&quot;
+[mode.param]
+Nsite = 8
+2Sz = 0
+Ncond = 8
+IterationMax = 1000
+EPS = 8
+RndSeed = 123456789
+T = 0.0
+[file]
+[file.input]
+path_to_input = &quot;&quot;
+OneBodyG = &quot;greenone.def&quot;
+[file.input.interaction]
+Trans = &quot;trans.def&quot;
+CoulombIntra = &quot;coulombintra.def&quot;
+[file.output]
+path_to_output = &quot;output&quot;
+energy = &quot;energy.dat&quot;
+eigen = &quot;eigen&quot;
+green = &quot;green.dat&quot;
+</pre></div>
+</div>
+<p>このファイルはtoml形式で記述します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">log</span></code> セクションに <code class="docutils literal notranslate"><span class="pre">print_level</span></code> で標準出力のレベル、 <code class="docutils literal notranslate"><span class="pre">print_step</span></code> でログファイルに出力するステップ間隔を指定します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">mode</span></code> セクションに実行モードおよび基本パラメータを指定します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクションに入力ファイルが格納されているディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> 、出力したい一体グリーン関数が定義されたファイル  <code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code>  及び初期配置 <code class="docutils literal notranslate"><span class="pre">Initial</span></code> を指定します。
+<code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code> を指定しない場合にはグリーン関数の出力がされません。また、<code class="docutils literal notranslate"><span class="pre">Initial</span></code> を指定しない場合には初期配置はランダムな配置が設定されます。</p>
+<p><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code> セクションにHamiltonianを作成するための入力ファイルを指定します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションには出力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_output</span></code> を指定します。
+また、エネルギーの値を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">energy</span></code> 、ハミルトニアンの固有値を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">eigen</span></code> 、一体グリーン関数の出力ファイル名 <code class="docutils literal notranslate"><span class="pre">green</span></code> を指定します。これらのキーワードがない場合には情報は出力されません。</p>
+<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-uhfr"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+</section>
+<section id="hamiltonian">
+<h2><span class="section-number">2.1.2. </span>Hamiltonianの指定<a class="headerlink" href="#hamiltonian" title="この見出しへのパーマリンク">¶</a></h2>
+<p>基本パラメータを設定した後は、Hamiltonianを構築するためのファイルを作成します。</p>
+<section id="transfer">
+<h3><strong>Transfer部の指定</strong><a class="headerlink" href="#transfer" title="この見出しへのパーマリンク">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Trans</span></code> でひも付けられるファイル(ここではtrans.def)で電子系のTransferに相当するHamiltonian</p>
+<div class="math notranslate nohighlight" id="equation-uhfr-tutorial-tu-index-0">
+<span class="eqno">(2.1)<a class="headerlink" href="#equation-uhfr-tutorial-tu-index-0" title="この数式へのパーマリンク">¶</a></span>\[\mathcal{H} = -\sum_{ij\sigma_1\sigma_2}
+t_{ij\sigma_1\sigma_2}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom\dagger}.\]</div>
+<p>を指定します。ファイルの中身は下記の通りです。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>========================
+NTransfer      64
+========================
+========i_j_s_tijs======
+========================
+    4     0     0     0         1.000000000000000         0.000000000000000
+    0     0     4     0         1.000000000000000        -0.000000000000000
+    4     1     0     1         1.000000000000000         0.000000000000000
+    0     1     4     1         1.000000000000000        -0.000000000000000
+    2     0     0     0         1.000000000000000         0.000000000000000
+    0     0     2     0         1.000000000000000        -0.000000000000000
+    2     1     0     1         1.000000000000000         0.000000000000000
+    0     1     2     1         1.000000000000000        -0.000000000000000
+...
+</pre></div>
+</div>
+<p>Transファイルの詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/Trans_file.html#subsec-trans"><span class="std std-ref">Trans指定ファイル</span></a> をご覧ください。</p>
+</section>
+<section id="id3">
+<h3><strong>二体相互作用部の指定</strong><a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h3>
+<p>このチュートリアルの例では <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> でひも付けられるファイル(ここではcoulombintra.def)で電子系の二体相互作用部に相当するHamiltonian</p>
+<div class="math notranslate nohighlight" id="equation-uhfr-tutorial-tu-index-1">
+<span class="eqno">(2.2)<a class="headerlink" href="#equation-uhfr-tutorial-tu-index-1" title="この数式へのパーマリンク">¶</a></span>\[\mathcal{H} = \sum_{i} U_i n_{i\uparrow}n_{i\downarrow}.\]</div>
+<p>を指定します。ファイルの中身は下記の通りです。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>=============================================
+NCoulombIntra          8
+=============================================
+================== CoulombIntra ================
+=============================================
+    0         8.000000000000000
+    1         8.000000000000000
+    2         8.000000000000000
+    3         8.000000000000000
+    4         8.000000000000000
+ ...
+</pre></div>
+</div>
+<p>なお、 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> 以外にも、Hamiltonianを簡易的に記載するための各種ファイル形式に対応しています。
+詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/InterAll_file.html#subsec-interall"><span class="std std-ref">InterAll指定ファイル</span></a> - <a class="reference internal" href="../filespecification/inputfiles/PairLift_file.html#subsec-pairlift"><span class="std std-ref">PairLift指定ファイル</span></a> をご覧ください。</p>
+</section>
+</section>
+<section id="id4">
+<h2><span class="section-number">2.1.3. </span>出力ファイルの指定<a class="headerlink" href="#id4" title="この見出しへのパーマリンク">¶</a></h2>
+<p>一体Green関数の計算する成分を、<code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code> でひも付けられるファイルで指定します。</p>
+<section id="green">
+<h3><strong>一体Green関数の計算対象の指定</strong><a class="headerlink" href="#green" title="この見出しへのパーマリンク">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code> でひも付けられるファイル(ここではgreenone.def)で計算する一体Green関数  <span class="math notranslate nohighlight">\(\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2} \rangle\)</span> の成分を指定します。ファイルの中身は下記の通りです</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>===============================
+NCisAjs         16
+===============================
+======== Green functions ======
+===============================
+    0     0     0     0
+    0     0     1     0
+    0     0     2     0
+    0     0     3     0
+    0     0     4     0
+ ...
+</pre></div>
+</div>
+<p>一体Green関数計算対象成分の指定に関するファイル入力形式の詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/OneBodyG_file.html#subsec-onebodyg"><span class="std std-ref">OneBodyG指定ファイル</span></a> をご覧ください。</p>
+</section>
+</section>
+<section id="id5">
+<h2><span class="section-number">2.1.4. </span>計算の実行<a class="headerlink" href="#id5" title="この見出しへのパーマリンク">¶</a></h2>
+<p>全ての入力ファイルが準備できた後、計算実行します。
+環境設定入力ファイル(ここでは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> )を引数とし、ターミナルからH-waveを実行します。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>計算が開始されると以下のようなログが出力されます。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>2022-12-01 09:37:30,114 INFO qlms: Read def files
+2022-12-01 09:37:30,116 INFO qlms: Get Hamiltonian information
+2022-12-01 09:37:30,116 INFO qlms: Get Green function information
+2022-12-01 09:37:30,116 INFO qlms.uhfr: Show input parameters
+  Nsite               : 8
+  Ncond               : 8
+  2Sz                 : 0
+  Mix                 : 0.5
+  EPS                 : 1e-08
+  IterationMax        : 1000
+  RndSeed             : 123456789
+  T                   : 0.0
+  ene_cutoff          : 100.0
+  threshold           : 1e-12
+2022-12-01 09:37:30,117 INFO qlms: Start UHF calculation
+2022-12-01 09:37:30,117 INFO qlms.uhfr: Set Initial Green&#39;s functions
+2022-12-01 09:37:30,117 INFO qlms.uhfr: Initialize green function by random numbers
+2022-12-01 09:37:30,117 INFO qlms.uhfr: Start UHFr calculations
+2022-12-01 09:37:30,117 INFO qlms.uhfr: step, rest, energy, NCond, Sz
+2022-12-01 09:37:30,119 INFO qlms.uhfr: 0, 0.022144468, -27.16081+0j, 8, -7.425e-16
+2022-12-01 09:37:30,134 INFO qlms.uhfr: 20, 1.2083848e-05, -3.399532+0j, 8, -1.055e-15
+2022-12-01 09:37:30,145 INFO qlms.uhfr: UHFr calculation is succeeded: rest=5.7552848630056134e-09, eps=1e-08.
+2022-12-01 09:37:30,145 INFO qlms: Save calculation results.
+2022-12-01 09:37:30,146 INFO qlms: All procedures are finished.
+--------------------------------------------------------------------------------
+Statistics
+  function                         :  total elapsed  : average elapsed : ncalls
+--------------------------------------------------------------------------------
+  hwave.solver.uhfr.__init__       :      0.357 msec :      0.357 msec :      1
+  hwave.solver.uhfr._initial_G     :      0.090 msec :      0.090 msec :      1
+  hwave.solver.uhfr._makeham_const :      0.839 msec :      0.839 msec :      1
+  hwave.solver.uhfr._makeham_mat   :      0.309 msec :      0.309 msec :      1
+  hwave.solver.uhfr._makeham       :      6.001 msec :      0.176 msec :     34
+  hwave.solver.uhfr._diag          :      2.468 msec :      0.073 msec :     34
+  hwave.solver.uhfr._green         :      3.107 msec :      0.091 msec :     34
+  hwave.solver.uhfr._calc_energy   :      1.990 msec :      0.059 msec :     34
+  hwave.solver.uhfr._calc_phys     :     12.929 msec :      0.380 msec :     34
+  hwave.solver.uhfr.solve          :     28.290 msec :     28.290 msec :      1
+  hwave.solver.uhfr.save_results   :      0.852 msec :      0.852 msec :      1
+--------------------------------------------------------------------------------
+</pre></div>
+</div>
+<p>入力ファイル読み込みに関するログが出力されたあと、UHF計算の計算過程に関する情報が出力されます。
+出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションでの設定にしたがい、
+<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに 固有値が記載された <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> ,
+固有ベクトルが記載された <code class="docutils literal notranslate"><span class="pre">spin-down_eigen.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">spin-up_eigen.npz</span></code>,
+一体グリーン関数の値が記載された <code class="docutils literal notranslate"><span class="pre">green.dat</span></code> ファイルが出力されます。
+出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles/index_outputfiles.html#sec-outputfile"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+</section>
+<section id="stdface">
+<h2><span class="section-number">2.1.5. </span>StdFaceライブラリを利用した入力ファイルの作成<a class="headerlink" href="#stdface" title="この見出しへのパーマリンク">¶</a></h2>
+<p>Hamiltonian作成用ファイルは、StdFaceライブラリを使用することで簡単に作成することができます。
+以下ではStdFaceライブラリを使用した入力ファイルの作成を行う方法を記載します。</p>
+<p>StdFaceライブラリでは、あらかじめ決められた格子模型やWannier90形式で記述された有効模型の情報をもとに入力ファイルを生成します。
+厳密対角化ソルバー <span class="math notranslate nohighlight">\({\mathcal H}\Phi\)</span> や多変数変分モンテカルロソルバーmVMCでも入力ファイルの生成に用いられています。
+ここでは具体例に沿ってUHF用の入力ファイル生成を説明します。</p>
+<p>最初に、StdFaceライブラリをダウンロードします。gitを利用できる場合は、以下のコマンドでダウンロードできます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/issp-center-dev/StdFace.git
+</pre></div>
+</div>
+<p>ダウンロード終了後、以下のコマンドを入力し、コンパイルします。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>StdFace
+$<span class="w"> </span>mkdir<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>build
+$<span class="w"> </span>cmake<span class="w"> </span>-DUHF<span class="o">=</span>ON<span class="w"> </span>../
+$<span class="w"> </span>make
+</pre></div>
+</div>
+<p>コンパイルに成功すると、 <code class="docutils literal notranslate"><span class="pre">src</span></code> ディレクトリに実行ファイル <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> ができます。</p>
+<p>以下、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。
+ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">stan.in</span></code> というファイルがありますが、これが <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> の入力ファイルになります。
+ファイルの内容は以下のとおりです。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>model = &quot;Hubbard&quot;
+lattice = &quot;square&quot;
+a0W = 2
+a0L = 2
+a1W = -2
+a1L = 2
+t = 1.0
+U = 8.0
+ncond = 8
+2Sz = 0
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">model</span></code> は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 <code class="docutils literal notranslate"><span class="pre">Hubbard</span></code> のみに対応しています。</p>
+<p><code class="docutils literal notranslate"><span class="pre">lattice</span></code> は結晶構造を指定するキーワードです。 ここでは正方格子 <code class="docutils literal notranslate"><span class="pre">square</span></code> を選択しています。
+<code class="docutils literal notranslate"><span class="pre">a0W,</span> <span class="pre">a0L</span></code> はx軸を <code class="docutils literal notranslate"><span class="pre">(a0W,</span> <span class="pre">a0L)</span></code> ベクトルとして、<code class="docutils literal notranslate"><span class="pre">a1W,</span> <span class="pre">a1L</span></code> はy軸を <code class="docutils literal notranslate"><span class="pre">(a1W,</span> <span class="pre">a1L)</span></code> ベクトルとして与えるパラメータです。
+また、 <code class="docutils literal notranslate"><span class="pre">t</span></code> はホッピング、 <code class="docutils literal notranslate"><span class="pre">U</span></code> はオンサイトクーロン相互作用を与えます。</p>
+<p><code class="docutils literal notranslate"><span class="pre">ncond</span></code> 、<code class="docutils literal notranslate"><span class="pre">2Sz</span></code> は <span class="math notranslate nohighlight">\({\mathcal H}\Phi\)</span> やmVMCで使用するために便宜上設けられています。
+こちらについては、環境設定入力ファイルで別途指定する必要があるのでご注意ください。</p>
+<p>入力ファイルの詳細については、例えば <span class="math notranslate nohighlight">\({\mathcal H}\Phi\)</span> のマニュアルなどを参照してください。</p>
+<p>上記のファイルを入力ファイルとして、 <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> を以下のコマンドで実行します。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>path_to_Hwave/docs/tutorial/Hubbard/UHFr
+$<span class="w"> </span>ln<span class="w"> </span>-s<span class="w"> </span>path_to_Stdface/build/src/uhf_dry.out<span class="w"> </span>.
+$<span class="w"> </span>./uhf_dry.out<span class="w"> </span>stan.in
+</pre></div>
+</div>
+<p>実行終了後、実行ディレクトリにHamiltonian作成用ファイルが生成されます。複数のファイルが生成されますが、今の場合は <code class="docutils literal notranslate"><span class="pre">tran.def</span></code> 及び <code class="docutils literal notranslate"><span class="pre">coulombintra.def</span></code> のみを利用します。</p>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../index.html">
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../uhfr-index.html">2. 実空間UHF(UHFr)</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">2.1. チュートリアル</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id2">2.1.1. 環境設定入力ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#hamiltonian">2.1.2. Hamiltonianの指定</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id4">2.1.3. 出力ファイルの指定</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id5">2.1.4. 計算の実行</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#stdface">2.1.5. StdFaceライブラリを利用した入力ファイルの作成</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">2.2. ファイルフォーマット</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfk/uhfk-index.html">3. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">4. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">5. 謝辞</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../uhfr-index.html"><span class="section-number">2. </span>実空間UHF(UHFr)</a><ul>
+      <li>Previous: <a href="../uhfr-index.html" title="前の章へ"><span class="section-number">2. </span>実空間UHF(UHFr)</a></li>
+      <li>Next: <a href="../filespecification/fi-index.html" title="次の章へ"><span class="section-number">2.2. </span>ファイルフォーマット</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.1.3</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../../_sources/uhfr/tutorial/tu-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
