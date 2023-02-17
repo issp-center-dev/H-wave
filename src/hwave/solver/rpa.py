@@ -467,24 +467,59 @@ class RPA:
 
     def save_results(self, info_outputfile, green_info):
         logger.info("Save RPA results")
-
         path_to_output = info_outputfile["path_to_output"]
+
+        freq_range = info_outputfile.get("matsubara_frequency", "all")
+        freq_index = self._find_index_range(freq_range)
+        logger.debug("freq_index = {}".format(freq_index))
 
         if "chiq" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             np.savez(file_name,
-                     chiq = green_info["chiq"],
+                     chiq = green_info["chiq"][freq_index],
                      )
             logger.info("save_results: save chiq in file {}".format(file_name))
 
         if "chi0q" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
-                     chi0q = green_info["chi0q"],
+                     chi0q = green_info["chi0q"][freq_index],
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
         
         pass
+
+    def _find_index_range(self, freq_range):
+        nmat = self.nmat
+
+        if type(freq_range) == int:
+            # e.g. freq_range = 0
+            freq_index = [ freq_range ]
+        elif type(freq_range) == list:
+            if len(freq_range) == 1:
+                # e.g. freq_range = [index]
+                freq_index = [ i for i in freq_range ]
+            elif len(freq_range) == 2:
+                # e.g. freq_range = [min,max]
+                freq_index = [ i for i in range(freq_range[0], freq_range[1]+1) ]
+            elif len(freq_range) >= 3:
+                # e.g. freq_range = [min,max,step]
+                freq_index = [ i for i in range(freq_range[0], freq_range[1]+1, freq_range[2]) ]
+            else:
+                raise ValueError("invalid value for matsubara_frequency")
+        elif type(freq_range) == str:
+            if freq_range == "all":
+                freq_index = [ i for i in range(nmat) ]
+            elif freq_range == "center":
+                freq_index = [ nmat//2 ]
+            elif freq_range == "none":
+                freq_index = []
+            else:
+                raise ValueError("invalid value for matsubara_frequency")
+        else:
+            raise ValueError("invalid value type for matsubara_frequency")
+
+        return freq_index[0] if len(freq_index) == 1 else freq_index
 
     def _calc_epsilon_k(self, green_info):
         logger.debug(">>> RPA._calc_epsilon_k")
