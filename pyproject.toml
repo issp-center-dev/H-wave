@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hwave"
-version = "0.1"
+version = "0.2"
 description = "UHF"
 authors = ["H-Wave developers <hwave-dev@issp.u-tokyo.ac.jp>"]
 license = "GPL-3.0-or-later"

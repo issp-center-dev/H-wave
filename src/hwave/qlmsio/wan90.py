@@ -1,15 +1,20 @@
 from __future__ import print_function
 
 import itertools
-
 import numpy as np
+import logging
 
+logger = logging.getLogger("qlms").getChild("wan90")
 
 def read_geom(name_in):
-    with open(name_in, 'r') as f:
-        # skip header
-        l_strip = [s.strip() for s in f.readlines()]
-    norb = int(l_strip[3])
+    try:
+        with open(name_in, 'r') as f:
+            # skip header
+            l_strip = [s.strip() for s in f.readlines()]
+        norb = int(l_strip[3])
+    except OSError:
+        logger.error("read_geom: file {} not found".format(name_in))
+        exit(1)
 
     rvec = np.zeros((3, 3), dtype=float)
     center = np.zeros((norb, 3), dtype=float)
@@ -31,23 +36,29 @@ def read_geometry(name_in):
     cell_vec_line_start = 4
     cell_vec_line_end = 7
     n_kpath_line = 2
-    with open(name_in, "r") as fr:
-        lines = fr.readlines()
-        info_geometry["unit_vec"] = np.array([data.split() for data in lines[0:unit_vec_line_end]], dtype=np.float)
-        info_geometry["degree"] = np.array(lines[unit_vec_line_end].split(), dtype=np.float)
-        info_geometry["cell_vec"] = np.array([data.split() for data in lines[cell_vec_line_start:cell_vec_line_end]], dtype=np.float)
-        info_geometry["site2vec"] = {}
-        for idx, data in enumerate(lines[cell_vec_line_end:]):
-            if len(data.split()) == n_kpath_line:
-                break
-            else:
-                vector = np.array(data.split(), dtype=np.int32)
-                info_geometry["site2vec"][idx] = vector
-        norb = 0
-        for idx, vec in info_geometry["site2vec"].items():
-            if [vec[0], vec[1], vec[2]] == [0, 0, 0]:
-                norb += 1
-        info_geometry["n_orb"] = norb
+
+    try:
+        with open(name_in, "r") as fr:
+            lines = fr.readlines()
+    except OSError:
+        logger.error("read_geom: file {} not found".format(name_in))
+        exit(1)
+        
+    info_geometry["unit_vec"] = np.array([data.split() for data in lines[0:unit_vec_line_end]], dtype=np.float)
+    info_geometry["degree"] = np.array(lines[unit_vec_line_end].split(), dtype=np.float)
+    info_geometry["cell_vec"] = np.array([data.split() for data in lines[cell_vec_line_start:cell_vec_line_end]], dtype=np.float)
+    info_geometry["site2vec"] = {}
+    for idx, data in enumerate(lines[cell_vec_line_end:]):
+        if len(data.split()) == n_kpath_line:
+            break
+        else:
+            vector = np.array(data.split(), dtype=np.int32)
+            info_geometry["site2vec"][idx] = vector
+    norb = 0
+    for idx, vec in info_geometry["site2vec"].items():
+        if [vec[0], vec[1], vec[2]] == [0, 0, 0]:
+            norb += 1
+    info_geometry["n_orb"] = norb
     return info_geometry
 
 def write_geom(name_out, info_geometry):
@@ -64,9 +75,13 @@ def write_geom(name_out, info_geometry):
             fw.write("{} {} {}\n".format(pos, pos, pos))
 
 def read_w90(name_in):
-    with open(name_in, 'r') as f:
-        # skip header
-        l_strip = [s.strip() for s in f.readlines()[1:]]
+    try:
+        with open(name_in, 'r') as f:
+            # skip header
+            l_strip = [s.strip() for s in f.readlines()[1:]]
+    except OSError:
+        logger.error("read_geom: file {} not found".format(name_in))
+        exit(1)
 
     nr = int(l_strip[1])
 

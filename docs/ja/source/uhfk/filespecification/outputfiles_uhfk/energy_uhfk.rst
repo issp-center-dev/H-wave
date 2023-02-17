@@ -20,47 +20,46 @@ energy
 ファイル形式
 ^^^^^^^^^^^^
 
--  Energy_Total = :math:`[`\ energy_total\ :math:`]`
+-  Energy_Total = ``[energy_total]``
 
--  Energy_Band = :math:`[`\ energy_band\ :math:`]`
+-  Energy_Band = ``[energy_band]``
 
--  Energy_{type} = :math:`[`\ energy_type\ :math:`]`
+-  Energy_{type} = ``[energy_type]``
 
--  NCond = :math:`[`\ ncond\ :math:`]`
+-  NCond = ``[ncond]``
 
--  Sz = :math:`[`\ sz\ :math:`]`
+-  Sz = ``[sz]``
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ energy_total\ :math:`]`
+-  ``[energy_total]``
 
    **形式 :** float型
 
    **説明 :**
    UHF法で求めた固有ベクトルを用い計算した全エネルギー。
 
--  :math:`[`\ energy_band\ :math:`]`
+-  ``[energy_band]``
 
    **形式 :** float型
 
    **説明 :** UHF法で求めたハミルトニアン行列の固有値のみ考慮した場合のエネルギー。
 
-
--  :math:`[`\ energy_type\ :math:`]`
+-  ``[energy_type]``
 
    **形式 :** float型
 
    **説明 :** 相互作用分のエネルギー。相互作用のタイプごとに出力される。
 
--  :math:`[`\ ncond\ :math:`]`
+-  ``[ncond]``
 
    **形式 :** float型
 
    **説明 :** 全粒子数の期待値。
     :math:`\sum_{i}\langle n_{i}\rangle`
 
--  :math:`[`\ sz\ :math:`]`
+-  ``[sz]``
 
    **形式 :** float型
 

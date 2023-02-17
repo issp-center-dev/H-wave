@@ -13,6 +13,7 @@ class UHFk(solver_base):
         self.name = "uhfk"
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
+        self._init_mode(info_mode)
         self._init_param()
         self._init_lattice()
         self._init_orbit()
@@ -44,6 +45,9 @@ class UHFk(solver_base):
 
         # work area
         self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
+
+    def _init_mode(self, param):
+        self.iflag_fock = param.get('flag_fock', True)
 
     @do_profile
     def _init_param(self):
@@ -77,6 +81,9 @@ class UHFk(solver_base):
         # strict hermiticity check
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
         self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
+
+        if self.relax_checks:
+            self.strict_hermite = False
 
     @do_profile
     def _init_lattice(self):
@@ -122,6 +129,7 @@ class UHFk(solver_base):
     @do_profile
     def _show_param(self):
         logger.info("Show parameters")
+        logger.info("    Enable Fock    = {}".format(self.iflag_fock))
         logger.info("    Cell Shape     = {}".format(self.cellshape))
         logger.info("    Sub Shape      = {}".format(self.subshape))
         logger.info("    Block          = {}".format(self.shape))
@@ -223,6 +231,9 @@ class UHFk(solver_base):
         norb_orig = self.norb_orig
         norb = self.norb
         ns = self.ns
+
+        # check array size
+        assert(green.shape == (Lvol,ns,norb_orig,ns,norb_orig))
 
         def _pack_index(x, n):
             _ix, _iy, _iz = x
@@ -331,24 +342,28 @@ class UHFk(solver_base):
         # wave vectors on sublatticed geometry
         def _klist(n):
             return np.roll( (np.arange(n)-(n//2)), -(n//2) )
+
         geom = self.param_ham["Geometry"]
         rvec = geom["rvec"]
         omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
-        kvec = np.array([ np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg for i in range(3) ])
+        kvec = np.array([
+            np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg * 2*np.pi/self.shape[i]
+            for i in range(3) ])
+
+        self.kvec = kvec  # store reciprocal lattice vectors
 
         nx,ny,nz = self.shape
+        nvol = self.nvol
 
-        self.wave_table = np.zeros((nx,ny,nz,3), dtype=float)
+        self.wavenum_table = np.array([(i,j,k) for i in _klist(nx) for j in _klist(ny) for k in _klist(nz)])
+
+        wtable = np.zeros((nx,ny,nz,3), dtype=float)
         for ix, kx in enumerate(_klist(nx)):
-            vx = kvec[0] * kx / nx
             for iy, ky in enumerate(_klist(ny)):
-                vy = kvec[1] * ky / ny
                 for iz, kz in enumerate(_klist(nz)):
-                    vz = kvec[2] * kz / nz
-                    self.wave_table[ix,iy,iz] = np.pi*2*(vx + vy + vz)
-        #for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
-        #    print(ix,iy,iz,self.wave_table[ix,iy,iz])
-        self.kvec = kvec
+                    v = kvec[0] * kx + kvec[1] * ky + kvec[2] * kz
+                    wtable[ix,iy,iz] = v
+        self.wave_table = wtable.reshape(nvol,3)
 
     @do_profile
     def _dump_param_ham(self):
@@ -399,10 +414,18 @@ class UHFk(solver_base):
                     logger.debug("range check for {} ok.".format(k))
                 else:
                     err += 1
-                    logger.error("range check for {} failed.".format(k))
+                    msg = "range check for {} failed.".format(k)
+                    if self.relax_checks:
+                        logger.warning(msg)
+                    else:
+                        logger.error(msg)
         if err > 0:
-            logger.error("_check_cellsize failed. interaction range exceeds cell shape.")
-            exit(1)
+            msg = "_check_cellsize failed. interaction range exceeds cell shape."
+            if self.relax_checks:
+                logger.warning(msg)
+            else:
+                logger.error(msg)
+                exit(1)
 
     def _check_orbital_index(self):
         norb = self.param_ham["Geometry"]["norb"]
@@ -508,10 +531,10 @@ class UHFk(solver_base):
         if is_converged:
             logger.info("UHFk calculation succeeded: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
+            logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
         else:
             logger.info("UHFk calculation failed: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
-
         if print_check is not None:
             fch.close()
             
@@ -533,14 +556,15 @@ class UHFk(solver_base):
         if _data is None:
             logger.info("initialize green function with random numbers")
             _data = self._initial_green_random()
+            # _data = self._initial_green_random_reshape()
         return _data
 
-    def _initial_green_random(self):
+    def _initial_green_random_reshape(self):
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
-        norb     = self.norb
-        nd       = self.nd
+        norb     = self.norb_orig if self.has_sublattice else self.norb
         ns       = self.ns
+        nd = ns * norb
 
         np.random.seed(self.param_mod["RndSeed"])
         #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
@@ -549,7 +573,7 @@ class UHFk(solver_base):
         # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
         x1 = np.random.rand(lvol * nd * lvol * nd).reshape(ns,lvol,norb,ns,lvol,norb)
         x2 = np.transpose(x1,(1,4,0,2,3,5))
-        x3 = x2[0].reshape(lvol,ns,norb,ns,norb)  # take average?
+        x3 = np.average(x2,axis=0).reshape(lvol,ns,norb,ns,norb)
 
         green = 0.01 * (x3 - 0.5)
 
@@ -557,6 +581,25 @@ class UHFk(solver_base):
             return self._reshape_green(green)
         else:
             return green
+
+    def _initial_green_random(self):
+        nvol     = self.nvol
+        norb     = self.norb
+        ns       = self.ns
+        nd = ns * norb
+
+        np.random.seed(self.param_mod["RndSeed"])
+        #rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+        #green = 0.01 * (rand - 0.5)
+
+        # G[(s,i,a),(t,j,b)] -> G[ij,s,a,t,b]
+        x1 = np.random.rand(nvol * nd * nvol * nd).reshape(ns,nvol,norb,ns,nvol,norb)
+        x2 = np.transpose(x1,(1,4,0,2,3,5))
+        x3 = np.average(x2,axis=0).reshape(nvol,ns,norb,ns,norb)
+
+        green = 0.01 * (x3 - 0.5)
+
+        return green
 
     def _initial_green_uhf(self, info, geom):
         lx,ly,lz = self.cellshape
@@ -897,12 +940,13 @@ class UHFk(solver_base):
                 
                 # cross term
                 #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
-                hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
+                if self.iflag_fock:
+                    hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
 
-                #   fourier transform: sum_r (*) e^{ikr}
-                hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                    #   fourier transform: sum_r (*) e^{ikr}
+                    hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
-                ham -= hh5.reshape(nvol, nd, nd)
+                    ham -= hh5.reshape(nvol, nd, nd)
 
         # interaction term: PairHop type
         for type in ['PairHop']:
@@ -918,10 +962,15 @@ class UHFk(solver_base):
                 #   + sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
                 #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
 
-                hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
-                hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
-                hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
-                hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                if self.iflag_fock:
+                    hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                    hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
+                    hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
+                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                else:
+                    hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                    hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, hh1)
+                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
 
                 ham += hh4.reshape(nvol, nd, nd)
 
@@ -1169,17 +1218,25 @@ class UHFk(solver_base):
                 gab_r = self.Green
 
                 if type == "PairHop":
-                    w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
-                    w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
-                    ee = np.einsum('rab, rab ->', jab_r, w1-w2)
+                    if self.iflag_fock:
+                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
+                        w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
+                        ee = np.einsum('rab, rab ->', jab_r, w1-w2)
+                    else:
+                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
+                        ee = np.einsum('rab, rab ->', jab_r, w1)
                     energy[type] = -ee/2.0*nvol
 
                 else:
-                    w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
-                    w1b = np.broadcast_to(w1, (nvol,norb,norb))
-                    w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
-                    ee = np.einsum('rab, rab->', jab_r, w1b-w2)
-
+                    if self.iflag_fock:
+                        w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
+                        w1b = np.broadcast_to(w1, (nvol,norb,norb))
+                        w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
+                        ee = np.einsum('rab, rab->', jab_r, w1b-w2)
+                    else:
+                        w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
+                        w1b = np.broadcast_to(w1, (nvol,norb,norb))
+                        ee = np.einsum('rab, rab->', jab_r, w1b)
                     energy[type] = -ee/2.0*nvol
 
                 energy_total += energy[type].real
@@ -1220,11 +1277,27 @@ class UHFk(solver_base):
             logger.info("save_results: save energy in file {}".format(file_name))
 
         if "eigen" in info_outputfile.keys():
+
+            # eigenvalue[spin_block,k,eigen_index] -> [k,spin_block*eigen_index]
+            eg = self._green_list["eigenvalue"]
+            egs = eg.shape
+            egg = np.transpose(eg,(1,0,2)).reshape(egs[1],egs[0]*egs[2])
+
+            ev = self._green_list["eigenvector"]
+            evs = ev.shape
+            evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
+
+            # # wavevec[k,eigen_index] = \vec(k)
+            # wv = self.wave_table
+            # wvs = wv.shape
+            # wvv = np.transpose(np.broadcast_to(wv, ((egs[0]*egs[2]),wvs[0],wvs[1])), (1,0,2))
+
             file_name = os.path.join(path_to_output, info_outputfile["eigen"])
             np.savez(file_name,
-                     eigenvalue  = self._green_list["eigenvalue"],
-                     eigenvector = self._green_list["eigenvector"],
-                     wavevec = self.wave_table,
+                     eigenvalue  = egg,
+                     eigenvector = evv,
+                     wavevector_unit = self.kvec,
+                     wavevector_index = self.wavenum_table,
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
                 

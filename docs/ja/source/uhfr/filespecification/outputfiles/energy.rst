@@ -20,46 +20,46 @@ UHF法で求めたエネルギー、粒子数、スピンに関する計算結�
 ファイル形式
 ^^^^^^^^^^^^
 
--  Energy_total = :math:`[`\ energy_total\ :math:`]`
+-  Energy_total = ``[energy_total]``
 
--  Energy_band = :math:`[`\ energy_band\ :math:`]`
+-  Energy_band = ``[energy_band]``
 
--  Energy_interall = :math:`[`\ energy_interall\ :math:`]`
+-  Energy_interall = ``[energy_interall]``
 
--  NCond = :math:`[`\ ncond\ :math:`]`
+-  NCond = ``[ncond]``
 
--  Sz = :math:`[`\ sz\ :math:`]`
+-  Sz = ``[sz]``
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ energy_total\ :math:`]`
+-  ``[energy_total]``
 
    **形式 :** float型
 
    **説明 :**
    UHF法で求めた固有ベクトルを用い計算した全エネルギー。
 
--  :math:`[`\ energy_band\ :math:`]`
+-  ``[energy_band]``
 
    **形式 :** float型
 
    **説明 :** UHF法で求めたハミルトニアン行列の固有値のみ考慮した場合のエネルギー。
 
--  :math:`[`\ energy_interall\ :math:`]`
+-  ``[energy_interall]``
 
    **形式 :** float型
 
    **説明 :** 相互作用分のエネルギー。
 
--  :math:`[`\ ncond\ :math:`]`
+-  ``[ncond]``
 
    **形式 :** float型
 
    **説明 :** 全粒子数の期待値。
     :math:`\sum_{i}\langle n_{i}\rangle`
 
--  :math:`[`\ sz\ :math:`]`
+-  ``[sz]``
 
    **形式 :** float型
 
