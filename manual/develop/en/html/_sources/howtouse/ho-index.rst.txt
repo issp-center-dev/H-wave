@@ -14,7 +14,9 @@ Basic usage
 
 - Official Page
 
-  `GitHub repository <https://github.com/issp-center-dev/H-wave>`_
+    - `GitHub repository <https://github.com/issp-center-dev/H-wave>`_
+
+    - `Sample/Tutorial <https://isspns-gitlab.issp.u-tokyo.ac.jp/hwave-dev/hwave-gallery>`_
 
 - Installation
 
