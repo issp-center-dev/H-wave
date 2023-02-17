@@ -41,7 +41,7 @@ UHF近似では揺らぎ :math:`\delta A \equiv A-\langle A \rangle` の一次�
 
 本ソフトウェアは以下の開発貢献者により開発されています。
 
--  ver.1.0 (2022/xx/xxリリース)
+-  ver.1.0 (2023/xx/xxリリース)
 
    -  開発者
 
@@ -75,7 +75,7 @@ UHF近似では揺らぎ :math:`\delta A \equiv A-\langle A \rangle` の一次�
 
 以下の環境で動作することを確認しています。
 
-- Mac + python3 (brew)
+- macOS + python3 (brew)
 
 - Ubuntu Linux + python3 (miniconda)
 

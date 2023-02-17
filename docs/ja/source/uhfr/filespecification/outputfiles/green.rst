@@ -5,7 +5,8 @@
 green
 ~~~~~~~~~~
 
-OneBodyGで指定された一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の計算結果を出力します。
+一体グリーン関数\ :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の計算結果を出力します。
+出力する要素のインデックスは\ ``OneBodyG``\ で指定します。
 ファイル名は環境設定ファイルの中の ``file.output`` セクションでキーワード ``green`` を用いて指定することができます。
 以下に出力例を記載します。
 
@@ -26,34 +27,34 @@ OneBodyGで指定された一体グリーン関数\ :math:`\langle c_{i\sigma_1}
 ファイル形式
 ^^^^^^^^^^^^
 
--  :math:`[`\ i\ :math:`]`  :math:`[`\ s1\ :math:`]`  :math:`[`\ j\ :math:`]`  :math:`[`\ s2\ :math:`]`  :math:`[`\ v.real\ :math:`]`  :math:`[`\ v.imag\ :math:`]`
+-  ``[i] [s1] [j] [s2]  [v.real] [v.imag]``
 
 
 パラメータ
 ^^^^^^^^^^
 
--  :math:`[`\ i\ :math:`]`, :math:`[`\ j\ :math:`]`
+-  ``[i]``, ``[j]``
 
    **形式 :** int型
 
    **説明 :**
-   サイト番号を指定する整数。\ :math:`[`\ i\ :math:`]`\ が\ :math:`i`\ サイト、\ :math:`[`\ j\ :math:`]`\ が\ :math:`j`\ サイトを表します。
+   サイト番号を指定する整数。\ ``[i]``\ が\ :math:`i`\ サイト、\ ``[j]``\ が\ :math:`j`\ サイトを表します。
 
--  :math:`[`\ s1\ :math:`]`, :math:`[`\ s2\ :math:`]`
+-  ``[s1]``, ``[s2]``
 
    **形式 :** int型
 
    **説明 :**
-   スピンを指定する整数。\ :math:`[`\ s1\ :math:`]`\ が\ :math:`\sigma_1`\ 、\ :math:`[`\ s2\ :math:`]`\ が\ :math:`\sigma_2`\ に対応します。
+   スピンを指定する整数。\ ``[s1]``\ が\ :math:`\sigma_1`\ 、\ ``[s2]``\ が\ :math:`\sigma_2`\ に対応します。
    0=アップスピン, 1=ダウンスピン を表します。
 
--  :math:`[`\ v.real\ :math:`]`, :math:`[`\ v.imag\ :math:`]`
+-  ``[v.real]``, ``[v.imag]``
 
    **形式 :** float型
 
    **説明 :**
    :math:`\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}\rangle`\ の値を表します。
-   :math:`[`\ v.real\ :math:`]`\ が実部、\ :math:`[`\ v.imag\ :math:`]`\ が虚部を表します。
+   ``[v.real]``\ が実部、\ ``[v.imag]``\ が虚部を表します。
 
 .. raw:: latex
 
