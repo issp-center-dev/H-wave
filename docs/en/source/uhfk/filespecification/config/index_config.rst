@@ -39,6 +39,15 @@ Parameters
   This parameter specifies the calculation mode. 
   Set to ``"UHFk"`` for calculations of the wave-number space UHF.
 
+
+- ``flag_fock``
+
+  **Type :**
+  Boolean (Default value is ``true``)
+
+  **Description :**
+  If ``true``, include the Fock term in the Hamiltonian, otherwise, exclude it (Hartree approximation).
+
 ``mode.param`` section
 ================================
 
