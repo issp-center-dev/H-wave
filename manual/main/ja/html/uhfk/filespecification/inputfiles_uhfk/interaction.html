@@ -6,13 +6,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
-    <title>相互作用指定ファイル &#8212; H-waveマニュアル 0.1.0 ドキュメント</title>
+    <title>相互作用指定ファイル &#8212; H-waveマニュアル 0.2 ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
     <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
-    <script src="../../../_static/jquery.js"></script>
-    <script src="../../../_static/underscore.js"></script>
-    <script src="../../../_static/_sphinx_javascript_frameworks_compat.js"></script>
     <script src="../../../_static/doctools.js"></script>
     <script src="../../../_static/sphinx_highlight.js"></script>
     <script src="../../../_static/translations.js"></script>
@@ -88,58 +85,44 @@
 <h2>ファイル形式<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
 <ul class="simple">
 <li><p>1行: ヘッダ(何が書かれても問題ありません)。</p></li>
-<li><dl class="simple">
-<dt>2行:</dt><dd><p><span class="math notranslate nohighlight">\(N_\text{orbit}\)</span></p>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>3行:</dt><dd><p><span class="math notranslate nohighlight">\(N_\text{pts}\)</span></p>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt>4 - <span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 3\)</span> 行:</dt><dd><p><span class="math notranslate nohighlight">\(n_1\ n_2\ ...\)</span></p>
-</dd>
-</dl>
-</li>
-<li><dl class="simple">
-<dt><span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 4\)</span> 行以降:</dt><dd><p><span class="math notranslate nohighlight">\(r_x\ \ r_y\ \ r_z\ \ \alpha\ \ \beta\ \ \mathop{Re}J\ \ \mathop{Im}J\)</span></p>
-</dd>
-</dl>
-</li>
+<li><p>2行: <code class="docutils literal notranslate"><span class="pre">[Norbit]</span></code></p></li>
+<li><p>3行: <code class="docutils literal notranslate"><span class="pre">[Npts]</span></code></p></li>
+<li><p>4 - <span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 3\)</span> 行:
+<code class="docutils literal notranslate"><span class="pre">[n_1]</span> <span class="pre">[n_2]</span> <span class="pre">...</span></code></p></li>
+<li><p><span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 4\)</span> 行以降:
+<code class="docutils literal notranslate"><span class="pre">[r_x]</span> <span class="pre">[r_x]</span> <span class="pre">[r_x]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">[J.real]</span> <span class="pre">[J.imag]</span></code></p></li>
 </ul>
 </section>
 <section id="id3">
 <h2>パラメータ<a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h2>
 <ul>
-<li><p><span class="math notranslate nohighlight">\(N_\text{orbit}\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[Norbit]</span></code></p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
-ユニットセル内の軌道の数を指定します。</p>
+ユニットセル内の軌道の数<span class="math notranslate nohighlight">\(N_\text{orbit}\)</span>を指定します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\(N_\text{pts}\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[Npts]</span></code></p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 並進ベクトル全体が入る直方体に含まれるセルの数を指定します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\(n_1, n_2, ...\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, <code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, ...</p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 各セルの縮重度を指定します(通常は 1)。一行あたり15点を列挙します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\(r_x,\ \ r_y,\ \ r_z\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[r_x]</span></code>, <code class="docutils literal notranslate"><span class="pre">[r_y]</span></code>, <code class="docutils literal notranslate"><span class="pre">[r_z]</span></code></p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 並進ベクトルを指定します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\(\alpha,\ \ \beta\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[alpha]</span></code>, <code class="docutils literal notranslate"><span class="pre">[beta]</span></code></p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 軌道のインデックスを指定します。
-<span class="math notranslate nohighlight">\(\alpha\)</span> が元のセル内の軌道、<span class="math notranslate nohighlight">\(\beta\)</span> が <span class="math notranslate nohighlight">\(\vec{r}\)</span> 離れたセル内の軌道を指します。</p>
+<code class="docutils literal notranslate"><span class="pre">[alpha]</span></code> が元のセル内の軌道、<code class="docutils literal notranslate"><span class="pre">[beta]</span></code> が <span class="math notranslate nohighlight">\(\vec{r}\)</span> 離れたセル内の軌道を指します。</p>
 </li>
-<li><p><span class="math notranslate nohighlight">\(\mathop{Re}J,\ \ \mathop{Im}J\)</span></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[J.real]</span></code>, <code class="docutils literal notranslate"><span class="pre">[J.imag]</span></code></p>
 <p><strong>形式 :</strong> float型</p>
 <p><strong>説明 :</strong>
 係数 <span class="math notranslate nohighlight">\(J_{\alpha\beta}(\vec{r})\)</span> の実部と虚部を指定します。</p>
@@ -152,6 +135,8 @@
 <ul class="simple">
 <li><p>行数固定で読み込みを行うため、ヘッダの省略はできません。</p></li>
 <li><p>係数行列のうち、省略された要素は 0と仮定します。</p></li>
+<li><p>並進ベクトルは全て <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> 内に収まるとします。
+<code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, <code class="docutils literal notranslate"><span class="pre">r_z</span></code> の範囲が <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> のx,y,z軸のサイズを超える場合はエラーで終了します。</p></li>
 </ul>
 </section>
 </section>
@@ -165,7 +150,7 @@
         <div class="sphinxsidebarwrapper">
 <p class="logo">
   <a href="../../../index.html">
-    <img class="logo" src="../../../_static/logo.png" alt="Logo"/>
+    <img class="logo" src="../../../_static/Hwave_logo.png" alt="Logo"/>
     
   </a>
 </p>
@@ -236,8 +221,8 @@
       &copy;2022-, The University of Tokyo.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 5.3.0</a>
-      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.1.3</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
       
       |
       <a href="../../../_sources/uhfk/filespecification/inputfiles_uhfk/interaction.rst.txt"
