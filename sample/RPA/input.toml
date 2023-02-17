@@ -1,0 +1,32 @@
+[log]
+  print_level = 1
+
+[mode]
+  mode = "RPA"
+
+[mode.param]
+  T = 0.5
+  CellShape = [32,32,1]
+  SubShape = [1,1,1]
+  Ncond = 1024
+
+[file]
+[file.input]
+  path_to_input = ""
+
+[file.input.interaction]
+  path_to_input = "input"
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+
+[file.output]
+  path_to_output = "output"
+  chiq = "chiq"
+  chi0q = "chi0q"
+  matsubara_frequency = 0
+  # matsubara_frequency = all
+  # matsubara_frequency = [0,16]
+ 
+
