@@ -494,21 +494,31 @@ class RPA:
 
         beta = 1.0/self.T
 
-        self._calc_epsilon_k(green_info)
-
-        if self.mu_value is not None:
-            mu = self.mu_value
+        if "chi0q" in green_info and green_info["chi0q"] is not None:
+            # use chi0q input
+            chi0q = green_info["chi0q"]
+            if chi0q.shape[0] != self.nmat:
+                logger.info("nmat resized from {} to {}".format(self.nmat, chi0q.shape[0]))
+                self.nmat = chi0q.shape[0]
         else:
-            dist, mu = self._find_mu(self.Ncond, self.T)
+            self._calc_epsilon_k(green_info)
 
-        green0 = self._calc_green(beta, mu)
+            if self.mu_value is not None:
+                mu = self.mu_value
+            else:
+                dist, mu = self._find_mu(self.Ncond, self.T)
 
-        chi0q = self._calc_chi0q(green0, beta)
+            green0 = self._calc_green(beta, mu)
+
+            chi0q = self._calc_chi0q(green0, beta)
+
+            green_info["chi0q"] = chi0q
+
+        # solve
         sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
 
         # adhoc store
         green_info["chiq"] = sol
-        green_info["chi0q"] = chi0q
 
         logger.info("End RPA calculations")
         pass
@@ -556,6 +566,7 @@ class RPA:
             else:
                 raise ValueError("invalid value for matsubara_frequency")
         elif type(freq_range) == str:
+            freq_range = freq_range.lower()
             if freq_range == "all":
                 freq_index = [ i for i in range(nmat) ]
             elif freq_range == "center":
@@ -568,6 +579,48 @@ class RPA:
             raise ValueError("invalid value type for matsubara_frequency")
 
         return freq_index[0] if len(freq_index) == 1 else freq_index
+
+    def read_init(self, info_inputfile):
+        logger.debug("RPA read initial configs")
+        info = {}
+
+        path_to_input = info_inputfile.get("path_to_input", "")
+
+        if "chi0q_init" in info_inputfile.keys():
+            file_name = os.path.join(path_to_input, info_inputfile["chi0q_init"])
+            info["chi0q"] = self._read_chi0q(file_name)
+
+        return info
+
+    def _read_chi0q(self, file_name):
+        logger.debug("RPA._read_chi0q")
+
+        try:
+            logger.debug("read chi0q from {}".format(file_name))
+            data = np.load(file_name)
+            chi0q = data["chi0q"]
+            logger.debug("chi0q: shape={}".format(chi0q.shape))
+            assert len(chi0q.shape) == 5 or len(chi0q.shape) == 6, "unexpected shape: {}".format(chi0q.shape)
+        except Exception as e:
+            logger.error("read_chi0q failed: {}".format(e))
+            sys.exit(1)
+
+        if len(chi0q.shape) == 5:
+            chi0q = chi0q.reshape(1,*chi0q.shape)
+
+        # check size
+        cs = chi0q.shape
+        try:
+            assert cs[1] == self.lattice.nvol, "lattice volume"
+            assert cs[2] == self.nd, "shape[2]"
+            assert cs[3] == self.nd, "shape[3]"
+            assert cs[4] == self.nd, "shape[4]"
+            assert cs[5] == self.nd, "shape[5]"
+        except AssertionError as e:
+            logger.error("unexpected data size {}".format(e))
+            sys.exit(1)
+
+        return chi0q
 
     def _calc_epsilon_k(self, green_info):
         logger.debug(">>> RPA._calc_epsilon_k")
@@ -806,7 +859,9 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
         solver = RPA(ham_info, info_log, info_mode)
 
-        green_info = {}
+        green_info = read_io.get_param("green")
+        green_info.update( solver.read_init(info_input_file) )
+
         logger.info("Start RPA calculation")
         solver.solve(green_info, path_to_output)
 

@@ -44,8 +44,8 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
     logger = logging.getLogger("qlms")
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    # logging.basicConfig(level=logging.DEBUG, format=fmt)
-    logging.basicConfig(level=logging.INFO, format=fmt)
+    logging.basicConfig(level=logging.DEBUG, format=fmt)
+    # logging.basicConfig(level=logging.INFO, format=fmt)
 
     if "mode" not in info_mode:
         logger.error("mode is not defined in [mode].")
@@ -105,14 +105,8 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
         solver = sol_rpa.RPA(ham_info, info_log, info_mode)
 
-        green_info = {}
-        # logger.info("Start RPA calculation")
-        # solver.solve(green_info, path_to_output)
-
-        # logger.info("Save calculation results")
-        # solver.save_results(info_outputfile, green_info)
-
-        # logger.info("all done.")
+        green_info = read_io.get_param("green")
+        green_info.update( solver.read_init(info_inputfile) )
 
     else:
         logger.warning("mode is incorrect: mode={}.".format(mode))
