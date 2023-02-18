@@ -425,15 +425,15 @@ class RPA:
         elif "filling" in self.param_mod:
             self.filling = self.param_mod['filling']
             self.Ncond = self.Nstate * self.filling
-
             # force Ncond to be integer when T=0
             if self.T == 0.0:
                 round_mode = self.param_mod.get("Ncond_round_mode", "strict")
                 self.Ncond = self._round_to_int(self.Ncond, round_mode)
-
         else:
             logger.error("Ncond or Nelec or filling is missing. abort")
             sys.exit(1)
+
+        self.mu_value = self.param_mod.get("mu", None)
 
         pass
 
@@ -477,6 +477,9 @@ class RPA:
         logger.info("    T               = {}".format(self.T))
         logger.info("    E_cutoff        = {:e}".format(self.ene_cutoff))
 
+        if self.mu_value is not None:
+            logger.info("    mu              = {}".format(self.mu_value))
+
         # logger.info("    Mix             = {}".format(self.param_mod["Mix"]))
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    IterationMax    = {}".format(self.param_mod["IterationMax"]))
@@ -492,11 +495,15 @@ class RPA:
         beta = 1.0/self.T
 
         self._calc_epsilon_k(green_info)
-        dist, mu = self._find_mu(self.Ncond, self.T)
-        # gr = self._calc_green(beta, mu)
-        gr = self._calc_green(beta, 0.0)
 
-        chi0q = self._calc_chi0q(gr, beta)
+        if self.mu_value is not None:
+            mu = self.mu_value
+        else:
+            dist, mu = self._find_mu(self.Ncond, self.T)
+
+        green0 = self._calc_green(beta, mu)
+
+        chi0q = self._calc_chi0q(green0, beta)
         sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
 
         # adhoc store
@@ -622,7 +629,7 @@ class RPA:
             logger.error("RPA._find_mu: not converged. abort")
             sys.exit(1)
 
-        logger.debug("RPA._find_mu: mu = {}".format(mu))
+        logger.info("RPA._find_mu: mu = {}".format(mu))
 
         dist = _fermi(T, mu, w)
 
