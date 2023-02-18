@@ -7,6 +7,8 @@ import numpy.fft as FFT
 import itertools
 from requests.structures import CaseInsensitiveDict
 
+from .perf import do_profile
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -388,6 +390,7 @@ class RPA:
     """
     RPA calculation
     """
+    @do_profile
     def __init__(self, param_ham, info_log, info_mode):
         self.param_ham = param_ham
         self.info_log = info_log
@@ -489,6 +492,7 @@ class RPA:
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
         pass
 
+    @do_profile
     def solve(self, green_info, path_to_output):
         logger.info("Start RPA calculations")
 
@@ -523,6 +527,7 @@ class RPA:
         logger.info("End RPA calculations")
         pass
 
+    @do_profile
     def save_results(self, info_outputfile, green_info):
         logger.info("Save RPA results")
         path_to_output = info_outputfile["path_to_output"]
@@ -622,6 +627,7 @@ class RPA:
 
         return chi0q
 
+    @do_profile
     def _calc_epsilon_k(self, green_info):
         logger.debug(">>> RPA._calc_epsilon_k")
 
@@ -641,6 +647,7 @@ class RPA:
         self.H0_eigenvalue = w
         self.H0_eigenvector = v
 
+    @do_profile
     def _find_mu(self, Ncond, T):
         from scipy import optimize
 
@@ -688,6 +695,7 @@ class RPA:
 
         return dist, mu
 
+    @do_profile
     def _calc_green(self, beta, mu):
         """
         ew: eigenvalues  ew[k,i]    i-th eigenvalue of wavenumber k
@@ -716,6 +724,7 @@ class RPA:
 
         return green
 
+    @do_profile
     def _calc_chi0q(self, green_kw, beta):
         # green function
         #   green_kw[j,l,k,a,b]: G_ab^j(k,ie)
@@ -764,6 +773,7 @@ class RPA:
 
         return chi0_qw
 
+    @do_profile
     def _solve_rpa(self, chi0q, ham):
         nvol = self.lattice.nvol
         nmat = self.nmat
@@ -786,6 +796,7 @@ class RPA:
 
         return sol.reshape(nmat,nvol,nd,nd,nd,nd)
 
+    @do_profile
     def _calc_chi0q_exact(self, eps_k, beta, mu):
         nx,ny,nz = self.lattice.shape
 
@@ -804,6 +815,7 @@ class RPA:
 
         return (chi0q_exact/(nx*ny*nz)).real
 
+    @do_profile
     def _get_green(self, eps_k, beta, mu):
         nmat = self.nmat
         nvol = self.nvol
