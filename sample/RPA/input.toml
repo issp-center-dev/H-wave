@@ -8,7 +8,8 @@
   T = 0.5
   CellShape = [32,32,1]
   SubShape = [1,1,1]
-  Ncond = 1024
+  # Ncond = 128
+  filling = 0.5
 
 [file]
 [file.input]

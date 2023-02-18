@@ -405,14 +405,6 @@ class RPA:
     def _init_param(self):
         logger.debug(">>> RPA._init_param")
 
-        if "Ncond" in self.param_mod:
-            self.Ncond = self.param_mod["Ncond"]
-        elif "Nelec" in self.param_mod:
-            self.Ncond = self.param_mod["Nelec"]
-        else:
-            logger.error("Ncond or Nelec is missing. abort")
-            sys.exit(1)
-
         self.T = self.param_mod.get("T", 0.0)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1.0e+2)
 
@@ -422,7 +414,55 @@ class RPA:
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
+        self.Nstate = self.lattice.nvol * self.nd
+
+        if "Ncond" in self.param_mod:
+            self.Ncond = self.param_mod["Ncond"]
+            self.filling = 1.0 * self.Ncond / self.Nstate
+        elif "Nelec" in self.param_mod:
+            self.Ncond = self.param_mod["Nelec"]
+            self.filling = 1.0 * self.Ncond / self.Nstate
+        elif "filling" in self.param_mod:
+            self.filling = self.param_mod['filling']
+            self.Ncond = self.Nstate * self.filling
+
+            # force Ncond to be integer when T=0
+            if self.T == 0.0:
+                round_mode = self.param_mod.get("Ncond_round_mode", "strict")
+                self.Ncond = self._round_to_int(self.Ncond, round_mode)
+
+        else:
+            logger.error("Ncond or Nelec or filling is missing. abort")
+            sys.exit(1)
+
         pass
+
+    def _round_to_int(self, val, mode):
+        import math
+        mode = mode.lower()  # case-insensitive
+        if mode == "exact":
+            ret = val  # not rounding to int
+        elif mode == "round":
+            ret = round(val)
+        elif mode == "round-up":
+            ret = math.ceil(val)
+        elif mode == "round-down":
+            ret = math.floor(val)
+        elif mode == "round-to-zero":
+            ret = int(val)
+        elif mode == "round-off":
+            nn = math.floor(val)
+            rr = val - nn
+            ret = nn if rr < 0.5 else nn+1
+        elif mode == "strict":
+            if val != round(val):
+                raise ValueError("value not integer")
+            ret = round(val)
+        else:  # default: "round" with warning
+            if val != round(val):
+                logger.warning("value not integer")
+            ret = round(val)
+        return ret
 
     def _show_params(self):
         logger.debug(">>> RPA._show_params")
@@ -433,6 +473,7 @@ class RPA:
         logger.info("    Nmat            = {}".format(self.nmat))
 
         logger.info("    Ncond           = {}".format(self.Ncond))
+        logger.info("    filling         = {:.3f}".format(self.filling))
         logger.info("    T               = {}".format(self.T))
         logger.info("    E_cutoff        = {:e}".format(self.ene_cutoff))
 
