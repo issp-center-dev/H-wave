@@ -44,8 +44,8 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
     logger = logging.getLogger("qlms")
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    logging.basicConfig(level=logging.DEBUG, format=fmt)
-    # logging.basicConfig(level=logging.INFO, format=fmt)
+    # logging.basicConfig(level=logging.DEBUG, format=fmt)
+    logging.basicConfig(level=logging.INFO, format=fmt)
 
     if "mode" not in info_mode:
         logger.error("mode is not defined in [mode].")

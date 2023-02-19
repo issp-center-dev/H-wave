@@ -11,7 +11,7 @@ chiq, chi0q
 データはそれぞれキー ``chiq`` および ``chi0q`` にバインドされます。
 データ配列は ``ndarray(l,q,a,ap,b,bp)`` で、インデックスは以下のとおりです。
 
-- ``l`` : 松原振動数のラベル。インデックスとラベルの対応はキー ``imat`` で与えられます。
+- ``l`` : 松原振動数のラベル。インデックスとラベルの対応はキー ``freq_index`` で与えられます。
 - ``q`` : 波数ベクトルのインデックス :math:`[q_x\ q_y\ q_z]` を1次元化したインデックスで、
   :math:`q = q_z + N_z \cdot (q_y + N_y \cdot q_x)` となります。
 - ``a``, ``ap``, ``b``, ``bp`` : 一般化軌道のインデックスで、それぞれ :math:`\tilde\alpha, \tilde\alpha^\prime, \tilde\beta, \tilde\beta^\prime` に対応します。
@@ -31,6 +31,6 @@ chiq, chi0q
     data = np.load('output/chiq.npz')
 
     chiq = data['chiq']
-    imat = data['imat']    
+    freq_index = data['freq_index']
 
 .. raw:: latex

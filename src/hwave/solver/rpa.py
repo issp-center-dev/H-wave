@@ -443,7 +443,7 @@ class RPA:
     def _round_to_int(self, val, mode):
         import math
         mode = mode.lower()  # case-insensitive
-        if mode == "exact":
+        if   mode == "as-is":
             ret = val  # not rounding to int
         elif mode == "round":
             ret = round(val)
@@ -459,12 +459,16 @@ class RPA:
             ret = nn if rr < 0.5 else nn+1
         elif mode == "strict":
             if val != round(val):
-                raise ValueError("value not integer")
+                logger.error("value not integer")
+                sys.exit(1)
             ret = round(val)
-        else:  # default: "round" with warning
+        elif mode == "exact":  # "round" with warning
             if val != round(val):
                 logger.warning("value not integer")
             ret = round(val)
+        else:
+            logger.error("round_to_int: unknown mode {}".format(mode))
+            sys.exit(1)
         return ret
 
     def _show_params(self):
@@ -483,11 +487,7 @@ class RPA:
         if self.mu_value is not None:
             logger.info("    mu              = {}".format(self.mu_value))
 
-        # logger.info("    Mix             = {}".format(self.param_mod["Mix"]))
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
-        # logger.info("    IterationMax    = {}".format(self.param_mod["IterationMax"]))
-        # logger.info("    EPS             = {}".format(self.param_mod["EPS"]))
-        # logger.info("    2Sz             = {}".format(self.param_mod["2Sz"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
         pass
@@ -540,6 +540,7 @@ class RPA:
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             np.savez(file_name,
                      chiq = green_info["chiq"][freq_index],
+                     freq_index = freq_index,
                      )
             logger.info("save_results: save chiq in file {}".format(file_name))
 
@@ -547,6 +548,7 @@ class RPA:
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
                      chi0q = green_info["chi0q"][freq_index],
+                     freq_index = freq_index,
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
         
@@ -583,8 +585,9 @@ class RPA:
         else:
             raise ValueError("invalid value type for matsubara_frequency")
 
-        return freq_index[0] if len(freq_index) == 1 else freq_index
+        return freq_index
 
+    @do_profile
     def read_init(self, info_inputfile):
         logger.debug("RPA read initial configs")
         info = {}
@@ -605,13 +608,10 @@ class RPA:
             data = np.load(file_name)
             chi0q = data["chi0q"]
             logger.debug("chi0q: shape={}".format(chi0q.shape))
-            assert len(chi0q.shape) == 5 or len(chi0q.shape) == 6, "unexpected shape: {}".format(chi0q.shape)
+            assert len(chi0q.shape) == 6, "unexpected shape: {}".format(chi0q.shape)
         except Exception as e:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
-
-        if len(chi0q.shape) == 5:
-            chi0q = chi0q.reshape(1,*chi0q.shape)
 
         # check size
         cs = chi0q.shape
