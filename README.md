@@ -58,6 +58,7 @@ of The Institute for Solid State Physics, The University of Tokyo.
 - [H-wave project site](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en)
 - [Software repository](https://github.com/issp-center-dev/H-wave)
 - [User Manual](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
+- [Samples/Tutorials](https://isspns-gitlab.issp.u-tokyo.ac.jp/hwave-dev/hwave-gallery)
 
 ## Authors
 

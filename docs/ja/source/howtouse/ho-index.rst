@@ -14,7 +14,9 @@
 
 - Official Page
 
-    `GitHubリポジトリ <https://github.com/issp-center-dev/H-wave>`_
+    - `GitHubリポジトリ <https://github.com/issp-center-dev/H-wave>`_
+
+    - `サンプル・チュートリアル <https://isspns-gitlab.issp.u-tokyo.ac.jp/hwave-dev/hwave-gallery>`_
 
 - ダウンロード方法
 

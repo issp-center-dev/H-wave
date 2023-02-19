@@ -12,6 +12,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-20.04
+    if: github.repository == 'issp-center-dev/H-wave'
     steps:
     - name: Inject slug/short variables
       uses: rlespinasse/github-slug-action@v4.x
@@ -39,7 +40,7 @@ jobs:
 
     - name: Build
       run: |
-        for lang in ja; do
+        for lang in ja en; do
           cd ${GITHUB_WORKSPACE}/main/docs/${lang}
           make html
         done
@@ -58,7 +59,7 @@ jobs:
         TARGET_NAME: ${{ env.GITHUB_REF_SLUG }}
       run: |
           cd ${GITHUB_WORKSPACE}
-          for lang in ja; do
+          for lang in ja en; do
             rm -rf "gh-pages/manual/${TARGET_NAME}/${lang}"
             mkdir -p "gh-pages/manual/${TARGET_NAME}/${lang}"
             cp -r "main/docs/${lang}/build/html" "gh-pages/manual/${TARGET_NAME}/${lang}"

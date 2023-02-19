@@ -33,7 +33,7 @@ index of the eigenvalue in a cell, and ``s`` refers to the spin index
 (0 for up-spin, and 1 for down-spin).
 
 ``eigenvector`` contains the corresponding eigenvectors.
-The data format is a numpy ndarray with the layout as ``eigenvector[k][l][j]``, where
+The data format is a numpy ndarray with the layout as ``eigenvector[k][j][l]``, where
 ``k`` and ``l`` refer to the indices of the corresponding wave number and eigenvalue,
 and ``j`` refers to the index of the orbital and spin in a cell.
 
