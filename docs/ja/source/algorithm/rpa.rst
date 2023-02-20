@@ -101,7 +101,7 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
 .. math::
     \begin{aligned}
-     \hat{X}(q)&=\hat{X}^{(0)}(q)+\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
+     \hat{X}(q)&=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
      &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
     \end{aligned}
 
