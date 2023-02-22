@@ -5,6 +5,7 @@ import sys, os
 import numpy as np
 import numpy.fft as FFT
 import itertools
+import copy
 from requests.structures import CaseInsensitiveDict
 
 from .perf import do_profile
@@ -397,11 +398,10 @@ class RPA:
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
 
         self.lattice = Lattice(self.param_mod)
+        self.ham_info = Interaction(self.lattice, param_ham)
 
         self._init_param()
         self._show_params()
-
-        self.ham_info = Interaction(self.lattice, param_ham)
 
         pass
 
