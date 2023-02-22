@@ -417,26 +417,41 @@ class RPA:
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
-        self.Nstate = self.lattice.nvol * self.nd
+        # exclusive options: mu and Ncond/filling
+        have_mu = "mu" in self.param_mod.keys()
+        have_Ncond = "Ncond" in self.param_mod.keys() or "Nelec" in self.param_mod.keys()
+        have_filling = "filling" in self.param_mod.keys()
 
-        if "Ncond" in self.param_mod:
-            self.Ncond = self.param_mod["Ncond"]
-            self.filling = 1.0 * self.Ncond / self.Nstate
-        elif "Nelec" in self.param_mod:
-            self.Ncond = self.param_mod["Nelec"]
-            self.filling = 1.0 * self.Ncond / self.Nstate
-        elif "filling" in self.param_mod:
-            self.filling = self.param_mod['filling']
-            self.Ncond = self.Nstate * self.filling
-            # force Ncond to be integer when T=0
-            if self.T == 0.0:
-                round_mode = self.param_mod.get("Ncond_round_mode", "strict")
-                self.Ncond = self._round_to_int(self.Ncond, round_mode)
-        else:
-            logger.error("Ncond or Nelec or filling is missing. abort")
+        if have_mu and (have_Ncond or have_filling):
+            # conflicting parameters
+            logger.error("both mu and Ncond or filling are specified")
+            sys.exit(1)
+        elif not (have_mu or have_Ncond or have_filling):
+            # none specified
+            logger.error("none of mu, Ncond, nor filling is specified")
             sys.exit(1)
 
-        self.mu_value = self.param_mod.get("mu", None)
+        self.Nstate = self.lattice.nvol * self.nd
+
+        if have_Ncond or have_filling:
+            self.calc_mu = True
+            if "Ncond" in self.param_mod:
+                self.Ncond = self.param_mod["Ncond"]
+                self.filling = 1.0 * self.Ncond / self.Nstate
+            elif "Nelec" in self.param_mod:
+                self.Ncond = self.param_mod["Nelec"]
+                self.filling = 1.0 * self.Ncond / self.Nstate
+            elif "filling" in self.param_mod:
+                self.filling = self.param_mod['filling']
+                self.Ncond = self.Nstate * self.filling
+                # force Ncond to be integer when T=0
+                if self.T == 0.0:
+                    round_mode = self.param_mod.get("Ncond_round_mode", "strict")
+                    self.Ncond = self._round_to_int(self.Ncond, round_mode)
+
+        if have_mu:
+            self.calc_mu = False
+            self.mu_value = self.param_mod.get("mu", None)
 
         pass
 
@@ -479,13 +494,14 @@ class RPA:
         logger.info("    nd              = {}".format(self.nd))
         logger.info("    Nmat            = {}".format(self.nmat))
 
-        logger.info("    Ncond           = {}".format(self.Ncond))
-        logger.info("    filling         = {:.3f}".format(self.filling))
+        if self.calc_mu == True:
+            logger.info("    Ncond           = {}".format(self.Ncond))
+            logger.info("    filling         = {:.3f}".format(self.filling))
+        else:
+            logger.info("    mu              = {}".format(self.mu_value))
+
         logger.info("    T               = {}".format(self.T))
         logger.info("    E_cutoff        = {:e}".format(self.ene_cutoff))
-
-        if self.mu_value is not None:
-            logger.info("    mu              = {}".format(self.mu_value))
 
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
@@ -507,10 +523,10 @@ class RPA:
         else:
             self._calc_epsilon_k(green_info)
 
-            if self.mu_value is not None:
-                mu = self.mu_value
-            else:
+            if self.calc_mu:
                 dist, mu = self._find_mu(self.Ncond, self.T)
+            else:
+                mu = self.mu_value
 
             green0 = self._calc_green(beta, mu)
 
