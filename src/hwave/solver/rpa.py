@@ -786,13 +786,16 @@ class RPA:
                          chi0q.reshape(nmat,nvol,ndx,ndx),
                          ham.reshape(nvol,ndx,ndx))
         
-        # [ 1 - X^0 W ]^-1
-        matrev = np.linalg.inv(mat)
+        # # [ 1 - X^0 W ]^-1
+        # matrev = np.linalg.inv(mat)
+
+        # # [ 1 - X^0 W ]^-1 X^0
+        # sol = np.einsum('lkab,lkbc->lkac',
+        #                 matrev,
+        #                 chi0q.reshape(nmat,nvol,ndx,ndx))
 
         # [ 1 - X^0 W ]^-1 X^0
-        sol = np.einsum('lkab,lkbc->lkac',
-                        matrev,
-                        chi0q.reshape(nmat,nvol,ndx,ndx))
+        sol = np.linalg.solve(mat, chi0q.reshape(nmat,nvol,ndx,ndx))
 
         return sol.reshape(nmat,nvol,nd,nd,nd,nd)
 
