@@ -6,11 +6,12 @@
 
 [mode.param]
   T = 0.5
-  # mu = 0.0
+  mu = 0.0
   CellShape = [32,32,1]
   SubShape = [1,1,1]
-  # Ncond = 128
-  filling = 0.5
+  nmat = 1024
+  # Ncond = 1024
+  # filling = 0.5
 
 [file]
 [file.input]
