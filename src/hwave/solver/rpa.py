@@ -16,10 +16,6 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 
-#XXX
-#debug = True
-debug = False
-
 class Lattice:
     """
     Lattice parameters:
@@ -314,10 +310,10 @@ class Interaction:
         spin_table = {
             'CoulombIntra': { (0,0,1,1): 1, (1,1,0,0): 1 },
             'CoulombInter': { (0,0,0,0): 1, (1,1,1,1): 1, (0,0,1,1): 1, (1,1,0,0): 1 },
-            'Hund':         { (0,0,0,0): 1, (1,1,1,1): 1 },
+            'Hund':         { (0,0,0,0): -1, (1,1,1,1): -1 },
             'Ising':        { (0,0,0,0): 1, (1,1,1,1): 1, (0,0,1,1): -1, (1,1,0,0): -1 },
             'PairLift':     { (0,1,0,1): 1, (1,0,1,0): 1 },
-            'Exchange':     { (0,1,1,0): 1, (1,0,0,1): 1 },
+            'Exchange':     { (0,1,1,0): -1, (1,0,0,1): -1 },
             #--
             'PairHop':      { (0,0,1,1): 1, (1,1,0,0): 1 },
         }
@@ -801,7 +797,7 @@ class RPA:
         mat += np.einsum('lkab,kbc->lkac',
                          chi0q.reshape(nmat,nvol,ndx,ndx),
                          ham.reshape(nvol,ndx,ndx))
-        
+
         # # [ 1 - X^0 W ]^-1
         # matrev = np.linalg.inv(mat)
 
