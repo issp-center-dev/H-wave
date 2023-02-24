@@ -79,6 +79,7 @@ Parameters
   This parameter specifies the chemical potential :math:`\mu`.
   If it is not specified, the value of :math:`\mu` will be calculated so that
   the expectation value of the number of electrons equals to ``Ncond``.
+  If both ``mu`` and ``Ncond`` or ``filling`` are specified, the program terminates with error.
 
 - ``Ncond``
 
@@ -121,7 +122,7 @@ Parameters
 
   **Description :**
   This parameter specifies the cut-off of Matsubara frequency.
-  It must be greater than or equal to zero.
+  It must be greater than zero.
 
 - ``RndSeed``
 

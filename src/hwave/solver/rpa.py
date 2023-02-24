@@ -449,6 +449,20 @@ class RPA:
             self.calc_mu = False
             self.mu_value = self.param_mod.get("mu", None)
 
+        # check parameters
+        err = 0
+        if self.T < 0.0:
+            logger.error("T must be greater than or equal to zero: T={}".format(self.T))
+            err += 1
+        if self.calc_mu and self.Ncond <= 0:
+            logger.error("Ncond must be greater than zero: Ncond={}".format(self.Ncond))
+            err += 1
+        if self.nmat <= 0:
+            logger.error("Nmat must be greater than zero: Nmat={}".format(self.nmat))
+            err += 1
+        if err > 0:
+            sys.exit(1)
+
         pass
 
     def _round_to_int(self, val, mode):
