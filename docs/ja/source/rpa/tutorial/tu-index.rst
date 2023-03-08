@@ -2,16 +2,12 @@
 チュートリアル
 ==================
 
-(TODO)
-
-..
 H-waveを乱雑位相近似モード(RPA)で実行するには、入力ファイルとして
 
 1. 環境設定入力ファイル
 2. 相互作用定義ファイル
 
-を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。
-
+を用意した後、プログラムを実行します。
 以下では、 ``docs/tutorial/Hubbard/RPA`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
 相互作用定義ファイルは StdFace ライブラリを用いて生成します。
 
@@ -99,13 +95,45 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 
 計算が開始されると以下のようなログが出力されます。
 
-.. literalinclude:: ../sample/run.log
+.. literalinclude:: ../sample/runlog.dat
 
 入力ファイル読み込みに関するログが出力されたあと、乱雑位相近似計算の計算過程に関する情報が出力されます。
 出力ファイルは ``input.toml`` の ``[file.output]`` セクションの指定に従い、
 ``output`` ディレクトリに ``chi0q.npz`` , ``chiq.npz`` ファイルが出力されます。
 
 出力ファイルの詳細については :ref:`ファイルフォーマット<Sec:outputfile_rpa>` の章をご覧ください。
+
+計算のポスト処理として、計算結果を可視化するためのツールが ``sample/RPA/view.py`` に用意されています。
+このスクリプトファイルを現在のディレクトリにコピーし、ターミナルから以下を実行します。
+このツールを実行するには ``matplotlib`` パッケージが必要です。
+
+.. code-block:: bash
+
+    $ python3 view.py
+
+``output/chi0q.npz`` と ``output/chiq.npz`` を読み込み、松原振動数 :math:`{\rm i}\omega_m=0` での電荷感受率 :math:`\chi_c(\vec{q})` およびスピン感受率 :math:`\chi_s(\vec{q})` の値を各 :math:`\vec{q}` ごとに標準出力に書き出します。あわせて、これらの値を3Dプロットした以下の図を PNG 形式で出力します。
+
+.. tabularcolumns:: CC
+
+.. raw:: latex
+
+	 \begingroup
+	 \renewcommand{\hline}{}
+
+.. list-table::
+
+  * - .. figure:: ../sample/chic.png
+
+         :math:`\chi_c(\vec{q})`
+
+    - .. figure:: ../sample/chis.png
+
+         :math:`\chi_s(\vec{q})`
+
+.. raw:: latex
+
+	 \endgroup
+
 
 StdFaceライブラリのコンパイルと実行
 ----------------------------------------------------------------

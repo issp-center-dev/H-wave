@@ -1,0 +1,44 @@
+2023-03-07 18:55:44,682 INFO qlms: RPA mode
+2023-03-07 18:55:44,682 INFO qlms: Read interaction definitions from files
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read Gemoetry from input/geom.dat
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read interaction Transfer from input/transfer.dat
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read interaction CoulombIntra from input/coulombintra.dat
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read interaction CoulombInter from input/coulombinter.dat
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa: Lattice parameters:
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     CellShape       = (32, 32, 1)
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     cell volume     = 1024
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     cell dimension  = 3
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     SubShape        = (1, 1, 1)
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     subshape volume = 1
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     Shape           = (32, 32, 1)
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     shape volume    = 1024
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     has_sublattice  = False
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa: RPA parameters:
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     norbit          = 1
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     nspin           = 2
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     nd              = 2
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     Nmat            = 1024
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     mu              = 0.0
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     T               = 0.5
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     E_cutoff        = 1.000000e+02
+2023-03-07 18:55:44,683 INFO qlms: Start UHF calculation
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa: Start RPA calculations
+2023-03-07 18:55:47,726 INFO hwave.solver.rpa: End RPA calculations
+2023-03-07 18:55:47,726 INFO qlms: Save calculation results.
+2023-03-07 18:55:47,726 INFO hwave.solver.rpa: Save RPA results
+2023-03-07 18:55:47,925 INFO hwave.solver.rpa: save_results: save chiq in file output/chiq
+2023-03-07 18:55:48,294 INFO hwave.solver.rpa: save_results: save chi0q in file output/chi0q
+2023-03-07 18:55:48,294 INFO qlms: All procedures are finished.
+--------------------------------------------------------------------------------
+Statistics
+  function                         :  total elapsed  : average elapsed : ncalls
+--------------------------------------------------------------------------------
+  hwave.solver.rpa.__init__        :      1.037 msec :      1.037 msec :      1
+  hwave.solver.rpa.read_init       :      0.001 msec :      0.001 msec :      1
+  hwave.solver.rpa._calc_epsilon_k :     22.587 msec :     22.587 msec :      1
+  hwave.solver.rpa._calc_green     :    130.035 msec :    130.035 msec :      1
+  hwave.solver.rpa._calc_chi0q     :   1886.201 msec :   1886.201 msec :      1
+  hwave.solver.rpa._solve_rpa      :   1003.617 msec :   1003.617 msec :      1
+  hwave.solver.rpa.solve           :   3042.926 msec :   3042.926 msec :      1
+  hwave.solver.rpa.save_results    :    567.897 msec :    567.897 msec :      1
+--------------------------------------------------------------------------------

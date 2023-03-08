@@ -9,8 +9,6 @@ you need to prepare input files:
 #. interaction definition files,
 
 before running the program.
-For the latter, you can use the outputs of external programs such as RESPACK,
-or you may create the files using the StdFace library.
 
 In the following, we provide a tutorial based on a sample in
 ``docs/tutorial/Hubbard/RPA`` directory.
@@ -121,13 +119,51 @@ as an argument.
 
 The calculation starts with the logs as shown below:
 
-.. literalinclude:: ../sample/run.log
+.. literalinclude:: ../sample/runlog.dat
 
 The logs on the input files are shown, followed by the logs on the process of RPA calculations.
 The program will yield, according to the settings in ``[file.output]`` section,
 the output files ``chi0q.npz`` and ``chiq.npz`` in ``output`` directory.
 
 See :ref:`Sec:outputfile_rpa` section for the details of the output files.
+
+A tool is prepared in ``sample/RPA/view.py`` for visualizing the calculation results
+as a post-process.
+Let us copy the script file to the current directory, and run the script as follows:
+
+.. code-block:: bash
+
+    $ python3 view.py
+
+The script reads ``output/chi0q.npz`` and ``output/chiq.npz``, and writes the values of
+the charge susceptibility :math:`\chi_c(\vec{q})`
+and the spin susceptibility :math:`\chi_s(\vec{q})`
+at Matsubara frequency :math:`{\rm i}\omega_m=0`
+for each :math:`\vec{q}`
+to the standard output.
+It also produces the figures of these quantities in PNG format shown as below:
+
+.. tabularcolumns:: CC
+
+.. raw:: latex
+
+	 \begingroup
+	 \renewcommand{\hline}{}
+
+.. list-table::
+
+  * - .. figure:: ../sample/chic.png
+
+         :math:`\chi_c(\vec{q})`
+
+    - .. figure:: ../sample/chis.png
+
+         :math:`\chi_s(\vec{q})`
+
+.. raw:: latex
+
+	 \endgroup
+
 
 Compile and run StdFace library
 ----------------------------------------------------------------
