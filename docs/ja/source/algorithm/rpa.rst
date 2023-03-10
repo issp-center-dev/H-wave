@@ -92,7 +92,7 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 .. math::
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
-    X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1'\beta_1'}
+    X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
     X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
@@ -105,6 +105,76 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
      &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
     \end{aligned}
 
-なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 [1]_ を参考にしてください。
+    
+上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられます。サイズが大きくなると当然メモリコスト、計算量も増大します。さて、H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
 
+.. math::
+    \begin{aligned}
+    & W^{\beta\sigma_1\sigma_1',\alpha\sigma\sigma'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha \sigma}^{\dagger}c_{\bf{k},\alpha \sigma'}^{\mathstrut}
+    c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}    \end{aligned}
+
+と書けます。軌道に対しては同一の軌道での散乱となるため、既約感受率は
+
+.. math::
+    \begin{aligned}
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+      -\frac{T}{N_L}
+      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}),
+    \end{aligned}
+
+となり、 :math:`N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}` にサイズを抑えることができます。このとき、RPAで得られる感受率は
+
+.. math::
+    \begin{aligned}
+    X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&=
+    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
+    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
+    \end{aligned}
+
+となります。 :math:`\alpha\sigma\sigma'` を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
+
+.. math::
+    \begin{aligned}
+     \hat{X}(q)&=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
+     &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
+    \end{aligned}
+
+と書けることがわかります。なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 [1]_ を参考にしてください。
+
+.. note::
+
+   H-waveではRPA近似を正確に行うため、既約感受率の計算を
+   
+   .. math::
+    \begin{aligned}
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+      -\frac{T}{N_L}
+      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
+    \end{aligned}
+
+  として行っています。この場合、対角化した成分の和が必要となり、計算コストが多くかかってしまいます。そのため、先行研究の多くは一体グリーン関数を
+
+  .. math::
+    \begin{aligned}
+     G^{(0)\alpha\beta}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})
+    \end{aligned}
+
+  として、以下のように既約感受率を計算して高速化する場合が多いです。
+
+   .. math::
+    \begin{aligned}
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+      -\frac{T}{N_L}
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
+    \end{aligned}
+
+  この既約感受率を用いた計算では、対角化成分が混在してしまう状況で近似精度が悪くなります。
+  先行研究との比較の際にはどちらの手法を用いているか、ご確認ください。
+    
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
