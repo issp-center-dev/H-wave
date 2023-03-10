@@ -160,7 +160,7 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
   .. math::
     \begin{aligned}
-     G^{(0)\alpha\beta}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})
+     G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n})
     \end{aligned}
 
   として、以下のように既約感受率を計算して高速化する場合が多いです。
