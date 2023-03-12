@@ -7,7 +7,7 @@
 
 乱雑位相近似(RPA)では相互作用のない状態を出発点に、電子相関効果による一体の演算子の揺らぎの応答を検出します。
 UHF近似ではあらかじめ初期配置を予想しておく必要があるのに対して、RPA法では2次転移により生じる秩序相を推定することが可能です。
-H-waveでは松原振動数を利用したRPA近似法を実装しており、解析接続によって実験で観測される動的な物理量との比較も行うことが可能です。
+H-waveでは松原振動数を利用したRPA法を実装しており、解析接続によって実験で観測される動的な物理量との比較も行うことが可能です。
 
 以下、アルゴリズムについて掲載します。
 H-waveのRPAモードでは以下のHamiltonianを取り扱います。
@@ -46,18 +46,18 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
       c_{{\bf k}',\beta}^{\mathstrut}
     \end{aligned}
 
-として求められます。さて、RPA近似では :math:`{\cal H}_0` に対して、電子相関効果による密度揺らぎを検出します。
-そのため、相互作用による散乱は :math:`{\cal H}_0` が対角化された空間で行う必要があるので、相互作用の項は以下のように近似されます。
+RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密度揺らぎの効果を考慮します。
+具体的には、 :math:`{\cal H}_0` が対角化されるような軌道・スピンの混成基底を用いて、相互作用の項を以下のように近似します。
 
 .. math::
     \begin{aligned}
     &W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
     c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
     &\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
-    u_{\alpha \gamma, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma}^{\dagger}
-    u_{\alpha' \gamma, \bf{k}} d_{\bf{k},\gamma}^{\mathstrut}
-    u_{\beta' \gamma', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma'}^{\dagger}
-    u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}.
+    (u_{\alpha \gamma, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma}^{\dagger}
+    u_{\alpha' \gamma, \bf{k}} d_{\bf{k},\gamma}^{\mathstrut})
+    (u_{\beta' \gamma', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma'}^{\dagger}
+    u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}) .
     \end{aligned}
 
 ここで、
@@ -106,7 +106,7 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
     \end{aligned}
 
     
-上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられます。サイズが大きくなると当然メモリコスト、計算量も増大します。さて、H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
+上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
 
 .. math::
     \begin{aligned}
