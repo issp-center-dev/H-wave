@@ -901,7 +901,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         solver = RPA(ham_info, info_log, info_mode)
 
         green_info = read_io.get_param("green")
-        green_info.update( solver.read_init(info_input_file) )
+        green_info.update( solver.read_init(info_inputfile) )
 
         logger.info("Start RPA calculation")
         solver.solve(green_info, path_to_output)
