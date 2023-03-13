@@ -911,60 +911,6 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
         logger.info("all done.")
 
-    elif mode == "RPAtest":
-        logger.info("RPA test mode")
-
-        beta = 10.0
-        mu = 0.0
-
-        nx = 2**5
-        ny = 2**5
-        nz = 1
-
-        kx_array = np.linspace(0, 2*np.pi, nx, endpoint=False)
-        ky_array = np.linspace(0, 2*np.pi, ny, endpoint=False)
-        kz_array = np.linspace(0, 2*np.pi, nz, endpoint=False)
-
-        t = 1.0
-        t1 = 0.5
-
-        eps_k = np.zeros((nx,ny,nz), dtype=complex)
-        for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
-            kx=kx_array[ix]
-            ky=ky_array[iy]
-            kz=kz_array[iz]
-
-            eps_k[ix,iy,iz] = 2.0 * t * (np.cos(kx)+np.cos(ky)+np.cos(kz)) + 2.0 * t1 * np.cos(kx+ky+kz)
-
-        rpa = RPA({}, info_log, info_mode)
-        x = rpa._calc_chi0q_exact(eps_k, beta, mu)
-
-        with open("test_chi0q_exact.dat", "w") as fw:
-            for iqx in range(nx):
-                for iqy in range(ny):
-                    fw.write("{} {} {}\n".format(kx_array[iqx],ky_array[iqy],x[iqx,iqy,0]))
-
-        # g = rpa._get_green(eps_k, beta, mu)
-
-        # y = rpa._calc_chi0q(g, beta)
-
-        # with open("test_chi0q.dat", "w") as fw:
-        #     for iqx in range(nx):
-        #         for iqy in range(ny):
-        #             fw.write("{} {} {}\n".format(kx_array[iqx],ky_array[iqy],(y[0,:,0,0,0,0].reshape(nx,ny,nz))[iqx,iqy,0].real))
-
-        #---
-        # param_ham = {}
-        # solver = RPA(param_ham, info_log, info_mode)
-
-        # logger.info("Start RPA calculation")
-        # solver.solve(green_info, path_to_output)
-
-        # logger.info("Save calculation results")
-        # solver.save_results(info_outputfile, green_info)
-
-        logger.info("all done.")
-
     else:
         logger.warning("mode is incorrect: mode={}.".format(mode))
         sys.exit(0)
