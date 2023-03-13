@@ -113,7 +113,88 @@ in the matrix form. Then finally it leads to the expression:
      &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
     \end{aligned}
 
+In the above formula, orbitals and spins were treated as unified generalised orbitals.
+Of the arrays needed to perform the calculations,
+the susceptibility ( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)`, X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)`) is the largest multidimensional array,
+given by :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}`, where the memory cost and computational complexity increase as the size increases.
+As explained below, the size of the multidimensional array of susceptibilities can be reduced by separating orbits and spins:
+for the two-body interactions handled in H-wave's RPA mode, separating orbits and spins results in
+
+.. math::
+    \begin{aligned}
+    & W^{\beta\sigma_1\sigma_1',\alpha\sigma\sigma'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha \sigma}^{\dagger}c_{\bf{k},\alpha \sigma'}^{\mathstrut}
+    c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}.
+    \end{aligned}
+
+Since the scattering is on the same diagonalized general orbital,
+the irreducible susceptibility becomes
+
+.. math::
+    \begin{aligned}
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+      -\frac{T}{N_L}
+      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}).
+    \end{aligned}
+
+The array size can be reduced to :math:`N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}`.
+Then susceptibility matrix by RPA is obtained as follows:
+
+.. math::
+    \begin{aligned}
+    X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&=
+    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
+    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
+    \end{aligned}
+
+If :math:`\alpha\sigma\sigma'` is regarded as a single index,
+it can be put into matrix form and, as in the case of generalised orbitals, can be used as a
+
+.. math::
+    \begin{aligned}
+     \hat{X}(q)&=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
+     &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
+    \end{aligned}
+
 It is noted that the vertex correction may be taken into account as a means to consider
 higher order correlations. See, for example, reference [1]_ for the details.
+
+.. note::
+
+   In H-wave, for the accuracy of the RPA approximation,
+   the calculation of the irreducible susceptibility is performed as follows:
+
+   .. math::
+    \begin{aligned}
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+      -\frac{T}{N_L}
+      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
+    \end{aligned}
+
+   In this case, the sum of the diagonalised components is required, which is computationally more expensive.
+   Thus, in many of previous studies, the one body Green's function is calculated as follows:
+
+   .. math::
+    \begin{aligned}
+     G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
+    \end{aligned}
+
+    The irreducible susceptibility is calculated as follows
+
+   .. math::
+    \begin{aligned}
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+      -\frac{T}{N_L}
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
+    \end{aligned}
+
+    Calculations using this method result in poor approximation accuracy in situations where the diagonalization component is mixed.
+    Please check which method is used when comparing with previous studies.
+
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
