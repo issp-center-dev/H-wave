@@ -449,6 +449,11 @@ class RPA:
             self.calc_mu = False
             self.mu_value = self.param_mod.get("mu", None)
 
+        # range of matsubara frequency in matrix calculation and output
+        self.freq_range = self.param_mod.get("matsubara_frequency", "all")
+        self.freq_index = self._find_index_range(self.freq_range)
+        logger.debug("freq_index = {}".format(self.freq_index))
+
         # check parameters
         err = 0
         if self.T < 0.0:
@@ -516,6 +521,7 @@ class RPA:
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
+        logger.info("    freq_range        = {}".format(self.freq_range))
         pass
 
     @do_profile
@@ -528,8 +534,8 @@ class RPA:
             # use chi0q input
             chi0q = green_info["chi0q"]
             if chi0q.shape[0] != self.nmat:
-                logger.info("nmat resized from {} to {}".format(self.nmat, chi0q.shape[0]))
-                self.nmat = chi0q.shape[0]
+                logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+                #self.nmat = chi0q.shape[0]
         else:
             self._calc_epsilon_k(green_info)
 
@@ -541,6 +547,10 @@ class RPA:
             green0 = self._calc_green(beta, mu)
 
             chi0q = self._calc_chi0q(green0, beta)
+
+            # filter by matsubara freq range
+            chi0q = chi0q[self.freq_index]
+            logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
             green_info["chi0q"] = chi0q
 
@@ -558,51 +568,54 @@ class RPA:
         logger.info("Save RPA results")
         path_to_output = info_outputfile["path_to_output"]
 
-        freq_range = info_outputfile.get("matsubara_frequency", "all")
-        freq_index = self._find_index_range(freq_range)
-        logger.debug("freq_index = {}".format(freq_index))
-
         if "chiq" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             np.savez(file_name,
-                     chiq = green_info["chiq"][freq_index],
-                     freq_index = freq_index,
+                     chiq = green_info["chiq"],
+                     freq_index = list(np.array(self.freq_index) - self.nmat//2),
                      )
             logger.info("save_results: save chiq in file {}".format(file_name))
 
         if "chi0q" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
-                     chi0q = green_info["chi0q"][freq_index],
-                     freq_index = freq_index,
+                     chi0q = green_info["chi0q"],
+                     freq_index = list(np.array(self.freq_index) - self.nmat//2),
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
         
         pass
 
     def _find_index_range(self, freq_range):
+        # decode matsubara frequency index list
+        #   1. single index
+        #   2. min, max, step
+        #   3. keyword
+        # note offset Nmat/2  (index range -Nmat/2 .. Nmat/2-1)
+
         nmat = self.nmat
+        offset = nmat//2
 
         if type(freq_range) == int:
             # e.g. freq_range = 0
-            freq_index = [ freq_range ]
+            freq_index = [ freq_range + offset ]
         elif type(freq_range) == list:
             if len(freq_range) == 1:
                 # e.g. freq_range = [index]
-                freq_index = [ i for i in freq_range ]
+                freq_index = [ i + offset for i in freq_range ]
             elif len(freq_range) == 2:
                 # e.g. freq_range = [min,max]
-                freq_index = [ i for i in range(freq_range[0], freq_range[1]+1) ]
+                freq_index = [ i + offset for i in range(freq_range[0], freq_range[1]+1) ]
             elif len(freq_range) >= 3:
                 # e.g. freq_range = [min,max,step]
-                freq_index = [ i for i in range(freq_range[0], freq_range[1]+1, freq_range[2]) ]
+                freq_index = [ i + offset for i in range(freq_range[0], freq_range[1]+1, freq_range[2]) ]
             else:
                 raise ValueError("invalid value for matsubara_frequency")
         elif type(freq_range) == str:
             freq_range = freq_range.lower()
             if freq_range == "all":
                 freq_index = [ i for i in range(nmat) ]
-            elif freq_range == "center":
+            elif freq_range == "center" or freq_range == "zero":
                 freq_index = [ nmat//2 ]
             elif freq_range == "none":
                 freq_index = []
@@ -802,7 +815,8 @@ class RPA:
     @do_profile
     def _solve_rpa(self, chi0q, ham):
         nvol = self.lattice.nvol
-        nmat = self.nmat
+        #nmat = self.nmat
+        nmat = chi0q.shape[0]
         nd = self.nd
         ndx = nd**2  # combined index a = (alpha, alpha')
 
