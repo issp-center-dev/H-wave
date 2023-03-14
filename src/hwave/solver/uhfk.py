@@ -48,6 +48,7 @@ class UHFk(solver_base):
 
     def _init_mode(self, param):
         self.iflag_fock = param.get('flag_fock', True)
+        self.enable_spin_orbital = param.get('enable_spin_orbital', False)
 
     @do_profile
     def _init_param(self):
@@ -151,6 +152,8 @@ class UHFk(solver_base):
         logger.info("    strict_hermite = {}".format(self.strict_hermite))
         logger.info("    hermite_tol    = {}".format(self.hermite_tolerance))
 
+        logger.info("    spin_orbital   = {}".format(self.enable_spin_orbital))
+
     @do_profile
     def _reshape_geometry(self, geom):
         Bx,By,Bz = self.subshape
@@ -176,12 +179,23 @@ class UHFk(solver_base):
         return geom_new
 
     @do_profile
-    def _reshape_interaction(self, ham):
+    def _reshape_interaction(self, ham, enable_spin_orbital):
         Bx,By,Bz = self.subshape
         nx,ny,nz = self.shape
 
-        def _reshape_orbit(a, x):
+        norb_orig = self.param_ham_orig["Geometry"]["norb"]
+
+        def _reshape_orbit_(a, x):
             return a + self.norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+
+        def _reshape_orbit_spin(a, x):
+            a_, s_ = a%norb_orig, a//norb_orig
+            return a_ + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2] + Bz * s_)))
+
+        if enable_spin_orbital:
+            _reshape_orbit = _reshape_orbit_spin
+        else:
+            _reshape_orbit = _reshape_orbit_
 
         def _round(x, n):
             return x % n if x >= 0 else x % -n
@@ -322,20 +336,21 @@ class UHFk(solver_base):
         # reinterpret interaction coefficient on sublattice
         if self.has_sublattice:
             # backup
-            self.param_ham_orig = {}
+            import copy
+            self.param_ham_orig = copy.deepcopy(self.param_ham)
 
+            # replace by sublatticed versions
             for type in self.param_ham.keys():
                 if type in ["Initial"]:
                     pass
                 elif type in ["Geometry"]:
-                    self.param_ham_orig[type] = self.param_ham[type]
                     tbl = self._reshape_geometry(self.param_ham[type])
-                    # replace
+                    self.param_ham[type] = tbl
+                elif type in ["Transfer"]:
+                    tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
                     self.param_ham[type] = tbl
                 else:
-                    self.param_ham_orig[type] = self.param_ham[type]
-                    tbl = self._reshape_interaction(self.param_ham[type])
-                    # replace
+                    tbl = self._reshape_interaction(self.param_ham[type], False)
                     self.param_ham[type] = tbl
 
     def _init_wavevec(self):
@@ -433,15 +448,35 @@ class UHFk(solver_base):
         for k in self.param_ham.keys():
             if k in ["Geometry", "Initial"]:
                 pass
+            elif k == "Transfer":
+                fail = 0
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    # allow spin-orbital interaction, i.e. twice norb
+                    if not all([ 0 <= orbvec[i] < norb*2 for i in range(2) ]):
+                        fail += 1
+                if fail > 0:
+                    logger.error("orbital index check failed for {}.".format(k))
+                    err += 1
+                else:
+                    logger.debug("orbital index check for {} ok.".format(k))
+            elif k == "CoulombIntra":
+                fail = 0
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
+                        fail += 1
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    if not orbvec[0] == orbvec[1]:
+                        fail += 1
+                if fail > 0:
+                    logger.error("orbital index check failed for {}.".format(k))
+                    err += 1
+                else:
+                    logger.debug("orbital index check for {} ok.".format(k))
             else:
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
                     if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
                         fail += 1
-                if k == "CoulombIntra":
-                    for (irvec,orbvec), v in self.param_ham[k].items():
-                        if not orbvec[0] == orbvec[1]:
-                            fail += 1
                 if fail > 0:
                     logger.error("orbital index check failed for {}.".format(k))
                     err += 1
@@ -636,22 +671,37 @@ class UHFk(solver_base):
         norb     = self.norb
         nd       = self.nd
 
-        # data structure of T_ab(r): T(rx,ry,rz,a,b)
-        tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+        if self.enable_spin_orbital == True:
+            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
-        for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-            tab_r[(*irvec, *orbvec)] = v
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec, *orbvec)] = v
 
-        # fourier transform
-        tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
+            # fourier transform
+            tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
 
-        # 2x2 unit matrix to introduce spin index
-        spin = np.eye(2)
+            ham = tab_k
 
-        # T_{a,si,b,sj}(k)
-        ham = np.einsum(
-            'kab, st -> ksatb', tab_k.reshape(nvol,norb,norb), spin
-        ).reshape(nvol,nd,nd)
+        else:
+            # data structure of T_ab(r): T(rx,ry,rz,a,b)
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                if orbvec[0] < norb and orbvec[1] < norb:
+                    tab_r[(*irvec, *orbvec)] = v
+                else:
+                    pass # skip spin dependence
+
+            # fourier transform
+            tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
+
+            # 2x2 unit matrix to introduce spin index
+            spin = np.eye(2)
+
+            # T_{a,si,b,sj}(k)
+            ham = np.einsum(
+                'kab, st -> ksatb', tab_k.reshape(nvol,norb,norb), spin
+            ).reshape(nvol,nd,nd)
 
         # store
         self.ham_trans = ham
