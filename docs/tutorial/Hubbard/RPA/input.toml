@@ -11,6 +11,7 @@
   SubShape = [1,1,1]
   # Ncond = 1024
   filling = 0.5
+  matsubara_frequency = "all"  # default
 
 [file]
 [file.input]
@@ -29,4 +30,4 @@
   path_to_output = "output"
   chiq = "chiq"
   chi0q = "chi0q"
-  matsubara_frequency = "all"  # default
+
