@@ -8,7 +8,15 @@ import itertools
 import copy
 from requests.structures import CaseInsensitiveDict
 
-from .perf import do_profile
+try:
+    from .perf import do_profile
+except ImportError:
+    from functools import wraps
+    def do_profile(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapper
 
 import logging
 logger = logging.getLogger(__name__)
@@ -449,6 +457,11 @@ class RPA:
             self.calc_mu = False
             self.mu_value = self.param_mod.get("mu", None)
 
+        # range of matsubara frequency in matrix calculation and output
+        self.freq_range = self.param_mod.get("matsubara_frequency", "all")
+        self.freq_index = self._find_index_range(self.freq_range)
+        logger.debug("freq_index = {}".format(self.freq_index))
+
         # check parameters
         err = 0
         if self.T < 0.0:
@@ -516,6 +529,7 @@ class RPA:
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
+        logger.info("    freq_range        = {}".format(self.freq_range))
         pass
 
     @do_profile
@@ -528,8 +542,8 @@ class RPA:
             # use chi0q input
             chi0q = green_info["chi0q"]
             if chi0q.shape[0] != self.nmat:
-                logger.info("nmat resized from {} to {}".format(self.nmat, chi0q.shape[0]))
-                self.nmat = chi0q.shape[0]
+                logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+                #self.nmat = chi0q.shape[0]
         else:
             self._calc_epsilon_k(green_info)
 
@@ -541,6 +555,10 @@ class RPA:
             green0 = self._calc_green(beta, mu)
 
             chi0q = self._calc_chi0q(green0, beta)
+
+            # filter by matsubara freq range
+            chi0q = chi0q[self.freq_index]
+            logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
             green_info["chi0q"] = chi0q
 
@@ -558,29 +576,32 @@ class RPA:
         logger.info("Save RPA results")
         path_to_output = info_outputfile["path_to_output"]
 
-        freq_range = info_outputfile.get("matsubara_frequency", "all")
-        freq_index = self._find_index_range(freq_range)
-        logger.debug("freq_index = {}".format(freq_index))
-
         if "chiq" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             np.savez(file_name,
-                     chiq = green_info["chiq"][freq_index],
-                     freq_index = freq_index,
+                     chiq = green_info["chiq"],
+                     freq_index = self.freq_index,
                      )
             logger.info("save_results: save chiq in file {}".format(file_name))
 
         if "chi0q" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
-                     chi0q = green_info["chi0q"][freq_index],
-                     freq_index = freq_index,
+                     chi0q = green_info["chi0q"],
+                     freq_index = self.freq_index,
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
         
         pass
 
     def _find_index_range(self, freq_range):
+        # decode matsubara frequency index list
+        #   1. single index
+        #   2. min, max, step
+        #   3. keyword
+        # note index n in [0 .. Nmat-1] corresponds to
+        #   w_n = (2*n-Nmat) * pi / beta
+
         nmat = self.nmat
 
         if type(freq_range) == int:
@@ -602,7 +623,7 @@ class RPA:
             freq_range = freq_range.lower()
             if freq_range == "all":
                 freq_index = [ i for i in range(nmat) ]
-            elif freq_range == "center":
+            elif freq_range == "center" or freq_range == "zero":
                 freq_index = [ nmat//2 ]
             elif freq_range == "none":
                 freq_index = []
@@ -802,7 +823,8 @@ class RPA:
     @do_profile
     def _solve_rpa(self, chi0q, ham):
         nvol = self.lattice.nvol
-        nmat = self.nmat
+        #nmat = self.nmat
+        nmat = chi0q.shape[0]
         nd = self.nd
         ndx = nd**2  # combined index a = (alpha, alpha')
 
@@ -901,67 +923,13 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         solver = RPA(ham_info, info_log, info_mode)
 
         green_info = read_io.get_param("green")
-        green_info.update( solver.read_init(info_input_file) )
+        green_info.update( solver.read_init(info_inputfile) )
 
         logger.info("Start RPA calculation")
         solver.solve(green_info, path_to_output)
 
         logger.info("Save calculation results")
         solver.save_results(info_outputfile, green_info)
-
-        logger.info("all done.")
-
-    elif mode == "RPAtest":
-        logger.info("RPA test mode")
-
-        beta = 10.0
-        mu = 0.0
-
-        nx = 2**5
-        ny = 2**5
-        nz = 1
-
-        kx_array = np.linspace(0, 2*np.pi, nx, endpoint=False)
-        ky_array = np.linspace(0, 2*np.pi, ny, endpoint=False)
-        kz_array = np.linspace(0, 2*np.pi, nz, endpoint=False)
-
-        t = 1.0
-        t1 = 0.5
-
-        eps_k = np.zeros((nx,ny,nz), dtype=complex)
-        for ix,iy,iz in itertools.product(range(nx),range(ny),range(nz)):
-            kx=kx_array[ix]
-            ky=ky_array[iy]
-            kz=kz_array[iz]
-
-            eps_k[ix,iy,iz] = 2.0 * t * (np.cos(kx)+np.cos(ky)+np.cos(kz)) + 2.0 * t1 * np.cos(kx+ky+kz)
-
-        rpa = RPA({}, info_log, info_mode)
-        x = rpa._calc_chi0q_exact(eps_k, beta, mu)
-
-        with open("test_chi0q_exact.dat", "w") as fw:
-            for iqx in range(nx):
-                for iqy in range(ny):
-                    fw.write("{} {} {}\n".format(kx_array[iqx],ky_array[iqy],x[iqx,iqy,0]))
-
-        # g = rpa._get_green(eps_k, beta, mu)
-
-        # y = rpa._calc_chi0q(g, beta)
-
-        # with open("test_chi0q.dat", "w") as fw:
-        #     for iqx in range(nx):
-        #         for iqy in range(ny):
-        #             fw.write("{} {} {}\n".format(kx_array[iqx],ky_array[iqy],(y[0,:,0,0,0,0].reshape(nx,ny,nz))[iqx,iqy,0].real))
-
-        #---
-        # param_ham = {}
-        # solver = RPA(param_ham, info_log, info_mode)
-
-        # logger.info("Start RPA calculation")
-        # solver.solve(green_info, path_to_output)
-
-        # logger.info("Save calculation results")
-        # solver.save_results(info_outputfile, green_info)
 
         logger.info("all done.")
 
