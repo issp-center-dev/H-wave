@@ -122,7 +122,26 @@ Parameters
 
   **Description :**
   This parameter specifies the cut-off of Matsubara frequency.
-  It must be greater than zero.
+  It must be greater than zero. Matsubara frequency is defined as follows:
+
+      - Boson： :math:`\omega_n = \frac{2\pi (n-\verb|Nmat|/2)}{\beta}`
+      - Fermion： :math:`\omega_n = \frac{\pi (2n+1-\verb|Nmat|)}{\beta}`
+
+- ``matsubara_frequency``
+
+  **Type :**
+  Integer, List of Integers, or String (default value is ``"all"``)
+
+  **Description :**
+  This parameter specifies the range of Matsubara frequency that the susceptibility matrices :math:`\chi(\vec{q})` and :math:`\chi_0(\vec{q})` will be stored at.
+  The value must be one of the following:
+
+    - *an integer value* : a single index value.
+    - ``[`` *min*, *max* (, *step*) ``]`` : every *step* index from *min* to *max*. If *step* is omitted, it is assumed to be 1.
+    - all : all indices
+    - center : corresponds to ``Nmat/2``.
+    - none : nothing will be stored.
+
 
 - ``RndSeed``
 
@@ -257,18 +276,3 @@ to the definition files.
   This parameter specifies the name of the file to store the susceptibility matrix
   :math:`\chi(\vec{q})`.
   If it is not set, no output will be generated.
-
-- ``matsubara_frequency``
-
-  **Type :**
-  Integer, List of Integers, or String (default value is ``"all"``)
-
-  **Description :**
-  This parameter specifies the range of Matsubara frequency that the susceptibility matrices :math:`\chi(\vec{q})` and :math:`\chi_0(\vec{q})` will be stored at.
-  The value must be one of the following:
-
-    - *an integer value* : a single index value.
-    - ``[`` *min*, *max* (, *step*) ``]`` : every *step* index from *min* to *max*. If *step* is omitted, it is assumed to be 1.
-    - all : all indices
-    - center : corresponds to ``Nmat/2``.
-    - none : nothing will be stored.
