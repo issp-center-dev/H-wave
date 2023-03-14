@@ -572,7 +572,7 @@ class RPA:
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             np.savez(file_name,
                      chiq = green_info["chiq"],
-                     freq_index = list(np.array(self.freq_index) - self.nmat//2),
+                     freq_index = self.freq_index,
                      )
             logger.info("save_results: save chiq in file {}".format(file_name))
 
@@ -580,7 +580,7 @@ class RPA:
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
                      chi0q = green_info["chi0q"],
-                     freq_index = list(np.array(self.freq_index) - self.nmat//2),
+                     freq_index = self.freq_index,
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
         
@@ -591,24 +591,24 @@ class RPA:
         #   1. single index
         #   2. min, max, step
         #   3. keyword
-        # note offset Nmat/2  (index range -Nmat/2 .. Nmat/2-1)
+        # note index n in [0 .. Nmat-1] corresponds to
+        #   w_n = (2*n-Nmat) * pi / beta
 
         nmat = self.nmat
-        offset = nmat//2
 
         if type(freq_range) == int:
             # e.g. freq_range = 0
-            freq_index = [ freq_range + offset ]
+            freq_index = [ freq_range ]
         elif type(freq_range) == list:
             if len(freq_range) == 1:
                 # e.g. freq_range = [index]
-                freq_index = [ i + offset for i in freq_range ]
+                freq_index = [ i for i in freq_range ]
             elif len(freq_range) == 2:
                 # e.g. freq_range = [min,max]
-                freq_index = [ i + offset for i in range(freq_range[0], freq_range[1]+1) ]
+                freq_index = [ i for i in range(freq_range[0], freq_range[1]+1) ]
             elif len(freq_range) >= 3:
                 # e.g. freq_range = [min,max,step]
-                freq_index = [ i + offset for i in range(freq_range[0], freq_range[1]+1, freq_range[2]) ]
+                freq_index = [ i for i in range(freq_range[0], freq_range[1]+1, freq_range[2]) ]
             else:
                 raise ValueError("invalid value for matsubara_frequency")
         elif type(freq_range) == str:
