@@ -8,7 +8,15 @@ import itertools
 import copy
 from requests.structures import CaseInsensitiveDict
 
-from .perf import do_profile
+try:
+    from .perf import do_profile
+except ImportError:
+    from functools import wraps
+    def do_profile(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapper
 
 import logging
 logger = logging.getLogger(__name__)
