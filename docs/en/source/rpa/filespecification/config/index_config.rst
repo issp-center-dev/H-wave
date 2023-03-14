@@ -124,8 +124,8 @@ Parameters
   This parameter specifies the cut-off of Matsubara frequency.
   It must be greater than zero. Matsubara frequency is defined as follows:
 
-      - Boson： :math:`\omega_n = \frac{2\pi (n-\verb|Nmat|/2)}{\beta}`
-      - Fermion： :math:`\omega_n = \frac{\pi (2n+1-\verb|Nmat|)}{\beta}`
+    - Boson: :math:`\omega_n = \dfrac{2\pi (n-\texttt{Nmat}/2)}{\beta}`
+    - Fermion: :math:`\omega_n = \dfrac{\pi (2n+1-\texttt{Nmat})}{\beta}`
 
 - ``matsubara_frequency``
 

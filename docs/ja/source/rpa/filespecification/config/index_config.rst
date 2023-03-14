@@ -98,8 +98,8 @@ TOML形式
 
   **説明 :** 松原振動数のカットオフを指定します。1以上の値を指定してください。松原振動数の定義は以下の通りです。
 
-      - Bosonの場合： :math:`\omega_n = \frac{2\pi (n-\verb|Nmat|/2)}{\beta}`
-      - Fermionの場合： :math:`\omega_n = \frac{\pi (2n+1-\verb|Nmat|)}{\beta}`
+      - Bosonの場合: :math:`\omega_n = \dfrac{2\pi (n-\texttt{Nmat}/2)}{\beta}`
+      - Fermionの場合: :math:`\omega_n = \dfrac{\pi (2n+1-\texttt{Nmat})}{\beta}`
 
 - ``matsubara_frequency``
 
