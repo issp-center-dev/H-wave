@@ -3,6 +3,7 @@
 
 [mode]
   mode = "RPA"
+  # enable_spin_orbital = false
 
 [mode.param]
   T = 0.5

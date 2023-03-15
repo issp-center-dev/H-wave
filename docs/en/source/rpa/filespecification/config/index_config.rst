@@ -142,14 +142,16 @@ Parameters
   Integer, List of Integers, or String (default value is ``"all"``)
 
   **Description :**
-  This parameter specifies the range of Matsubara frequency that the susceptibility matrices :math:`\chi(\vec{q})` and :math:`\chi_0(\vec{q})` will be stored at.
+  This parameter specifies the range of Matsubara frequency for which the susceptibility matrix :math:`\chi(\vec{q})` is calculated.
   The value must be one of the following:
 
     - *an integer value* : a single index value.
     - ``[`` *min*, *max* (, *step*) ``]`` : every *step* index from *min* to *max*. If *step* is omitted, it is assumed to be 1.
     - all : all indices
     - center : corresponds to ``Nmat/2``.
-    - none : nothing will be stored.
+    - none : nothing will be calculated.
+
+  When the susceptibility matrix :math:`\chi(\vec{q})` or the irreducible susceptibility matrix :math:`\chi_0(\vec{q})` are stored to files, the values at the specified freqneucy are exported.
 
 
 - ``RndSeed``

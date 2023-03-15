@@ -128,18 +128,27 @@ class Interaction:
     """
     Construct Hamiltonian from input
     """
-    def __init__(self, lattice, param_ham):
+    def __init__(self, lattice, param_ham, info_mode):
         self.lattice = lattice
         self.param_ham = param_ham
+        self._has_interactoin = False
 
+        # mode options
+        self.enable_spin_orbital = info_mode.get("enable_spin_orbital", False)
+
+        # initialize, and reshape if use sublattice
         self._init_interaction()
 
         self.norb = param_ham["Geometry"]["norb"]
 
+        # create hamiltonian
         self._make_ham_trans()
         self._make_ham_inter()
 
         pass
+
+    def has_interaction(self):
+        return self._has_interactoin
 
     def _init_interaction(self):
         # reinterpret interaction coefficient on sublattice
@@ -154,8 +163,11 @@ class Interaction:
                 elif type in ["Geometry"]:
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
+                elif type in ["Transfer"]:
+                    tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
+                    self.param_ham[type] = tbl
                 else:
-                    tbl = self._reshape_interaction(self.param_ham[type])
+                    tbl = self._reshape_interaction(self.param_ham[type], False)
                     self.param_ham[type] = tbl
         pass
 
@@ -182,14 +194,23 @@ class Interaction:
 
         return geom_new
 
-    def _reshape_interaction(self, ham):
+    def _reshape_interaction(self, ham, enable_spin_orbital):
         Bx,By,Bz = self.lattice.subshape
         nx,ny,nz = self.lattice.shape
 
         norb_orig = self.param_ham_orig["Geometry"]["norb"]
 
-        def _reshape_orbit(a, x):
+        def _reshape_orbit_(a, x):
             return a + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+
+        def _reshape_orbit_spin(a, x):
+            a_, s_ = a%norb_orig, a//norb_orig
+            return a_ + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2] + Bz * s_)))
+
+        if enable_spin_orbital:
+            _reshape_orbit = _reshape_orbit_spin
+        else:
+            _reshape_orbit = _reshape_orbit_
 
         def _round(x, n):
             return x % n if x >= 0 else x % -n
@@ -270,28 +291,45 @@ class Interaction:
             self.ham_trans_q = None
             return
 
-        tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=complex)
+        if self.enable_spin_orbital == True:
+            # assume orbital index includes spin index
+            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=complex)
 
-        for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-            tab_r[(*irvec,*orbvec)] = v
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec,*orbvec)] = v
 
-        # Fourier transform
-        tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
+            # Fourier transform
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
-        # 2x2 unit matrix for spin dof
-        spin = np.eye(2)
+            ham_r = tab_r
+            ham_q = tab_q
 
-        # T_{a,s,b,t}(r)
-        ham_r = np.einsum('rab,st->rsatb',
-                          tab_r.reshape(nvol,norb,norb),
-                          spin
-                          ).reshape(nx,ny,nz,nd,nd)
+        else:
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=complex)
 
-        # T_{a,s,b,t}(k)
-        ham_q = np.einsum('kab,st->ksatb',
-                          tab_q.reshape(nvol,norb,norb),
-                          spin
-                          ).reshape(nx,ny,nz,nd,nd)
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                if orbvec[0] < norb and orbvec[1] < norb:
+                    tab_r[(*irvec,*orbvec)] = v
+                else:
+                    pass  # skip spin dependence
+
+            # Fourier transform
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
+
+            # 2x2 unit matrix for spin dof
+            spin = np.eye(2)
+
+            # T_{a,s,b,t}(r)
+            ham_r = np.einsum('rab,st->rsatb',
+                              tab_r.reshape(nvol,norb,norb),
+                              spin
+            ).reshape(nx,ny,nz,nd,nd)
+
+            # T_{a,s,b,t}(k)
+            ham_q = np.einsum('kab,st->ksatb',
+                              tab_q.reshape(nvol,norb,norb),
+                              spin
+            ).reshape(nx,ny,nz,nd,nd)
 
         logger.debug("ham_trans_r shape={}, size={}".format(ham_r.shape, ham_r.size))
         logger.debug("ham_trans_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
@@ -357,24 +395,31 @@ class Interaction:
 
         if 'CoulombIntra' in self.param_ham.keys():
             _append_inter('CoulombIntra')
+            self._has_interactoin = True
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
+            self._has_interactoin = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
+            self._has_interactoin = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
+            self._has_interactoin = True
 
         if 'PairLift' in self.param_ham.keys():
             _append_inter('PairLift')
+            self._has_interactoin = True
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
+            self._has_interactoin = True
 
         if 'PairHop' in self.param_ham.keys():
             _append_pairhop('PairHop')
+            self._has_interactoin = True
 
         # reshape to W(r)^{bb'aa'}, a,b=(spin,alpha)
         ham_r = ham_r.reshape(nx,ny,nz,*(nd,)*4)
@@ -402,7 +447,9 @@ class RPA:
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
 
         self.lattice = Lattice(self.param_mod)
-        self.ham_info = Interaction(self.lattice, param_ham)
+        self.ham_info = Interaction(self.lattice, param_ham, info_mode)
+
+        self.calc_chiq = self.ham_info.has_interaction()
 
         self._init_param()
         self._show_params()
@@ -531,7 +578,8 @@ class RPA:
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
-        logger.info("    freq_range        = {}".format(self.freq_range))
+        logger.info("    freq_range      = {}".format(self.freq_range))
+        logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         pass
 
     @do_profile
@@ -559,16 +607,18 @@ class RPA:
             chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
             # filter by matsubara freq range
-            chi0q = chi0q[self.freq_index]
-            logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+            if len(self.freq_index) < self.nmat:
+                chi0q = chi0q[self.freq_index]
+                logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
             green_info["chi0q"] = chi0q
 
-        # solve
-        sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
+        if self.calc_chiq:
+            # solve
+            sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
 
-        # adhoc store
-        green_info["chiq"] = sol
+            # adhoc store
+            green_info["chiq"] = sol
 
         logger.info("End RPA calculations")
         pass
@@ -579,12 +629,15 @@ class RPA:
         path_to_output = info_outputfile["path_to_output"]
 
         if "chiq" in info_outputfile.keys():
-            file_name = os.path.join(path_to_output, info_outputfile["chiq"])
-            np.savez(file_name,
-                     chiq = green_info["chiq"],
-                     freq_index = self.freq_index,
-                     )
-            logger.info("save_results: save chiq in file {}".format(file_name))
+            if self.calc_chiq == True:
+                file_name = os.path.join(path_to_output, info_outputfile["chiq"])
+                np.savez(file_name,
+                         chiq = green_info["chiq"],
+                         freq_index = self.freq_index,
+                )
+                logger.info("save_results: save chiq in file {}".format(file_name))
+            else:
+                logger.info("save_results: chiq not calculated. skip")
 
         if "chi0q" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
