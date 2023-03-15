@@ -124,8 +124,17 @@ Parameters
   This parameter specifies the cut-off of Matsubara frequency.
   It must be greater than zero. Matsubara frequency is defined as follows:
 
-    - Boson: :math:`\omega_n = \dfrac{2\pi (n-\texttt{Nmat}/2)}{\beta}`
-    - Fermion: :math:`\omega_n = \dfrac{\pi (2n+1-\texttt{Nmat})}{\beta}`
+      - Boson: :math:`\omega_n = \dfrac{2\pi (n-\texttt{Nmat}/2)}{\beta}`
+      - Fermion: :math:`\omega_n = \dfrac{\pi (2n+1-\texttt{Nmat})}{\beta}`
+
+- ``coeff_tail``
+
+  **Type :**
+  Float (default value is 0.0)
+
+  **Description :**
+  This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
+  After Fourier transforming the diagonalized one-body Green function to the imaginary time representation by subtracting :math:`\texttt{coeff\_tail}/(i \omega_n)`, the term :math:`-\beta/2\cdot\texttt{coeff\_tail}` is added to the one-body Green function.
 
 - ``matsubara_frequency``
 

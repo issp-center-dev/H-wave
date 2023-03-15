@@ -467,6 +467,7 @@ class RPA:
         self.norb = self.param_ham["geometry"]["norb"]
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
+        self.coeff_tail = self.param_mod.get("coeff_tail", 0.0)
 
         # exclusive options: mu and Ncond/filling
         have_mu = "mu" in self.param_mod.keys()
@@ -563,6 +564,7 @@ class RPA:
         logger.info("    nspin           = {}".format(self.ns))
         logger.info("    nd              = {}".format(self.nd))
         logger.info("    Nmat            = {}".format(self.nmat))
+        logger.info("    coeff_tail      = {}".format(self.coeff_tail))
 
         if self.calc_mu == True:
             logger.info("    Ncond           = {}".format(self.Ncond))
@@ -600,9 +602,9 @@ class RPA:
             else:
                 mu = self.mu_value
 
-            green0 = self._calc_green(beta, mu)
+            green0, green0_tail = self._calc_green(beta, mu)
 
-            chi0q = self._calc_chi0q(green0, beta)
+            chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
             # filter by matsubara freq range
             if len(self.freq_index) < self.nmat:
@@ -817,15 +819,14 @@ class RPA:
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
         # 1 / (iw_{n} - (e_i(k) - mu)) -> g[n,k,i]
-        g = 1.0 / (np.tile(1j * iomega, (nd,nvol,1)).T - np.tile((ew - mu), (nmat,1,1)))
-
+        g = 1.0 / (np.tile(1j * iomega, (nd,nvol,1)).T - np.tile((ew - mu), (nmat,1,1))) - self.coeff_tail / np.tile(1j * iomega, (nd,nvol,1)).T
         # G_ab^j(k,iw_n) = d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
         green = np.einsum('kaj,kbj,lkj->jlkab', ev, np.conj(ev), g)
-
-        return green
+        green_tail = np.einsum('kaj,kbj,l->jlkab', ev, np.conj(ev), np.ones(nmat))*self.coeff_tail*0.5*beta
+        return green, green_tail
 
     @do_profile
-    def _calc_chi0q(self, green_kw, beta):
+    def _calc_chi0q(self, green_kw, green0_tail, beta):
         # green function
         #   green_kw[j,l,k,a,b]: G_ab^j(k,ie)
         #     l : matsubara freq i\epsilon_l = i\pi(2*l+1-N)/\beta for l=0..N-1
@@ -840,15 +841,16 @@ class RPA:
         nd = self.nd
         nmat = self.nmat
 
-        # Fourier transform from wave number space to coordinate space
-        green_rw = FFT.ifftn(green_kw.reshape(nd,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
-
         # Fourier transform from matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
-        green_rt = np.einsum('jtv,t->jtv',
-                             FFT.fft(green_rw.reshape(nd,nmat,nvol*nd*nd), axis=1),
+        green_kt = np.einsum('jtv,t->jtv',
+                             FFT.fft(green_kw.reshape(nd,nmat,nvol*nd*nd), axis=1),
                              omg).reshape(nd,nmat,nx,ny,nz,nd,nd)
+        green_kt -= green0_tail.reshape(nd,nmat,nx,ny,nz,nd,nd)
+
+        # Fourier transform from wave number space to coordinate space
+        green_rt = FFT.ifftn(green_kt.reshape(nd,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
 
         # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
         green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nd,nmat,nvol,nd,nd)
