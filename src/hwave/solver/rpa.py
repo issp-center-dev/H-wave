@@ -128,15 +128,20 @@ class Interaction:
     """
     Construct Hamiltonian from input
     """
-    def __init__(self, lattice, param_ham):
+    def __init__(self, lattice, param_ham, info_mode):
         self.lattice = lattice
         self.param_ham = param_ham
         self._has_interactoin = False
 
+        # mode options
+        self.enable_spin_orbital = info_mode.get("enable_spin_orbital", False)
+
+        # initialize, and reshape if use sublattice
         self._init_interaction()
 
         self.norb = param_ham["Geometry"]["norb"]
 
+        # create hamiltonian
         self._make_ham_trans()
         self._make_ham_inter()
 
@@ -158,8 +163,11 @@ class Interaction:
                 elif type in ["Geometry"]:
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
+                elif type in ["Transfer"]:
+                    tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
+                    self.param_ham[type] = tbl
                 else:
-                    tbl = self._reshape_interaction(self.param_ham[type])
+                    tbl = self._reshape_interaction(self.param_ham[type], False)
                     self.param_ham[type] = tbl
         pass
 
@@ -186,14 +194,23 @@ class Interaction:
 
         return geom_new
 
-    def _reshape_interaction(self, ham):
+    def _reshape_interaction(self, ham, enable_spin_orbital):
         Bx,By,Bz = self.lattice.subshape
         nx,ny,nz = self.lattice.shape
 
         norb_orig = self.param_ham_orig["Geometry"]["norb"]
 
-        def _reshape_orbit(a, x):
+        def _reshape_orbit_(a, x):
             return a + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+
+        def _reshape_orbit_spin(a, x):
+            a_, s_ = a%norb_orig, a//norb_orig
+            return a_ + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2] + Bz * s_)))
+
+        if enable_spin_orbital:
+            _reshape_orbit = _reshape_orbit_spin
+        else:
+            _reshape_orbit = _reshape_orbit_
 
         def _round(x, n):
             return x % n if x >= 0 else x % -n
@@ -274,28 +291,45 @@ class Interaction:
             self.ham_trans_q = None
             return
 
-        tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=complex)
+        if self.enable_spin_orbital == True:
+            # assume orbital index includes spin index
+            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=complex)
 
-        for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-            tab_r[(*irvec,*orbvec)] = v
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec,*orbvec)] = v
 
-        # Fourier transform
-        tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
+            # Fourier transform
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
-        # 2x2 unit matrix for spin dof
-        spin = np.eye(2)
+            ham_r = tab_r
+            ham_q = tab_q
 
-        # T_{a,s,b,t}(r)
-        ham_r = np.einsum('rab,st->rsatb',
-                          tab_r.reshape(nvol,norb,norb),
-                          spin
-                          ).reshape(nx,ny,nz,nd,nd)
+        else:
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=complex)
 
-        # T_{a,s,b,t}(k)
-        ham_q = np.einsum('kab,st->ksatb',
-                          tab_q.reshape(nvol,norb,norb),
-                          spin
-                          ).reshape(nx,ny,nz,nd,nd)
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                if orbvec[0] < norb and orbvec[1] < norb:
+                    tab_r[(*irvec,*orbvec)] = v
+                else:
+                    pass  # skip spin dependence
+
+            # Fourier transform
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
+
+            # 2x2 unit matrix for spin dof
+            spin = np.eye(2)
+
+            # T_{a,s,b,t}(r)
+            ham_r = np.einsum('rab,st->rsatb',
+                              tab_r.reshape(nvol,norb,norb),
+                              spin
+            ).reshape(nx,ny,nz,nd,nd)
+
+            # T_{a,s,b,t}(k)
+            ham_q = np.einsum('kab,st->ksatb',
+                              tab_q.reshape(nvol,norb,norb),
+                              spin
+            ).reshape(nx,ny,nz,nd,nd)
 
         logger.debug("ham_trans_r shape={}, size={}".format(ham_r.shape, ham_r.size))
         logger.debug("ham_trans_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
@@ -413,7 +447,7 @@ class RPA:
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
 
         self.lattice = Lattice(self.param_mod)
-        self.ham_info = Interaction(self.lattice, param_ham)
+        self.ham_info = Interaction(self.lattice, param_ham, info_mode)
 
         self.calc_chiq = self.ham_info.has_interaction()
 
