@@ -101,6 +101,14 @@ TOML形式
       - Bosonの場合： :math:`\omega_n = \frac{2\pi (n-\verb|Nmat|/2)}{\beta}`
       - Fermionの場合： :math:`\omega_n = \frac{\pi (2n+1-\verb|Nmat|)}{\beta}`
 
+- ``coeff_tail``
+
+  **形式 :** float型 (デフォルトは0.0)
+
+  **説明 :** フーリエ変換の尾部の補正を行う際の、補正の大きさを指定します。
+　　　対角化された一体Green関数に対して :math:` \verb|coeff_tail| /(i \omega_n)` を引き虚時間表示にフーリエ変換した後、:math:` \beta 0.5 \verb|coeff_tail|` を付与します。
+
+
 - ``matsubara_frequency``
 
   **形式 :** int型, list型, または str型 (デフォルトは ``"all"``)

@@ -127,6 +127,15 @@ Parameters
       - Boson： :math:`\omega_n = \frac{2\pi (n-\verb|Nmat|/2)}{\beta}`
       - Fermion： :math:`\omega_n = \frac{\pi (2n+1-\verb|Nmat|)}{\beta}`
 
+- ``coeff_tail``
+
+  **Type :**
+  Float (default value is 0.0)
+
+  **Description :**
+  This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
+  After Fourier transforming the diagonalised one-body Green function to the imaginary time representation by subtracting :math:` \verb|coeff_tail| /(i \omega_n)`, the term :math:` \beta 0.5 \verb|coeff_tail|` is added to the one-body Green function.
+
 - ``matsubara_frequency``
 
   **Type :**
