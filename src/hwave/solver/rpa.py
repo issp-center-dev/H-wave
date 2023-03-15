@@ -766,8 +766,8 @@ class RPA:
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
         # 1 / (iw_{n} - (e_i(k) - mu)) -> g[n,k,i]
-        #g = 1.0 / (np.tile(1j * iomega, (nd,nvol,1)).T - np.tile((ew - mu), (nmat,1,1))) - np.tile(self.coeff_tail/(1j * iomega), (nd,nvol,1)).T
-        g = 1.0 / (np.tile(1j * iomega, (nd, nvol, 1)).T - np.tile((ew - mu), (nmat, 1, 1)))
+        g = 1.0 / (np.tile(1j * iomega, (nd,nvol,1)).T - np.tile((ew - mu), (nmat,1,1))) - self.coeff_tail / np.tile((1j * iomega), (nd,nvol,1)).T
+        #g = 1.0 / (np.tile(1j * iomega, (nd, nvol, 1)).T - np.tile((ew - mu), (nmat, 1, 1)))
         # G_ab^j(k,iw_n) = d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
         green = np.einsum('kaj,kbj,lkj->jlkab', ev, np.conj(ev), g)
         green_tail = np.einsum('kaj,kbj,l->jlkab', ev, np.conj(ev), np.ones(nmat))*self.coeff_tail*0.5
@@ -789,33 +789,33 @@ class RPA:
         nd = self.nd
         nmat = self.nmat
 
-        # # Fourier transform from matsubara freq to imaginary time
-        # omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
-        #
-        # green_kt = np.einsum('jtv,t->jtv',
-        #                      FFT.fft(green_kw.reshape(nd,nmat,nvol*nd*nd), axis=1),
-        #                      omg).reshape(nd,nmat,nx,ny,nz,nd,nd)
-        # #green_kt -= green0_tail.reshape(nd,nmat,nx,ny,nz,nd,nd)
-        #
-        # # Fourier transform from wave number space to coordinate space
-        # green_rt = FFT.ifftn(green_kt.reshape(nd,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
-        #
-        # # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
-        # green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nd,nmat,nvol,nd,nd)
+        # Fourier transform from matsubara freq to imaginary time
+        omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
+
+        green_kt = np.einsum('jtv,t->jtv',
+                             FFT.fft(green_kw.reshape(nd,nmat,nvol*nd*nd), axis=1),
+                             omg).reshape(nd,nmat,nx,ny,nz,nd,nd)
+        green_kt -= green0_tail.reshape(nd,nmat,nx,ny,nz,nd,nd)
 
         # Fourier transform from wave number space to coordinate space
-        green_rw = FFT.ifftn(green_kw.reshape(nd, nmat, nx, ny, nz, nd * nd), axes=(2, 3, 4))
-
-        # Fourier transform from matsubara freq to imaginary time
-        omg = np.exp(-1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
-
-        green_rt = np.einsum('jtv,t->jtv',
-                             FFT.fft(green_rw.reshape(nd, nmat, nvol * nd * nd), axis=1),
-                             omg).reshape(nd, nmat, nx, ny, nz, nd, nd)
+        green_rt = FFT.ifftn(green_kt.reshape(nd,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
 
         # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
-        green_rev = np.flip(np.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nd, nmat, nvol, nd, nd)
-        #green_kt -= green0_tail.reshape(nd,nmat,nx,ny,nz,nd,nd)
+        green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nd,nmat,nvol,nd,nd)
+
+        # # Fourier transform from wave number space to coordinate space
+        # green_rw = FFT.ifftn(green_kw.reshape(nd, nmat, nx, ny, nz, nd * nd), axes=(2, 3, 4))
+        #
+        # # Fourier transform from matsubara freq to imaginary time
+        # omg = np.exp(-1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
+        #
+        # green_rt = np.einsum('jtv,t->jtv',
+        #                      FFT.fft(green_rw.reshape(nd, nmat, nvol * nd * nd), axis=1),
+        #                      omg).reshape(nd, nmat, nx, ny, nz, nd, nd)
+        #
+        # # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
+        # green_rev = np.flip(np.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nd, nmat, nvol, nd, nd)
+        # #green_kt -= green0_tail.reshape(nd,nmat,nx,ny,nz,nd,nd)
 
         sgn = np.full(nmat, -1)
         sgn[0] = 1
