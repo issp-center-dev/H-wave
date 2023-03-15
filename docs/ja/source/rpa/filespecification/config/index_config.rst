@@ -98,16 +98,15 @@ TOML形式
 
   **説明 :** 松原振動数のカットオフを指定します。1以上の値を指定してください。松原振動数の定義は以下の通りです。
 
-      - Bosonの場合： :math:`\omega_n = \frac{2\pi (n-\verb|Nmat|/2)}{\beta}`
-      - Fermionの場合： :math:`\omega_n = \frac{\pi (2n+1-\verb|Nmat|)}{\beta}`
+      - Bosonの場合: :math:`\omega_n = \frac{2\pi (n-\texttt{Nmat}/2)}{\beta}`
+      - Fermionの場合: :math:`\omega_n = \frac{\pi (2n+1-\texttt{Nmat})}{\beta}`
 
 - ``coeff_tail``
 
   **形式 :** float型 (デフォルトは0.0)
 
   **説明 :** フーリエ変換の尾部の補正を行う際の、補正の大きさを指定します。
-　　　対角化された一体Green関数に対して :math:` \verb|coeff_tail| /(i \omega_n)` を引き虚時間表示にフーリエ変換した後、:math:` \beta 0.5 \verb|coeff_tail|` を付与します。
-
+  対角化された一体Green関数に対して :math:`\texttt{coeff\_tail}/(i \omega_n)` を引き虚時間表示にフーリエ変換した後、:math:`-\beta/2\cdot\texttt{coeff\_tail}` を付加します。
 
 - ``matsubara_frequency``
 
