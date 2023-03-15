@@ -131,6 +131,7 @@ class Interaction:
     def __init__(self, lattice, param_ham):
         self.lattice = lattice
         self.param_ham = param_ham
+        self._has_interactoin = False
 
         self._init_interaction()
 
@@ -140,6 +141,9 @@ class Interaction:
         self._make_ham_inter()
 
         pass
+
+    def has_interaction(self):
+        return self._has_interactoin
 
     def _init_interaction(self):
         # reinterpret interaction coefficient on sublattice
@@ -357,24 +361,31 @@ class Interaction:
 
         if 'CoulombIntra' in self.param_ham.keys():
             _append_inter('CoulombIntra')
+            self._has_interactoin = True
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
+            self._has_interactoin = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
+            self._has_interactoin = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
+            self._has_interactoin = True
 
         if 'PairLift' in self.param_ham.keys():
             _append_inter('PairLift')
+            self._has_interactoin = True
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
+            self._has_interactoin = True
 
         if 'PairHop' in self.param_ham.keys():
             _append_pairhop('PairHop')
+            self._has_interactoin = True
 
         # reshape to W(r)^{bb'aa'}, a,b=(spin,alpha)
         ham_r = ham_r.reshape(nx,ny,nz,*(nd,)*4)
@@ -403,6 +414,8 @@ class RPA:
 
         self.lattice = Lattice(self.param_mod)
         self.ham_info = Interaction(self.lattice, param_ham)
+
+        self.calc_chiq = self.ham_info.has_interaction()
 
         self._init_param()
         self._show_params()
@@ -529,7 +542,8 @@ class RPA:
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
-        logger.info("    freq_range        = {}".format(self.freq_range))
+        logger.info("    freq_range      = {}".format(self.freq_range))
+        logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         pass
 
     @do_profile
@@ -557,16 +571,18 @@ class RPA:
             chi0q = self._calc_chi0q(green0, beta)
 
             # filter by matsubara freq range
-            chi0q = chi0q[self.freq_index]
-            logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+            if len(self.freq_index) < self.nmat:
+                chi0q = chi0q[self.freq_index]
+                logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
             green_info["chi0q"] = chi0q
 
-        # solve
-        sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
+        if self.calc_chiq:
+            # solve
+            sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
 
-        # adhoc store
-        green_info["chiq"] = sol
+            # adhoc store
+            green_info["chiq"] = sol
 
         logger.info("End RPA calculations")
         pass
@@ -577,12 +593,15 @@ class RPA:
         path_to_output = info_outputfile["path_to_output"]
 
         if "chiq" in info_outputfile.keys():
-            file_name = os.path.join(path_to_output, info_outputfile["chiq"])
-            np.savez(file_name,
-                     chiq = green_info["chiq"],
-                     freq_index = self.freq_index,
-                     )
-            logger.info("save_results: save chiq in file {}".format(file_name))
+            if self.calc_chiq == True:
+                file_name = os.path.join(path_to_output, info_outputfile["chiq"])
+                np.savez(file_name,
+                         chiq = green_info["chiq"],
+                         freq_index = self.freq_index,
+                )
+                logger.info("save_results: save chiq in file {}".format(file_name))
+            else:
+                logger.info("save_results: chiq not calculated. skip")
 
         if "chi0q" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
