@@ -12,4 +12,4 @@ Appendix
    :maxdepth: 3
 
    stdface
-   message/msg-index
+..   message/msg-index

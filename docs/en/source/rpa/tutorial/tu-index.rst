@@ -12,8 +12,8 @@ before running the program.
 
 In the following, we provide a tutorial based on a sample in
 ``docs/tutorial/Hubbard/RPA`` directory.
-The interaction definition files are generated using StdFace library.
-
+The interaction definition files can be generated using StdFace library.
+See :ref:`Ch:StdFace` section for the details.
 
 Create a parameter file
 --------------------------------
@@ -165,57 +165,4 @@ It also produces the figures of these quantities in PNG format shown as below:
 	 \endgroup
 
 
-Compile and run StdFace library
-----------------------------------------------------------------
-
-The interaction definition files can be generated easily using StdFace library.
-We will provide a short instruction how to use it.
-
-The source package of StdFace library that supports input formats of the RPA is available from the repository as follows.
-
-.. code-block:: bash
-
-    $ git clone https://github.com/issp-center-dev/StdFace.git
-
-Then, the library is to be compiled with the commands:
-
-.. code-block:: bash
-
-    $ cd StdFace
-    $ mkdir build && cd build
-    $ cmake -DUHF=ON ..
-    $ make
-
-If the compilation is successful, you can find the executable module ``uhf_dry.out`` in ``src`` directory.
-
-An input to ``uhf_dry.out`` can be found as ``stan.in`` in the sample directory,
-which reads:
-
-.. literalinclude:: ../sample/stan.in
-
-- ``model`` is a keyword to choose the target model.
-  Currently, only ``Hubbard`` is supported that denotes Hubbard model with the number of electrons fixed.
-
-- ``lattice`` is a keyword to specify the lattice structure.
-  In this example, the square lattice ``square`` is chosen.
-  ``W`` and ``L`` denote the size of the lattice.
-
-- ``t`` and ``V`` denote parameters of the hopping and the neighbor-site Coulomb interaction, respectively.
-
-- ``calcmode = "uhfk"`` specifies the output to be in the Wannier90(-like) format.
-  If ``exportall = 0`` is given, the outputs are compactified with zero components omitted.
-
-See Section :ref:`Ch:HowToWannier90_rpa` for the details of input files.
-
-Then, run ``uhf_dry.out`` with the file above as an input:
-
-.. code-block:: bash
-
-    $ cd path_to_Hwave/docs/tutorial/Hubbard/RPA
-    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ ./uhf_dry.out stan.in
-
-When the program finishes, a geometry information file ``geom.dat``
-and interaction definition files ``transfer.dat`` and ``coulombinter.dat``,
-are generated in the current directory.
 
