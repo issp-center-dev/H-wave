@@ -182,7 +182,7 @@ higher order correlations. See, for example, reference [1]_ for the details.
      G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
     \end{aligned}
 
-    The irreducible susceptibility is calculated as follows
+   The irreducible susceptibility is calculated as follows
 
    .. math::
     \begin{aligned}
@@ -193,8 +193,8 @@ higher order correlations. See, for example, reference [1]_ for the details.
       G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
     \end{aligned}
 
-    Calculations using this method result in poor approximation accuracy in situations where the diagonalization component is mixed.
-    Please check which method is used when comparing with previous studies.
+   Calculations using this method result in poor approximation accuracy in situations where the diagonalization component is mixed.
+   Please check which method is used when comparing with previous studies.
 
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
