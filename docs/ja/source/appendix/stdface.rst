@@ -37,9 +37,12 @@ StdFaceライブラリの使用
 - ``model`` は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 ``Hubbard`` のみに対応しています。
 - ``lattice`` は結晶構造を指定するキーワードです。 ここでは正方格子 ``square`` を選択しています。 ``W``, ``L`` は格子のサイズです。
 - ``t`` はホッピング、 ``V`` は隣接サイトクーロン相互作用のパラメータです。
-- ``calcmode = "uhfk"``, ``calcmode = "rpa"`` では Wannier90(-like)形式での入力ファイルが出力されます。 ``exportall = 0`` は出力をコンパクトにするオプションです。
-    ``calcmode = "uhfr"`` はH-waveの実空間UHFプログラムUHFr向けの入力ファイルを出力します。デフォルトは、 ``calcmode = "uhfk"`` となっています。
-
+- ``calcmode`` は出力形式を指定します。
+  ``"uhfk"`` または ``"rpa"`` を指定した場合はWannier90(-like)形式の入力ファイルを生成します。
+  ``"uhfr"`` を指定した場合はH-waveの実空間UHFプログラムUHFr向けの入力ファイルを出力します。
+  デフォルトは ``calcmode = "uhfk"`` です。
+- ``exportall = 0`` はWannier90(-like)形式の出力をコンパクトにするオプションです。
+  
 入力ファイルの詳細については、:ref:`Ch:HowToExpert` , :ref:`Ch:HowToWannier90` , :ref:`Ch:HowToWannier90_rpa` のセクションを参照してください。
 
 上記のファイルを入力ファイルとして、 ``hwave_dry.out`` を以下のコマンドで実行します。

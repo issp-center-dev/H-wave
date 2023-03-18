@@ -1,375 +1,375 @@
-エラーメッセージ一覧
-=====================
+List of error messages
+======================
 
 - ``mode is not defined in [mode].``
 
-  **説明 :** パラメータファイルの ``[mode]`` セクションに ``mode`` パラメータが指定されていない。
+  **description :** ``mode`` parameter is missing in ``[mode]`` section of the input parameter file.
 
-  **モード :** main
+  **mode :** main
 
 - ``Get_param: key must be mod or ham or output.``
 
-  **説明 :** ``get_param()`` の引数が不正
+  **description :** unsupported keyword is given to ``get_param()``.
 
-  **モード :** UHFr (read_input)
+  **mode :** UHFr (read_input)
 
 - ``duplicate items found in`` *file*
 
-  **説明 :** *file* に重複するエントリがある
+  **description :** the file *file* contains duplicate entries.
 
-  **モード :** UHFr (read_input)
+  **mode :** UHFr (read_input)
 
 - ``incorrect number of lines in`` *file* ``: expected=`` *N* ``, found=`` *M*
 
-  **説明 :** 入力ファイルの行数とファイル内の行数指定が異なっている
+  **description :** number of lines of the input file does not match the description in the file.
 
-  **モード :** UHFr (read_input)
+  **mode :** UHFr (read_input)
 
 - ``Unknown keyword`` *keyword*
 
-  **説明 :** ``[file.input.interaction]`` に不明なキーワードがある
+  **description :** unsupported keyword is found in ``[file.input.interaction]``.
 
-  **モード :** UHFk (read_input_k)
+  **mode :** UHFk (read_input_k)
 
 - ``initial and initial_uhf can not be specified simultaneously.``
 
-  **説明 :** ``initial`` と ``initial_uhf`` は同時に指定できない
+  **description :** ``initial`` and ``initial_uhf`` cannot be specified simultaneously.
 
-  **モード :** UHFk (read_input_k)
+  **mode :** UHFk (read_input_k)
 
 - ``read_input_k: file`` *file* ``not found``
 
-  **説明 :** *file* が存在しない
+  **description :** the file *file* cannot be found.
 
-  **モード :** UHFk (read_input_k)
+  **mode :** UHFk (read_input_k)
 
 - ``Get_param: key must be mod or ham or output.``
 
-  **説明 :** ``get_param()`` の引数が不正
+  **description :** unsupported keyword is given to ``get_param()``.
 
-  **モード :** UHFk (read_input_k)
+  **mode :** UHFk (read_input_k)
 
 - ``read_geom: file`` *file* ``not found``
 
-  **説明 :** ``Geometry`` に指定されているファイル *file* が存在しない
+  **description :** the file *file* specified by ``Geometry`` keyword cannot be found.
 
-  **モード :** UHFk (wan90)
+  **mode :** UHFk (wan90)
 
 - ``mode.param.2Sz must be even(odd) when Ncond is even(odd).``
 
-  **説明 :**  パラメータ ``2Sz`` と ``Ncond`` の偶奇が一致していない
+  **description :** even/odd mismatch between ``2Sz`` and ``Ncond``.
 
-  **モード :** solver base
+  **mode :** solver base
 
 - ``range check for`` *type* ``failed.``
 
-  **説明 :** *type* の値が範囲外
+  **description :** the value of *type* is not appropriate.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``_check_cellsize failed. interaction range exceeds cell shape.``
 
-  **説明 :** 相互作用項の並進ベクトルが CellShape 内に収まっていない
+  **description :** some of translation vectors of the interaction description do not lie within the CellShape.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``Hermiticity check failed: |T_ba(-r)^* - T_ab(r)| =`` *val*
 
-  **説明 :** Transfer項が Hermite でない
+  **description :** Transfer term is not Hermite.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``Parameter range check failed for param_mod.``
 
-  **説明 :** [mode.param] のパラメータの値が範囲外
+  **description :** the parameter value in [mode.param] is out of range.
 
-  **モード :** solver base
+  **mode :** solver base
 
 - ``Parameter check failed for param_mod.``
 
-  **説明 :** [mode.param] のパラメータが不正
+  **description :** the parameter value in [mode.param] is inappropriate.
 
-  **モード :** solver base
+  **mode :** solver base
 
 - ``Hermite check failed for`` *type*
 
-  **説明 :** *type* が Hermite でない
+  **description :** *type* is not Hermite.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``Parameter check failed for info_mode.``
 
-  **説明 :** [mode] のパラメータが不正
+  **description :** the parameter value in [mode] is inappropriate.
 
-  **モード :** solver base
+  **mode :** solver base
 
 - ``value not integer``
 
-  **説明 :** パラメータの値が整数ではない
+  **description :** the parameter value is not an integer.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``Lattice initialization failed: 'CellShape' not found.``
 
-  **説明 :** [mode.param] に ``CellShape`` が指定されていない
+  **description :** ``CellShape`` is missing in [mode.param].
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``Ncond must be greater than zero: Ncond=`` *Ncond*
 
-  **説明 :** ``Ncond`` に0以上の値が指定されていない
+  **description :** the value of ``Ncond`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``Nmat must be greater than zero: Nmat=`` *Nmat*
 
-  **説明 :** ``Nmat`` に0以上の値が指定されていない
+  **description :** the value of ``Nmat`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``RPA._find_mu: not converged. abort``
 
-  **説明 :** ``mu`` の計算が収束しなかった
+  **description :** the calculation of ``mu`` does not converge.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``SubShape is not compatible with CellShape.``
 
-  **説明 :** 副格子の指定が不正
+  **description :** the value of SubShape does not divide that of CellShape.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``T must be greater than or equal to zero: T=`` *T*
 
-  **説明 :** ``T`` に 0以上の値が指定されていない
+  **description :** the value of ``T`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``both mu and Ncond or filling are specified``
 
-  **説明 :** ``mu` と ``Ncond`` または ``filling`` が同時に指定されている
+  **description :** ``mu` and ``Ncond`` or ``filling`` should not specified simultaneously.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``dimension of CellShape must be one, two, or three.``
 
-  **説明 :** ``CellShape`` の指定が不正
+  **description :** the dimension of ``CellShape`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``dimension of SubShape does not match with that of CellShape.``
 
-  **説明 :** 副格子の指定が不正
+  **description :** the dimension of ``SubShape`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``invalid CellShape.``
 
-  **説明 :** CellShapeの指定が不正
+  **description :** the value of ``CellShape`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``invalid SubShape.``
 
-  **説明 :** SubShapeの指定が不正
+  **description :** the value of ``SubShape`` is not appropriate.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``none of mu, Ncond, nor filling is specified``
 
-  **説明 :** ``mu`` または ``Ncond``, ``filling`` のいずれも指定されていない
+  **description :** one of ``mu``, ``Ncond``, or ``filling`` should be specified.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``read_chi0q failed:`` *info*
 
-  **説明 :** ``chi0q`` の読み込みに問題があった
+  **description :** reading ``chi0q`` from file was not successful.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``round_to_int: unknown mode`` *mode*
 
-  **説明 :** 丸めモードの指定が不正
+  **description :** unsupported rounding mode is specified.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``unexpected data size`` *error*
 
-  **説明 :** データサイズが不正
+  **description :** data size is not as expected.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``mode is not defined in [mode].``
 
-  **説明 :** ``[mode]`` に mode パラメータが指定されていない
+  **description :** the ``mode`` parameter is missing in ``[mode]``.
 
-  **モード :** RPA
+  **mode :** RPA
 
 - ``orbital index check failed for`` *type*
 
-  **説明 :** 軌道のインデックスが不正
+  **description :** the indices of the orbitals are inappropriate.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``initial green function in coord space requires geometry.dat``
 
-  **説明 :** 実空間でのグリーン関数の読み込みは ``geometry.dat`` を同時に指定する必要がある
+  **description :** ``geometry.dat`` must also be specified when the coordinate space Green's function.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``CellShape is missing. abort``
 
-  **説明 :** ``CellShape`` パラメータが指定されていない
+  **description :** ``CellShape`` parameter is missing.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``Ncond or Nelec is missing. abort``
 
-  **説明 :** ``Ncond`` または ``Nelec`` パラメータが指定されていない
+  **description :** ``Ncond`` or ``Nelec`` parameter is missing.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``SubShape is not compatible with CellShape. abort``
 
-  **説明 :** 副格子の指定が不正
+  **description :** the value of ``SubShape`` does not divide that of ``CellShape``.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``_check_orbital_index failed. invalid orbital index found in interaction definitions.``
 
-  **説明 :** 相互作用定義ファイルの軌道インデックスが不正
+  **description :** the indices of the orbitals in interaction definition files are inappropriate.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``_save_greenone: onebodyg_uhf and geometry_uhf are required``
 
-  **説明 :** ``onebodyg_uhf`` と ``geometry_uhf`` が指定されていない
+  **description :** ``onebodyg_uhf`` and ``geometry_uhf`` are not provided.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``find mu: not converged. abort``
 
-  **説明 :** ``mu`` の計算が収束しなかった
+  **description :** the calculation of ``mu`` does not converge.
 
-  **モード :** UHFk
+  **mode :** UHFk
 
 - ``range check failed for Initial``
 
-  **説明 :** ``Initial`` の指定が不正
+  **description :** the values of ``Initial`` are inappropriate.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``OneBodyG is required to output green function.``
 
-  **説明 :** グリーン関数の出力のための ``OneBodyG`` の指定がない
+  **description :** ``OneBodyG`` is missing for the output of Green's function.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``hermite check failed for Initial``
 
-  **説明 :** ``Initial`` が Hermite でない
+  **description :** ``Initial`` is not Hermite.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``Range check failed for Transfer``
 
-  **説明 :** ``Transfer`` 定義ファイルのインデックスが範囲外
+  **description :** the indices of ``Transfer`` definition file are out of range.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``Range check failed for`` *type*
 
-  **説明 :** *type* 定義ファイルのインデックスが範囲外
+  **description :** the indices of *type* definition file are out of range.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``parameter range check failed.``
 
-  **説明 :** パラメータの値が不正
+  **description :** the value of the parameter is not appropriate.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``mode is incorrect: mode=`` *mode*
 
-  **説明 :** ``mode`` の指定が不正
+  **description :** ``mode`` parameter is not appropriate.
 
-  **モード :** UHFr
+  **mode :** UHFr
 
 - ``mode.param.`` *key* ``must be greater than`` *value*
 
-  **説明 :** パラメータ *key* の値が不正
+  **description :** the value of parameter *key* in [mode.param] is inappropriate.
 
-  **モード :** solver base [warning]
+  **mode :** solver base [warning]
 
 - ``"mode.param.`` *key* ``must be smaller than`` *value*
 
-  **説明 :** パラメータ *key* の値が不正
+  **description :** the value of parameter *key* is [mode.param] is inappropriate.
 
-  **モード :** solver base [warning]
+  **mode :** solver base [warning]
 
 - ``mode.param.`` *key* ``is not defined.``
 
-  **説明 :** パラメータ *key* が設定されていない
+  **description :** parameter *key* is not found in [mode.param].
 
-  **モード :** solver base [warning]
+  **mode :** solver base [warning]
 
 - ``mode.`` *key* ``in mode section is incorrect:`` *values*
 
-  **説明 :** ``[mode]`` セクションの ``mode`` パラメータの値が不正
+  **description :** ``mode`` parameter in ``[mode]`` section is not valid.
 
-  **モード :** solver base [warning]
+  **mode :** solver base [warning]
 
 - ``mode.`` *key* ``is not defined.``
 
-  **説明 :** ``[mode]`` セクションに ``mode`` パラメータが指定されていない
+  **description :** ``mode`` parameter is not found in ``[mode]`` section.
 
-  **モード :** solver base [warning]
+  **mode :** solver base [warning]
 
 - ``TRUST-ME mode enabled. parameter checks are relaxed``
 
-  **説明 :** ``TRUST-ME`` モードが有効。パラメータのチェックを行わない
+  **description :** ``TRUST-ME`` mode is enabled. the parameter checks will be omitted.
 
-  **モード :** solver base [warning]
+  **mode :** solver base [warning]
 
 - ``value not integer``
 
-  **説明 :** 設定値が整数でない
+  **description :** the specified value is not an integer.
 
-  **モード :** RPA [warning]
+  **mode :** RPA [warning]
 
 - ``mode is incorrect: mode=`` *mode*
 
-  **説明 :** ``mode`` パラメータの値が不正
+  **description :** ``mode`` parameter is not valid.
 
-  **モード :** RPA [warning]
+  **mode :** RPA [warning]
 
 - ``FATAL: 2Sz=`` *value* ``. 2Sz should be even for calculating fij``
 
-  **説明 :** :math:`f_{ij}` の計算で ``2Sz`` は偶数でなければならない
+  **description :** ``2Sz`` must be an even number for the calculation of :math:`f_{ij}`.
 
-  **モード :** UHFr [warning]
+  **mode :** UHFr [warning]
 
 - ``FATAL: Ne=`` *value* ``. Ne should be even for calculating fij``
 
-  **説明 :** :math:`f_{ij}` の計算で ``Ne`` は偶数でなければならない
+  **description :** ``Ne`` must be an even number for the calculation of :math:`f_{ij}`.
 
-  **モード :** UHFr [warning]
+  **mode :** UHFr [warning]
 
 - ``NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future``
 
-  **説明 :** :math:`f_{ij}` の計算で ``Sz`` が 0以外の偶数の場合は未サポート
+  **description :** the calculation of :math:`f_{ij}` is not yet supported when ``Sz`` is an even number except zero.
 
-  **モード :** UHFr [warning]
+  **mode :** UHFr [warning]
 
 - ``key`` *key* ``is wrong!``
 
-  **説明 :** キーワード *key* が不正
+  **description :** the keyword *key* is invalid.
 
-  **モード :** UHFr [warning]
+  **mode :** UHFr [warning]
 
 - ``UHFr calculation is failed: rest=`` *residue* ``, eps=`` *eps*
 
-  **説明 :** UHFr の計算が収束しなかった
+  **description :** the calculation of UHFr does not converge.
 
-  **モード :** UHFr [warning]
+  **mode :** UHFr [warning]
 

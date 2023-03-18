@@ -46,8 +46,11 @@ The calculation parameters are specified in ``[mode.param]`` subsection.
 
 ``[file.input]`` subsection contains settings
 on the directory for the input files by ``path_to_input``,
-and the filename for the initial configuration by ``initial``.
-If the latter is not specified, a random configuration will be generated.
+and the filename for the static Green's function by ``initial`` as an input.
+If the latter is not specified, it is assumed to be zero.
+It is also possible to read the pre-calculated irreducible susceptibility
+:math:`\chi_0(\vec{q})` from a file specified by ``chi0q_init`` and calculate
+the susceptibility.
 
 ``[file.input.interaction]`` subsection contains a list of files
 associated with the geometry information and the interactions distinguished by the keywords.
@@ -97,9 +100,11 @@ These files are written in Wannier90(-like) format, as exemplified below.
 It contains
 a comment (line 1),
 the number of orbitals (line 2),
-the number of cells ``nrpts`` of the rectangular cuboid that accommodates translation vectors (line 3),
+``nrpts`` (line 3),
 the multiplicity factors (``nrpts`` elements, with 15 elements per line),
 and the elements of the coefficient matrix.
+``nrpts`` denotes the number of cells of the rectangular cuboid that is spanned by the
+lower and upper ends of the translation vectors along x, y, and z axes.
 
 Each element of the matrix consists of
 translation vector :math:`r_x, r_y, r_z`,

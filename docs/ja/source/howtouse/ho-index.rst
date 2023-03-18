@@ -12,7 +12,7 @@
     - requests モジュール
     - tomli モジュール
 
-    なお、H-waveのUHFk, rpaモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
+    なお、H-waveのUHFkとRPAモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
 
 - Official Page
 

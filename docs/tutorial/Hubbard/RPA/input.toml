@@ -9,9 +9,10 @@
   # mu = 0.0
   CellShape = [32,32,1]
   SubShape = [1,1,1]
+  nmat = 1024
   # Ncond = 1024
   filling = 0.5
-  matsubara_frequency = "all"  # default
+  matsubara_frequency = "all"
 
 [file]
 [file.input]

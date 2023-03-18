@@ -122,10 +122,12 @@ Parameters
 
   **Description :**
   This parameter specifies the cut-off of Matsubara frequency.
-  It must be greater than zero. Matsubara frequency is defined as follows:
+  It must be an even number greater than zero. Matsubara frequency is defined as follows:
 
       - Boson: :math:`\omega_n = \dfrac{2\pi (n-\texttt{Nmat}/2)}{\beta}`
       - Fermion: :math:`\omega_n = \dfrac{\pi (2n+1-\texttt{Nmat})}{\beta}`
+
+  with the indices :math:`n` between 0 and ``Nmat-1``.
 
 - ``coeff_tail``
 
@@ -142,7 +144,7 @@ Parameters
   Integer, List of Integers, or String (default value is ``"all"``)
 
   **Description :**
-  This parameter specifies the range of Matsubara frequency for which the susceptibility matrix :math:`\chi(\vec{q})` is calculated.
+  This parameter specifies the indices of Matsubara frequency for which the susceptibility matrix :math:`\chi(\vec{q})` is calculated.
   The value must be one of the following:
 
     - *an integer value* : a single index value.
@@ -168,7 +170,7 @@ Parameters
   Float (default value is 100.0)
 
   **Description :**
-  This parameter specifies the cutoff to avoid overflow in the calculations of the Fermi distribution function.
+  This parameter specifies the upper cutoff of the exponent in the Fermi distribution function to avoid overflow during the calculation.
 
 
 ``log`` section
@@ -188,8 +190,8 @@ Parameters
 ================================
 
 This section consists of ``input`` and ``output`` subsections.
-The former specifies the settings on the input files (such as locations and name of the files),
-and the latter on the output files (such as locations to store).
+They specify the settings of the input and output files, respectively, on the types of files, the directories to be located or stored, and the names of the files.
+
 
 ``file.input`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -197,7 +199,7 @@ and the latter on the output files (such as locations to store).
 - ``path_to_input``
 
   **Type :**
-  String (default value is ``""``)
+  String (default value is ``""`` (blank string))
 
   **Description :**
   This parameter specifies the directory in which the input files are located.
@@ -208,8 +210,7 @@ and the latter on the output files (such as locations to store).
   String
 
   **Description :**
-  This parameter specifies the filename of the initial configuration
-  of the one-body Green's function.
+  This parameter specifies the filename of the static one-body Green's function.
   The input file is in NumPy zip format that corresponds to the output format of
   ``green`` of the UHF calculation.
   If the initial configuration is not given, it is assumed to be zero.
