@@ -64,7 +64,7 @@ def __read_geom(file_name="./dir-model/zvo_geom.dat"):
 def calc_dos(
     input_dict: dict,
     ene_window: list | None = None,
-    ene_num: int = 100,
+    ene_num: int = 101,
     verbose: bool = False,
 ) -> DoS:
 
@@ -122,7 +122,7 @@ def main():
     import tomli
     import argparse
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument(
         "input", type=str, help="input file of hwave"
     )
@@ -131,10 +131,11 @@ def main():
         "--ene_window",
         default=None,
         type=float,
-        help="energy window; [ene_low, ene_high]. If None, ene_low = ene_min - 0.2, ene_high = ene_max + 0.2",
+        help="""energy window; [ene_low, ene_high].
+If omitted, [ene_min - 0.2, ene_max + 0.2]""",
     )
-    parser.add_argument("--ene_num", default=100, type=int, help="energy step")
-    parser.add_argument("--plot", action="store_true", help="plot DOS")
+    parser.add_argument("--ene_num", default=101, type=int, help="number of energy points")
+    parser.add_argument("--plot", action="store_true", help="plot DOS as 'dos.png'")
     parser.add_argument("--verbose", action="store_true", help="print verbosely")
 
     args = parser.parse_args()
