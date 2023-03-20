@@ -5,6 +5,8 @@ import os
 
 import numpy as np
 
+import hwave
+
 
 class DoS:
     dos: np.ndarray
@@ -19,7 +21,7 @@ class DoS:
         self.ene_num = ene.shape[0]
         self.norb = dos.shape[0]
 
-    def plot(self, filename: str = ""):
+    def plot(self, filename: str = "", verbose: bool = False):
         try:
             import matplotlib.pyplot as plt
         except ImportError:
@@ -37,10 +39,14 @@ class DoS:
         plt.ylim(0)
         plt.legend()
         if filename != "":
+            if verbose:
+                print("Saving plot to file: ", filename)
             plt.savefig(filename)
         plt.close()
 
-    def write_dos(self, output: str):
+    def write_dos(self, output: str, verbose: bool = False):
+        if verbose:
+            print("Writing DOS to file: ", output)
         with open(output, "w") as fw:
             fw.write("# ene")
             for j in range(self.norb):
@@ -67,7 +73,6 @@ def calc_dos(
     ene_num: int = 101,
     verbose: bool = False,
 ) -> DoS:
-
     try:
         import libtetrabz
     except ImportError:
@@ -75,14 +80,13 @@ def calc_dos(
             "libtetrabz is not installed. Please install libtetrabz and try again."
         )
 
-    if verbose:
-        print("Reading eigenvalues")
     output_info_dict = input_dict["file"]["output"]
-    data = np.load(
-        os.path.join(
-            output_info_dict["path_to_output"], output_info_dict["eigen"] + ".npz"
-        )
+    filename = os.path.join(
+        output_info_dict["path_to_output"], output_info_dict["eigen"] + ".npz"
     )
+    if verbose:
+        print("Reading eigenvalues from file: ", filename)
+    data = np.load(os.path.join(filename))
     eigenvalues = data["eigenvalue"]
     Lx, Ly, Lz = input_dict["mode"]["param"]["CellShape"]
     norb = eigenvalues.shape[1]
@@ -90,14 +94,19 @@ def calc_dos(
         print("Lx, Ly, Lz, norb: ", Lx, Ly, Lz, norb)
     eigenvalues.reshape(Lx, Ly, Lz, norb)
 
-    if verbose:
-        print("Reading geometry")
     input_info_dict = input_dict["file"]["input"]["interaction"]
     file_name = os.path.join(
         input_info_dict["path_to_input"], input_info_dict["Geometry"]
     )
+    if verbose:
+        print("Reading geometry from file: ", file_name)
     uvec = __read_geom(file_name)
     bvec = 2.0 * np.pi * np.linalg.inv(uvec).T
+
+    ene_min = np.min(eigenvalues)
+    ene_max = np.max(eigenvalues)
+    if verbose:
+        print("Calculated energy min, max: ", ene_min, ene_max)
 
     if ene_window is None:
         ene_min = np.min(eigenvalues) - 0.2
@@ -108,11 +117,11 @@ def calc_dos(
 
     ene = np.linspace(ene_min, ene_max, num=ene_num)
     if verbose:
-        print("ene_min, ene_max, ene_num: ", ene_min, ene_max, ene_num)
+        print("Energy window min, max, num: ", ene_min, ene_max, ene_num)
 
     eig = eigenvalues.reshape(Lx, Ly, Lz, norb)
     if verbose:
-        print("Calculating DOS")
+        print("Finish calculating DOS")
     wght = libtetrabz.dos(bvec, eig, ene)
     dos = wght.sum(2).sum(1).sum(0)
     return DoS(dos=dos, ene=ene)
@@ -123,26 +132,31 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument("input", type=str, help="input file of hwave")
+    parser.add_argument("-o","--output", type=str, default="dos.dat", help="DoS output")
     parser.add_argument(
-        "input", type=str, help="input file of hwave"
-    )
-    parser.add_argument("--output_dos", type=str, default="dos.dat", help="DoS output")
-    parser.add_argument(
-        "--ene_window",
+        "--ene-window",
         default=None,
         type=float,
+        nargs=2,
         help="""energy window; [ene_low, ene_high].
 If omitted, [ene_min - 0.2, ene_max + 0.2]""",
     )
-    parser.add_argument("--ene_num", default=101, type=int, help="number of energy points")
-    parser.add_argument("--plot", action="store_true", help="plot DOS as 'dos.png'")
-    parser.add_argument("--verbose", action="store_true", help="print verbosely")
+    parser.add_argument(
+        "--ene-num", default=101, type=int, help="number of energy points"
+    )
+    parser.add_argument("-p", "--plot", type=str, default="", help="plot DOS to file")
+    parser.add_argument("-q", "--quiet", action="store_true", help="calculate quietly")
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"hwave_dos v{hwave.__version__}"
+    )
 
     args = parser.parse_args()
+    verbose = not args.quiet
 
     file_toml = args.input
     if os.path.exists(file_toml):
-        if args.verbose:
+        if verbose:
             print("Reading input file: ", file_toml)
         with open(file_toml, "rb") as f:
             input_dict = tomli.load(f)
@@ -153,9 +167,10 @@ If omitted, [ene_min - 0.2, ene_max + 0.2]""",
         input_dict,
         ene_window=args.ene_window,
         ene_num=args.ene_num,
-        verbose=args.verbose,
+        verbose=verbose,
     )
-    if args.output_dos != "":
-        dos.write_dos(args.output_dos)
+    output_dir = input_dict["file"]["output"]["path_to_output"]
+    if args.output != "":
+        dos.write_dos(os.path.join(output_dir, args.output), verbose=verbose)
     if args.plot:
-        dos.plot("dos.png")
+        dos.plot(os.path.join(output_dir, args.plot), verbose=verbose)
