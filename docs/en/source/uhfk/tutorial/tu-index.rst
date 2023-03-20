@@ -130,6 +130,38 @@ the output files ``energy.dat``, ``eigen.npz``, and ``green.npz`` in ``output`` 
 
 See :ref:`Sec:outputfile_uhfk` section for the details of the output files.
 
+
+Calculate density of state  (``hwave_dos``)
+------------------------------------------------
+
+You can calculate the density of states (DOS) using the post-processing tool, ``hwave_dos``.
+
+
+``hwave_dos`` uses the ``libtetrabz`` library to integrating over the Brillouin zone.
+``libtetrabz`` can be installed by ``pip``::
+
+    $ python3 -m pip install libtetrabz
+
+The tool requires the input parameter file used in the calculation.
+The following example shows how to calculate the DOS using the sample input file::
+
+    $ hwave_dos input.toml
+
+``hwave_dos`` outputs the DOS file, ``dos.dat`` in the directory specified by the ``file.output.path_to_output`` of the input file.
+The filename can be changed by ``--output`` option::
+
+    $ hwave_dos input.toml --output dos.dat
+
+The DOS is calculated in the energy range specified by ``--ene-window`` option.
+If omitted, the energy range is set to :math:`[E_\text{min}-0.2, E_\text{max}+0.2]` where :math:`E_\text{min}` and :math:`E_\text{max}` are the minimum and maximum energies obtained by ``hwave``.
+The number of the energy points for the DOS calculation is specified by ``--ene-num`` option (default is 101)::
+
+    $ hwave_dos input.toml --ene-window -10.0 5.0 --ene-num 201
+
+The ``--plot`` option plots the DOS. ``matplotlib`` is required::
+
+    $ hwave_dos input.toml --plot dos.png
+
 Compile and run StdFace library
 ----------------------------------------------------------------
 
