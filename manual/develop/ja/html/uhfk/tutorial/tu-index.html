@@ -222,8 +222,36 @@ Statistics
 <code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> , <code class="docutils literal notranslate"><span class="pre">eigen.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> ファイルが出力されます。</p>
 <p>出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles_uhfk/index_outputfiles_uhfk.html#sec-outputfile-uhfk"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
 </section>
+<section id="hwave-dos">
+<h2><span class="section-number">3.1.4. </span>状態密度の計算 (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)<a class="headerlink" href="#hwave-dos" title="この見出しへのパーマリンク">¶</a></h2>
+<p>ポストツール <code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> を用いることで、状態密度を計算することができます。
+ブリルアンゾーン積分を精度良く計算するために <a class="reference external" href="https://pypi.org/project/libtetrabz/">libtetrabz</a> を利用しています。 <code class="docutils literal notranslate"><span class="pre">pip</span></code> を利用してインストールしてください。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ python3 -m pip install libtetrabz
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> は、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> で利用した入力パラメータファイルを引数として受け取ります</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> は、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> と同様に <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> セクションの指定に従い、
+<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに <code class="docutils literal notranslate"><span class="pre">dos.dat</span></code> ファイルを出力します。
+ファイル名は <code class="docutils literal notranslate"><span class="pre">--output</span></code> オプションで変更することができます。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --output dos.dat
+</pre></div>
+</div>
+<p>状態密度を計算するエネルギーの範囲は <code class="docutils literal notranslate"><span class="pre">--ene-window</span></code> オプションで指定します。
+省略した場合は、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> で得られたエネルギーの最小値と最大値を <span class="math notranslate nohighlight">\(E_\text{min}\)</span>, <span class="math notranslate nohighlight">\(E_\text{max}\)</span> として、 <span class="math notranslate nohighlight">\([E_\text{min}-0.2, E_\text{max}+0.2]\)</span> で計算されます。
+エネルギーの点数は <code class="docutils literal notranslate"><span class="pre">--ene-num</span></code> オプションで指定します（デフォルトは101）</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --ene-window -10.0 5.0 --ene-num 201
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--plot</span></code> オプションを指定すると、状態密度をプロットします。 <code class="docutils literal notranslate"><span class="pre">matplotlib</span></code> が必要です。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --plot dos.png
+</pre></div>
+</div>
+</section>
 <section id="stdface">
-<h2><span class="section-number">3.1.4. </span>StdFaceライブラリのコンパイルと実行<a class="headerlink" href="#stdface" title="この見出しへのパーマリンク">¶</a></h2>
+<h2><span class="section-number">3.1.5. </span>StdFaceライブラリのコンパイルと実行<a class="headerlink" href="#stdface" title="この見出しへのパーマリンク">¶</a></h2>
 <p>相互作用定義ファイルは、StdFaceライブラリを使用することで簡単に作成することができます。
 以下ではStdFaceライブラリを使用した入力ファイルの作成を行う方法を記載します。</p>
 <p>波数空間UHFの入力ファイル形式に対応した StdFace ライブラリは以下から取得できます。</p>
@@ -297,7 +325,8 @@ $<span class="w"> </span>./uhf_dry.out<span class="w"> </span>stan.in
 <li class="toctree-l3"><a class="reference internal" href="#id2">3.1.1. 環境設定入力ファイルの作成</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id3">3.1.2. 相互作用定義ファイルの作成</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id4">3.1.3. 計算の実行</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#stdface">3.1.4. StdFaceライブラリのコンパイルと実行</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#hwave-dos">3.1.4. 状態密度の計算 (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#stdface">3.1.5. StdFaceライブラリのコンパイルと実行</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">3.2. ファイルフォーマット</a></li>

@@ -103,6 +103,36 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 
 出力ファイルの詳細については :ref:`ファイルフォーマット<Sec:outputfile_uhfk>` の章をご覧ください。
 
+
+状態密度の計算 (``hwave_dos``)
+----------------------------------------
+
+ポストツール ``hwave_dos`` を用いることで、状態密度を計算することができます。
+ブリルアンゾーン積分を精度良く計算するために `libtetrabz <https://pypi.org/project/libtetrabz/>`_ を利用しています。 ``pip`` を利用してインストールしてください。 ::
+
+    $ python3 -m pip install libtetrabz
+
+``hwave_dos`` は、 ``hwave`` で利用した入力パラメータファイルを引数として受け取ります ::
+
+    $ hwave_dos input.toml
+
+``hwave_dos`` は、 ``hwave`` と同様に ``[file.output]`` セクションの指定に従い、
+``output`` ディレクトリに ``dos.dat`` ファイルを出力します。
+ファイル名は ``--output`` オプションで変更することができます。 ::
+
+    $ hwave_dos input.toml --output dos.dat
+
+状態密度を計算するエネルギーの範囲は ``--ene-window`` オプションで指定します。
+省略した場合は、 ``hwave`` で得られたエネルギーの最小値と最大値を :math:`E_\text{min}`, :math:`E_\text{max}` として、 :math:`[E_\text{min}-0.2, E_\text{max}+0.2]` で計算されます。
+エネルギーの点数は ``--ene-num`` オプションで指定します（デフォルトは101） ::
+
+    $ hwave_dos input.toml --ene-window -10.0 5.0 --ene-num 201
+
+``--plot`` オプションを指定すると、状態密度をプロットします。 ``matplotlib`` が必要です。 ::
+
+    $ hwave_dos input.toml --plot dos.png
+
+
 StdFaceライブラリのコンパイルと実行
 ----------------------------------------------------------------
 
