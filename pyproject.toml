@@ -25,6 +25,7 @@ tomli = "^2.0.1"
 
 [tool.poetry.scripts]
 hwave = "hwave.qlms:main"
+hwave_dos = "hwave.dos:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
