@@ -316,20 +316,24 @@ class Interaction:
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
-            # 2x2 unit matrix for spin dof
-            spin = np.eye(2)
+            # # 2x2 unit matrix for spin dof
+            # spin = np.eye(2)
 
-            # T_{a,s,b,t}(r)
-            ham_r = np.einsum('rab,st->rsatb',
-                              tab_r.reshape(nvol,norb,norb),
-                              spin
-            ).reshape(nx,ny,nz,nd,nd)
+            # # T_{a,s,b,t}(r)
+            # ham_r = np.einsum('rab,st->rsatb',
+            #                   tab_r.reshape(nvol,norb,norb),
+            #                   spin
+            # ).reshape(nx,ny,nz,nd,nd)
 
-            # T_{a,s,b,t}(k)
-            ham_q = np.einsum('kab,st->ksatb',
-                              tab_q.reshape(nvol,norb,norb),
-                              spin
-            ).reshape(nx,ny,nz,nd,nd)
+            # # T_{a,s,b,t}(k)
+            # ham_q = np.einsum('kab,st->ksatb',
+            #                   tab_q.reshape(nvol,norb,norb),
+            #                   spin
+            # ).reshape(nx,ny,nz,nd,nd)
+
+            # N.B. spin degree of freedom not included
+            ham_r = tab_r
+            ham_q = tab_q
 
         logger.debug("ham_trans_r shape={}, size={}".format(ham_r.shape, ham_r.size))
         logger.debug("ham_trans_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
@@ -614,6 +618,27 @@ class RPA:
             green_info["chi0q"] = chi0q
 
         if self.calc_chiq:
+
+            if self.ham_info.enable_spin_orbital:
+                pass
+            else:
+                # introduce spin degree of freedom
+                chi0q_orig = chi0q
+
+                spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
+                spin_tensor[0,0,0,0] = 1
+                spin_tensor[1,1,1,1] = 1
+
+                nvol = self.lattice.nvol
+                nd = self.norb
+                nso = self.ns * self.norb
+
+                nfreq = chi0q_orig.shape[0]
+
+                chi0q = np.einsum('lkabcd,stuv->lksatbucvd',
+                                  chi0q_orig.reshape(nfreq,nvol,nd,nd,nd,nd),
+                                  spin_tensor).reshape(nfreq,nvol,nso,nso,nso,nso)
+
             # solve
             sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
 
@@ -719,13 +744,20 @@ class RPA:
         cs = chi0q.shape
         try:
             assert cs[1] == self.lattice.nvol, "lattice volume"
-            assert cs[2] == self.nd, "shape[2]"
-            assert cs[3] == self.nd, "shape[3]"
-            assert cs[4] == self.nd, "shape[4]"
-            assert cs[5] == self.nd, "shape[5]"
+            # assert cs[2] == self.nd, "shape[2]"
+            # assert cs[3] == self.nd, "shape[3]"
+            # assert cs[4] == self.nd, "shape[4]"
+            # assert cs[5] == self.nd, "shape[5]"
+            nd = cs[2]
+            assert nd == self.nd or nd == self.norb, "shape[2]"
+            assert cs[3] == nd, "shape[3]"
+            assert cs[4] == nd, "shape[4]"
+            assert cs[5] == nd, "shape[5]"
         except AssertionError as e:
             logger.error("unexpected data size {}".format(e))
             sys.exit(1)
+
+        logger.info("read_chi0q: shape={}".format(chi0q.shape))
 
         return chi0q
 
@@ -734,7 +766,6 @@ class RPA:
         logger.debug(">>> RPA._calc_epsilon_k")
 
         nvol = self.lattice.nvol
-        nd = self.nd
 
         # input green function
         # g0 = _init_green(green_info)
@@ -742,6 +773,10 @@ class RPA:
         # H0(k) = T_ab(k) + (H * G0)_ab(k)
         H0 = self.ham_info.ham_trans_q
         # XXX assume g0 = 0
+
+        #nd = self.nd
+        nd = self.nd if self.ham_info.enable_spin_orbital else self.norb
+        assert H0.shape[-1] == nd
 
         # diagonalize H0(k)
         w,v = np.linalg.eigh(H0.reshape(nvol,nd,nd))
@@ -813,53 +848,60 @@ class RPA:
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
-        nd = self.nd
+
+        #nd = self.nd
+        nd = self.nd if self.ham_info.enable_spin_orbital else self.norb
+        assert ev.shape[-1] == nd
+
         nmat = self.nmat
 
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
         # 1 / (iw_{n} - (e_i(k) - mu)) -> g[n,k,i]
         g = 1.0 / (np.tile(1j * iomega, (nd,nvol,1)).T - np.tile((ew - mu), (nmat,1,1))) - self.coeff_tail / np.tile(1j * iomega, (nd,nvol,1)).T
-        # G_ab^j(k,iw_n) = d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
-        green = np.einsum('kaj,kbj,lkj->jlkab', ev, np.conj(ev), g)
-        green_tail = np.einsum('kaj,kbj,l->jlkab', ev, np.conj(ev), np.ones(nmat))*self.coeff_tail*0.5*beta
+        # G_ab(k,iw_n) = sum_j d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
+        green = np.einsum('kaj,kbj,lkj->lkab', ev, np.conj(ev), g)
+        green_tail = np.einsum('kaj,kbj,l->lkab', ev, np.conj(ev), np.ones(nmat))*self.coeff_tail*0.5*beta
         return green, green_tail
 
     @do_profile
     def _calc_chi0q(self, green_kw, green0_tail, beta):
         # green function
-        #   green_kw[j,l,k,a,b]: G_ab^j(k,ie)
+        #   green_kw[l,k,a,b]: G_ab^j(k,ie)
         #     l : matsubara freq i\epsilon_l = i\pi(2*l+1-N)/\beta for l=0..N-1
         #     k : wave number kx,ky,kz
         #     a,b : orbital and spin index a=(s,alpha) b=(t,beta)
-        #     j : diagnoalized orbital index
 
         logger.debug(">>> RPA._calc_chi0q")
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
-        nd = self.nd
+
+        #nd = self.nd
+        nd = self.nd if self.ham_info.enable_spin_orbital else self.norb
+        assert green_kw.shape[-1] == nd
+
         nmat = self.nmat
 
         # Fourier transform from matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
-        green_kt = np.einsum('jtv,t->jtv',
-                             FFT.fft(green_kw.reshape(nd,nmat,nvol*nd*nd), axis=1),
-                             omg).reshape(nd,nmat,nx,ny,nz,nd,nd)
-        green_kt -= green0_tail.reshape(nd,nmat,nx,ny,nz,nd,nd)
+        green_kt = np.einsum('tv,t->tv',
+                             FFT.fft(green_kw.reshape(nmat,nvol*nd*nd), axis=0),
+                             omg).reshape(nmat,nx,ny,nz,nd,nd)
+        green_kt -= green0_tail.reshape(nmat,nx,ny,nz,nd,nd)
 
         # Fourier transform from wave number space to coordinate space
-        green_rt = FFT.ifftn(green_kt.reshape(nd,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
+        green_rt = FFT.ifftn(green_kt.reshape(nmat,nx,ny,nz,nd*nd), axes=(1,2,3))
 
         # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
-        green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nd,nmat,nvol,nd,nd)
+        green_rev = np.flip(np.roll(green_rt, -1, axis=(0,1,2,3)), axis=(0,1,2,3)).reshape(nmat,nvol,nd,nd)
 
         sgn = np.full(nmat, -1)
         sgn[0] = 1
 
-        chi0_rt = np.einsum('jlrab,jlrdc,l->lracbd',
-                            green_rt.reshape(nd,nmat,nvol,nd,nd),
+        chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
+                            green_rt.reshape(nmat,nvol,nd,nd),
                             green_rev,
                             sgn)
 
@@ -888,14 +930,6 @@ class RPA:
         mat += np.einsum('lkab,kbc->lkac',
                          chi0q.reshape(nmat,nvol,ndx,ndx),
                          ham.reshape(nvol,ndx,ndx))
-
-        # # [ 1 - X^0 W ]^-1
-        # matrev = np.linalg.inv(mat)
-
-        # # [ 1 - X^0 W ]^-1 X^0
-        # sol = np.einsum('lkab,lkbc->lkac',
-        #                 matrev,
-        #                 chi0q.reshape(nmat,nvol,ndx,ndx))
 
         # [ 1 - X^0 W ]^-1 X^0
         sol = np.linalg.solve(mat, chi0q.reshape(nmat,nvol,ndx,ndx))
