@@ -184,7 +184,7 @@ class Interaction:
         sc = np.array([1.0/Bx, 1.0/By, 1.0/Bz])
         cw = [ sc * geom['center'][k] for k in range(norb) ]
 
-        centerv = np.zeros((norb * bvol, 3), dtype=np.double)
+        centerv = np.zeros((norb * bvol, 3), dtype=np.float64)
         k = 0
         for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
             for i in range(norb):
@@ -293,7 +293,7 @@ class Interaction:
 
         if self.enable_spin_orbital == True:
             # assume orbital index includes spin index
-            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=complex)
+            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 tab_r[(*irvec,*orbvec)] = v
@@ -305,7 +305,7 @@ class Interaction:
             ham_q = tab_q
 
         else:
-            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=complex)
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
@@ -354,7 +354,7 @@ class Interaction:
         # Interaction Hamiltonian W[r,b,bp,a,ap]
         #   H = W(r)^{\beta\beta^\prime\alpha\alpah^\prime}
         #        * c_{i\alpha}^\dagger c_{i\alpha^\prime} c_{j\beta^\prime}^\dagger c_{j\beta}
-        ham_r = np.zeros((nx,ny,nz,*(ns,norb)*4), dtype=complex)
+        ham_r = np.zeros((nx,ny,nz,*(ns,norb)*4), dtype=np.complex128)
 
         # spin(a,ap,bp,b)  0: up, 1: down
         spin_table = {
@@ -607,6 +607,9 @@ class RPA:
                 mu = self.mu_value
 
             green0, green0_tail = self._calc_green(beta, mu)
+            #XXX
+            self.green0 = green0
+            self.green0_tail = green0_tail
 
             chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
@@ -944,7 +947,7 @@ class RPA:
 
         eta = 1.0e-12
 
-        chi0q_exact = np.zeros((nx,ny,nz), dtype=complex)
+        chi0q_exact = np.zeros((nx,ny,nz), dtype=np.complex128)
         for iqx,iqy,iqz in itertools.product(range(nx),range(ny),range(nz)):
             for ikx,iky,ikz in itertools.product(range(nx),range(ny),range(nz)):
                 kqx = (ikx + iqx) % nx
@@ -963,7 +966,7 @@ class RPA:
         iomega = (np.arange(nmat)*2+1-nmat) * np.pi / beta
         eps = eps_k.reshape(nvol)
 
-        # g = np.zeros((nmat,nvol), dtype=complex)
+        # g = np.zeros((nmat,nvol), dtype=np.complex128)
         # for i in range(nvol):
         #     for l in range(nmat):
         #         g[l][i] = 1.0 / (1j * iomega[l] - (eps[i] - mu))
