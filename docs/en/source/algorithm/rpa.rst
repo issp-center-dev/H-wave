@@ -157,15 +157,11 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
      &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
     \end{aligned}
 
-It is noted that the vertex correction may be taken into account as a means to consider
-higher order correlations. See, for example, reference [1]_ for the details.
+The above formula is the general formula for the RPA method.
 
-.. note::
+In the above formula, the calculation of the irreducible susceptibility is performed as follows:
 
-   In H-wave, for the accuracy of the RPA approximation,
-   the calculation of the irreducible susceptibility is performed as follows:
-
-   .. math::
+.. math::
     \begin{aligned}
      X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
       -\frac{T}{N_L}
@@ -174,17 +170,17 @@ higher order correlations. See, for example, reference [1]_ for the details.
       G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
     \end{aligned}
 
-   In this case, the sum of the diagonalised components is required, which is computationally more expensive.
-   Thus, in many of previous studies, the one body Green's function is calculated as follows:
+In this case, the sum of the diagonalized components is required, which is computationally more expensive.
+Thus, in many of previous studies, the one body Green's function is calculated as follows:
 
-   .. math::
+.. math::
     \begin{aligned}
      G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
     \end{aligned}
 
-   The irreducible susceptibility is calculated as follows
+The irreducible susceptibility is calculated as follows
 
-   .. math::
+.. math::
     \begin{aligned}
      X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
       -\frac{T}{N_L}
@@ -193,8 +189,12 @@ higher order correlations. See, for example, reference [1]_ for the details.
       G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
     \end{aligned}
 
-   Calculations using this method result in poor approximation accuracy in situations where the diagonalization component is mixed.
-   Please check which method is used when comparing with previous studies.
+Though calculations using this method result in poor approximation accuracy in situations where the diagonalization component is mixed,
+there is the advantage that there is no need for technical consideration for :math:`\gamma` due to band intersections.
+In order to make comparisons with previous studies,
+H-Wave has adopted this approach (a mode for correctly handling the Green's functions and susceptibilities will also be implemented).
+It is noted that the vertex correction may be taken into account as a means to consider
+higher order correlations. See, for example, reference [1]_ for the details.
 
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
