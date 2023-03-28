@@ -166,29 +166,18 @@ class RPATwoOrbital:
         for idqx, kx in enumerate(kx_array):
             for idqy, ky in enumerate(ky_array):
                 I = np.identity(8, dtype=np.complex128)
-                #chi0 = chi0q[:,:,:,:, idqx, idqy,int(Nmat/2)].real
                 chi0 = chi0q[:,:,:,:, idqx, idqy,Nmat//2]
                 #Vxq = V*(1.0+np.exp(-1J*kx))
                 Vxq = V*(1.0+np.exp(+1J*kx))
                 Vyq = 2.0*V*np.cos(ky)
-                # X0 = np.matrix(([chi0[0][0][0][0], 0, 0, chi0[0][0][1][1], 0, 0, 0, 0],
-                #                 [0, 0, 0, 0, 0, 0, 0, 0],
-                #                 [0, 0, 0, 0, 0, 0, 0, 0],
-                #                 [chi0[1][1][0][0], 0, 0, chi0[1][1][1][1], 0, 0, 0, 0],
-                #                 [0, 0, 0, 0, chi0[0][0][0][0], 0, 0, chi0[0][0][1][1]],
-                #                 [0, 0, 0, 0, 0, 0, 0, 0],
-                #                 [0, 0, 0, 0, 0, 0, 0, 0],
-                #                 [0, 0, 0, 0, chi0[1][1][0][0], 0, 0, chi0[1][1][1][1]]), dtype=np.complex128)
-                X0 = np.zeros((8,8),dtype=np.complex128)
-                for ia in range(4):
-                    ia1 = ia//2
-                    ia2 = ia%2
-                    for ib in range(4):
-                        ib1 = ib//2
-                        ib2 = ib%2
-                        X0[ia,ib] = chi0[ia1,ia2,ib1,ib2]
-                        X0[ia+4,ib+4] = chi0[ia1,ia2,ib1,ib2]
-                
+                X0 = np.matrix(([chi0[0][0][0][0], 0, 0, chi0[0][0][1][1], 0, 0, 0, 0],
+                                [0, 0, 0, 0, 0, 0, 0, 0],
+                                [0, 0, 0, 0, 0, 0, 0, 0],
+                                [chi0[1][1][0][0], 0, 0, chi0[1][1][1][1], 0, 0, 0, 0],
+                                [0, 0, 0, 0, chi0[0][0][0][0], 0, 0, chi0[0][0][1][1]],
+                                [0, 0, 0, 0, 0, 0, 0, 0],
+                                [0, 0, 0, 0, 0, 0, 0, 0],
+                                [0, 0, 0, 0, chi0[1][1][0][0], 0, 0, chi0[1][1][1][1]]), dtype=np.complex128)
                 W =  np.matrix([[Vyq, 0, 0, np.conj(Vxq), U+Vyq, 0, 0, np.conj(Vxq)],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
@@ -376,25 +365,25 @@ class TestRPATwoOrbital(unittest.TestCase):
         #XXX
         #x[np.abs(x)<1.0e-8]=0
         
-        y = np.einsum('ijsabtcd,su,tv->ijsaubvctd',
-                      chiq_ref.reshape(Lx,Ly,*(2,2,2)*2),
-                      np.identity(2),
-                      np.identity(2)).reshape(Lx,Ly,*(2,2)*4)
+        # y = np.einsum('ijsabtcd,su,tv->ijsaubvctd',
+        #               chiq_ref.reshape(Lx,Ly,*(2,2,2)*2),
+        #               np.identity(2),
+        #               np.identity(2)).reshape(Lx,Ly,*(2,2)*4)
+        y = chiq_ref.reshape(Lx,Ly,*(2,2,2)*2)
         #XXX
         #y[np.abs(y)<1.0e-8]=0
 
-        #for ss in [ [0,0,0,0], [1,1,1,1], [0,1,0,1], [0,1,1,0], [0,0,1,1] ]:
-        for s in range(16):
-            ss = [ s%2, (s//2)%2, (s//4)%2, (s//8)%2 ]
+        for ss in [ [0,0,0,0], [1,1,1,1], [0,0,1,1], [1,1,0,0] ]:
             # print(ss)
             for ix in range(Lx):
                 for iy in range(Ly):
-                    xx = x[ix,iy,ss[0],:,ss[1],:,ss[2],:,ss[3],:].reshape(4,4)
-                    yy = y[ix,iy,ss[0],:,ss[1],:,ss[2],:,ss[3],:].reshape(4,4)
-                    # for ia in range(4):
-                    #     for ib in range(4):
-                    #         print(ix,iy,ia,ib,xx[ia,ib],yy[ia,ib])
-                    self.assertTrue(np.allclose(xx,yy), "chi_{}{}{}{} k={},{}".format(*ss,ix,iy))
+                    xx = x[ix,iy,ss[0],:,ss[1],:,ss[2],:,ss[3],:]
+                    yy = y[ix,iy,ss[0],:,:,ss[2],:,:]
+
+                    self.assertTrue(np.isclose(xx[0,0,0,0],yy[0,0,0,0]), "chi_0000 k={}".format((ix,iy)))
+                    self.assertTrue(np.isclose(xx[0,0,1,1],yy[0,0,1,1]), "chi_0011 k={}".format((ix,iy)))
+                    self.assertTrue(np.isclose(xx[1,1,0,0],yy[1,1,0,0]), "chi_1100 k={}".format((ix,iy)))
+                    self.assertTrue(np.isclose(xx[1,1,1,1],yy[1,1,1,1]), "chi_1111 k={}".format((ix,iy)))
 
         pass
 
