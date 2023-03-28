@@ -4,7 +4,6 @@ import os, sys
 import unittest
 
 import numpy as np
-import toml
 
 class RPAOneOrbital:
     def __init__(self):
