@@ -47,6 +47,7 @@ class DoS:
     def write_dos(self, output: str, verbose: bool = False):
         if verbose:
             print("Writing DOS to file: ", output)
+        total_dos = np.sum(self.dos, axis=0)
         with open(output, "w") as fw:
             fw.write("# ene")
             for j in range(self.norb):
@@ -54,6 +55,7 @@ class DoS:
             fw.write("\n")
             for i in range(self.ene_num):
                 fw.write("{:15.8f} ".format(self.ene[i]))
+                fw.write("{:15.8f} ".format(total_dos[i]))
                 for j in range(self.norb):
                     fw.write("{:15.8f} ".format(self.dos[j, i]))
                 fw.write("\n")
