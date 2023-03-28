@@ -49,7 +49,7 @@ class DoS:
             print("Writing DOS to file: ", output)
         total_dos = np.sum(self.dos, axis=0)
         with open(output, "w") as fw:
-            fw.write("# ene")
+            fw.write("# ene total_dos")
             for j in range(self.norb):
                 fw.write(f" dos[iorb={j}]")
             fw.write("\n")
