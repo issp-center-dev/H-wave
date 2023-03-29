@@ -394,7 +394,7 @@ class Interaction:
                     for spinvec, w in spins.items():
                         s1,s2,s3,s4 = spinvec
                         # beta beta' alpha alpha'
-                        orb = (s4, a, s3, b, s1, a, s2, b)
+                        orb = (s4, b, s3, a, s1, a, s2, b)
                         ham_r[(*irvec, *orb)] += v * w
 
         if 'CoulombIntra' in self.param_ham.keys():
@@ -584,6 +584,7 @@ class RPA:
         # logger.info("    hermite_tol     = {}".format(self.hermite_tolerance))
         logger.info("    freq_range      = {}".format(self.freq_range))
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
+        logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
         pass
 
     @do_profile
@@ -631,6 +632,8 @@ class RPA:
                 spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
                 spin_tensor[0,0,0,0] = 1
                 spin_tensor[1,1,1,1] = 1
+                spin_tensor[0,1,0,1] = 1
+                spin_tensor[1,0,1,0] = 1
 
                 nvol = self.lattice.nvol
                 nd = self.norb
