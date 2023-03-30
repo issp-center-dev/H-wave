@@ -316,21 +316,6 @@ class Interaction:
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
-            # # 2x2 unit matrix for spin dof
-            # spin = np.eye(2)
-
-            # # T_{a,s,b,t}(r)
-            # ham_r = np.einsum('rab,st->rsatb',
-            #                   tab_r.reshape(nvol,norb,norb),
-            #                   spin
-            # ).reshape(nx,ny,nz,nd,nd)
-
-            # # T_{a,s,b,t}(k)
-            # ham_q = np.einsum('kab,st->ksatb',
-            #                   tab_q.reshape(nvol,norb,norb),
-            #                   spin
-            # ).reshape(nx,ny,nz,nd,nd)
-
             # N.B. spin degree of freedom not included
             ham_r = tab_r
             ham_q = tab_q
@@ -449,6 +434,9 @@ class RPA:
         self.param_ham = param_ham
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
+
+        self.calc_scheme = info_mode.get("calc_scheme", "general")
+        self.enable_reduced = self.calc_scheme.lower() in ["reduced", "squashed"]
 
         self.lattice = Lattice(self.param_mod)
         self.ham_info = Interaction(self.lattice, param_ham, info_mode)
@@ -585,6 +573,7 @@ class RPA:
         logger.info("    freq_range      = {}".format(self.freq_range))
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
+        logger.info("    calc_scheme     = {}".format(self.calc_scheme))
         pass
 
     @do_profile
@@ -624,29 +613,86 @@ class RPA:
         if self.calc_chiq:
 
             if self.ham_info.enable_spin_orbital:
+                ham_orig = self.ham_info.ham_inter_q
+
+                if self.calc_scheme == "reduced":
+                    # alpha=alpha', beta=beta' case
+                    nvol = self.lattice.nvol
+                    nd = self.nd
+                    ham = np.einsum('kaabb->kab',
+                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                elif self.calc_scheme == "squashed":
+                    logger.error("squash is not available with spin-orbital interaction")
+                    sys.exit(1)
+                else:
+                    ham = ham_orig
                 pass
+            
             else:
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
+                ham_orig = self.ham_info.ham_inter_q
 
-                spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
-                spin_tensor[0,0,0,0] = 1
-                spin_tensor[1,1,1,1] = 1
-                spin_tensor[0,1,0,1] = 1
-                spin_tensor[1,0,1,0] = 1
+                if self.calc_scheme == "reduced":
+                    # alpha=alpha', beta=beta' case
 
-                nvol = self.lattice.nvol
-                nd = self.norb
-                nso = self.ns * self.norb
+                    spin_tensor = np.identity(2)
 
-                nfreq = chi0q_orig.shape[0]
+                    nvol = self.lattice.nvol
+                    norb = self.norb
+                    ns = self.ns
+                    nd = self.ns * self.norb
+                    nfreq = chi0q_orig.shape[0]
 
-                chi0q = np.einsum('lkabcd,stuv->lksatbucvd',
-                                  chi0q_orig.reshape(nfreq,nvol,nd,nd,nd,nd),
-                                  spin_tensor).reshape(nfreq,nvol,nso,nso,nso,nso)
+                    chi0q = np.einsum('lkab,st->lksatb',
+                                      chi0q_orig.reshape(nfreq,nvol,norb,norb),
+                                      spin_tensor).reshape(nfreq,nvol,nd,nd)
+
+                    ham = np.einsum('ksasatbtb->ksatb',
+                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(nd,)*2)
+
+                elif self.calc_scheme == "squashed":
+                    # norb**2 squash
+
+                    spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
+                    spin_tensor[0,0,0,0] = 1
+                    spin_tensor[1,1,1,1] = 1
+                    spin_tensor[0,1,0,1] = 1
+                    spin_tensor[1,0,1,0] = 1
+
+                    nvol = self.lattice.nvol
+                    norb = self.norb
+                    ns = self.ns
+                    nfreq = chi0q_orig.shape[0]
+
+                    chi0q = np.einsum('lkab,stuv->lkstauvb',
+                                      chi0q_orig.reshape(nfreq,nvol,norb,norb),
+                                      spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
+
+                    ham = np.einsum('ksauatbvb->ksuatvb',
+                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+
+                else:
+                    # general nd**4 case
+
+                    spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
+                    spin_tensor[0,0,0,0] = 1
+                    spin_tensor[1,1,1,1] = 1
+                    spin_tensor[0,1,0,1] = 1
+                    spin_tensor[1,0,1,0] = 1
+
+                    nvol = self.lattice.nvol
+                    norb = self.norb
+                    nd = self.ns * self.norb
+                    nfreq = chi0q_orig.shape[0]
+
+                    chi0q = np.einsum('lkabcd,stuv->lksatbucvd',
+                                      chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
+                                      spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
+                    ham = ham_orig
 
             # solve
-            sol = self._solve_rpa(chi0q, self.ham_info.ham_inter_q)
+            sol = self._solve_rpa(chi0q, ham)
 
             # adhoc store
             green_info["chiq"] = sol
@@ -906,20 +952,31 @@ class RPA:
         sgn = np.full(nmat, -1)
         sgn[0] = 1
 
-        chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
-                            green_rt.reshape(nmat,nvol,nd,nd),
-                            green_rev,
-                            sgn)
+        if self.enable_reduced:
+            # reduced index calculation
+            chi0_rt = np.einsum('lrab,lrba,l->lrab',
+                                green_rt.reshape(nmat,nvol,nd,nd),
+                                green_rev,
+                                sgn)
+            nd_shape=(nd,nd)
+            nds=nd**2
+        else:
+            chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
+                                green_rt.reshape(nmat,nvol,nd,nd),
+                                green_rev,
+                                sgn)
+            nd_shape=(nd,nd,nd,nd)
+            nds=nd**4
 
         # Fourier transform to wave number space
-        chi0_qt = FFT.fftn(chi0_rt.reshape(nmat,nx,ny,nz,nd**4), axes=(1,2,3))
+        chi0_qt = FFT.fftn(chi0_rt.reshape(nmat,nx,ny,nz,nds), axes=(1,2,3))
 
         # Fourier transform to matsubara freq
         omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
 
         chi0_qw = FFT.ifft(
-            np.einsum('tv,t->tv', chi0_qt.reshape(nmat,nvol*nd**4), omg),
-            axis=0).reshape(nmat,nvol,nd,nd,nd,nd) * (-1.0/beta)
+            np.einsum('tv,t->tv', chi0_qt.reshape(nmat,nvol*nds), omg),
+            axis=0).reshape(nmat,nvol,*nd_shape) * (-1.0/beta)
 
         return chi0_qw
 
@@ -929,18 +986,20 @@ class RPA:
         #nmat = self.nmat
         nmat = chi0q.shape[0]
         nd = self.nd
-        ndx = nd**2  # combined index a = (alpha, alpha')
+        #ndx = nd**2  # combined index a = (alpha, alpha')
+        chi_shape = chi0q.shape  # [nmat,nvol,(spin_orbital structure)]
+        ndx = np.prod(chi_shape[2:2+(len(chi_shape)-2)//2])
 
-        # 1 - X^0(l,k,aa,bb) W(k,bb,cc)
+        # 1 + X^0(l,k,aa,bb) W(k,bb,cc)
         mat  = np.tile(np.eye(ndx, dtype=np.complex128), (nmat,nvol,1,1))
         mat += np.einsum('lkab,kbc->lkac',
                          chi0q.reshape(nmat,nvol,ndx,ndx),
                          ham.reshape(nvol,ndx,ndx))
 
-        # [ 1 - X^0 W ]^-1 X^0
+        # [ 1 + X^0 W ]^-1 X^0
         sol = np.linalg.solve(mat, chi0q.reshape(nmat,nvol,ndx,ndx))
 
-        return sol.reshape(nmat,nvol,nd,nd,nd,nd)
+        return sol.reshape(chi_shape)
 
     @do_profile
     def _calc_chi0q_exact(self, eps_k, beta, mu):
