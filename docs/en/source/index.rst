@@ -106,6 +106,7 @@ Contents
    rpa/rpa-index
    algorithm/al-index
    acknowledgement
+   appendix/app-index
    
 
 .. Indices and tables

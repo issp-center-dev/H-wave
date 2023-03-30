@@ -12,8 +12,8 @@ before running the program.
 
 In the following, we provide a tutorial based on a sample in
 ``docs/tutorial/Hubbard/RPA`` directory.
-The interaction definition files are generated using StdFace library.
-
+The interaction definition files can be generated using StdFace library.
+See :ref:`Ch:StdFace` section for the details.
 
 Create a parameter file
 --------------------------------
@@ -46,8 +46,11 @@ The calculation parameters are specified in ``[mode.param]`` subsection.
 
 ``[file.input]`` subsection contains settings
 on the directory for the input files by ``path_to_input``,
-and the filename for the initial configuration by ``initial``.
-If the latter is not specified, a random configuration will be generated.
+and the filename for the static Green's function by ``initial`` as an input.
+If the latter is not specified, it is assumed to be zero.
+It is also possible to read the pre-calculated irreducible susceptibility
+:math:`\chi_0(\vec{q})` from a file specified by ``chi0q_init`` and calculate
+the susceptibility.
 
 ``[file.input.interaction]`` subsection contains a list of files
 associated with the geometry information and the interactions distinguished by the keywords.
@@ -97,9 +100,11 @@ These files are written in Wannier90(-like) format, as exemplified below.
 It contains
 a comment (line 1),
 the number of orbitals (line 2),
-the number of cells ``nrpts`` of the rectangular cuboid that accommodates translation vectors (line 3),
+``nrpts`` (line 3),
 the multiplicity factors (``nrpts`` elements, with 15 elements per line),
 and the elements of the coefficient matrix.
+``nrpts`` denotes the number of cells of the rectangular cuboid that is spanned by the
+lower and upper ends of the translation vectors along x, y, and z axes.
 
 Each element of the matrix consists of
 translation vector :math:`r_x, r_y, r_z`,
@@ -165,57 +170,4 @@ It also produces the figures of these quantities in PNG format shown as below:
 	 \endgroup
 
 
-Compile and run StdFace library
-----------------------------------------------------------------
-
-The interaction definition files can be generated easily using StdFace library.
-We will provide a short instruction how to use it.
-
-The source package of StdFace library that supports input formats of the RPA is available from the repository as follows.
-
-.. code-block:: bash
-
-    $ git clone https://github.com/issp-center-dev/StdFace.git
-
-Then, the library is to be compiled with the commands:
-
-.. code-block:: bash
-
-    $ cd StdFace
-    $ mkdir build && cd build
-    $ cmake -DUHF=ON ..
-    $ make
-
-If the compilation is successful, you can find the executable module ``uhf_dry.out`` in ``src`` directory.
-
-An input to ``uhf_dry.out`` can be found as ``stan.in`` in the sample directory,
-which reads:
-
-.. literalinclude:: ../sample/stan.in
-
-- ``model`` is a keyword to choose the target model.
-  Currently, only ``Hubbard`` is supported that denotes Hubbard model with the number of electrons fixed.
-
-- ``lattice`` is a keyword to specify the lattice structure.
-  In this example, the square lattice ``square`` is chosen.
-  ``W`` and ``L`` denote the size of the lattice.
-
-- ``t`` and ``V`` denote parameters of the hopping and the neighbor-site Coulomb interaction, respectively.
-
-- ``calcmode = "uhfk"`` specifies the output to be in the Wannier90(-like) format.
-  If ``exportall = 0`` is given, the outputs are compactified with zero components omitted.
-
-See Section :ref:`Ch:HowToWannier90_rpa` for the details of input files.
-
-Then, run ``uhf_dry.out`` with the file above as an input:
-
-.. code-block:: bash
-
-    $ cd path_to_Hwave/docs/tutorial/Hubbard/RPA
-    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ ./uhf_dry.out stan.in
-
-When the program finishes, a geometry information file ``geom.dat``
-and interaction definition files ``transfer.dat`` and ``coulombinter.dat``,
-are generated in the current directory.
 

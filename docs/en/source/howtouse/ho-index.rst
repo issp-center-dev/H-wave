@@ -12,6 +12,8 @@ Basic usage
   - requests module
   - tomli module
 
+  Note that `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ is used for FFT calculations in H-wave UHFk and rpa modes.
+
 - Official Page
 
     - `GitHub repository <https://github.com/issp-center-dev/H-wave>`_
