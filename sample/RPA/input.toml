@@ -4,6 +4,7 @@
 [mode]
   mode = "RPA"
   # enable_spin_orbital = false
+  # calc_scheme = "general"
 
 [mode.param]
   T = 0.5
@@ -28,7 +29,8 @@
 [file.input.interaction]
   path_to_input = "input"
   Geometry = "geom.dat"
-  Transfer = "transfer.dat"
+  #Transfer = "transfer.dat"
+  Transfer = "transfer_spin_orbital.dat"
   CoulombIntra = "coulombintra.dat"
   CoulombInter = "coulombinter.dat"
 
