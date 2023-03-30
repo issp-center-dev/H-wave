@@ -45,10 +45,8 @@ The calculation parameters are specified in ``[mode.param]`` subsection.
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``[file.input]`` subsection contains settings
-on the directory for the input files by ``path_to_input``,
-and the filename for the static Green's function by ``initial`` as an input.
-If the latter is not specified, it is assumed to be zero.
-It is also possible to read the pre-calculated irreducible susceptibility
+on the directory for the input files by ``path_to_input``.
+It is possible to read the pre-calculated irreducible susceptibility
 :math:`\chi_0(\vec{q})` from a file specified by ``chi0q_init`` and calculate
 the susceptibility.
 

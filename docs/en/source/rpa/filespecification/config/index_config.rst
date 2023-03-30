@@ -39,6 +39,29 @@ Parameters
   This parameter specifies the calculation mode. 
   Set to ``"RPA"`` for calculations of the Random Phase Approximation.
 
+- ``enable_spin_orbital`` (default value is ``false``)
+
+  **Type :**
+  Boolean
+
+  **Description :**
+  This parameter specifies whether to allow spin-orbital interaction.
+  If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` and the spin index :math:`s` by :math:`\alpha + N_\text{orb} \cdot s`.
+
+- ``calc_scheme`` (default value is ``"general"``)
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies how the spin and orbitals are treated in the calculation. The parameter takes one of the following options.
+
+  - ``general``: Generalized orbitals combining spins and orbitals are considered. The susceptibility matrix takes the most general form, with the size of :math:`N_\text{orb}^4 N_\text{spin}^4 N_k N_\omega`.
+
+  - ``reduced``: Generalized orbitals combining spins and orbitals are considered. For the susceptibility matrix, the components with :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered.
+
+  - ``squashed``: Spins and orbitals are separately treated, and for the orbitals :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the susceptilibity matrix becomes :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega`. See :ref:`Ch:Algorithm` for details.
+
 
 ``mode.param`` section
 ================================
@@ -203,17 +226,6 @@ They specify the settings of the input and output files, respectively, on the ty
 
   **Description :**
   This parameter specifies the directory in which the input files are located.
-
-- ``initial``
-
-  **Type :**
-  String
-
-  **Description :**
-  This parameter specifies the filename of the static one-body Green's function.
-  The input file is in NumPy zip format that corresponds to the output format of
-  ``green`` of the UHF calculation.
-  If the initial configuration is not given, it is assumed to be zero.
 
 - ``chi0q_init``
 

@@ -115,7 +115,7 @@ in the matrix form. Then finally it leads to the expression:
 
 In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,
-the susceptibility ( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)`, X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)`) is the largest multidimensional array,
+the susceptibility ( :math:`X^{(0)\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)`, :math:`X^{\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)`) is the largest multidimensional array,
 given by :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}`, where the memory cost and computational complexity increase as the size increases.
 As explained below, the size of the multidimensional array of susceptibilities can be reduced by separating orbits and spins:
 for the two-body interactions handled in H-wave's RPA mode, separating orbits and spins results in
