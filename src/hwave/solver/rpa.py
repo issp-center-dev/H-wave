@@ -592,7 +592,8 @@ class RPA:
             self._calc_epsilon_k(green_info)
 
             if self.calc_mu:
-                dist, mu = self._find_mu(self.Ncond, self.T)
+                Ncond = self.Ncond/2 if self.ham_info.enable_spin_orbital == False else self.Ncond
+                dist, mu = self._find_mu(Ncond, self.T)
             else:
                 mu = self.mu_value
 
