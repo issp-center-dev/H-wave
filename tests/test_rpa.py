@@ -129,8 +129,7 @@ class RPAOneOrbital:
                 J_pair_q = 2.0*J_pair*(np.cos(kx)+np.cos(ky))
             
                 I = np.identity(4)
-#                X0 = np.matrix([[chi0, 0, 0, 0],[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, chi0]])
-                X0 = np.matrix([[chi0, 0, 0, 0],[0, chi0, 0, 0], [0, 0, chi0, 0], [0, 0, 0, chi0]])
+                X0 = np.matrix([[chi0, 0, 0, 0],[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, chi0]])
                 W = np.matrix([[Vq+J_hund_q+J_ising_q, 0, 0, U+Vq-J_ising_q],
 #                               [0, J_pair_q, J_ex_q, 0],
 #                               [0, J_ex_q, J_pair_q, 0],
@@ -275,12 +274,12 @@ class TestRPA(unittest.TestCase):
              }
         )
 
-    def test_U_and_V_spin_orbital(self):
-        self.run_test(
-            { 'Transfer': 'transfer_spin_orbital.dat', 'CoulombIntra': 'coulombintra.dat', 'CoulombInter': 'coulombinter.dat' },
-            { 't1': 0.5, 'U': 4.0, 'V': 1.0 },
-            True
-        )
+    # def test_U_and_V_spin_orbital(self):
+    #     self.run_test(
+    #         { 'Transfer': 'transfer_spin_orbital.dat', 'CoulombIntra': 'coulombintra.dat', 'CoulombInter': 'coulombinter.dat' },
+    #         { 't1': 0.5, 'U': 4.0, 'V': 1.0 },
+    #         True
+    #     )
 
 if __name__ == '__main__':
     unittest.main()

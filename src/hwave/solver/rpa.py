@@ -295,14 +295,22 @@ class Interaction:
             # assume orbital index includes spin index
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
+            is_spin_diagonal = True
+
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 tab_r[(*irvec,*orbvec)] = v
+                if (orbvec[0] < norb and orbvec[1] >= norb) or (orbvec[0] >= norb and orbvec[1] < norb):
+                    is_spin_diagonal = False
 
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
             ham_r = tab_r
             ham_q = tab_q
+
+            self.is_spin_diagonal = is_spin_diagonal
+            if self.is_spin_diagonal:
+                logger.info("make_ham_trans: spin_diagonal")
 
         else:
             tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
@@ -658,8 +666,8 @@ class RPA:
                     spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
                     spin_tensor[0,0,0,0] = 1
                     spin_tensor[1,1,1,1] = 1
-                    spin_tensor[0,1,0,1] = 1
-                    spin_tensor[1,0,1,0] = 1
+                    #spin_tensor[0,1,0,1] = 1
+                    #spin_tensor[1,0,1,0] = 1
 
                     nvol = self.lattice.nvol
                     norb = self.norb
@@ -679,8 +687,8 @@ class RPA:
                     spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
                     spin_tensor[0,0,0,0] = 1
                     spin_tensor[1,1,1,1] = 1
-                    spin_tensor[0,1,0,1] = 1
-                    spin_tensor[1,0,1,0] = 1
+                    #spin_tensor[0,1,0,1] = 1
+                    #spin_tensor[1,0,1,0] = 1
 
                     nvol = self.lattice.nvol
                     norb = self.norb
