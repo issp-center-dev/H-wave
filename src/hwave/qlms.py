@@ -8,6 +8,7 @@ import logging
 
 import tomli
 
+import hwave
 import hwave.qlmsio as qlmsio
 import hwave.solver.uhfr as sol_uhfr
 import hwave.solver.uhfk as sol_uhfk
@@ -120,9 +121,20 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
 
 def main():
-    args = sys.argv
-    if len(args) != 2:
-        print("Usage: python3 qlms.py input.toml")
-        sys.exit(1)
-    run(input_file=args[1])
+    import argparse
 
+    parser = argparse.ArgumentParser(prog='hwave')
+    parser.add_argument('input_toml', nargs='?', default=None, help='input parameter file')
+    parser.add_argument('--version', action='store_true', help='show version')
+
+    args = parser.parse_args()
+
+    if args.version:
+        print('hwave', hwave.__version__)
+        sys.exit(0)
+
+    if args.input_toml is None:
+        parser.print_help()
+        sys.exit(1)
+
+    run(input_file = args.input_toml)
