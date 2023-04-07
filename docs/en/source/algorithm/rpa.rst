@@ -171,14 +171,14 @@ In the above formula, the calculation of the irreducible susceptibility is perfo
     \end{aligned}
 
 In this case, the sum of the diagonalized components is required, which is computationally more expensive.
-Thus, in many of previous studies, the one body Green's function is calculated as follows:
+In many previous studies, the one body Green's function is calculated as follows:
 
 .. math::
     \begin{aligned}
      G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
     \end{aligned}
 
-The irreducible susceptibility is calculated as follows
+The irreducible susceptibility is calculated as follows:
 
 .. math::
     \begin{aligned}
@@ -186,11 +186,11 @@ The irreducible susceptibility is calculated as follows
       -\frac{T}{N_L}
       \sum_{{\bf k},n}
       G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}).\nonumber
     \end{aligned}
 
-Though calculations using this method result in poor approximation accuracy in situations where the diagonalization component is mixed,
-there is the advantage that there is no need for technical consideration for :math:`\gamma` due to band intersections.
+Though this method may lead to poor accuracy when the diagonalized components are mixed,
+there is an advantage that there is no need for technical consideration for :math:`\gamma` due to band intersections.
 In order to make comparisons with previous studies,
 H-Wave has adopted this approach (a mode for correctly handling the Green's functions and susceptibilities will also be implemented).
 It is noted that the vertex correction may be taken into account as a means to consider
