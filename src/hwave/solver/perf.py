@@ -6,6 +6,8 @@ class PerfDB:
         self._db_count = {}
         self._db_value = {}
     def __del__(self):
+        if len(self._db_count) == 0:
+            return
         print("--------------------------------------------------------------------------------")
         print("Statistics")
         print("  function                         :  total elapsed  : average elapsed : ncalls")
