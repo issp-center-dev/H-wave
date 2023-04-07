@@ -796,24 +796,54 @@ class RPA:
             data = np.load(file_name)
             chi0q = data["chi0q"]
             logger.debug("chi0q: shape={}".format(chi0q.shape))
-            assert len(chi0q.shape) == 6, "unexpected shape: {}".format(chi0q.shape)
         except Exception as e:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
 
         # check size
-        cs = chi0q.shape
         try:
-            assert cs[1] == self.lattice.nvol, "lattice volume"
-            # assert cs[2] == self.nd, "shape[2]"
-            # assert cs[3] == self.nd, "shape[3]"
-            # assert cs[4] == self.nd, "shape[4]"
-            # assert cs[5] == self.nd, "shape[5]"
-            nd = cs[2]
-            assert nd == self.nd or nd == self.norb, "shape[2]"
-            assert cs[3] == nd, "shape[3]"
-            assert cs[4] == nd, "shape[4]"
-            assert cs[5] == nd, "shape[5]"
+            if self.calc_scheme == "general":
+                # general: shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
+
+                assert len(chi0q.shape) == 6, "unexpected shape: {}".format(chi0q.shape)
+
+                cs = chi0q.shape
+                assert cs[1] == self.lattice.nvol, "lattice volume"
+                nd = cs[2]
+                assert nd == self.nd or nd == self.norb, "shape[2]"
+                assert cs[3] == nd, "shape[3]"
+                assert cs[4] == nd, "shape[4]"
+                assert cs[5] == nd, "shape[5]"
+
+            elif self.calc_scheme == "reduced":
+                # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+
+                assert len(chi0q.shape) == 4, "unexpected shape: {}".format(chi0q.shape)
+
+                cs = chi0q.shape
+                assert cs[1] == self.lattice.nvol, "lattice volume"
+                nd = cs[2]
+                assert nd == self.nd or nd == self.norb, "shape[2]"
+                assert cs[3] == nd, "shape[3]"
+
+            elif self.calc_scheme == "squashed":
+                # squashed: shape = (nmat,nvol,ns,ns,norb,ns,ns,norb)
+
+                assert len(chi0q.shape) == 8, "unexpected shape: {}".format(chi0q.shape)
+
+                assert cs[1] == self.lattice.nvol, "lattice volume"
+                ns = cs[2]
+                nd = cs[4]
+                assert ns == 2, "shape[2] == nspin"
+                assert nd == self.norb, "shape[4] == norb"
+                assert cs[2] == ns, "shape[2]"
+                assert cs[3] == ns, "shape[3]"
+                assert cs[4] == nd, "shape[4]"
+                assert cs[5] == ns, "shape[5]"
+                assert cs[6] == ns, "shape[6]"
+                assert cs[7] == nd, "shape[7]"
+            else:
+                pass
         except AssertionError as e:
             logger.error("unexpected data size {}".format(e))
             sys.exit(1)
