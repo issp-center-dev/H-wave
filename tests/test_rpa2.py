@@ -167,8 +167,7 @@ class RPATwoOrbital:
             for idqy, ky in enumerate(ky_array):
                 I = np.identity(8, dtype=np.complex128)
                 chi0 = chi0q[:,:,:,:, idqx, idqy,Nmat//2]
-                #Vxq = V*(1.0+np.exp(-1J*kx))
-                Vxq = V*(1.0+np.exp(+1J*kx))
+                Vxq = V*(1.0+np.exp(-1J*kx))
                 Vyq = 2.0*V*np.cos(ky)
                 X0 = np.matrix(([chi0[0][0][0][0], 0, 0, chi0[0][0][1][1], 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],

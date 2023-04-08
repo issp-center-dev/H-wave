@@ -425,7 +425,7 @@ class Interaction:
         logger.debug("ham_inter_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
 
         # Fourier transform W(q)^{bb'aa'}
-        ham_q = FFT.ifftn(ham_r, axes=(0,1,2)) * nvol
+        ham_q = FFT.fftn(ham_r, axes=(0,1,2))
 
         logger.debug("ham_inter_q shape={}, size={}".format(ham_q.shape, ham_q.size))
         logger.debug("ham_inter_q nonzero count={}".format(ham_q[abs(ham_q) > 1.0e-8].size))
