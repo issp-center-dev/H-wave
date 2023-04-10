@@ -286,31 +286,25 @@ class Interaction:
         nd = norb * ns
 
         if 'Transfer' not in self.param_ham.keys():
-            logger.warn("Transfer not found")
+            logger.warning("Transfer not found")
             self.ham_trans_r = None
             self.ham_trans_q = None
+            self.ham_extern_r = None
+            self.ham_extern_q = None
             return
 
         if self.enable_spin_orbital == True:
             # assume orbital index includes spin index
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
-            is_spin_diagonal = True
-
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 tab_r[(*irvec,*orbvec)] = v
-                if (orbvec[0] < norb and orbvec[1] >= norb) or (orbvec[0] >= norb and orbvec[1] < norb):
-                    is_spin_diagonal = False
 
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
-            ham_r = tab_r
-            ham_q = tab_q
-
-            self.is_spin_diagonal = is_spin_diagonal
-            if self.is_spin_diagonal:
-                logger.info("make_ham_trans: spin_diagonal")
+            self.ham_trans_r = tab_r.reshape(nvol,nd,nd)
+            self.ham_trans_q = tab_q.reshape(nvol,nd,nd)
 
         else:
             tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
@@ -325,18 +319,41 @@ class Interaction:
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
-            ham_r = tab_r
-            ham_q = tab_q
+            self.ham_trans_r = tab_r.reshape(nvol,norb,norb)
+            self.ham_trans_q = tab_q.reshape(nvol,norb,norb)
 
-        logger.debug("ham_trans_r shape={}, size={}".format(ham_r.shape, ham_r.size))
-        logger.debug("ham_trans_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
-        
-        logger.debug("ham_trans_q shape={}, size={}".format(ham_q.shape, ham_q.size))
-        logger.debug("ham_trans_q nonzero count={}".format(ham_q[abs(ham_q) > 1.0e-8].size))
+        logger.debug("ham_trans_r shape={}, size={}, nonzero_count={}".format(
+            self.ham_trans_r.shape,
+            self.ham_trans_r.size,
+            self.ham_trans_r[abs(self.ham_trans_r) > 1.0e-8].size,
+        ))
+        logger.debug("ham_trans_q shape={}, size={}, nonzero_count={}".format(
+            self.ham_trans_q.shape,
+            self.ham_trans_q.size,
+            self.ham_trans_q[abs(self.ham_trans_q) > 1.0e-8].size,
+        ))
 
-        sh = ham_r.shape[3:]
-        self.ham_trans_r = ham_r.reshape(nvol,*(sh))
-        self.ham_trans_q = ham_q.reshape(nvol,*(sh))
+        if 'Extern' in self.param_ham.keys():
+            logger.info("read External field")
+
+            hab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+            
+            for (irvec,orbvec), v in self.param_ham["Extern"].items():
+                if orbvec[0] < norb and orbvec[1] < norb:
+                    hab_r[(*irvec,*orbvec)] = v
+                else:
+                    pass  # skip spin dependence
+
+            # Fourier transform
+            hab_q = FFT.ifftn(hab_r, axes=(0,1,2)) * nvol
+
+            # N.B. spin degree of freedom not included
+            self.ham_extern_r = hab_r.reshape(nvol,norb,norb)
+            self.ham_extern_q = hab_q.reshape(nvol,norb,norb)
+        else:
+            self.ham_extern_r = None
+            self.ham_extern_q = None
+
 
     def _make_ham_inter(self):
         nx,ny,nz = self.lattice.shape
@@ -468,7 +485,9 @@ class RPA:
         self.norb = self.param_ham["geometry"]["norb"]
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
+
         self.coeff_tail = self.param_mod.get("coeff_tail", 0.0)
+        self.ext = self.param_mod.get("coeff_extern", 0.0)
 
         # exclusive options: mu and Ncond/filling
         have_mu = "mu" in self.param_mod.keys()
@@ -867,25 +886,63 @@ class RPA:
         # input green function
         # g0 = _init_green(green_info)
 
-        # H0(k) = T_ab(k) + (H * G0)_ab(k)
-        H0 = self.ham_info.ham_trans_q
-        # XXX assume g0 = 0
+        #XXX
+        # read trans_mod
 
         #XXX
-        sh = H0.shape
-        H0 = H0.reshape(1,*sh)
 
-        #XXX ham_trans_q.shape == (nblock, nvol, nd, nd)
-        # where
-        # nd = norb for spin-free or spin-diag
-        # nd = norb*nspin for spinful
+        if self.ham_info.enable_spin_orbital:
+            # H0(k) = T_{a~b~}(k) + h sigma_z_{ss'} H_{ab}(k)
+            #   T_{a~b~} with extended orbital index
+            #   H_{ab} with bare orbital index
+            #   sigma_z = diag(1,-1) Pauli matrix
+            #   h coefficient
 
-        # #nd = self.nd
-        # nd = self.nd if self.ham_info.enable_spin_orbital else self.norb
-        # assert H0.shape[-1] == nd
+            H0 = self.ham_info.ham_trans_q
+
+            if self.ham_info.ham_extern_q is not None:
+                H1 = self.ham_info.ham_extern_q * self.ext
+                Sz = np.diag((1,-1))
+                H0 += np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
+
+            # check if diagonal
+            ns = self.ns
+            norb = self.norb
+
+            Htmp = H0.reshape(nvol,ns,norb,ns,norb)
+            if np.allclose(Htmp[:,0,:,1,:], 0) and np.allclose(Htmp[:,1,:,0,:], 0):
+                if np.allclose(Htmp[:,0,:,0,:], Htmp[:,1,:,1,:]):
+                    logger.info("H is spin-free")
+                    H0 = Htmp[:,0,:,0,:].reshape(1,nvol,norb,norb)
+                else:
+                    logger.info("H is spin-diagnoal")
+                    Hnew = np.zeros((2,nvol,norb,norb), dtype=np.complex128)
+                    Hnew[0] = Htmp[:,0,:,0,:]
+                    Hnew[1] = Htmp[:,1,:,1,:]
+                    H0 = Hnew
+            else:
+                logger.debug("H is spinful")
+                H0 = H0.reshape(1,*H0.shape)
+
+        else:
+            # H0(k) = T_{ab}(k) x 1_{ss'} + h Sz_{ss'} H_{ab}(k)
+            #   T_{a~b~} with bare orbital index
+
+            H0 = self.ham_info.ham_trans_q
+
+            if self.ham_info.ham_extern_q is not None:
+                H1 = self.ham_info.ham_extern_q * self.ext
+
+                Hnew = np.zeros((2,nvol,norb,norb), dtype=np.complex128)
+                Hnew[0] = H0 + H1
+                Hnew[1] = H0 - H1
+                H0 = Hnew
+                logger.info("H is spin-diagnoal")
+            else:
+                logger.debug("H is spin-free")
+                H0 = H0.reshape(1,*H0.shape)
 
         # diagonalize H0(k)
-        # w,v = np.linalg.eigh(H0.reshape(nvol,nd,nd))
         w,v = np.linalg.eigh(H0)
 
         self.H0_eigenvalue = w
@@ -916,7 +973,7 @@ class RPA:
 
         def _calc_delta_n(mu):
             ff = _fermi(T, mu, w)
-            nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
+            nn = np.einsum('gkal,gkl,gkal->', np.conjugate(v), ff, v)
             return nn.real - occupied_number
 
         # find mu s.t. <n>(mu) = N0
