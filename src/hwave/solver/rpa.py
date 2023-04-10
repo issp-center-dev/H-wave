@@ -639,14 +639,18 @@ class RPA:
                 logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
             # nblock
-            if chi0q.shape[0] == 1:
+            if self.spin_mode in [ "spin-free", "spinful" ]:
+                assert chi0q.shape[0] == 1
                 chi0q = chi0q[0]
+            else:
+                assert chi0q.shape[0] == 2
+                pass
 
             green_info["chi0q"] = chi0q
 
         if self.calc_chiq:
 
-            if self.ham_info.enable_spin_orbital:
+            if self.spin_mode == "spinful":
                 ham_orig = self.ham_info.ham_inter_q
 
                 if self.calc_scheme == "reduced":
@@ -660,24 +664,70 @@ class RPA:
                     sys.exit(1)
                 else:
                     ham = ham_orig
-                pass
-            
-            else:
+
+            elif self.spin_mode == "spin-diag":
+                chi0q_orig = chi0q
+                ham_orig = self.ham_info.ham_inter_q
+
+                if self.calc_scheme == "reduced":
+                    nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
+
+                    norb = self.norb
+                    ns = self.ns
+                    nd = norb * ns
+
+                    spin_tensor = np.diag([1,-1])
+                    chi0q = np.einsum('glkab,gh->lkgahb',
+                                      chi0q_orig,
+                                      np.diag((1,-1))).reshape(nfreq,nvol,nd,nd)
+
+                    ham = np.einsum('kaabb->kab',
+                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+
+                elif self.calc_scheme == "squashed":
+                    nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
+
+                    norb = self.norb
+                    ns = self.ns
+                    nd = norb * ns
+
+                    chi0q = np.zeros((nfreq,nvol,ns,ns,norb,ns,ns,norb), dtype=np.complex128)
+                    chi0q[:,:,0,0,:,0,0,:] = chi0q[0]
+                    chi0q[:,:,1,1,:,1,1,:] = chi0q[1]
+
+                    ham = np.einsum('kaabb->kab',
+                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+
+                else:
+                    nblock,nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
+
+                    norb = self.norb
+                    ns = self.ns
+                    nd = norb * ns
+
+                    spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
+                    spin_tensor[0,0,0,0] = 1
+                    spin_tensor[1,1,1,1] = 1
+
+                    chi0q = np.einsum('glkabcd,gtuv->lkgatbucvd',
+                                      chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
+                                      spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
+                    ham = ham_orig
+
+            elif self.spin_mode == "spin-free":
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
                 ham_orig = self.ham_info.ham_inter_q
 
                 if self.calc_scheme == "reduced":
                     # alpha=alpha', beta=beta' case
+                    nfreq,nvol,norb1,norb2 = chi0q_orig.shape
 
-                    spin_tensor = np.identity(2)
-
-                    nvol = self.lattice.nvol
                     norb = self.norb
                     ns = self.ns
-                    nd = self.ns * self.norb
-                    nfreq = chi0q_orig.shape[0]
+                    nd = norb * ns
 
+                    spin_tensor = np.identity(ns)
                     chi0q = np.einsum('lkab,st->lksatb',
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
@@ -687,17 +737,15 @@ class RPA:
 
                 elif self.calc_scheme == "squashed":
                     # norb**2 squash
+                    nfreq,nvol,norb1,norb2 = chi0q_orig.shape
+
+                    norb = self.norb
+                    ns = self.ns
+                    nd = norb * ns
 
                     spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
                     spin_tensor[0,0,0,0] = 1
                     spin_tensor[1,1,1,1] = 1
-                    #spin_tensor[0,1,0,1] = 1
-                    #spin_tensor[1,0,1,0] = 1
-
-                    nvol = self.lattice.nvol
-                    norb = self.norb
-                    ns = self.ns
-                    nfreq = chi0q_orig.shape[0]
 
                     chi0q = np.einsum('lkab,stuv->lkstauvb',
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
@@ -708,17 +756,15 @@ class RPA:
 
                 else:
                     # general nd**4 case
+                    nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
+
+                    norb = self.norb
+                    ns = self.ns
+                    nd = norb * ns
 
                     spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
                     spin_tensor[0,0,0,0] = 1
                     spin_tensor[1,1,1,1] = 1
-                    #spin_tensor[0,1,0,1] = 1
-                    #spin_tensor[1,0,1,0] = 1
-
-                    nvol = self.lattice.nvol
-                    norb = self.norb
-                    nd = self.ns * self.norb
-                    nfreq = chi0q_orig.shape[0]
 
                     chi0q = np.einsum('lkabcd,stuv->lksatbucvd',
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
@@ -914,15 +960,18 @@ class RPA:
                 if np.allclose(Htmp[:,0,:,0,:], Htmp[:,1,:,1,:]):
                     logger.info("H is spin-free")
                     H0 = Htmp[:,0,:,0,:].reshape(1,nvol,norb,norb)
+                    self.spin_mode = "spin-free"
                 else:
                     logger.info("H is spin-diagnoal")
                     Hnew = np.zeros((2,nvol,norb,norb), dtype=np.complex128)
                     Hnew[0] = Htmp[:,0,:,0,:]
                     Hnew[1] = Htmp[:,1,:,1,:]
                     H0 = Hnew
+                    self.spin_mode = "spin-diag"
             else:
                 logger.debug("H is spinful")
                 H0 = H0.reshape(1,*H0.shape)
+                self.spin_mode = "spinful"
 
         else:
             # H0(k) = T_{ab}(k) x 1_{ss'} + h Sz_{ss'} H_{ab}(k)
@@ -937,10 +986,12 @@ class RPA:
                 Hnew[0] = H0 + H1
                 Hnew[1] = H0 - H1
                 H0 = Hnew
+                self.spin_mode = "spin-diag"
                 logger.info("H is spin-diagnoal")
             else:
                 logger.debug("H is spin-free")
                 H0 = H0.reshape(1,*H0.shape)
+                self.spin_mode = "spin-free"
 
         # diagonalize H0(k)
         w,v = np.linalg.eigh(H0)
@@ -1016,10 +1067,6 @@ class RPA:
         nblock,nvol,nd = ew.shape
         assert nvol == self.lattice.nvol
         
-        #nd = self.nd
-        #nd = self.nd if self.ham_info.enable_spin_orbital else self.norb
-        #assert ev.shape[-1] == nd
-
         nmat = self.nmat
 
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
@@ -1053,12 +1100,6 @@ class RPA:
 
         nblock,nmat,nvol,nd,nd2 = green_kw.shape
         assert nvol == self.lattice.nvol
-
-        #nd = self.nd
-        #nd = self.nd if self.ham_info.enable_spin_orbital else self.norb
-        #assert green_kw.shape[-1] == nd
-
-        #nmat = self.nmat
         assert nmat == self.nmat
 
         # Fourier transform from matsubara freq to imaginary time
@@ -1111,7 +1152,7 @@ class RPA:
         nvol = self.lattice.nvol
         #nmat = self.nmat
         nmat = chi0q.shape[0]
-        nd = self.nd
+        #nd = self.nd
         #ndx = nd**2  # combined index a = (alpha, alpha')
         chi_shape = chi0q.shape  # [nmat,nvol,(spin_orbital structure)]
         ndx = np.prod(chi_shape[2:2+(len(chi_shape)-2)//2])
