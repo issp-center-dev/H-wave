@@ -14,6 +14,7 @@
   nmat = 1024
   # Ncond = 1024
   # filling = 0.5
+  # coeff_tail = 1.0
 
   matsubara_frequency = "all"  # default
   # matsubara_frequency = "center"
@@ -29,8 +30,8 @@
 [file.input.interaction]
   path_to_input = "input"
   Geometry = "geom.dat"
-  #Transfer = "transfer.dat"
-  Transfer = "transfer_spin_orbital.dat"
+  Transfer = "transfer.dat"
+  #Transfer = "transfer_spin_orbital.dat"
   CoulombIntra = "coulombintra.dat"
   CoulombInter = "coulombinter.dat"
 
