@@ -594,7 +594,7 @@ class RPA:
 
         logger.info("    T               = {}".format(self.T))
         logger.info("    E_cutoff        = {:e}".format(self.ene_cutoff))
-        logger.info("    coeff_tail      = {}".format(self.coeff_tail))
+        logger.info("    coeff_extern    = {}".format(self.ext))
 
         # logger.info("    RndSeed         = {}".format(self.param_mod["RndSeed"]))
         # logger.info("    strict_hermite  = {}".format(self.strict_hermite))
@@ -691,12 +691,16 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    chi0q = np.zeros((nfreq,nvol,ns,ns,norb,ns,ns,norb), dtype=np.complex128)
-                    chi0q[:,:,0,0,:,0,0,:] = chi0q[0]
-                    chi0q[:,:,1,1,:,1,1,:] = chi0q[1]
+                    spin_tensor = np.zeros((2,2,2,2), dtype=np.int32)
+                    spin_tensor[0,0,0,0] = 1
+                    spin_tensor[1,1,1,1] = 1
 
-                    ham = np.einsum('kaabb->kab',
-                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                    chi0q = np.einsum('glkab,gtuv->lkgtauvb',
+                                      chi0q_orig,
+                                      spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
+
+                    ham = np.einsum('ksauatbvb->ksuatvb',
+                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
 
                 else:
                     nblock,nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
@@ -710,7 +714,7 @@ class RPA:
                     spin_tensor[1,1,1,1] = 1
 
                     chi0q = np.einsum('glkabcd,gtuv->lkgatbucvd',
-                                      chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
+                                      chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_orig
 
@@ -981,6 +985,9 @@ class RPA:
 
             if self.ham_info.ham_extern_q is not None:
                 H1 = self.ham_info.ham_extern_q * self.ext
+
+                ns = self.ns
+                norb = self.norb
 
                 Hnew = np.zeros((2,nvol,norb,norb), dtype=np.complex128)
                 Hnew[0] = H0 + H1
