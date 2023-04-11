@@ -263,7 +263,7 @@ class TestRPATwoOrbital(unittest.TestCase):
         # compare
 
         # epsilon_k
-        self.assertEqual(solver.ham_info.ham_trans_q.shape, (Lx,Ly,1,2,2), "epsk.shape")
+        self.assertEqual(solver.ham_info.ham_trans_q.shape, (Lx*Ly,2,2), "epsk.shape")
         
         epsk = solver.ham_info.ham_trans_q.reshape(Lx,Ly,2,2)
         epsk_ref = np.transpose(eps_ref, (2,3,0,1))
