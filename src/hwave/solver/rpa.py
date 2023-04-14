@@ -316,7 +316,7 @@ class Interaction:
                     pass  # skip spin dependence
 
             # Fourier transform
-            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
+            tab_q = FFT.fftn(tab_r, axes=(0,1,2))
 
             # N.B. spin degree of freedom not included
             self.ham_trans_r = tab_r.reshape(nvol,norb,norb)
@@ -345,7 +345,7 @@ class Interaction:
                     pass  # skip spin dependence
 
             # Fourier transform
-            hab_q = FFT.ifftn(hab_r, axes=(0,1,2)) * nvol
+            hab_q = FFT.fftn(hab_r, axes=(0,1,2))
 
             # N.B. spin degree of freedom not included
             self.ham_extern_r = hab_r.reshape(nvol,norb,norb)
@@ -621,7 +621,10 @@ class RPA:
             self._calc_epsilon_k(green_info)
 
             if self.calc_mu:
-                Ncond = self.Ncond/2 if self.ham_info.enable_spin_orbital == False else self.Ncond
+                if self.spin_mode == "spin-free":
+                    Ncond = self.Ncond/2
+                else:
+                    Ncond = self.Ncond
                 dist, mu = self._find_mu(Ncond, self.T)
             else:
                 mu = self.mu_value
@@ -651,6 +654,7 @@ class RPA:
         if self.calc_chiq:
 
             if self.spin_mode == "spinful":
+                chi0q_orig = chi0q
                 ham_orig = self.ham_info.ham_inter_q
 
                 if self.calc_scheme == "reduced":
@@ -676,10 +680,10 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = np.diag([1,-1])
+                    spin_tensor = np.identity(2)
                     chi0q = np.einsum('glkab,gh->lkgahb',
                                       chi0q_orig,
-                                      np.diag((1,-1))).reshape(nfreq,nvol,nd,nd)
+                                      spin_tensor).reshape(nfreq,nvol,nd,nd)
 
                     ham = np.einsum('kaabb->kab',
                                     ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
