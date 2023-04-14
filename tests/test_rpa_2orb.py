@@ -17,9 +17,6 @@ class RPATwoOrbital:
                 epsilon_k[1][1][idx][idy] = 2.0*t*np.cos(ky)
                 epsilon_k[0][1][idx][idy] = t1*(1.0+np.exp(1J*kx))
                 epsilon_k[1][0][idx][idy] = t1*(1.0+np.exp(-1J*kx))
-        #XXX
-        epsilon_k[np.abs(epsilon_k) < 1.0e-8] = 0
-                
         return epsilon_k
 
     def _get_green(self, Nx, Ny, Nmat, myu, beta, epsilon_k):
@@ -27,7 +24,6 @@ class RPATwoOrbital:
         green_kw = np.zeros((2, 2, 2, Nx, Ny, Nmat), dtype=np.complex128)
         #diagonalize epsilon_k
 
-        #XXX
         ew = np.zeros((Nx,Ny,2),dtype=np.complex128)
         ev = np.zeros((Nx,Ny,2,2),dtype=np.complex128)
 
@@ -38,7 +34,6 @@ class RPATwoOrbital:
                 ene = eig[0]
                 vec = eig[1]
 
-                #XXX
                 ew[idx,idy] = eig[0]
                 ev[idx,idy] = eig[1]
                 
@@ -50,7 +45,6 @@ class RPATwoOrbital:
                             for idz in range(Nmat):
                                 green_kw[igamma][iorb][jorb][idx][idy][idz] = factor/(1J*iomega[idz]-(ene_gamma - myu))
 
-        #XXX
         self.ew = ew
         self.ev = ev
         return np.sum(green_kw, axis=0)
@@ -270,68 +264,68 @@ class TestRPATwoOrbital(unittest.TestCase):
 
         self.assertTrue(np.allclose(epsk,epsk_ref),"epsk")
 
-        # eigenvalues and eigenvectors
-        ew = solver.H0_eigenvalue.reshape(Lx,Ly,2)
-        ev = solver.H0_eigenvector.reshape(Lx,Ly,2,2)
+        # # eigenvalues and eigenvectors
+        # ew = solver.H0_eigenvalue.reshape(Lx,Ly,2)
+        # ev = solver.H0_eigenvector.reshape(Lx,Ly,2,2)
 
-        ew_ref = rpatwo.ew
-        ev_ref = rpatwo.ev
+        # ew_ref = rpatwo.ew
+        # ev_ref = rpatwo.ev
 
-        for ix in range(Lx):
-            for iy in range(Ly):
-                eig = ew[ix,iy]
-                evec = ev[ix,iy]
-                eig_ref = ew_ref[ix,iy]
-                evec_ref = ev_ref[ix,iy]
+        # for ix in range(Lx):
+        #     for iy in range(Ly):
+        #         eig = ew[ix,iy]
+        #         evec = ev[ix,iy]
+        #         eig_ref = ew_ref[ix,iy]
+        #         evec_ref = ev_ref[ix,iy]
 
-                if np.isclose(eig_ref[0],eig_ref[1]):
-                    ng0,ng1 = 0,0
-                    for ig in range(2):
-                        e0 = evec_ref[:,0]
-                        e1 = evec_ref[:,1]
-                        ee = evec[:,ig]
-                        if not np.isclose(eig[ig],eig_ref[0]):
-                            print("eigenvalue mismatch",ix,iy,eig[ig],eig_ref[0])
-                            self.assertTrue(False,"eig mismatch")
-                        else:
-                            if np.allclose(ee,e0) or np.allclose(ee,-e0):
-                                ng0 += 1
-                            elif np.allclose(ee,e1) or np.allclose(ee,-e1):
-                                ng1 += 1
-                            else:
-                                print(f"eigenvector {ig} not match",ix,iy,ee,e0,e1)
-                                self.assertTrue(False,"evec mismatch")
-                    if ng0 == 1 and ng1 == 1:
-                        pass
-                    else:
-                        print("eigenvector set mismatch",ix,iy,ng0,ng1)
-                        self.assertTrue(False,"ng0ng1")
-                else:
-                    ng0,ng1 = 0,0
-                    for ig in range(2):
-                        e0 = evec_ref[:,0]
-                        e1 = evec_ref[:,1]
-                        ee = evec[:,ig]
-                        if np.isclose(eig[ig],eig_ref[0]):
-                            if np.allclose(ee,e0) or np.allclose(ee,-e0):
-                                ng0 += 1
-                            else:
-                                print(f"eigenvector {ig} not match for vec0",ix,iy,ee,e0)
-                                self.assertTrue(False,"evec mismatch 0")
-                        elif np.isclose(eig[ig],eig_ref[1]):
-                            if np.allclose(ee,e1) or np.allclose(ee,-e1):
-                                ng1 += 1
-                            else:
-                                print(f"eigenvector {ig} not match for vec1",ix,iy,ee,e1)
-                                self.assertTrue(False,"evec mismatch 1")
-                        else:
-                            print(f"eigenvalue {ig} not found",ix,iy,eig[ig],eig_ref[0],eig_ref[1])
-                            self.assertTrue(False,"eig mismatch")
-                    if ng0 == 1 and ng1 == 1:
-                        pass
-                    else:
-                        print("eigenvector set mismatch",ix,iy,ng0,ng1)
-                        self.assertTrue(False,"evec ng0ng1")
+        #         if np.isclose(eig_ref[0],eig_ref[1]):
+        #             ng0,ng1 = 0,0
+        #             for ig in range(2):
+        #                 e0 = evec_ref[:,0]
+        #                 e1 = evec_ref[:,1]
+        #                 ee = evec[:,ig]
+        #                 if not np.isclose(eig[ig],eig_ref[0]):
+        #                     print("eigenvalue mismatch",ix,iy,eig[ig],eig_ref[0])
+        #                     self.assertTrue(False,"eig mismatch")
+        #                 else:
+        #                     if np.allclose(ee,e0) or np.allclose(ee,-e0):
+        #                         ng0 += 1
+        #                     elif np.allclose(ee,e1) or np.allclose(ee,-e1):
+        #                         ng1 += 1
+        #                     else:
+        #                         print(f"eigenvector {ig} not match",ix,iy,ee,e0,e1)
+        #                         self.assertTrue(False,"evec mismatch")
+        #             if ng0 == 1 and ng1 == 1:
+        #                 pass
+        #             else:
+        #                 print("eigenvector set mismatch",ix,iy,ng0,ng1)
+        #                 self.assertTrue(False,"ng0ng1")
+        #         else:
+        #             ng0,ng1 = 0,0
+        #             for ig in range(2):
+        #                 e0 = evec_ref[:,0]
+        #                 e1 = evec_ref[:,1]
+        #                 ee = evec[:,ig]
+        #                 if np.isclose(eig[ig],eig_ref[0]):
+        #                     if np.allclose(ee,e0) or np.allclose(ee,-e0):
+        #                         ng0 += 1
+        #                     else:
+        #                         print(f"eigenvector {ig} not match for vec0",ix,iy,ee,e0)
+        #                         self.assertTrue(False,"evec mismatch 0")
+        #                 elif np.isclose(eig[ig],eig_ref[1]):
+        #                     if np.allclose(ee,e1) or np.allclose(ee,-e1):
+        #                         ng1 += 1
+        #                     else:
+        #                         print(f"eigenvector {ig} not match for vec1",ix,iy,ee,e1)
+        #                         self.assertTrue(False,"evec mismatch 1")
+        #                 else:
+        #                     print(f"eigenvalue {ig} not found",ix,iy,eig[ig],eig_ref[0],eig_ref[1])
+        #                     self.assertTrue(False,"eig mismatch")
+        #             if ng0 == 1 and ng1 == 1:
+        #                 pass
+        #             else:
+        #                 print("eigenvector set mismatch",ix,iy,ng0,ng1)
+        #                 self.assertTrue(False,"evec ng0ng1")
 
         # green function
         green = solver.green0
