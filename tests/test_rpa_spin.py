@@ -2,6 +2,7 @@
 
 import os, sys
 import unittest
+import copy
 
 import numpy as np
 
@@ -10,7 +11,7 @@ class TestRPAspin(unittest.TestCase):
         Lx, Ly, Nmat = 16,16,128
 
         spin_orbital = params.get("enable_spin_orbital", False)
-        calc_scheme = params.get("calc_scheme", "general")
+        calc_scheme  = params.get("calc_scheme", "general")
         params_inter = params.get("inter", {})
 
         #----------------------------------------------------------------
@@ -20,7 +21,8 @@ class TestRPAspin(unittest.TestCase):
             'mode': 'RPA',
             'param': {
                 'T': 2.0,
-                'mu': 0.0,
+                #'mu': 0.0,
+                'filling': 0.75,
                 'CellShape': [Lx,Ly,1],
                 'SubShape': [1,1,1],
                 'Nmat': Nmat,
@@ -34,12 +36,17 @@ class TestRPAspin(unittest.TestCase):
                 'interaction': {
                     'path_to_input': 'tests/rpa/input',
                     'Geometry': 'geom.dat',
+                    'CoulombIntra': 'coulombintra.dat',
+                    'CoulombInter': 'coulombinter.dat',
                 },
             },
             'output': {
                 'path_to_output': 'tests/rpa/output',
+                'chi0q': 'chi0q.npz',
             },
         }
+
+        os.makedirs(info_file['output']['path_to_output'], exist_ok=True)
 
         # overwrite by params
         info_file['input']['interaction'].update(params_inter)
@@ -55,32 +62,25 @@ class TestRPAspin(unittest.TestCase):
         solver.solve(green_info, info_file['output']['path_to_output'])
 
         # chi0q = green_info["chi0q"]
-        # chiq = green_info["chiq"]
-        
-        # #----------------------------------------------------------------
-        # # reference
-        # rpaone = RPAOneOrbital()
+        chiq = copy.deepcopy(green_info["chiq"])
 
-        # chi0q_ref, chiq_ref, ham_ref, kx_array, ky_array = rpaone.run(params_ref)
+        solver.save_results(info_file['output'], green_info)
 
-        # #----------------------------------------------------------------
-        # # compare
+        #----------------------------------------------------------------
+        # load chi0q and retry
 
-        # # chi0q
-        # chi0q_x = chi0q[:,:,0,0,0,0]
-        # chi0q_ref_x = np.transpose(chi0q_ref, (2,0,1)).reshape(Nmat,Lx*Ly)
+        green_info.update( solver.read_init({
+            'path_to_input': 'tests/rpa/output',
+            'chi0q_init': 'chi0q.npz',
+        }) )
 
-        # self.assertTrue(np.allclose(chi0q_x, chi0q_ref_x), 'chi0q')
+        solver.solve(green_info, info_file['output']['path_to_output'])
 
-        # # hamiltonian
-        # ham = solver.ham_info.ham_inter_q.reshape(Lx,Ly,4,4)
-        # self.assertTrue(np.allclose(ham, ham_ref), 'hamiltonian')
+        chiq_new = copy.deepcopy(green_info["chiq"])
 
-        # # chiq
-        # chiq_x = chiq[Nmat//2].reshape(Lx,Ly,4,4)
-
-        # self.assertTrue(np.allclose(chiq_x, chiq_ref), 'chiq')
-        self.assertTrue(True)
+        self.assertTrue(np.allclose(chiq, chiq_new), "check chiq")
+        # self.assertTrue(True)
+        pass
 
     #----------------------------------------------------------------
     def test_general_spin_free(self):
@@ -89,8 +89,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'general',
             'inter': {
                 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -100,8 +98,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'general',
             'inter': {
                 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
                 'Extern': 'coulombintra.dat',
             }
         })
@@ -112,8 +108,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'general',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_trivial.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -123,8 +117,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'general',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_diag.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -134,8 +126,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'general',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_trivial.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
                 'Extern': 'coulombintra.dat',
             }
         })
@@ -146,8 +136,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'general',
             'inter': {
                 'Transfer': 'transfer_spin_orbital.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -158,8 +146,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'reduced',
             'inter': {
                 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -169,8 +155,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'reduced',
             'inter': {
                 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
                 'Extern': 'coulombintra.dat',
             }
         })
@@ -181,8 +165,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'reduced',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_trivial.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -192,8 +174,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'reduced',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_diag.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -203,8 +183,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'reduced',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_trivial.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
                 'Extern': 'coulombintra.dat',
             }
         })
@@ -215,8 +193,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'reduced',
             'inter': {
                 'Transfer': 'transfer_spin_orbital.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -227,8 +203,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'squashed',
             'inter': {
                 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -238,8 +212,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'squashed',
             'inter': {
                 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
                 'Extern': 'coulombintra.dat',
             }
         })
@@ -250,8 +222,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'squashed',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_trivial.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -261,8 +231,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'squashed',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_diag.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
             }
         })
 
@@ -272,8 +240,6 @@ class TestRPAspin(unittest.TestCase):
             'calc_scheme': 'squashed',
             'inter': {
                 'Transfer': 'transfer_spin_orbital_trivial.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
                 'Extern': 'coulombintra.dat',
             }
         })
