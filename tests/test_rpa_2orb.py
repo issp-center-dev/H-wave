@@ -121,8 +121,8 @@ class RPATwoOrbital:
         Lx    = params.get("Lx", 8)
         Ly    = params.get("Ly", 16)
         Nmat  = params.get("Nmat", 64)
-        myu   = params.get("myu", 0.0)
-        beta  = params.get("beta", 0.5)
+        myu   = params.get("mu", 0.0)
+        beta  = 1.0 / params.get("T", 1.0)
 
         kx_array = np.linspace(0, 2.*np.pi, Lx, endpoint=False)
         ky_array = np.linspace(0, 2.*np.pi, Ly, endpoint=False)
@@ -179,7 +179,7 @@ class RPATwoOrbital:
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [Vxq, 0, 0, U+Vyq, Vxq, 0, 0, Vyq]], dtype=np.complex128)
-                X = (I+X0@W).I*X0
+                X = (I+X0@W.T).I*X0
 
                 ham[idqx,idqy,:,:] = W
                 chi[idqx,idqy,:,:] = X
@@ -194,10 +194,7 @@ class RPATwoOrbital:
 
 
 class TestRPATwoOrbital(unittest.TestCase):
-    def run_test(self, params, params_ref):
-
-        Lx, Ly, Nmat = 8,16,64
-        T = 1.0
+    def run_test(self, params):
 
         #----------------------------------------------------------------
         # input_dict = toml.load("tests/rpa/input.toml")
@@ -205,11 +202,11 @@ class TestRPATwoOrbital(unittest.TestCase):
         info_mode = {
             'mode': 'RPA',
             'param': {
-                'T': T,
-                'mu': 0.0,
-                'CellShape': [Lx,Ly,1],
+                'T': params['T'],
+                'mu': params['mu'],
+                'CellShape': [params['Lx'],params['Ly'],1],
                 'SubShape': [1,1,1],
-                'Nmat': Nmat,
+                'Nmat': params['Nmat'],
             },
         }
         info_file = {
@@ -219,6 +216,8 @@ class TestRPATwoOrbital(unittest.TestCase):
                     'path_to_input': 'tests/rpa/input_2orb',
                     'Geometry': 'geom.dat',
                     'Transfer': 'transfer.dat',
+                    'CoulombIntra': 'coulombintra.dat',
+                    'CoulombInter': 'coulombinter.dat',
                 },
             },
             'output': {
@@ -226,8 +225,8 @@ class TestRPATwoOrbital(unittest.TestCase):
             },
         }
 
-        # overwrite by params
-        info_file['input']['interaction'].update(params)
+        # # overwrite by params
+        # info_file['input']['interaction'].update(params)
 
         import hwave.qlmsio.read_input_k as read_input_k
         read_io = read_input_k.QLMSkInput(info_file['input'])
@@ -245,16 +244,15 @@ class TestRPATwoOrbital(unittest.TestCase):
         #----------------------------------------------------------------
         # reference
 
-        params_ref['Lx'] = params_ref.get('Lx', Lx)
-        params_ref['Ly'] = params_ref.get('Ly', Ly)
-        params_ref['Nmat'] = params_ref.get('Nmat', Nmat)
-        params_ref['beta'] = params_ref.get('beta', 1.0/T)
-        
         rpatwo = RPATwoOrbital()
-        chi0q_ref, chiq_ref, ham_ref, kxarr, kyarr, green_ref, eps_ref = rpatwo.run(params_ref)
+        chi0q_ref, chiq_ref, ham_ref, kxarr, kyarr, green_ref, eps_ref = rpatwo.run(params)
 
         #----------------------------------------------------------------
         # compare
+
+        Lx = params['Lx']
+        Ly = params['Ly']
+        Nmat = params['Nmat']
 
         # epsilon_k
         self.assertEqual(solver.ham_info.ham_trans_q.shape, (Lx*Ly,2,2), "epsk.shape")
@@ -263,69 +261,6 @@ class TestRPATwoOrbital(unittest.TestCase):
         epsk_ref = np.transpose(eps_ref, (2,3,0,1))
 
         self.assertTrue(np.allclose(epsk,epsk_ref),"epsk")
-
-        # # eigenvalues and eigenvectors
-        # ew = solver.H0_eigenvalue.reshape(Lx,Ly,2)
-        # ev = solver.H0_eigenvector.reshape(Lx,Ly,2,2)
-
-        # ew_ref = rpatwo.ew
-        # ev_ref = rpatwo.ev
-
-        # for ix in range(Lx):
-        #     for iy in range(Ly):
-        #         eig = ew[ix,iy]
-        #         evec = ev[ix,iy]
-        #         eig_ref = ew_ref[ix,iy]
-        #         evec_ref = ev_ref[ix,iy]
-
-        #         if np.isclose(eig_ref[0],eig_ref[1]):
-        #             ng0,ng1 = 0,0
-        #             for ig in range(2):
-        #                 e0 = evec_ref[:,0]
-        #                 e1 = evec_ref[:,1]
-        #                 ee = evec[:,ig]
-        #                 if not np.isclose(eig[ig],eig_ref[0]):
-        #                     print("eigenvalue mismatch",ix,iy,eig[ig],eig_ref[0])
-        #                     self.assertTrue(False,"eig mismatch")
-        #                 else:
-        #                     if np.allclose(ee,e0) or np.allclose(ee,-e0):
-        #                         ng0 += 1
-        #                     elif np.allclose(ee,e1) or np.allclose(ee,-e1):
-        #                         ng1 += 1
-        #                     else:
-        #                         print(f"eigenvector {ig} not match",ix,iy,ee,e0,e1)
-        #                         self.assertTrue(False,"evec mismatch")
-        #             if ng0 == 1 and ng1 == 1:
-        #                 pass
-        #             else:
-        #                 print("eigenvector set mismatch",ix,iy,ng0,ng1)
-        #                 self.assertTrue(False,"ng0ng1")
-        #         else:
-        #             ng0,ng1 = 0,0
-        #             for ig in range(2):
-        #                 e0 = evec_ref[:,0]
-        #                 e1 = evec_ref[:,1]
-        #                 ee = evec[:,ig]
-        #                 if np.isclose(eig[ig],eig_ref[0]):
-        #                     if np.allclose(ee,e0) or np.allclose(ee,-e0):
-        #                         ng0 += 1
-        #                     else:
-        #                         print(f"eigenvector {ig} not match for vec0",ix,iy,ee,e0)
-        #                         self.assertTrue(False,"evec mismatch 0")
-        #                 elif np.isclose(eig[ig],eig_ref[1]):
-        #                     if np.allclose(ee,e1) or np.allclose(ee,-e1):
-        #                         ng1 += 1
-        #                     else:
-        #                         print(f"eigenvector {ig} not match for vec1",ix,iy,ee,e1)
-        #                         self.assertTrue(False,"evec mismatch 1")
-        #                 else:
-        #                     print(f"eigenvalue {ig} not found",ix,iy,eig[ig],eig_ref[0],eig_ref[1])
-        #                     self.assertTrue(False,"eig mismatch")
-        #             if ng0 == 1 and ng1 == 1:
-        #                 pass
-        #             else:
-        #                 print("eigenvector set mismatch",ix,iy,ng0,ng1)
-        #                 self.assertTrue(False,"evec ng0ng1")
 
         # green function
         green = solver.green0
@@ -350,24 +285,16 @@ class TestRPATwoOrbital(unittest.TestCase):
                       ham_ref.reshape(Lx,Ly,*(2,2,2)*2),
                       np.identity(2),
                       np.identity(2)).reshape(Lx,Ly,16,16)
+        y = np.transpose(y, (0,1,3,2))
 
         self.assertTrue(np.allclose(x,y), "hamiltonian")
 
         # chiq
         x = chiq[Nmat//2].reshape(Lx,Ly,*(2,2)*4)
-        #XXX
-        #x[np.abs(x)<1.0e-8]=0
-        
-        # y = np.einsum('ijsabtcd,su,tv->ijsaubvctd',
-        #               chiq_ref.reshape(Lx,Ly,*(2,2,2)*2),
-        #               np.identity(2),
-        #               np.identity(2)).reshape(Lx,Ly,*(2,2)*4)
+
         y = chiq_ref.reshape(Lx,Ly,*(2,2,2)*2)
-        #XXX
-        #y[np.abs(y)<1.0e-8]=0
 
         for ss in [ [0,0,0,0], [1,1,1,1], [0,0,1,1], [1,1,0,0] ]:
-            # print(ss)
             for ix in range(Lx):
                 for iy in range(Ly):
                     xx = x[ix,iy,ss[0],:,ss[1],:,ss[2],:,ss[3],:]
@@ -382,9 +309,12 @@ class TestRPATwoOrbital(unittest.TestCase):
 
     def test_2orbital(self):
         self.run_test({
-            'CoulombIntra': 'coulombintra.dat',
-            'CoulombInter': 'coulombinter.dat',
-        }, {})
+            'Lx': 8,
+            'Ly': 16,
+            'Nmat': 128,
+            'T': 0.1,
+            'mu': 0.241,
+        })
         self.assertTrue(True)
 
 if __name__ == '__main__':
