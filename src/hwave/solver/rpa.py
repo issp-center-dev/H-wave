@@ -54,10 +54,14 @@ class Lattice:
 
     """
     def __init__(self, params):
+        logger.debug(">>> Lattice.__init__")
+
         self._init_lattice(params)
         self._show_params()
 
     def _init_lattice(self, params):
+        logger.debug(">>> Lattice._init_lattice")
+
         if "CellShape" not in params:
             logger.error("Lattice initialization failed: 'CellShape' not found.")
             sys.exit(1)
@@ -129,6 +133,8 @@ class Interaction:
     Construct Hamiltonian from input
     """
     def __init__(self, lattice, param_ham, info_mode):
+        logger.debug(">>> Interaction.__init__")
+
         self.lattice = lattice
         self.param_ham = param_ham
         self._has_interactoin = False
@@ -151,6 +157,8 @@ class Interaction:
         return self._has_interactoin
 
     def _init_interaction(self):
+        logger.debug(">>> Interaction._init_interaction")
+
         # reinterpret interaction coefficient on sublattice
         if self.lattice.has_sublattice:
             # backup
@@ -172,6 +180,8 @@ class Interaction:
         pass
 
     def _reshape_geometry(self, geom):
+        logger.debug(">>> Interaction._reshape_geometry")
+
         Bx,By,Bz = self.lattice.subshape
         bvol = self.lattice.subvol
 
@@ -195,6 +205,8 @@ class Interaction:
         return geom_new
 
     def _reshape_interaction(self, ham, enable_spin_orbital):
+        logger.debug(">>> Interaction._reshape_interaction")
+
         Bx,By,Bz = self.lattice.subshape
         nx,ny,nz = self.lattice.shape
 
@@ -247,6 +259,8 @@ class Interaction:
         return ham_new
 
     def _export_interaction(self, type, file_name):
+        logger.debug(">>> Interaction._export_interaction")
+
         intr = self.param_ham[type]
 
         min_r = [0,0,0]
@@ -279,6 +293,8 @@ class Interaction:
                     ))
 
     def _make_ham_trans(self):
+        logger.debug(">>> Interaction._make_ham_trans")
+
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
         norb = self.norb
@@ -356,6 +372,8 @@ class Interaction:
 
 
     def _make_ham_inter(self):
+        logger.debug(">>> Interaction._make_ham_inter")
+
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
         norb = self.norb
@@ -457,6 +475,8 @@ class RPA:
     """
     @do_profile
     def __init__(self, param_ham, info_log, info_mode):
+        logger.debug(">>> RPA.__init__")
+
         self.param_ham = param_ham
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
@@ -856,7 +876,7 @@ class RPA:
 
     @do_profile
     def read_init(self, info_inputfile):
-        logger.debug("RPA read initial configs")
+        logger.info("RPA read initial configs")
         info = {}
 
         path_to_input = info_inputfile.get("path_to_input", "")
@@ -868,7 +888,7 @@ class RPA:
         return info
 
     def _read_chi0q(self, file_name):
-        logger.debug("RPA._read_chi0q")
+        logger.debug(">>> RPA._read_chi0q")
 
         try:
             logger.debug("read chi0q from {}".format(file_name))
@@ -880,12 +900,10 @@ class RPA:
             sys.exit(1)
 
         # check size
-        try:
-            if self.calc_scheme == "general":
-                # general: shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
-
-                assert len(chi0q.shape) == 6, "unexpected shape: {}".format(chi0q.shape)
-
+        if self.calc_scheme == "general":
+            if len(chi0q.shape) == 6:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
                 cs = chi0q.shape
                 assert cs[1] == self.lattice.nvol, "lattice volume"
                 nd = cs[2]
@@ -894,40 +912,58 @@ class RPA:
                 assert cs[4] == nd, "shape[4]"
                 assert cs[5] == nd, "shape[5]"
 
-            elif self.calc_scheme == "reduced":
-                # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 7:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
+                cs = chi0q.shape
+                assert cs[0] == 2, "spin block"
+                assert cs[2] == self.lattice.nvol, "lattice volume"
+                nd = cs[3]
+                assert nd == self.norb, "shape[3]"
+                assert cs[4] == nd, "shape[4]"
+                assert cs[5] == nd, "shape[5]"
+                assert cs[6] == nd, "shape[6]"
 
-                assert len(chi0q.shape) == 4, "unexpected shape: {}".format(chi0q.shape)
+                self.spin_mode = "spin-diag"
+            else:
+                assert False, "unexpected shape for general scheme: {}".format(chi0q.shape)
 
+        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+            if len(chi0q.shape) == 4:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
                 cs = chi0q.shape
                 assert cs[1] == self.lattice.nvol, "lattice volume"
                 nd = cs[2]
                 assert nd == self.nd or nd == self.norb, "shape[2]"
                 assert cs[3] == nd, "shape[3]"
 
-            elif self.calc_scheme == "squashed":
-                # squashed: shape = (nmat,nvol,ns,ns,norb,ns,ns,norb)
-
-                assert len(chi0q.shape) == 8, "unexpected shape: {}".format(chi0q.shape)
-
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                ns = cs[2]
-                nd = cs[4]
-                assert ns == 2, "shape[2] == nspin"
-                assert nd == self.norb, "shape[4] == norb"
-                assert cs[2] == ns, "shape[2]"
-                assert cs[3] == ns, "shape[3]"
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 5:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb)
+                cs = chi0q.shape
+                assert cs[0] == 2, "spin block"
+                assert cs[2] == self.lattice.nvol, "lattice volume"
+                nd = cs[3]
+                assert nd == self.norb, "shape[3]"
                 assert cs[4] == nd, "shape[4]"
-                assert cs[5] == ns, "shape[5]"
-                assert cs[6] == ns, "shape[6]"
-                assert cs[7] == nd, "shape[7]"
-            else:
-                pass
-        except AssertionError as e:
-            logger.error("unexpected data size {}".format(e))
-            sys.exit(1)
 
-        logger.info("read_chi0q: shape={}".format(chi0q.shape))
+                self.spin_mode = "spin-diag"
+            else:
+                assert False, "unexpected shape for reduced scheme: {}".format(chi0q.shape)
+        else:
+            assert False, "unknown scheme: {}".format(self.calc_scheme)
+
+        logger.info("read_chi0q: shape={}, spin_mode={}".format(chi0q.shape, self.spin_mode))
 
         return chi0q
 
@@ -1012,6 +1048,8 @@ class RPA:
 
     @do_profile
     def _find_mu(self, Ncond, T):
+        logger.debug(">>> RPA._find_mu")
+
         from scipy import optimize
 
         # load eigenvalues and eigenvectors
@@ -1160,6 +1198,8 @@ class RPA:
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):
+        logger.debug(">>> RPA._solve_rpa")
+
         nvol = self.lattice.nvol
         #nmat = self.nmat
         nmat = chi0q.shape[0]
