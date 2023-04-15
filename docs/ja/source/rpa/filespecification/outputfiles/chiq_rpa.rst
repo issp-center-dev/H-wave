@@ -73,7 +73,7 @@ chiq のデータ形式
 
 - ``calc_scheme = reduced`` の場合、データ配列は ``ndarray(l,q,a,b)`` となります。 ``a``, ``b`` はスピンを含む一般化軌道インデックス :math:`\tilde\alpha`, :math:`\tilde\beta` に対応します。
 
-- ``calc_scheme = squashed`` の場合、データ配列は ``ndarray(l,q,s1,s2,a,s3,s4,b)`` となります。 ``a``, ``b`` は軌道インデックス :math:`\tilde\alpha`, :math:`\tilde\beta` に対応し、 ``s1`` 〜 ``s4`` はスピンインデックス :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime` にそれぞれ対応します。
+- ``calc_scheme = squashed`` の場合、データ配列は ``ndarray(l,q,s1,s2,a,s3,s4,b)`` となります。 ``a``, ``b`` は軌道インデックス :math:`\alpha`, :math:`\beta` に対応し、 ``s1`` 〜 ``s4`` はスピンインデックス :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime` にそれぞれ対応します。
 
 
 データ読み込みの例
