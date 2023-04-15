@@ -813,12 +813,16 @@ class RPA:
         logger.info("Save RPA results")
         path_to_output = info_outputfile["path_to_output"]
 
+        self._init_wavevec()
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
                 np.savez(file_name,
                          chiq = green_info["chiq"],
                          freq_index = self.freq_index,
+                         wavevector_unit = self.kvec,
+                         wavevector_index = self.wavenum_table,
                 )
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
@@ -829,10 +833,39 @@ class RPA:
             np.savez(file_name,
                      chi0q = green_info["chi0q"],
                      freq_index = self.freq_index,
+                     wavevector_unit = self.kvec,
+                     wavevector_index = self.wavenum_table,
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
         
         pass
+
+    def _init_wavevec(self):
+        # wave vectors on sublatticed geometry
+        def _klist(n):
+            return np.roll( (np.arange(n)-(n//2)), -(n//2) )
+
+        geom = self.param_ham["Geometry"]
+        rvec = geom["rvec"]
+        omg = np.dot(rvec[0], np.cross(rvec[1], rvec[2]))
+        kvec = np.array([
+            np.cross(rvec[(i+1)%3], rvec[(i+2)%3])/omg * 2*np.pi/self.lattice.shape[i]
+            for i in range(3) ])
+
+        self.kvec = kvec  # store reciprocal lattice vectors
+
+        nx,ny,nz = self.lattice.shape
+        nvol = self.lattice.nvol
+
+        self.wavenum_table = np.array([(i,j,k) for i in _klist(nx) for j in _klist(ny) for k in _klist(nz)])
+
+        wtable = np.zeros((nx,ny,nz,3), dtype=float)
+        for ix, kx in enumerate(_klist(nx)):
+            for iy, ky in enumerate(_klist(ny)):
+                for iz, kz in enumerate(_klist(nz)):
+                    v = kvec[0] * kx + kvec[1] * ky + kvec[2] * kz
+                    wtable[ix,iy,iz] = v
+        self.wave_table = wtable.reshape(nvol,3)
 
     def _find_index_range(self, freq_range):
         # decode matsubara frequency index list
