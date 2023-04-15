@@ -85,8 +85,9 @@
       |       |-- solver/
       |           |-- __init__.py
       |           |-- base.py
-      |           |-- uhf.py
+      |           |-- uhfr.py
       |           |-- uhfk.py
+      |           |-- rpa.py
       |           |-- perf.py
       |-- tests/
        

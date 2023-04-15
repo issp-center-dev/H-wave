@@ -50,7 +50,7 @@ TOML形式
 
   - ``general``: 軌道とスピンを統一した一般化軌道として扱い、感受率行列は最も一般的な形式をとります。行列のサイズは :math:`N_\text{orb}^4 N_\text{spin}^4 N_k N_\omega` となります。
 
-  - ``reduced``: 軌道とスピンを統一した一般化軌道として扱います。感受率行列は :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ扱います。
+  - ``reduced``: 軌道とスピンを統一した一般化軌道として扱い、感受率行列は :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ計算します。行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega` となります。二体相互作用は CoulombIntra, CoulombInter, Ising, Hund のみを考慮します。
 
   - ``squashed``: 軌道とスピンを分離し、軌道については :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ扱います。感受率行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega` となります。詳細は :ref:`Ch:Algorithm` の章を参照してください。
 
@@ -141,6 +141,12 @@ TOML形式
 
   感受率行列 :math:`\chi(\vec{q})` および既約感受率行列 :math:`\chi_0(\vec{q})` をファイルに出力する場合、このパラメータで指定した松原振動数における値が出力されます。
 
+- ``coeff_extern``
+
+  **形式 :** float型 (デフォルトは0.0)
+
+  **説明 :** 外場の係数 :math:`h` を指定します。外場は :math:`\pm h H_{\alpha\beta}(r_{ij})` の形式で導入され、行列要素 :math:`H_{\alpha\beta}(r_{ij})` の定義は相互作用入力ファイルで与えます。符号は :math:`+(-)` が spin up(down) です。
+
 - ``RndSeed``
 
   **形式 :** int型 (デフォルトは1234)
@@ -207,11 +213,12 @@ TOML形式
 
   **説明 :** 幾何情報のファイル名を指定します。
 
-- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``
+- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``, ``Extern``
 
   **形式 :** str型
 
   **説明 :** 各相互作用の係数ファイル名を指定します。
+  二体相互作用項 (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``) の指定がない場合は、``chi0q`` のみを計算して終了します。
 
 
 ``file.output`` セクション

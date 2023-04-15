@@ -67,6 +67,6 @@ Yuichi Motoyama,
 Tatsumi Aoyama,
 Kota Ido,
 Takahiro Misawa,
-Taiki Kawamura
+Taiki Kawamura,
 Akito Kobayashi,
 Takeo Kato
