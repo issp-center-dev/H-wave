@@ -26,6 +26,10 @@ They are classified into two categories, and written in Wannier90 format.
       corresponds to one-body term denoted by
       :math:`c_{i\sigma_1}^{\dagger} c_{j\sigma_2}^{\phantom{\dagger}}`.
 
+    **Extern**
+      corresponds to external field for the one-body term denoted by
+      :math:`\sigma^z_{\sigma_1\sigma_2}\,c_{i\sigma_1}^{\dagger} c_{j\sigma_2}^{\phantom{\dagger}}`.
+
     **CoulombIntra**
       corresponds to the interaction denoted by 
       :math:`n_{i\uparrow} n_{i\downarrow}`, where :math:`n_{i\sigma} = c_{i\sigma}^{\dagger} c_{i\sigma}^{\phantom{\dagger}}`. 
