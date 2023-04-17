@@ -11,8 +11,3 @@ RPAの出力ファイルに関するファイル形式を記載します。
    :maxdepth: 1
 
    chiq_rpa
-
-..
-   energy_uhfk
-   eigen_uhfk
-   green_uhfk

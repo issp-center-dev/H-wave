@@ -58,7 +58,7 @@ Parameters
 
   - ``general``: Generalized orbitals combining spins and orbitals are considered. The susceptibility matrix takes the most general form, with the size of :math:`N_\text{orb}^4 N_\text{spin}^4 N_k N_\omega`.
 
-  - ``reduced``: Generalized orbitals combining spins and orbitals are considered. For the susceptibility matrix, the components with :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered.
+  - ``reduced``: Generalized orbitals combining spins and orbitals are considered. The components of the susceptibility matrix with :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the matrix turns to :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega`. For the two-body interaction terms, only CoulombIntra, CoulombInter, Ising and Hund are allowed. 
 
   - ``squashed``: Spins and orbitals are separately treated, and for the orbitals :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the susceptilibity matrix becomes :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega`. See :ref:`Ch:Algorithm` for details.
 
@@ -179,6 +179,16 @@ Parameters
   When the susceptibility matrix :math:`\chi(\vec{q})` or the irreducible susceptibility matrix :math:`\chi_0(\vec{q})` are stored to files, the values at the specified freqneucy are exported.
 
 
+- ``coeff_extern``
+
+  **Type :**
+  Float (default value is 0.0)
+
+  **Description :**
+  This parameter specifies the coefficient :math:`h` of the external field given by the form :math:`\pm h H_{\alpha\beta}(r_{ij})`. The definition of the matrix :math:`H_{\alpha\beta}(r_{ij})` will be provided by an input file. The sign :math:`+` and :math:`-` correspond to spin up and down, respectively.
+  
+
+
 - ``RndSeed``
 
   **Type :**
@@ -261,13 +271,14 @@ to the definition files.
   **Description :**
   This parameter specifies the filename for the geometry information.
 
-- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``
+- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``, ``Extern``
 
   **Type :**
   String
 
   **Description :**
-  These parameters specify the filenames for the definitions of the corresponding interaction terms.
+  These parameters specify the filenames for the definitions of the corresponding interaction terms. If none of two-body interaction term (CoulombIntra, CoulombInter, Hund, Ising, Exchange, PairLift, or PairHop) is specified, the program only calculates ``chi0q`` and exits.
+
 
 ``file.output`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

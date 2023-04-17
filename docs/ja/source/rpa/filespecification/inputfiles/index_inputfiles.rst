@@ -20,9 +20,11 @@ RPA用入力ファイル
     :math:`{\mathcal H}\Phi` や mVMC のExpert Mode入力に相当する以下のキーワードを指定できます。
 
     **Transfer**:
-      :math:`c_{i\sigma_1}^{\dagger}c_{j\sigma_2}`\ で表される一体項を指定します。
+      :math:`c_{i\sigma_1}^{\dagger}c^{\phantom{\dagger}}_{j\sigma_2}`\ で表される一体項を指定します。
+    **Extern**:
+      :math:`\sigma^z_{\sigma_1\sigma_2}c_{i}^{\dagger}c^{\phantom{\dagger}}_{j}`\ で表される一体項に対する外場を指定します。
     **CoulombIntra**:
-      :math:`n_ {i \uparrow}n_{i \downarrow}`\ で表される相互作用を指定します(\ :math:`n_{i \sigma}=c_{i\sigma}^{\dagger}c_{i\sigma}`)。
+      :math:`n_ {i \uparrow}n_{i \downarrow}`\ で表される相互作用を指定します(\ :math:`n_{i \sigma}=c_{i\sigma}^{\dagger}c^{\phantom{\dagger}}_{i\sigma}`)。
     **CoulombInter**:
       :math:`n_ {i}n_{j}`\ で表される相互作用を指定します(\ :math:`n_i=n_{i\uparrow}+n_{i\downarrow}`)。
     **Hund**:
@@ -32,9 +34,9 @@ RPA用入力ファイル
     **Exchange**:
       :math:`S_i^+ S_j^-`\ で表される相互作用を指定します。  
     **PairLift**:
-      :math:`c_ {i \uparrow}^{\dagger}c_{i\downarrow}c_{j \uparrow}^{\dagger}c_{j \downarrow}`\ で表される相互作用を指定します。	    
+      :math:`c_ {i \uparrow}^{\dagger}c^{\phantom{\dagger}}_{i\downarrow}c_{j \uparrow}^{\dagger}c^{\phantom{\dagger}}_{j \downarrow}`\ で表される相互作用を指定します。	    
     **PairHop**:
-      :math:`c_ {i \uparrow}^{\dagger}c_{j\uparrow}c_{i \downarrow}^{\dagger}c_{j  \downarrow}`\ で表される相互作用を指定します。
+      :math:`c_ {i \uparrow}^{\dagger}c^{\phantom{\dagger}}_{j\uparrow}c_{i \downarrow}^{\dagger}c^{\phantom{\dagger}}_{j  \downarrow}`\ で表される相互作用を指定します。
 
 以下のセクションでデータフォーマットについて記述します。
 
