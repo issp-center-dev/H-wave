@@ -1363,6 +1363,10 @@ class UHFk(solver_base):
             logger.warn("save_results: save initial is not supported")
             pass
 
+        if "rpa" in info_outputfile.keys():
+            file_name = os.path.join(path_to_output, info_outputfile["rpa"])
+            self._save_trans_mod(file_name)
+
         if "export_hamiltonian" in info_outputfile.keys():
             self._export_hamiltonian(path_to_output, info_outputfile["export_hamiltonian"])
 
@@ -1447,6 +1451,31 @@ class UHFk(solver_base):
                 ))
 
         logger.info("save_results: save greenone to file {}".format(file_name))
+
+    def _save_trans_mod(self, file_name):
+        nx,ny,nz = self.shape
+        nvol = self.nvol
+        nd = self.nd
+
+        tab_k = self.ham
+        tab_r = np.fft.fftn(tab_k.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd) / nvol
+
+        if self.has_sublattice:
+            # use deflate_green to convert to original lattice
+
+            norb = self.norb
+            ns = self.ns
+
+            tab_r = self._deflate_green(tab_r.reshape(nvol,ns,norb,ns,norb))
+
+            lvol = self.cellvol
+            norb_orig = self.norb_orig
+            nd0 = norb_orig * ns
+
+            np.savez(file_name, trans_mod = tab_r.reshape(lvol,nd0,nd0))
+        else:
+            np.savez(file_name, trans_mod = tab_r)
+        logger.info("save_results: save trans_mod to file {}".format(file_name))
 
     def _export_geometry(self, file_name):
         geom = self.param_ham["Geometry"]
