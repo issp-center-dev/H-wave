@@ -208,6 +208,7 @@ class TestRPATwoOrbital(unittest.TestCase):
                 'SubShape': [1,1,1],
                 'Nmat': params['Nmat'],
             },
+           'calc_scheme': 'general',
         }
         info_file = {
             'input': {
