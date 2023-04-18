@@ -137,7 +137,12 @@ class Interaction:
 
         self.lattice = lattice
         self.param_ham = param_ham
-        self._has_interactoin = False
+
+        self._has_interaction = False
+        self._has_interaction_coulomb = False
+        self._has_interaction_exchange = False
+        self._has_interaction_pairhop = False
+
 
         # mode options
         self.enable_spin_orbital = info_mode.get("enable_spin_orbital", False)
@@ -154,7 +159,16 @@ class Interaction:
         pass
 
     def has_interaction(self):
-        return self._has_interactoin
+        return self._has_interaction
+
+    def has_interaction_coulomb(self):
+        return self._has_interaction_coulomb
+
+    def has_interaction_exchange(self):
+        return self._has_interaction_exchange
+
+    def has_interaction_pairhop(self):
+        return self._has_interaction_pairhop
 
     def _init_interaction(self):
         logger.debug(">>> Interaction._init_interaction")
@@ -428,31 +442,38 @@ class Interaction:
 
         if 'CoulombIntra' in self.param_ham.keys():
             _append_inter('CoulombIntra')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_coulomb = True
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_coulomb = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_coulomb = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_coulomb = True
 
         if 'PairLift' in self.param_ham.keys():
             _append_inter('PairLift')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_exchange = True
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_exchange = True
 
         if 'PairHop' in self.param_ham.keys():
             _append_pairhop('PairHop')
-            self._has_interactoin = True
+            self._has_interaction = True
+            self._has_interaction_pairhop = True
 
         # reshape to W(r)^{bb'aa'}, a,b=(spin,alpha)
         ham_r = ham_r.reshape(nx,ny,nz,*(nd,)*4)
@@ -481,19 +502,45 @@ class RPA:
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
 
-        self.calc_scheme = info_mode.get("calc_scheme", "general")
-        self.enable_reduced = self.calc_scheme.lower() in ["reduced", "squashed"]
-
         self.lattice = Lattice(self.param_mod)
         self.ham_info = Interaction(self.lattice, param_ham, info_mode)
 
-        self.calc_chiq = self.ham_info.has_interaction()
+        self._set_scheme(info_mode)
 
         self._init_param()
         self._show_params()
 
         pass
 
+    def _set_scheme(self, info_mode):
+        # handle calc_scheme: must be called after setting up interactions
+
+        self.calc_scheme = info_mode.get("calc_scheme", "auto")
+
+        # auto choose
+        if self.calc_scheme == "auto":
+            if not self.ham_info.has_interaction():
+                logger.error("calc_scheme must be specified for chi0q-only mode.")
+                sys.exit(1)
+            else:
+                if self.ham_info.has_interaction_exchange():
+                    self.calc_scheme = "squashed"
+                    logger.info("auto mode for calc_scheme: set to squashed")
+                else:
+                    self.calc_scheme = "reduced"
+                    logger.info("auto mode for calc_scheme: set to reduced")
+
+        # consistency check
+        if self.calc_scheme == "reduced" and self.ham_info.has_interaction_exchange():
+            logger.error("calc_scheme=reduced is not compatible with exchange-type interaction.")
+            sys.exit(1)
+
+        # calc chiq if interaction term exists; otherwise chi0q-only mode
+        self.calc_chiq = self.ham_info.has_interaction()
+
+        # chi0q in reduced mode if calc_scheme is reduced or squashed
+        self.enable_reduced = self.calc_scheme.lower() in ["reduced", "squashed"]
+        
     def _init_param(self):
         logger.debug(">>> RPA._init_param")
 
