@@ -248,6 +248,15 @@ They specify the settings of the input and output files, respectively, on the ty
   The input file is in NumPy binary format that corresponds to the output format of
   ``chi0q`` in ``file.output`` section.
 
+- ``trans_mod``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the initial configuration exported from UHFk by the parameter ``file.output.rpa``. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.
+
+
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
