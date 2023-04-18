@@ -48,7 +48,7 @@ Parameters
   This parameter specifies whether to allow spin-orbital interaction.
   If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` and the spin index :math:`s` by :math:`\alpha + N_\text{orb} \cdot s`.
 
-- ``calc_scheme`` (default value is ``"general"``)
+- ``calc_scheme`` (default value is ``"auto"``)
 
   **Type :**
   String
@@ -61,6 +61,8 @@ Parameters
   - ``reduced``: Generalized orbitals combining spins and orbitals are considered. The components of the susceptibility matrix with :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the matrix turns to :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega`. For the two-body interaction terms, only CoulombIntra, CoulombInter, Ising and Hund are allowed. 
 
   - ``squashed``: Spins and orbitals are separately treated, and for the orbitals :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the susceptilibity matrix becomes :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega`. See :ref:`Ch:Algorithm` for details.
+
+  - ``auto``: scheme is automatically chosen according to the specifications of interaction terms. This option is not available when only ``chi0q`` is to be calculated.
 
 
 ``mode.param`` section
