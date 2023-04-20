@@ -183,6 +183,7 @@ class TestRPAExternal(unittest.TestCase):
                 'Nmat': Nmat,
                 'coeff_extern': -H,
             },
+            'calc_scheme': 'general',
         }
         info_file = {
             'input': {

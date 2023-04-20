@@ -44,7 +44,7 @@ TOML形式
 
 - ``calc_scheme``
 
-  **形式 :** string型 (デフォルトは ``"general"``)
+  **形式 :** string型 (デフォルトは ``"auto"``)
 
   **説明 :** 軌道・スピンの取り扱い方を指定します。以下のいずれかの値をとります。
 
@@ -53,6 +53,8 @@ TOML形式
   - ``reduced``: 軌道とスピンを統一した一般化軌道として扱い、感受率行列は :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ計算します。行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega` となります。二体相互作用は CoulombIntra, CoulombInter, Ising, Hund のみを考慮します。
 
   - ``squashed``: 軌道とスピンを分離し、軌道については :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ扱います。感受率行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega` となります。詳細は :ref:`Ch:Algorithm` の章を参照してください。
+
+  - ``auto``: 相互作用項の指定に応じて自動判別します。 ``chi0q`` のみを計算する場合は指定できません。
 
 
 ``mode.param`` セクション

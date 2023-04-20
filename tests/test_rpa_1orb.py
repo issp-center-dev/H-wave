@@ -171,6 +171,7 @@ class TestRPA(unittest.TestCase):
                 'Nmat': Nmat,
             },
             'enable_spin_orbital': spin_orbital,
+            'calc_scheme': 'general',
         }
         info_file = {
             'input': {
