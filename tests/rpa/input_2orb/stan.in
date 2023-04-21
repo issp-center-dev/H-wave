@@ -1,0 +1,12 @@
+model = "Hubbard"
+lattice = "square"
+W = 4
+L = 4
+t = 1.0
+t' = 0.5
+U = 4.0
+V = 1.0
+Ncond = 16
+eps = 12
+calcmode = "uhfk"
+exportall = 0
