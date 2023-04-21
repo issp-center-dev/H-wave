@@ -297,3 +297,12 @@ to the definition files.
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's functions.
   If it is not set, no output fill be generated.
+
+- ``rpa``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the name of the file to store the one-body term involving the approximated two-body interaction term by UHF method. The output may be used as an initial configuration of the RPA calculation by specifying it in the parameter ``file.input.trans_mod``.
+  If it is not set, no output fill be generated.

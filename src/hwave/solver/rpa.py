@@ -367,7 +367,7 @@ class Interaction:
             logger.info("read External field")
 
             hab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-            
+
             for (irvec,orbvec), v in self.param_ham["Extern"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
                     hab_r[(*irvec,*orbvec)] = v
@@ -884,7 +884,7 @@ class RPA:
                      wavevector_index = self.wavenum_table,
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
-        
+
         pass
 
     def _init_wavevec(self):
@@ -964,6 +964,14 @@ class RPA:
         if "chi0q_init" in info_inputfile.keys():
             file_name = os.path.join(path_to_input, info_inputfile["chi0q_init"])
             info["chi0q"] = self._read_chi0q(file_name)
+
+        if "trans_mod" in info_inputfile.keys():
+            file_name = os.path.join(path_to_input, info_inputfile["trans_mod"])
+            info["trans_mod"] = self._read_trans_mod(file_name)
+
+        if "green_init" in info_inputfile.keys():
+            file_name = os.path.join(path_to_input, info_inputfile["green_init"])
+            info["green_init"] = self._read_green(file_name)
 
         return info
 
@@ -1047,28 +1055,152 @@ class RPA:
 
         return chi0q
 
+    def _read_trans_mod(self, file_name):
+        logger.debug(">>> RPA._read_trans_mod")
+
+        try:
+            logger.info("read trans_mod from {}".format(file_name))
+            data = np.load(file_name)
+            tab_r = data["trans_mod"]
+            logger.debug("read_trans_mod: shape={}".format(tab_r.shape))
+        except Exception as e:
+            logger.error("read_trans_mod failed: {}".format(e))
+            sys.exit(1)
+
+        if self.lattice.has_sublattice:
+            # use reshape green to convert layout
+            tab_r = self.lattice._reshape_green(tab_r)
+
+        nx,ny,nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nd = self.nd
+
+        tab_k = np.fft.fftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+
+        return tab_k
+
+    def _read_green(self, file_name):
+        logger.debug(">>> RPA._read_green")
+        try:
+            logger.info("read green from {}".format(file_name))
+            data = np.load(file_name)
+            green = data["green"]
+            logger.debug("read_green: shape={}".format(green.shape))
+        except Exception as e:
+            logger.error("read_green failed: {}".format(e))
+            sys.exit(1)
+
+        nvol = self.lattice.nvol
+        nd = self.nd
+        return green.reshape(nvol,nd,nd)
+
+    def _reshape_green(self, green_):
+        # convert green function into sublattice
+
+        Lx,Ly,Lz = self.lattice.cellshape
+        Lvol = Lx * Ly * Lz
+        Bx,By,Bz = self.lattice.subshape
+        Bvol = Bx * By * Bz
+        Nx,Ny,Nz = self.lattice.shape
+        Nvol = Nx * Ny * Nz
+
+        norb_orig = self.norb_orig
+        norb = self.norb
+        ns = self.ns
+
+        # check array size
+        #assert(green.shape == (Lvol,ns,norb_orig,ns,norb_orig))
+        green = green_.reshape(Lvol,ns,norb_orig,ns,norb_orig)
+
+        def _pack_index(x, n):
+            _ix, _iy, _iz = x
+            _nx, _ny, _nz = n
+            return _ix + _nx * (_iy + _ny * (_iz))
+
+        def _unpack_index(x, n):
+            _nx, _ny, _nz = n
+            _ix = x % _nx
+            _iy = (x // _nx) % _ny
+            _iz = (x // (_nx * _ny)) % _nz
+            return (_ix, _iy, _iz)
+
+        green_sub = np.zeros((Nvol,ns,norb,ns,norb), dtype=np.complex128)
+
+        for isite in range(Nvol):
+            ixx, iyy, izz = _unpack_index(isite, (Nx,Ny,Nz))
+            ix0, iy0, iz0 = ixx * Bx, iyy * By, izz * Bz
+
+            for aa, bb in itertools.product(range(norb), range(norb)):
+                a, ri = aa % norb_orig, aa // norb_orig
+                b, rj = bb % norb_orig, bb // norb_orig
+
+                rix, riy, riz = _unpack_index(ri, (Bx,By,Bz))
+                rjx, rjy, rjz = _unpack_index(rj, (Bx,By,Bz))
+
+                ix = (ix0 + rjx - rix) % Lx
+                iy = (iy0 + rjy - riy) % Ly
+                iz = (iz0 + rjz - riz) % Lz
+
+                jsite = _pack_index((ix,iy,iz), (Lx,Ly,Lz))
+
+                for s, t in itertools.product(range(ns), range(ns)):
+                    green_sub[isite, s, aa, t, bb] = green[jsite, s, a, t, b]
+
+        return green_sub
+
+    def _calc_trans_mod(self, g0):
+        logger.debug(">>> RPA._calc_trans_mod")
+
+        nx,ny,nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nd = self.nd
+        norb = self.norb
+
+        gg = g0[0]
+        ww = self.ham_info.ham_inter_r.reshape(nvol,nd,nd,nd,nd)
+
+        hh1 = np.einsum('rbacd,cd->rab', ww, gg)
+        hh2 = np.einsum('rcdab,dc->rab', ww, gg)
+        hh3 = np.sum(hh1+hh2, axis=0)/2
+
+        if self.ham_info.enable_spin_orbital:
+            H0r = self.ham_info.ham_trans_r.reshape(nvol,nd,nd)
+        else:
+            H0r = np.einsum('kab,st->ksatb',
+                            self.ham_info.ham_trans_r.reshape(nvol,norb,norb),
+                            np.eye(2)).reshape(nvol,nd,nd)
+        H0r[0] += hh3
+
+        H0 = np.fft.fftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        return H0
+
     @do_profile
     def _calc_epsilon_k(self, green_info):
         logger.debug(">>> RPA._calc_epsilon_k")
 
         nvol = self.lattice.nvol
 
-        # input green function
-        # g0 = _init_green(green_info)
+        # Find transfer term H0(k)
+        if "trans_mod" in green_info:
+            logger.debug("calc_epsilon_k: use trans_mod")
+            H0 = green_info['trans_mod']
+            do_spin_orbital = True
 
-        #XXX
-        # read trans_mod
+        elif "green_init" in green_info:
+            logger.debug("calc_epsilon_k: use initial green")
+            H0 = self._calc_trans_mod(green_info["green_init"])
+            do_spin_orbital = True
 
-        #XXX
+        else:
+            H0 = self.ham_info.ham_trans_q
+            do_spin_orbital = self.ham_info.enable_spin_orbital
 
-        if self.ham_info.enable_spin_orbital:
+        if do_spin_orbital:
             # H0(k) = T_{a~b~}(k) + h sigma_z_{ss'} H_{ab}(k)
             #   T_{a~b~} with extended orbital index
             #   H_{ab} with bare orbital index
             #   sigma_z = diag(1,-1) Pauli matrix
             #   h coefficient
-
-            H0 = self.ham_info.ham_trans_q
 
             if self.ham_info.ham_extern_q is not None:
                 H1 = self.ham_info.ham_extern_q * self.ext
@@ -1100,8 +1232,6 @@ class RPA:
         else:
             # H0(k) = T_{ab}(k) x 1_{ss'} + h Sz_{ss'} H_{ab}(k)
             #   T_{a~b~} with bare orbital index
-
-            H0 = self.ham_info.ham_trans_q
 
             if self.ham_info.ham_extern_q is not None:
                 H1 = self.ham_info.ham_extern_q * self.ext
@@ -1195,7 +1325,7 @@ class RPA:
 
         nblock,nvol,nd = ew.shape
         assert nvol == self.lattice.nvol
-        
+
         nmat = self.nmat
 
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
