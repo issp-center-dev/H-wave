@@ -1490,15 +1490,15 @@ class UHFk(solver_base):
             norb = self.norb
             ns = self.ns
 
-            tab_r = self._deflate_green(tab_r.reshape(nvol,ns,norb,ns,norb))
+            tab_r_defl = self._deflate_green(tab_r.reshape(nvol,ns,norb,ns,norb))
 
             lvol = self.cellvol
             norb_orig = self.norb_orig
             nd0 = norb_orig * ns
 
-            np.savez(file_name, trans_mod = tab_r.reshape(lvol,nd0,nd0))
+            np.savez(file_name, trans_mod=tab_r_defl.reshape(lvol,nd0,nd0), trans_mod_sublattice=tab_r)
         else:
-            np.savez(file_name, trans_mod = tab_r)
+            np.savez(file_name, trans_mod=tab_r)
         logger.info("save_results: save trans_mod to file {}".format(file_name))
 
     def _export_geometry(self, file_name):
