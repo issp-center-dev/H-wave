@@ -1,19 +1,14 @@
 # H-wave
 
-H-wave is a program for performing unrestricted Hartree-Fock (UHF) approximation
-for itinerant electron systems.
-The UHF method approximates two-body interaction terms into one-body ones by
-taking account of the fluctuations up to the first order. The wave functions
-and energies are determined self-consistently by an iterative method.
-H-wave treats two types of UHF approximation: one is real-space and the other is
-wavenumber-space UHF methods using translational symmetry. In the wavenumber space
-UHF method, the input file defining the one-body and two-body interactions is
-based on the Wannier90 format, and the program can be smoothly connected to
-the softwares for deriving effective models from first-principles calculations.
+H-wave is a program for performing unrestricted Hartree-Fock (UHF) approximation and random phase approximation (RPA) for itinerant electron systems. UHF and RPA correspond to simple approximations that deal with fluctuations up to first order and enable analyses of electron correlation effects in materials at a low computational cost. The input files describing the one-body and two-body interactions are based on the Wannier90 format[1]. This allows smooth connection for the software packages that derive the effective models from first principles calculations, such as RESPACK[2], to the analyses of the effective model with H-wave.
+
+[1] G. Pizzi et al, J. Phys.: Condens. Matter 32 165902 (2020).
+[2] K. Nakmura, Y. Yoshimoto, Y. Nomura et al., Comp. Phys. Commun. 261, 107781 (2021).
+
 
 ## Methods
 
-Hartree-Fock approximation
+Hartree-Fock and Random Phase approximation
 
 ## Target models
 
@@ -21,7 +16,7 @@ Hubbard model, multi-orbital Hubbard model
 
 ## Available physical quantities
 
-ground-state energy, free energy, etc.
+ground-state energy, free energy, charge and spin susceptibilities, etc.
 
 ## Requirement
 
@@ -58,15 +53,15 @@ of The Institute for Solid State Physics, The University of Tokyo.
 - [H-wave project site](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en)
 - [Software repository](https://github.com/issp-center-dev/H-wave)
 - [User Manual](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
-- [Samples/Tutorials](https://isspns-gitlab.issp.u-tokyo.ac.jp/hwave-dev/hwave-gallery)
+- [Data Repository](https://datarepo.mdcl.issp.u-tokyo.ac.jp/repo/23)
 
 ## Authors
 
-Kazuyoshi Yoshimi,
-Yuichi Motoyama,
-Tatsumi Aoyama,
-Kota Ido,
-Takahiro Misawa,
-Taiki Kawamura,
-Akito Kobayashi,
-Takeo Kato
+Kazuyoshi Yoshimi (ISSP, Univ. of Tokyo),
+Yuichi Motoyama (ISSP, Univ. of Tokyo),
+Tatsumi Aoyama (ISSP, Univ. of Tokyo),
+Kota Ido (ISSP, Univ. of Tokyo),
+Takahiro Misawa (ISSP, Univ. of Tokyo),
+Taiki Kawamura (Nagoya Univ.),
+Akito Kobayashi (Nagoya Univ.),
+Takeo Kato (ISSP, Univ. of Tokyo)
