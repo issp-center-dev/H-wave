@@ -120,7 +120,6 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#create-definition-files-for-hamiltonian">2.1.2. Create definition files for Hamiltonian</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#specify-output-components">2.1.3. Specify output components</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#run">2.1.4. Run</a></li>
-<li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#generate-input-files-using-stdface-library">2.1.5. Generate input files using StdFace library</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="uhfr/filespecification/fi-index.html">2.2. File specifications</a><ul>
@@ -137,7 +136,6 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#create-interaction-definition-files">3.1.2. Create interaction definition files</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#run">3.1.3. Run</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#calculate-density-of-state-hwave-dos">3.1.4. Calculate density of state  (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#compile-and-run-stdface-library">3.1.5. Compile and run StdFace library</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="uhfk/filespecification/fi-index.html">3.2. File specifications</a><ul>
@@ -148,15 +146,40 @@ In the actual calculation, the above equations are solved iteratively until the 
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">4. Algorithms</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="algorithm/uhf.html">4.1. Unrestricted Hartree-Fock method</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#overview">4.1.1. Overview</a></li>
-<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#extension-to-wave-number-space">4.1.2. Extension to wave-number space</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpa/rpa-index.html">4. Random Phase Approximation (RPA)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="rpa/tutorial/tu-index.html">4.1. Tutorial</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#create-a-parameter-file">4.1.1. Create a parameter file</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#create-interaction-definition-files">4.1.2. Create interaction definition files</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#run">4.1.3. Run</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="rpa/filespecification/fi-index.html">4.2. File specifications</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/config/index_config.html">4.2.1. Parameter files</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/inputfiles/index_inputfiles.html">4.2.2. Input files for RPA</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/outputfiles/index_outputfiles.html">4.2.3. Output files of RPA</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">5. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">5. Algorithms</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="algorithm/uhf.html">5.1. Unrestricted Hartree-Fock method</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#overview">5.1.1. Overview</a></li>
+<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#extension-to-wave-number-space">5.1.2. Extension to wave-number space</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="algorithm/rpa.html">5.2. Random Phase Approximation</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/app-index.html">7. Appendix</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="appendix/stdface.html">7.1. Generation of interaction files using StdFace library</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="appendix/stdface.html#compile-stdface-library">7.1.1. Compile StdFace library</a></li>
+<li class="toctree-l3"><a class="reference internal" href="appendix/stdface.html#run-stdface-library">7.1.2. Run StdFace library</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="appendix/message/msg-index.html">7.2. List of error messages</a></li>
+</ul>
+</li>
 </ul>
 </div>
 </section>
@@ -188,8 +211,10 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li class="toctree-l1"><a class="reference internal" href="howtouse/ho-index.html">1. Basic usage</a></li>
 <li class="toctree-l1"><a class="reference internal" href="uhfr/uhfr-index.html">2. Coordinate-space UHF (UHFr)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="uhfk/uhfk-index.html">3. Wave-number space UHF (UHFk)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">4. Algorithms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">5. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpa/rpa-index.html">4. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">5. Algorithms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/app-index.html">7. Appendix</a></li>
 </ul>
 
 <div class="relations">

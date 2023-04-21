@@ -46,7 +46,8 @@ For the latter, you can use the outputs of external programs such as RESPACK,
 or you may create the files using the StdFace library.</p>
 <p>In the following, we provide a tutorial based on a sample in
 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFk</span></code> directory.
-The interaction definition files are generated using StdFace library.</p>
+The interaction definition files can be generated using StdFace library.
+See <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">Generation of interaction files using StdFace library</span></a> section for the details.</p>
 <section id="create-a-parameter-file">
 <h2><span class="section-number">3.1.1. </span>Create a parameter file<a class="headerlink" href="#create-a-parameter-file" title="Permalink to this heading">¶</a></h2>
 <p>We prepare an input parameter file that contains basic parameters as well as settings on
@@ -278,56 +279,6 @@ The number of the energy points for the DOS calculation is specified by <code cl
 </pre></div>
 </div>
 </section>
-<section id="compile-and-run-stdface-library">
-<h2><span class="section-number">3.1.5. </span>Compile and run StdFace library<a class="headerlink" href="#compile-and-run-stdface-library" title="Permalink to this heading">¶</a></h2>
-<p>The interaction definition files can be generated easily using StdFace library.
-We will provide a short instruction how to use it.</p>
-<p>The source package of StdFace library that supports input formats of the
-wave-number space UHF is available from the repository as follows.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/issp-center-dev/StdFace.git
-</pre></div>
-</div>
-<p>Then, the library is to be compiled with the commands:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>StdFace
-$<span class="w"> </span>mkdir<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>build
-$<span class="w"> </span>cmake<span class="w"> </span>-DUHF<span class="o">=</span>ON<span class="w"> </span>..
-$<span class="w"> </span>make
-</pre></div>
-</div>
-<p>If the compilation is successful, you can find the executable module <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> in <code class="docutils literal notranslate"><span class="pre">src</span></code> directory.</p>
-<p>An input to <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> can be found as <code class="docutils literal notranslate"><span class="pre">stan.in</span></code> in the sample directory,
-which reads:</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>model = &quot;Hubbard&quot;
-lattice = &quot;square&quot;
-W = 4
-L = 4
-t = 1.0
-V = 4.0
-calcmode = &quot;uhfk&quot;
-exportall = 0
-</pre></div>
-</div>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">model</span></code> is a keyword to choose the target model.
-Currently, only <code class="docutils literal notranslate"><span class="pre">Hubbard</span></code> is supported that denotes Hubbard model with the number of electrons fixed.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">lattice</span></code> is a keyword to specify the lattice structure.
-In this example, the square lattice <code class="docutils literal notranslate"><span class="pre">square</span></code> is chosen.
-<code class="docutils literal notranslate"><span class="pre">W</span></code> and <code class="docutils literal notranslate"><span class="pre">L</span></code> denote the size of the lattice.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">t</span></code> and <code class="docutils literal notranslate"><span class="pre">V</span></code> denote parameters of the hopping and the neighbor-site Coulomb interaction, respectively.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">calcmode</span> <span class="pre">=</span> <span class="pre">&quot;uhfk&quot;</span></code> specifies the output to be in the Wannier90(-like) format.
-If <code class="docutils literal notranslate"><span class="pre">exportall</span> <span class="pre">=</span> <span class="pre">0</span></code> is given, the outputs are compactified with zero components omitted.</p></li>
-</ul>
-<p>See Section <a class="reference internal" href="../filespecification/inputfiles_uhfk/index_inputfiles_uhfk.html#ch-howtowannier90"><span class="std std-ref">Input files for UHFk</span></a> for the details of input files.</p>
-<p>Then, run <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> with the file above as an input:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>path_to_Hwave/docs/tutorial/Hubbard/UHFk
-$<span class="w"> </span>ln<span class="w"> </span>-s<span class="w"> </span>path_to_Stdface/build/src/uhf_dry.out<span class="w"> </span>.
-$<span class="w"> </span>./uhf_dry.out<span class="w"> </span>stan.in
-</pre></div>
-</div>
-<p>When the program finishes, a geometry information file <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>
-and interaction definition files <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code> and <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>,
-are generated in the current directory.</p>
-</section>
 </section>
 
 
@@ -361,14 +312,15 @@ are generated in the current directory.</p>
 <li class="toctree-l3"><a class="reference internal" href="#create-interaction-definition-files">3.1.2. Create interaction definition files</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#run">3.1.3. Run</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#calculate-density-of-state-hwave-dos">3.1.4. Calculate density of state  (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#compile-and-run-stdface-library">3.1.5. Compile and run StdFace library</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">3.2. File specifications</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">4. Algorithms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">5. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../rpa/rpa-index.html">4. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">5. Algorithms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">7. Appendix</a></li>
 </ul>
 
 <div class="relations">

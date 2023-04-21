@@ -11,7 +11,9 @@ To use H-wave, you need to prepare the input files:
 before performing calculations.
 In the following, we will provide a tutorial
 using a sample in ``docs/tutorial/Hubbard/UHFr`` directory.
-   
+The interaction definition files can be generated using StdFace library.
+See :ref:`Ch:StdFace` section for the details.
+
 
 Create a parameter file
 ------------------------------------------
@@ -132,7 +134,6 @@ The content of the file is as follows:
         4         8.000000000000000
      ...
 
-
 There are a number of keywords provided to concicely describe the Hamiltonian,
 besides ``CoulombIntra``.
 See sections :ref:`Subsec:interall` - :ref:`Subsec:pairlift` for the details.
@@ -230,65 +231,3 @@ The results are written in the ``output`` directory, according to the settings i
 ``spin-up_eigen.npz`` and ``spin-down_eigen.npz`` for the eigenvectors, and
 ``green.dat`` for the one-body Green's functions.
 See :ref:`Sec:outputfile` section for the details of the output files.
-
-Generate input files using StdFace library
-----------------------------------------------
-
-The definition files for the Hamiltonian can be generated easily by using StdFace library.
-StdFace is a program to create input files for the predefined lattice models or from the information based on the effective models provided in Wannier90 format.
-It is used for the exact-diagonalization solver :math:`{\mathcal H}\Phi` and the many-variable variational Monte Carlo solver mVMC for the genration of input files.
-In this section, we describe the procedure to create the input files for UHF using the StdFace library by a concrete example.
-
-First, download the source files of StdFace library with git:
-
-.. code-block:: bash
-
-    $ git clone https://github.com/issp-center-dev/StdFace.git
-
-Then, type in the following commands to compile the sources:
-
-.. code-block:: bash
-
-    $ cd StdFace
-    $ mkdir build && cd build
-    $ cmake -DUHF=ON ../
-    $ make
-
-If the compilation is successful, you will find an executable file ``uhf_dry.out`` in ``src`` directory.
-
-In this tutorial, we use sample files in ``docs/tutorial/Hubbard/UHFr`` directory.
-There is a file named ``stan.in`` which is an input to ``uhf_dry.out``.
-The content of the file is as follows:
-
-::
-
-    model = "Hubbard"
-    lattice = "square"
-    a0W = 2
-    a0L = 2
-    a1W = -2
-    a1L = 2
-    t = 1.0
-    U = 8.0
-    ncond = 8
-    2Sz = 0
-
-- ``model`` is a keyword that specifies the model to consider. At present, only the value ``Hubbard`` is supported, which corresponds to the Hubbard model with the number of electrons fixed.
-- ``lattice`` is a keyword that specifies the crystal structure. In this example, the square lattice ``square`` is chosen.
-- ``a0W`` and ``a0L`` are parameters to set x axis as a vector ``(a0W, a0L)``, and ``a1W`` and ``a1L`` to set y axis as a vector ``(a1W, a1L)``.
-- ``t`` corresponds to the hopping, and ``U`` to the on-site Coulomb interaction.
-- ``ncond`` and ``2Sz`` are given for compatibility with :math:`{\mathcal H}\Phi` and mVMC. 
-  It is noted that these parameters must also be specified in the parameter file. 
-
-See, for example, the manual of :math:`{\mathcal H}\Phi` for the details of input parameters.
-
-With the file shown above as an argument, run ``uhf_dry.out`` as follows:
-
-.. code-block:: bash
-
-    $ cd path_to_Hwave/docs/tutorial/Hubbard/UHFr
-    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ ./uhf_dry.out stan.in
-
-If the command is completed, a set of Hamiltonian definition files are generated in the current directory.
-We use ``trans.def`` and ``coulombintra.def`` for the tutorial.

@@ -13,7 +13,6 @@
     <script src="_static/doctools.js"></script>
     <script src="_static/sphinx_highlight.js"></script>
     <script src="_static/translations.js"></script>
-    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="genindex.html" />
     <link rel="search" title="検索" href="search.html" />
     <link rel="next" title="1. 基本的な使用方法" href="howtouse/ho-index.html" />
@@ -37,27 +36,8 @@
 <h1>H-waveのドキュメントへようこそ！<a class="headerlink" href="#h-wave" title="この見出しへのパーマリンク">¶</a></h1>
 <section id="id1">
 <h2>H-waveとは？<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h2>
-<p>H-waveでは遍歴電子系を対象に非制限Hartree-Fock(UHF)近似を行うためのプログラムです。
-UHF近似では揺らぎ <span class="math notranslate nohighlight">\(\delta A \equiv A-\langle A \rangle\)</span> の一次までを考慮することで、二体項を一体項へと近似します。
-たとえば、サイト間クーロン相互作用</p>
-<div class="math notranslate nohighlight" id="equation-index-0">
-<span class="eqno">(1)<a class="headerlink" href="#equation-index-0" title="この数式へのパーマリンク">¶</a></span>\[{\cal H}_V = \sum_{i,j, \sigma, \sigma'}V_{ij} n_ {i\sigma}n_{j\sigma'}\]</div>
-<p>について考えます。簡単化のため、 <span class="math notranslate nohighlight">\(i\equiv (i, \sigma)\)</span>,
-<span class="math notranslate nohighlight">\(j\equiv (j, \sigma')\)</span> とすると相互作用の項は揺らぎの二次を落とすことで、</p>
-<div class="math notranslate nohighlight" id="equation-index-1">
-<span class="eqno">(2)<a class="headerlink" href="#equation-index-1" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
-n_ {i}n_{j} &amp;=
-(\langle n_{i} \rangle +\delta n_i) (\langle n_{j} \rangle +\delta n_j)
-- \left[ \langle c_{i}^{\dagger}c_j \rangle +\delta (c_{i}^{\dagger}c_j ) \right]
-  \left[ \langle c_{j}^{\dagger}c_i \rangle +\delta (c_{j}^{\dagger}c_i )\right]
-\nonumber\\
-&amp;\sim
-\langle n_{i} \rangle n_j+\langle n_{j} \rangle  n_i
-- \langle c_{i}^{\dagger}c_j \rangle  c_{j}^{\dagger}c_i  -  \langle c_{j}^{\dagger}c_i \rangle c_{i}^{\dagger}c_j
--\langle n_{i} \rangle \langle n_j \rangle +  \langle c_{j}^{\dagger}c_i \rangle \langle c_{i}^{\dagger}c_j \rangle
-\end{aligned}\end{split}\]</div>
-<p>と近似されます。このような形式で、その他の相互作用についても近似を行うことで、一体問題に帰着させることができます。
-計算では、上記の各平均値がself-consistentになるまで計算を行います。</p>
+<p>H-waveは遍歴電子系を対象に非制限Hartree-Fock(UHF)近似計算および乱雑位相近似(RPA)計算を行うためのプログラムです。
+平均場近似をベースとした近似計算であるため、計算コストが軽く、複雑なハミルトニアンや大きいサイズでの計算が可能です。</p>
 </section>
 <section id="id2">
 <h2>ライセンス<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
@@ -113,7 +93,6 @@ n_ {i}n_{j} &amp;=
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#hamiltonian">2.1.2. Hamiltonianの指定</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#id4">2.1.3. 出力ファイルの指定</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#id5">2.1.4. 計算の実行</a></li>
-<li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#stdface">2.1.5. StdFaceライブラリを利用した入力ファイルの作成</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="uhfr/filespecification/fi-index.html">2.2. ファイルフォーマット</a><ul>
@@ -130,7 +109,6 @@ n_ {i}n_{j} &amp;=
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#id3">3.1.2. 相互作用定義ファイルの作成</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#id4">3.1.3. 計算の実行</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#hwave-dos">3.1.4. 状態密度の計算 (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#stdface">3.1.5. StdFaceライブラリのコンパイルと実行</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="uhfk/filespecification/fi-index.html">3.2. ファイルフォーマット</a><ul>
@@ -141,15 +119,40 @@ n_ {i}n_{j} &amp;=
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">4. アルゴリズム</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="algorithm/uhf.html">4.1. 非制限Hartree-Fock法</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#id1">4.1.1. 概要</a></li>
-<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#id2">4.1.2. 波数空間への拡張</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="rpa/tutorial/tu-index.html">4.1. チュートリアル</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#id2">4.1.1. 環境設定入力ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#id3">4.1.2. 相互作用定義ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#id4">4.1.3. 計算の実行</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="rpa/filespecification/fi-index.html">4.2. ファイルフォーマット</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/config/index_config.html">4.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/inputfiles/index_inputfiles.html">4.2.2. RPA用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/outputfiles/index_outputfiles.html">4.2.3. RPAの出力ファイル</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">5. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">5. アルゴリズム</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="algorithm/uhf.html">5.1. 非制限Hartree-Fock法</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#id1">5.1.1. 概要</a></li>
+<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#id2">5.1.2. 波数空間への拡張</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="algorithm/rpa.html">5.2. 乱雑位相近似法</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">6. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/app-index.html">7. Appendix</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="appendix/stdface.html">7.1. StdFaceを用いた相互作用ファイルの作成</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="appendix/stdface.html#id1">7.1.1. StdFaceライブラリのコンパイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="appendix/stdface.html#id2">7.1.2. StdFaceライブラリの使用</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="appendix/message/msg-index.html">7.2. エラーメッセージ一覧</a></li>
+</ul>
+</li>
 </ul>
 </div>
 </section>
@@ -181,8 +184,10 @@ n_ {i}n_{j} &amp;=
 <li class="toctree-l1"><a class="reference internal" href="howtouse/ho-index.html">1. 基本的な使用方法</a></li>
 <li class="toctree-l1"><a class="reference internal" href="uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="uhfk/uhfk-index.html">3. 波数空間UHF(UHFk)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">4. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">5. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">5. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">6. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/app-index.html">7. Appendix</a></li>
 </ul>
 
 <div class="relations">

@@ -43,7 +43,7 @@
 </ol>
 <p>を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。</p>
 <p>以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFk</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。
-相互作用定義ファイルは StdFace ライブラリを用いて生成します。</p>
+相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a> の章をご覧ください。</p>
 <section id="id2">
 <h2><span class="section-number">3.1.1. </span>環境設定入力ファイルの作成<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
 <p>環境設定入力ファイルには、基本パラメータの指定と入出力を制御する情報を記述します。
@@ -250,49 +250,6 @@ Statistics
 </pre></div>
 </div>
 </section>
-<section id="stdface">
-<h2><span class="section-number">3.1.5. </span>StdFaceライブラリのコンパイルと実行<a class="headerlink" href="#stdface" title="この見出しへのパーマリンク">¶</a></h2>
-<p>相互作用定義ファイルは、StdFaceライブラリを使用することで簡単に作成することができます。
-以下ではStdFaceライブラリを使用した入力ファイルの作成を行う方法を記載します。</p>
-<p>波数空間UHFの入力ファイル形式に対応した StdFace ライブラリは以下から取得できます。</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/issp-center-dev/StdFace.git
-</pre></div>
-</div>
-<p>ダウンロード終了後、以下のコマンドでコンパイルを行います。</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>StdFace
-$<span class="w"> </span>mkdir<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>build
-$<span class="w"> </span>cmake<span class="w"> </span>-DUHF<span class="o">=</span>ON<span class="w"> </span>..
-$<span class="w"> </span>make
-</pre></div>
-</div>
-<p>コンパイルに成功すると、 <code class="docutils literal notranslate"><span class="pre">src</span></code> ディレクトリに実行ファイル <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> ができます。</p>
-<p><code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> の入力ファイルはサンプルディレクトリ内の <code class="docutils literal notranslate"><span class="pre">stan.in</span></code> ファイルです。
-ファイルの内容は以下のとおりです。</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>model = &quot;Hubbard&quot;
-lattice = &quot;square&quot;
-W = 4
-L = 4
-t = 1.0
-V = 4.0
-calcmode = &quot;uhfk&quot;
-exportall = 0
-</pre></div>
-</div>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">model</span></code> は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 <code class="docutils literal notranslate"><span class="pre">Hubbard</span></code> のみに対応しています。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">lattice</span></code> は結晶構造を指定するキーワードです。 ここでは正方格子 <code class="docutils literal notranslate"><span class="pre">square</span></code> を選択しています。 <code class="docutils literal notranslate"><span class="pre">W</span></code>, <code class="docutils literal notranslate"><span class="pre">L</span></code> は格子のサイズです。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">t</span></code> はホッピング、 <code class="docutils literal notranslate"><span class="pre">V</span></code> は隣接サイトクーロン相互作用のパラメータです。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">calcmode</span> <span class="pre">=</span> <span class="pre">&quot;uhfk&quot;</span></code> は波数空間UHF向けに Wannier90(-like)形式での出力を指定します。 <code class="docutils literal notranslate"><span class="pre">exportall</span> <span class="pre">=</span> <span class="pre">0</span></code> は出力をコンパクトにするオプションです。</p></li>
-</ul>
-<p>入力ファイルの詳細については、 <a class="reference internal" href="../filespecification/inputfiles_uhfk/index_inputfiles_uhfk.html#ch-howtowannier90"><span class="std std-ref">UHFk用入力ファイル</span></a> のセクションを参照してください。</p>
-<p>上記のファイルを入力ファイルとして、 <code class="docutils literal notranslate"><span class="pre">uhf_dry.out</span></code> を以下のコマンドで実行します。</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>path_to_Hwave/docs/tutorial/Hubbard/UHFk
-$<span class="w"> </span>ln<span class="w"> </span>-s<span class="w"> </span>path_to_Stdface/build/src/uhf_dry.out<span class="w"> </span>.
-$<span class="w"> </span>./uhf_dry.out<span class="w"> </span>stan.in
-</pre></div>
-</div>
-<p>実行終了後、実行ディレクトリに幾何情報ファイル <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> 、相互作用定義ファイル <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code> が生成されます。</p>
-</section>
 </section>
 
 
@@ -326,14 +283,15 @@ $<span class="w"> </span>./uhf_dry.out<span class="w"> </span>stan.in
 <li class="toctree-l3"><a class="reference internal" href="#id3">3.1.2. 相互作用定義ファイルの作成</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id4">3.1.3. 計算の実行</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#hwave-dos">3.1.4. 状態密度の計算 (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#stdface">3.1.5. StdFaceライブラリのコンパイルと実行</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">3.2. ファイルフォーマット</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">4. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">5. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">5. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">6. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">7. Appendix</a></li>
 </ul>
 
 <div class="relations">

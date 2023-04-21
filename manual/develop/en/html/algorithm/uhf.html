@@ -6,7 +6,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
-    <title>4.1. Unrestricted Hartree-Fock method &#8212; H-wave Users Guide 0.3-dev documentation</title>
+    <title>5.1. Unrestricted Hartree-Fock method &#8212; H-wave Users Guide 0.3-dev documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
     <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
     <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
@@ -15,8 +15,8 @@
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="5. Acknowledgments" href="../acknowledgement.html" />
-    <link rel="prev" title="4. Algorithms" href="al-index.html" />
+    <link rel="next" title="5.2. Random Phase Approximation" href="rpa.html" />
+    <link rel="prev" title="5. Algorithms" href="al-index.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
   
@@ -34,15 +34,15 @@
           <div class="body" role="main">
             
   <section id="unrestricted-hartree-fock-method">
-<span id="algorithm-sec"></span><h1><span class="section-number">4.1. </span>Unrestricted Hartree-Fock method<a class="headerlink" href="#unrestricted-hartree-fock-method" title="Permalink to this heading">¶</a></h1>
+<span id="algorithm-sec"></span><h1><span class="section-number">5.1. </span>Unrestricted Hartree-Fock method<a class="headerlink" href="#unrestricted-hartree-fock-method" title="Permalink to this heading">¶</a></h1>
 <section id="overview">
-<h2><span class="section-number">4.1.1. </span>Overview<a class="headerlink" href="#overview" title="Permalink to this heading">¶</a></h2>
+<h2><span class="section-number">5.1.1. </span>Overview<a class="headerlink" href="#overview" title="Permalink to this heading">¶</a></h2>
 <p>The unrestricted Hartree-Fock approximation is a method to approximate
 two-body interactions into one-body terms by taking account of the fluctuation
 of the one-body operators up to first order.
 For a general two-body interactions, it leads to the following approximation:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-0">
-<span class="eqno">(4.1)<a class="headerlink" href="#equation-algorithm-uhf-0" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(5.1)<a class="headerlink" href="#equation-algorithm-uhf-0" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
 c_{i}^{\dagger} c_{j}^{\dagger} c_{k} c_{l}
 &amp; \sim
 \langle c_{i}^{\dagger} c_l \rangle c_{j}^{\dagger} c_k
@@ -55,7 +55,7 @@ c_{i}^{\dagger} c_{j}^{\dagger} c_{k} c_{l}
 \end{aligned}\end{split}\]</div>
 <p>In H-wave, the two-body interaction terms are defined as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-1">
-<span class="eqno">(4.2)<a class="headerlink" href="#equation-algorithm-uhf-1" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(5.2)<a class="headerlink" href="#equation-algorithm-uhf-1" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
 \mathcal{H}_\text{InterAll}
 &amp;=
 \sum_{ijkl\alpha\beta\gamma\delta} \sum_{\sigma_1 \sigma_2 \sigma_3 \sigma_4}
@@ -72,7 +72,7 @@ c^\dagger_{i\alpha\sigma_1} c^\dagger_{k\gamma\sigma_3} c_{l\gamma\sigma_4} c_{j
 the above expression.
 Then, the Hamiltonian given by the one-body terms is generally denoted as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-2">
-<span class="eqno">(4.3)<a class="headerlink" href="#equation-algorithm-uhf-2" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.3)<a class="headerlink" href="#equation-algorithm-uhf-2" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \sum_{ij} H_{ij} c^\dagger_{i} c_{j} = \hat{c}^\dagger H \hat{c}
 \end{aligned}\]</div>
 <p>where we adopt a notation <span class="math notranslate nohighlight">\(i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)\)</span> for brevity,
@@ -85,13 +85,13 @@ where
 and <span class="math notranslate nohighlight">\(U\)</span> is a matrix composed of the corresponding eigenvectors.</p>
 <p>Then, let <span class="math notranslate nohighlight">\(\hat{d} = U^\dagger \hat{c}\)</span>, and <span class="math notranslate nohighlight">\(\mathcal{H}_\text{UHF}\)</span> leads to</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-3">
-<span class="eqno">(4.4)<a class="headerlink" href="#equation-algorithm-uhf-3" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.4)<a class="headerlink" href="#equation-algorithm-uhf-3" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \hat{d}^\dagger \hat{\xi} \hat{d} =  \sum_{k} \xi_k d_k^\dagger d_k .
 \end{aligned}\]</div>
 <p>Therefore, the energy derived from the one-body interaction term of the UHF approximation
 is obtained by</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-4">
-<span class="eqno">(4.5)<a class="headerlink" href="#equation-algorithm-uhf-4" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.5)<a class="headerlink" href="#equation-algorithm-uhf-4" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 E_\text{UHF} = \langle \mathcal{H}_\text{UHF} \rangle = \sum_{k} \xi_k \langle d_k^\dagger d_k \rangle .
 \end{aligned}\]</div>
 <p>In the numerical calculation, as <span class="math notranslate nohighlight">\(H\)</span> depends on the one-body Green’s function
@@ -99,7 +99,7 @@ E_\text{UHF} = \langle \mathcal{H}_\text{UHF} \rangle = \sum_{k} \xi_k \langle d
 through the UHF approximation, the equation is iteratively solved to satisfy the self-consistency.
 Starting from a one-body Green’s function given as an initial value, it is updated through the relation</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-5">
-<span class="eqno">(4.6)<a class="headerlink" href="#equation-algorithm-uhf-5" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.6)<a class="headerlink" href="#equation-algorithm-uhf-5" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}^* U_{jl} \langle d_l^\dagger d_l \rangle = \sum_{l} \frac{U_{il}^* U_{jl}}{1+\exp^{\beta(\xi_l -\mu)}}
 \end{aligned}\]</div>
 <p>until the one-body Green’s function converges.
@@ -108,7 +108,7 @@ Here, <span class="math notranslate nohighlight">\(\beta\)</span> denotes the in
 In the canonical calculation in which the number of particles is fixed,
 <span class="math notranslate nohighlight">\(\mu\)</span> is determined to satisfy the relation</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-6">
-<span class="eqno">(4.7)<a class="headerlink" href="#equation-algorithm-uhf-6" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.7)<a class="headerlink" href="#equation-algorithm-uhf-6" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 N = \sum_{i} \langle c_i^{\dagger} c_i \rangle
 \end{aligned}\]</div>
 <p>for the number of particles <span class="math notranslate nohighlight">\(N\)</span> at every step.</p>
@@ -118,7 +118,7 @@ If we denote the one-body Green’s function at <em>n</em>-th step by
 the Green’s function at <em>n+1</em>-th step is chosen by mixing that of <em>n</em>-th step
 with the new one obtained in <em>n+1</em>-th step as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-7">
-<span class="eqno">(4.8)<a class="headerlink" href="#equation-algorithm-uhf-7" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.8)<a class="headerlink" href="#equation-algorithm-uhf-7" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 \langle c_{i}^\dagger c_{j}\rangle^{(n+1)} := (1-\alpha) \langle c_{i}^\dagger c_{j}\rangle^{(n)} +  \alpha \langle c_{i}^\dagger c_{j}\rangle^{(n+1)},
 \end{aligned}\]</div>
 <p>where <span class="math notranslate nohighlight">\(\alpha\)</span> is a parameter between 0 and 1.
@@ -127,17 +127,17 @@ in the present version of H-wave.</p>
 <p>In the coordinate-space UHF mode of H-wave, all interactions are mapped to InterAll form.
 The free energy at finite temperature is given by</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-8">
-<span class="eqno">(4.9)<a class="headerlink" href="#equation-algorithm-uhf-8" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.9)<a class="headerlink" href="#equation-algorithm-uhf-8" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 F = \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(\xi_k - \mu)) \right]
  - \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_j\rangle \langle c_{k}^{\dagger} c_l\rangle - \langle c_{i}^{\dagger} c_l\rangle \langle c_{k}^{\dagger} c_j\rangle) .
 \end{aligned}\]</div>
 </section>
 <section id="extension-to-wave-number-space">
-<h2><span class="section-number">4.1.2. </span>Extension to wave-number space<a class="headerlink" href="#extension-to-wave-number-space" title="Permalink to this heading">¶</a></h2>
+<h2><span class="section-number">5.1.2. </span>Extension to wave-number space<a class="headerlink" href="#extension-to-wave-number-space" title="Permalink to this heading">¶</a></h2>
 <p>The Hamiltonian given by the one-body terms is rewritten in the wave-number representation
 by the Fourier transform <span class="math notranslate nohighlight">\(c_i = \dfrac{1}{\sqrt{V}} \sum_k e^{ikr_i} c_k\)</span> as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-9">
-<span class="eqno">(4.10)<a class="headerlink" href="#equation-algorithm-uhf-9" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(5.10)<a class="headerlink" href="#equation-algorithm-uhf-9" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF}
 &amp;=
 \sum_{k\alpha\beta\sigma\sigma^\prime}
@@ -187,24 +187,27 @@ Here,
 <li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">1. Basic usage</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">2. Coordinate-space UHF (UHFr)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">3. Wave-number space UHF (UHFk)</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">4. Algorithms</a><ul class="current">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">4.1. Unrestricted Hartree-Fock method</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#overview">4.1.1. Overview</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#extension-to-wave-number-space">4.1.2. Extension to wave-number space</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">4. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">5. Algorithms</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">5.1. Unrestricted Hartree-Fock method</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">5.1.1. Overview</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#extension-to-wave-number-space">5.1.2. Extension to wave-number space</a></li>
 </ul>
 </li>
+<li class="toctree-l2"><a class="reference internal" href="rpa.html">5.2. Random Phase Approximation</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">5. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">7. Appendix</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
-  <li><a href="al-index.html"><span class="section-number">4. </span>Algorithms</a><ul>
-      <li>Previous: <a href="al-index.html" title="previous chapter"><span class="section-number">4. </span>Algorithms</a></li>
-      <li>Next: <a href="../acknowledgement.html" title="next chapter"><span class="section-number">5. </span>Acknowledgments</a></li>
+  <li><a href="al-index.html"><span class="section-number">5. </span>Algorithms</a><ul>
+      <li>Previous: <a href="al-index.html" title="previous chapter"><span class="section-number">5. </span>Algorithms</a></li>
+      <li>Next: <a href="rpa.html" title="next chapter"><span class="section-number">5.2. </span>Random Phase Approximation</a></li>
   </ul></li>
   </ul></li>
 </ul>
