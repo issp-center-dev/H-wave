@@ -122,7 +122,7 @@ Parameters
 
   **Description :**
   This parameter specifies the filling ratio of electrons with respect to the number of states.
-  When ``Ncond`` is specified, the ``filling`` parameter will not be used.
+  Both ``Ncond`` and ``filling`` are specified, the program will be terminated with error.
 
 - ``Ncond_round_mode``
 

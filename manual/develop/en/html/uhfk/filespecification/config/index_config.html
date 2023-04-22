@@ -129,6 +129,31 @@ Integer</p>
 This parameter specifies the number of conduction electrons.
 It must be greater than or equal to one.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">filling</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+This parameter specifies the filling ratio of electrons with respect to the number of states.
+It must be between 0 and 1.
+Both <code class="docutils literal notranslate"><span class="pre">Ncond</span></code> and <code class="docutils literal notranslate"><span class="pre">filling</span></code> are specified, the program will be terminated with error.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ncond_round_mode</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;strict&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+This parameter specifies how the number of electrons calculated from the <code class="docutils literal notranslate"><span class="pre">filling</span></code> parameter is rounded to an integer value. The parameter must take one of the following values.</p>
+<blockquote>
+<div><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">as-is</span></code>:  the value is not rounded to an integer. (returns a floating-point number)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round-up</span></code>:  the value is rounded up.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round-down</span></code>:  the value is rounded down.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round-off</span></code>:  the value is rounded to the closest integer. (0.5 is rounded up.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round</span></code>:  the value is rounded by <code class="docutils literal notranslate"><span class="pre">round</span></code> function. (0.5 is rounded down.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">strict</span></code>:  if the value is not an integer value, the program terminates with error.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">exact</span></code>:  if the value is not an integer value, a warning message will be shown and the value is rounded to an integer as <code class="docutils literal notranslate"><span class="pre">round</span></code>.</p></li>
+</ul>
+</div></blockquote>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span></code></p>
 <p><strong>Type :</strong>
 Integer (default value is 20000)</p>
