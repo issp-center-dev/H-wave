@@ -569,6 +569,10 @@ class RPA:
             # none specified
             logger.error("none of mu, Ncond, nor filling is specified")
             sys.exit(1)
+        elif have_Ncond and have_filling:
+            # both Ncond or filling
+            logger.error("both Ncond and filling are specified")
+            sys.exit(1)
 
         self.Nstate = self.lattice.nvol * self.nd
 

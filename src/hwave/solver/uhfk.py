@@ -54,20 +54,30 @@ class UHFk(solver_base):
     def _init_param(self):
         # check and store parameters
 
+        # - cell shape
         if not "CellShape" in self.param_mod:
             logger.error("CellShape is missing. abort")
             exit(1)
 
-        if "Ncond" in self.param_mod:
-            ncond = self.param_mod["Ncond"]
-        elif "Nelec" in self.param_mod:
-            ncond = self.param_mod["Nelec"]
+        # - temperature
+        self.T = self.param_mod.get("T", 0.0)
+
+        # - number of electrons
+        if "filling" in self.param_mod:
+            self.filling = self.param_mod["filling"]
+            round_mode = self.param_mod.get("Ncond_round_mode", "strict")
+
+            Lx,Ly,Lz = self.param_mod.get("CellShape")
+            norb = self.param_ham["Geometry"]["norb"]
+            Nstate = Lx*Ly*Lz*norb*2
+
+            ncond = self._round_to_int(Nstate * self.filling, round_mode)
+            self.param_mod["Ncond"] = ncond  # overwrite
         else:
-            logger.error("Ncond or Nelec is missing. abort")
-            exit(1)
+            self.filling = None
+            ncond = self.param_mod["Ncond"]
 
-        # self.Ncond = ncond
-
+        # - Sz fixed or free
         if self.param_mod["2Sz"] is None:
             self.sz_free = True
             self.Nconds = [ ncond ]
@@ -76,13 +86,14 @@ class UHFk(solver_base):
             twosz = self.param_mod["2Sz"]
             self.Nconds = [ (ncond + twosz)//2, (ncond - twosz)//2 ]
 
-        self.T = self.param_mod.get("T", 0.0)
+        # - calc condition
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
 
-        # strict hermiticity check
+        # - strict hermiticity check
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
         self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
+        # - check strictness
         if self.relax_checks:
             self.strict_hermite = False
 
@@ -141,6 +152,8 @@ class UHFk(solver_base):
         logger.info("    nd             = {}".format(self.nd))
 
         logger.info("    Ncond          = {}".format(self.Nconds))
+        if self.filling is not None:
+            logger.info("    filling        = {}".format(self.filling))
         logger.info("    T              = {}".format(self.T))
         logger.info("    E_cutoff       = {}".format(self.ene_cutoff))
 
