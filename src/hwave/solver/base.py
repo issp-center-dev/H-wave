@@ -1,3 +1,4 @@
+import sys
 import logging
 from requests.structures import CaseInsensitiveDict
 
@@ -32,7 +33,7 @@ class solver_base():
             "T":     [ 0, None ],
             # "2Sz":   [ -param_mod["Nsite"], param_mod["Nsite"] ],
             # "Nsite": [ 1, None ],
-            "Ncond": [ 1, None ],
+            # "Ncond": [ 1, None ],
             "IterationMax": [ 0, None ],
             "Mix":   [ 0.0, 1.0 ],
             # "print_step": [ 1, None ],
@@ -65,26 +66,49 @@ class solver_base():
         if self.relax_checks:
             logger.warning("TRUST-ME mode enabled. parameter checks are relaxed")
 
+        # Sz mode
         if "2Sz" in self.param_mod and self.param_mod["2Sz"] == "free":
             self.param_mod["2Sz"] = None
 
+        # Ncond and filling
+        if "Nelec" in self.param_mod:
+            if self.param_mod["Ncond"] > 0:
+                logger.warning("Both Ncond and Nelec are specified: Ncond used")
+            else:
+                self.param_mod["Ncond"] = self.param_mod["Nelec"]
+
+        if "filling" in self.param_mod:
+            if self.param_mod["Ncond"] > 0:
+                logger.error("Both Ncond and filling are specified.")
+                sys.exit(1)
+            else:
+                filling = self.param_mod["filling"]
+                if filling < 0.0 or filling > 1.0:
+                    logger.error("Parameter range check failed for filling")
+                    sys.exit(1)
+        else:
+            if self.param_mod["Ncond"] == 0:
+                logger.error("Neigher Ncond nor filling is specified.")
+                sys.exit(1)
+
+        # checks
         if self._check_info_mode(info_mode) != 0:
             logger.error("Parameter check failed for info_mode.")
-            exit(1)
+            sys.exit(1)
         if self._check_param_range(self.param_mod, range_list) != 0:
             msg = "Parameter range check failed for param_mod."
             if self.relax_checks:
                 logger.warning(msg)
             else:
                 logger.error(msg)
-                exit(1)
+                sys.exit(1)
         if self._check_param_mod(self.param_mod) != 0:
             msg = "Parameter check failed for param_mod."
             if self.relax_checks:
                 logger.warning(msg)
             else:
                 logger.error(msg)
-                exit(1)
+                sys.exit(1)
 
         # canonicalize
         self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
@@ -139,6 +163,37 @@ class solver_base():
                     logger.warning("mode.param.{} must be smaller than {}.".format(key, vmax))
                     error_code += 1
         return error_code
+
+    def _round_to_int(self, val, mode):
+        import math
+        mode = mode.lower()  # case-insensitive
+        if   mode == "as-is":
+            ret = val  # not rounding to int
+        elif mode == "round":
+            ret = round(val)
+        elif mode == "round-up":
+            ret = math.ceil(val)
+        elif mode == "round-down":
+            ret = math.floor(val)
+        elif mode == "round-to-zero":
+            ret = int(val)
+        elif mode == "round-off":
+            nn = math.floor(val)
+            rr = val - nn
+            ret = nn if rr < 0.5 else nn+1
+        elif mode == "strict":
+            if val != round(val):
+                logger.error("value not integer")
+                sys.exit(1)
+            ret = round(val)
+        elif mode == "exact":  # "round" with warning
+            if val != round(val):
+                logger.warning("value not integer")
+            ret = round(val)
+        else:
+            logger.error("round_to_int: unknown mode {}".format(mode))
+            sys.exit(1)
+        return ret
 
     def solve(self, path_to_output):
         pass
