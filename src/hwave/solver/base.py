@@ -1,8 +1,9 @@
 import sys
-import logging
 from requests.structures import CaseInsensitiveDict
-
 # from pprint import pprint
+
+import logging
+logger = logging.getLogger("qlms").getChild("solver")
 
 class solver_base():
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):

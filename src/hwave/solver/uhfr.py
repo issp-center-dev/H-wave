@@ -259,7 +259,11 @@ class UHFr(solver_base):
 
         # Make a list for generating Hamiltonian
         self.Nsize = self.param_mod["nsite"]
-        self.Ncond = self.param_mod["Ncond"]
+        if "filling" in self.param_mod:
+            round_mode = self.param_mod.get("Ncond_round_mode", "strict")
+            self.Ncond = self._round_to_int(self.param_mod["filling"] * 2 * self.Nsize, round_mode)
+        else:
+            self.Ncond = self.param_mod["Ncond"]
         TwoSz = self.param_mod["2Sz"]
         if TwoSz is None:
             self.green_list = {"sz-free": {"label": [i for i in range(2 * self.Nsize)], "occupied": self.Ncond}}
