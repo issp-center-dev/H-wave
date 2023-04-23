@@ -1388,8 +1388,12 @@ class UHFk(solver_base):
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
 
-        if "green" in info_outputfile.keys():
-            file_name = os.path.join(path_to_output, info_outputfile["green"])
+        # export green function to "green.npz",
+        # or to a file of the name specified by 'green' keyword.
+        # if the keyword has empty string "", nothing exported.
+        fname = info_outputfile.get("green", "green")
+        if fname != "":
+            file_name = os.path.join(path_to_output, fname)
             self._save_green(file_name)
 
         if "onebodyg" in info_outputfile.keys():
