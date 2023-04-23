@@ -318,11 +318,11 @@ to the definition files.
 - ``green``
 
   **Type :**
-  String
+  String (default value is ``"green"``)
 
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's functions.
-  If it is not set, no output fill be generated.
+  If it is set to an empty string, no output will be generated.
 
 - ``rpa``
 
@@ -331,4 +331,4 @@ to the definition files.
 
   **Description :**
   This parameter specifies the name of the file to store the one-body term involving the approximated two-body interaction term by UHF method. The output may be used as an initial configuration of the RPA calculation by specifying it in the parameter ``file.input.trans_mod``.
-  If it is not set, no output fill be generated.
+  If it is not set, no output will be generated.
