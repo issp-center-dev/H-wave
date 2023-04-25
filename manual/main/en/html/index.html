@@ -6,13 +6,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
-    <title>Welcome to H-wave documentations! &#8212; H-wave Users Guide 0.2 documentation</title>
+    <title>Welcome to H-wave documentations! &#8212; H-wave Users Guide 0.3-dev documentation</title>
     <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
     <link rel="stylesheet" type="text/css" href="_static/alabaster.css" />
     <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
     <script src="_static/doctools.js"></script>
     <script src="_static/sphinx_highlight.js"></script>
-    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
     <link rel="next" title="1. Basic usage" href="howtouse/ho-index.html" />
@@ -36,27 +35,8 @@
 <h1>Welcome to H-wave documentations!<a class="headerlink" href="#welcome-to-h-wave-documentations" title="Permalink to this heading">¶</a></h1>
 <section id="what-is-h-wave">
 <h2>What is H-wave?<a class="headerlink" href="#what-is-h-wave" title="Permalink to this heading">¶</a></h2>
-<p>H-wave is a program to perform unrestricted Hartree-Fock (UHF) approximation for itinerant electron systems.
-The UHF approximation reduces two-body interaction terms into one-body terms by taking account of the fluctuation <span class="math notranslate nohighlight">\(\delta A \equiv A-\langle A \rangle\)</span> up to first order.</p>
-<p>Let us consider the inter-site Coulomb interaction for example.</p>
-<div class="math notranslate nohighlight" id="equation-index-0">
-<span class="eqno">(1)<a class="headerlink" href="#equation-index-0" title="Permalink to this equation">¶</a></span>\[{\cal H}_V = \sum_{i,j, \sigma, \sigma'}V_{ij} n_ {i\sigma}n_{j\sigma'}\]</div>
-<p>We adopt a notation <span class="math notranslate nohighlight">\(i\equiv (i, \sigma)\)</span> and <span class="math notranslate nohighlight">\(j\equiv (j, \sigma')\)</span> for brevity.
-The interaction term is approximated to the following form by eliminating the second order contribution of the fluctuation:</p>
-<div class="math notranslate nohighlight" id="equation-index-1">
-<span class="eqno">(2)<a class="headerlink" href="#equation-index-1" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
-n_ {i}n_{j} &amp;=
-(\langle n_{i} \rangle +\delta n_i) (\langle n_{j} \rangle +\delta n_j)
-- \left[ \langle c_{i}^{\dagger}c_j \rangle +\delta (c_{i}^{\dagger}c_j ) \right]
-  \left[ \langle c_{j}^{\dagger}c_i \rangle +\delta (c_{j}^{\dagger}c_i )\right]
-\nonumber\\
-&amp;\sim
-\langle n_{i} \rangle n_j+\langle n_{j} \rangle  n_i
-- \langle c_{i}^{\dagger}c_j \rangle  c_{j}^{\dagger}c_i  -  \langle c_{j}^{\dagger}c_i \rangle c_{i}^{\dagger}c_j
--\langle n_{i} \rangle \langle n_j \rangle +  \langle c_{j}^{\dagger}c_i \rangle \langle c_{i}^{\dagger}c_j \rangle
-\end{aligned}\end{split}\]</div>
-<p>Other types of interactions are reduced to one-body problems in a similar manner.
-In the actual calculation, the above equations are solved iteratively until the expectaion values become self-consistent.</p>
+<p>H-wave is a program to perform unrestricted Hartree-Fock (UHF) approximation and random phase approximation (RPA) for itinerant electron systems.
+It is based on mean field approximation, and it enables calculations of complicated Hamiltonian and large lattices at low compuational cost.</p>
 </section>
 <section id="license">
 <h2>License<a class="headerlink" href="#license" title="Permalink to this heading">¶</a></h2>
@@ -77,7 +57,7 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li><p>Yuichi Motoyama
 (The Institute for Solid State Physics, The University of Tokyo)</p></li>
 <li><p>Takahiro Misawa
-(Beijing Academy of Quantum Information Sciences (BAQIS))</p></li>
+(The Institute for Solid State Physics, The University of Tokyo)</p></li>
 <li><p>Kota Ido
 (The Institute for Solid State Physics, The University of Tokyo)</p></li>
 <li><p>Akito Kobayashi
@@ -120,7 +100,6 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#create-definition-files-for-hamiltonian">2.1.2. Create definition files for Hamiltonian</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#specify-output-components">2.1.3. Specify output components</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#run">2.1.4. Run</a></li>
-<li class="toctree-l3"><a class="reference internal" href="uhfr/tutorial/tu-index.html#generate-input-files-using-stdface-library">2.1.5. Generate input files using StdFace library</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="uhfr/filespecification/fi-index.html">2.2. File specifications</a><ul>
@@ -136,7 +115,7 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#create-a-parameter-file">3.1.1. Create a parameter file</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#create-interaction-definition-files">3.1.2. Create interaction definition files</a></li>
 <li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#run">3.1.3. Run</a></li>
-<li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#compile-and-run-stdface-library">3.1.4. Compile and run StdFace library</a></li>
+<li class="toctree-l3"><a class="reference internal" href="uhfk/tutorial/tu-index.html#calculate-density-of-state-hwave-dos">3.1.4. Calculate density of state  (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="uhfk/filespecification/fi-index.html">3.2. File specifications</a><ul>
@@ -147,15 +126,40 @@ In the actual calculation, the above equations are solved iteratively until the 
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">4. Algorithms</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="algorithm/uhf.html">4.1. Unrestricted Hartree-Fock method</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#overview">4.1.1. Overview</a></li>
-<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#extension-to-wave-number-space">4.1.2. Extension to wave-number space</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpa/rpa-index.html">4. Random Phase Approximation (RPA)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="rpa/tutorial/tu-index.html">4.1. Tutorial</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#create-a-parameter-file">4.1.1. Create a parameter file</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#create-interaction-definition-files">4.1.2. Create interaction definition files</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/tutorial/tu-index.html#run">4.1.3. Run</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="rpa/filespecification/fi-index.html">4.2. File specifications</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/config/index_config.html">4.2.1. Parameter files</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/inputfiles/index_inputfiles.html">4.2.2. Input files for RPA</a></li>
+<li class="toctree-l3"><a class="reference internal" href="rpa/filespecification/outputfiles/index_outputfiles.html">4.2.3. Output files of RPA</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">5. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">5. Algorithms</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="algorithm/uhf.html">5.1. Unrestricted Hartree-Fock method</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#overview">5.1.1. Overview</a></li>
+<li class="toctree-l3"><a class="reference internal" href="algorithm/uhf.html#extension-to-wave-number-space">5.1.2. Extension to wave-number space</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="algorithm/rpa.html">5.2. Random Phase Approximation</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/app-index.html">7. Appendix</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="appendix/stdface.html">7.1. Generation of interaction files using StdFace library</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="appendix/stdface.html#compile-stdface-library">7.1.1. Compile StdFace library</a></li>
+<li class="toctree-l3"><a class="reference internal" href="appendix/stdface.html#run-stdface-library">7.1.2. Run StdFace library</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="appendix/message/msg-index.html">7.2. List of error messages</a></li>
+</ul>
+</li>
 </ul>
 </div>
 </section>
@@ -187,8 +191,10 @@ In the actual calculation, the above equations are solved iteratively until the 
 <li class="toctree-l1"><a class="reference internal" href="howtouse/ho-index.html">1. Basic usage</a></li>
 <li class="toctree-l1"><a class="reference internal" href="uhfr/uhfr-index.html">2. Coordinate-space UHF (UHFr)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="uhfk/uhfk-index.html">3. Wave-number space UHF (UHFk)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">4. Algorithms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">5. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpa/rpa-index.html">4. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="algorithm/al-index.html">5. Algorithms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/app-index.html">7. Appendix</a></li>
 </ul>
 
 <div class="relations">
@@ -225,7 +231,7 @@ In the actual calculation, the above equations are solved iteratively until the 
       &copy;2022-, The University of Tokyo.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.1.3</a>
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.2.0</a>
       &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
       
       |

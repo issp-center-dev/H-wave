@@ -10,7 +10,7 @@ H-waveを波数空間モード(UHFk)で実行するには、入力ファイル�
 を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。
 
 以下では、 ``docs/tutorial/Hubbard/UHFk`` ディレクトリにあるサンプルを例にチュートリアルを実施します。
-相互作用定義ファイルは StdFace ライブラリを用いて生成します。
+相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は :ref:`Ch:StdFace` の章をご覧ください。
 
 環境設定入力ファイルの作成
 --------------------------------
@@ -103,48 +103,32 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 
 出力ファイルの詳細については :ref:`ファイルフォーマット<Sec:outputfile_uhfk>` の章をご覧ください。
 
-StdFaceライブラリのコンパイルと実行
-----------------------------------------------------------------
 
-相互作用定義ファイルは、StdFaceライブラリを使用することで簡単に作成することができます。
-以下ではStdFaceライブラリを使用した入力ファイルの作成を行う方法を記載します。
+状態密度の計算 (``hwave_dos``)
+----------------------------------------
 
-波数空間UHFの入力ファイル形式に対応した StdFace ライブラリは以下から取得できます。
+ポストツール ``hwave_dos`` を用いることで、状態密度を計算することができます。
+ブリルアンゾーン積分を精度良く計算するために `libtetrabz <https://pypi.org/project/libtetrabz/>`_ を利用しています。 ``pip`` を利用してインストールしてください。 ::
 
-.. code-block:: bash
+    $ python3 -m pip install libtetrabz
 
-    $ git clone https://github.com/issp-center-dev/StdFace.git
+``hwave_dos`` は、 ``hwave`` で利用した入力パラメータファイルを引数として受け取ります ::
 
-ダウンロード終了後、以下のコマンドでコンパイルを行います。
+    $ hwave_dos input.toml
 
-.. code-block:: bash
+``hwave_dos`` は、 ``hwave`` と同様に ``[file.output]`` セクションの指定に従い、
+``output`` ディレクトリに ``dos.dat`` ファイルを出力します。
+ファイル名は ``--output`` オプションで変更することができます。 ::
 
-    $ cd StdFace
-    $ mkdir build && cd build
-    $ cmake -DUHF=ON ..
-    $ make
+    $ hwave_dos input.toml --output dos.dat
 
-コンパイルに成功すると、 ``src`` ディレクトリに実行ファイル ``uhf_dry.out`` ができます。
+状態密度を計算するエネルギーの範囲は ``--ene-window`` オプションで指定します。
+省略した場合は、 ``hwave`` で得られたエネルギーの最小値と最大値を :math:`E_\text{min}`, :math:`E_\text{max}` として、 :math:`[E_\text{min}-0.2, E_\text{max}+0.2]` で計算されます。
+エネルギーの点数は ``--ene-num`` オプションで指定します（デフォルトは101） ::
 
-``uhf_dry.out`` の入力ファイルはサンプルディレクトリ内の ``stan.in`` ファイルです。
-ファイルの内容は以下のとおりです。
+    $ hwave_dos input.toml --ene-window -10.0 5.0 --ene-num 201
 
-.. literalinclude:: ../sample/stan.in
+``--plot`` オプションを指定すると、状態密度をプロットします。 ``matplotlib`` が必要です。 ::
 
-- ``model`` は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 ``Hubbard`` のみに対応しています。
-- ``lattice`` は結晶構造を指定するキーワードです。 ここでは正方格子 ``square`` を選択しています。 ``W``, ``L`` は格子のサイズです。
-- ``t`` はホッピング、 ``V`` は隣接サイトクーロン相互作用のパラメータです。
-- ``calcmode = "uhfk"`` は波数空間UHF向けに Wannier90(-like)形式での出力を指定します。 ``exportall = 0`` は出力をコンパクトにするオプションです。
-
-入力ファイルの詳細については、 :ref:`Ch:HowToWannier90` のセクションを参照してください。
-
-上記のファイルを入力ファイルとして、 ``uhf_dry.out`` を以下のコマンドで実行します。
-
-.. code-block:: bash
-
-    $ cd path_to_Hwave/docs/tutorial/Hubbard/UHFk
-    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ ./uhf_dry.out stan.in
-
-実行終了後、実行ディレクトリに幾何情報ファイル ``geom.dat`` 、相互作用定義ファイル ``transfer.dat``, ``coulombinter.dat`` が生成されます。
+    $ hwave_dos input.toml --plot dos.png
 
