@@ -8,9 +8,11 @@ import logging
 
 import tomli
 
+import hwave
 import hwave.qlmsio as qlmsio
 import hwave.solver.uhfr as sol_uhfr
 import hwave.solver.uhfk as sol_uhfk
+import hwave.solver.rpa as sol_rpa
 from requests.structures import CaseInsensitiveDict
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
@@ -95,6 +97,18 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
         solver = sol_uhfk.UHFk(ham_info, info_log, info_mode)
 
+    elif mode == "RPA":
+        logger.info("RPA mode")
+
+        logger.info("Read interaction definitions from files")
+        read_io = qlmsio.read_input_k.QLMSkInput(info_inputfile)
+        ham_info = read_io.get_param("ham")
+
+        solver = sol_rpa.RPA(ham_info, info_log, info_mode)
+
+        green_info = read_io.get_param("green")
+        green_info.update( solver.read_init(info_inputfile) )
+
     else:
         logger.warning("mode is incorrect: mode={}.".format(mode))
         exit(0)
@@ -107,9 +121,20 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
 
 
 def main():
-    args = sys.argv
-    if len(args) != 2:
-        print("Usage: python3 qlms.py input.toml")
-        exit(1)
-    run(input_file=args[1])
+    import argparse
 
+    parser = argparse.ArgumentParser(prog='hwave')
+    parser.add_argument('input_toml', nargs='?', default=None, help='input parameter file')
+    parser.add_argument('--version', action='store_true', help='show version')
+
+    args = parser.parse_args()
+
+    if args.version:
+        print('hwave', hwave.__version__)
+        sys.exit(0)
+
+    if args.input_toml is None:
+        parser.print_help()
+        sys.exit(1)
+
+    run(input_file = args.input_toml)

@@ -14,8 +14,8 @@ or you may create the files using the StdFace library.
 
 In the following, we provide a tutorial based on a sample in
 ``docs/tutorial/Hubbard/UHFk`` directory.
-The interaction definition files are generated using StdFace library.
-
+The interaction definition files can be generated using StdFace library.
+See :ref:`Ch:StdFace` section for the details.
 
 Create a parameter file
 --------------------------------
@@ -130,58 +130,35 @@ the output files ``energy.dat``, ``eigen.npz``, and ``green.npz`` in ``output`` 
 
 See :ref:`Sec:outputfile_uhfk` section for the details of the output files.
 
-Compile and run StdFace library
-----------------------------------------------------------------
 
-The interaction definition files can be generated easily using StdFace library.
-We will provide a short instruction how to use it.
+Calculate density of state  (``hwave_dos``)
+------------------------------------------------
 
-The source package of StdFace library that supports input formats of the
-wave-number space UHF is available from the repository as follows.
+You can calculate the density of states (DOS) using the post-processing tool, ``hwave_dos``.
 
-.. code-block:: bash
 
-    $ git clone https://github.com/issp-center-dev/StdFace.git
+``hwave_dos`` uses the ``libtetrabz`` library to integrating over the Brillouin zone.
+``libtetrabz`` can be installed by ``pip``::
 
-Then, the library is to be compiled with the commands:
+    $ python3 -m pip install libtetrabz
 
-.. code-block:: bash
+The tool requires the input parameter file used in the calculation.
+The following example shows how to calculate the DOS using the sample input file::
 
-    $ cd StdFace
-    $ mkdir build && cd build
-    $ cmake -DUHF=ON ..
-    $ make
+    $ hwave_dos input.toml
 
-If the compilation is successful, you can find the executable module ``uhf_dry.out`` in ``src`` directory.
+``hwave_dos`` outputs the DOS file, ``dos.dat`` in the directory specified by the ``file.output.path_to_output`` of the input file.
+The filename can be changed by ``--output`` option::
 
-An input to ``uhf_dry.out`` can be found as ``stan.in`` in the sample directory,
-which reads:
+    $ hwave_dos input.toml --output dos.dat
 
-.. literalinclude:: ../sample/stan.in
+The DOS is calculated in the energy range specified by ``--ene-window`` option.
+If omitted, the energy range is set to :math:`[E_\text{min}-0.2, E_\text{max}+0.2]` where :math:`E_\text{min}` and :math:`E_\text{max}` are the minimum and maximum energies obtained by ``hwave``.
+The number of the energy points for the DOS calculation is specified by ``--ene-num`` option (default is 101)::
 
-- ``model`` is a keyword to choose the target model.
-  Currently, only ``Hubbard`` is supported that denotes Hubbard model with the number of electrons fixed.
+    $ hwave_dos input.toml --ene-window -10.0 5.0 --ene-num 201
 
-- ``lattice`` is a keyword to specify the lattice structure.
-  In this example, the square lattice ``square`` is chosen.
-  ``W`` and ``L`` denote the size of the lattice.
+The ``--plot`` option plots the DOS. ``matplotlib`` is required::
 
-- ``t`` and ``V`` denote parameters of the hopping and the neighbor-site Coulomb interaction, respectively.
-
-- ``calcmode = "uhfk"`` specifies the output to be in the Wannier90(-like) format.
-  If ``exportall = 0`` is given, the outputs are compactified with zero components omitted.
-
-See Section :ref:`Ch:HowToWannier90` for the details of input files.
-
-Then, run ``uhf_dry.out`` with the file above as an input:
-
-.. code-block:: bash
-
-    $ cd path_to_Hwave/docs/tutorial/Hubbard/UHFk
-    $ ln -s path_to_Stdface/build/src/uhf_dry.out .
-    $ ./uhf_dry.out stan.in
-
-When the program finishes, a geometry information file ``geom.dat``
-and interaction definition files ``transfer.dat`` and ``coulombinter.dat``,
-are generated in the current directory.
+    $ hwave_dos input.toml --plot dos.png
 

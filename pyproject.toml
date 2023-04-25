@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hwave"
-version = "0.2"
+version = "0.3-dev"
 description = "UHF"
 authors = ["H-Wave developers <hwave-dev@issp.u-tokyo.ac.jp>"]
 license = "GPL-3.0-or-later"
@@ -25,6 +25,7 @@ tomli = "^2.0.1"
 
 [tool.poetry.scripts]
 hwave = "hwave.qlms:main"
+hwave_dos = "hwave.dos:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

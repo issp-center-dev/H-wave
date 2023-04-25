@@ -87,6 +87,32 @@ Parameters
   This parameter specifies the number of conduction electrons.
   It must be greater than or equal to one.
 
+- ``filling``
+
+  **Type :**
+  Float
+
+  **Description :**
+  This parameter specifies the filling ratio of electrons with respect to the number of states.
+  It must be between 0 and 1.
+  Both ``Ncond`` and ``filling`` are specified, the program will be terminated with error.
+
+- ``Ncond_round_mode``
+
+  **Type :**
+  String (default value is ``"strict"``)
+
+  **Description :**
+  This parameter specifies how the number of electrons calculated from the ``filling`` parameter is rounded to an integer value. The parameter must take one of the following values.
+
+    - ``as-is``:  the value is not rounded to an integer. (returns a floating-point number)
+    - ``round-up``:  the value is rounded up.
+    - ``round-down``:  the value is rounded down.
+    - ``round-off``:  the value is rounded to the closest integer. (0.5 is rounded up.)
+    - ``round``:  the value is rounded by ``round`` function. (0.5 is rounded down.)
+    - ``strict``:  if the value is not an integer value, the program terminates with error.
+    - ``exact``:  if the value is not an integer value, a warning message will be shown and the value is rounded to an integer as ``round``.
+
 - ``IterationMax``
 
   **Type :**
@@ -292,8 +318,17 @@ to the definition files.
 - ``green``
 
   **Type :**
-  String
+  String (default value is ``"green"``)
 
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's functions.
-  If it is not set, no output fill be generated.
+  If it is set to an empty string, no output will be generated.
+
+- ``rpa``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the name of the file to store the one-body term involving the approximated two-body interaction term by UHF method. The output may be used as an initial configuration of the RPA calculation by specifying it in the parameter ``file.input.trans_mod``.
+  If it is not set, no output will be generated.

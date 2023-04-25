@@ -35,7 +35,7 @@ class UHFk(solver_base):
 
         nvol = self.nvol
         nd = self.nd
-        
+
         self._green_list = {
 #            "eigenvalue":  np.zeros((nvol,nd), dtype=np.complex128),
 #            "eigenvector": np.zeros((nvol,nd,nd), dtype=np.complex128)
@@ -48,25 +48,36 @@ class UHFk(solver_base):
 
     def _init_mode(self, param):
         self.iflag_fock = param.get('flag_fock', True)
+        self.enable_spin_orbital = param.get('enable_spin_orbital', False)
 
     @do_profile
     def _init_param(self):
         # check and store parameters
-        
+
+        # - cell shape
         if not "CellShape" in self.param_mod:
             logger.error("CellShape is missing. abort")
             exit(1)
 
-        if "Ncond" in self.param_mod:
-            ncond = self.param_mod["Ncond"]
-        elif "Nelec" in self.param_mod:
-            ncond = self.param_mod["Nelec"]
+        # - temperature
+        self.T = self.param_mod.get("T", 0.0)
+
+        # - number of electrons
+        if "filling" in self.param_mod:
+            self.filling = self.param_mod["filling"]
+            round_mode = self.param_mod.get("Ncond_round_mode", "strict")
+
+            Lx,Ly,Lz = self.param_mod.get("CellShape")
+            norb = self.param_ham["Geometry"]["norb"]
+            Nstate = Lx*Ly*Lz*norb*2
+
+            ncond = self._round_to_int(Nstate * self.filling, round_mode)
+            self.param_mod["Ncond"] = ncond  # overwrite
         else:
-            logger.error("Ncond or Nelec is missing. abort")
-            exit(1)
+            self.filling = None
+            ncond = self.param_mod["Ncond"]
 
-        # self.Ncond = ncond
-
+        # - Sz fixed or free
         if self.param_mod["2Sz"] is None:
             self.sz_free = True
             self.Nconds = [ ncond ]
@@ -75,13 +86,14 @@ class UHFk(solver_base):
             twosz = self.param_mod["2Sz"]
             self.Nconds = [ (ncond + twosz)//2, (ncond - twosz)//2 ]
 
-        self.T = self.param_mod.get("T", 0.0)
+        # - calc condition
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
 
-        # strict hermiticity check
+        # - strict hermiticity check
         self.strict_hermite = self.param_mod.get("strict_hermite", False)
         self.hermite_tolerance = self.param_mod.get("hermite_tolerance", 1.0e-8)
 
+        # - check strictness
         if self.relax_checks:
             self.strict_hermite = False
 
@@ -140,6 +152,8 @@ class UHFk(solver_base):
         logger.info("    nd             = {}".format(self.nd))
 
         logger.info("    Ncond          = {}".format(self.Nconds))
+        if self.filling is not None:
+            logger.info("    filling        = {}".format(self.filling))
         logger.info("    T              = {}".format(self.T))
         logger.info("    E_cutoff       = {}".format(self.ene_cutoff))
 
@@ -150,6 +164,8 @@ class UHFk(solver_base):
         logger.info("    2Sz            = {}".format(self.param_mod["2Sz"]))
         logger.info("    strict_hermite = {}".format(self.strict_hermite))
         logger.info("    hermite_tol    = {}".format(self.hermite_tolerance))
+
+        logger.info("    spin_orbital   = {}".format(self.enable_spin_orbital))
 
     @do_profile
     def _reshape_geometry(self, geom):
@@ -176,12 +192,23 @@ class UHFk(solver_base):
         return geom_new
 
     @do_profile
-    def _reshape_interaction(self, ham):
+    def _reshape_interaction(self, ham, enable_spin_orbital):
         Bx,By,Bz = self.subshape
         nx,ny,nz = self.shape
 
-        def _reshape_orbit(a, x):
+        norb_orig = self.param_ham_orig["Geometry"]["norb"]
+
+        def _reshape_orbit_(a, x):
             return a + self.norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+
+        def _reshape_orbit_spin(a, x):
+            a_, s_ = a%norb_orig, a//norb_orig
+            return a_ + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2] + Bz * s_)))
+
+        if enable_spin_orbital:
+            _reshape_orbit = _reshape_orbit_spin
+        else:
+            _reshape_orbit = _reshape_orbit_
 
         def _round(x, n):
             return x % n if x >= 0 else x % -n
@@ -212,9 +239,9 @@ class UHFk(solver_base):
                 # check wrap-around: maybe overwritten by duplicate entries
                 ir = (_round(xx1, nx), _round(yy1, ny), _round(zz1, nz))
                 ov = (aa, bb)
-                
+
                 ham_new[(ir, ov)] = v
-        
+
         return ham_new
 
     @do_profile
@@ -247,10 +274,22 @@ class UHFk(solver_base):
             _iz = (x // (_nx * _ny)) % _nz
             return (_ix, _iy, _iz)
 
+        def _pack_site(x, n):
+            _ix, _iy, _iz = x
+            _nx, _ny, _nz = n
+            return _iz + _nz * (_iy + _ny * (_ix))
+
+        def _unpack_site(idx, n):
+            _nx, _ny, _nz = n
+            _iz = idx % _nz
+            _iy = (idx // _nz) % _ny
+            _ix = (idx // (_nz * _ny)) % _nx
+            return (_ix,_iy,_iz)
+
         green_sub = np.zeros((Nvol,ns,norb,ns,norb), dtype=np.complex128)
 
         for isite in range(Nvol):
-            ixx, iyy, izz = _unpack_index(isite, (Nx,Ny,Nz))
+            ixx, iyy, izz = _unpack_site(isite, (Nx,Ny,Nz))
             ix0, iy0, iz0 = ixx * Bx, iyy * By, izz * Bz
 
             for aa, bb in itertools.product(range(norb), range(norb)):
@@ -264,7 +303,7 @@ class UHFk(solver_base):
                 iy = (iy0 + rjy - riy) % Ly
                 iz = (iz0 + rjz - riz) % Lz
 
-                jsite = _pack_index((ix,iy,iz), (Lx,Ly,Lz))
+                jsite = _pack_site((ix,iy,iz), (Lx,Ly,Lz))
 
                 for s, t in itertools.product(range(ns), range(ns)):
                     green_sub[isite, s, aa, t, bb] = green[jsite, s, a, t, b]
@@ -297,16 +336,28 @@ class UHFk(solver_base):
             _iz = (x // (_nx * _ny)) % _nz
             return (_ix, _iy, _iz)
 
+        def _pack_site(x, n):
+            _ix, _iy, _iz = x
+            _nx, _ny, _nz = n
+            return _iz + _nz * (_iy + _ny * (_ix))
+
+        def _unpack_site(idx, n):
+            _nx, _ny, _nz = n
+            _iz = idx % _nz
+            _iy = (idx // _nz) % _ny
+            _ix = (idx // (_nz * _ny)) % _nx
+            return (_ix,_iy,_iz)
+
         green = np.zeros((Lvol,ns,norb_orig,ns,norb_orig), dtype=np.complex128)
 
         for jsite in range(Lvol):
-            ix, iy, iz = _unpack_index(jsite, (Lx,Ly,Lz))
+            ix, iy, iz = _unpack_site(jsite, (Lx,Ly,Lz))
 
             ixx, irx = ix // Bx, ix % Bx
             iyy, iry = iy // By, iy % By
             izz, irz = iz // Bz, iz % Bz
 
-            isite = _pack_index((ixx,iyy,izz), (Nx,Ny,Nz))
+            isite = _pack_site((ixx,iyy,izz), (Nx,Ny,Nz))
             ir = _pack_index((irx,iry,irz), (Bx,By,Bz))
 
             for a, b in itertools.product(range(norb_orig), range(norb_orig)):
@@ -322,20 +373,21 @@ class UHFk(solver_base):
         # reinterpret interaction coefficient on sublattice
         if self.has_sublattice:
             # backup
-            self.param_ham_orig = {}
+            import copy
+            self.param_ham_orig = copy.deepcopy(self.param_ham)
 
+            # replace by sublatticed versions
             for type in self.param_ham.keys():
                 if type in ["Initial"]:
                     pass
                 elif type in ["Geometry"]:
-                    self.param_ham_orig[type] = self.param_ham[type]
                     tbl = self._reshape_geometry(self.param_ham[type])
-                    # replace
+                    self.param_ham[type] = tbl
+                elif type in ["Transfer"]:
+                    tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
                     self.param_ham[type] = tbl
                 else:
-                    self.param_ham_orig[type] = self.param_ham[type]
-                    tbl = self._reshape_interaction(self.param_ham[type])
-                    # replace
+                    tbl = self._reshape_interaction(self.param_ham[type], False)
                     self.param_ham[type] = tbl
 
     def _init_wavevec(self):
@@ -433,15 +485,35 @@ class UHFk(solver_base):
         for k in self.param_ham.keys():
             if k in ["Geometry", "Initial"]:
                 pass
+            elif k == "Transfer":
+                fail = 0
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    # allow spin-orbital interaction, i.e. twice norb
+                    if not all([ 0 <= orbvec[i] < norb*2 for i in range(2) ]):
+                        fail += 1
+                if fail > 0:
+                    logger.error("orbital index check failed for {}.".format(k))
+                    err += 1
+                else:
+                    logger.debug("orbital index check for {} ok.".format(k))
+            elif k == "CoulombIntra":
+                fail = 0
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
+                        fail += 1
+                for (irvec,orbvec), v in self.param_ham[k].items():
+                    if not orbvec[0] == orbvec[1]:
+                        fail += 1
+                if fail > 0:
+                    logger.error("orbital index check failed for {}.".format(k))
+                    err += 1
+                else:
+                    logger.debug("orbital index check for {} ok.".format(k))
             else:
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
                     if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
                         fail += 1
-                if k == "CoulombIntra":
-                    for (irvec,orbvec), v in self.param_ham[k].items():
-                        if not orbvec[0] == orbvec[1]:
-                            fail += 1
                 if fail > 0:
                     logger.error("orbital index check failed for {}.".format(k))
                     err += 1
@@ -527,7 +599,7 @@ class UHFk(solver_base):
             if self.physics["Rest"] < self.param_mod["eps"]:
                 is_converged = True
                 break
-            
+
         if is_converged:
             logger.info("UHFk calculation succeeded: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
@@ -537,7 +609,7 @@ class UHFk(solver_base):
                         .format(self.physics["Rest"], self.param_mod["eps"]))
         if print_check is not None:
             fch.close()
-            
+
     @do_profile
     def _initial_green(self, green_info):
         logger.debug(">>> _initial_green")
@@ -630,28 +702,43 @@ class UHFk(solver_base):
     @do_profile
     def _make_ham_trans(self):
         logger.debug(">>> _make_ham_trans")
-        
+
         nx,ny,nz = self.shape
         nvol     = self.nvol
         norb     = self.norb
         nd       = self.nd
 
-        # data structure of T_ab(r): T(rx,ry,rz,a,b)
-        tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+        if self.enable_spin_orbital == True:
+            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
-        for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-            tab_r[(*irvec, *orbvec)] = v
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                tab_r[(*irvec, *orbvec)] = v
 
-        # fourier transform
-        tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
+            # fourier transform
+            tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
 
-        # 2x2 unit matrix to introduce spin index
-        spin = np.eye(2)
+            ham = tab_k
 
-        # T_{a,si,b,sj}(k)
-        ham = np.einsum(
-            'kab, st -> ksatb', tab_k.reshape(nvol,norb,norb), spin
-        ).reshape(nvol,nd,nd)
+        else:
+            # data structure of T_ab(r): T(rx,ry,rz,a,b)
+            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
+
+            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                if orbvec[0] < norb and orbvec[1] < norb:
+                    tab_r[(*irvec, *orbvec)] = v
+                else:
+                    pass # skip spin dependence
+
+            # fourier transform
+            tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
+
+            # 2x2 unit matrix to introduce spin index
+            spin = np.eye(2)
+
+            # T_{a,si,b,sj}(k)
+            ham = np.einsum(
+                'kab, st -> ksatb', tab_k.reshape(nvol,norb,norb), spin
+            ).reshape(nvol,nd,nd)
 
         # store
         self.ham_trans = ham
@@ -670,7 +757,7 @@ class UHFk(solver_base):
         #----------------
         self.inter_table = {}
         self.spin_table = {}
-        
+
         #----------------
         # Coulomb Intra and Coulomb Inter
         #----------------
@@ -795,7 +882,7 @@ class UHFk(solver_base):
         #----------------
         if 'Ising' in self.param_ham.keys():
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-        
+
             for (irvec,orbvec), v in self.param_ham["Ising"].items():
                 jab_r[(*irvec, *orbvec)] = v
 
@@ -918,7 +1005,7 @@ class UHFk(solver_base):
         # transfer term  T_{ab}(k) (note convention)
         logger.debug("Transfer")
         ham += self.ham_trans
-        
+
         # interaction term: Coulomb type
         for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
             if self.inter_table[type] is not None:
@@ -937,7 +1024,7 @@ class UHFk(solver_base):
                 hh3 = np.sum(hh2, axis=0).reshape(nd,nd)
 
                 ham += np.broadcast_to(hh3, (nvol,nd,nd))
-                
+
                 # cross term
                 #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
                 if self.iflag_fock:
@@ -1039,7 +1126,7 @@ class UHFk(solver_base):
 
         # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
         gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
-            
+
         # store
         self.Green_prev = self.Green
         self.Green = gab_r.reshape(nvol,ns,norb,ns,norb)
@@ -1189,7 +1276,7 @@ class UHFk(solver_base):
                 w = ws[k]
                 v = vs[k]
                 mu = mus[k]
-            
+
                 def _fermi(t, mu, ev):
                     w = (ev - mu) / t
                     mask_ = w < self.ene_cutoff
@@ -1300,9 +1387,13 @@ class UHFk(solver_base):
                      wavevector_index = self.wavenum_table,
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
-                
-        if "green" in info_outputfile.keys():
-            file_name = os.path.join(path_to_output, info_outputfile["green"])
+
+        # export green function to "green.npz",
+        # or to a file of the name specified by 'green' keyword.
+        # if the keyword has empty string "", nothing exported.
+        fname = info_outputfile.get("green", "green")
+        if fname != "":
+            file_name = os.path.join(path_to_output, fname)
             self._save_green(file_name)
 
         if "onebodyg" in info_outputfile.keys():
@@ -1312,6 +1403,10 @@ class UHFk(solver_base):
         if "initial" in info_outputfile.keys():
             logger.warn("save_results: save initial is not supported")
             pass
+
+        if "rpa" in info_outputfile.keys():
+            file_name = os.path.join(path_to_output, info_outputfile["rpa"])
+            self._save_trans_mod(file_name)
 
         if "export_hamiltonian" in info_outputfile.keys():
             self._export_hamiltonian(path_to_output, info_outputfile["export_hamiltonian"])
@@ -1324,7 +1419,7 @@ class UHFk(solver_base):
             logger.info("_read_green: file {} not found".format(file_name))
             return None
         return self._read_green_from_data(v)
-            
+
     def _read_green_from_data(self, ginfo):
         if self.has_sublattice:
             if "green_sublattice" in ginfo.files:
@@ -1397,6 +1492,31 @@ class UHFk(solver_base):
                 ))
 
         logger.info("save_results: save greenone to file {}".format(file_name))
+
+    def _save_trans_mod(self, file_name):
+        nx,ny,nz = self.shape
+        nvol = self.nvol
+        nd = self.nd
+
+        tab_k = self.ham
+        tab_r = np.fft.fftn(tab_k.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd) / nvol
+
+        if self.has_sublattice:
+            # use deflate_green to convert to original lattice
+
+            norb = self.norb
+            ns = self.ns
+
+            tab_r_defl = self._deflate_green(tab_r.reshape(nvol,ns,norb,ns,norb))
+
+            lvol = self.cellvol
+            norb_orig = self.norb_orig
+            nd0 = norb_orig * ns
+
+            np.savez(file_name, trans_mod=tab_r_defl.reshape(lvol,nd0,nd0), trans_mod_sublattice=tab_r)
+        else:
+            np.savez(file_name, trans_mod=tab_r)
+        logger.info("save_results: save trans_mod to file {}".format(file_name))
 
     def _export_geometry(self, file_name):
         geom = self.param_ham["Geometry"]
