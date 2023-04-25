@@ -1,0 +1,152 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>green &#8212; H-waveマニュアル 1.0.0 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <script src="../../../_static/translations.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../../genindex.html" />
+    <link rel="search" title="検索" href="../../../search.html" />
+    <link rel="next" title="4. 乱雑位相近似 (RPA)" href="../../../rpa/rpa-index.html" />
+    <link rel="prev" title="eigen" href="eigen_uhfk.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="green">
+<span id="subsec-green-uhfk"></span><h1>green<a class="headerlink" href="#green" title="この見出しへのパーマリンク">¶</a></h1>
+<p>一体グリーン関数<span class="math notranslate nohighlight">\(\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom{\dagger}}\rangle\)</span>の計算結果をnpz形式で出力します。
+ファイル名は、環境設定ファイルの中の <code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションでキーワード <code class="docutils literal notranslate"><span class="pre">green</span></code> を用いて指定された文字列(以下、 <code class="docutils literal notranslate"><span class="pre">green_str</span></code>)を用いて、 <code class="docutils literal notranslate"><span class="pre">green_str.npz</span></code> という名前で出力されます。</p>
+<p>データはキー <code class="docutils literal notranslate"><span class="pre">green</span></code> にバインドされます。
+データ配列は <code class="docutils literal notranslate"><span class="pre">ndarray(r,</span> <span class="pre">s,</span> <span class="pre">a,</span> <span class="pre">t,</span> <span class="pre">b)</span></code> で、インデックスは以下のとおりです。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">r</span></code>: 並進ベクトル <span class="math notranslate nohighlight">\([r_x\ r_y\ r_z]\)</span> を1次元化したインデックスで、<code class="docutils literal notranslate"><span class="pre">r</span></code> <span class="math notranslate nohighlight">\(= r_z + N_z \cdot (r_y + N_y r_x)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>: 軌道のインデックス <span class="math notranslate nohighlight">\(\alpha, \beta\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">s</span></code>, <code class="docutils literal notranslate"><span class="pre">t</span></code>: スピンのインデックス <span class="math notranslate nohighlight">\(\sigma_1, \sigma_2\)</span></p></li>
+</ul>
+<p>出力ファイルは、<code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクションの <code class="docutils literal notranslate"><span class="pre">initial</span></code> で指定するグリーン関数の初期データとして使用できます。</p>
+<p>副格子を指定している場合は、上記に加えて、副格子を単位としたグリーン関数の値がキー <code class="docutils literal notranslate"><span class="pre">green_sublattice</span></code> にバインドされます。並進ベクトルおよび軌道のインデックスは副格子に読み替えます。</p>
+<p>以下、データを読み込む例となります。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;green.dat.npz&quot;</span><span class="p">)</span>
+<span class="n">green</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;green&quot;</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../../index.html">
+    <img class="logo" src="../../../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">3. 波数空間UHF(UHFk)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">3.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">3.2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">3.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../inputfiles_uhfk/index_inputfiles_uhfk.html">3.2.2. UHFk用入力ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_outputfiles_uhfk.html">3.2.3. UHFkの出力ファイル</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">5. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">6. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">7. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../uhfk-index.html"><span class="section-number">3. </span>波数空間UHF(UHFk)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">3.2. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_outputfiles_uhfk.html"><span class="section-number">3.2.3. </span>UHFkの出力ファイル</a><ul>
+      <li>Previous: <a href="eigen_uhfk.html" title="前の章へ">eigen</a></li>
+      <li>Next: <a href="../../../rpa/rpa-index.html" title="次の章へ"><span class="section-number">4. </span>乱雑位相近似 (RPA)</a></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.2.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../../../_sources/uhfk/filespecification/outputfiles_uhfk/green_uhfk.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

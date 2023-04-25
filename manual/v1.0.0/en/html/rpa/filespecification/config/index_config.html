@@ -1,0 +1,437 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>4.2.1. Parameter files &#8212; H-wave Users Guide 1.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="4.2.2. Input files for RPA" href="../inputfiles/index_inputfiles.html" />
+    <link rel="prev" title="4.2. File specifications" href="../fi-index.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="parameter-files">
+<span id="ch-config-rpa"></span><h1><span class="section-number">4.2.1. </span>Parameter files<a class="headerlink" href="#parameter-files" title="Permalink to this heading">¶</a></h1>
+<p>The parameter file specifies calculation conditions and parameters for H-wave
+in TOML format. It is composed of the following three sections.</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code> section for specifying calculation conditions,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">log</span></code> section for setting standard outputs,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">file</span></code> section for setting file paths: It contains <code class="docutils literal notranslate"><span class="pre">input</span></code> and <code class="docutils literal notranslate"><span class="pre">output</span></code> subsections.</p></li>
+</ol>
+<p>An example of the file is shown below:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;RPA&quot;
+
+[mode.param]
+  T = 0.5
+  # mu = 0.0
+  CellShape = [32,32,1]
+  SubShape = [1,1,1]
+  nmat = 1024
+  # Ncond = 1024
+  filling = 0.5
+  matsubara_frequency = &quot;all&quot;
+
+[file]
+[file.input]
+  path_to_input = &quot;input&quot;
+  # initial = &quot;initial.dat&quot;
+  # chi0q_init = &quot;chi0q.npz&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;input&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chiq = &quot;chiq&quot;
+  chi0q = &quot;chi0q&quot;
+
+</pre></div>
+</div>
+<section id="file-format">
+<h2>File format<a class="headerlink" href="#file-format" title="Permalink to this heading">¶</a></h2>
+<p>TOML format</p>
+</section>
+<section id="parameters">
+<h2>Parameters<a class="headerlink" href="#parameters" title="Permalink to this heading">¶</a></h2>
+<section id="mode-section">
+<h3><code class="docutils literal notranslate"><span class="pre">mode</span></code> section<a class="headerlink" href="#mode-section" title="Permalink to this heading">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the calculation mode.
+Set to <code class="docutils literal notranslate"><span class="pre">&quot;RPA&quot;</span></code> for calculations of the Random Phase Approximation.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p>
+<p><strong>Type :</strong>
+Boolean</p>
+<p><strong>Description :</strong>
+This parameter specifies whether to allow spin-orbital interaction.
+If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index <span class="math notranslate nohighlight">\(\alpha\)</span> and the spin index <span class="math notranslate nohighlight">\(s\)</span> by <span class="math notranslate nohighlight">\(\alpha + N_\text{orb} \cdot s\)</span>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> (default value is <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>)</p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies how the spin and orbitals are treated in the calculation. The parameter takes one of the following options.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">general</span></code>: Generalized orbitals combining spins and orbitals are considered. The susceptibility matrix takes the most general form, with the size of <span class="math notranslate nohighlight">\(N_\text{orb}^4 N_\text{spin}^4 N_k N_\omega\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>: Generalized orbitals combining spins and orbitals are considered. The components of the susceptibility matrix with <span class="math notranslate nohighlight">\(\alpha=\alpha^\prime\)</span> and <span class="math notranslate nohighlight">\(\beta=\beta^\prime\)</span> are considered. The size of the matrix turns to <span class="math notranslate nohighlight">\(N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega\)</span>. For the two-body interaction terms, only CoulombIntra, CoulombInter, Ising and Hund are allowed.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">squashed</span></code>: Spins and orbitals are separately treated, and for the orbitals <span class="math notranslate nohighlight">\(\alpha=\alpha^\prime\)</span> and <span class="math notranslate nohighlight">\(\beta=\beta^\prime\)</span> are considered. The size of the susceptilibity matrix becomes <span class="math notranslate nohighlight">\(N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega\)</span>. See <a class="reference internal" href="../../../algorithm/al-index.html#ch-algorithm"><span class="std std-ref">Algorithms</span></a> for details.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">auto</span></code>: scheme is automatically chosen according to the specifications of interaction terms. This option is not available when only <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> is to be calculated.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="mode-param-section">
+<h3><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> section<a class="headerlink" href="#mode-param-section" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code> section contains the parameters for the calculation.</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">CellShape</span></code></p>
+<p><strong>Type :</strong>
+Integer array</p>
+<p><strong>Description :</strong>
+This parameter specifies the shape of the lattice Lx, Ly, Lz.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SubShape</span></code></p>
+<p><strong>Type :</strong>
+Integer array (default value is <code class="docutils literal notranslate"><span class="pre">[</span></code> Lx, Ly, Lz <code class="docutils literal notranslate"><span class="pre">]</span></code>)</p>
+<p><strong>Description :</strong>
+This parameter specifies the shape of the sublattice Bx, By, Bz.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is 0)</p>
+<p><strong>Description :</strong>
+This parameter specifies the temperature.
+It must be greater than or equal to zero.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mu</span></code></p>
+<p><strong>Type :</strong>
+Float or None (default value is None)</p>
+<p><strong>Description :</strong>
+This parameter specifies the chemical potential <span class="math notranslate nohighlight">\(\mu\)</span>.
+If it is not specified, the value of <span class="math notranslate nohighlight">\(\mu\)</span> will be calculated so that
+the expectation value of the number of electrons equals to <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>.
+If both <code class="docutils literal notranslate"><span class="pre">mu</span></code> and <code class="docutils literal notranslate"><span class="pre">Ncond</span></code> or <code class="docutils literal notranslate"><span class="pre">filling</span></code> are specified, the program terminates with error.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ncond</span></code></p>
+<p><strong>Type :</strong>
+Integer</p>
+<p><strong>Description :</strong>
+This parameter specifies the number of conduction electrons.
+It must be greater than or equal to one.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">filling</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+This parameter specifies the filling ratio of electrons with respect to the number of states.
+Both <code class="docutils literal notranslate"><span class="pre">Ncond</span></code> and <code class="docutils literal notranslate"><span class="pre">filling</span></code> are specified, the program will be terminated with error.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ncond_round_mode</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;strict&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+This parameter specifies how the number of electrons calculated from the <code class="docutils literal notranslate"><span class="pre">filling</span></code> parameter is rounded to an integer value when the temperature is zero. The parameter must take one of the following values.</p>
+<blockquote>
+<div><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">as-is</span></code>:  the value is not rounded to an integer. (returns a floating-point number)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round-up</span></code>:  the value is rounded up.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round-down</span></code>:  the value is rounded down.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round-off</span></code>:  the value is rounded to the closest integer. (0.5 is rounded up.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">round</span></code>:  the value is rounded by <code class="docutils literal notranslate"><span class="pre">round</span></code> function. (0.5 is rounded down.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">strict</span></code>:  if the value is not an integer value, the program terminates with error.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">exact</span></code>:  if the value is not an integer value, a warning message will be shown and the value is rounded to an integer as <code class="docutils literal notranslate"><span class="pre">round</span></code>.</p></li>
+</ul>
+</div></blockquote>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code></p>
+<p><strong>Type :</strong>
+Integer (default value is 1024)</p>
+<p><strong>Description :</strong>
+This parameter specifies the cut-off of Matsubara frequency.
+It must be an even number greater than zero. Matsubara frequency is defined as follows:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Boson: <span class="math notranslate nohighlight">\(\omega_n = \dfrac{2\pi (n-\texttt{Nmat}/2)}{\beta}\)</span></p></li>
+<li><p>Fermion: <span class="math notranslate nohighlight">\(\omega_n = \dfrac{\pi (2n+1-\texttt{Nmat})}{\beta}\)</span></p></li>
+</ul>
+</div></blockquote>
+<p>with the indices <span class="math notranslate nohighlight">\(n\)</span> between 0 and <code class="docutils literal notranslate"><span class="pre">Nmat-1</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is 0.0)</p>
+<p><strong>Description :</strong>
+This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
+After Fourier transforming the diagonalized one-body Green function to the imaginary time representation by subtracting <span class="math notranslate nohighlight">\(\texttt{coeff\_tail}/(i \omega_n)\)</span>, the term <span class="math notranslate nohighlight">\(-\beta/2\cdot\texttt{coeff\_tail}\)</span> is added to the one-body Green function.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
+<p><strong>Type :</strong>
+Integer, List of Integers, or String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+This parameter specifies the indices of Matsubara frequency for which the susceptibility matrix <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span> is calculated.
+The value must be one of the following:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p><em>an integer value</em> : a single index value.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[</span></code> <em>min</em>, <em>max</em> (, <em>step</em>) <code class="docutils literal notranslate"><span class="pre">]</span></code> : every <em>step</em> index from <em>min</em> to <em>max</em>. If <em>step</em> is omitted, it is assumed to be 1.</p></li>
+<li><p>all : all indices</p></li>
+<li><p>center : corresponds to <code class="docutils literal notranslate"><span class="pre">Nmat/2</span></code>.</p></li>
+<li><p>none : nothing will be calculated.</p></li>
+</ul>
+</div></blockquote>
+<p>When the susceptibility matrix <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span> or the irreducible susceptibility matrix <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span> are stored to files, the values at the specified freqneucy are exported.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is 0.0)</p>
+<p><strong>Description :</strong>
+This parameter specifies the coefficient <span class="math notranslate nohighlight">\(h\)</span> of the external field given by the form <span class="math notranslate nohighlight">\(\pm h H_{\alpha\beta}(r_{ij})\)</span>. The definition of the matrix <span class="math notranslate nohighlight">\(H_{\alpha\beta}(r_{ij})\)</span> will be provided by an input file. The sign <span class="math notranslate nohighlight">\(+\)</span> and <span class="math notranslate nohighlight">\(-\)</span> correspond to spin up and down, respectively.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RndSeed</span></code></p>
+<p><strong>Type :</strong>
+Integer (default value is 1234)</p>
+<p><strong>Description :</strong>
+This parameter specifies the seed of the random number generator.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ene_cutoff</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is 100.0)</p>
+<p><strong>Description :</strong>
+This parameter specifies the upper cutoff of the exponent in the Fermi distribution function to avoid overflow during the calculation.</p>
+</li>
+</ul>
+</section>
+<section id="log-section">
+<h3><code class="docutils literal notranslate"><span class="pre">log</span></code> section<a class="headerlink" href="#log-section" title="Permalink to this heading">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">print_level</span></code></p>
+<p><strong>Type :</strong>
+Integer (default value is 1)</p>
+<p><strong>Description :</strong>
+This parameter specifies the verbosity of the standard output.
+If it is set to 1, a detailed information will be shown.</p>
+</li>
+</ul>
+</section>
+<section id="file-section">
+<h3><code class="docutils literal notranslate"><span class="pre">file</span></code> section<a class="headerlink" href="#file-section" title="Permalink to this heading">¶</a></h3>
+<p>This section consists of <code class="docutils literal notranslate"><span class="pre">input</span></code> and <code class="docutils literal notranslate"><span class="pre">output</span></code> subsections.
+They specify the settings of the input and output files, respectively, on the types of files, the directories to be located or stored, and the names of the files.</p>
+<section id="file-input-section">
+<h4><code class="docutils literal notranslate"><span class="pre">file.input</span></code> section<a class="headerlink" href="#file-input-section" title="Permalink to this heading">¶</a></h4>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">path_to_input</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code> (blank string))</p>
+<p><strong>Description :</strong>
+This parameter specifies the directory in which the input files are located.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of the pre-calculated irreducible susceptibility
+<span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span> to be used for the calculation of the susceptibility matrix.
+The input file is in NumPy binary format that corresponds to the output format of
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> in <code class="docutils literal notranslate"><span class="pre">file.output</span></code> section.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">trans_mod</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of the initial configuration exported from UHFk by the parameter <code class="docutils literal notranslate"><span class="pre">file.output.rpa</span></code>. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green_init</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of the initial Green’s function for RPA calculation. The file format corresponds to the output file of <code class="docutils literal notranslate"><span class="pre">green</span></code> of UHFk. When <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> is specified, <code class="docutils literal notranslate"><span class="pre">green_init</span></code> is not used.</p>
+</li>
+</ul>
+</section>
+<section id="file-input-interaction-section">
+<h4><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code> section<a class="headerlink" href="#file-input-interaction-section" title="Permalink to this heading">¶</a></h4>
+<p>This section describes the relation of the interaction types and geometry information
+to the definition files.</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">path_to_input</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the directory in which the input files are located.
+It is independent from <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> section.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Geometry</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename for the geometry information.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>, <code class="docutils literal notranslate"><span class="pre">Extern</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+These parameters specify the filenames for the definitions of the corresponding interaction terms. If none of two-body interaction term (CoulombIntra, CoulombInter, Hund, Ising, Exchange, PairLift, or PairHop) is specified, the program only calculates <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and exits.</p>
+</li>
+</ul>
+</section>
+<section id="file-output-section">
+<h4><code class="docutils literal notranslate"><span class="pre">file.output</span></code> section<a class="headerlink" href="#file-output-section" title="Permalink to this heading">¶</a></h4>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">path_to_output</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;output&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+This parameter specifies the directory in which the output files are stored.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong></p>
+<p>This parameter specifies the name of the file to store the irreducible susceptibility matrix
+<span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span>.
+If it is not set, no output will be generated.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the name of the file to store the susceptibility matrix
+<span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span>.
+If it is not set, no output will be generated.</p>
+</li>
+</ul>
+</section>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../../index.html">
+    <img class="logo" src="../../../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. Basic usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. Coordinate-space UHF (UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">3. Wave-number space UHF (UHFk)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../rpa-index.html">4. Random Phase Approximation (RPA)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">4.1. Tutorial</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">4.2. File specifications</a><ul class="current">
+<li class="toctree-l3 current"><a class="current reference internal" href="#">4.2.1. Parameter files</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../inputfiles/index_inputfiles.html">4.2.2. Input files for RPA</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">4.2.3. Output files of RPA</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">5. Algorithms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">6. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">7. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../rpa-index.html"><span class="section-number">4. </span>Random Phase Approximation (RPA)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">4.2. </span>File specifications</a><ul>
+      <li>Previous: <a href="../fi-index.html" title="previous chapter"><span class="section-number">4.2. </span>File specifications</a></li>
+      <li>Next: <a href="../inputfiles/index_inputfiles.html" title="next chapter"><span class="section-number">4.2.2. </span>Input files for RPA</a></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.2.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../../../_sources/rpa/filespecification/config/index_config.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

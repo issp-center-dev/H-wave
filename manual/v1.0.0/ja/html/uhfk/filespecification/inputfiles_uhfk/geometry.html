@@ -1,0 +1,187 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>幾何情報指定ファイル &#8212; H-waveマニュアル 1.0.0 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <script src="../../../_static/translations.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../../genindex.html" />
+    <link rel="search" title="検索" href="../../../search.html" />
+    <link rel="next" title="相互作用指定ファイル" href="interaction.html" />
+    <link rel="prev" title="3.2.2. UHFk用入力ファイル" href="index_inputfiles_uhfk.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="id1">
+<h1>幾何情報指定ファイル<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h1>
+<p>格子の幾何情報を記述します。ファイル例を以下に示します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>3.7599302871   0.0000000000   0.0000000000
+0.0000000000   3.7599302871   0.0000000000
+0.0000000000   0.0000000000   5.4822004186
+     10
+-7.179835091886330E-003 -3.812050198019962E-002  1.639284152926924E-003
+ 1.346463812592166E-002  6.709778405878775E-003 -6.812442303544219E-003
+ 0.495705070884200      -0.457955704941170      -4.077818544354700E-003
+-1.577970702078565E-004 -2.999005205319096E-004 -1.190284144276225E-004
+-1.302397074478660E-003 -5.021621895411691E-003 -3.514564279609852E-004
+ 0.504124376959700       0.457760356450585      -2.634809811615298E-003
+ 0.499384075989520      -0.494227365093439       6.927730957590197E-003
+-5.164444920392309E-003  3.667887236852975E-002  4.972296517752579E-003
+ 0.500170586121734       0.499747448247510       2.760670734661295E-003
+ 0.500734036298328       0.494793997305026      -2.212377045150314E-003
+</pre></div>
+</div>
+<section id="id2">
+<h2>ファイル形式<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<ul class="simple">
+<li><p>1-3行: <code class="docutils literal notranslate"><span class="pre">[ax_i]</span> <span class="pre">[ay_i]</span> <span class="pre">[az_i]</span></code></p></li>
+<li><p>4行: <code class="docutils literal notranslate"><span class="pre">[Norbit]</span></code></p></li>
+<li><p>5行以降: <code class="docutils literal notranslate"><span class="pre">[vx_i]</span> <span class="pre">[vy_i]</span> <span class="pre">[vz_i]</span></code></p></li>
+</ul>
+</section>
+<section id="id3">
+<h2>パラメータ<a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h2>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">[ax_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[ay_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[az_i]</span></code></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong>
+基本格子ベクトル <span class="math notranslate nohighlight">\(\vec{a}_1, \vec{a}_2, \vec{a}_3\)</span> を指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[Norbit]</span></code></p>
+<p><strong>形式 :</strong> int型</p>
+<p><strong>説明 :</strong>
+ユニットセル内の軌道の数 <span class="math notranslate nohighlight">\(N_\text{orbit}\)</span> を指定します。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[vx_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[vy_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[vz_i]</span></code></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong>
+各軌道のWannier center <span class="math notranslate nohighlight">\(\vec{v}_i\)</span> を fractional coordinate 表記で指定します。</p>
+</li>
+</ul>
+</section>
+<section id="id4">
+<h2>使用ルール<a class="headerlink" href="#id4" title="この見出しへのパーマリンク">¶</a></h2>
+<p>本ファイルを使用するにあたってのルールは以下の通りです。</p>
+<ul class="simple">
+<li><p>軌道のインデックスは暗黙的に Wannier center の並び順に 1〜<span class="math notranslate nohighlight">\(N_\text{orbit}\)</span>で与えられます。</p></li>
+</ul>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../../index.html">
+    <img class="logo" src="../../../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">3. 波数空間UHF(UHFk)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">3.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">3.2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">3.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles_uhfk.html">3.2.2. UHFk用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles_uhfk/index_outputfiles_uhfk.html">3.2.3. UHFkの出力ファイル</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">5. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">6. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">7. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../uhfk-index.html"><span class="section-number">3. </span>波数空間UHF(UHFk)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">3.2. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_inputfiles_uhfk.html"><span class="section-number">3.2.2. </span>UHFk用入力ファイル</a><ul>
+      <li>Previous: <a href="index_inputfiles_uhfk.html" title="前の章へ"><span class="section-number">3.2.2. </span>UHFk用入力ファイル</a></li>
+      <li>Next: <a href="interaction.html" title="次の章へ">相互作用指定ファイル</a></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.2.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../../../_sources/uhfk/filespecification/inputfiles_uhfk/geometry.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

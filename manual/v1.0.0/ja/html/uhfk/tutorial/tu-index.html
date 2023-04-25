@@ -1,0 +1,346 @@
+
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>3.1. チュートリアル &#8212; H-waveマニュアル 1.0.0 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <script src="../../_static/translations.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="検索" href="../../search.html" />
+    <link rel="next" title="3.2. ファイルフォーマット" href="../filespecification/fi-index.html" />
+    <link rel="prev" title="3. 波数空間UHF(UHFk)" href="../uhfk-index.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="id1">
+<h1><span class="section-number">3.1. </span>チュートリアル<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h1>
+<p>H-waveを波数空間モード(UHFk)で実行するには、入力ファイルとして</p>
+<ol class="arabic simple">
+<li><p>環境設定入力ファイル</p></li>
+<li><p>相互作用定義ファイル</p></li>
+</ol>
+<p>を用意した後、プログラムを実行します。2.は RESPACK 等の外部プログラムの出力を利用する他、StdFaceライブラリを使って生成することもできます。</p>
+<p>以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFk</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。
+相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a> の章をご覧ください。</p>
+<section id="id2">
+<h2><span class="section-number">3.1.1. </span>環境設定入力ファイルの作成<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<p>環境設定入力ファイルには、基本パラメータの指定と入出力を制御する情報を記述します。
+<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFk</span></code> ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> というファイルがありますが、これが入力パラメータファイルになります。
+以下、ファイルの内容を記載します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+  print_step = 10
+[mode]
+  mode = &quot;UHFk&quot;
+[mode.param]
+  # 2Sz = 0
+  Ncond = 16
+  IterationMax = 1000
+  EPS = 8
+  Mix = 0.5
+  RndSeed = 123456789
+  # ene_cutoff = 1.0e+2
+  T = 0.0
+  CellShape = [ 4, 4, 1 ]
+  SubShape = [ 2, 2, 1 ]
+[file]
+[file.input]
+  path_to_input = &quot;&quot;
+  # initial = &quot;green_init.dat.npz&quot;
+[file.input.interaction]
+  path_to_input = &quot;./&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+[file.output]
+  path_to_output = &quot;output&quot;
+  energy = &quot;energy.dat&quot;
+  eigen = &quot;eigen&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p>このファイルはTOML形式で記述され、内容ごとにセクションに分類されています。</p>
+<section id="log">
+<h3><code class="docutils literal notranslate"><span class="pre">[log]</span></code> セクション<a class="headerlink" href="#log" title="この見出しへのパーマリンク">¶</a></h3>
+<p>ログ出力に関する設定を行います。
+<code class="docutils literal notranslate"><span class="pre">print_level</span></code> で標準出力のレベル、 <code class="docutils literal notranslate"><span class="pre">print_step</span></code> でログ出力を行う繰り返し間隔を指定します。</p>
+</section>
+<section id="mode">
+<h3><code class="docutils literal notranslate"><span class="pre">[mode]</span></code> セクション<a class="headerlink" href="#mode" title="この見出しへのパーマリンク">¶</a></h3>
+<p>実行モードに関する設定および基本パラメータの指定を行います。
+<code class="docutils literal notranslate"><span class="pre">mode</span></code> で実空間版(<code class="docutils literal notranslate"><span class="pre">UHF</span></code>)または波数空間版(<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>)を選択します。
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> サブセクションには計算実行時のパラメータを指定します。</p>
+</section>
+<section id="file">
+<h3><code class="docutils literal notranslate"><span class="pre">[file]</span></code> セクション<a class="headerlink" href="#file" title="この見出しへのパーマリンク">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> サブセクションでは、入力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> および
+初期配位データファイルのファイル名 <code class="docutils literal notranslate"><span class="pre">initial</span></code> を指定します。指定がない場合は乱数を用いて初期化されます。
+<code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> サブセクションには、幾何情報および相互作用定義を格納するファイルのファイル名を相互作用のタイプごとに列挙します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> サブセクションには、エネルギーなどの物理量を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">energy</span></code> 、
+ハミルトニアンの固有値・固有ベクトルを出力するファイル名 <code class="docutils literal notranslate"><span class="pre">eigen</span></code> 、一体グリーン関数を書き出す出力ファイル名 <code class="docutils literal notranslate"><span class="pre">green</span></code> を指定します。
+これらのキーワードがない場合にはその項目は出力されません。</p>
+<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+</section>
+</section>
+<section id="id3">
+<h2><span class="section-number">3.1.2. </span>相互作用定義ファイルの作成<a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h2>
+<p>Hamiltonianを構築するための格子の幾何情報および相互作用係数を格納したデータファイルを作成します。
+項目とファイル名の対応付けは、入力パラメータファイルの <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> セクションで行います。</p>
+<section id="geometry">
+<h3><code class="docutils literal notranslate"><span class="pre">Geometry</span></code><a class="headerlink" href="#geometry" title="この見出しへのパーマリンク">¶</a></h3>
+<p>格子の幾何情報を記述します。ファイル例を以下に示します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+1
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+</pre></div>
+</div>
+<p>基本ベクトル(1〜3行目)、軌道の数(4行目)、各軌道のWannier center(5行目以降)を記載します。</p>
+</section>
+<section id="transfer-coulombintra-coulombinter-hund-etc">
+<h3><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, etc<a class="headerlink" href="#transfer-coulombintra-coulombinter-hund-etc" title="この見出しへのパーマリンク">¶</a></h3>
+<p>Transferに指定するファイルは、電子系のTransferに相当するHamiltonianの係数を格納します。
+また、二体相互作用の係数は相互作用のタイプごとに係数を格納するファイルを指定します。</p>
+<p>相互作用のタイプは、実空間版UHFの入力ファイル形式と対応して、CoulombItra, CoulombInter, Hund, Ising, Exchange, PairLift, PairHop が定義されています。</p>
+<p>これらのファイルはWannier90(-like)形式で記述されます。以下に例を示します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+1
+9
+ 1 1 1 1 1 1 1 1 1
+  -1    0    0    1    1  -1.000000000000  -0.000000000000
+   0   -1    0    1    1  -1.000000000000  -0.000000000000
+   0    1    0    1    1  -1.000000000000   0.000000000000
+   1    0    0    1    1  -1.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>コメント行(1行目)、軌道の数(2行目)、並進ベクトルをすべて収める直方体内のセルの総数 <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> (3行目)、
+縮重度 ( <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> 個を1行あたり15個ずつ)、係数行列の要素を記載します。</p>
+<p>行列要素の各行は、並進ベクトル <span class="math notranslate nohighlight">\(r_x, r_y, r_z\)</span> 、軌道のインデックス <span class="math notranslate nohighlight">\(\alpha, \beta\)</span> 、係数の値の実部・虚部です。</p>
+</section>
+</section>
+<section id="id4">
+<h2><span class="section-number">3.1.3. </span>計算の実行<a class="headerlink" href="#id4" title="この見出しへのパーマリンク">¶</a></h2>
+<p>全ての入力ファイルが準備できた後、プログラムを実行して計算を行います。
+入力パラメータファイル(ここでは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> )を引数とし、ターミナルからH-waveを実行します。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>計算が開始されると以下のようなログが出力されます。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>2022-12-02 13:48:11,641 INFO qlms: Read definitions from files
+2022-12-02 13:48:11,641 INFO qlms.read_input: QLMSkInput: read Gemoetry from ./geom.dat
+2022-12-02 13:48:11,641 INFO qlms.read_input: QLMSkInput: read interaction Transfer from ./transfer.dat
+2022-12-02 13:48:11,641 INFO qlms.read_input: QLMSkInput: read interaction CoulombInter from ./coulombinter.dat
+2022-12-02 13:48:11,641 INFO qlms: Get Hamiltonian information
+2022-12-02 13:48:11,641 INFO qlms: Get Green function information
+2022-12-02 13:48:11,667 INFO qlms.uhfk: Show parameters
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Cell Shape     = (4, 4, 1)
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Sub Shape      = (2, 2, 1)
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Block          = (2, 2, 1)
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Block volume   = 4
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Num orbit      = 1
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Num orbit eff  = 4
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     nspin          = 2
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     nd             = 8
+2022-12-02 13:48:11,668 INFO qlms.uhfk:     Ncond          = 16
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     T              = 0.0
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     E_cutoff       = 100.0
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     Mix            = 0.5
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     RndSeed        = 123456789
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     IterationMax   = 1000
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     EPS            = 1e-08
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     strict_hermite = False
+2022-12-02 13:48:11,669 INFO qlms.uhfk:     hermite_tol    = 1e-08
+2022-12-02 13:48:11,669 INFO qlms: Start UHF calculation
+2022-12-02 13:48:11,670 INFO qlms.uhfk: Start UHFk calculations
+2022-12-02 13:48:11,670 INFO qlms.uhfk: step, rest, energy, NCond, Sz
+2022-12-02 13:48:11,671 INFO qlms.uhfk: initialize green function with random numbers
+2022-12-02 13:48:11,673 INFO qlms.uhfk: 0, 0.015588886, -139.86928, 16, 1.732e-14 
+2022-12-02 13:48:11,684 INFO qlms.uhfk: 10, 0.00043101981, 91.751578, 16, -1.029e-11 
+2022-12-02 13:48:11,690 INFO qlms.uhfk: 20, 0.00097917933, 92.129093, 16, -0.0001693 
+2022-12-02 13:48:11,694 INFO qlms.uhfk: 30, 0.0002328601, -0.49699902, 16, -2.492e-09 
+2022-12-02 13:48:11,697 INFO qlms.uhfk: 40, 8.9087396e-07, -2.2626401, 16, -2.354e-14 
+2022-12-02 13:48:11,699 INFO qlms.uhfk: UHFk calculation succeeded: rest=9.905239155412216e-09, eps=1e-08.
+2022-12-02 13:48:11,699 INFO qlms: Save calculation results.
+2022-12-02 13:48:11,699 INFO qlms.uhfk: save_results: save energy in file output/energy.dat
+2022-12-02 13:48:11,699 INFO qlms.uhfk: save_results: save eigenvalues and eigenvectors in file output/eigen.dat
+2022-12-02 13:48:11,699 INFO qlms.uhfk: save_results: save green function to file output/green.dat
+2022-12-02 13:48:11,700 INFO qlms: All procedures are finished.
+--------------------------------------------------------------------------------
+Statistics
+  function                         :  total elapsed  : average elapsed : ncalls
+--------------------------------------------------------------------------------
+  hwave.solver.uhfk._init_param    :      0.004 msec :      0.004 msec :      1
+  hwave.solver.uhfk._init_lattice  :      0.004 msec :      0.004 msec :      1
+  hwave.solver.uhfk._init_orbit    :      0.001 msec :      0.001 msec :      1
+  hwave.solver.uhfk._check_interaction :      0.176 msec :      0.176 msec :      1
+  hwave.solver.uhfk._reshape_geometry :     23.000 msec :     23.000 msec :      1
+  hwave.solver.uhfk._reshape_interaction :      0.222 msec :      0.111 msec :      2
+  hwave.solver.uhfk._init_interaction :     23.313 msec :     23.313 msec :      1
+  hwave.solver.uhfk._show_param    :      2.149 msec :      2.149 msec :      1
+  hwave.solver.uhfk.__init__       :     28.129 msec :     28.129 msec :      1
+  hwave.solver.uhfk._make_ham_trans :      0.501 msec :      0.501 msec :      1
+  hwave.solver.uhfk._make_ham_inter :      0.414 msec :      0.414 msec :      1
+  hwave.solver.uhfk._reshape_green :      0.202 msec :      0.202 msec :      1
+  hwave.solver.uhfk._initial_green :      0.494 msec :      0.494 msec :      1
+  hwave.solver.uhfk._make_ham      :      6.999 msec :      0.143 msec :     49
+  hwave.solver.uhfk._diag          :      3.533 msec :      0.072 msec :     49
+  hwave.solver.uhfk._green         :      8.698 msec :      0.178 msec :     49
+  hwave.solver.uhfk._calc_energy   :      3.960 msec :      0.081 msec :     49
+  hwave.solver.uhfk._calc_phys     :      3.559 msec :      0.073 msec :     49
+  hwave.solver.uhfk.solve          :     29.349 msec :     29.349 msec :      1
+  hwave.solver.uhfk._deflate_green :      0.035 msec :      0.035 msec :      1
+  hwave.solver.uhfk._save_green    :      0.202 msec :      0.202 msec :      1
+  hwave.solver.uhfk.save_results   :      0.559 msec :      0.559 msec :      1
+--------------------------------------------------------------------------------
+</pre></div>
+</div>
+<p>入力ファイル読み込みに関するログが出力されたあと、波数空間UHF計算の計算過程に関する情報が出力されます。
+出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> セクションの指定に従い、
+<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> , <code class="docutils literal notranslate"><span class="pre">eigen.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> ファイルが出力されます。</p>
+<p>出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles_uhfk/index_outputfiles_uhfk.html#sec-outputfile-uhfk"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+</section>
+<section id="hwave-dos">
+<h2><span class="section-number">3.1.4. </span>状態密度の計算 (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)<a class="headerlink" href="#hwave-dos" title="この見出しへのパーマリンク">¶</a></h2>
+<p>ポストツール <code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> を用いることで、状態密度を計算することができます。
+ブリルアンゾーン積分を精度良く計算するために <a class="reference external" href="https://pypi.org/project/libtetrabz/">libtetrabz</a> を利用しています。 <code class="docutils literal notranslate"><span class="pre">pip</span></code> を利用してインストールしてください。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ python3 -m pip install libtetrabz
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> は、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> で利用した入力パラメータファイルを引数として受け取ります</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> は、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> と同様に <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> セクションの指定に従い、
+<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに <code class="docutils literal notranslate"><span class="pre">dos.dat</span></code> ファイルを出力します。
+ファイル名は <code class="docutils literal notranslate"><span class="pre">--output</span></code> オプションで変更することができます。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --output dos.dat
+</pre></div>
+</div>
+<p>状態密度を計算するエネルギーの範囲は <code class="docutils literal notranslate"><span class="pre">--ene-window</span></code> オプションで指定します。
+省略した場合は、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> で得られたエネルギーの最小値と最大値を <span class="math notranslate nohighlight">\(E_\text{min}\)</span>, <span class="math notranslate nohighlight">\(E_\text{max}\)</span> として、 <span class="math notranslate nohighlight">\([E_\text{min}-0.2, E_\text{max}+0.2]\)</span> で計算されます。
+エネルギーの点数は <code class="docutils literal notranslate"><span class="pre">--ene-num</span></code> オプションで指定します（デフォルトは101）</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --ene-window -10.0 5.0 --ene-num 201
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--plot</span></code> オプションを指定すると、状態密度をプロットします。 <code class="docutils literal notranslate"><span class="pre">matplotlib</span></code> が必要です。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --plot dos.png
+</pre></div>
+</div>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../index.html">
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../uhfk-index.html">3. 波数空間UHF(UHFk)</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">3.1. チュートリアル</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id2">3.1.1. 環境設定入力ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id3">3.1.2. 相互作用定義ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id4">3.1.3. 計算の実行</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#hwave-dos">3.1.4. 状態密度の計算 (<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">3.2. ファイルフォーマット</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">5. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">6. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">7. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../uhfk-index.html"><span class="section-number">3. </span>波数空間UHF(UHFk)</a><ul>
+      <li>Previous: <a href="../uhfk-index.html" title="前の章へ"><span class="section-number">3. </span>波数空間UHF(UHFk)</a></li>
+      <li>Next: <a href="../filespecification/fi-index.html" title="次の章へ"><span class="section-number">3.2. </span>ファイルフォーマット</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 6.2.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../../_sources/uhfk/tutorial/tu-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
