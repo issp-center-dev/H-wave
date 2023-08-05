@@ -91,7 +91,7 @@ def calc_dos(
     data = np.load(os.path.join(filename))
     eigenvalues = data["eigenvalue"]
     Lx, Ly, Lz = input_dict["mode"]["param"]["CellShape"]
-    Lxsub, Lysub, Lzsub = input_dict["mode"]["param"].get("SubShape", (1,1,1))
+    Lxsub, Lysub, Lzsub = input_dict["mode"]["param"].get("SubShape", (Lx,Ly,Lz))
     norb = eigenvalues.shape[1]
     if verbose:
         print("Lx, Ly, Lz, norb: ", Lx, Ly, Lz, norb)
