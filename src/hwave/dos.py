@@ -91,10 +91,11 @@ def calc_dos(
     data = np.load(os.path.join(filename))
     eigenvalues = data["eigenvalue"]
     Lx, Ly, Lz = input_dict["mode"]["param"]["CellShape"]
+    Lxsub, Lysub, Lzsub = input_dict["mode"]["param"].get("SubShape", (Lx,Ly,Lz))
     norb = eigenvalues.shape[1]
     if verbose:
         print("Lx, Ly, Lz, norb: ", Lx, Ly, Lz, norb)
-    eigenvalues.reshape(Lx, Ly, Lz, norb)
+        print("Lxsub, Lysub, Lzsub, norb: ", Lxsub, Lysub, Lzsub, norb)
 
     input_info_dict = input_dict["file"]["input"]["interaction"]
     file_name = os.path.join(
@@ -121,7 +122,8 @@ def calc_dos(
     if verbose:
         print("Energy window min, max, num: ", ene_min, ene_max, ene_num)
 
-    eig = eigenvalues.reshape(Lx, Ly, Lz, norb)
+    eig = eigenvalues.reshape(int(Lx/Lxsub), int(Ly/Lysub), int(Lz/Lzsub), norb)
+
     if verbose:
         print("Finish calculating DOS")
     wght = libtetrabz.dos(bvec, eig, ene)
@@ -132,7 +134,6 @@ def calc_dos(
 def main():
     import tomli
     import argparse
-
     parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("input", type=str, help="input file of hwave")
     parser.add_argument("-o","--output", type=str, default="dos.dat", help="DoS output")
@@ -152,10 +153,8 @@ If omitted, [ene_min - 0.2, ene_max + 0.2]""",
     parser.add_argument(
         "-v", "--version", action="version", version=f"hwave_dos v{hwave.__version__}"
     )
-
     args = parser.parse_args()
     verbose = not args.quiet
-
     file_toml = args.input
     if os.path.exists(file_toml):
         if verbose:
