@@ -66,3 +66,7 @@ H-wave was tested on the following platforms
 
 - Ubuntu Linux + python3 (miniconda)
 
+Reference
+----------------------------------------------------------------
+
+"H-wave -- A Python package for the Hartree-Fock approximation and the random phase approximation", Tatsumi Aoyama, Kazuyoshi Yoshimi, Kota Ido, Yuichi Motoyama, Taiki Kawamura, Takahiro Misawa, Takeo Kato, and Akito Kobayashi, `arXiv:2308.00324 [cond-mat.str-el] <https://arxiv.org/abs/2308.00324>`_.
