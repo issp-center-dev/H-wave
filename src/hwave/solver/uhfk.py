@@ -636,11 +636,12 @@ class UHFk(solver_base):
                 _data = self._initial_green_random_conv()
                 #_data = self._initial_green_random_conv_reshape()
             elif green_info["initial_mode"] == "random":
-                pass # default
+                logger.info("initialize green function with random numbers")
+                _data = self._initial_green_random_simple()
 
-        if _data is None: # default
-            logger.info("initialize green function with random numbers")
-            _data = self._initial_green_random_simple()
+        if _data is None: # default = zero
+            logger.info("initialize green function with zeros")
+            _data = self._initial_green_zero()
         return _data
 
     def _initial_green_zero(self):
