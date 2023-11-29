@@ -78,6 +78,10 @@ class QLMSkInput():
                 logger.info("QLMSkInput: read initial_uhf from {}".format(file_name))
                 self.green["initial_uhf"] = self._read_data(file_name, "complex")
 
+        #- how to set initial green function when file is not given
+        if "initial_mode" in info_inputfile:
+            self.green["initial_mode"] = info_inputfile["initial_mode"]
+
         #- geometry.dat is required to handle data in coordinate space
         if "geometry_uhf" in info_inputfile:
             file_name = os.path.join(input_file_dir, info_inputfile["geometry_uhf"])
