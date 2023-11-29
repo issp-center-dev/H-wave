@@ -261,12 +261,12 @@ and the latter on the output files (such as locations to store).
   **Description :**
   This parameter specifies how the initial value of the Green's function is set when the initial configuration is not given from files. It takes one of the following:
 
-  - ``random``: set the initial configuration by random numbers.
-
-  - ``zero``: set the initial configuration to be zero.
+  - ``zero``: set the initial configuration to be zero. (default)
 
   - ``one`` or ``unity``: set the initial configuration as :math:`G_{\alpha\sigma,\beta\sigma^\prime}(\vec{r}) = \delta_{\vec{r},0}\delta_{\alpha\beta}\delta_{\sigma\sigma^\prime}`.
   
+  - ``random``: set the initial configuration by random numbers.
+
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

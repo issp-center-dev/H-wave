@@ -197,12 +197,12 @@ TOML形式
 
   **説明 :** 初期状態の一体グリーン関数データが指定されていない場合、初期値をどのように取るかを指定します。以下のいずれかの値を取ります。
 
-  ``random``: 初期値を乱数で与えます。(デフォルト)
-
-  ``zero``: 初期値を 0 に設定します。
+  ``zero``: 初期値を 0 に設定します。(デフォルト)
 
   ``one`` または ``unity``: 初期値を :math:`G_{\alpha\sigma,\beta\sigma^\prime}(\vec{r}) = \delta_{\vec{r},0}\delta_{\alpha\beta}\delta_{\sigma\sigma^\prime}` で与えます。
   
+  ``random``: 初期値を乱数で与えます。
+
 
 ``file.input.interaction`` セクション
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
