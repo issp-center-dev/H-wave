@@ -191,6 +191,19 @@ TOML形式
   ファイルは NumPy binary 形式です。
   ``file.output`` の ``green`` の出力ファイル形式に対応しています。
 
+- ``initial_mode``
+
+  **形式 :** str型
+
+  **説明 :** 初期状態の一体グリーン関数データが指定されていない場合、初期値をどのように取るかを指定します。以下のいずれかの値を取ります。
+
+  ``random``: 初期値を乱数で与えます。(デフォルト)
+
+  ``zero``: 初期値を 0 に設定します。
+
+  ``one`` または ``unity``: 初期値を :math:`G_{\alpha\sigma,\beta\sigma^\prime}(\vec{r}) = \delta_{\vec{r},0}\delta_{\alpha\beta}\delta_{\sigma\sigma^\prime}` で与えます。
+  
+
 ``file.input.interaction`` セクション
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
