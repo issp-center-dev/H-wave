@@ -48,6 +48,15 @@ Parameters
   **Description :**
   If ``true``, include the Fock term in the Hamiltonian, otherwise, exclude it (Hartree approximation).
 
+- ``enable_spin_orbital`` (default value is ``false``)
+
+  **Type :**
+  Boolean
+
+  **Description :**
+  This parameter specifies whether to allow spin-orbital interaction.
+  If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` and the spin index :math:`s` by :math:`\alpha + N_\text{orb} \cdot s`.
+
 ``mode.param`` section
 ================================
 

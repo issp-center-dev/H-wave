@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>Interaction definition files &#8212; H-wave Users Guide 1.0.0 documentation</title>
-    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b76e3c8a" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=66c3864b" />
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=af2ce170"></script>
     <script src="../../../_static/doctools.js?v=888ff710"></script>
@@ -153,6 +153,8 @@ These parameters specify the real and imaginary parts of the coefficient
 <ul class="simple">
 <li><p>Header cannot be omitted.</p></li>
 <li><p>The unspecified elements of the coefficient matrix are assumed to be zero.</p></li>
+<li><p>The translation vectors need to be enclosed within the CellShape. If the range of <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, or <code class="docutils literal notranslate"><span class="pre">r_z</span></code> exceeds the extent of <code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, or <code class="docutils literal notranslate"><span class="pre">z</span></code> dimension of CellShape, the program terminates with an error.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> is set to <code class="docutils literal notranslate"><span class="pre">true</span></code>, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to <span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span>, in which the indices <span class="math notranslate nohighlight">\(1 \dots N_\text{orbital}\)</span> correspond to spin-up, and the indices <span class="math notranslate nohighlight">\(N_\text{orbital}+1 \dots 2N_\text{orbital}\)</span> correspond to spin-down. Otherwise, only the entries with the orbital indices from 1 to <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> are taken into account.</p></li>
 </ul>
 </section>
 </section>

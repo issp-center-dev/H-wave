@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>3.2.1. Parameter files &#8212; H-wave Users Guide 1.0.0 documentation</title>
-    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b76e3c8a" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=66c3864b" />
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=af2ce170"></script>
     <script src="../../../_static/doctools.js?v=888ff710"></script>
@@ -95,6 +95,13 @@ Set to <code class="docutils literal notranslate"><span class="pre">&quot;UHFk&q
 Boolean (Default value is <code class="docutils literal notranslate"><span class="pre">true</span></code>)</p>
 <p><strong>Description :</strong>
 If <code class="docutils literal notranslate"><span class="pre">true</span></code>, include the Fock term in the Hamiltonian, otherwise, exclude it (Hartree approximation).</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p>
+<p><strong>Type :</strong>
+Boolean</p>
+<p><strong>Description :</strong>
+This parameter specifies whether to allow spin-orbital interaction.
+If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index <span class="math notranslate nohighlight">\(\alpha\)</span> and the spin index <span class="math notranslate nohighlight">\(s\)</span> by <span class="math notranslate nohighlight">\(\alpha + N_\text{orb} \cdot s\)</span>.</p>
 </li>
 </ul>
 </section>
