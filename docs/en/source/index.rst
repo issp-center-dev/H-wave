@@ -13,6 +13,14 @@ License
 
 The distribution of the program package and the source codes for H-wave follow GNU General Public License version 3 (GPL v3) or later.
 
+We hope that you would cite the following paper on H-wave or refer to the DOI when you publish your research using H-wave:
+
+  H-wave -- A Python package for the Hartree-Fock approximation and the random phase approximation,
+  Tatsumi Aoyama, Kazuyoshi Yoshimi, Kota Ido, Yuichi Motoyama, Taiki Kawamura, Takahiro Misawa, Takeo Kato, and Akito Kobayashi,
+  Computer Physics Communications, 298, 109087 (2024)
+
+  `DOI:10.1016/j.cpc.2024.109087 <https://doi.org/10.1016/j.cpc.2024.109087>`_.
+
 Contributors
 ----------------------------------------------------------------
 
