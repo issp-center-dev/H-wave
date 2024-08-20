@@ -42,6 +42,13 @@ TOML形式
 
   **説明 :** ``true`` の場合にはFock項を考慮し、 ``false`` の場合にはHartree項のみ取り扱います。
 
+- ``enable_spin_orbital``
+
+  **形式 :** bool型 (デフォルトは false)
+
+  **説明 :** スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 :math:`\alpha` とスピン :math:`s` に対して :math:`\alpha + N_\text{orb} \cdot s` となります。
+
+
 ``mode.param`` セクション
 ================================
 

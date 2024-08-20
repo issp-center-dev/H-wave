@@ -48,6 +48,11 @@ This software was developed with the support of
 "Project for Advancement of Software Usability in Materials Science"
 of The Institute for Solid State Physics, The University of Tokyo.
 
+We would appreciate it if you cite the following article in your research with H-wave:
+H-wave -- A Python package for the Hartree-Fock approximation and the random phase approximation,
+Tatsumi Aoyama, Kazuyoshi Yoshimi, Kota Ido, Yuichi Motoyama, Taiki Kawamura, Takahiro Misawa, Takeo Kato, and Akito Kobayashi,
+[Computer Physics Communications, 298, 109087 (2024)](https://doi.org/10.1016/j.cpc.2024.109087).
+
 ## Official page
 
 - [H-wave project site](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en)

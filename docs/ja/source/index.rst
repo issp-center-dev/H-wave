@@ -11,6 +11,14 @@ H-waveは遍歴電子系を対象に非制限Hartree-Fock(UHF)近似計算およ
 --------------
 本ソフトウェアのプログラムパッケージおよびソースコード一式はGNU General Public License version 3 (GPL v3) に準じて配布されています。
 
+H-wave を引用する際には、以下の H-wave に関する論文を引用またはDOIを記載してください。
+
+  H-wave -- A Python package for the Hartree-Fock approximation and the random phase approximation,
+  Tatsumi Aoyama, Kazuyoshi Yoshimi, Kota Ido, Yuichi Motoyama, Taiki Kawamura, Takahiro Misawa, Takeo Kato, and Akito Kobayashi,
+  Computer Physics Communications, 298, 109087 (2024)
+
+  `DOI:10.1016/j.cpc.2024.109087 <https://doi.org/10.1016/j.cpc.2024.109087>`_.
+
 開発貢献者
 --------------
 
