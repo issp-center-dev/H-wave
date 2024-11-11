@@ -881,12 +881,6 @@ class UHFr(solver_base):
         _green_list = self.green_list
         Ene = {}
         Ene["band"] = 0
-        # Zero temperature case - sum up energies of occupied states
-        if self.T == 0:
-            Ene["band"] = _calc_zero_temp_energy(_green_list)
-        else:
-            Ene["band"] = _calc_finite_temp_energy(_green_list)
-
         def _calc_zero_temp_energy(self, green_list):
             """Calculate band energy for zero temperature case.
             
@@ -915,44 +909,6 @@ class UHFr(solver_base):
                 energy += np.sum(eigenvalue[:occupied_number]) 
             return energy
 
-        def _calc_finite_temp_energy(self, green_list):
-            """Calculate band energy for finite temperature case.
-            
-            Parameters
-            ----------
-            green_list : dict
-                Dictionary containing Green's function blocks
-                
-            Returns
-            -------
-            float
-                Band energy at finite temperature
-                
-            Notes
-            -----
-            At finite T, band energy includes:
-            1. Chemical potential term: mu * n where n is particle number
-            2. Entropy term: -T * sum(ln(1 + exp(-(e-mu)/T)))
-            Uses Fermi-Dirac distribution and logarithmic terms.
-            """
-            energy = 0
-            # Loop through each block (spin up/down or sz-free)
-            for k, block_g_info in green_list.items():
-                eigenvalue = self.green_list[k]["eigenvalue"]  # Get eigenvalues
-                eigenvec = self.green_list[k]["eigenvector"]   # Get eigenvectors  
-                mu = self.green_list[k]["mu"]                  # Chemical potential
-                
-                # Calculate Fermi-Dirac occupations
-                fermi = self._fermi(mu, eigenvalue)
-                # Calculate logarithmic terms for entropy
-                ln_Ene = _calc_log_terms(eigenvalue, mu)
-                # Calculate particle number using eigenvectors and occupations
-                tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
-                
-                # Add mu*N term and entropy term
-                energy += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
-            return energy
-                
         def _calc_log_terms(self, eigenvalue, mu):
             """Calculate logarithmic terms in grand potential.
             
@@ -985,6 +941,54 @@ class UHFr(solver_base):
                     # For large negative arguments, approximate as -(e-mu)/T
                     ln_Ene[idx] = -(value - mu) / self.T
             return ln_Ene
+    
+        def _calc_finite_temp_energy(self, green_list):
+            """Calculate band energy for finite temperature case.
+            
+            Parameters
+            ----------
+            green_list : dict
+                Dictionary containing Green's function blocks
+                
+            Returns
+            -------
+            float
+                Band energy at finite temperature
+                
+            Notes
+            -----
+            At finite T, band energy includes:
+            1. Chemical potential term: mu * n where n is particle number
+            2. Entropy term: -T * sum(ln(1 + exp(-(e-mu)/T)))
+            Uses Fermi-Dirac distribution and logarithmic terms.
+            """
+            energy = 0
+            # Loop through each block (spin up/down or sz-free)
+            for k, block_g_info in green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]  # Get eigenvalues
+                eigenvec = self.green_list[k]["eigenvector"]   # Get eigenvectors  
+                mu = self.green_list[k]["mu"]                  # Chemical potential
+                
+        
+                # Calculate Fermi-Dirac occupations
+                fermi = self._fermi(mu, eigenvalue)
+                # Calculate logarithmic terms for entropy
+                ln_Ene = _calc_log_terms(eigenvalue, mu)
+                # Calculate particle number using eigenvectors and occupations
+                tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
+                
+                # Add mu*N term and entropy term
+                energy += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
+            return energy      
+   
+        
+        # Zero temperature case - sum up energies of occupied states
+        if self.T == 0:
+            Ene["band"] = _calc_zero_temp_energy(_green_list)
+        else:
+            Ene["band"] = _calc_finite_temp_energy(_green_list)
+
+
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
