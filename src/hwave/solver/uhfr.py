@@ -881,7 +881,8 @@ class UHFr(solver_base):
         _green_list = self.green_list
         Ene = {}
         Ene["band"] = 0
-        def _calc_zero_temp_energy(self, green_list):
+
+        def _calc_zero_temp_energy(green_list):
             """Calculate band energy for zero temperature case.
             
             Parameters
@@ -909,7 +910,7 @@ class UHFr(solver_base):
                 energy += np.sum(eigenvalue[:occupied_number]) 
             return energy
 
-        def _calc_log_terms(self, eigenvalue, mu):
+        def _calc_log_terms(eigenvalue, mu):
             """Calculate logarithmic terms in grand potential.
             
             Parameters
@@ -942,7 +943,7 @@ class UHFr(solver_base):
                     ln_Ene[idx] = -(value - mu) / self.T
             return ln_Ene
     
-        def _calc_finite_temp_energy(self, green_list):
+        def _calc_finite_temp_energy(green_list):
             """Calculate band energy for finite temperature case.
             
             Parameters
