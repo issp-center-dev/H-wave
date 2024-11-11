@@ -1,3 +1,10 @@
+"""Density of states (DoS) calculation and plotting utilities.
+
+This module provides functionality for calculating, plotting and analyzing the
+density of states from Hartree-Fock calculations.
+
+"""
+
 from __future__ import annotations
 
 import itertools
@@ -9,10 +16,26 @@ import hwave
 
 
 class DoS:
-    dos: np.ndarray
-    ene: np.ndarray
-    ene_num: int
-    norb: int
+    """Class for storing and manipulating density of states data.
+    
+    Parameters
+    ----------
+    ene : np.ndarray
+        Energy grid points
+    dos : np.ndarray 
+        Density of states values for each orbital at each energy point
+        
+    Attributes
+    ----------
+    dos : np.ndarray
+        Density of states array with shape (norb, nene)
+    ene : np.ndarray
+        Energy grid points array with shape (nene,)
+    ene_num : int
+        Number of energy points
+    norb : int
+        Number of orbitals
+    """
 
     def __init__(self, ene: np.ndarray, dos: np.ndarray):
         assert ene.shape[0] == dos.shape[1]
@@ -22,6 +45,17 @@ class DoS:
         self.norb = dos.shape[0]
 
     def plot(self, filename: str = "", verbose: bool = False):
+        """Plot the density of states.
+
+        Creates a plot showing the total DoS and orbital-resolved DoS.
+
+        Parameters
+        ----------
+        filename : str, optional
+            If provided, save plot to this file
+        verbose : bool, optional
+            If True, print additional output
+        """
         try:
             import matplotlib.pyplot as plt
         except ImportError:
@@ -45,6 +79,15 @@ class DoS:
         plt.close()
 
     def write_dos(self, output: str, verbose: bool = False):
+        """Write density of states data to file.
+
+        Parameters
+        ----------
+        output : str
+            Output filename
+        verbose : bool, optional
+            If True, print additional output
+        """
         if verbose:
             print("Writing DOS to file: ", output)
         total_dos = np.sum(self.dos, axis=0)
@@ -62,6 +105,18 @@ class DoS:
 
 
 def __read_geom(file_name="./dir-model/zvo_geom.dat"):
+    """Read geometry data from file.
+
+    Parameters
+    ----------
+    file_name : str, optional
+        Path to geometry file
+
+    Returns
+    -------
+    np.ndarray
+        Unit cell vectors array with shape (3,3)
+    """
     with open(file_name, "r") as fr:
         uvec = np.zeros((3, 3))
         for i, line in enumerate(itertools.islice(fr, 3)):  # take first 3 lines
@@ -75,6 +130,29 @@ def calc_dos(
     ene_num: int = 101,
     verbose: bool = False,
 ) -> DoS:
+    """Calculate density of states.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Input parameters dictionary
+    ene_window : list, optional
+        Energy window [min, max] for DoS calculation
+    ene_num : int, optional
+        Number of energy points
+    verbose : bool, optional
+        If True, print additional output
+
+    Returns
+    -------
+    DoS
+        Calculated density of states object
+
+    Raises
+    ------
+    ImportError
+        If required libtetrabz package is not installed
+    """
     try:
         import libtetrabz
     except ImportError:
@@ -130,6 +208,10 @@ def calc_dos(
 
 
 def main():
+    """Command-line interface for DoS calculation.
+
+    Parses command line arguments and runs DoS calculation.
+    """
     import tomli
     import argparse
 
