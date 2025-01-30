@@ -678,6 +678,28 @@ class RPA:
 
     @do_profile
     def solve(self, green_info, path_to_output):
+        """Solve the RPA equation to calculate susceptibility.
+
+        This is the main method that performs RPA calculations. It either calculates 
+        or loads chi0q, transforms interaction Hamiltonians based on spin state, 
+        and solves the RPA equation.
+
+        Parameters
+        ----------
+        green_info : dict
+            Dictionary containing Green's function information and calculation parameters.
+            May include pre-calculated chi0q.
+        path_to_output : str
+            Path to directory where output files will be saved.
+
+        Notes
+        -----
+        The calculation flow is:
+        1. Calculate/load chi0q
+        2. Transform interactions based on spin state (spin-free/spinful/spin-diag)
+        3. Transform tensors based on calculation scheme (reduced/squashed/general)
+        4. Solve RPA equation to get chiq
+        """
         logger.info("Start RPA calculations")
 
         beta = 1.0/self.T
@@ -861,6 +883,23 @@ class RPA:
 
     @do_profile
     def save_results(self, info_outputfile, green_info):
+        """Save calculation results to files.
+
+        Parameters
+        ----------
+        info_outputfile : dict
+            Dictionary containing output file configuration.
+        green_info : dict
+            Dictionary containing calculation information and results.
+
+        Notes
+        -----
+        Saves the following information:
+        - Calculated correlation functions (chi0q/chiq)
+        - Matsubara frequency indices
+        - Wave vector unit vectors
+        - Wave vector indices
+        """
         logger.info("Save RPA results")
         path_to_output = info_outputfile["path_to_output"]
 
@@ -980,6 +1019,31 @@ class RPA:
         return info
 
     def _read_chi0q(self, file_name):
+        """Read chi0q from file and validate its shape.
+
+        Parameters
+        ----------
+        file_name : str
+            Path to the file containing chi0q data.
+
+        Returns
+        -------
+        ndarray
+            The loaded chi0q array.
+
+        Raises
+        ------
+        AssertionError
+            If the loaded data doesn't match expected dimensions or format.
+
+        Notes
+        -----
+        Performs checks for:
+        - Lattice volume consistency
+        - Number of orbitals consistency 
+        - Spin freedom consistency
+        - Calculation scheme compatibility
+        """
         logger.debug(">>> RPA._read_chi0q")
 
         try:
@@ -1060,6 +1124,28 @@ class RPA:
         return chi0q
 
     def _read_trans_mod(self, file_name):
+        """Read transfer integral modifications from file.
+
+        Parameters
+        ----------
+        file_name : str
+            Path to the file containing transfer integral modifications.
+
+        Returns
+        -------
+        ndarray
+            The transfer integrals in k-space.
+
+        Raises
+        ------
+        RuntimeError
+            If file reading fails.
+
+        Notes
+        -----
+        - Converts layout if sublattice exists
+        - Performs Fourier transform to k-space
+        """
         logger.debug(">>> RPA._read_trans_mod")
 
         try:
@@ -1350,12 +1436,35 @@ class RPA:
 
     @do_profile
     def _calc_chi0q(self, green_kw, green0_tail, beta):
-        # green function
-        #   green_kw[g,l,k,a,b]: G_ab(k,ie) in block g
-        #     l : matsubara freq i\epsilon_l = i\pi(2*l+1-N)/\beta for l=0..N-1
-        #     k : wave number kx,ky,kz
-        #     a,b : orbital and spin index a=(s,alpha) b=(t,beta)
+        """Calculate the bare susceptibility chi0q.
 
+        Parameters
+        ----------
+        green_kw : ndarray
+            Green's function in k-space and Matsubara frequency.
+            Shape: [g,l,k,a,b] where:
+            - g: block index
+            - l: Matsubara frequency index
+            - k: wave number index
+            - a,b: orbital and spin indices
+        green0_tail : ndarray
+            High-frequency tail correction for Green's function.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            The calculated chi0q.
+
+        Notes
+        -----
+        Calculation steps:
+        1. Fourier transform from Matsubara freq to imaginary time
+        2. Transform from k-space to real space
+        3. Calculate chi0 in real space and imaginary time
+        4. Transform back to k-space and Matsubara frequency
+        """
         logger.debug(">>> RPA._calc_chi0q")
 
         nx,ny,nz = self.lattice.shape
@@ -1365,7 +1474,7 @@ class RPA:
         assert nvol == self.lattice.nvol
         assert nmat == self.nmat
 
-        # Fourier transform from matsubara freq to imaginary time
+        # Fourier transform from Matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
         green_kt = np.einsum('gtv,t->gtv',
@@ -1376,7 +1485,7 @@ class RPA:
         # Fourier transform from wave number space to coordinate space
         green_rt = FFT.ifftn(green_kt.reshape(nblock,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
 
-        # calculate chi0(r,t)[a,a',b,b'] = G(r,t)[a,b] * G(-r,-t)[b',a']
+        # calculate chi0 in real space and imaginary time
         green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nblock,nmat,nvol,nd,nd)
 
         sgn = np.full(nmat, -1)
@@ -1412,6 +1521,26 @@ class RPA:
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):
+        """Solve the RPA equation.
+
+        Parameters
+        ----------
+        chi0q : ndarray
+            Bare susceptibility.
+        ham : ndarray
+            Interaction Hamiltonian.
+
+        Returns
+        -------
+        ndarray
+            The RPA susceptibility chiq.
+
+        Notes
+        -----
+        Solves the equation:
+        chiq = [1 + chi0q * W]^(-1) * chi0q
+        where W is the interaction vertex.
+        """
         logger.debug(">>> RPA._solve_rpa")
 
         nvol = self.lattice.nvol
@@ -1435,6 +1564,41 @@ class RPA:
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
+    """Main entry point for running RPA calculations.
+
+    Parameters
+    ----------
+    input_dict : dict, optional
+        Dictionary containing input parameters. Must be provided if input_file is None.
+    input_file : str, optional
+        Path to input file. Not used if input_dict is provided.
+
+    Raises
+    ------
+    RuntimeError
+        If input_dict is None.
+
+    Notes
+    -----
+    The input dictionary should contain the following sections:
+    - log: Logging configuration
+        - print_level: Verbosity level (default: 1)
+        - print_step: Print frequency (default: 1)
+    - mode: Calculation mode configuration
+        - mode: Must be "RPA" for RPA calculations
+    - file: File paths configuration
+        - input: Input file paths
+            - path_to_input: Input directory (default: "")
+        - output: Output file paths
+            - path_to_output: Output directory (default: "output")
+
+    The function performs the following steps:
+    1. Initializes logging and file paths
+    2. Reads interaction definitions
+    3. Creates RPA solver instance
+    4. Performs RPA calculations
+    5. Saves results
+    """
     logger = logging.getLogger("run")
 
     if input_dict is None:

@@ -10,32 +10,48 @@ logger = logging.getLogger("qlms").getChild("uhfk")
 class UHFk(solver_base):
     @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
+        """Initialize the UHF solver.
+        
+        Parameters
+        ----------
+        param_ham : dict
+            Hamiltonian parameters
+        info_log : dict
+            Logging configuration  
+        info_mode : dict
+            Solver mode parameters
+        param_mod : dict, optional
+            Additional model parameters
+        """
         self.name = "uhfk"
         super().__init__(param_ham, info_log, info_mode, param_mod)
 
-        self._init_mode(info_mode)
-        self._init_param()
-        self._init_lattice()
-        self._init_orbit()
+        # Initialize solver components
+        self._init_mode(info_mode)  # Set solver modes like Fock term
+        self._init_param()          # Initialize parameters
+        self._init_lattice()        # Setup lattice geometry
+        self._init_orbit()          # Setup orbital structure
         # self._dump_param_ham()
-        self._check_interaction()
-        self._init_interaction()
+        self._check_interaction()   # Validate interactions
+        self._init_interaction()    # Setup interaction terms
         # self._dump_param_ham()
-        self._init_wavevec()
+        self._init_wavevec()        # Setup k-vectors
 
-        self._show_param()
+        self._show_param()          # Display parameters
 
-        # local data
+        # Initialize physical quantities
         self.physics = {
             "Ene": { "Total": 0.0, "Band": 0.0 },
-            "NCond": 0.0,
-            "Sz": 0.0,
-            "Rest": 1.0
+            "NCond": 0.0,  # Total particle number
+            "Sz": 0.0,     # Total spin
+            "Rest": 1.0    # Convergence measure
         }
 
-        nvol = self.nvol
-        nd = self.nd
+        # Setup dimensions
+        nvol = self.nvol  # Number of k-points
+        nd = self.nd      # Total number of basis states
 
+        # Storage for eigenvalues/vectors
         self._green_list = {
 #            "eigenvalue":  np.zeros((nvol,nd), dtype=np.complex128),
 #            "eigenvector": np.zeros((nvol,nd,nd), dtype=np.complex128)
@@ -43,15 +59,34 @@ class UHFk(solver_base):
 
         #self.Green = np.zeros((nvol,ns,norb,ns,norb), dtype=np.complex128),
 
-        # work area
+        # Initialize Hamiltonian matrix
         self.ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
 
     def _init_mode(self, param):
+        """Initialize solver modes.
+        
+        Parameters
+        ----------
+        param : dict
+            Mode parameters
+        """
+        # Enable/disable Fock term
         self.iflag_fock = param.get('flag_fock', True)
+        
+        # Enable/disable spin-orbital coupling
         self.enable_spin_orbital = param.get('enable_spin_orbital', False)
 
     @do_profile
     def _init_param(self):
+        """Initialize solver parameters.
+        
+        Sets up key parameters including:
+        - Cell shape
+        - Temperature
+        - Number of electrons/filling
+        - Sz constraints
+        - Numerical precision parameters
+        """
         # check and store parameters
 
         # - cell shape
@@ -99,6 +134,15 @@ class UHFk(solver_base):
 
     @do_profile
     def _init_lattice(self):
+        """Initialize lattice geometry.
+        
+        Sets up:
+        - Cell shape and volume
+        - Sublattice structure
+        - Consistency checks for sublattice
+        
+        Parameters are read from self.param_mod.
+        """
         Lx,Ly,Lz = self.param_mod.get("CellShape")
         self.cellshape = (Lx,Ly,Lz)
         self.cellvol = Lx * Ly * Lz
@@ -128,6 +172,14 @@ class UHFk(solver_base):
 
     @do_profile
     def _init_orbit(self):
+        """Initialize orbital structure.
+        
+        Sets up:
+        - Number of orbitals
+        - Spin degrees of freedom
+        - Total basis dimension
+        Takes into account supercell structure if present.
+        """
         norb = self.param_ham["Geometry"]["norb"]
         ns = 2  # spin dof
 
@@ -140,6 +192,15 @@ class UHFk(solver_base):
 
     @do_profile
     def _show_param(self):
+        """Display solver parameters.
+        
+        Logs key parameters including:
+        - Enabled features (Fock term, spin-orbital coupling)
+        - Lattice dimensions
+        - Orbital/spin structure
+        - Physical parameters (filling, temperature)
+        - Numerical parameters
+        """
         logger.info("Show parameters")
         logger.info("    Enable Fock    = {}".format(self.iflag_fock))
         logger.info("    Cell Shape     = {}".format(self.cellshape))
@@ -169,6 +230,18 @@ class UHFk(solver_base):
 
     @do_profile
     def _reshape_geometry(self, geom):
+        """Reshape geometry for sublattice structure.
+        
+        Parameters
+        ----------
+        geom : dict
+            Original geometry definition
+        
+        Returns
+        -------
+        dict
+            Reshaped geometry for sublattice
+        """
         Bx,By,Bz = self.subshape
         bvol = Bx * By * Bz
 
@@ -193,6 +266,20 @@ class UHFk(solver_base):
 
     @do_profile
     def _reshape_interaction(self, ham, enable_spin_orbital):
+        """Reshape interaction terms for sublattice.
+        
+        Parameters
+        ----------
+        ham : dict
+            Original interaction terms
+        enable_spin_orbital : bool
+            Whether spin-orbital coupling is enabled
+        
+        Returns
+        -------
+        dict
+            Reshaped interaction terms
+        """
         Bx,By,Bz = self.subshape
         nx,ny,nz = self.shape
 
@@ -246,6 +333,18 @@ class UHFk(solver_base):
 
     @do_profile
     def _reshape_green(self, green):
+        """Convert Green function to sublattice basis.
+        
+        Parameters
+        ----------
+        green : ndarray
+            Green function in original basis
+        
+        Returns
+        -------
+        ndarray
+            Green function in sublattice basis
+        """
         # convert green function into sublattice
 
         Lx,Ly,Lz = self.cellshape
@@ -312,6 +411,18 @@ class UHFk(solver_base):
 
     @do_profile
     def _deflate_green(self, green_sub):
+        """Convert Green function back to original basis.
+        
+        Parameters
+        ----------
+        green_sub : ndarray
+            Green function in sublattice basis
+        
+        Returns
+        -------
+        ndarray
+            Green function in original basis
+        """
         # convert green function back to original lattice
         Lx,Ly,Lz = self.cellshape
         Lvol = Lx * Ly * Lz
@@ -370,6 +481,11 @@ class UHFk(solver_base):
 
     @do_profile
     def _init_interaction(self):
+        """Initialize interaction terms.
+        
+        Processes interaction terms for sublattice structure if needed.
+        Handles different types of interactions (Coulomb, Hund, etc).
+        """
         # reinterpret interaction coefficient on sublattice
         if self.has_sublattice:
             # backup
@@ -391,6 +507,13 @@ class UHFk(solver_base):
                     self.param_ham[type] = tbl
 
     def _init_wavevec(self):
+        """Initialize wave vectors.
+        
+        Sets up:
+        - k-vectors for sublatticed geometry
+        - Reciprocal lattice vectors
+        - Wave number tables
+        """
         # wave vectors on sublatticed geometry
         def _klist(n):
             return np.roll( (np.arange(n)-(n//2)), -(n//2) )
@@ -436,6 +559,13 @@ class UHFk(solver_base):
 
     @do_profile
     def _check_interaction(self):
+        """Validate interaction terms.
+        
+        Performs checks on:
+        - Cell size compatibility
+        - Orbital index validity
+        - Hermiticity of terms
+        """
         self._check_cellsize()
         self._check_orbital_index()
         self._check_hermite()
@@ -557,6 +687,21 @@ class UHFk(solver_base):
 
     @do_profile
     def solve(self, green_info, path_to_output):
+        """Main solver routine.
+        
+        Performs UHF iteration until convergence:
+        1. Constructs Hamiltonian
+        2. Diagonalizes
+        3. Updates Green function
+        4. Calculates physical quantities
+        
+        Parameters
+        ----------
+        green_info : dict
+            Initial Green function information
+        path_to_output : str
+            Path for output files
+        """
         print_level = self.info_log["print_level"]
         print_check = self.info_log.get("print_check", None)
 
@@ -1283,7 +1428,7 @@ class UHFk(solver_base):
                     w1 = np.where( mask_, w, 0.0 )
                     v1 = 1.0 / (1.0 + np.exp(w1))
                     v = np.where( mask_, v1, 0.0 )
-                    #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) )
+                    #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) ) )
                     return v
 
                 wt = -(w - mu) / T
@@ -1341,6 +1486,22 @@ class UHFk(solver_base):
 
     @do_profile
     def save_results(self, info_outputfile, green_info):
+        """Save results to files.
+        
+        Parameters
+        ----------
+        info_outputfile : dict
+            Output file configuration
+        green_info : dict
+            Green function information
+            
+        Saves:
+        - Energy and physical quantities
+        - Eigenvalues/vectors
+        - Green functions
+        - One-body quantities
+        - RPA data if requested
+        """
         path_to_output = info_outputfile["path_to_output"]
 
         if "energy" in info_outputfile.keys():
