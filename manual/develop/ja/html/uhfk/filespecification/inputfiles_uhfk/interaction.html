@@ -15,7 +15,7 @@
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="検索" href="../../../search.html" />
-    <link rel="next" title="3.2.3. UHFkの出力ファイル" href="../outputfiles_uhfk/index_outputfiles_uhfk.html" />
+    <link rel="next" title="4.2.3. UHFkの出力ファイル" href="../outputfiles_uhfk/index_outputfiles_uhfk.html" />
     <link rel="prev" title="幾何情報指定ファイル" href="geometry.html" />
    
   <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
@@ -136,6 +136,7 @@
 <li><p>係数行列のうち、省略された要素は 0と仮定します。</p></li>
 <li><p>並進ベクトルは全て <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> 内に収まるとします。
 <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, <code class="docutils literal notranslate"><span class="pre">r_z</span></code> の範囲が <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> のx,y,z軸のサイズを超える場合はエラーで終了します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">true</span></code> の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 <span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span> の値をとります。1〜 <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> が spin up、<span class="math notranslate nohighlight">\(N_\text{orbital}+1\)</span> 〜 <span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span> が spin down に対応します。 <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">false</span></code> の場合は、インデックスの範囲が 1〜 <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> の行のみ考慮します。</p></li>
 </ul>
 </section>
 </section>
@@ -163,33 +164,34 @@
 
 <h3>ナビゲーション</h3>
 <ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">3. 波数空間UHF(UHFk)</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">3.1. チュートリアル</a></li>
-<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">3.2. ファイルフォーマット</a><ul class="current">
-<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">3.2.1. 環境設定ファイル</a></li>
-<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles_uhfk.html">3.2.2. UHFk用入力ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../outputfiles_uhfk/index_outputfiles_uhfk.html">3.2.3. UHFkの出力ファイル</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">4. 波数空間UHF(UHFk)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">4.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">4.2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">4.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles_uhfk.html">4.2.2. UHFk用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles_uhfk/index_outputfiles_uhfk.html">4.2.3. UHFkの出力ファイル</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">5. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">6. 謝辞</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">7. Appendix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">6. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">8. Appendix</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../../../index.html">Documentation overview</a><ul>
-  <li><a href="../../uhfk-index.html"><span class="section-number">3. </span>波数空間UHF(UHFk)</a><ul>
-  <li><a href="../fi-index.html"><span class="section-number">3.2. </span>ファイルフォーマット</a><ul>
-  <li><a href="index_inputfiles_uhfk.html"><span class="section-number">3.2.2. </span>UHFk用入力ファイル</a><ul>
+  <li><a href="../../uhfk-index.html"><span class="section-number">4. </span>波数空間UHF(UHFk)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">4.2. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_inputfiles_uhfk.html"><span class="section-number">4.2.2. </span>UHFk用入力ファイル</a><ul>
       <li>Previous: <a href="geometry.html" title="前の章へ">幾何情報指定ファイル</a></li>
-      <li>Next: <a href="../outputfiles_uhfk/index_outputfiles_uhfk.html" title="次の章へ"><span class="section-number">3.2.3. </span>UHFkの出力ファイル</a></li>
+      <li>Next: <a href="../outputfiles_uhfk/index_outputfiles_uhfk.html" title="次の章へ"><span class="section-number">4.2.3. </span>UHFkの出力ファイル</a></li>
   </ul></li>
   </ul></li>
   </ul></li>

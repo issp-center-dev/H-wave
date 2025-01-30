@@ -136,4 +136,8 @@ Usage rules
 
 -  The unspecified elements of the coefficient matrix are assumed to be zero.
 
+-  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
+
+-  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}`, in which the indices :math:`1 \dots N_\text{orbital}` correspond to spin-up, and the indices :math:`N_\text{orbital}+1 \dots 2N_\text{orbital}` correspond to spin-down. Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
+
 .. raw:: latex

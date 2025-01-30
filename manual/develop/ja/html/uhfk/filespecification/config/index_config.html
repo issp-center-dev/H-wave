@@ -5,7 +5,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>3.2.1. 環境設定ファイル &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
+    <title>4.2.1. 環境設定ファイル &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=03e43079" />
     <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=66c3864b" />
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=91189e65"></script>
@@ -15,8 +15,8 @@
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="検索" href="../../../search.html" />
-    <link rel="next" title="3.2.2. UHFk用入力ファイル" href="../inputfiles_uhfk/index_inputfiles_uhfk.html" />
-    <link rel="prev" title="3.2. ファイルフォーマット" href="../fi-index.html" />
+    <link rel="next" title="4.2.2. UHFk用入力ファイル" href="../inputfiles_uhfk/index_inputfiles_uhfk.html" />
+    <link rel="prev" title="4.2. ファイルフォーマット" href="../fi-index.html" />
    
   <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
   
@@ -34,7 +34,7 @@
           <div class="body" role="main">
             
   <section id="ch-config">
-<span id="id1"></span><h1><span class="section-number">3.2.1. </span>環境設定ファイル<a class="headerlink" href="#ch-config" title="この見出しへのパーマリンク">¶</a></h1>
+<span id="id1"></span><h1><span class="section-number">4.2.1. </span>環境設定ファイル<a class="headerlink" href="#ch-config" title="この見出しへのパーマリンク">¶</a></h1>
 <p>このファイルでは、TOML形式でH-waveに関する環境を設定します。
 本ファイルは以下の3つのセクションから構成されます。</p>
 <ol class="arabic simple">
@@ -91,6 +91,10 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">flag_fock</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは <code class="docutils literal notranslate"><span class="pre">true</span></code> )</p>
 <p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">true</span></code> の場合にはFock項を考慮し、 <code class="docutils literal notranslate"><span class="pre">false</span></code> の場合にはHartree項のみ取り扱います。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
+<p><strong>説明 :</strong> スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 <span class="math notranslate nohighlight">\(\alpha\)</span> とスピン <span class="math notranslate nohighlight">\(s\)</span> に対して <span class="math notranslate nohighlight">\(\alpha + N_\text{orb} \cdot s\)</span> となります。</p>
 </li>
 </ul>
 </section>
@@ -279,32 +283,33 @@ true の場合、warning を表示して実行を継続し、 false の場合、
 
 <h3>ナビゲーション</h3>
 <ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">3. 波数空間UHF(UHFk)</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">3.1. チュートリアル</a></li>
-<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">3.2. ファイルフォーマット</a><ul class="current">
-<li class="toctree-l3 current"><a class="current reference internal" href="#">3.2.1. 環境設定ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../inputfiles_uhfk/index_inputfiles_uhfk.html">3.2.2. UHFk用入力ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../outputfiles_uhfk/index_outputfiles_uhfk.html">3.2.3. UHFkの出力ファイル</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../uhfk-index.html">4. 波数空間UHF(UHFk)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">4.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">4.2. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3 current"><a class="current reference internal" href="#">4.2.1. 環境設定ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../inputfiles_uhfk/index_inputfiles_uhfk.html">4.2.2. UHFk用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles_uhfk/index_outputfiles_uhfk.html">4.2.3. UHFkの出力ファイル</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">5. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">6. 謝辞</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">7. Appendix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">6. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">8. Appendix</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../../../index.html">Documentation overview</a><ul>
-  <li><a href="../../uhfk-index.html"><span class="section-number">3. </span>波数空間UHF(UHFk)</a><ul>
-  <li><a href="../fi-index.html"><span class="section-number">3.2. </span>ファイルフォーマット</a><ul>
-      <li>Previous: <a href="../fi-index.html" title="前の章へ"><span class="section-number">3.2. </span>ファイルフォーマット</a></li>
-      <li>Next: <a href="../inputfiles_uhfk/index_inputfiles_uhfk.html" title="次の章へ"><span class="section-number">3.2.2. </span>UHFk用入力ファイル</a></li>
+  <li><a href="../../uhfk-index.html"><span class="section-number">4. </span>波数空間UHF(UHFk)</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">4.2. </span>ファイルフォーマット</a><ul>
+      <li>Previous: <a href="../fi-index.html" title="前の章へ"><span class="section-number">4.2. </span>ファイルフォーマット</a></li>
+      <li>Next: <a href="../inputfiles_uhfk/index_inputfiles_uhfk.html" title="次の章へ"><span class="section-number">4.2.2. </span>UHFk用入力ファイル</a></li>
   </ul></li>
   </ul></li>
   </ul></li>

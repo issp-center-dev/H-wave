@@ -5,7 +5,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>5.2. 乱雑位相近似法 &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
+    <title>6.2. 乱雑位相近似法 &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
     <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=66c3864b" />
     <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=91189e65"></script>
@@ -15,8 +15,8 @@
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="検索" href="../search.html" />
-    <link rel="next" title="6. 謝辞" href="../acknowledgement.html" />
-    <link rel="prev" title="5.1. 非制限Hartree-Fock法" href="uhf.html" />
+    <link rel="next" title="7. 謝辞" href="../acknowledgement.html" />
+    <link rel="prev" title="6.1. 非制限Hartree-Fock法" href="uhf.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
   
@@ -34,14 +34,14 @@
           <div class="body" role="main">
             
   <section id="algorithm-sec">
-<span id="id1"></span><h1><span class="section-number">5.2. </span>乱雑位相近似法<a class="headerlink" href="#algorithm-sec" title="この見出しへのパーマリンク">¶</a></h1>
+<span id="id1"></span><h1><span class="section-number">6.2. </span>乱雑位相近似法<a class="headerlink" href="#algorithm-sec" title="この見出しへのパーマリンク">¶</a></h1>
 <p>乱雑位相近似(RPA)では相互作用のない状態を出発点に、電子相関効果による一体の演算子の揺らぎの応答を検出します。
 UHF近似ではあらかじめ初期配置を予想しておく必要があるのに対して、RPA法では2次転移により生じる秩序相を推定することが可能です。
 H-waveでは松原振動数を利用したRPA法を実装しており、解析接続によって実験で観測される動的な物理量との比較も行うことが可能です。</p>
 <p>以下、アルゴリズムについて掲載します。
 H-waveのRPAモードでは以下のHamiltonianを取り扱います。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-0">
-<span class="eqno">(5.11)<a class="headerlink" href="#equation-algorithm-rpa-0" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.11)<a class="headerlink" href="#equation-algorithm-rpa-0" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
  {\cal H}&amp;={\cal H}_0+{\cal H}_{\rm int},\\
  {\cal H}_0&amp;=\sum_{\langle i\alpha;j\beta \rangle}
   (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
@@ -51,14 +51,14 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。</p>
 \end{aligned}\end{split}\]</div>
 <p>ここで、以下のフーリエ変換</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-1">
-<span class="eqno">(5.12)<a class="headerlink" href="#equation-algorithm-rpa-1" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.12)<a class="headerlink" href="#equation-algorithm-rpa-1" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 c_{i\alpha}
 =\frac{1}{\sqrt{N_L}}\sum_{\bf{k}}
 e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 \end{aligned}\]</div>
 <p>を行うと、Hamiltonianは以下のように書き換えられます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-2">
-<span class="eqno">(5.13)<a class="headerlink" href="#equation-algorithm-rpa-2" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.13)<a class="headerlink" href="#equation-algorithm-rpa-2" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
  {\cal H}&amp;=\sum_{{\bf k}\alpha\beta}
  (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
  c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
@@ -72,7 +72,7 @@ e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 <p>RPAでは <span class="math notranslate nohighlight">\({\cal H}_0\)</span> に対して、電子間相互作用を介した密度揺らぎの効果を考慮します。
 具体的には、 <span class="math notranslate nohighlight">\({\cal H}_0\)</span> が対角化されるような軌道・スピンの混成基底を用いて、相互作用の項を以下のように近似します。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-3">
-<span class="eqno">(5.14)<a class="headerlink" href="#equation-algorithm-rpa-3" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.14)<a class="headerlink" href="#equation-algorithm-rpa-3" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
 &amp;W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
 c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
 &amp;\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
@@ -83,19 +83,19 @@ u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}) .
 \end{aligned}\end{split}\]</div>
 <p>ここで、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-4">
-<span class="eqno">(5.15)<a class="headerlink" href="#equation-algorithm-rpa-4" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.15)<a class="headerlink" href="#equation-algorithm-rpa-4" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 c_{\bf{k},\alpha} = \sum_{\gamma} u_{\alpha \gamma, \bf{k}} d_{\bf{k}, \gamma}
 \end{aligned}\]</div>
 <p>であり、 <span class="math notranslate nohighlight">\(d_{\bf{k}, \gamma}\)</span> は <span class="math notranslate nohighlight">\({\cal H}_0\)</span> を対角化する消滅演算子を表します( <span class="math notranslate nohighlight">\(\gamma\)</span> は固有値のindex)。
 このとき、一体の既約グリーン関数は以下のように与えられます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-5">
-<span class="eqno">(5.16)<a class="headerlink" href="#equation-algorithm-rpa-5" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.16)<a class="headerlink" href="#equation-algorithm-rpa-5" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
  G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})=
   \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
 \end{aligned}\]</div>
 <p>既約感受率は対角化された成分で閉じる必要があるため、以下のように与えられます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-6">
-<span class="eqno">(5.17)<a class="headerlink" href="#equation-algorithm-rpa-6" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.17)<a class="headerlink" href="#equation-algorithm-rpa-6" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -104,7 +104,7 @@ c_{\bf{k},\alpha} = \sum_{\gamma} u_{\alpha \gamma, \bf{k}} d_{\bf{k}, \gamma}
 \end{aligned}\]</div>
 <p>この既約感受率を用いることで、RPAで得られる感受率が以下のように得られます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-7">
-<span class="eqno">(5.18)<a class="headerlink" href="#equation-algorithm-rpa-7" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.18)<a class="headerlink" href="#equation-algorithm-rpa-7" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 X^{\alpha\alpha', \beta\beta'}(q)&amp;=
 X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
 X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
@@ -112,19 +112,19 @@ X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_
 <p>ここで、 <span class="math notranslate nohighlight">\(\alpha \alpha'\)</span> などをまとめて一つのindexにすると行列形式で表すことができ、
 最終的には以下のような形式で感受率を得ることができます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-8">
-<span class="eqno">(5.19)<a class="headerlink" href="#equation-algorithm-rpa-8" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.19)<a class="headerlink" href="#equation-algorithm-rpa-8" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( <span class="math notranslate nohighlight">\(X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)\)</span> )が一番大きなサイズの多次元配列となり、そのサイズは <span class="math notranslate nohighlight">\(N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}\)</span> で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
-<span class="eqno">(5.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 &amp; W^{\beta\sigma_1\sigma_1',\alpha\sigma\sigma'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha \sigma}^{\dagger}c_{\bf{k},\alpha \sigma'}^{\mathstrut}
 c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}    \end{aligned}\]</div>
 <p>と書けます。軌道に対しては同一の軌道での散乱となるため、既約感受率は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
-<span class="eqno">(5.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -133,21 +133,21 @@ c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstru
 \end{aligned}\]</div>
 <p>となり、 <span class="math notranslate nohighlight">\(N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}\)</span> にサイズを抑えることができます。このとき、RPAで得られる感受率は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
-<span class="eqno">(5.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
 X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&amp;=
 X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
 X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
 \end{aligned}\]</div>
 <p>となります。 <span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span> を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-12">
-<span class="eqno">(5.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="この数式へのパーマリンク">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>と書けることがわかります。以上が一般的なRPAの定式化になります。</p>
 <p>上述の近似では既約感受率の計算を</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-13">
-<span class="eqno">(5.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -157,12 +157,12 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
 <p>として行っています。この場合、対角化した成分の和が必要となり、計算コストが多くかかってしまいます。
 そのため、先行研究の多くは一体グリーン関数を</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
-<span class="eqno">(5.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
  G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n})
 \end{aligned}\]</div>
 <p>のように近似し、既約感受率を</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
-<span class="eqno">(5.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="この数式へのパーマリンク">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{{\bf k},n}
@@ -205,26 +205,27 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
 
 <h3>ナビゲーション</h3>
 <ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">1. 基本的な使用方法</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">2. 実空間UHF(UHFr)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">3. 波数空間UHF(UHFk)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">4. 乱雑位相近似 (RPA)</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">5. アルゴリズム</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="uhf.html">5.1. 非制限Hartree-Fock法</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">5.2. 乱雑位相近似法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">6. アルゴリズム</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="uhf.html">6.1. 非制限Hartree-Fock法</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">6.2. 乱雑位相近似法</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">6. 謝辞</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">7. Appendix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">8. Appendix</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
-  <li><a href="al-index.html"><span class="section-number">5. </span>アルゴリズム</a><ul>
-      <li>Previous: <a href="uhf.html" title="前の章へ"><span class="section-number">5.1. </span>非制限Hartree-Fock法</a></li>
-      <li>Next: <a href="../acknowledgement.html" title="次の章へ"><span class="section-number">6. </span>謝辞</a></li>
+  <li><a href="al-index.html"><span class="section-number">6. </span>アルゴリズム</a><ul>
+      <li>Previous: <a href="uhf.html" title="前の章へ"><span class="section-number">6.1. </span>非制限Hartree-Fock法</a></li>
+      <li>Next: <a href="../acknowledgement.html" title="次の章へ"><span class="section-number">7. </span>謝辞</a></li>
   </ul></li>
   </ul></li>
 </ul>
