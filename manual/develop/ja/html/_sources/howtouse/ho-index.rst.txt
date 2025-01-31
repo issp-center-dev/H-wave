@@ -37,7 +37,7 @@
 
       .. code-block:: bash
 
-        $ pip install h-wave
+        $ pip install hwave
 
     - ソースパッケージから
 
