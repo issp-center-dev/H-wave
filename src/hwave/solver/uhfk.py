@@ -769,14 +769,58 @@ class UHFk(solver_base):
                 exit(1)
             logger.info("load initial green function in coord space from file")
             _data = self._initial_green_uhf(green_info["initial_uhf"], green_info["geometry_uhf"])
+        elif "initial_mode" in green_info:
+            if green_info["initial_mode"] == "zero":
+                logger.info("initialize green function with zeros")
+                _data = self._initial_green_zero()
+            elif green_info["initial_mode"] in ["one", "unity"]:
+                logger.info("initialize green function with identity")
+                _data = self._initial_green_one()
+            elif green_info["initial_mode"] == "conventional_random":
+                logger.info("initialize green function with random numbers (conventional)")
+                _data = self._initial_green_random_conv()
+                #_data = self._initial_green_random_conv_reshape()
+            elif green_info["initial_mode"] == "random":
+                logger.info("initialize green function with random numbers")
+                _data = self._initial_green_random_simple()
 
-        if _data is None:
-            logger.info("initialize green function with random numbers")
-            _data = self._initial_green_random()
-            # _data = self._initial_green_random_reshape()
+        if _data is None: # default = zero
+            logger.info("initialize green function with zeros")
+            _data = self._initial_green_zero()
         return _data
 
-    def _initial_green_random_reshape(self):
+    def _initial_green_zero(self):
+        nvol     = self.nvol
+        norb     = self.norb
+        ns       = self.ns
+        nd = ns * norb
+
+        green = np.zeros((nvol,ns,norb,ns,norb), dtype=np.complex128)
+        return green
+
+    def _initial_green_one(self):
+        nvol     = self.nvol
+        norb     = self.norb
+        ns       = self.ns
+        nd = ns * norb
+
+        green = np.zeros((nvol,ns,norb,ns,norb), dtype=np.complex128)
+        green[0] = np.einsum('ab,st->satb', np.identity(norb), np.identity(ns))
+        return green
+
+    def _initial_green_random_simple(self):
+        nvol     = self.nvol
+        norb     = self.norb
+        ns       = self.ns
+        nd = ns * norb
+
+        np.random.seed(self.param_mod["RndSeed"])
+        rand = np.random.rand(nvol * nd * nd).reshape(nvol,ns,norb,ns,norb)
+        green = 0.01 * (rand - 0.5)
+
+        return green
+
+    def _initial_green_random_conv_reshape(self):
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
         norb     = self.norb_orig if self.has_sublattice else self.norb
@@ -799,7 +843,7 @@ class UHFk(solver_base):
         else:
             return green
 
-    def _initial_green_random(self):
+    def _initial_green_random_conv(self):
         nvol     = self.nvol
         norb     = self.norb
         ns       = self.ns
