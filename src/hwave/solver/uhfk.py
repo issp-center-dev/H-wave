@@ -683,7 +683,7 @@ class UHFk(solver_base):
                     logger.error("{} entries".format(len(errlist)))
                     exit(1)
                 else:
-                    logger.warn(msg)
+                    logger.warning(msg)
 
     @do_profile
     def solve(self, green_info, path_to_output):
@@ -1606,7 +1606,7 @@ class UHFk(solver_base):
             self._save_greenone(file_name, green_info)
 
         if "initial" in info_outputfile.keys():
-            logger.warn("save_results: save initial is not supported")
+            logger.warning("save_results: save initial is not supported")
             pass
 
         if "rpa" in info_outputfile.keys():
