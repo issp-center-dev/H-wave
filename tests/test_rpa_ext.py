@@ -147,13 +147,13 @@ class RPAExternal:
         for idqx, kx in enumerate(kx_array):
             for idqy, ky in enumerate(ky_array):
                 _chi0 = chi0q[:, idqx, idqy, Nmat//2].real
-                #X0_mat = np.array([[_chi0[0], 0 ], [0, _chi0[1]]])
-                X0_mat = np.matrix([[_chi0[0], 0 ], [0, _chi0[1]]])
+                X0_mat = np.array([[_chi0[0], 0 ], [0, _chi0[1]]])
+                #X0_mat = np.matrix([[_chi0[0], 0 ], [0, _chi0[1]]])
                 Vq = 2.0*V*(np.cos(kx)+np.cos(ky))
                 Vss = Vq
                 Vsbs = U+Vq
                 V_mat = np.array([[Vss, Vsbs], [Vsbs, Vss]])
-                X_mat = np.dot(np.linalg.inv(I + X0_mat*V_mat), X0_mat)
+                X_mat = np.linalg.inv(I + X0_mat @ V_mat) @ X0_mat
 
                 chiq[idqx,idqy,:,:] = X_mat
                 # fw.write("{} {} {} {} {} {}\n".format(kx, ky, X_mat[0][0], X_mat[0][1], X_mat[1][0], X_mat[1][1]))
