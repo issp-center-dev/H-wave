@@ -211,6 +211,13 @@ true の場合、warning を表示して実行を継続し、 false の場合、
 ファイルは NumPy binary 形式です。
 <code class="docutils literal notranslate"><span class="pre">file.output</span></code> の <code class="docutils literal notranslate"><span class="pre">green</span></code> の出力ファイル形式に対応しています。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">initial_mode</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> 初期状態の一体グリーン関数データが指定されていない場合、初期値をどのように取るかを指定します。以下のいずれかの値を取ります。</p>
+<p><code class="docutils literal notranslate"><span class="pre">zero</span></code>: 初期値を 0 に設定します。(デフォルト)</p>
+<p><code class="docutils literal notranslate"><span class="pre">one</span></code> または <code class="docutils literal notranslate"><span class="pre">unity</span></code>: 初期値を <span class="math notranslate nohighlight">\(G_{\alpha\sigma,\beta\sigma^\prime}(\vec{r}) = \delta_{\vec{r},0}\delta_{\alpha\beta}\delta_{\sigma\sigma^\prime}\)</span> で与えます。</p>
+<p><code class="docutils literal notranslate"><span class="pre">random</span></code>: 初期値を乱数で与えます。</p>
+</li>
 </ul>
 </section>
 <section id="file-input-interaction">

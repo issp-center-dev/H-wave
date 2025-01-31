@@ -273,6 +273,17 @@ of the one-body Green’s function.
 The input file is in NumPy binary format that corresponds to the output format of
 <code class="docutils literal notranslate"><span class="pre">green</span></code> in <code class="docutils literal notranslate"><span class="pre">file.output</span></code> section.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">initial_mode</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies how the initial value of the Green’s function is set when the initial configuration is not given from files. It takes one of the following:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">zero</span></code>: set the initial configuration to be zero. (default)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">one</span></code> or <code class="docutils literal notranslate"><span class="pre">unity</span></code>: set the initial configuration as <span class="math notranslate nohighlight">\(G_{\alpha\sigma,\beta\sigma^\prime}(\vec{r}) = \delta_{\vec{r},0}\delta_{\alpha\beta}\delta_{\sigma\sigma^\prime}\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">random</span></code>: set the initial configuration by random numbers.</p></li>
+</ul>
+</li>
 </ul>
 </section>
 <section id="file-input-interaction-section">
