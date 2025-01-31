@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>green &#8212; H-wave Users Guide 1.0.0 documentation</title>
-    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=fa44fd50" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=03e43079" />
     <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=66c3864b" />
     <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=af2ce170"></script>
     <script src="../../../_static/doctools.js?v=888ff710"></script>
@@ -54,7 +54,7 @@ specified by the keyword <code class="docutils literal notranslate"><span class=
 the Green’s function in unit of the sublattice is also stored with the key <code class="docutils literal notranslate"><span class="pre">green_sublattice</span></code>.
 The indices of the data are regarded as those of the sublattice.</p>
 <p>The following code is an example for reading the data from the output file.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;green.dat.npz&quot;</span><span class="p">)</span>
 <span class="n">green</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;green&quot;</span><span class="p">]</span>
 </pre></div>
