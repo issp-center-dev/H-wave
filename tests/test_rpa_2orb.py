@@ -163,7 +163,7 @@ class RPATwoOrbital:
                 chi0 = chi0q[:,:,:,:, idqx, idqy,Nmat//2]
                 Vxq = V*(1.0+np.exp(-1J*kx))
                 Vyq = 2.0*V*np.cos(ky)
-                X0 = np.matrix(([chi0[0][0][0][0], 0, 0, chi0[0][0][1][1], 0, 0, 0, 0],
+                X0 = np.array(([chi0[0][0][0][0], 0, 0, chi0[0][0][1][1], 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [chi0[1][1][0][0], 0, 0, chi0[1][1][1][1], 0, 0, 0, 0],
@@ -171,7 +171,7 @@ class RPATwoOrbital:
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, chi0[1][1][0][0], 0, 0, chi0[1][1][1][1]]), dtype=np.complex128)
-                W =  np.matrix([[Vyq, 0, 0, np.conj(Vxq), U+Vyq, 0, 0, np.conj(Vxq)],
+                W =  np.array([[Vyq, 0, 0, np.conj(Vxq), U+Vyq, 0, 0, np.conj(Vxq)],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [Vxq, 0, 0, Vyq, Vxq, 0, 0, U+Vyq],
@@ -179,7 +179,7 @@ class RPATwoOrbital:
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [Vxq, 0, 0, U+Vyq, Vxq, 0, 0, Vyq]], dtype=np.complex128)
-                X = (I+X0@W.T).I*X0
+                X = np.linalg.inv(I + X0 @ W.T) @ X0
 
                 ham[idqx,idqy,:,:] = W
                 chi[idqx,idqy,:,:] = X

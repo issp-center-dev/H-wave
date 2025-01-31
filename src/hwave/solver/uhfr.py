@@ -166,7 +166,7 @@ class Interact_UHFr_base:
                 logger.error(msg)
                 exit(1)
             else:
-                logger.warn(msg)
+                logger.warning(msg)
 
     def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
         """Public interface for Hermiticity check.
@@ -429,7 +429,7 @@ class Term_base:
                 logger.error(msg)
                 exit(1)
             else:
-                logger.warn(msg)
+                logger.warning(msg)
 
     def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
         """Public interface for Hermiticity check.
