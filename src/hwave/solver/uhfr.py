@@ -1,3 +1,10 @@
+"""Unrestricted Hartree-Fock solver with real-space representation.
+
+This module implements the unrestricted Hartree-Fock (UHF) method for solving
+many-body quantum systems in real space. It supports both zero and finite
+temperature calculations.
+"""
+
 import itertools
 import logging
 import numpy as np
@@ -8,7 +15,28 @@ from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhfr")
 
-class Interact_UHFr_base():
+class Interact_UHFr_base:
+    """Base class for interaction terms in UHF calculations.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Dictionary containing interaction parameters
+    Nsize : int
+        System size (number of sites)
+        
+    Attributes
+    ----------
+    Nsize : int
+        System size
+    Ham_tmp : ndarray
+        Temporary array for Hamiltonian construction
+    Ham_trans_tmp : ndarray 
+        Temporary array for transformed Hamiltonian
+    param_ham : dict
+        Transformed interaction parameters
+    """
+
     def __init__(self, ham_info, Nsize):
         self.Nsize = Nsize
         self.Ham_tmp = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
@@ -16,11 +44,36 @@ class Interact_UHFr_base():
         self.param_ham = self._transform_interall(ham_info)
         self._check_range()
 
-    #Change interaction to interall type
     def _transform_interall(self, ham_info):
+        """Transform interaction parameters to internal format.
+        
+        Parameters
+        ----------
+        ham_info : dict
+            Input interaction parameters
+            
+        Returns
+        -------
+        dict
+            Transformed parameters
+        """
         return ham_info
 
     def _calc_hartree(self):
+        """Calculate Hartree terms in the Hamiltonian.
+        
+        Calculates the diagonal Hartree terms in the Hamiltonian by iterating through
+        interaction parameters and adding contributions to Ham_tmp and Ham_trans_tmp.
+        
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        None
+            Updates self.Ham_tmp and self.Ham_trans_tmp arrays
+        """
         site = np.zeros(4, dtype=np.int32)
         for site_info, value in self.param_ham.items():
             for i in range(4):
@@ -33,6 +86,20 @@ class Interact_UHFr_base():
         pass
 
     def _calc_fock(self):
+        """Calculate Fock exchange terms in the Hamiltonian.
+        
+        Calculates the off-diagonal Fock exchange terms in the Hamiltonian by iterating
+        through interaction parameters and adding contributions to Ham_tmp.
+        
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        None
+            Updates self.Ham_tmp array
+        """
         site = np.zeros(4,dtype=np.int32)
         for site_info, value in self.param_ham.items():
             for i in range(4):
@@ -43,13 +110,28 @@ class Interact_UHFr_base():
         pass
 
     def get_ham(self, type):
+        """Get the Hamiltonian matrices.
+        
+        Calculates and returns the Hartree and Fock terms of the Hamiltonian.
+        
+        Parameters
+        ----------
+        type : str
+            Type of calculation - either "hartree" or "hartreefock"
+            
+        Returns
+        -------
+        tuple of ndarray
+            (Ham_tmp, Ham_trans_tmp) containing the Hamiltonian matrices
+        """
         self._calc_hartree()
         if type == "hartreefock":
             self._calc_fock()
         return self.Ham_tmp, self.Ham_trans_tmp
 
-    # check input
+
     def _check_range(self):
+        """Check that site indices are within valid range."""
         err = 0
         for site_info, value in self.param_ham.items():
             for i in range(4):
@@ -62,6 +144,15 @@ class Interact_UHFr_base():
             exit(1)
 
     def _check_hermite(self, strict_hermite, tolerance):
+        """Check Hermiticity of interaction parameters.
+        
+        Parameters
+        ----------
+        strict_hermite : bool
+            If True, exit on Hermiticity violation
+        tolerance : float
+            Tolerance for Hermiticity check
+        """
         err = 0
         for site_info, value in self.param_ham.items():
             list = tuple([site_info[i] for i in [6,7,4,5,2,3,0,1]])
@@ -78,9 +169,27 @@ class Interact_UHFr_base():
                 logger.warn(msg)
 
     def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
+        """Public interface for Hermiticity check.
+        
+        Parameters
+        ----------
+        strict_hermite : bool, optional
+            If True, exit on Hermiticity violation
+        tolerance : float, optional
+            Tolerance for Hermiticity check
+        """
         self._check_hermite(strict_hermite, tolerance)
 
 class CoulombIntra_UHFr(Interact_UHFr_base):
+    """On-site Coulomb interaction term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "CoulombIntra"
         super().__init__(ham_info, Nsize)
@@ -92,6 +201,15 @@ class CoulombIntra_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class CoulombInter_UHFr(Interact_UHFr_base):
+    """Inter-site Coulomb interaction term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters  
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "CoulombInter"
         super().__init__(ham_info, Nsize)
@@ -104,6 +222,15 @@ class CoulombInter_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class Hund_UHFr(Interact_UHFr_base):
+    """Hund's coupling term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "Hund"
         super().__init__(ham_info, Nsize)
@@ -116,6 +243,15 @@ class Hund_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class PairHop_UHFr(Interact_UHFr_base):
+    """Pair hopping term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "PairHop"
         super().__init__(ham_info, Nsize)
@@ -129,6 +265,15 @@ class PairHop_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class Exchange_UHFr(Interact_UHFr_base):
+    """Exchange interaction term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "Exchange"
         super().__init__(ham_info, Nsize)
@@ -142,6 +287,15 @@ class Exchange_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class Ising_UHFr(Interact_UHFr_base):
+    """Ising interaction term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "Ising"
         super().__init__(ham_info, Nsize)
@@ -154,6 +308,15 @@ class Ising_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class PairLift_UHFr(Interact_UHFr_base):
+    """Pair lifting term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, ham_info, Nsize):
         self.__name__ = "PairLift"
         super().__init__(ham_info, Nsize)
@@ -167,6 +330,19 @@ class PairLift_UHFr(Interact_UHFr_base):
         return param_tmp
 
 class InterAll_UHFr(Interact_UHFr_base):
+    """General interaction term.
+    
+    Parameters
+    ----------
+    ham_info : dict
+        Interaction parameters
+    Nsize : int
+        System size
+    strict_hermite : bool
+        If True, exit on Hermiticity violation
+    tolerance : float
+        Tolerance for Hermiticity check
+    """
     def __init__(self, ham_info, Nsize, strict_hermite, tolerance):
         self.__name__ = "InterAll"
         super().__init__(ham_info, Nsize)
@@ -175,6 +351,26 @@ class InterAll_UHFr(Interact_UHFr_base):
         return ham_info
 
 class Term_base:
+    """Base class for single-particle terms.
+    
+    Parameters
+    ----------
+    term_info : dict
+        Term parameters
+    Nsize : int
+        System size
+    coeff : float, optional
+        Overall coefficient
+        
+    Attributes
+    ----------
+    Nsize : int
+        System size
+    term_info : dict
+        Term parameters
+    coeff : float
+        Overall coefficient
+    """
     def __init__(self, term_info, Nsize, coeff=1.0):
         self.Nsize = Nsize
         self.term_info = term_info
@@ -182,6 +378,13 @@ class Term_base:
         self._check_range()
 
     def get_data(self):
+        """Get matrix representation of term.
+        
+        Returns
+        -------
+        ndarray
+            Matrix representation
+        """
         data = np.zeros(tuple([(2 * self.Nsize) for i in range(2)]), dtype=complex)
         for site_info, value in self.term_info.items():
             # set value
@@ -191,6 +394,7 @@ class Term_base:
         return data
 
     def _check_range(self):
+        """Check that site indices are within valid range."""
         err = 0
         for site_info, value in self.term_info.items():
             for i in range(2):
@@ -203,6 +407,15 @@ class Term_base:
             exit(1)
 
     def _check_hermite(self, strict_hermite, tolerance):
+        """Check Hermiticity of term parameters.
+        
+        Parameters
+        ----------
+        strict_hermite : bool
+            If True, exit on Hermiticity violation
+        tolerance : float
+            Tolerance for Hermiticity check
+        """
         err = 0
         for site_info, value in self.term_info.items():
             list = tuple([site_info[i] for i in [2,3,0,1]])
@@ -219,14 +432,41 @@ class Term_base:
                 logger.warn(msg)
 
     def check_hermite(self, strict_hermite=False, tolerance=1.0e-8):
+        """Public interface for Hermiticity check.
+        
+        Parameters
+        ----------
+        strict_hermite : bool, optional
+            If True, exit on Hermiticity violation
+        tolerance : float, optional
+            Tolerance for Hermiticity check
+        """
         self._check_hermite(strict_hermite, tolerance)
 
 class Transfer_UHFr(Term_base):
+    """Hopping term.
+    
+    Parameters
+    ----------
+    term_info : dict
+        Hopping parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, term_info, Nsize):
         self.__name__ = "Transfer"
         super().__init__(term_info, Nsize, coeff=-1.0)
 
 class Green_UHFr(Term_base):
+    """Green's function term.
+    
+    Parameters
+    ----------
+    term_info : dict
+        Green's function parameters
+    Nsize : int
+        System size
+    """
     def __init__(self, term_info, Nsize):
         self.__name__ = "Green"
         super().__init__(term_info, Nsize, coeff=1.0)
@@ -235,6 +475,40 @@ class Green_UHFr(Term_base):
 from .base import solver_base
 
 class UHFr(solver_base):
+    """Unrestricted Hartree-Fock solver.
+    
+    Parameters
+    ----------
+    param_ham : dict
+        Hamiltonian parameters
+    info_log : dict
+        Logging parameters
+    info_mode : dict
+        Mode parameters
+    param_mod : dict, optional
+        Model parameters
+        
+    Attributes
+    ----------
+    name : str
+        Solver name
+    physics : dict
+        Physical quantities
+    iflag_fock : bool
+        Include Fock terms if True
+    ene_cutoff : float
+        Energy cutoff for finite temperature
+    T : float
+        Temperature
+    strict_hermite : bool
+        Strict Hermiticity check
+    hermite_tolerance : float
+        Tolerance for Hermiticity
+    Nsize : int
+        System size
+    Ncond : int
+        Number of particles
+    """
     @do_profile
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         self.name = "uhfr"
@@ -275,6 +549,15 @@ class UHFr(solver_base):
 
     @do_profile
     def solve(self, green_info, path_to_output):
+        """Solve the UHF equations.
+        
+        Parameters
+        ----------
+        green_info : dict
+            Green's function parameters
+        path_to_output : str
+            Output directory path
+        """
         print_level = self.info_log["print_level"]
         print_step = self.info_log["print_step"]
         print_check = self.info_log.get("print_check", None)
@@ -327,6 +610,18 @@ class UHFr(solver_base):
 
     @do_profile
     def _initial_G(self, green_info):
+        """Initialize Green's function.
+        
+        Parameters
+        ----------
+        green_info : dict
+            Green's function parameters
+            
+        Returns
+        -------
+        ndarray
+            Initial Green's function
+        """
         _green_list = self.green_list
         green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         if green_info["Initial"] is not None:
@@ -364,6 +659,7 @@ class UHFr(solver_base):
 
     @do_profile
     def _makeham_const(self):
+        """Initialize constant part of Hamiltonian."""
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Transfer integrals
         trans = Transfer_UHFr(self.param_ham["Transfer"], self.Nsize)
@@ -372,6 +668,7 @@ class UHFr(solver_base):
 
     @do_profile
     def _makeham(self):
+        """Construct full Hamiltonian."""
         import time
         self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         self.Ham = self.Ham_trans.copy()
@@ -381,6 +678,7 @@ class UHFr(solver_base):
 
     @do_profile
     def _makeham_mat(self):
+        """Construct interaction matrix."""
         # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         if self.iflag_fock is True:
@@ -420,6 +718,7 @@ class UHFr(solver_base):
 
     @do_profile
     def _diag(self):
+        """Diagonalize Hamiltonian."""
         _green_list = self.green_list
         for k, block_g_info in _green_list.items():
             g_label = block_g_info["label"]
@@ -437,6 +736,20 @@ class UHFr(solver_base):
 
     @do_profile
     def _fermi(self, mu, eigenvalue):
+        """Calculate Fermi-Dirac distribution.
+        
+        Parameters
+        ----------
+        mu : float
+            Chemical potential
+        eigenvalue : ndarray
+            Eigenvalues
+            
+        Returns
+        -------
+        ndarray
+            Fermi-Dirac distribution
+        """
         fermi = np.zeros(eigenvalue.shape)
         for idx, value in enumerate(eigenvalue):
             if (value - mu) / self.T > self.ene_cutoff:
@@ -447,88 +760,236 @@ class UHFr(solver_base):
 
     @do_profile
     def _green(self):
+        """Calculate Green's function.
+        
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        None
+            Updates self.Green and self.Green_old attributes
+            
+        Notes
+        -----
+        For T=0:
+        Constructs Green's function from occupied eigenvectors using:
+        G = U^* U^T where U contains occupied eigenvectors
+        
+        For T>0:
+        1. Finds chemical potential mu by solving particle number equation
+        2. Calculates Fermi-Dirac occupations
+        3. Constructs Green's function using eigenvectors and occupations
+        """
         _green_list = self.green_list
         # R_SLT = U^{*} in _green
         # L_SLT = U^T in _green
         R_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         L_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        # Copy Green_old
+        # Store previous Green's function for convergence check
         self.Green_old = self.Green.copy()
-        if self.T == 0:
+
+        if self.T == 0:  # Zero temperature case
             for k, block_g_info in _green_list.items():
-                g_label = block_g_info["label"]
-                # occupied: return the occupied number
-                occupied_number = block_g_info["occupied"]
-                eigenvec = self.green_list[k]["eigenvector"]
-                eigen_start = self.green_list[k]["eigen_start"]
+                g_label = block_g_info["label"]  # List of orbital indices for this block
+                occupied_number = block_g_info["occupied"]  # Number of occupied states
+                eigenvec = self.green_list[k]["eigenvector"]  # Eigenvectors for this block
+                eigen_start = self.green_list[k]["eigen_start"]  # Starting index for eigenvalues
+
+                # Construct Green's function from occupied eigenvectors
+                # G = U^* U^T where U contains occupied eigenvectors
                 for eigen_i in range(occupied_number):
-                    evec_i = eigenvec[:, eigen_i]
+                    evec_i = eigenvec[:, eigen_i]  # Get i-th eigenvector
                     for idx, org_site in enumerate(g_label):
+                        # Build U^* and U^T matrices
                         R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
                         L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
+
+            # Multiply matrices to get Green's function
             RMat = np.dot(R_SLT, L_SLT)
             self.Green = RMat.copy()
-        else: # for finite temperatures
+
+        else:  # Finite temperature case
             from scipy import optimize
 
+            # Function to find chemical potential by solving particle number equation
             def _calc_delta_n(mu):
+                # Calculate occupation numbers for each eigenstate
                 n_eigen = np.einsum("ij, ij -> j", np.conjugate(eigenvec), eigenvec).real
+                # Get Fermi-Dirac distribution
                 fermi = self._fermi(mu, eigenvalue)
+                # Return difference from target particle number
                 return np.dot(n_eigen, fermi)-occupied_number
 
+            # Initialize Green's function
             self.Green = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
+
             for k, block_g_info in _green_list.items():
-                g_label = block_g_info["label"]
-                eigenvalue = self.green_list[k]["eigenvalue"]
-                eigenvec = self.green_list[k]["eigenvector"]
-                occupied_number = block_g_info["occupied"]
+                g_label = block_g_info["label"]  # Orbital indices
+                eigenvalue = self.green_list[k]["eigenvalue"]  # Eigenvalues
+                eigenvec = self.green_list[k]["eigenvector"]  # Eigenvectors  
+                occupied_number = block_g_info["occupied"]  # Target particle number
 
-                #determine mu
+                # Find chemical potential using bisection method first
                 is_converged = False
-
                 if (_calc_delta_n(eigenvalue[0]) * _calc_delta_n(eigenvalue[-1])) < 0.0:
                     mu, r = optimize.bisect(_calc_delta_n, eigenvalue[0], eigenvalue[-1], full_output=True, disp=False)
                     is_converged = r.converged
+
+                # If bisection fails, try Newton's method
                 if not is_converged:
                     mu, r = optimize.newton(_calc_delta_n, eigenvalue[0], full_output=True)
                     is_converged = r.converged
+
+                # Exit if chemical potential cannot be found
                 if not is_converged:
                     logger.error("find mu: not converged. abort")
                     exit(1)
 
+                # Store chemical potential
                 self.green_list[k]["mu"] = mu
+
+                # Calculate Fermi-Dirac occupations
                 fermi = self._fermi(mu, eigenvalue)
+
+                # Construct Green's function using eigenvectors and occupations
+                # G = U^* f U where f is diagonal matrix of Fermi-Dirac occupations
                 tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
+
+                # Store block of Green's function
                 for idx1, org_site1 in enumerate(g_label):
                     for idx2, org_site2 in enumerate(g_label):
                         self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
 
     @do_profile
     def _calc_energy(self):
+        """Calculate total energy and its components.
+        
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        None
+            Updates self.physics["Ene"] with dictionary containing:
+            - "band": Band energy
+            - "InterAll": Interaction energy  
+            - "Total": Total energy
+        """
         _green_list = self.green_list
         Ene = {}
         Ene["band"] = 0
-        if self.T == 0:
-            for k, block_g_info in _green_list.items():
-                eigenvalue = self.green_list[k]["eigenvalue"]
-                occupied_number = block_g_info["occupied"]
-                Ene["band"] += np.sum(eigenvalue[:occupied_number])
-        else:
 
-            for k, block_g_info in _green_list.items():
-                eigenvalue = self.green_list[k]["eigenvalue"]
-                eigenvec = self.green_list[k]["eigenvector"]
-                mu = self.green_list[k]["mu"]
+        def _calc_zero_temp_energy(green_list):
+            """Calculate band energy for zero temperature case.
+            
+            Parameters
+            ----------
+            green_list : dict
+                Dictionary containing Green's function blocks
+                
+            Returns
+            -------
+            float
+                Band energy at zero temperature
+                
+            Notes
+            -----
+            At T=0, band energy is simply sum of occupied eigenvalues.
+            Loops through each block in Green's function and sums eigenvalues
+            up to the occupation number for that block.
+            """
+            energy = 0
+            # Loop through each block (spin up/down or sz-free)
+            for k, block_g_info in green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]  # Get eigenvalues for this block
+                occupied_number = block_g_info["occupied"]     # Number of occupied states
+                # Sum up eigenvalues of occupied states only
+                energy += np.sum(eigenvalue[:occupied_number]) 
+            return energy
+
+        def _calc_log_terms(eigenvalue, mu):
+            """Calculate logarithmic terms in grand potential.
+            
+            Parameters
+            ----------
+            eigenvalue : ndarray
+                Array of eigenvalues
+            mu : float
+                Chemical potential
+                
+            Returns
+            -------
+            ndarray
+                Array of logarithmic terms
+                
+            Notes
+            -----
+            Calculates ln(1 + exp(-(e-mu)/T)) for each eigenvalue.
+            Uses cutoff to avoid numerical overflow:
+            - If -(e-mu)/T < cutoff: use log1p for numerical stability
+            - If -(e-mu)/T >= cutoff: approximate as -(e-mu)/T
+            """
+            ln_Ene = np.zeros(eigenvalue.shape)
+            for idx, value in enumerate(eigenvalue):
+                # Check if exponential will overflow
+                if -(value - mu) / self.T < self.ene_cutoff:
+                    # Use log1p for numerical stability
+                    ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
+                else:
+                    # For large negative arguments, approximate as -(e-mu)/T
+                    ln_Ene[idx] = -(value - mu) / self.T
+            return ln_Ene
+    
+        def _calc_finite_temp_energy(green_list):
+            """Calculate band energy for finite temperature case.
+            
+            Parameters
+            ----------
+            green_list : dict
+                Dictionary containing Green's function blocks
+                
+            Returns
+            -------
+            float
+                Band energy at finite temperature
+                
+            Notes
+            -----
+            At finite T, band energy includes:
+            1. Chemical potential term: mu * n where n is particle number
+            2. Entropy term: -T * sum(ln(1 + exp(-(e-mu)/T)))
+            Uses Fermi-Dirac distribution and logarithmic terms.
+            """
+            energy = 0
+            # Loop through each block (spin up/down or sz-free)
+            for k, block_g_info in green_list.items():
+                eigenvalue = self.green_list[k]["eigenvalue"]  # Get eigenvalues
+                eigenvec = self.green_list[k]["eigenvector"]   # Get eigenvectors  
+                mu = self.green_list[k]["mu"]                  # Chemical potential
+                
+        
+                # Calculate Fermi-Dirac occupations
                 fermi = self._fermi(mu, eigenvalue)
-
-                ln_Ene = np.zeros(eigenvalue.shape)
-                for idx, value in enumerate(eigenvalue):
-                    if -(value - mu) / self.T < self.ene_cutoff:
-                        ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
-                    else:
-                        ln_Ene[idx] = -(value - mu) / self.T
+                # Calculate logarithmic terms for entropy
+                ln_Ene = _calc_log_terms(eigenvalue, mu)
+                # Calculate particle number using eigenvectors and occupations
                 tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
-                Ene["band"] += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
+                
+                # Add mu*N term and entropy term
+                energy += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
+            return energy      
+   
+        
+        # Zero temperature case - sum up energies of occupied states
+        if self.T == 0:
+            Ene["band"] = _calc_zero_temp_energy(_green_list)
+        else:
+            Ene["band"] = _calc_finite_temp_energy(_green_list)
+
+
 
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
@@ -543,6 +1004,24 @@ class UHFr(solver_base):
 
     @do_profile
     def _calc_phys(self):
+        """Calculate physical observables.
+        
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        None
+            Updates self.physics with:
+            - "NCond": Total particle number
+            - "Sz": Total spin z component
+            - "Rest": Convergence measure
+            
+        Notes
+        -----
+        Also performs mixing of old and new Green's functions for convergence
+        """
         n = 0
         for site in range(2 * self.Nsize):
             n += self.Green[site][site]
@@ -564,10 +1043,33 @@ class UHFr(solver_base):
 
     @do_profile
     def get_results(self):
+        """Get calculation results.
+        
+        Returns
+        -------
+        tuple
+            (physics, Green) where:
+            - physics: Dictionary of physical observables
+            - Green: Green's function matrix
+        """
         return (self.physics, self.Green)
 
     @do_profile
     def save_results(self, info_outputfile, green_info):
+        """Save calculation results to files.
+        
+        Parameters
+        ----------
+        info_outputfile : dict
+            Dictionary specifying output files and paths
+        green_info : dict
+            Dictionary containing Green's function information
+            
+        Returns
+        -------
+        None
+            Writes results to files specified in info_outputfile
+        """
         path_to_output = info_outputfile["path_to_output"]
 
         if "energy" in info_outputfile.keys():
@@ -662,4 +1164,11 @@ class UHFr(solver_base):
 
     @do_profile
     def get_Ham(self):
+        """Get Hamiltonian matrix.
+        
+        Returns
+        -------
+        ndarray
+            Hamiltonian matrix
+        """
         return self.Ham

@@ -1,3 +1,15 @@
+"""Input file reader for k-space calculations.
+
+This module provides functionality to read and parse input files for k-space 
+calculations in QLMS. It handles geometry, transfer integrals, and various 
+interaction terms.
+
+Classes
+-------
+QLMSkInput
+    Reads and parses input files for k-space calculations.
+"""
+
 import logging
 import numpy as np
 import sys
@@ -10,6 +22,46 @@ logger = logging.getLogger("qlms").getChild("read_input")
 
 
 class QLMSkInput():
+    """Input file reader for k-space calculations.
+    
+    Parameters
+    ----------
+    info_inputfile : dict
+        Dictionary containing input file information with keys:
+        - path_to_input : str
+            Path to input file directory
+        - interaction : dict
+            Dictionary specifying interaction files
+        - initial : str, optional
+            Filename for initial Green's function in k-space (NPZ format)
+        - initial_uhf : str, optional
+            Filename for initial Green's function in real space
+        - geometry_uhf : str, optional
+            Filename for geometry in real space
+        - onebodyg_uhf : str, optional
+            Filename for one-body Green's function indices
+    solver_type : str, optional
+        Type of solver to use (default: "UHFk")
+        
+    Attributes
+    ----------
+    valid_namelist : list
+        List of valid input file section names
+    ham_param : CaseInsensitiveDict
+        Dictionary storing Hamiltonian parameters
+    green : CaseInsensitiveDict
+        Dictionary storing Green's function data
+        
+    Methods
+    -------
+    get_param(key)
+        Get parameters by key
+    _read_data(file_name, value_type)
+        Read data from file into dictionary
+    _read_green(file_name) 
+        Read Green's function indices from file
+    """
+
     valid_namelist = [s.lower() for s in ["path_to_input", "Geometry", "Transfer", "CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop", "Extern"]]
 
     def __init__(self, info_inputfile, solver_type="UHFk"):
@@ -78,6 +130,10 @@ class QLMSkInput():
                 logger.info("QLMSkInput: read initial_uhf from {}".format(file_name))
                 self.green["initial_uhf"] = self._read_data(file_name, "complex")
 
+        #- how to set initial green function when file is not given
+        if "initial_mode" in info_inputfile:
+            self.green["initial_mode"] = info_inputfile["initial_mode"]
+
         #- geometry.dat is required to handle data in coordinate space
         if "geometry_uhf" in info_inputfile:
             file_name = os.path.join(input_file_dir, info_inputfile["geometry_uhf"])
@@ -91,6 +147,25 @@ class QLMSkInput():
             self.green["onebodyg_uhf"] = self._read_green(file_name)
 
     def _read_data(self, file_name, value_type="real"):
+        """Read data from file into dictionary.
+        
+        Parameters
+        ----------
+        file_name : str
+            Name of file to read
+        value_type : str, optional
+            Type of values to read ("real" or "complex")
+            
+        Returns
+        -------
+        dict
+            Dictionary containing data read from file
+            
+        Raises
+        ------
+        FileNotFoundError
+            If input file is not found
+        """
         info = {}
         try:
             data = np.loadtxt(file_name, skiprows = 5)
@@ -110,6 +185,23 @@ class QLMSkInput():
         return info
 
     def _read_green(self, file_name):
+        """Read Green's function indices from file.
+        
+        Parameters
+        ----------
+        file_name : str
+            Name of file to read
+            
+        Returns
+        -------
+        ndarray
+            Array of Green's function indices
+            
+        Raises
+        ------
+        FileNotFoundError
+            If input file is not found
+        """
         try:
             _data = np.loadtxt(file_name, dtype=np.int32, skiprows = 5)
         except FileNotFoundError:
@@ -118,6 +210,21 @@ class QLMSkInput():
         return _data
 
     def get_param(self, key):
+        """Get parameters by key.
+        
+        Parameters
+        ----------
+        key : str
+            Key to retrieve parameters for:
+            - "mod"/"parameter": Returns None
+            - "ham"/"hamiltonian": Returns Hamiltonian parameters
+            - "output"/"green": Returns Green's function data
+            
+        Returns
+        -------
+        CaseInsensitiveDict or None
+            Requested parameters or None if key is invalid
+        """
         if key == "mod" or key == "parameter":
             return None
         elif key == "ham" or key == "hamiltonian":
