@@ -69,4 +69,6 @@ H-wave was tested on the following platforms
 Reference
 ----------------------------------------------------------------
 
-"H-wave -- A Python package for the Hartree-Fock approximation and the random phase approximation", Tatsumi Aoyama, Kazuyoshi Yoshimi, Kota Ido, Yuichi Motoyama, Taiki Kawamura, Takahiro Misawa, Takeo Kato, and Akito Kobayashi, `arXiv:2308.00324 [cond-mat.str-el] <https://arxiv.org/abs/2308.00324>`_.
+"H-wave -- A Python package for the Hartree-Fock approximation and the random phase approximation", Tatsumi Aoyama, Kazuyoshi Yoshimi, Kota Ido, Yuichi Motoyama, Taiki Kawamura, Takahiro Misawa, Takeo Kato, and Akito Kobayashi,
+`Computer Physics Communications, 298, 109087 (2024) <https://doi.org/10.1016/j.cpc.2024.109087>`_
+(`arXiv:2308.00324 [cond-mat.str-el] <https://arxiv.org/abs/2308.00324>`_).
