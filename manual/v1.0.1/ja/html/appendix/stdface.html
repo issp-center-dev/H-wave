@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>8.1. StdFaceを用いた相互作用ファイルの作成 &#8212; H-waveマニュアル 1.0.1 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=66c3864b" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=924edec7"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../_static/translations.js?v=4dbe4bdc"></script>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="検索" href="../search.html" />
+    <link rel="next" title="8.2. エラーメッセージ一覧" href="message/msg-index.html" />
+    <link rel="prev" title="8. Appendix" href="app-index.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="stdface">
+<span id="ch-stdface"></span><h1><span class="section-number">8.1. </span>StdFaceを用いた相互作用ファイルの作成<a class="headerlink" href="#stdface" title="この見出しへのパーマリンク">¶</a></h1>
+<section id="id1">
+<h2><span class="section-number">8.1.1. </span>StdFaceライブラリのコンパイル<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h2>
+<p>H-waveで使用する相互作用定義ファイルは、StdFaceライブラリを使用することで簡単に作成することができます。
+以下ではStdFaceライブラリを使用した入力ファイルの作成を行う方法を記載します。</p>
+<p>H-waveに対応した StdFace ライブラリは以下から取得できます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/issp-center-dev/StdFace.git
+</pre></div>
+</div>
+<p>ダウンロード終了後、以下のコマンドでコンパイルを行います。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>StdFace
+$<span class="w"> </span>mkdir<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>build
+$<span class="w"> </span>cmake<span class="w"> </span>-DHWAVE<span class="o">=</span>ON<span class="w"> </span>..
+$<span class="w"> </span>make
+</pre></div>
+</div>
+<p>コンパイルに成功すると、 <code class="docutils literal notranslate"><span class="pre">src</span></code> ディレクトリに実行ファイル <code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code> ができます。</p>
+</section>
+<section id="id2">
+<h2><span class="section-number">8.1.2. </span>StdFaceライブラリの使用<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code> の入力ファイルはサンプルディレクトリ内の <code class="docutils literal notranslate"><span class="pre">stan.in</span></code> ファイルにそれぞれ置いてあります。
+ファイルの内容は以下のとおりです。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>model = &quot;Hubbard&quot;
+lattice = &quot;square&quot;
+W = 4
+L = 4
+t = 1.0
+t&#39; = 0.5
+U = 4.0
+V = 1.0
+Ncond = 16
+eps = 12
+calcmode = &quot;uhfk&quot;
+exportall = 0
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">model</span></code> は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 <code class="docutils literal notranslate"><span class="pre">Hubbard</span></code> のみに対応しています。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">lattice</span></code> は結晶構造を指定するキーワードです。 ここでは正方格子 <code class="docutils literal notranslate"><span class="pre">square</span></code> を選択しています。 <code class="docutils literal notranslate"><span class="pre">W</span></code>, <code class="docutils literal notranslate"><span class="pre">L</span></code> は格子のサイズです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">t</span></code> はホッピング、 <code class="docutils literal notranslate"><span class="pre">V</span></code> は隣接サイトクーロン相互作用のパラメータです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calcmode</span></code> は出力形式を指定します。
+<code class="docutils literal notranslate"><span class="pre">&quot;uhfk&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;rpa&quot;</span></code> を指定した場合はWannier90(-like)形式の入力ファイルを生成します。
+<code class="docutils literal notranslate"><span class="pre">&quot;uhfr&quot;</span></code> を指定した場合はH-waveの実空間UHFプログラムUHFr向けの入力ファイルを出力します。
+デフォルトは <code class="docutils literal notranslate"><span class="pre">calcmode</span> <span class="pre">=</span> <span class="pre">&quot;uhfk&quot;</span></code> です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">exportall</span> <span class="pre">=</span> <span class="pre">0</span></code> はWannier90(-like)形式の出力をコンパクトにするオプションです。</p></li>
+</ul>
+<p>入力ファイルの詳細については、<a class="reference internal" href="../uhfr/filespecification/inputfiles/index_inputfiles.html#ch-howtoexpert"><span class="std std-ref">UHFr用入力ファイル</span></a> , <a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/index_inputfiles_uhfk.html#ch-howtowannier90"><span class="std std-ref">UHFk用入力ファイル</span></a> , <a class="reference internal" href="../rpa/filespecification/inputfiles/index_inputfiles.html#ch-howtowannier90-rpa"><span class="std std-ref">RPA用入力ファイル</span></a> のセクションを参照してください。</p>
+<p>上記のファイルを入力ファイルとして、 <code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code> を以下のコマンドで実行します。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>path_to_Hwave/docs/tutorial/Hubbard/RPA
+$<span class="w"> </span>ln<span class="w"> </span>-s<span class="w"> </span>path_to_Stdface/build/src/hwave_dry.out<span class="w"> </span>.
+$<span class="w"> </span>./hwave_dry.out<span class="w"> </span>stan.in
+</pre></div>
+</div>
+<p>実行終了後、実行ディレクトリに幾何情報ファイル <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> 、相互作用定義ファイル <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code> が生成されます。
+StdFaceライブラリで指定できる格子や相互作用の種類については、 HΦもしくはmVMCのマニュアルにあるスタンダードモードの入力ファイル形式を参照してください。</p>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../index.html">
+    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">6. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="app-index.html">8. Appendix</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">8.1. StdFaceを用いた相互作用ファイルの作成</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id1">8.1.1. StdFaceライブラリのコンパイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id2">8.1.2. StdFaceライブラリの使用</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="message/msg-index.html">8.2. エラーメッセージ一覧</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+  <li><a href="app-index.html"><span class="section-number">8. </span>Appendix</a><ul>
+      <li>Previous: <a href="app-index.html" title="前の章へ"><span class="section-number">8. </span>Appendix</a></li>
+      <li>Next: <a href="message/msg-index.html" title="次の章へ"><span class="section-number">8.2. </span>エラーメッセージ一覧</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.1.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../_sources/appendix/stdface.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>5.1. チュートリアル &#8212; H-waveマニュアル 1.0.1 ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=66c3864b" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js?v=924edec7"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../_static/translations.js?v=4dbe4bdc"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="検索" href="../../search.html" />
+    <link rel="next" title="5.2. ファイルフォーマット" href="../filespecification/fi-index.html" />
+    <link rel="prev" title="5. 乱雑位相近似 (RPA)" href="../rpa-index.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="id1">
+<h1><span class="section-number">5.1. </span>チュートリアル<a class="headerlink" href="#id1" title="この見出しへのパーマリンク">¶</a></h1>
+<p>H-waveを乱雑位相近似モード(RPA)で実行するには、入力ファイルとして</p>
+<ol class="arabic simple">
+<li><p>環境設定入力ファイル</p></li>
+<li><p>相互作用定義ファイル</p></li>
+</ol>
+<p>を用意した後、プログラムを実行します。
+以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。
+相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a> の章をご覧ください。</p>
+<section id="id2">
+<h2><span class="section-number">5.1.1. </span>環境設定入力ファイルの作成<a class="headerlink" href="#id2" title="この見出しへのパーマリンク">¶</a></h2>
+<p>環境設定入力ファイルには、基本パラメータの指定と入出力を制御する情報を記述します。
+<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code> ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> というファイルがありますが、これが入力パラメータファイルになります。
+以下、ファイルの内容を記載します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;RPA&quot;
+
+[mode.param]
+  T = 0.5
+  # mu = 0.0
+  CellShape = [32,32,1]
+  SubShape = [1,1,1]
+  nmat = 1024
+  # Ncond = 1024
+  filling = 0.5
+  matsubara_frequency = &quot;all&quot;
+
+[file]
+[file.input]
+  path_to_input = &quot;input&quot;
+  # initial = &quot;initial.dat&quot;
+  # chi0q_init = &quot;chi0q.npz&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chiq = &quot;chiq&quot;
+  chi0q = &quot;chi0q&quot;
+
+</pre></div>
+</div>
+<p>このファイルはTOML形式で記述され、内容ごとにセクションに分類されています。</p>
+<section id="log">
+<h3><code class="docutils literal notranslate"><span class="pre">[log]</span></code> セクション<a class="headerlink" href="#log" title="この見出しへのパーマリンク">¶</a></h3>
+<p>ログ出力に関する設定を行います。
+<code class="docutils literal notranslate"><span class="pre">print_level</span></code> で標準出力のレベルを指定します。</p>
+</section>
+<section id="mode">
+<h3><code class="docutils literal notranslate"><span class="pre">[mode]</span></code> セクション<a class="headerlink" href="#mode" title="この見出しへのパーマリンク">¶</a></h3>
+<p>実行モードに関する設定および基本パラメータの指定を行います。
+<code class="docutils literal notranslate"><span class="pre">mode</span></code> で乱雑位相近似(<code class="docutils literal notranslate"><span class="pre">RPA</span></code>)を選択します。
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> サブセクションには計算実行時のパラメータを指定します。</p>
+</section>
+<section id="file">
+<h3><code class="docutils literal notranslate"><span class="pre">[file]</span></code> セクション<a class="headerlink" href="#file" title="この見出しへのパーマリンク">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> サブセクションでは、入力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> を指定します。
+以前に計算した既約感受率 <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span> のデータを <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> に指定したファイルから読み込んで感受率の計算を行うことができます。
+<code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> サブセクションには、幾何情報および相互作用定義を格納するファイルのファイル名を相互作用のタイプごとに列挙します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> サブセクションには、
+既約感受率 <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span> を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> 、
+感受率 <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span> を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> を指定します。
+これらのキーワードがない場合にはその項目は出力されません。</p>
+<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+</section>
+</section>
+<section id="id3">
+<h2><span class="section-number">5.1.2. </span>相互作用定義ファイルの作成<a class="headerlink" href="#id3" title="この見出しへのパーマリンク">¶</a></h2>
+<p>Hamiltonianを構築するための格子の幾何情報および相互作用係数を格納したデータファイルを作成します。
+項目とファイル名の対応付けは、入力パラメータファイルの <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> セクションで行います。</p>
+<section id="geometry">
+<h3><code class="docutils literal notranslate"><span class="pre">Geometry</span></code><a class="headerlink" href="#geometry" title="この見出しへのパーマリンク">¶</a></h3>
+<p>格子の幾何情報を記述します。ファイル例を以下に示します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+1
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+</pre></div>
+</div>
+<p>基本ベクトル(1〜3行目)、軌道の数(4行目)、各軌道のWannier center(5行目以降)を記載します。</p>
+</section>
+<section id="transfer-coulombintra-coulombinter-hund-etc">
+<h3><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, etc<a class="headerlink" href="#transfer-coulombintra-coulombinter-hund-etc" title="この見出しへのパーマリンク">¶</a></h3>
+<p>Transferに指定するファイルは、電子系のTransferに相当するHamiltonianの係数を格納します。
+また、二体相互作用の係数は相互作用のタイプごとに係数を格納するファイルを指定します。</p>
+<p>相互作用のタイプは、実空間版および波数空間版UHFの入力ファイル形式と対応して、CoulombItra, CoulombInter, Hund, Ising, Exchange, PairLift, PairHop が定義されています。</p>
+<p>これらのファイルはWannier90(-like)形式で記述されます。以下に例を示します。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+1
+9
+ 1 1 1 1 1 1 1 1 1
+  -1   -1    0    1    1  0.500000000000  -0.000000000000
+  -1    0    0    1    1  1.000000000000  -0.000000000000
+   0   -1    0    1    1  1.000000000000  -0.000000000000
+   0    1    0    1    1  1.000000000000   0.000000000000
+   1    0    0    1    1  1.000000000000   0.000000000000
+   1    1    0    1    1  0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>コメント行(1行目)、軌道の数(2行目)、 <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> (3行目)、縮重度 ( <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> 個を1行あたり15個ずつ)、係数行列の要素を記載します。
+<code class="docutils literal notranslate"><span class="pre">nrpts</span></code> は、相互作用定義の並進ベクトルのx,y,z軸に沿った上限と下限から作られる直方体について、それに含まれるセルの総数です。</p>
+<p>行列要素の各行は、並進ベクトル <span class="math notranslate nohighlight">\(r_x, r_y, r_z\)</span> 、軌道のインデックス <span class="math notranslate nohighlight">\(\alpha, \beta\)</span> 、係数の値の実部・虚部です。</p>
+</section>
+</section>
+<section id="id4">
+<h2><span class="section-number">5.1.3. </span>計算の実行<a class="headerlink" href="#id4" title="この見出しへのパーマリンク">¶</a></h2>
+<p>全ての入力ファイルが準備できた後、プログラムを実行して計算を行います。
+入力パラメータファイル(ここでは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> )を引数とし、ターミナルからH-waveを実行します。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>計算が開始されると以下のようなログが出力されます。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>2023-03-07 18:55:44,682 INFO qlms: RPA mode
+2023-03-07 18:55:44,682 INFO qlms: Read interaction definitions from files
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read Gemoetry from input/geom.dat
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read interaction Transfer from input/transfer.dat
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read interaction CoulombIntra from input/coulombintra.dat
+2023-03-07 18:55:44,682 INFO qlms.read_input: QLMSkInput: read interaction CoulombInter from input/coulombinter.dat
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa: Lattice parameters:
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     CellShape       = (32, 32, 1)
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     cell volume     = 1024
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     cell dimension  = 3
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     SubShape        = (1, 1, 1)
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     subshape volume = 1
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     Shape           = (32, 32, 1)
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     shape volume    = 1024
+2023-03-07 18:55:44,682 INFO hwave.solver.rpa:     has_sublattice  = False
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa: RPA parameters:
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     norbit          = 1
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     nspin           = 2
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     nd              = 2
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     Nmat            = 1024
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     mu              = 0.0
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     T               = 0.5
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa:     E_cutoff        = 1.000000e+02
+2023-03-07 18:55:44,683 INFO qlms: Start UHF calculation
+2023-03-07 18:55:44,683 INFO hwave.solver.rpa: Start RPA calculations
+2023-03-07 18:55:47,726 INFO hwave.solver.rpa: End RPA calculations
+2023-03-07 18:55:47,726 INFO qlms: Save calculation results.
+2023-03-07 18:55:47,726 INFO hwave.solver.rpa: Save RPA results
+2023-03-07 18:55:47,925 INFO hwave.solver.rpa: save_results: save chiq in file output/chiq
+2023-03-07 18:55:48,294 INFO hwave.solver.rpa: save_results: save chi0q in file output/chi0q
+2023-03-07 18:55:48,294 INFO qlms: All procedures are finished.
+--------------------------------------------------------------------------------
+Statistics
+  function                         :  total elapsed  : average elapsed : ncalls
+--------------------------------------------------------------------------------
+  hwave.solver.rpa.__init__        :      1.037 msec :      1.037 msec :      1
+  hwave.solver.rpa.read_init       :      0.001 msec :      0.001 msec :      1
+  hwave.solver.rpa._calc_epsilon_k :     22.587 msec :     22.587 msec :      1
+  hwave.solver.rpa._calc_green     :    130.035 msec :    130.035 msec :      1
+  hwave.solver.rpa._calc_chi0q     :   1886.201 msec :   1886.201 msec :      1
+  hwave.solver.rpa._solve_rpa      :   1003.617 msec :   1003.617 msec :      1
+  hwave.solver.rpa.solve           :   3042.926 msec :   3042.926 msec :      1
+  hwave.solver.rpa.save_results    :    567.897 msec :    567.897 msec :      1
+--------------------------------------------------------------------------------
+</pre></div>
+</div>
+<p>入力ファイル読み込みに関するログが出力されたあと、乱雑位相近似計算の計算過程に関する情報が出力されます。
+出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> セクションの指定に従い、
+<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> , <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> ファイルが出力されます。</p>
+<p>出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles/index_outputfiles.html#sec-outputfile-rpa"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+<p>計算のポスト処理として、計算結果を可視化するためのツールが <code class="docutils literal notranslate"><span class="pre">sample/RPA/view.py</span></code> に用意されています。
+このスクリプトファイルを現在のディレクトリにコピーし、ターミナルから以下を実行します。
+このツールを実行するには <code class="docutils literal notranslate"><span class="pre">matplotlib</span></code> パッケージが必要です。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>view.py
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code> を読み込み、松原振動数 <span class="math notranslate nohighlight">\({\rm i}\omega_m=0\)</span> での電荷感受率 <span class="math notranslate nohighlight">\(\chi_c(\vec{q})\)</span> およびスピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\vec{q})\)</span> の値を各 <span class="math notranslate nohighlight">\(\vec{q}\)</span> ごとに標準出力に書き出します。あわせて、これらの値を3Dプロットした以下の図を PNG 形式で出力します。</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><figure class="align-default" id="id5">
+<img alt="../../_images/chic.png" src="../../_images/chic.png" />
+<figcaption>
+<p><span class="caption-number">図 5.1 </span><span class="caption-text"><span class="math notranslate nohighlight">\(\chi_c(\vec{q})\)</span></span><a class="headerlink" href="#id5" title="この画像へのパーマリンク">¶</a></p>
+</figcaption>
+</figure>
+</td>
+<td><figure class="align-default" id="id6">
+<img alt="../../_images/chis.png" src="../../_images/chis.png" />
+<figcaption>
+<p><span class="caption-number">図 5.2 </span><span class="caption-text"><span class="math notranslate nohighlight">\(\chi_s(\vec{q})\)</span></span><a class="headerlink" href="#id6" title="この画像へのパーマリンク">¶</a></p>
+</figcaption>
+</figure>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../index.html">
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo"/>
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../rpa-index.html">5. 乱雑位相近似 (RPA)</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">5.1. チュートリアル</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id2">5.1.1. 環境設定入力ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id3">5.1.2. 相互作用定義ファイルの作成</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id4">5.1.3. 計算の実行</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.2. ファイルフォーマット</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">6. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">8. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../rpa-index.html"><span class="section-number">5. </span>乱雑位相近似 (RPA)</a><ul>
+      <li>Previous: <a href="../rpa-index.html" title="前の章へ"><span class="section-number">5. </span>乱雑位相近似 (RPA)</a></li>
+      <li>Next: <a href="../filespecification/fi-index.html" title="次の章へ"><span class="section-number">5.2. </span>ファイルフォーマット</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.1.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="../../_sources/rpa/tutorial/tu-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
