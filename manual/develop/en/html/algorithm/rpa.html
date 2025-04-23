@@ -1,16 +1,17 @@
 <!DOCTYPE html>
 
-<html lang="en">
+<html lang="en" data-content_root="../">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>6.2. Random Phase Approximation &#8212; H-wave Users Guide 1.1-dev documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
-    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=66c3864b" />
-    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=080225cb"></script>
-    <script src="../_static/doctools.js?v=888ff710"></script>
-    <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
+    <script src="../_static/documentation_options.js?v=5f12b55d"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
@@ -19,8 +20,9 @@
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
   
+
   
-  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+  
 
   </head><body>
   
@@ -33,7 +35,7 @@
           <div class="body" role="main">
             
   <section id="random-phase-approximation">
-<span id="algorithm-sec"></span><h1><span class="section-number">6.2. </span>Random Phase Approximation<a class="headerlink" href="#random-phase-approximation" title="Permalink to this heading">¶</a></h1>
+<span id="algorithm-sec"></span><h1><span class="section-number">6.2. </span>Random Phase Approximation<a class="headerlink" href="#random-phase-approximation" title="Link to this heading">¶</a></h1>
 <p>The random phase approximation (RPA) is a method to detect the response to the fluctuations of
 one-body operators by the effect of electron correlations, starting from the non-interacting
 state.
@@ -44,7 +46,7 @@ observables measured in the experiments by analytical continuation.</p>
 <p>In the following, the algorithm is described.
 In the RPA mode of H-wave, the Hamiltonian given below will be considered:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-0">
-<span class="eqno">(6.11)<a class="headerlink" href="#equation-algorithm-rpa-0" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.11)<a class="headerlink" href="#equation-algorithm-rpa-0" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  {\cal H}&amp;={\cal H}_0+{\cal H}_{\rm int},\\
  {\cal H}_0&amp;=\sum_{\langle i\alpha;j\beta \rangle}
   (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
@@ -54,14 +56,14 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:</p>
 \end{aligned}\end{split}\]</div>
 <p>Applying the Fourier transformation</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-1">
-<span class="eqno">(6.12)<a class="headerlink" href="#equation-algorithm-rpa-1" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.12)<a class="headerlink" href="#equation-algorithm-rpa-1" title="Link to this equation">¶</a></span>\[\begin{aligned}
 c_{i\alpha}
 =\frac{1}{\sqrt{N_L}}\sum_{\bf{k}}
 e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 \end{aligned}\]</div>
 <p>the Hamiltonian is rewritten in the following form</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-2">
-<span class="eqno">(6.13)<a class="headerlink" href="#equation-algorithm-rpa-2" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.13)<a class="headerlink" href="#equation-algorithm-rpa-2" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  {\cal H}&amp;=\sum_{{\bf k}\alpha\beta}
  (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
  c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
@@ -77,7 +79,7 @@ is detected with respect to <span class="math notranslate nohighlight">\({\cal H
 The scattering by the interaction must therefore be considered on the basis
 where <span class="math notranslate nohighlight">\({\cal H}_0\)</span> is diagonalize, and thus the interaction term is approximated as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-3">
-<span class="eqno">(6.14)<a class="headerlink" href="#equation-algorithm-rpa-3" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.14)<a class="headerlink" href="#equation-algorithm-rpa-3" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
 &amp;W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
 c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
 &amp;\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
@@ -88,20 +90,20 @@ u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}.
 \end{aligned}\end{split}\]</div>
 <p>Here,</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-4">
-<span class="eqno">(6.15)<a class="headerlink" href="#equation-algorithm-rpa-4" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.15)<a class="headerlink" href="#equation-algorithm-rpa-4" title="Link to this equation">¶</a></span>\[\begin{aligned}
 c_{\bf{k},\alpha} = \sum_{\gamma} u_{\alpha \gamma, \bf{k}} d_{\bf{k}, \gamma}
 \end{aligned}\]</div>
 <p>and <span class="math notranslate nohighlight">\(d_{\bf{k}, \gamma}\)</span> denotes the annihilation operator that diagonalizes <span class="math notranslate nohighlight">\({\cal H}_0\)</span>. (<span class="math notranslate nohighlight">\(\gamma\)</span> refers to the index of the eigenvalue.)
 Then, the irreducible one-body Green’s function is written as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-5">
-<span class="eqno">(6.16)<a class="headerlink" href="#equation-algorithm-rpa-5" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.16)<a class="headerlink" href="#equation-algorithm-rpa-5" title="Link to this equation">¶</a></span>\[\begin{aligned}
  G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})=
   \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
 \end{aligned}\]</div>
 <p>The irreducible susceptibility is given in the following form, as it must be closed
 within the diagnoalized elements:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-6">
-<span class="eqno">(6.17)<a class="headerlink" href="#equation-algorithm-rpa-6" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.17)<a class="headerlink" href="#equation-algorithm-rpa-6" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -111,7 +113,7 @@ within the diagnoalized elements:</p>
 <p>By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-7">
-<span class="eqno">(6.18)<a class="headerlink" href="#equation-algorithm-rpa-7" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.18)<a class="headerlink" href="#equation-algorithm-rpa-7" title="Link to this equation">¶</a></span>\[\begin{aligned}
 X^{\alpha\alpha', \beta\beta'}(q)&amp;=
 X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1'\beta_1'}
 X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
@@ -119,7 +121,7 @@ X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_
 <p>Combining indices such as <span class="math notranslate nohighlight">\(\alpha\alpha^\prime\)</span> into one index, they are expressed
 in the matrix form. Then finally it leads to the expression:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-8">
-<span class="eqno">(6.19)<a class="headerlink" href="#equation-algorithm-rpa-8" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.19)<a class="headerlink" href="#equation-algorithm-rpa-8" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
@@ -130,14 +132,14 @@ given by <span class="math notranslate nohighlight">\(N_{\rm orb}^4 N_{\rm spin}
 As explained below, the size of the multidimensional array of susceptibilities can be reduced by separating orbits and spins:
 for the two-body interactions handled in H-wave’s RPA mode, separating orbits and spins results in</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
-<span class="eqno">(6.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Link to this equation">¶</a></span>\[\begin{aligned}
 &amp; W^{\beta\sigma_1\sigma_1',\alpha\sigma\sigma'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha \sigma}^{\dagger}c_{\bf{k},\alpha \sigma'}^{\mathstrut}
 c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}.
 \end{aligned}\]</div>
 <p>Since the scattering is on the same diagonalized general orbital,
 the irreducible susceptibility becomes</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
-<span class="eqno">(6.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -147,7 +149,7 @@ the irreducible susceptibility becomes</p>
 <p>The array size can be reduced to <span class="math notranslate nohighlight">\(N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}\)</span>.
 Then susceptibility matrix by RPA is obtained as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
-<span class="eqno">(6.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\begin{aligned}
 X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&amp;=
 X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
 X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
@@ -155,14 +157,14 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
 <p>If <span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span> is regarded as a single index,
 it can be put into matrix form and, as in the case of generalised orbitals, can be used as a</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-12">
-<span class="eqno">(6.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="Permalink to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<span class="eqno">(6.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>The above formula is the general formula for the RPA method.</p>
 <p>In the above formula, the calculation of the irreducible susceptibility is performed as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-13">
-<span class="eqno">(6.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -172,12 +174,12 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
 <p>In this case, the sum of the diagonalized components is required, which is computationally more expensive.
 In many previous studies, the one body Green’s function is calculated as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
-<span class="eqno">(6.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Link to this equation">¶</a></span>\[\begin{aligned}
  G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
 \end{aligned}\]</div>
 <p>The irreducible susceptibility is calculated as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
-<span class="eqno">(6.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Permalink to this equation">¶</a></span>\[\begin{aligned}
+<span class="eqno">(6.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{{\bf k},n}
@@ -203,11 +205,11 @@ higher order correlations. See, for example, reference <a class="footnote-refere
           
         </div>
       </div>
-      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
         <div class="sphinxsidebarwrapper">
 <p class="logo">
   <a href="../index.html">
-    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo"/>
+    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo" />
     
   </a>
 </p>
@@ -246,7 +248,7 @@ higher order correlations. See, for example, reference <a class="footnote-refere
   </ul></li>
 </ul>
 </div>
-<div id="searchbox" style="display: none" role="search">
+<search id="searchbox" style="display: none" role="search">
   <h3 id="searchlabel">Quick search</h3>
     <div class="searchformwrapper">
     <form class="search" action="../search.html" method="get">
@@ -254,7 +256,7 @@ higher order correlations. See, for example, reference <a class="footnote-refere
       <input type="submit" value="Go" />
     </form>
     </div>
-</div>
+</search>
 <script>document.getElementById('searchbox').style.display = "block"</script>
 
 
@@ -269,11 +271,11 @@ higher order correlations. See, for example, reference <a class="footnote-refere
       <div class="clearer"></div>
     </div>
     <div class="footer">
-      &copy;2022-, The University of Tokyo.
+      &#169;2022-, The University of Tokyo.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.1.2</a>
-      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
       
       |
       <a href="../_sources/algorithm/rpa.rst.txt"

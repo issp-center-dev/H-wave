@@ -1,16 +1,17 @@
 <!DOCTYPE html>
 
-<html lang="en">
+<html lang="en" data-content_root="../../">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>5.1. Tutorial &#8212; H-wave Users Guide 1.1-dev documentation</title>
     <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
-    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=66c3864b" />
-    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js?v=080225cb"></script>
-    <script src="../../_static/doctools.js?v=888ff710"></script>
-    <script src="../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=9814fe92" />
+    <script src="../../_static/documentation_options.js?v=5f12b55d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
@@ -19,8 +20,9 @@
    
   <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
   
+
   
-  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+  
 
   </head><body>
   
@@ -33,7 +35,7 @@
           <div class="body" role="main">
             
   <section id="tutorial">
-<h1><span class="section-number">5.1. </span>Tutorial<a class="headerlink" href="#tutorial" title="Permalink to this heading">¶</a></h1>
+<h1><span class="section-number">5.1. </span>Tutorial<a class="headerlink" href="#tutorial" title="Link to this heading">¶</a></h1>
 <p>To use H-wave for the calculation of Random Phase Approximation (RPA),
 you need to prepare input files:</p>
 <ol class="arabic simple">
@@ -46,7 +48,7 @@ you need to prepare input files:</p>
 The interaction definition files can be generated using StdFace library.
 See <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">Generation of interaction files using StdFace library</span></a> section for the details.</p>
 <section id="create-a-parameter-file">
-<h2><span class="section-number">5.1.1. </span>Create a parameter file<a class="headerlink" href="#create-a-parameter-file" title="Permalink to this heading">¶</a></h2>
+<h2><span class="section-number">5.1.1. </span>Create a parameter file<a class="headerlink" href="#create-a-parameter-file" title="Link to this heading">¶</a></h2>
 <p>We prepare an input parameter file that contains basic parameters as well as settings on
 inputs and outputs.
 A sample file can be found in <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code> directory by a filename
@@ -89,19 +91,19 @@ A sample file can be found in <code class="docutils literal notranslate"><span c
 </div>
 <p>The file is written in TOML format, and organized by the following sections.</p>
 <section id="log-section">
-<h3><code class="docutils literal notranslate"><span class="pre">[log]</span></code> section<a class="headerlink" href="#log-section" title="Permalink to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">[log]</span></code> section<a class="headerlink" href="#log-section" title="Link to this heading">¶</a></h3>
 <p>This section contains settings on log outputs.
 <code class="docutils literal notranslate"><span class="pre">print_level</span></code> sets the verbosity of the standard output,
 and <code class="docutils literal notranslate"><span class="pre">print_step</span></code> sets the interval of the outputs.</p>
 </section>
 <section id="mode-section">
-<h3><code class="docutils literal notranslate"><span class="pre">[mode]</span></code> section<a class="headerlink" href="#mode-section" title="Permalink to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">[mode]</span></code> section<a class="headerlink" href="#mode-section" title="Link to this heading">¶</a></h3>
 <p>This section contains settings on calculation mode and basic parameters.
 We choose <code class="docutils literal notranslate"><span class="pre">mode</span></code> to be <code class="docutils literal notranslate"><span class="pre">&quot;RPA&quot;</span></code>.
 The calculation parameters are specified in <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> subsection.</p>
 </section>
 <section id="file-section">
-<h3><code class="docutils literal notranslate"><span class="pre">[file]</span></code> section<a class="headerlink" href="#file-section" title="Permalink to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">[file]</span></code> section<a class="headerlink" href="#file-section" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> subsection contains settings
 on the directory for the input files by <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>.
 It is possible to read the pre-calculated irreducible susceptibility
@@ -118,13 +120,13 @@ If they are not specified, the corresponding data will not be outputted.</p>
 </section>
 </section>
 <section id="create-interaction-definition-files">
-<h2><span class="section-number">5.1.2. </span>Create interaction definition files<a class="headerlink" href="#create-interaction-definition-files" title="Permalink to this heading">¶</a></h2>
+<h2><span class="section-number">5.1.2. </span>Create interaction definition files<a class="headerlink" href="#create-interaction-definition-files" title="Link to this heading">¶</a></h2>
 <p>You need to prepare data files on the geometry information of the lattice, and
 the coefficients of the interactions required to construct the Hamiltonian.
 The association between the types of information and the filenames is provided
 in <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> section.</p>
 <section id="geometry">
-<h3><code class="docutils literal notranslate"><span class="pre">Geometry</span></code><a class="headerlink" href="#geometry" title="Permalink to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">Geometry</span></code><a class="headerlink" href="#geometry" title="Link to this heading">¶</a></h3>
 <p>The file associated with Geometry provides the geometrical information of the lattice.
 An example of the file is shown below.</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
@@ -138,7 +140,7 @@ An example of the file is shown below.</p>
 and the Wannier centers of the orbitals (line 5 onwards).</p>
 </section>
 <section id="transfer-coulombintra-coulombinter-hund-etc">
-<h3><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, etc<a class="headerlink" href="#transfer-coulombintra-coulombinter-hund-etc" title="Permalink to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, etc<a class="headerlink" href="#transfer-coulombintra-coulombinter-hund-etc" title="Link to this heading">¶</a></h3>
 <p>The file associated with Transfer contains the coefficients of Hamiltonian
 corresponding to the transfer term of the electron systems.
 The coefficients of the two-body interaction terms are stored in the files
@@ -174,7 +176,7 @@ and the real and imaginary part of the coefficient.</p>
 </section>
 </section>
 <section id="run">
-<h2><span class="section-number">5.1.3. </span>Run<a class="headerlink" href="#run" title="Permalink to this heading">¶</a></h2>
+<h2><span class="section-number">5.1.3. </span>Run<a class="headerlink" href="#run" title="Link to this heading">¶</a></h2>
 <p>Once you prepare all the input files, you can perform the calculation
 by running H-wave with the input parameter file (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code> in this tutorial)
 as an argument.</p>
@@ -250,14 +252,14 @@ It also produces the figures of these quantities in PNG format shown as below:</
 <tr class="row-odd"><td><figure class="align-default" id="id1">
 <img alt="../../_images/chic.png" src="../../_images/chic.png" />
 <figcaption>
-<p><span class="caption-number">Fig. 5.1 </span><span class="caption-text"><span class="math notranslate nohighlight">\(\chi_c(\vec{q})\)</span></span><a class="headerlink" href="#id1" title="Permalink to this image">¶</a></p>
+<p><span class="caption-number">Fig. 5.1 </span><span class="caption-text"><span class="math notranslate nohighlight">\(\chi_c(\vec{q})\)</span></span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </td>
 <td><figure class="align-default" id="id2">
 <img alt="../../_images/chis.png" src="../../_images/chis.png" />
 <figcaption>
-<p><span class="caption-number">Fig. 5.2 </span><span class="caption-text"><span class="math notranslate nohighlight">\(\chi_s(\vec{q})\)</span></span><a class="headerlink" href="#id2" title="Permalink to this image">¶</a></p>
+<p><span class="caption-number">Fig. 5.2 </span><span class="caption-text"><span class="math notranslate nohighlight">\(\chi_s(\vec{q})\)</span></span><a class="headerlink" href="#id2" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </td>
@@ -272,11 +274,11 @@ It also produces the figures of these quantities in PNG format shown as below:</
           
         </div>
       </div>
-      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
         <div class="sphinxsidebarwrapper">
 <p class="logo">
   <a href="../../index.html">
-    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo"/>
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo" />
     
   </a>
 </p>
@@ -320,7 +322,7 @@ It also produces the figures of these quantities in PNG format shown as below:</
   </ul></li>
 </ul>
 </div>
-<div id="searchbox" style="display: none" role="search">
+<search id="searchbox" style="display: none" role="search">
   <h3 id="searchlabel">Quick search</h3>
     <div class="searchformwrapper">
     <form class="search" action="../../search.html" method="get">
@@ -328,7 +330,7 @@ It also produces the figures of these quantities in PNG format shown as below:</
       <input type="submit" value="Go" />
     </form>
     </div>
-</div>
+</search>
 <script>document.getElementById('searchbox').style.display = "block"</script>
 
 
@@ -343,11 +345,11 @@ It also produces the figures of these quantities in PNG format shown as below:</
       <div class="clearer"></div>
     </div>
     <div class="footer">
-      &copy;2022-, The University of Tokyo.
+      &#169;2022-, The University of Tokyo.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.1.2</a>
-      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
       
       |
       <a href="../../_sources/rpa/tutorial/tu-index.rst.txt"
