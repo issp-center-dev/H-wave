@@ -3,7 +3,12 @@
 
 name: Run tests
 
-on: [push]
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 0 1,15 * *' # JST 9:00 on 1st and 15th every month
+
 
 jobs:
   build:
