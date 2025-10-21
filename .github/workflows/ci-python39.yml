@@ -44,19 +44,23 @@ jobs:
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       run: poetry install --no-interaction --no-root
     
-    - name: Install project
+    - name: Install project and dependencies
       run: poetry install --no-interaction --with dev
+    
+    - name: Verify installation
+      run: |
+        poetry run python -c "import numpy; print('numpy version:', numpy.__version__)"
+        poetry run python -c "import scipy; print('scipy version:', scipy.__version__)"
+        poetry run python -c "import hwave; print('hwave imported successfully')"
     
     - name: Run tests with unittest
       run: |
-        export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
-        python -m unittest discover tests/ -v
+        poetry run python -m unittest discover tests/ -v
     
     - name: Run tests with pytest (if available)
       run: |
-        pip install pytest
-        export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
-        pytest tests/ -v
+        poetry add pytest
+        poetry run pytest tests/ -v
       continue-on-error: true
 
   lint:
