@@ -49,12 +49,13 @@ jobs:
     
     - name: Run tests with unittest
       run: |
-        cd tests
-        python -m unittest discover -v
+        export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
+        python -m unittest discover tests/ -v
     
     - name: Run tests with pytest (if available)
       run: |
         pip install pytest
+        export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
         pytest tests/ -v
       continue-on-error: true
 
