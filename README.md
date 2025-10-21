@@ -1,7 +1,7 @@
 # H-wave
 
 [![CI](https://github.com/issp-center-dev/H-wave/workflows/CI/badge.svg)](https://github.com/issp-center-dev/H-wave/actions)
-[![Python](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 H-wave is a Python package for performing unrestricted Hartree-Fock (UHF) approximation and random phase approximation (RPA) for itinerant electron systems. UHF and RPA correspond to simple approximations that deal with fluctuations up to first order and enable analyses of electron correlation effects in materials at a low computational cost. The input files describing the one-body and two-body interactions are based on the Wannier90 format[1]. This allows smooth connection for the software packages that derive the effective models from first principles calculations, such as RESPACK[2], to the analyses of the effective model with H-wave.
@@ -39,7 +39,7 @@ H-wave is a Python package for performing unrestricted Hartree-Fock (UHF) approx
 
 ## Requirements
 
-- Python 3.7 or higher
+- Python 3.9 or higher
 - NumPy (^1.14)
 - SciPy (^1.7)
 - Requests (^2.28.1)
@@ -119,7 +119,7 @@ pytest tests/ -v
 
 The project uses GitHub Actions for automated testing:
 
-- **Multi-version testing**: Python 3.7, 3.8, 3.9, 3.10, 3.11
+- **Multi-version testing**: Python 3.9, 3.10, 3.11, 3.12
 - **Code quality checks**: flake8, black, isort, mypy
 - **Automated testing**: Runs on every push and pull request to main/develop branches
 
