@@ -49,7 +49,7 @@ class TestQLMSMain(unittest.TestCase):
     
     def test_run_with_valid_dict(self):
         """Test run function with valid input dictionary."""
-        with patch('hwave.qlms.QLMSInput') as mock_input:
+        with patch('hwave.qlmsio.read_input.QLMSInput') as mock_input:
             with patch('hwave.solver.uhfr.UHFr') as mock_solver:
                 mock_solver_instance = MagicMock()
                 mock_solver.return_value = mock_solver_instance

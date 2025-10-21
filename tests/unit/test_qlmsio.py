@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from hwave.qlmsio.read_input import QLMSInput
 from hwave.qlmsio.read_input_k import QLMSkInput
-from hwave.qlmsio.wan90 import Wannier90Input
+# from hwave.qlmsio.wan90 import Wannier90Input  # This class doesn't exist
 
 
 class TestQLMSInput(unittest.TestCase):
@@ -103,30 +103,30 @@ class TestQLMSkInput(unittest.TestCase):
         self.assertIsInstance(qlmsk_input.green, dict)
 
 
-class TestWannier90Input(unittest.TestCase):
-    """Test cases for Wannier90Input class."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        pass
-    
-    def test_initialization_with_empty_file_list(self):
-        """Test initialization with empty file list."""
-        with self.assertRaises((FileNotFoundError, IndexError)):
-            Wannier90Input([])
-    
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('os.path.exists', return_value=True)
-    def test_initialization_with_mock_files(self, mock_exists, mock_file):
-        """Test initialization with mocked files."""
-        # Mock file content
-        mock_file.return_value.read.return_value = "1 2 3\n4 5 6\n"
-        
-        file_list = ["test.def"]
-        wan90_input = Wannier90Input(file_list)
-        
-        self.assertEqual(wan90_input.file_names, file_list)
-        self.assertIsInstance(wan90_input.ham_param, dict)
+# class TestWannier90Input(unittest.TestCase):
+#     """Test cases for Wannier90Input class."""
+#     
+#     def setUp(self):
+#         """Set up test fixtures."""
+#         pass
+#     
+#     def test_initialization_with_empty_file_list(self):
+#         """Test initialization with empty file list."""
+#         with self.assertRaises((FileNotFoundError, IndexError)):
+#             Wannier90Input([])
+#     
+#     @patch('builtins.open', new_callable=mock_open)
+#     @patch('os.path.exists', return_value=True)
+#     def test_initialization_with_mock_files(self, mock_exists, mock_file):
+#         """Test initialization with mocked files."""
+#         # Mock file content
+#         mock_file.return_value.read.return_value = "1 2 3\n4 5 6\n"
+#         
+#         file_list = ["test.def"]
+#         wan90_input = Wannier90Input(file_list)
+#         
+#         self.assertEqual(wan90_input.file_names, file_list)
+#         self.assertIsInstance(wan90_input.ham_param, dict)
 
 
 class TestUtilityFunctions(unittest.TestCase):
