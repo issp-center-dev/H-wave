@@ -21,7 +21,7 @@
   # chi0q_init = "chi0q.npz"
 
 [file.input.interaction]
-  path_to_input = "input"
+  path_to_input = "."
   Geometry = "geom.dat"
   Transfer = "transfer.dat"
   CoulombIntra = "coulombintra.dat"

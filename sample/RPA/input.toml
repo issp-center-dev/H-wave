@@ -4,7 +4,7 @@
 [mode]
   mode = "RPA"
   # enable_spin_orbital = false
-  # calc_scheme = "general"
+  calc_scheme = "general"
 
 [mode.param]
   T = 0.5

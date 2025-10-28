@@ -1,11 +1,43 @@
+"""Base solver class for Hartree-Fock calculations.
+
+This module provides the base solver class that implements common functionality
+for Hartree-Fock calculations, including parameter handling and validation.
+
+"""
 import sys
 from requests.structures import CaseInsensitiveDict
-# from pprint import pprint
-
 import logging
 logger = logging.getLogger("qlms").getChild("solver")
 
+
 class solver_base():
+    """Base solver class for Hartree-Fock calculations.
+    
+    Parameters
+    ----------
+    param_ham : dict
+        Hamiltonian parameters
+    info_log : dict
+        Logging configuration
+    info_mode : dict
+        Calculation mode parameters
+    param_mod : dict, optional
+        Model parameters to override defaults
+        
+    Attributes
+    ----------
+    param_mod : CaseInsensitiveDict
+        Model parameters
+    param_ham : dict
+        Hamiltonian parameters  
+    info_log : dict
+        Logging configuration
+    threshold : float
+        Cutoff threshold for Green's function elements
+    relax_checks : bool
+        Whether to relax parameter validation checks
+    """
+
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         logger = logging.getLogger("qlms").getChild(self.name)
 
@@ -32,12 +64,8 @@ class solver_base():
 
         range_list = {
             "T":     [ 0, None ],
-            # "2Sz":   [ -param_mod["Nsite"], param_mod["Nsite"] ],
-            # "Nsite": [ 1, None ],
-            # "Ncond": [ 1, None ],
             "IterationMax": [ 0, None ],
             "Mix":   [ 0.0, 1.0 ],
-            # "print_step": [ 1, None ],
             "EPS":   [ 0, None ],
         }
 
@@ -114,15 +142,23 @@ class solver_base():
         # canonicalize
         self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
 
-        # debug
-        # pprint(self.param_mod)
-
     def _check_info_mode(self, info_mode):
+        """Check validity of info_mode parameters.
+        
+        Parameters
+        ----------
+        info_mode : dict
+            Mode parameters to validate
+            
+        Returns
+        -------
+        int
+            Number of validation errors found
+        """
         logger = logging.getLogger("qlms").getChild(self.name)
 
         fix_list = {
             "mode": ["UHFr", "UHFk"],
-            # "flag_fock": [True, False]
         }
 
         exit_code = 0
@@ -136,6 +172,18 @@ class solver_base():
         return exit_code
 
     def _check_param_mod(self, param_mod):
+        """Check validity of model parameters.
+        
+        Parameters
+        ----------
+        param_mod : dict
+            Model parameters to validate
+            
+        Returns
+        -------
+        int
+            Number of validation errors found
+        """
         logger = logging.getLogger("qlms").getChild(self.name)
 
         error_code = 0
@@ -149,6 +197,20 @@ class solver_base():
         return error_code
 
     def _check_param_range(self, param_mod, range_list):
+        """Check if parameters are within valid ranges.
+        
+        Parameters
+        ----------
+        param_mod : dict
+            Model parameters to validate
+        range_list : dict
+            Valid ranges for parameters
+            
+        Returns
+        -------
+        int
+            Number of validation errors found
+        """
         logger = logging.getLogger("qlms").getChild(self.name)
 
         error_code = 0
@@ -166,6 +228,25 @@ class solver_base():
         return error_code
 
     def _round_to_int(self, val, mode):
+        """Round a value to integer according to specified mode.
+        
+        Parameters
+        ----------
+        val : float
+            Value to round
+        mode : str
+            Rounding mode to use
+            
+        Returns
+        -------
+        int
+            Rounded integer value
+            
+        Raises
+        ------
+        SystemExit
+            If rounding fails or mode is invalid
+        """
         import math
         mode = mode.lower()  # case-insensitive
         if   mode == "as-is":
@@ -197,10 +278,33 @@ class solver_base():
         return ret
 
     def solve(self, path_to_output):
+        """Solve the Hartree-Fock equations.
+        
+        Parameters
+        ----------
+        path_to_output : str
+            Path to output file
+        """
         pass
 
     def get_results(self):
+        """Get calculation results.
+        
+        Returns
+        -------
+        tuple
+            (physics, Green's function) results
+        """
         return (self.physics, self.Green)
 
     def save_results(self, info_outputfile, green_info):
+        """Save calculation results.
+        
+        Parameters
+        ----------
+        info_outputfile : dict
+            Output file configuration
+        green_info : dict
+            Green's function information
+        """
         pass
