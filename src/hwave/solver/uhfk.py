@@ -179,9 +179,19 @@ class UHFk(solver_base):
         - Spin degrees of freedom
         - Total basis dimension
         Takes into account supercell structure if present.
+        
+        When enable_spin_orbital is True, the orbital index from input files
+        already includes spin (Wannier90 format: index = 2*orb + spin).
+        In this case, ns=1 since spin is encoded in the orbital index.
         """
         norb = self.param_ham["Geometry"]["norb"]
-        ns = 2  # spin dof
+        
+        if self.enable_spin_orbital:
+            # Spin is already encoded in orbital index (Wannier90 SOI format)
+            ns = 1
+        else:
+            # Spin is separate degree of freedom
+            ns = 2
 
         # take account of supercell
         self.norb_orig = norb
@@ -906,7 +916,8 @@ class UHFk(solver_base):
             # fourier transform
             tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
 
-            ham = tab_k
+            # Reshape from (nx,ny,nz,nd,nd) to (nvol,nd,nd)
+            ham = tab_k.reshape(nvol, nd, nd)
 
         else:
             # data structure of T_ab(r): T(rx,ry,rz,a,b)
