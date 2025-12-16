@@ -71,10 +71,59 @@ class UHFk(solver_base):
             Mode parameters
         """
         # Enable/disable Fock term
-        self.iflag_fock = param.get('flag_fock', True)
+        self.iflag_fock = self._to_bool(param.get('flag_fock', True), 'flag_fock')
         
         # Enable/disable spin-orbital coupling
-        self.enable_spin_orbital = param.get('enable_spin_orbital', False)
+        self.enable_spin_orbital = self._to_bool(
+            param.get('enable_spin_orbital', False), 'enable_spin_orbital'
+        )
+
+    def _to_bool(self, value, param_name):
+        """Convert a value to boolean with type validation.
+        
+        Parameters
+        ----------
+        value : any
+            Value to convert to boolean
+        param_name : str
+            Parameter name for error messages
+            
+        Returns
+        -------
+        bool
+            Converted boolean value
+            
+        Raises
+        ------
+        ValueError
+            If value cannot be converted to boolean
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            if value.lower() in ('true', 'yes', '1', 'on'):
+                logger.warning(
+                    f"Parameter '{param_name}' should be boolean, not string. "
+                    f"Use '{param_name} = true' instead of '{param_name} = \"{value}\"'"
+                )
+                return True
+            elif value.lower() in ('false', 'no', '0', 'off'):
+                logger.warning(
+                    f"Parameter '{param_name}' should be boolean, not string. "
+                    f"Use '{param_name} = false' instead of '{param_name} = \"{value}\"'"
+                )
+                return False
+            else:
+                raise ValueError(
+                    f"Parameter '{param_name}' has invalid value '{value}'. "
+                    f"Expected boolean (true/false)."
+                )
+        if isinstance(value, (int, float)):
+            return bool(value)
+        raise ValueError(
+            f"Parameter '{param_name}' has invalid type {type(value).__name__}. "
+            f"Expected boolean."
+        )
 
     @do_profile
     def _init_param(self):
