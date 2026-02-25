@@ -624,10 +624,41 @@ class UHFk(solver_base):
         - Cell size compatibility
         - Orbital index validity
         - Hermiticity of terms
+        - Spin-orbital mode compatibility
         """
         self._check_cellsize()
         self._check_orbital_index()
         self._check_hermite()
+        self._check_spin_orbital_compatibility()
+
+    def _check_spin_orbital_compatibility(self):
+        """Check if interaction terms are compatible with spin-orbital mode.
+        
+        When enable_spin_orbital=True, interaction terms (Coulomb, Hund, etc.)
+        are not currently supported because they assume separate spin indices.
+        """
+        if not self.enable_spin_orbital:
+            return
+        
+        # List of interaction types that are not compatible with spin-orbital mode
+        incompatible_types = [
+            "CoulombIntra", "CoulombInter", "Coulomb",
+            "Hund", "Ising", "PairLift", "Exchange", "PairHop"
+        ]
+        
+        found_interactions = []
+        for itype in incompatible_types:
+            if itype in self.param_ham and self.param_ham[itype]:
+                found_interactions.append(itype)
+        
+        if found_interactions:
+            msg = (
+                f"Interaction terms {found_interactions} are not supported "
+                f"when enable_spin_orbital=True. "
+                f"Currently, only Transfer term is supported in spin-orbital mode."
+            )
+            logger.error(msg)
+            exit(1)
 
     def _check_cellsize(self):
         err = 0
