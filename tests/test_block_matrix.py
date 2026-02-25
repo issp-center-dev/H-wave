@@ -305,7 +305,8 @@ class TestUHFkDetectBlocks(unittest.TestCase):
 
     def _make_uhfk_stub(self, norb, ns, nvol, ham_trans,
                         inter_table=None, spin_table=None,
-                        iflag_fock=True, sz_free=True, Nconds=None):
+                        iflag_fock=True, sz_free=True, Nconds=None,
+                        enable_spin_orbital=False):
         """Create a minimal UHFk-like object for _detect_blocks testing.
 
         Parameters
@@ -329,6 +330,8 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         Nconds : list or None
             Electron counts per block. Defaults to [norb*ns] if sz_free,
             or [norb//2, norb//2] if not sz_free.
+        enable_spin_orbital : bool
+            Whether spin-orbital mode is enabled.
         """
         import hwave.solver.uhfk as uhfk_module
 
@@ -343,6 +346,11 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         stub.spin_table = spin_table if spin_table is not None else {}
         stub.iflag_fock = iflag_fock
         stub.sz_free = sz_free
+        stub.enable_spin_orbital = enable_spin_orbital
+        if enable_spin_orbital:
+            stub.norb_phys = norb // 2
+        else:
+            stub.norb_phys = norb
         if Nconds is not None:
             stub.Nconds = Nconds
         elif sz_free:
@@ -828,7 +836,8 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         ham_trans[:, 3, 2] = 0.3
 
         stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
-                                    sz_free=True, Nconds=[2])
+                                    sz_free=True, Nconds=[2],
+                                    enable_spin_orbital=True)
         stub._detect_blocks()
 
         blocks = stub.block_info
@@ -1475,6 +1484,720 @@ class TestUHFrDetectBlocks(unittest.TestCase):
         total_occ = sum(v["occupied"] for v in stub.green_list.values())
         self.assertEqual(total_occ, 6,
                          "Total Ncond must be preserved after splitting")
+
+
+class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
+    """Test spin-orbital mode with interaction terms.
+
+    Verifies that running UHFk in spin-orbital mode (ns=1, nd=2*norb_phys)
+    with interactions produces results equivalent to normal mode (ns=2, norb=norb_phys).
+
+    In spin-orbital mode, the orbital index uses the convention:
+        index = 2 * physical_orbital + spin  (spin=0 for up, 1 for down)
+    """
+
+    def _make_uhfk_stub_full(self, norb_phys, nvol, ham_trans_normal,
+                             inter_table=None, spin_table=None,
+                             iflag_fock=True, sz_free=True, Nconds=None,
+                             green_init=None):
+        """Create a UHFk-like stub with both normal and spin-orbital modes.
+
+        Parameters
+        ----------
+        norb_phys : int
+            Number of physical orbitals.
+        nvol : int
+            Number of k-points.
+        ham_trans_normal : ndarray (nvol, 2*norb_phys, 2*norb_phys)
+            Transfer Hamiltonian in normal mode (s*norb + a ordering).
+        inter_table : dict or None
+            Interaction tables {name: ndarray(nvol, norb_phys, norb_phys) or None}.
+        spin_table : dict or None
+            Spin combination tables {name: ndarray(2,2,2,2)}.
+        iflag_fock : bool
+            Whether Fock term is enabled.
+        green_init : ndarray or None
+            Initial Green function in normal mode (nvol, 2, norb_phys, 2, norb_phys).
+
+        Returns
+        -------
+        stub_normal, stub_so : pair of UHFk-like stubs
+        """
+        import hwave.solver.uhfk as uhfk_module
+
+        nd = 2 * norb_phys
+
+        # --- Normal mode stub ---
+        stub_n = object.__new__(uhfk_module.UHFk)
+        stub_n.norb = norb_phys
+        stub_n.ns = 2
+        stub_n.nd = nd
+        stub_n.nvol = nvol
+        stub_n.shape = (nvol, 1, 1)  # (nx, ny, nz) for FFT
+        stub_n.ham_trans = ham_trans_normal
+        # Ensure all interaction types exist in table (defaulting to None)
+        all_types = ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising',
+                     'PairLift', 'Exchange', 'PairHop']
+        _inter = {t: None for t in all_types}
+        _spin = {}
+        if inter_table is not None:
+            _inter.update(inter_table)
+        if spin_table is not None:
+            _spin.update(spin_table)
+        stub_n.inter_table = _inter
+        stub_n.spin_table = _spin
+        stub_n.iflag_fock = iflag_fock
+        stub_n.sz_free = sz_free
+        stub_n.enable_spin_orbital = False
+        stub_n.norb_phys = norb_phys
+        stub_n.block_info = [np.arange(nd)]
+        stub_n.Nconds = Nconds if Nconds is not None else [nd]
+        stub_n.threshold = 1e-12
+
+        # --- Spin-orbital mode stub ---
+        # Convert ham_trans from normal ordering (s*norb+a) to SO ordering (2*a+s)
+        ham_trans_so = np.zeros_like(ham_trans_normal)
+        for s in range(2):
+            for t in range(2):
+                # Normal: s*norb+a -> SO: 2*a+s
+                ham_trans_so[:, s::2, t::2] = ham_trans_normal[:, s*norb_phys:(s+1)*norb_phys,
+                                                                t*norb_phys:(t+1)*norb_phys]
+
+        stub_so = object.__new__(uhfk_module.UHFk)
+        stub_so.norb = 2 * norb_phys  # nd in SO mode
+        stub_so.ns = 1
+        stub_so.nd = nd
+        stub_so.nvol = nvol
+        stub_so.shape = (nvol, 1, 1)
+        stub_so.ham_trans = ham_trans_so
+        _inter_so = {t: None for t in all_types}
+        _spin_so = {}
+        if inter_table is not None:
+            _inter_so.update(inter_table)
+        if spin_table is not None:
+            _spin_so.update(spin_table)
+        stub_so.inter_table = _inter_so
+        stub_so.spin_table = _spin_so
+        stub_so.iflag_fock = iflag_fock
+        stub_so.sz_free = sz_free
+        stub_so.enable_spin_orbital = True
+        stub_so.norb_phys = norb_phys
+        stub_so.block_info = [np.arange(nd)]
+        stub_so.Nconds = Nconds if Nconds is not None else [nd]
+        stub_so.threshold = 1e-12
+
+        return stub_n, stub_so
+
+    def _normal_green_to_so(self, green_normal, norb_phys):
+        """Convert Green function from normal to spin-orbital ordering.
+
+        normal: (nvol, 2, norb_phys, 2, norb_phys)
+        so: (nvol, 1, 2*norb_phys, 1, 2*norb_phys)
+        """
+        nvol = green_normal.shape[0]
+        nd = 2 * norb_phys
+        G_so = np.zeros((nvol, 1, nd, 1, nd), dtype=np.complex128)
+        for s in range(2):
+            for t in range(2):
+                G_so[:, 0, s::2, 0, t::2] = green_normal[:, s, :, t, :]
+        return G_so
+
+    def _so_ham_to_normal(self, ham_so, norb_phys):
+        """Convert Hamiltonian from spin-orbital to normal ordering.
+
+        so: (nvol, nd, nd) with index = 2*a+s
+        normal: (nvol, nd, nd) with index = s*norb+a
+        """
+        nvol = ham_so.shape[0]
+        nd = 2 * norb_phys
+        H_n = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            for t in range(2):
+                H_n[:, s*norb_phys:(s+1)*norb_phys,
+                     t*norb_phys:(t+1)*norb_phys] = ham_so[:, s::2, t::2]
+        return H_n
+
+    # ----------------------------------------------------------------
+    # Test 1: CoulombIntra produces identical Hamiltonian in both modes
+    # ----------------------------------------------------------------
+    def test_coulomb_intra_equivalence(self):
+        """CoulombIntra interaction: normal vs spin-orbital mode.
+
+        norb_phys=2, nvol=1.
+        CoulombIntra U[0,0]=4.0, U[1,1]=3.0
+        """
+        norb_phys, nvol = 2, 1
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(42)
+
+        # Transfer: simple diagonal + small off-diagonal
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+        ham_t[:, 0, 1] = 0.3
+        ham_t[:, 1, 0] = 0.3
+        ham_t[:, 2, 3] = 0.3
+        ham_t[:, 3, 2] = 0.3
+
+        # CoulombIntra
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0
+        uab[:, 1, 1] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1
+        cu_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"CoulombIntra": uab}
+        spin_table = {"CoulombIntra": cu_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        # Random Green function in normal mode
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        # Make it roughly Hermitian-like for diagonal
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        # Build Hamiltonians
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        # Convert SO Hamiltonian to normal ordering for comparison
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="CoulombIntra: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 2: CoulombInter with Fock term
+    # ----------------------------------------------------------------
+    def test_coulomb_inter_fock_equivalence(self):
+        """CoulombInter interaction with Fock: normal vs spin-orbital mode.
+
+        norb_phys=2, nvol=2.
+        CoulombInter V[0,1]=2.0, V[1,0]=2.0
+        """
+        norb_phys, nvol = 2, 2
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(123)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 2.0
+        vab[:, 1, 0] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1
+        ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1
+        ci_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"CoulombInter": vab}
+        spin_table = {"CoulombInter": ci_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="CoulombInter Fock: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 3: Hund interaction (same-spin coupling)
+    # ----------------------------------------------------------------
+    def test_hund_equivalence(self):
+        """Hund interaction: normal vs spin-orbital mode.
+
+        norb_phys=2, nvol=1.
+        """
+        norb_phys, nvol = 2, 1
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(77)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        jab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jab[:, 0, 1] = -1.5
+        jab[:, 1, 0] = -1.5
+
+        hund_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        hund_spin[0, 0, 0, 0] = 1
+        hund_spin[1, 1, 1, 1] = 1
+
+        inter_table = {"Hund": jab}
+        spin_table = {"Hund": hund_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="Hund: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 4: Exchange interaction
+    # ----------------------------------------------------------------
+    def test_exchange_equivalence(self):
+        """Exchange interaction: normal vs spin-orbital mode."""
+        norb_phys, nvol = 2, 1
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(88)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        jab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jab[:, 0, 1] = -2.0
+        jab[:, 1, 0] = -2.0
+
+        ex_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ex_spin[0, 1, 0, 1] = 1
+        ex_spin[1, 0, 1, 0] = 1
+
+        inter_table = {"Exchange": jab}
+        spin_table = {"Exchange": ex_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="Exchange: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 5: PairHop interaction
+    # ----------------------------------------------------------------
+    def test_pairhop_equivalence(self):
+        """PairHop interaction: normal vs spin-orbital mode."""
+        norb_phys, nvol = 2, 2
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(99)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        jab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jab[:, 0, 1] = 1.0
+        jab[:, 1, 0] = 1.0
+
+        ph_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ph_spin[0, 1, 1, 0] = 1
+        ph_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"PairHop": jab}
+        spin_table = {"PairHop": ph_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="PairHop: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 6: Multiple interactions combined
+    # ----------------------------------------------------------------
+    def test_combined_interactions_equivalence(self):
+        """Multiple interactions: CoulombIntra + CoulombInter + Exchange.
+
+        norb_phys=2, nvol=2. Tests that the combined Hamiltonian matches.
+        """
+        norb_phys, nvol = 2, 2
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(55)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+        ham_t[:, 0, 1] = 0.5
+        ham_t[:, 1, 0] = 0.5
+        ham_t[:, 2, 3] = 0.5
+        ham_t[:, 3, 2] = 0.5
+
+        # CoulombIntra
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0
+        uab[:, 1, 1] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1
+        cu_spin[1, 0, 0, 1] = 1
+
+        # CoulombInter
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 2.0
+        vab[:, 1, 0] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1
+        ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1
+        ci_spin[1, 0, 0, 1] = 1
+
+        # Exchange
+        jex = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jex[:, 0, 1] = -1.5
+        jex[:, 1, 0] = -1.5
+        ex_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ex_spin[0, 1, 0, 1] = 1
+        ex_spin[1, 0, 1, 0] = 1
+
+        inter_table = {
+            "CoulombIntra": uab,
+            "CoulombInter": vab,
+            "Exchange": jex,
+        }
+        spin_table = {
+            "CoulombIntra": cu_spin,
+            "CoulombInter": ci_spin,
+            "Exchange": ex_spin,
+        }
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="Combined interactions: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 7: Energy calculation equivalence
+    # ----------------------------------------------------------------
+    def test_energy_equivalence(self):
+        """Interaction energy: normal vs spin-orbital mode.
+
+        Uses CoulombIntra + CoulombInter with Fock.
+        """
+        norb_phys, nvol = 2, 1
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(33)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        # CoulombIntra
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0
+        uab[:, 1, 1] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1
+        cu_spin[1, 0, 0, 1] = 1
+
+        # CoulombInter
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 2.0
+        vab[:, 1, 0] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1
+        ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1
+        ci_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"CoulombIntra": uab, "CoulombInter": vab}
+        spin_table = {"CoulombIntra": cu_spin, "CoulombInter": ci_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        # Build Hamiltonians (needed for band energy setup)
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        # Setup minimal eigenvalue data for band energy
+        w_n, v_n = np.linalg.eigh(stub_n.ham)
+        w_so, v_so = np.linalg.eigh(stub_so.ham)
+        stub_n._green_list = {
+            "eigenvalue": [w_n], "eigenvector": [v_n], "mu": np.array([0.0])
+        }
+        stub_so._green_list = {
+            "eigenvalue": [w_so], "eigenvector": [v_so], "mu": np.array([0.0])
+        }
+        stub_n.T = 0
+        stub_so.T = 0
+        stub_n.ene_cutoff = 1e2
+        stub_so.ene_cutoff = 1e2
+        stub_n.physics = {"Ene": {}}
+        stub_so.physics = {"Ene": {}}
+        stub_n.norb = norb_phys
+        stub_so.norb = 2 * norb_phys
+
+        stub_n._calc_energy()
+        stub_so._calc_energy()
+
+        # Interaction energies should match
+        for itype in inter_table:
+            if itype in stub_n.physics["Ene"] and itype in stub_so.physics["Ene"]:
+                np.testing.assert_allclose(
+                    stub_so.physics["Ene"][itype].real,
+                    stub_n.physics["Ene"][itype].real,
+                    atol=1e-12,
+                    err_msg=f"{itype} energy: SO and normal mode should match"
+                )
+
+    # ----------------------------------------------------------------
+    # Test 8: Block detection with interaction in spin-orbital mode
+    # ----------------------------------------------------------------
+    def test_block_detection_so_with_coulomb_intra(self):
+        """Block detection in spin-orbital mode with CoulombIntra.
+
+        norb_phys=2, nd=4. Diagonal transfer + CoulombIntra.
+        CoulombIntra couples (up,a)-(dn,a): in SO, couples 2a with 2a+1.
+        Expected: 2 blocks: {0,1} and {2,3} (each orbital pairs up/dn).
+        """
+        import hwave.solver.uhfk as uhfk_module
+
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 1
+
+        # Diagonal transfer in SO ordering
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = float(i) + 1.0
+
+        # CoulombIntra
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0
+        uab[:, 1, 1] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1
+        cu_spin[1, 0, 0, 1] = 1
+
+        stub = object.__new__(uhfk_module.UHFk)
+        stub.norb = nd
+        stub.ns = 1
+        stub.nd = nd
+        stub.nvol = nvol
+        stub.ham_trans = ham_trans
+        stub.inter_table = {"CoulombIntra": uab}
+        stub.spin_table = {"CoulombIntra": cu_spin}
+        stub.iflag_fock = True
+        stub.sz_free = True
+        stub.enable_spin_orbital = True
+        stub.norb_phys = norb_phys
+        stub.Nconds = [nd]
+        stub._detect_blocks()
+
+        blocks = stub.block_info
+        self.assertEqual(len(blocks), 2,
+                         "CoulombIntra in SO mode: 2 blocks (one per physical orbital)")
+        sizes = sorted([len(b) for b in blocks])
+        self.assertEqual(sizes, [2, 2])
+
+        # Each block should contain one up (even) and one down (odd) index
+        for blk in blocks:
+            indices = sorted(blk.tolist())
+            self.assertEqual(len(indices), 2)
+            self.assertEqual(indices[1] - indices[0], 1,
+                             "Block should contain consecutive up/dn pair")
+
+    # ----------------------------------------------------------------
+    # Test 9: Block detection SO with Fock connects orbitals
+    # ----------------------------------------------------------------
+    def test_block_detection_so_fock_bridges_orbitals(self):
+        """In SO mode, CoulombInter Fock bridges physical orbitals.
+
+        norb_phys=2, nd=4. CoulombInter J[0,1]!=0 with Fock.
+        Fock connects (s,0)-(s,1) -> in SO: 0-2 and 1-3.
+        CoulombIntra or Hartree connects (up,a)-(dn,a).
+        Combined: all indices connected -> single block.
+        """
+        import hwave.solver.uhfk as uhfk_module
+
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 1
+
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = float(i) + 1.0
+
+        # CoulombInter (Fock bridges orbitals + Hartree bridges spins)
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 2.0
+        vab[:, 1, 0] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1
+        ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1
+        ci_spin[1, 0, 0, 1] = 1
+
+        stub = object.__new__(uhfk_module.UHFk)
+        stub.norb = nd
+        stub.ns = 1
+        stub.nd = nd
+        stub.nvol = nvol
+        stub.ham_trans = ham_trans
+        stub.inter_table = {"CoulombInter": vab}
+        stub.spin_table = {"CoulombInter": ci_spin}
+        stub.iflag_fock = True
+        stub.sz_free = True
+        stub.enable_spin_orbital = True
+        stub.norb_phys = norb_phys
+        stub.Nconds = [nd]
+        stub._detect_blocks()
+
+        blocks = stub.block_info
+        self.assertEqual(len(blocks), 1,
+                         "CoulombInter Fock + Hartree in SO mode: single block")
+
+    # ----------------------------------------------------------------
+    # Test 10: Sz calculation in spin-orbital mode
+    # ----------------------------------------------------------------
+    def test_sz_calculation_so(self):
+        """Verify Sz calculation works correctly in spin-orbital mode."""
+        import hwave.solver.uhfk as uhfk_module
+
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 1
+
+        stub = object.__new__(uhfk_module.UHFk)
+        stub.norb = nd
+        stub.ns = 1
+        stub.nd = nd
+        stub.nvol = nvol
+        stub.shape = (1, 1, 1)
+        stub.enable_spin_orbital = True
+        stub.norb_phys = norb_phys
+        stub.threshold = 1e-12
+        stub.param_mod = {"Mix": 0.5}
+        stub.physics = {"Ene": {"Total": 0.0, "Band": 0.0}, "NCond": 0.0,
+                         "Sz": 0.0, "Rest": 1.0}
+
+        # Green function: G[2a, 2a] = n_{a,up}, G[2a+1, 2a+1] = n_{a,dn}
+        green_so = np.zeros((nvol, 1, nd, 1, nd), dtype=np.complex128)
+        # Orbital 0: n_up=0.7, n_dn=0.3
+        green_so[0, 0, 0, 0, 0] = 0.7  # orb0, up
+        green_so[0, 0, 1, 0, 1] = 0.3  # orb0, dn
+        # Orbital 1: n_up=0.4, n_dn=0.6
+        green_so[0, 0, 2, 0, 2] = 0.4  # orb1, up
+        green_so[0, 0, 3, 0, 3] = 0.6  # orb1, dn
+
+        stub.Green = green_so
+        stub.Green_prev = np.zeros_like(green_so)
+
+        stub._calc_phys()
+
+        # Expected Sz = 0.5 * ((0.7 - 0.3) + (0.4 - 0.6)) = 0.5 * 0.2 = 0.1
+        expected_sz = 0.5 * ((0.7 - 0.3) + (0.4 - 0.6))
+        np.testing.assert_allclose(
+            stub.physics["Sz"], expected_sz, atol=1e-12,
+            err_msg="Sz calculation in SO mode should be correct"
+        )
 
 
 if __name__ == '__main__':
