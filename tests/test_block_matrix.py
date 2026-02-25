@@ -2200,5 +2200,421 @@ class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
         )
 
 
+    # ================================================================
+    # Integrated SCF cycle tests:
+    # Run make_ham -> diag -> green -> calc_energy in both normal and
+    # spin-orbital modes with spin-diagonal transfer + interactions,
+    # verify all results match after multiple iterations.
+    # ================================================================
+
+    def _run_scf_cycle(self, stub, n_steps=3, mix=0.5):
+        """Run n_steps of the SCF cycle: make_ham -> diag -> green -> calc_energy -> calc_phys.
+
+        Initializes the Green function from the non-interacting ground state
+        (transfer Hamiltonian only) to ensure a physical starting point.
+        A physical Green function satisfies G_{ab}(r) = G_{ba}(-r)^*, which
+        guarantees the mean-field Hamiltonian is Hermitian at every step.
+
+        Parameters
+        ----------
+        stub : UHFk stub
+            Must have ham_trans, inter_table, etc. set up.
+        n_steps : int
+            Number of SCF iterations.
+        mix : float
+            Mixing parameter for Green function update.
+        """
+        stub.param_mod = {"Mix": mix}
+        stub.physics = {"Ene": {"Total": 0.0, "Band": 0.0},
+                         "NCond": 0.0, "Sz": 0.0, "Rest": 1.0}
+        stub._green_list = {}
+
+        # Initialize Green function from non-interacting ground state
+        # Set zero Green as placeholder (needed by _green which saves Green_prev)
+        stub.Green = np.zeros((stub.nvol, stub.ns, stub.norb, stub.ns, stub.norb),
+                              dtype=np.complex128)
+        stub.ham = stub.ham_trans.copy()
+        stub._diag()
+        stub._green()
+
+        for _ in range(n_steps):
+            stub._make_ham()
+            stub._diag()
+            stub._green()
+            stub._calc_energy()
+            stub._calc_phys()
+
+    def _so_green_to_normal(self, green_so, norb_phys):
+        """Convert Green from SO (nvol, 1, nd, 1, nd) to normal (nvol, 2, norb_phys, 2, norb_phys)."""
+        nvol = green_so.shape[0]
+        nd = 2 * norb_phys
+        G_flat = green_so.reshape(nvol, nd, nd)
+        G_n = np.zeros((nvol, 2, norb_phys, 2, norb_phys), dtype=np.complex128)
+        for s in range(2):
+            for t in range(2):
+                G_n[:, s, :, t, :] = G_flat[:, s::2, t::2]
+        return G_n
+
+    def test_scf_cycle_coulomb_intra(self):
+        """Full SCF cycle: CoulombIntra, normal vs spin-orbital mode.
+
+        Sets up spin-diagonal transfer (no spin-orbit coupling in transfer)
+        with CoulombIntra interaction. Runs 5 SCF steps in both modes
+        and verifies that Green functions, energies, and physical quantities match.
+        """
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 2
+
+        # Spin-diagonal transfer in normal ordering
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        # Spin-up block
+        ham_t[:, 0, 0] = 1.0
+        ham_t[:, 1, 1] = 2.0
+        ham_t[:, 0, 1] = 0.3
+        ham_t[:, 1, 0] = 0.3
+        # Spin-down block (same hopping)
+        ham_t[:, 2, 2] = 1.0
+        ham_t[:, 3, 3] = 2.0
+        ham_t[:, 2, 3] = 0.3
+        ham_t[:, 3, 2] = 0.3
+
+        # CoulombIntra: U[0,0]=4.0, U[1,1]=3.0
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0
+        uab[:, 1, 1] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1
+        cu_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"CoulombIntra": uab}
+        spin_table = {"CoulombIntra": cu_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True, Nconds=[3]
+        )
+
+        # Set additional required attributes for full cycle
+        for stub in [stub_n, stub_so]:
+            stub.T = 0
+            stub.ene_cutoff = 1e2
+
+        # Run 5 SCF steps (Green initialized from non-interacting ground state)
+        self._run_scf_cycle(stub_n, n_steps=5)
+        self._run_scf_cycle(stub_so, n_steps=5)
+
+        # Compare Green functions (convert SO back to normal ordering)
+        green_so_as_normal = self._so_green_to_normal(stub_so.Green, norb_phys)
+        np.testing.assert_allclose(
+            green_so_as_normal, stub_n.Green, atol=1e-10,
+            err_msg="Green functions should match after SCF cycle"
+        )
+
+        # Compare energies
+        for key in stub_n.physics["Ene"]:
+            en = stub_n.physics["Ene"][key]
+            eso = stub_so.physics["Ene"][key]
+            e_n = en.real if hasattr(en, 'real') else en
+            e_so = eso.real if hasattr(eso, 'real') else eso
+            np.testing.assert_allclose(
+                e_so, e_n, atol=1e-10,
+                err_msg=f"Energy '{key}' should match after SCF cycle"
+            )
+
+        # Compare physical quantities
+        np.testing.assert_allclose(
+            stub_so.physics["NCond"], stub_n.physics["NCond"], atol=1e-10,
+            err_msg="NCond should match"
+        )
+        np.testing.assert_allclose(
+            stub_so.physics["Sz"], stub_n.physics["Sz"], atol=1e-10,
+            err_msg="Sz should match"
+        )
+
+    def test_scf_cycle_coulomb_inter_exchange(self):
+        """Full SCF cycle: CoulombInter + Exchange, normal vs spin-orbital.
+
+        More complex test with two interaction types and Fock term active.
+        Runs 5 SCF steps and compares all outputs.
+        """
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 2
+
+        # Spin-diagonal transfer with different k-point values
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        # k=0
+        ham_t[0, 0, 0] = 1.0;  ham_t[0, 1, 1] = 2.5
+        ham_t[0, 0, 1] = 0.4;  ham_t[0, 1, 0] = 0.4
+        ham_t[0, 2, 2] = 1.0;  ham_t[0, 3, 3] = 2.5
+        ham_t[0, 2, 3] = 0.4;  ham_t[0, 3, 2] = 0.4
+        # k=1 (different hopping)
+        ham_t[1, 0, 0] = 1.5;  ham_t[1, 1, 1] = 2.0
+        ham_t[1, 0, 1] = -0.2; ham_t[1, 1, 0] = -0.2
+        ham_t[1, 2, 2] = 1.5;  ham_t[1, 3, 3] = 2.0
+        ham_t[1, 2, 3] = -0.2; ham_t[1, 3, 2] = -0.2
+
+        # CoulombInter: V[0,1]=2.0
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 2.0
+        vab[:, 1, 0] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1
+        ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1
+        ci_spin[1, 0, 0, 1] = 1
+
+        # Exchange: J[0,1]=-1.5
+        jex = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jex[:, 0, 1] = -1.5
+        jex[:, 1, 0] = -1.5
+        ex_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ex_spin[0, 1, 0, 1] = 1
+        ex_spin[1, 0, 1, 0] = 1
+
+        inter_table = {"CoulombInter": vab, "Exchange": jex}
+        spin_table = {"CoulombInter": ci_spin, "Exchange": ex_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True, Nconds=[3]
+        )
+
+        for stub in [stub_n, stub_so]:
+            stub.T = 0
+            stub.ene_cutoff = 1e2
+
+        self._run_scf_cycle(stub_n, n_steps=5)
+        self._run_scf_cycle(stub_so, n_steps=5)
+
+        green_so_as_normal = self._so_green_to_normal(stub_so.Green, norb_phys)
+        np.testing.assert_allclose(
+            green_so_as_normal, stub_n.Green, atol=1e-10,
+            err_msg="Green functions should match (CoulombInter + Exchange)"
+        )
+
+        for key in stub_n.physics["Ene"]:
+            en = stub_n.physics["Ene"][key]
+            eso = stub_so.physics["Ene"][key]
+            e_n = en.real if hasattr(en, 'real') else en
+            e_so = eso.real if hasattr(eso, 'real') else eso
+            np.testing.assert_allclose(
+                e_so, e_n, atol=1e-10,
+                err_msg=f"Energy '{key}' should match (CoulombInter + Exchange)"
+            )
+
+    def test_scf_cycle_all_interactions(self):
+        """Full SCF cycle: CoulombIntra + CoulombInter + Hund + Exchange.
+
+        Comprehensive test with all Coulomb-type interactions.
+        3 physical orbitals, nvol=2, 5 SCF steps.
+        """
+        norb_phys = 3
+        nd = 2 * norb_phys
+        nvol = 2
+
+        # Spin-diagonal transfer
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for k in range(nvol):
+            for a in range(norb_phys):
+                ham_t[k, a, a] = float(a) + 1.0 + 0.5 * k
+                ham_t[k, norb_phys + a, norb_phys + a] = float(a) + 1.0 + 0.5 * k
+            ham_t[k, 0, 1] = 0.3; ham_t[k, 1, 0] = 0.3
+            ham_t[k, 1, 2] = 0.2; ham_t[k, 2, 1] = 0.2
+            ham_t[k, norb_phys+0, norb_phys+1] = 0.3
+            ham_t[k, norb_phys+1, norb_phys+0] = 0.3
+            ham_t[k, norb_phys+1, norb_phys+2] = 0.2
+            ham_t[k, norb_phys+2, norb_phys+1] = 0.2
+
+        # CoulombIntra
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0; uab[:, 1, 1] = 3.5; uab[:, 2, 2] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1; cu_spin[1, 0, 0, 1] = 1
+
+        # CoulombInter
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 1.5; vab[:, 1, 0] = 1.5
+        vab[:, 1, 2] = 1.0; vab[:, 2, 1] = 1.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1; ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1; ci_spin[1, 0, 0, 1] = 1
+
+        # Hund
+        jhund = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jhund[:, 0, 1] = -0.8; jhund[:, 1, 0] = -0.8
+        hund_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        hund_spin[0, 0, 0, 0] = 1; hund_spin[1, 1, 1, 1] = 1
+
+        # Exchange
+        jex = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jex[:, 0, 1] = -0.5; jex[:, 1, 0] = -0.5
+        ex_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ex_spin[0, 1, 0, 1] = 1; ex_spin[1, 0, 1, 0] = 1
+
+        inter_table = {
+            "CoulombIntra": uab, "CoulombInter": vab,
+            "Hund": jhund, "Exchange": jex,
+        }
+        spin_table = {
+            "CoulombIntra": cu_spin, "CoulombInter": ci_spin,
+            "Hund": hund_spin, "Exchange": ex_spin,
+        }
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True, Nconds=[4]
+        )
+
+        for stub in [stub_n, stub_so]:
+            stub.T = 0
+            stub.ene_cutoff = 1e2
+
+        self._run_scf_cycle(stub_n, n_steps=5)
+        self._run_scf_cycle(stub_so, n_steps=5)
+
+        green_so_as_normal = self._so_green_to_normal(stub_so.Green, norb_phys)
+        np.testing.assert_allclose(
+            green_so_as_normal, stub_n.Green, atol=1e-10,
+            err_msg="Green functions should match (all interactions)"
+        )
+
+        for key in stub_n.physics["Ene"]:
+            en = stub_n.physics["Ene"][key]
+            eso = stub_so.physics["Ene"][key]
+            e_n = en.real if hasattr(en, 'real') else en
+            e_so = eso.real if hasattr(eso, 'real') else eso
+            np.testing.assert_allclose(
+                e_so, e_n, atol=1e-10,
+                err_msg=f"Energy '{key}' should match (all interactions)"
+            )
+
+        np.testing.assert_allclose(
+            stub_so.physics["NCond"], stub_n.physics["NCond"], atol=1e-10,
+            err_msg="NCond should match (all interactions)"
+        )
+        np.testing.assert_allclose(
+            stub_so.physics["Sz"], stub_n.physics["Sz"], atol=1e-10,
+            err_msg="Sz should match (all interactions)"
+        )
+
+    def test_scf_cycle_pairhop(self):
+        """Full SCF cycle: PairHop interaction, normal vs spin-orbital.
+
+        PairHop has a different contraction structure in _make_ham,
+        so it needs a separate test.
+        """
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 2
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for k in range(nvol):
+            for a in range(norb_phys):
+                ham_t[k, a, a] = float(a) + 1.0 + 0.3 * k
+                ham_t[k, norb_phys + a, norb_phys + a] = float(a) + 1.0 + 0.3 * k
+
+        jab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jab[:, 0, 1] = 1.0; jab[:, 1, 0] = 1.0
+        ph_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ph_spin[0, 1, 1, 0] = 1; ph_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"PairHop": jab}
+        spin_table = {"PairHop": ph_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True, Nconds=[3]
+        )
+
+        for stub in [stub_n, stub_so]:
+            stub.T = 0
+            stub.ene_cutoff = 1e2
+
+        self._run_scf_cycle(stub_n, n_steps=5)
+        self._run_scf_cycle(stub_so, n_steps=5)
+
+        green_so_as_normal = self._so_green_to_normal(stub_so.Green, norb_phys)
+        np.testing.assert_allclose(
+            green_so_as_normal, stub_n.Green, atol=1e-10,
+            err_msg="Green functions should match (PairHop)"
+        )
+
+        for key in stub_n.physics["Ene"]:
+            en = stub_n.physics["Ene"][key]
+            eso = stub_so.physics["Ene"][key]
+            e_n = en.real if hasattr(en, 'real') else en
+            e_so = eso.real if hasattr(eso, 'real') else eso
+            np.testing.assert_allclose(
+                e_so, e_n, atol=1e-10,
+                err_msg=f"Energy '{key}' should match (PairHop)"
+            )
+
+    def test_scf_cycle_no_fock(self):
+        """Full SCF cycle without Fock term: normal vs spin-orbital.
+
+        Tests that Hartree-only mode also works correctly.
+        """
+        norb_phys = 2
+        nd = 2 * norb_phys
+        nvol = 1
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for a in range(norb_phys):
+            ham_t[:, a, a] = float(a) + 1.0
+            ham_t[:, norb_phys + a, norb_phys + a] = float(a) + 1.0
+        ham_t[:, 0, 1] = 0.5; ham_t[:, 1, 0] = 0.5
+        ham_t[:, 2, 3] = 0.5; ham_t[:, 3, 2] = 0.5
+
+        # CoulombIntra + CoulombInter (Hartree only)
+        uab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        uab[:, 0, 0] = 4.0; uab[:, 1, 1] = 3.0
+        cu_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        cu_spin[0, 1, 1, 0] = 1; cu_spin[1, 0, 0, 1] = 1
+
+        vab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        vab[:, 0, 1] = 2.0; vab[:, 1, 0] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 0, 0, 0] = 1; ci_spin[1, 1, 1, 1] = 1
+        ci_spin[0, 1, 1, 0] = 1; ci_spin[1, 0, 0, 1] = 1
+
+        inter_table = {"CoulombIntra": uab, "CoulombInter": vab}
+        spin_table = {"CoulombIntra": cu_spin, "CoulombInter": ci_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=False, Nconds=[3]  # Fock disabled
+        )
+
+        for stub in [stub_n, stub_so]:
+            stub.T = 0
+            stub.ene_cutoff = 1e2
+
+        self._run_scf_cycle(stub_n, n_steps=5)
+        self._run_scf_cycle(stub_so, n_steps=5)
+
+        green_so_as_normal = self._so_green_to_normal(stub_so.Green, norb_phys)
+        np.testing.assert_allclose(
+            green_so_as_normal, stub_n.Green, atol=1e-10,
+            err_msg="Green functions should match (Hartree only, no Fock)"
+        )
+
+        for key in stub_n.physics["Ene"]:
+            en = stub_n.physics["Ene"][key]
+            eso = stub_so.physics["Ene"][key]
+            e_n = en.real if hasattr(en, 'real') else en
+            e_so = eso.real if hasattr(eso, 'real') else eso
+            np.testing.assert_allclose(
+                e_so, e_n, atol=1e-10,
+                err_msg=f"Energy '{key}' should match (Hartree only)"
+            )
+
+
 if __name__ == '__main__':
     unittest.main()
