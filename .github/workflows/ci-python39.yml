@@ -58,7 +58,6 @@ jobs:
 
     - name: Run tests with pytest and coverage
       run: |
-        poetry add pytest pytest-cov coverage
         poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml
       continue-on-error: true
 
