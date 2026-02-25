@@ -2182,6 +2182,112 @@ class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
         )
 
     # ----------------------------------------------------------------
+    # Test 5b: Ising interaction
+    # ----------------------------------------------------------------
+    def test_ising_equivalence(self):
+        """Ising interaction: normal vs spin-orbital mode.
+
+        Ising spin table: [0,0,0,0]=1, [1,1,1,1]=1, [0,1,1,0]=-1, [1,0,0,1]=-1
+        This represents J Sz_i Sz_j (Hartree + Fock).
+        """
+        norb_phys, nvol = 2, 2
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(110)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        jab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jab[:, 0, 1] = 2.0
+        jab[:, 1, 0] = 2.0
+
+        ising_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ising_spin[0, 0, 0, 0] = 1
+        ising_spin[1, 1, 1, 1] = 1
+        ising_spin[0, 1, 1, 0] = -1
+        ising_spin[1, 0, 0, 1] = -1
+
+        inter_table = {"Ising": jab}
+        spin_table = {"Ising": ising_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="Ising: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
+    # Test 5c: PairLift interaction
+    # ----------------------------------------------------------------
+    def test_pairlift_equivalence(self):
+        """PairLift interaction: normal vs spin-orbital mode.
+
+        PairLift spin table: [0,0,1,1]=1, [1,1,0,0]=1
+        This is a Coulomb-type interaction (Hartree + Fock).
+        """
+        norb_phys, nvol = 2, 2
+        nd = 2 * norb_phys
+        rng = np.random.RandomState(120)
+
+        ham_t = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_t[:, i, i] = float(i) + 1.0
+
+        jab = np.zeros((nvol, norb_phys, norb_phys), dtype=np.complex128)
+        jab[:, 0, 1] = 1.5
+        jab[:, 1, 0] = 1.5
+
+        pl_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        pl_spin[0, 0, 1, 1] = 1
+        pl_spin[1, 1, 0, 0] = 1
+
+        inter_table = {"PairLift": jab}
+        spin_table = {"PairLift": pl_spin}
+
+        stub_n, stub_so = self._make_uhfk_stub_full(
+            norb_phys, nvol, ham_t,
+            inter_table=inter_table, spin_table=spin_table,
+            iflag_fock=True
+        )
+
+        green_n = 0.01 * (rng.randn(nvol, 2, norb_phys, 2, norb_phys)
+                          + 1j * rng.randn(nvol, 2, norb_phys, 2, norb_phys))
+        for s in range(2):
+            for a in range(norb_phys):
+                green_n[:, s, a, s, a] = 0.25 + 0.01 * rng.randn(nvol)
+
+        stub_n.Green = green_n
+        stub_so.Green = self._normal_green_to_so(green_n, norb_phys)
+
+        stub_n._make_ham()
+        stub_so._make_ham()
+
+        ham_so_in_normal = self._so_ham_to_normal(stub_so.ham, norb_phys)
+        np.testing.assert_allclose(
+            ham_so_in_normal, stub_n.ham, atol=1e-12,
+            err_msg="PairLift: SO and normal mode Hamiltonians should match"
+        )
+
+    # ----------------------------------------------------------------
     # Test 6: Multiple interactions combined
     # ----------------------------------------------------------------
     def test_combined_interactions_equivalence(self):

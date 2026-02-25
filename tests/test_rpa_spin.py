@@ -244,7 +244,16 @@ class TestRPAspin(unittest.TestCase):
             }
         })
 
-    # def test_squashed_spinful(self):
+    def test_squashed_spinful(self):
+        self.run_test({
+            'enable_spin_orbital': True,
+            'calc_scheme': 'squashed',
+            'inter': {
+                'Transfer': 'transfer_spin_orbital.dat',
+            }
+        })
+
+    # def test_squashed_spinful_with_interaction(self):
     #     self.run_test({
     #         'enable_spin_orbital': True,
     #         'calc_scheme': 'squashed',

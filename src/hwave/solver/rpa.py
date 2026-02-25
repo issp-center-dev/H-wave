@@ -750,15 +750,14 @@ class RPA:
                 chi0q_orig = chi0q
                 ham_orig = self.ham_info.ham_inter_q
 
-                if self.calc_scheme == "reduced":
-                    # alpha=alpha', beta=beta' case
+                if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+                    # Treat combined spin-orbital indices as general orbitals.
+                    # squashed degenerates to reduced; block structure is
+                    # exploited by _find_block_diagonal inside _solve_rpa.
                     nvol = self.lattice.nvol
                     nd = self.nd
                     ham = np.einsum('kaabb->kab',
                                     ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
-                elif self.calc_scheme == "squashed":
-                    logger.error("squash is not available with spin-orbital interaction")
-                    sys.exit(1)
                 else:
                     ham = ham_orig
 

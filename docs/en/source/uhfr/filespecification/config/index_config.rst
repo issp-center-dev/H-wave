@@ -74,6 +74,10 @@ Parameters
   When this parameter is ``true``, the Fock term is considered.
   If it is ``false``, only the Hartree term is considered.
 
+.. note::
+
+   The UHFr solver does not support spin-orbital interaction (``enable_spin_orbital``). To handle spin-orbital interaction, use the UHFk solver (wave-number space version).
+
 
 ``mode.param`` section
 ================================
