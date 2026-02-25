@@ -773,6 +773,7 @@ class UHFk(solver_base):
 
         self._make_ham_trans() # T_ab(k)
         self._make_ham_inter() # J_ab(r)
+        self._detect_blocks()  # Detect block-diagonal structure
 
         self.Green = self._initial_green(green_info)
 
@@ -1233,6 +1234,167 @@ class UHFk(solver_base):
             self.inter_table["PairHop"] = None
 
     @do_profile
+    def _detect_blocks(self):
+        """Detect block-diagonal structure from transfer and interaction terms.
+
+        Analyzes the connectivity in the (spin, orbital) index space by
+        combining the non-zero patterns of:
+        1. Transfer Hamiltonian ham_trans (summed over k-points)
+        2. Interaction terms inter_table x spin_table (expanded to nd x nd)
+
+        The detected blocks are used by _diag() and _green() to decompose
+        the problem into smaller independent sub-problems.
+
+        Sets self.block_info: list of arrays, each containing nd-space indices
+        for one independent block. Also sets self.Nconds for each block.
+        """
+        logger.debug(">>> _detect_blocks")
+
+        nd = self.nd
+        norb = self.norb
+        ns = self.ns
+
+        # Build connectivity matrix in nd x nd space
+        connectivity = np.zeros((nd, nd), dtype=np.float64)
+
+        # 1. Transfer Hamiltonian: sum |ham_trans(k)| over k
+        connectivity += np.sum(np.abs(self.ham_trans), axis=0)
+
+        # 2. Interaction terms: expand (norb, norb) x spin(2,2,2,2) -> (nd, nd)
+        #    For each interaction, the Hamiltonian contributes to
+        #    H[(s,a), (t,b)] via spin_table[s,u,v,t] * inter_table[a,b]
+        #    This couples (s,a) with (t,b) if any spin combination is nonzero
+        for type_name in self.inter_table:
+            if self.inter_table[type_name] is not None:
+                jab = self.inter_table[type_name]
+                spin = self.spin_table[type_name]
+
+                # Sum |J_ab(r)| over r to get orbital connectivity
+                jab_sum = np.sum(np.abs(jab.reshape(-1, norb, norb)), axis=0)
+
+                # Expand to nd x nd using spin structure
+                # Non-cross (Hartree) term couples (s,a)-(t,b) if
+                #   exists u,v: spin[s,u,v,t] != 0 and J[a,b] != 0
+                # The orbital structure: H[(s,a),(t,a)] += J[a,b] * G[b,b] * spin
+                # -> couples all (s,a) with (t,a') for a' in same connected component
+                # Cross (Fock) term couples (s,a)-(t,b) if
+                #   exists u,v: spin[s,u,t,v] != 0 and J[a,b] != 0
+                # -> directly couples (s,a) with (t,b)
+
+                # For Hartree: spin_mat_h[s,t] = any(spin[s,:,:,t] != 0)
+                spin_mat_h = np.any(spin != 0, axis=(1, 2)).astype(float)
+                # Hartree connects (s,a) to (t,a') for all a,a' if J has path a-b-a'
+                # Conservative: treat all orbitals as connected if any J[a,b] != 0
+                orb_connected_h = (jab_sum > 0).any(axis=1).astype(float)
+                # But actually Hartree term: H[(s,a),(t,a)] += sum_b J[a,b]*G[b,b]*spin
+                # This couples (s,a)-(t,a) (same orbital, different spin if spin allows)
+                for s in range(ns):
+                    for t in range(ns):
+                        if spin_mat_h[s, t] > 0:
+                            # Hartree: couples (s, a) with (t, a) for all a with J[a,:] != 0
+                            for a in range(norb):
+                                if orb_connected_h[a]:
+                                    connectivity[s * norb + a, t * norb + a] += 1.0
+
+                if self.iflag_fock:
+                    # Fock: spin_mat_f[s,t] = any over u,v of spin[s,u,t,v]
+                    spin_mat_f = np.any(
+                        spin.transpose(0, 2, 1, 3).reshape(ns * ns, ns * ns) != 0
+                    ).astype(float) if ns > 1 else np.ones((1, 1))
+                    # More precise: spin_mat_f[s,t] = max_u,v |spin[s,u,t,v]|
+                    spin_fock = np.max(np.abs(spin), axis=(1, 3))  # (ns, ns) = max over u,v of |spin[s,u,t,v]|
+                    # Fock connects (s, a) with (t, b) if spin_fock[s,t] > 0 and J[a,b] > 0
+                    for s in range(ns):
+                        for t in range(ns):
+                            if spin_fock[s, t] > 0:
+                                connectivity[s * norb:(s + 1) * norb,
+                                             t * norb:(t + 1) * norb] += jab_sum
+
+        # Symmetrize
+        connectivity = connectivity + connectivity.T
+
+        # Find connected components
+        threshold = 1.0e-12
+        adj = np.abs(connectivity) > threshold
+
+        # BFS/label propagation
+        labels = np.arange(nd)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(nd):
+                neighbors = np.where(adj[i])[0]
+                if len(neighbors) > 0:
+                    min_label = min(labels[i], np.min(labels[neighbors]))
+                    if labels[i] != min_label:
+                        labels[i] = min_label
+                        changed = True
+                    for n in neighbors:
+                        if labels[n] != min_label:
+                            labels[n] = min_label
+                            changed = True
+
+        unique_labels = np.unique(labels)
+        blocks = [np.where(labels == lbl)[0] for lbl in unique_labels]
+
+        # Sort blocks by first index
+        blocks.sort(key=lambda b: b[0])
+
+        # Determine Nconds for each block
+        if self.sz_free:
+            # All indices in one or more blocks, total Ncond distributed
+            total_ncond = self.Nconds[0]
+            if len(blocks) == 1:
+                block_nconds = [total_ncond]
+            else:
+                # Distribute proportionally to block size
+                # (user may override via filling)
+                block_nconds = []
+                remaining = total_ncond
+                for i, blk in enumerate(blocks):
+                    if i < len(blocks) - 1:
+                        nc = int(round(total_ncond * len(blk) / nd))
+                        block_nconds.append(nc)
+                        remaining -= nc
+                    else:
+                        block_nconds.append(remaining)
+        else:
+            # 2Sz is specified: blocks should align with spin sectors
+            # Check if blocks correspond to pure spin-up / spin-down sectors
+            ncond_up, ncond_down = self.Nconds[0], self.Nconds[1]
+            block_nconds = []
+            for blk in blocks:
+                # Count how many indices are spin-up (0..norb-1) vs spin-down (norb..nd-1)
+                n_up = np.sum(blk < norb)
+                n_down = np.sum(blk >= norb)
+                if n_up > 0 and n_down == 0:
+                    # Pure spin-up block
+                    nc = int(round(ncond_up * len(blk) / norb))
+                    block_nconds.append(nc)
+                elif n_up == 0 and n_down > 0:
+                    # Pure spin-down block
+                    nc = int(round(ncond_down * len(blk) / norb))
+                    block_nconds.append(nc)
+                else:
+                    # Mixed spin block - distribute proportionally
+                    nc = int(round((ncond_up + ncond_down) * len(blk) / nd))
+                    block_nconds.append(nc)
+
+        self.block_info = blocks
+        self.Nconds = block_nconds
+
+        # Log detected structure
+        if len(blocks) == 1:
+            logger.info("Block detection: single block (nd={})".format(nd))
+        else:
+            block_desc = ", ".join(
+                ["{}".format(len(b)) for b in blocks]
+            )
+            logger.info("Block detection: {} blocks of sizes [{}] "
+                        "with Nconds={}".format(
+                            len(blocks), block_desc, block_nconds))
+
+    @do_profile
     def _make_ham(self):
         logger.debug(">>> _make_ham")
 
@@ -1317,26 +1479,23 @@ class UHFk(solver_base):
     def _diag(self):
         logger.debug(">>> _diag")
 
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
-        nd       = self.nd
-        norb     = self.norb
-        ns       = self.ns
+        nvol = self.nvol
+        blocks = self.block_info
 
-        if self.sz_free:
-            # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
-            mat = self.ham.reshape(1,nvol,nd,nd)
-            # note: number of spin blocks = 1
-        else:
-            # hamiltonian H_{ab}(k, spin) : ham(s,k,(a,b)) : spin-diagonal
-            mat = np.einsum('ksasb->skab', self.ham.reshape(nvol,ns,norb,ns,norb))
+        # Diagonalize each block independently
+        eigenvalues = []
+        eigenvectors = []
+        for blk in blocks:
+            idx = np.array(blk)
+            ix = np.ix_(idx, idx)
+            mat_blk = self.ham[:, ix[0], ix[1]]  # (nvol, blk_size, blk_size)
+            w, v = np.linalg.eigh(mat_blk)
+            eigenvalues.append(w)
+            eigenvectors.append(v)
 
-        # diagonalize
-        w,v = np.linalg.eigh(mat)
-
-        # store
-        self._green_list["eigenvalue"] = w
-        self._green_list["eigenvector"] = v
+        # Store as list of per-block arrays
+        self._green_list["eigenvalue"] = eigenvalues
+        self._green_list["eigenvector"] = eigenvectors
 
     @do_profile
     def _green(self):
@@ -1348,38 +1507,42 @@ class UHFk(solver_base):
         norb     = self.norb
         ns       = self.ns
 
-        ws = self._green_list["eigenvalue"]
-        vs = self._green_list["eigenvector"]
+        ws_list = self._green_list["eigenvalue"]
+        vs_list = self._green_list["eigenvector"]
         nconds = self.Nconds
+        blocks = self.block_info
+        nblock = len(blocks)
 
-        self._green_list["mu"] = np.zeros(ws.shape[0], dtype=float)
+        self._green_list["mu"] = np.zeros(nblock, dtype=float)
 
-        nblock = ws.shape[0]
-        block_norb = ws.shape[2]  # norb per block
-        gg = np.zeros((nblock, nvol, block_norb, block_norb), dtype=np.complex128)
+        # Build full Green's function in k-space by assembling blocks
+        gab_k = np.zeros((nvol, nd, nd), dtype=np.complex128)
 
         for k in range(nblock):
-            w = ws[k]
-            v = vs[k]
+            w = ws_list[k]
+            v = vs_list[k]
             ncond = nconds[k]
 
             dist, mu = self._find_dist(w, v, ncond)
 
             self._green_list["mu"][k] = mu
-            logger.debug("mu[{}] = {}".format(k,mu))
+            logger.debug("mu[{}] = {}".format(k, mu))
 
-            # G_ab(k) = sum_l v_al(k)^* v_bl(k) f(ev(k))
-            gg[k] = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+            # G_ab(k) for this block
+            gg_blk = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
 
-        # merge spin-diagonal blocks
-        gab_k = np.einsum('skab,st->ksatb', gg, np.eye(nblock)).reshape(nx,ny,nz,nd,nd)
+            # Place into full matrix
+            idx = np.array(blocks[k])
+            ix = np.ix_(idx, idx)
+            gab_k[:, ix[0], ix[1]] = gg_blk
 
         # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-        gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
+        gab_r = np.fft.fftn(gab_k.reshape(nx, ny, nz, nd, nd),
+                            axes=(0, 1, 2), norm='forward')
 
         # store
         self.Green_prev = self.Green
-        self.Green = gab_r.reshape(nvol,ns,norb,ns,norb)
+        self.Green = gab_r.reshape(nvol, ns, norb, ns, norb)
 
     def _find_dist(self, w, v, ncond):
         if self.T == 0:
@@ -1503,12 +1666,15 @@ class UHFk(solver_base):
         energy = {}
         energy_total = 0.0
 
-        if self.T == 0:
-            ws = self._green_list["eigenvalue"]
+        ws_list = self._green_list["eigenvalue"]
+        vs_list = self._green_list["eigenvector"]
+        mus = self._green_list["mu"]
+        nblock = len(ws_list)
 
+        if self.T == 0:
             e_band = 0.0
-            for k in range(ws.shape[0]):
-                w = ws[k]
+            for k in range(nblock):
+                w = ws_list[k]
                 ev = np.sort(w.flatten())
                 e_band += np.sum(ev[:self.Nconds[k]])
 
@@ -1516,25 +1682,21 @@ class UHFk(solver_base):
             logger.debug("energy: Band = {}".format(energy["Band"]))
             energy_total += energy["Band"]
         else:
-            ws = self._green_list["eigenvalue"]
-            vs = self._green_list["eigenvector"]
-            mus = self._green_list["mu"]
             T = self.T
 
             e_band = 0.0
-            for k in range(ws.shape[0]):
-                w = ws[k]
-                v = vs[k]
+            for k in range(nblock):
+                w = ws_list[k]
+                v = vs_list[k]
                 mu = mus[k]
 
                 def _fermi(t, mu, ev):
-                    w = (ev - mu) / t
-                    mask_ = w < self.ene_cutoff
-                    w1 = np.where( mask_, w, 0.0 )
+                    w_ = (ev - mu) / t
+                    mask_ = w_ < self.ene_cutoff
+                    w1 = np.where( mask_, w_, 0.0 )
                     v1 = 1.0 / (1.0 + np.exp(w1))
-                    v = np.where( mask_, v1, 0.0 )
-                    #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) ) )
-                    return v
+                    v_ = np.where( mask_, v1, 0.0 )
+                    return v_
 
                 wt = -(w - mu) / T
                 mask_ = wt < self.ene_cutoff
@@ -1631,14 +1793,25 @@ class UHFk(solver_base):
 
         if "eigen" in info_outputfile.keys():
 
-            # eigenvalue[spin_block,k,eigen_index] -> [k,spin_block*eigen_index]
-            eg = self._green_list["eigenvalue"]
-            egs = eg.shape
-            egg = np.transpose(eg,(1,0,2)).reshape(egs[1],egs[0]*egs[2])
+            # Reconstruct full eigenvalue/eigenvector arrays from blocks
+            nvol = self.nvol
+            nd = self.nd
+            blocks = self.block_info
+            eg_list = self._green_list["eigenvalue"]
+            ev_list = self._green_list["eigenvector"]
 
-            ev = self._green_list["eigenvector"]
-            evs = ev.shape
-            evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
+            egg = np.zeros((nvol, nd), dtype=np.float64)
+            evv = np.zeros((nvol, nd, nd), dtype=np.complex128)
+
+            col_offset = 0
+            for i, blk in enumerate(blocks):
+                idx = np.array(blk)
+                blk_size = len(idx)
+                egg[:, col_offset:col_offset + blk_size] = eg_list[i]
+                # Place eigenvectors in correct rows
+                evv[np.ix_(np.arange(nvol), idx,
+                     np.arange(col_offset, col_offset + blk_size))] = ev_list[i]
+                col_offset += blk_size
 
             # # wavevec[k,eigen_index] = \vec(k)
             # wv = self.wave_table
