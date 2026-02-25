@@ -295,6 +295,308 @@ class TestRPAEighBlockDecomposition(unittest.TestCase):
                           "Full matrix should not detect block structure")
 
 
+class TestRPASpinOrbitalEquivalence(unittest.TestCase):
+    """Test that RPA _solve_rpa and _find_block_diagonal produce equivalent
+    results under spin-orbital index reordering.
+
+    Normal ordering: flat index = s * norb + a  (spin-block first)
+    SO ordering:     flat index = 2 * a + s      (interleaved spin-orbital)
+
+    Since _solve_rpa computes chiq = [1 + chi0q * W]^(-1) * chi0q,
+    the result must be invariant under simultaneous permutation of all indices.
+    """
+
+    def _make_solver_stub(self, nvol):
+        """Create a minimal RPA stub with _solve_rpa and _find_block_diagonal."""
+        import hwave.solver.rpa as rpa_module
+
+        class LatticeStub:
+            pass
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.lattice = LatticeStub()
+        stub.lattice.nvol = nvol
+        return stub
+
+    def _build_perm(self, norb):
+        """Build permutation: perm[i_so] = i_normal.
+
+        Normal: s*norb+a, SO: 2*a+s.
+        """
+        nd = 2 * norb
+        perm = np.zeros(nd, dtype=int)
+        for a in range(norb):
+            for s in range(2):
+                perm[2 * a + s] = s * norb + a
+        return perm
+
+    def _normal_to_so_2d(self, mat, perm):
+        """Reorder last 2 indices from normal to SO ordering."""
+        return mat[..., perm[:, None], perm[None, :]]
+
+    def _so_to_normal_2d(self, mat, perm):
+        """Reorder last 2 indices from SO to normal ordering."""
+        inv_perm = np.argsort(perm)
+        return mat[..., inv_perm[:, None], inv_perm[None, :]]
+
+    def _normal_to_so_4d(self, mat, perm):
+        """Reorder last 4 indices from normal to SO ordering."""
+        ix = np.ix_(perm, perm, perm, perm)
+        return mat[..., ix[0], ix[1], ix[2], ix[3]]
+
+    def _so_to_normal_4d(self, mat, perm):
+        """Reorder last 4 indices from SO to normal ordering."""
+        inv_perm = np.argsort(perm)
+        ix = np.ix_(inv_perm, inv_perm, inv_perm, inv_perm)
+        return mat[..., ix[0], ix[1], ix[2], ix[3]]
+
+    # ----------------------------------------------------------------
+    # Block detection tests
+    # ----------------------------------------------------------------
+    def test_find_block_diagonal_so_ordering(self):
+        """Block detection finds equivalent blocks in SO ordering.
+
+        norb=3, nd=6.
+        Normal: spin blocks [0,1,2] and [3,4,5].
+        SO: equivalent blocks [0,2,4] and [1,3,5] (interleaved).
+        """
+        norb, nvol = 3, 4
+        nd = 2 * norb
+        rng = np.random.RandomState(310)
+
+        ham = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            blk = rng.randn(nvol, norb, norb) + 1j * rng.randn(nvol, norb, norb)
+            ham[:, s*norb:(s+1)*norb, s*norb:(s+1)*norb] = blk
+
+        solver = self._make_solver_stub(nvol)
+        blocks_normal = solver._find_block_diagonal(ham)
+
+        perm = self._build_perm(norb)
+        ham_so = self._normal_to_so_2d(ham, perm)
+        blocks_so = solver._find_block_diagonal(ham_so)
+
+        self.assertIsNotNone(blocks_normal)
+        self.assertIsNotNone(blocks_so)
+        self.assertEqual(len(blocks_normal), len(blocks_so))
+
+        # Verify SO blocks map back to same normal blocks
+        # perm[i_so] = i_normal, so perm maps SO indices to normal indices
+        blocks_so_as_normal = [sorted(perm[b].tolist()) for b in blocks_so]
+        blocks_normal_sorted = [sorted(b) for b in blocks_normal]
+        self.assertEqual(sorted(map(tuple, blocks_so_as_normal)),
+                         sorted(map(tuple, blocks_normal_sorted)))
+
+    def test_find_block_diagonal_so_mixed_blocks(self):
+        """SO block detection with orbital sub-blocks.
+
+        norb=3, nd=6. Orbitals 0,1 coupled; orbital 2 isolated.
+        Normal: blocks {0,1}, {2}, {3,4}, {5} (4 blocks).
+        SO: blocks {0,2}, {4}, {1,3}, {5} (same structure, non-contiguous).
+        """
+        norb, nvol = 3, 4
+        nd = 2 * norb
+        rng = np.random.RandomState(320)
+
+        ham = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        # Spin-up: orbitals 0-1 coupled
+        ham[:, 0, 0] = rng.randn(nvol)
+        ham[:, 1, 1] = rng.randn(nvol)
+        ham[:, 0, 1] = rng.randn(nvol)
+        ham[:, 1, 0] = rng.randn(nvol)
+        ham[:, 2, 2] = rng.randn(nvol)  # orbital 2 isolated
+        # Spin-down: same structure
+        ham[:, 3, 3] = rng.randn(nvol)
+        ham[:, 4, 4] = rng.randn(nvol)
+        ham[:, 3, 4] = rng.randn(nvol)
+        ham[:, 4, 3] = rng.randn(nvol)
+        ham[:, 5, 5] = rng.randn(nvol)
+
+        solver = self._make_solver_stub(nvol)
+        blocks_normal = solver._find_block_diagonal(ham)
+
+        perm = self._build_perm(norb)
+        ham_so = self._normal_to_so_2d(ham, perm)
+        blocks_so = solver._find_block_diagonal(ham_so)
+
+        self.assertIsNotNone(blocks_normal)
+        self.assertIsNotNone(blocks_so)
+        self.assertEqual(len(blocks_normal), 4)
+        self.assertEqual(len(blocks_so), 4)
+
+        blocks_so_as_normal = [sorted(perm[b].tolist()) for b in blocks_so]
+        blocks_normal_sorted = [sorted(b) for b in blocks_normal]
+        self.assertEqual(sorted(map(tuple, blocks_so_as_normal)),
+                         sorted(map(tuple, blocks_normal_sorted)))
+
+    # ----------------------------------------------------------------
+    # _solve_rpa equivalence tests (reduced scheme: nd x nd)
+    # ----------------------------------------------------------------
+    def test_solve_rpa_so_reduced_spin_diag(self):
+        """Spin-diagonal chi0q/ham: normal vs SO in reduced scheme.
+
+        Block structure: normal has contiguous blocks [0,1],[2,3];
+        SO has interleaved blocks [0,2],[1,3].
+        """
+        norb, nmat, nvol = 2, 4, 8
+        nd = 2 * norb
+        rng = np.random.RandomState(300)
+
+        chi0q = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            blk = rng.randn(nmat, nvol, norb, norb) + \
+                  1j * rng.randn(nmat, nvol, norb, norb)
+            blk = (blk + blk.conj().transpose(0, 1, 3, 2)) / 2
+            chi0q[:, :, s*norb:(s+1)*norb, s*norb:(s+1)*norb] = blk
+
+        ham = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            blk = rng.randn(nvol, norb, norb) + 1j * rng.randn(nvol, norb, norb)
+            blk = (blk + blk.conj().transpose(0, 2, 1)) / 2
+            ham[:, s*norb:(s+1)*norb, s*norb:(s+1)*norb] = blk
+
+        solver = self._make_solver_stub(nvol)
+        sol_normal = solver._solve_rpa(chi0q, ham)
+
+        perm = self._build_perm(norb)
+        chi0q_so = self._normal_to_so_2d(chi0q, perm)
+        ham_so = self._normal_to_so_2d(ham, perm)
+        sol_so = solver._solve_rpa(chi0q_so, ham_so)
+        sol_so_as_normal = self._so_to_normal_2d(sol_so, perm)
+
+        np.testing.assert_allclose(
+            sol_so_as_normal, sol_normal, atol=1e-12,
+            err_msg="RPA solve (reduced, spin-diag) must be invariant under SO reordering"
+        )
+
+    def test_solve_rpa_so_reduced_full_matrix(self):
+        """Full (non-block-diagonal) chi0q/ham: normal vs SO in reduced scheme."""
+        norb, nmat, nvol = 2, 3, 4
+        nd = 2 * norb
+        rng = np.random.RandomState(301)
+
+        chi0q = rng.randn(nmat, nvol, nd, nd) + 1j * rng.randn(nmat, nvol, nd, nd)
+        chi0q = (chi0q + chi0q.conj().transpose(0, 1, 3, 2)) / 2
+
+        ham = rng.randn(nvol, nd, nd) + 1j * rng.randn(nvol, nd, nd)
+        ham = (ham + ham.conj().transpose(0, 2, 1)) / 2
+
+        solver = self._make_solver_stub(nvol)
+        sol_normal = solver._solve_rpa(chi0q, ham)
+
+        perm = self._build_perm(norb)
+        chi0q_so = self._normal_to_so_2d(chi0q, perm)
+        ham_so = self._normal_to_so_2d(ham, perm)
+        sol_so = solver._solve_rpa(chi0q_so, ham_so)
+        sol_so_as_normal = self._so_to_normal_2d(sol_so, perm)
+
+        np.testing.assert_allclose(
+            sol_so_as_normal, sol_normal, atol=1e-12,
+            err_msg="RPA solve (reduced, full matrix) must be invariant under SO reordering"
+        )
+
+    def test_solve_rpa_so_reduced_larger_system(self):
+        """Larger system: norb=4, nd=8, spin-diagonal, reduced scheme."""
+        norb, nmat, nvol = 4, 4, 4
+        nd = 2 * norb
+        rng = np.random.RandomState(302)
+
+        chi0q = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            blk = rng.randn(nmat, nvol, norb, norb) + \
+                  1j * rng.randn(nmat, nvol, norb, norb)
+            blk = (blk + blk.conj().transpose(0, 1, 3, 2)) / 2
+            chi0q[:, :, s*norb:(s+1)*norb, s*norb:(s+1)*norb] = blk
+
+        ham = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            blk = rng.randn(nvol, norb, norb) + 1j * rng.randn(nvol, norb, norb)
+            blk = (blk + blk.conj().transpose(0, 2, 1)) / 2
+            ham[:, s*norb:(s+1)*norb, s*norb:(s+1)*norb] = blk
+
+        solver = self._make_solver_stub(nvol)
+        sol_normal = solver._solve_rpa(chi0q, ham)
+
+        perm = self._build_perm(norb)
+        sol_so = solver._solve_rpa(
+            self._normal_to_so_2d(chi0q, perm),
+            self._normal_to_so_2d(ham, perm))
+        sol_so_as_normal = self._so_to_normal_2d(sol_so, perm)
+
+        np.testing.assert_allclose(
+            sol_so_as_normal, sol_normal, atol=1e-12,
+            err_msg="RPA solve (reduced, norb=4) must be invariant under SO reordering"
+        )
+
+    # ----------------------------------------------------------------
+    # _solve_rpa equivalence tests (general scheme: nd^2 x nd^2)
+    # ----------------------------------------------------------------
+    def test_solve_rpa_so_general_spin_diag(self):
+        """Spin-diagonal chi0q/ham: normal vs SO in general scheme.
+
+        chi0q shape: (nmat, nvol, nd, nd, nd, nd)
+        ham shape: (nvol, nd, nd, nd, nd)
+        """
+        norb, nmat, nvol = 2, 2, 4
+        nd = 2 * norb
+        rng = np.random.RandomState(400)
+
+        chi0q = np.zeros((nmat, nvol, nd, nd, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            a = s * norb
+            b = (s + 1) * norb
+            blk = rng.randn(nmat, nvol, norb, norb, norb, norb) + \
+                  1j * rng.randn(nmat, nvol, norb, norb, norb, norb)
+            chi0q[:, :, a:b, a:b, a:b, a:b] = blk
+
+        ham = np.zeros((nvol, nd, nd, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            a = s * norb
+            b = (s + 1) * norb
+            blk = rng.randn(nvol, norb, norb, norb, norb) + \
+                  1j * rng.randn(nvol, norb, norb, norb, norb)
+            ham[:, a:b, a:b, a:b, a:b] = blk
+
+        solver = self._make_solver_stub(nvol)
+        sol_normal = solver._solve_rpa(chi0q, ham)
+
+        perm = self._build_perm(norb)
+        chi0q_so = self._normal_to_so_4d(chi0q, perm)
+        ham_so = self._normal_to_so_4d(ham, perm)
+        sol_so = solver._solve_rpa(chi0q_so, ham_so)
+        sol_so_as_normal = self._so_to_normal_4d(sol_so, perm)
+
+        np.testing.assert_allclose(
+            sol_so_as_normal, sol_normal, atol=1e-12,
+            err_msg="RPA solve (general, spin-diag) must be invariant under SO reordering"
+        )
+
+    def test_solve_rpa_so_general_full_matrix(self):
+        """Full chi0q/ham: normal vs SO in general scheme."""
+        norb, nmat, nvol = 2, 2, 4
+        nd = 2 * norb
+        rng = np.random.RandomState(401)
+
+        chi0q = rng.randn(nmat, nvol, nd, nd, nd, nd) + \
+                1j * rng.randn(nmat, nvol, nd, nd, nd, nd)
+        ham = rng.randn(nvol, nd, nd, nd, nd) + \
+              1j * rng.randn(nvol, nd, nd, nd, nd)
+
+        solver = self._make_solver_stub(nvol)
+        sol_normal = solver._solve_rpa(chi0q, ham)
+
+        perm = self._build_perm(norb)
+        chi0q_so = self._normal_to_so_4d(chi0q, perm)
+        ham_so = self._normal_to_so_4d(ham, perm)
+        sol_so = solver._solve_rpa(chi0q_so, ham_so)
+        sol_so_as_normal = self._so_to_normal_4d(sol_so, perm)
+
+        np.testing.assert_allclose(
+            sol_so_as_normal, sol_normal, atol=1e-12,
+            err_msg="RPA solve (general, full matrix) must be invariant under SO reordering"
+        )
+
+
 class TestUHFkDetectBlocks(unittest.TestCase):
     """Test _detect_blocks in UHFk for various transfer/interaction patterns.
 
