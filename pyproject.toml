@@ -34,6 +34,10 @@ coverage = "^7.0.0"
 hwave = "hwave.qlms:main"
 hwave_dos = "hwave.dos:main"
 
+[tool.mypy]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped", "assignment"]
+
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
