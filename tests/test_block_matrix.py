@@ -1267,5 +1267,215 @@ class TestUHFkDetectBlocks(unittest.TestCase):
                               "Orbs 1,2 in spin-down should be together")
 
 
+class TestUHFrDetectBlocks(unittest.TestCase):
+    """Test _detect_blocks in UHFr for various Hamiltonian patterns.
+
+    UHFr uses flat indices 0..2*Nsize-1.
+    For spin-up/down split: up=[0..Nsize-1], down=[Nsize..2*Nsize-1].
+    """
+
+    def _make_uhfr_stub(self, Nsize, Ham_trans, Ham_local,
+                        TwoSz=None, Ncond=None):
+        """Create a minimal UHFr-like object for _detect_blocks testing.
+
+        Parameters
+        ----------
+        Nsize : int
+            Number of sites.
+        Ham_trans : ndarray (2*Nsize, 2*Nsize)
+            Transfer Hamiltonian.
+        Ham_local : ndarray (2*Nsize, 2*Nsize, 2*Nsize, 2*Nsize)
+            Interaction matrix (before reshape to (4N^2, 4N^2)).
+        TwoSz : int or None
+            If None, sz-free mode. Otherwise spin-up/down split.
+        Ncond : int or None
+            Electron count. Defaults to Nsize.
+        """
+        import hwave.solver.uhfr as uhfr_module
+
+        nd = 2 * Nsize
+        stub = object.__new__(uhfr_module.UHFr)
+        stub.Nsize = Nsize
+        stub.Ham_trans = Ham_trans
+        stub.Ham_local = Ham_local.reshape(nd ** 2, nd ** 2)
+
+        if Ncond is None:
+            Ncond = Nsize
+
+        if TwoSz is None:
+            stub.green_list = {
+                "sz-free": {
+                    "label": list(range(nd)),
+                    "occupied": Ncond
+                }
+            }
+        else:
+            stub.green_list = {
+                "spin-up": {
+                    "label": list(range(Nsize)),
+                    "value": 0.5,
+                    "occupied": int((Ncond + TwoSz) / 2)
+                },
+                "spin-down": {
+                    "label": list(range(Nsize, nd)),
+                    "value": -0.5,
+                    "occupied": int((Ncond - TwoSz) / 2)
+                }
+            }
+        return stub
+
+    def test_spin_diagonal_transfer(self):
+        """Transfer only couples within spin sectors.
+
+        Nsize=3, nd=6. Transfer: up-up and dn-dn coupled, no cross-spin.
+        TwoSz specified -> already 2 spin blocks from green_list.
+        No further splitting expected since orbitals all connected within spin.
+        """
+        Nsize = 3
+        nd = 2 * Nsize
+        rng = np.random.RandomState(300)
+
+        Ham_trans = np.zeros((nd, nd), dtype=complex)
+        # Spin-up: all sites connected
+        blk = rng.randn(Nsize, Nsize) + 1j * rng.randn(Nsize, Nsize)
+        Ham_trans[:Nsize, :Nsize] = (blk + blk.conj().T) / 2
+        # Spin-down: all sites connected
+        blk = rng.randn(Nsize, Nsize) + 1j * rng.randn(Nsize, Nsize)
+        Ham_trans[Nsize:, Nsize:] = (blk + blk.conj().T) / 2
+
+        Ham_local = np.zeros((nd, nd, nd, nd), dtype=complex)
+
+        stub = self._make_uhfr_stub(Nsize, Ham_trans, Ham_local,
+                                    TwoSz=1, Ncond=3)
+        stub._detect_blocks()
+
+        # Should remain as 2 spin blocks
+        self.assertEqual(len(stub.green_list), 2)
+
+    def test_diagonal_transfer_orbital_split(self):
+        """Diagonal transfer splits into individual site blocks.
+
+        Nsize=3, nd=6, sz-free mode. Diagonal transfer only.
+        No interactions -> 6 independent blocks.
+        """
+        Nsize = 3
+        nd = 2 * Nsize
+
+        Ham_trans = np.diag(np.arange(1, nd + 1, dtype=complex))
+        Ham_local = np.zeros((nd, nd, nd, nd), dtype=complex)
+
+        stub = self._make_uhfr_stub(Nsize, Ham_trans, Ham_local,
+                                    TwoSz=None, Ncond=3)
+        stub._detect_blocks()
+
+        self.assertEqual(len(stub.green_list), nd,
+                         "Diagonal transfer -> {} blocks".format(nd))
+
+    def test_interaction_connects_spins(self):
+        """Interaction term connects spin-up and spin-down sites.
+
+        Nsize=2, nd=4. Diagonal transfer.
+        Ham_local couples (0,2) and (1,3) -> merges spin sectors per site.
+        TwoSz=None -> starts as single block.
+        Expected: 2 blocks {0,2} and {1,3}.
+        """
+        Nsize = 2
+        nd = 2 * Nsize
+
+        Ham_trans = np.diag(np.ones(nd, dtype=complex))
+        Ham_local = np.zeros((nd, nd, nd, nd), dtype=complex)
+        # Couple site 0 (up) with site 2 (down) via interaction
+        Ham_local[0, 0, 2, 2] = 1.0
+        Ham_local[2, 2, 0, 0] = 1.0
+        # Couple site 1 (up) with site 3 (down) via interaction
+        Ham_local[1, 1, 3, 3] = 1.0
+        Ham_local[3, 3, 1, 1] = 1.0
+
+        stub = self._make_uhfr_stub(Nsize, Ham_trans, Ham_local,
+                                    TwoSz=None, Ncond=2)
+        stub._detect_blocks()
+
+        self.assertEqual(len(stub.green_list), 2,
+                         "Interaction connects spin pairs -> 2 blocks")
+        for k, info in stub.green_list.items():
+            self.assertEqual(len(info["label"]), 2)
+
+    def test_partial_transfer_coupling(self):
+        """Transfer couples sites 0-1 within spin-up, 2-3 within spin-down.
+
+        Nsize=3, nd=6. Site 2 (up) and 5 (dn) are isolated.
+        TwoSz specified -> start with 2 spin blocks.
+        Expected: 4 blocks: {0,1}, {2}, {3,4}, {5}.
+        """
+        Nsize = 3
+        nd = 2 * Nsize
+
+        Ham_trans = np.zeros((nd, nd), dtype=complex)
+        # Spin-up: site 0-1 coupled
+        Ham_trans[0, 0] = 1.0
+        Ham_trans[1, 1] = 1.0
+        Ham_trans[2, 2] = 1.0
+        Ham_trans[0, 1] = 0.5
+        Ham_trans[1, 0] = 0.5
+        # Spin-down: site 3-4 coupled
+        Ham_trans[3, 3] = 1.0
+        Ham_trans[4, 4] = 1.0
+        Ham_trans[5, 5] = 1.0
+        Ham_trans[3, 4] = 0.5
+        Ham_trans[4, 3] = 0.5
+
+        Ham_local = np.zeros((nd, nd, nd, nd), dtype=complex)
+
+        stub = self._make_uhfr_stub(Nsize, Ham_trans, Ham_local,
+                                    TwoSz=1, Ncond=3)
+        stub._detect_blocks()
+
+        self.assertEqual(len(stub.green_list), 4,
+                         "Partial coupling -> 4 sub-blocks")
+        sizes = sorted([len(v["label"]) for v in stub.green_list.values()])
+        self.assertEqual(sizes, [1, 1, 2, 2])
+
+    def test_full_coupling_single_block(self):
+        """Fully coupled transfer -> no splitting.
+
+        Nsize=3, nd=6. All sites connected via transfer.
+        sz-free mode -> single block.
+        """
+        Nsize = 3
+        nd = 2 * Nsize
+        rng = np.random.RandomState(310)
+
+        Ham_trans = rng.randn(nd, nd) + 1j * rng.randn(nd, nd)
+        Ham_trans = (Ham_trans + Ham_trans.conj().T) / 2
+        Ham_local = np.zeros((nd, nd, nd, nd), dtype=complex)
+
+        stub = self._make_uhfr_stub(Nsize, Ham_trans, Ham_local,
+                                    TwoSz=None, Ncond=3)
+        stub._detect_blocks()
+
+        self.assertEqual(len(stub.green_list), 1,
+                         "Fully coupled -> single block")
+
+    def test_ncond_preserved_after_split(self):
+        """Total occupied count is preserved after block splitting.
+
+        Nsize=4, nd=8. sz-free mode with Ncond=6.
+        Diagonal transfer -> 8 blocks with Ncond summing to 6.
+        """
+        Nsize = 4
+        nd = 2 * Nsize
+
+        Ham_trans = np.diag(np.ones(nd, dtype=complex))
+        Ham_local = np.zeros((nd, nd, nd, nd), dtype=complex)
+
+        stub = self._make_uhfr_stub(Nsize, Ham_trans, Ham_local,
+                                    TwoSz=None, Ncond=6)
+        stub._detect_blocks()
+
+        total_occ = sum(v["occupied"] for v in stub.green_list.values())
+        self.assertEqual(total_occ, 6,
+                         "Total Ncond must be preserved after splitting")
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -578,6 +578,7 @@ class UHFr(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
+        self._detect_blocks()
         import time
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
@@ -658,6 +659,113 @@ class UHFr(solver_base):
         return green
 
     @do_profile
+    def _detect_blocks(self):
+        """Detect block-diagonal structure from transfer and interaction terms.
+
+        Analyzes the connectivity in the 2*Nsize index space from:
+        1. Ham_trans: direct transfer connectivity
+        2. Ham_local: interaction connectivity (which indices couple via interactions)
+
+        Refines self.green_list by splitting existing blocks into sub-blocks
+        when independent groups are found.
+        """
+        nd = 2 * self.Nsize
+
+        # Build connectivity matrix
+        connectivity = np.abs(self.Ham_trans)
+
+        # Add interaction connectivity from Ham_local
+        # Ham_local[i,j,k,l] != 0 means G[k,l] affects Ham[i,j].
+        # For block independence, we need: if i is in block A and k is in block B,
+        # blocks A and B must be merged. So connect i<->k and j<->l.
+        ham_local_4d = self.Ham_local.reshape(nd, nd, nd, nd)
+        nonzero = np.abs(ham_local_4d) > 1e-12
+
+        # Connect i with k: project out j and l dimensions
+        ik_conn = np.any(nonzero, axis=(1, 3))  # (nd, nd) : ik_conn[i,k]
+        connectivity += ik_conn.astype(np.float64)
+
+        # Connect j with l: project out i and k dimensions
+        jl_conn = np.any(nonzero, axis=(0, 2))  # (nd, nd) : jl_conn[j,l]
+        connectivity += jl_conn.astype(np.float64)
+
+        # Symmetrize
+        connectivity = connectivity + connectivity.T
+
+        # Find connected components
+        threshold = 1e-12
+        adj = np.abs(connectivity) > threshold
+
+        labels = np.arange(nd)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(nd):
+                neighbors = np.where(adj[i])[0]
+                if len(neighbors) > 0:
+                    min_label = min(labels[i], np.min(labels[neighbors]))
+                    if labels[i] != min_label:
+                        labels[i] = min_label
+                        changed = True
+                    for n in neighbors:
+                        if labels[n] != min_label:
+                            labels[n] = min_label
+                            changed = True
+
+        unique_labels = np.unique(labels)
+        if len(unique_labels) <= 1:
+            logger.info("Block detection (UHFr): single block (nd={})".format(nd))
+            return
+
+        # Build block list
+        all_blocks = [np.where(labels == lbl)[0] for lbl in unique_labels]
+        all_blocks.sort(key=lambda b: b[0])
+
+        # Refine green_list: split existing blocks into sub-blocks
+        new_green_list = {}
+        for k, block_g_info in self.green_list.items():
+            g_label = set(block_g_info["label"])
+            occupied = block_g_info["occupied"]
+
+            # Find sub-blocks within this green_list block
+            sub_blocks = []
+            for blk in all_blocks:
+                overlap = sorted(set(blk.tolist()) & g_label)
+                if overlap:
+                    sub_blocks.append(overlap)
+
+            if len(sub_blocks) <= 1:
+                # No further splitting
+                new_green_list[k] = block_g_info
+            else:
+                # Split this block
+                total_size = len(g_label)
+                remaining_occ = occupied
+                for i, sub in enumerate(sub_blocks):
+                    sub_key = "{}_blk{}".format(k, i)
+                    if i < len(sub_blocks) - 1:
+                        sub_occ = int(round(occupied * len(sub) / total_size))
+                        remaining_occ -= sub_occ
+                    else:
+                        sub_occ = remaining_occ
+                    sub_info = {"label": sub, "occupied": sub_occ}
+                    if "value" in block_g_info:
+                        sub_info["value"] = block_g_info["value"]
+                    new_green_list[sub_key] = sub_info
+
+                block_desc = ", ".join(
+                    ["{}".format(len(s)) for s in sub_blocks])
+                logger.info("Block detection (UHFr): block '{}' split into "
+                            "{} sub-blocks of sizes [{}]".format(
+                                k, len(sub_blocks), block_desc))
+
+        self.green_list = new_green_list
+
+        block_desc = ", ".join(
+            ["{}:{}".format(k, len(v["label"])) for k, v in self.green_list.items()])
+        logger.info("Block detection (UHFr): final blocks: {}".format(block_desc))
+
+    @do_profile
     def _makeham_const(self):
         """Initialize constant part of Hamiltonian."""
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
@@ -669,10 +777,19 @@ class UHFr(solver_base):
     @do_profile
     def _makeham(self):
         """Construct full Hamiltonian."""
+        nd = 2 * self.Nsize
         self.Ham = self.Ham_trans.copy()
-        green_local = self.Green.reshape((2 * self.Nsize) ** 2)
+        green_local = self.Green.reshape(nd ** 2)
         ham_dot_green = np.dot(self.Ham_local, green_local)
-        self.Ham += ham_dot_green.reshape((2 * self.Nsize), (2 * self.Nsize))
+        self.Ham += ham_dot_green.reshape(nd, nd)
+
+        # Enforce block structure: zero out cross-block entries
+        if len(self.green_list) > 1:
+            mask = np.zeros((nd, nd), dtype=bool)
+            for info in self.green_list.values():
+                idx = np.array(info["label"])
+                mask[np.ix_(idx, idx)] = True
+            self.Ham[~mask] = 0.0
 
     @do_profile
     def _makeham_mat(self):
@@ -719,15 +836,8 @@ class UHFr(solver_base):
         """Diagonalize Hamiltonian."""
         _green_list = self.green_list
         for k, block_g_info in _green_list.items():
-            g_label = block_g_info["label"]
-            block_size = len(g_label)
-            mat = np.zeros((block_size, block_size), dtype=complex)
-            for site1, org_site1 in enumerate(g_label):
-                for site2, org_site2 in enumerate(g_label):
-                    mat[site1][site2] = self.Ham[org_site1][org_site2]
-            # w: The eigenvalues in ascending order, each repeated according to its multiplicity.
-            # v: The column v[:, i] is the normalized eigenvector corresponding to the eigenvalue w[i].
-            # Will return a matrix object if a is a matrix object.
+            g_label = np.array(block_g_info["label"])
+            mat = self.Ham[np.ix_(g_label, g_label)]
             w, v = np.linalg.eigh(mat)
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
@@ -777,28 +887,21 @@ class UHFr(solver_base):
         3. Constructs Green's function using eigenvectors and occupations
         """
         _green_list = self.green_list
-        # R_SLT = U^{*} in _green
-        # L_SLT = U^T in _green
-        R_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        L_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Store previous Green's function for convergence check
         self.Green_old = self.Green.copy()
 
         if self.T == 0:  # Zero temperature case
+            nd = 2 * self.Nsize
+            self.Green = np.zeros((nd, nd), dtype=complex)
             for k, block_g_info in _green_list.items():
                 g_label = np.array(block_g_info["label"])
                 occupied_number = block_g_info["occupied"]
                 eigenvec = self.green_list[k]["eigenvector"]
-                eigen_start = self.green_list[k]["eigen_start"]
 
-                # Vectorized construction of R_SLT and L_SLT
-                occ_vecs = eigenvec[:, :occupied_number]  # (block_size, occupied)
-                eigen_idx = np.arange(eigen_start, eigen_start + occupied_number)
-                R_SLT[np.ix_(g_label, eigen_idx)] = np.conjugate(occ_vecs)
-                L_SLT[np.ix_(eigen_idx, g_label)] = occ_vecs.T
-
-            # Multiply matrices to get Green's function
-            self.Green = np.dot(R_SLT, L_SLT)
+                # G_block = U^* U^T for occupied states
+                occ_vecs = eigenvec[:, :occupied_number]
+                g_block = np.dot(np.conjugate(occ_vecs), occ_vecs.T)
+                self.Green[np.ix_(g_label, g_label)] = g_block
 
         else:  # Finite temperature case
             from scipy import optimize
