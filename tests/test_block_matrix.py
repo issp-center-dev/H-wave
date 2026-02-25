@@ -178,6 +178,123 @@ class TestRPABlockDiagonal(unittest.TestCase):
                         "3-block solve must match full solve")
 
 
+class TestRPAEighBlockDecomposition(unittest.TestCase):
+    """Test that RPA _calc_epsilon_k block decomposition gives correct eigenvalues."""
+
+    def _make_rpa_stub(self, nvol):
+        """Create a minimal RPA-like object for eigenvalue tests."""
+        import hwave.solver.rpa as rpa_module
+
+        class LatticeStub:
+            pass
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.lattice = LatticeStub()
+        stub.lattice.nvol = nvol
+        return stub
+
+    def test_eigh_block_diagonal_matches_full(self):
+        """Block-diagonal eigh should produce same eigenvalues as full eigh.
+
+        H0 shape (nblock_spin, nvol, nd, nd) with block-diagonal structure.
+        """
+        nblock_spin, nvol, nd = 1, 8, 6
+        rng = np.random.RandomState(200)
+
+        # Build block-diagonal H0: blocks of size 3 and 3
+        H0 = np.zeros((nblock_spin, nvol, nd, nd), dtype=np.complex128)
+        for a, b in [(0, 3), (3, 6)]:
+            sz = b - a
+            blk = rng.randn(nblock_spin, nvol, sz, sz) + \
+                1j * rng.randn(nblock_spin, nvol, sz, sz)
+            blk = (blk + blk.conj().transpose(0, 1, 3, 2)) / 2
+            H0[:, :, a:b, a:b] = blk
+
+        # Full eigh
+        w_full, v_full = np.linalg.eigh(H0)
+
+        # Block eigh via RPA stub
+        stub = self._make_rpa_stub(nvol)
+        blocks = stub._find_block_diagonal(
+            H0.reshape(nblock_spin * nvol, nd, nd))
+        self.assertIsNotNone(blocks)
+        self.assertEqual(len(blocks), 2)
+
+        # Reconstruct block eigenvalues
+        w_block = np.zeros((nblock_spin, nvol, nd), dtype=np.float64)
+        col = 0
+        for blk_idx in blocks:
+            idx = np.array(blk_idx)
+            ix = np.ix_(idx, idx)
+            wb, _ = np.linalg.eigh(H0[:, :, ix[0], ix[1]])
+            nb = len(idx)
+            w_block[:, :, col:col + nb] = wb
+            col += nb
+
+        # Sort eigenvalues per k-point for comparison
+        w_full_sorted = np.sort(w_full.reshape(nblock_spin, nvol, -1), axis=-1)
+        w_block_sorted = np.sort(w_block.reshape(nblock_spin, nvol, -1), axis=-1)
+
+        self.assertTrue(np.allclose(w_full_sorted, w_block_sorted, atol=1e-12),
+                        "Block-decomposed eigh eigenvalues must match full eigh")
+
+    def test_eigh_spin_diag_with_orbital_blocks(self):
+        """Spin-diagonal H0 (nblock=2) with orbital blocks within each spin.
+
+        nblock=2, nvol=4, norb=4.
+        Each spin block has 2+2 orbital structure.
+        """
+        nblock_spin, nvol, norb = 2, 4, 4
+        rng = np.random.RandomState(210)
+
+        H0 = np.zeros((nblock_spin, nvol, norb, norb), dtype=np.complex128)
+        for g in range(nblock_spin):
+            for a, b in [(0, 2), (2, 4)]:
+                sz = b - a
+                blk = rng.randn(nvol, sz, sz) + 1j * rng.randn(nvol, sz, sz)
+                blk = (blk + blk.conj().transpose(0, 2, 1)) / 2
+                H0[g, :, a:b, a:b] = blk
+
+        w_full, _ = np.linalg.eigh(H0)
+        w_full_sorted = np.sort(w_full.reshape(nblock_spin, nvol, -1), axis=-1)
+
+        stub = self._make_rpa_stub(nvol)
+        blocks = stub._find_block_diagonal(
+            H0.reshape(nblock_spin * nvol, norb, norb))
+
+        self.assertIsNotNone(blocks)
+        self.assertEqual(len(blocks), 2)
+
+        w_block = np.zeros_like(w_full)
+        col = 0
+        for blk_idx in blocks:
+            idx = np.array(blk_idx)
+            ix = np.ix_(idx, idx)
+            wb, _ = np.linalg.eigh(H0[:, :, ix[0], ix[1]])
+            nb = len(idx)
+            w_block[:, :, col:col + nb] = wb
+            col += nb
+
+        w_block_sorted = np.sort(w_block.reshape(nblock_spin, nvol, -1), axis=-1)
+        self.assertTrue(np.allclose(w_full_sorted, w_block_sorted, atol=1e-12),
+                        "Spin-diag + orbital block eigh must match full eigh")
+
+    def test_eigh_no_blocks_unchanged(self):
+        """Full matrix (no blocks) should produce identical results."""
+        nblock_spin, nvol, nd = 1, 4, 4
+        rng = np.random.RandomState(220)
+
+        H0 = rng.randn(nblock_spin, nvol, nd, nd) + \
+            1j * rng.randn(nblock_spin, nvol, nd, nd)
+        H0 = (H0 + H0.conj().transpose(0, 1, 3, 2)) / 2
+
+        stub = self._make_rpa_stub(nvol)
+        blocks = stub._find_block_diagonal(
+            H0.reshape(nblock_spin * nvol, nd, nd))
+        self.assertIsNone(blocks,
+                          "Full matrix should not detect block structure")
+
+
 class TestUHFkDetectBlocks(unittest.TestCase):
     """Test _detect_blocks in UHFk for various transfer/interaction patterns.
 

@@ -1472,6 +1472,15 @@ class UHFk(solver_base):
 
                 ham += hh4.reshape(nvol, nd, nd)
 
+        # Enforce block structure: zero out cross-block entries
+        if len(self.block_info) > 1:
+            mask = np.zeros((nd, nd), dtype=bool)
+            for blk in self.block_info:
+                idx = np.array(blk)
+                ix = np.ix_(idx, idx)
+                mask[ix] = True
+            ham[:, ~mask] = 0.0
+
         # store
         self.ham = ham
 

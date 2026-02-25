@@ -1371,8 +1371,30 @@ class RPA:
                 H0 = H0.reshape(1,*H0.shape)
                 self.spin_mode = "spin-free"
 
-        # diagonalize H0(k)
-        w,v = np.linalg.eigh(H0)
+        # diagonalize H0(k) with optional block decomposition
+        nblock_spin = H0.shape[0]
+        nd_block = H0.shape[-1]
+        blocks = self._find_block_diagonal(H0.reshape(nblock_spin * nvol, nd_block, nd_block))
+
+        if blocks is not None and len(blocks) > 1:
+            logger.info("_calc_epsilon_k: orbital block structure detected, "
+                        "nd={} -> {} blocks of sizes {}".format(
+                            nd_block, len(blocks), [len(b) for b in blocks]))
+            w = np.zeros((nblock_spin, nvol, nd_block), dtype=np.float64)
+            v = np.zeros((nblock_spin, nvol, nd_block, nd_block), dtype=np.complex128)
+            col_offset = 0
+            for blk_idx in blocks:
+                idx = np.array(blk_idx)
+                ix = np.ix_(idx, idx)
+                H0_blk = H0[:, :, ix[0], ix[1]]
+                wb, vb = np.linalg.eigh(H0_blk)
+                nb = len(idx)
+                w[:, :, col_offset:col_offset + nb] = wb
+                v[np.ix_(np.arange(nblock_spin), np.arange(nvol), idx,
+                  np.arange(col_offset, col_offset + nb))] = vb
+                col_offset += nb
+        else:
+            w,v = np.linalg.eigh(H0)
 
         self.H0_eigenvalue = w
         self.H0_eigenvector = v
