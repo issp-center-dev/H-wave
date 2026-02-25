@@ -14,7 +14,7 @@
 H-wave is a Python package for performing unrestricted Hartree-Fock (UHF) approximation and random phase approximation (RPA) for itinerant electron systems. UHF and RPA correspond to simple approximations that deal with fluctuations up to first order and enable analyses of electron correlation effects in materials at a low computational cost. The input files describing the one-body and two-body interactions are based on the Wannier90 format[1]. This allows smooth connection for the software packages that derive the effective models from first principles calculations, such as RESPACK[2], to the analyses of the effective model with H-wave.
 
 [1] G. Pizzi et al, J. Phys.: Condens. Matter 32 165902 (2020).  
-[2] K. Nakmura, Y. Yoshimoto, Y. Nomura et al., Comp. Phys. Commun. 261, 107781 (2021).
+[2] K. Nakamura, Y. Yoshimoto, Y. Nomura et al., Comp. Phys. Commun. 261, 107781 (2021).
 
 ## Features
 
@@ -80,24 +80,15 @@ poetry install
 
 ## Quick Start
 
-### Basic Usage
-
-```python
-import hwave.qlms
-
-# Run UHF calculation
-hwave.qlms.run(input_dict=params)
-```
-
-### Command Line Interface
-
 ```bash
-# Run UHF calculation
+# Run UHF/RPA calculation
 hwave input.toml
 
 # Calculate DOS
 hwave_dos input.toml
 ```
+
+For input file format and examples, see the [User Manual](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual).
 
 ## Testing
 
@@ -133,40 +124,11 @@ The project uses GitHub Actions for automated testing:
 ## Documentation
 
 - [User Manual](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
-- [API Documentation](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
 - [Tutorial Examples](https://github.com/issp-center-dev/H-wave/tree/main/docs/tutorial)
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature-name`
-3. Make your changes
-4. Run tests: `python -m unittest discover tests/ -v`
-5. Commit your changes: `git commit -m "Add your feature"`
-6. Push to the branch: `git push origin feature/your-feature-name`
-7. Create a Pull Request
-
-### Code Quality
-
-The project enforces code quality through:
-
-- **Black**: Code formatting
-- **isort**: Import sorting
-- **flake8**: Linting
-- **mypy**: Type checking
-
-Run these tools before submitting:
-
-```bash
-black src/ tests/
-isort src/ tests/
-flake8 src/ tests/
-mypy src/
-```
+We welcome contributions! Please fork the repository, create a feature branch, and submit a Pull Request. Code quality (formatting, linting, type checking) is automatically verified by CI.
 
 ## License
 
