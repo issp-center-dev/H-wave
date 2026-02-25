@@ -100,5 +100,5 @@ jobs:
       run: poetry run isort src/ tests/
 
     - name: Run mypy
-      run: poetry run mypy src/ --ignore-missing-imports
+      run: poetry run mypy src/
       continue-on-error: true
