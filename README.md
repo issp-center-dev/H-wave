@@ -9,6 +9,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/hwave)](https://pypi.org/project/hwave/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Doc](https://img.shields.io/badge/doc-Manual-blue)](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
 
 H-wave is a Python package for performing unrestricted Hartree-Fock (UHF) approximation and random phase approximation (RPA) for itinerant electron systems. UHF and RPA correspond to simple approximations that deal with fluctuations up to first order and enable analyses of electron correlation effects in materials at a low computational cost. The input files describing the one-body and two-body interactions are based on the Wannier90 format[1]. This allows smooth connection for the software packages that derive the effective models from first principles calculations, such as RESPACK[2], to the analyses of the effective model with H-wave.
 
