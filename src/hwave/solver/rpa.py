@@ -949,13 +949,16 @@ class RPA:
 
         self.wavenum_table = np.array([(i,j,k) for i in _klist(nx) for j in _klist(ny) for k in _klist(nz)])
 
-        wtable = np.zeros((nx,ny,nz,3), dtype=float)
-        for ix, kx in enumerate(_klist(nx)):
-            for iy, ky in enumerate(_klist(ny)):
-                for iz, kz in enumerate(_klist(nz)):
-                    v = kvec[0] * kx + kvec[1] * ky + kvec[2] * kz
-                    wtable[ix,iy,iz] = v
-        self.wave_table = wtable.reshape(nvol,3)
+        kx = _klist(nx)
+        ky = _klist(ny)
+        kz = _klist(nz)
+        # Build (nx,ny,nz) grids for each k-component
+        kx_g, ky_g, kz_g = np.meshgrid(kx, ky, kz, indexing='ij')
+        # wtable[ix,iy,iz,:] = kvec[0]*kx + kvec[1]*ky + kvec[2]*kz
+        wtable = (kx_g[..., np.newaxis] * kvec[0]
+                + ky_g[..., np.newaxis] * kvec[1]
+                + kz_g[..., np.newaxis] * kvec[2])
+        self.wave_table = wtable.reshape(nvol, 3)
 
     def _find_index_range(self, freq_range):
         # decode matsubara frequency index list
@@ -1214,27 +1217,55 @@ class RPA:
             _iz = (x // (_nx * _ny)) % _nz
             return (_ix, _iy, _iz)
 
-        green_sub = np.zeros((Nvol,ns,norb,ns,norb), dtype=np.complex128)
+        # Build index mapping tables (vectorized)
+        # Supercell site indices
+        isite_arr = np.arange(Nvol)
+        ixx = isite_arr % Nx
+        iyy = (isite_arr // Nx) % Ny
+        izz = (isite_arr // (Nx * Ny)) % Nz
+        ix0 = ixx * Bx  # (Nvol,)
+        iy0 = iyy * By
+        iz0 = izz * Bz
 
-        for isite in range(Nvol):
-            ixx, iyy, izz = _unpack_index(isite, (Nx,Ny,Nz))
-            ix0, iy0, iz0 = ixx * Bx, iyy * By, izz * Bz
+        # Orbital decomposition
+        orb_arr = np.arange(norb)
+        a_arr = orb_arr % norb_orig          # original orbital index
+        ri_arr = orb_arr // norb_orig         # sublattice index
+        rix = ri_arr % Bx
+        riy = (ri_arr // Bx) % By
+        riz = (ri_arr // (Bx * By)) % Bz
 
-            for aa, bb in itertools.product(range(norb), range(norb)):
-                a, ri = aa % norb_orig, aa // norb_orig
-                b, rj = bb % norb_orig, bb // norb_orig
+        # Compute jsite for all (isite, aa, bb) combinations
+        # drx[aa,bb] = rjx[bb] - rix[aa], etc.
+        drx = rix[np.newaxis, :] - rix[:, np.newaxis]  # (norb, norb)
+        dry = riy[np.newaxis, :] - riy[:, np.newaxis]
+        drz = riz[np.newaxis, :] - riz[:, np.newaxis]
 
-                rix, riy, riz = _unpack_index(ri, (Bx,By,Bz))
-                rjx, rjy, rjz = _unpack_index(rj, (Bx,By,Bz))
+        # ix[isite, aa, bb] = (ix0[isite] + drx[aa, bb]) % Lx
+        jx = (ix0[:, np.newaxis, np.newaxis] + drx[np.newaxis, :, :]) % Lx  # (Nvol, norb, norb)
+        jy = (iy0[:, np.newaxis, np.newaxis] + dry[np.newaxis, :, :]) % Ly
+        jz = (iz0[:, np.newaxis, np.newaxis] + drz[np.newaxis, :, :]) % Lz
+        jsite_map = jx + Lx * (jy + Ly * jz)  # (Nvol, norb, norb)
 
-                ix = (ix0 + rjx - rix) % Lx
-                iy = (iy0 + rjy - riy) % Ly
-                iz = (iz0 + rjz - riz) % Lz
+        # Source orbital indices: a_arr[aa], a_arr[bb]
+        a_src = a_arr  # (norb,) - maps aa -> original orbital a
+        b_src = a_arr  # (norb,) - maps bb -> original orbital b
 
-                jsite = _pack_index((ix,iy,iz), (Lx,Ly,Lz))
+        # Gather using advanced indexing
+        # green[jsite, s, a, t, b] -> green_sub[isite, s, aa, t, bb]
+        green_sub = green[jsite_map][:, :, :, :, a_src, :, :][:, :, :, :, :, :, b_src]
+        # Shape: (Nvol, norb, norb, ns, norb, ns, norb) - need to select diagonal
+        # Use explicit indexing for clarity
+        green_sub = green[
+            jsite_map[:, :, :, np.newaxis, np.newaxis],   # (Nvol, norb, norb, 1, 1)
+            np.arange(ns)[np.newaxis, np.newaxis, np.newaxis, :, np.newaxis],  # s
+            a_src[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis],          # a
+            np.arange(ns)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :],  # t
+            b_src[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis],          # b
+        ]  # shape: (Nvol, norb, norb, ns, ns)
 
-                for s, t in itertools.product(range(ns), range(ns)):
-                    green_sub[isite, s, aa, t, bb] = green[jsite, s, a, t, b]
+        # Transpose to match (Nvol, ns, norb, ns, norb)
+        green_sub = green_sub.transpose(0, 3, 1, 4, 2)
 
         return green_sub
 
@@ -1602,35 +1633,30 @@ class RPA:
         # Sum absolute values over nvol to get connectivity pattern
         connectivity = np.sum(np.abs(ham_2d), axis=0)
 
-        # Find connected components via union-find
-        parent = list(range(ndx))
-
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        def union(x, y):
-            px, py = find(x), find(y)
-            if px != py:
-                parent[px] = py
-
+        # Build adjacency from non-zero off-diagonal entries
         threshold = 1.0e-12
-        for i in range(ndx):
-            for j in range(i + 1, ndx):
-                if abs(connectivity[i, j]) > threshold or abs(connectivity[j, i]) > threshold:
-                    union(i, j)
+        adj = (np.abs(connectivity) > threshold) | (np.abs(connectivity.T) > threshold)
 
-        # Group indices by their root
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for i in range(ndx):
-            groups[find(i)].append(i)
+        # Find connected components via iterative propagation
+        labels = np.arange(ndx)
+        while True:
+            new_labels = labels.copy()
+            for i in range(ndx):
+                neighbors = np.where(adj[i])[0]
+                if len(neighbors) > 0:
+                    min_label = np.min(labels[neighbors])
+                    new_labels[i] = min(new_labels[i], min_label)
+            # Propagate labels
+            new_labels = np.array([new_labels[new_labels[i]] for i in range(ndx)])
+            if np.array_equal(new_labels, labels):
+                break
+            labels = new_labels
 
-        blocks = list(groups.values())
-        if len(blocks) <= 1:
+        unique_labels = np.unique(labels)
+        if len(unique_labels) <= 1:
             return None
+
+        blocks = [np.where(labels == lbl)[0].tolist() for lbl in unique_labels]
         return blocks
 
 
