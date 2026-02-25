@@ -669,8 +669,6 @@ class UHFr(solver_base):
     @do_profile
     def _makeham(self):
         """Construct full Hamiltonian."""
-        import time
-        self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         self.Ham = self.Ham_trans.copy()
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
         ham_dot_green = np.dot(self.Ham_local, green_local)
@@ -737,25 +735,21 @@ class UHFr(solver_base):
     @do_profile
     def _fermi(self, mu, eigenvalue):
         """Calculate Fermi-Dirac distribution.
-        
+
         Parameters
         ----------
         mu : float
             Chemical potential
         eigenvalue : ndarray
             Eigenvalues
-            
+
         Returns
         -------
         ndarray
             Fermi-Dirac distribution
         """
-        fermi = np.zeros(eigenvalue.shape)
-        for idx, value in enumerate(eigenvalue):
-            if (value - mu) / self.T > self.ene_cutoff:
-                fermi[idx] = 0
-            else:
-                fermi[idx] = 1.0 / (np.exp((value - mu) / self.T) + 1.0)
+        x = (eigenvalue - mu) / self.T
+        fermi = np.where(x > self.ene_cutoff, 0.0, 1.0 / (np.exp(x) + 1.0))
         return fermi
 
     @do_profile
@@ -792,23 +786,19 @@ class UHFr(solver_base):
 
         if self.T == 0:  # Zero temperature case
             for k, block_g_info in _green_list.items():
-                g_label = block_g_info["label"]  # List of orbital indices for this block
-                occupied_number = block_g_info["occupied"]  # Number of occupied states
-                eigenvec = self.green_list[k]["eigenvector"]  # Eigenvectors for this block
-                eigen_start = self.green_list[k]["eigen_start"]  # Starting index for eigenvalues
+                g_label = np.array(block_g_info["label"])
+                occupied_number = block_g_info["occupied"]
+                eigenvec = self.green_list[k]["eigenvector"]
+                eigen_start = self.green_list[k]["eigen_start"]
 
-                # Construct Green's function from occupied eigenvectors
-                # G = U^* U^T where U contains occupied eigenvectors
-                for eigen_i in range(occupied_number):
-                    evec_i = eigenvec[:, eigen_i]  # Get i-th eigenvector
-                    for idx, org_site in enumerate(g_label):
-                        # Build U^* and U^T matrices
-                        R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
-                        L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
+                # Vectorized construction of R_SLT and L_SLT
+                occ_vecs = eigenvec[:, :occupied_number]  # (block_size, occupied)
+                eigen_idx = np.arange(eigen_start, eigen_start + occupied_number)
+                R_SLT[np.ix_(g_label, eigen_idx)] = np.conjugate(occ_vecs)
+                L_SLT[np.ix_(eigen_idx, g_label)] = occ_vecs.T
 
             # Multiply matrices to get Green's function
-            RMat = np.dot(R_SLT, L_SLT)
-            self.Green = RMat.copy()
+            self.Green = np.dot(R_SLT, L_SLT)
 
         else:  # Finite temperature case
             from scipy import optimize
@@ -857,10 +847,9 @@ class UHFr(solver_base):
                 # G = U^* f U where f is diagonal matrix of Fermi-Dirac occupations
                 tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
 
-                # Store block of Green's function
-                for idx1, org_site1 in enumerate(g_label):
-                    for idx2, org_site2 in enumerate(g_label):
-                        self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
+                # Store block of Green's function (vectorized)
+                g_idx = np.array(g_label)
+                self.Green[np.ix_(g_idx, g_idx)] += tmp_green
 
     @do_profile
     def _calc_energy(self):
@@ -932,15 +921,8 @@ class UHFr(solver_base):
             - If -(e-mu)/T < cutoff: use log1p for numerical stability
             - If -(e-mu)/T >= cutoff: approximate as -(e-mu)/T
             """
-            ln_Ene = np.zeros(eigenvalue.shape)
-            for idx, value in enumerate(eigenvalue):
-                # Check if exponential will overflow
-                if -(value - mu) / self.T < self.ene_cutoff:
-                    # Use log1p for numerical stability
-                    ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
-                else:
-                    # For large negative arguments, approximate as -(e-mu)/T
-                    ln_Ene[idx] = -(value - mu) / self.T
+            x = -(eigenvalue - mu) / self.T
+            ln_Ene = np.where(x < self.ene_cutoff, np.log1p(np.exp(x)), x)
             return ln_Ene
     
         def _calc_finite_temp_energy(green_list):
@@ -1022,24 +1004,18 @@ class UHFr(solver_base):
         -----
         Also performs mixing of old and new Green's functions for convergence
         """
-        n = 0
-        for site in range(2 * self.Nsize):
-            n += self.Green[site][site]
-        self.physics["NCond"] = n.real
+        self.physics["NCond"] = np.trace(self.Green).real
 
-        sz = 0
-        for site in range(self.Nsize):
-            sz += self.Green[site][site]
-            sz -= self.Green[site + self.Nsize][site + self.Nsize]
-        self.physics["Sz"] = (0.5 * sz).real
+        N = self.Nsize
+        diag = np.diag(self.Green).real
+        self.physics["Sz"] = 0.5 * (np.sum(diag[:N]) - np.sum(diag[N:]))
 
-        rest = 0.0
+        diff = self.Green - self.Green_old
+        rest = np.sum(np.abs(diff) ** 2)
         mix = self.param_mod["mix"]
-        for site1, site2 in itertools.product(range(2 * self.Nsize), range(2 * self.Nsize)):
-            rest += abs(self.Green[site1][site2] - self.Green_old[site1][site2])**2
-            self.Green[site1][site2] = self.Green_old[site1][site2] * (1.0 - mix) + mix * self.Green[site1][site2]
-        self.physics["Rest"] = np.sqrt(rest) / (2.0 * self.Nsize * self.Nsize)
-        self.Green[np.where(abs(self.Green) < self.threshold)] = 0
+        self.Green = self.Green_old * (1.0 - mix) + mix * self.Green
+        self.physics["Rest"] = np.sqrt(rest) / (2.0 * N * N)
+        self.Green[np.abs(self.Green) < self.threshold] = 0
 
     @do_profile
     def get_results(self):

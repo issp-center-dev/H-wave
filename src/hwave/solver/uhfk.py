@@ -1354,8 +1354,11 @@ class UHFk(solver_base):
 
         self._green_list["mu"] = np.zeros(ws.shape[0], dtype=float)
 
-        gg = []
-        for k in range(ws.shape[0]):
+        nblock = ws.shape[0]
+        block_norb = ws.shape[2]  # norb per block
+        gg = np.zeros((nblock, nvol, block_norb, block_norb), dtype=np.complex128)
+
+        for k in range(nblock):
             w = ws[k]
             v = vs[k]
             ncond = nconds[k]
@@ -1366,12 +1369,10 @@ class UHFk(solver_base):
             logger.debug("mu[{}] = {}".format(k,mu))
 
             # G_ab(k) = sum_l v_al(k)^* v_bl(k) f(ev(k))
-            gg.append(
-                np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
-            )
+            gg[k] = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
 
         # merge spin-diagonal blocks
-        gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
+        gab_k = np.einsum('skab,st->ksatb', gg, np.eye(nblock)).reshape(nx,ny,nz,nd,nd)
 
         # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
         gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')

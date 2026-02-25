@@ -1540,27 +1540,98 @@ class RPA:
         Solves the equation:
         chiq = [1 + chi0q * W]^(-1) * chi0q
         where W is the interaction vertex.
+
+        When the matrices have block-diagonal structure (e.g. spin-diagonal case),
+        the solver automatically detects and exploits this to reduce problem size.
         """
         logger.debug(">>> RPA._solve_rpa")
 
         nvol = self.lattice.nvol
-        #nmat = self.nmat
         nmat = chi0q.shape[0]
-        #nd = self.nd
-        #ndx = nd**2  # combined index a = (alpha, alpha')
         chi_shape = chi0q.shape  # [nmat,nvol,(spin_orbital structure)]
         ndx = np.prod(chi_shape[2:2+(len(chi_shape)-2)//2])
 
-        # 1 + X^0(l,k,aa,bb) W(k,bb,cc)
-        mat  = np.tile(np.eye(ndx, dtype=np.complex128), (nmat,nvol,1,1))
-        mat += np.einsum('lkab,kbc->lkac',
-                         chi0q.reshape(nmat,nvol,ndx,ndx),
-                         ham.reshape(nvol,ndx,ndx))
+        chi0q_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+        ham_2d = ham.reshape(nvol, ndx, ndx)
 
-        # [ 1 + X^0 W ]^-1 X^0
-        sol = np.linalg.solve(mat, chi0q.reshape(nmat,nvol,ndx,ndx))
+        # Detect block-diagonal structure from ham
+        blocks = self._find_block_diagonal(ham_2d)
+
+        if blocks is not None and len(blocks) > 1:
+            logger.info("_solve_rpa: block-diagonal structure detected, "
+                        "ndx={} -> {} blocks of sizes {}".format(
+                            ndx, len(blocks), [len(b) for b in blocks]))
+            sol = np.zeros_like(chi0q_2d)
+            for block_idx in blocks:
+                idx = np.array(block_idx)
+                ix = np.ix_(idx, idx)
+                chi0q_blk = chi0q_2d[:, :, ix[0], ix[1]]
+                ham_blk = ham_2d[:, ix[0], ix[1]]
+                nb = len(idx)
+
+                mat_blk = np.tile(np.eye(nb, dtype=np.complex128), (nmat, nvol, 1, 1))
+                mat_blk += np.einsum('lkab,kbc->lkac', chi0q_blk, ham_blk)
+
+                sol[:, :, ix[0], ix[1]] = np.linalg.solve(mat_blk, chi0q_blk)
+        else:
+            # Full matrix solve (original path)
+            mat = np.tile(np.eye(ndx, dtype=np.complex128), (nmat, nvol, 1, 1))
+            mat += np.einsum('lkab,kbc->lkac', chi0q_2d, ham_2d)
+            sol = np.linalg.solve(mat, chi0q_2d)
 
         return sol.reshape(chi_shape)
+
+    def _find_block_diagonal(self, ham_2d):
+        """Detect block-diagonal structure from the interaction Hamiltonian.
+
+        Parameters
+        ----------
+        ham_2d : ndarray, shape (nvol, ndx, ndx)
+            Interaction Hamiltonian reshaped to 2D matrices.
+
+        Returns
+        -------
+        list of list of int, or None
+            List of index groups forming independent blocks.
+            Returns None if no block structure is found (single block).
+        """
+        ndx = ham_2d.shape[-1]
+        if ndx <= 1:
+            return None
+
+        # Sum absolute values over nvol to get connectivity pattern
+        connectivity = np.sum(np.abs(ham_2d), axis=0)
+
+        # Find connected components via union-find
+        parent = list(range(ndx))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+
+        threshold = 1.0e-12
+        for i in range(ndx):
+            for j in range(i + 1, ndx):
+                if abs(connectivity[i, j]) > threshold or abs(connectivity[j, i]) > threshold:
+                    union(i, j)
+
+        # Group indices by their root
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for i in range(ndx):
+            groups[find(i)].append(i)
+
+        blocks = list(groups.values())
+        if len(blocks) <= 1:
+            return None
+        return blocks
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
