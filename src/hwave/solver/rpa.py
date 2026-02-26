@@ -517,13 +517,23 @@ class RPA:
 
         self.calc_scheme = info_mode.get("calc_scheme", "auto")
 
+        # calc_type: "ring" (default) or "ring+ladder"
+        self.calc_type = info_mode.get("calc_type", "ring")
+        if self.calc_type not in ["ring", "ring+ladder"]:
+            logger.error("calc_type must be 'ring' or 'ring+ladder', got '{}'".format(self.calc_type))
+            sys.exit(1)
+
         # auto choose
         if self.calc_scheme == "auto":
             if not self.ham_info.has_interaction():
                 logger.error("calc_scheme must be specified for chi0q-only mode.")
                 sys.exit(1)
             else:
-                if self.ham_info.has_interaction_exchange():
+                if self.calc_type == "ring+ladder":
+                    # ladder diagrams require general scheme (full rank-4 tensor)
+                    self.calc_scheme = "general"
+                    logger.info("auto mode for calc_scheme: set to general (ring+ladder)")
+                elif self.ham_info.has_interaction_exchange():
                     self.calc_scheme = "squashed"
                     logger.info("auto mode for calc_scheme: set to squashed")
                 else:
@@ -533,6 +543,9 @@ class RPA:
         # consistency check
         if self.calc_scheme == "reduced" and self.ham_info.has_interaction_exchange():
             logger.error("calc_scheme=reduced is not compatible with exchange-type interaction.")
+            sys.exit(1)
+        if self.calc_type == "ring+ladder" and self.calc_scheme != "general":
+            logger.error("calc_type='ring+ladder' requires calc_scheme='general' or 'auto'.")
             sys.exit(1)
 
         # calc chiq if interaction term exists; otherwise chi0q-only mode
@@ -674,6 +687,7 @@ class RPA:
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
         logger.info("    calc_scheme     = {}".format(self.calc_scheme))
+        logger.info("    calc_type       = {}".format(self.calc_type))
         pass
 
     @do_profile
@@ -871,11 +885,18 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_orig
 
-            # solve
+            # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
 
             # adhoc store
             green_info["chiq"] = sol
+
+            # Solve transverse (ladder) RPA if requested
+            if self.calc_type == "ring+ladder":
+                chi0q_pm, ham_pm = self._build_transverse_channel(
+                    chi0q_orig, ham_orig)
+                sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
+                green_info["chiq_pm"] = sol_pm
 
         logger.info("End RPA calculations")
         pass
@@ -1570,6 +1591,117 @@ class RPA:
             axis=1).reshape(nblock,nmat,nvol,*nd_shape) * (-1.0/beta)
 
         return chi0_qw
+
+    def _build_transverse_channel(self, chi0q_orig, ham_orig):
+        """Build transverse (ladder) channel for RPA.
+
+        The transverse susceptibility chi_+-(q) describes spin-flip
+        correlations <S^+(q) S^-(-q)>.
+
+        For paramagnetic systems, the transverse bare susceptibility
+        has the same numerical values as the longitudinal chi0:
+            chi0_+-[a,c,b,d] = -G_↑[a,b] * G_↓[d,c] = chi0_orb[a,c,b,d]
+
+        The transverse vertex W_+- is obtained by crossing the Hartree
+        vertex (Fock exchange):
+            W_+-[a,c,b,d] = Gamma_H[(↑,d),(↓,c),(↑,a),(↓,b)]
+
+        Parameters
+        ----------
+        chi0q_orig : ndarray
+            Original bare susceptibility (before spin inflation).
+        ham_orig : ndarray
+            Original interaction Hamiltonian in spin-orbital space.
+
+        Returns
+        -------
+        chi0q_pm : ndarray
+            Transverse bare susceptibility, shape matches general scheme.
+        ham_pm : ndarray
+            Transverse vertex, shape (nvol, norb, norb, norb, norb).
+        """
+        norb = self.norb
+        ns = self.ns
+        nd = norb * ns
+        nvol = self.lattice.nvol
+
+        # --- Build chi0_+- ---
+        # For paramagnetic and spin-diagonal cases, chi0_+- = chi0_orb
+        # (same numerical values, just interpreted as transverse bubble)
+        if self.spin_mode == "spin-free":
+            # chi0q_orig shape: (nfreq, nvol, norb, norb, norb, norb) for general
+            # or (nfreq, nvol, norb, norb) for reduced
+            if chi0q_orig.ndim == 4:
+                # reduced: expand to general
+                # chi0q_pm[:, :, l1, l2, l3, l2] = chi0q_orig[:, :, l1, l3]
+                # i.e., delta_{l2,l4} structure
+                nfreq, nvol_c, n1, n2 = chi0q_orig.shape
+                chi0q_pm = np.zeros((nfreq, nvol_c, norb, norb, norb, norb),
+                                    dtype=np.complex128)
+                # Vectorized: broadcast chi0q_orig into diagonal l2=l4 positions
+                for l2 in range(norb):
+                    chi0q_pm[:, :, :, l2, :, l2] = chi0q_orig
+            else:
+                chi0q_pm = chi0q_orig.copy()
+
+        elif self.spin_mode == "spin-diag":
+            # chi0q_orig shape: (nblock=2, nfreq, nvol, ...)
+            # For transverse: chi0_+- = -G_↑ * G_↓
+            # Use average of ↑ and ↓ blocks for paramagnetic-like treatment
+            # More precisely: chi0_+-[a,c,b,d] = G_↑[a,b]*G_↓_rev[d,c]
+            # For now, use spin-↑ block (they should be close for near-paramagnetic)
+            if chi0q_orig.ndim == 5:
+                chi0q_pm = chi0q_orig[0].copy()  # ↑ block
+            else:
+                chi0q_pm = chi0q_orig[0].copy()
+
+        elif self.spin_mode == "spinful":
+            # Already in spin-orbital space
+            # chi0_+- requires re-extraction with proper spin indices
+            # For now, extract from the chi0_SO structure
+            # chi0_SO[a,c,b,d] -> chi0_+-[a_orb,c_orb,b_orb,d_orb]
+            #   = chi0_SO[(↑,a),(↓,c),(↑,b),(↓,d)]  (when s1=↑=s3, s2=↓=s4)
+            #   which is just the orbital diagonal of chi0
+            if chi0q_orig.ndim == 6:
+                nfreq = chi0q_orig.shape[0]
+                chi0q_pm = chi0q_orig[:, :,
+                                      0:norb, norb:2*norb,
+                                      0:norb, norb:2*norb].copy()
+            else:
+                nfreq = chi0q_orig.shape[0]
+                chi0q_pm = chi0q_orig[:, :, 0:norb, 0:norb].copy()
+
+        # --- Build W_+- (transverse vertex) ---
+        # The transverse vertex for the +- (spin-flip) channel:
+        #   W_+-[a,c,b,d] = ham[↑a,↑c,↑b,↑d] - ham[↓d,↓b,↑c,↑a]
+        #
+        # First term: same-spin (↑↑↑↑) block of the Hartree vertex
+        # Second term: cross-spin (↓↓↑↑) block (subtracted)
+        #
+        # Verification for each interaction type:
+        #   CoulombIntra U: ham[↑↑↑↑]=0, ham[↓↓↑↑]=U  → W_+-= -U  (correct)
+        #   CoulombInter V: ham[↑↑↑↑]=V, ham[↓↓↑↑]=V  → W_+-=  0  (SU(2) correct)
+        #   Exchange J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
+        #   PairLift J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
+        #   Hund J:         ham[↑↑↑↑]=-J, ham[↓↓↑↑]=0  → W_+-= -J  (not SU(2) alone)
+        #   Ising J:        ham[↑↑↑↑]=J, ham[↓↓↑↑]=-J  → W_+-= 2J  (not SU(2) alone)
+        #   Full Kanamori:  W_+- = -(U-2J) = W_zz  (SU(2) correct)
+        ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
+
+        # Vectorized extraction using index arrays (replaces norb^4 Python loop)
+        # Same-spin block: ham[(↑,a),(↑,c),(↑,b),(↑,d)]
+        up_block = ham_4d[:, :norb, :norb, :norb, :norb]  # (nvol, norb, norb, norb, norb)
+        # Cross-spin block: ham[(↓,d),(↓,b),(↑,c),(↑,a)] with index reordering
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]  # (nvol, norb, norb, norb, norb)
+        # cross_block[:, d, b, c, a] -> need to transpose to match ham_pm[:, a, c, b, d]
+        cross_reordered = cross_block.transpose(0, 4, 3, 2, 1)  # (nvol, a, c, b, d)
+        ham_pm = up_block - cross_reordered
+
+        logger.info("ring+ladder: built transverse channel "
+                    "(chi0_pm shape={}, ham_pm shape={})".format(
+                        chi0q_pm.shape, ham_pm.shape))
+
+        return chi0q_pm, ham_pm
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):
