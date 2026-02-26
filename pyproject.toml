@@ -33,6 +33,7 @@ coverage = "^7.0.0"
 [tool.poetry.scripts]
 hwave = "hwave.qlms:main"
 hwave_dos = "hwave.dos:main"
+hwave_sc = "hwave.sc:main"
 
 [tool.mypy]
 ignore_missing_imports = true
