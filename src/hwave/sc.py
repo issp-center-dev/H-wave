@@ -306,12 +306,9 @@ def _calc_eigenvalues(epsilon_k):
     eigenvalues = np.zeros((Nx, Ny, Nz, norb))
     eigenvectors = np.zeros((Nx, Ny, Nz, norb, norb), dtype=complex)
 
-    for ix in range(Nx):
-        for iy in range(Ny):
-            for iz in range(Nz):
-                vals, vecs = np.linalg.eigh(epsilon_k[:, :, ix, iy, iz])
-                eigenvalues[ix, iy, iz, :] = vals
-                eigenvectors[ix, iy, iz, :, :] = vecs
+    # Batch diagonalization: transpose to (Nx, Ny, Nz, norb, norb) for vectorized eigh
+    eps_batch = epsilon_k.transpose(2, 3, 4, 0, 1)  # (Nx, Ny, Nz, norb, norb)
+    eigenvalues, eigenvectors = np.linalg.eigh(eps_batch)
 
     return eigenvalues, eigenvectors
 
@@ -378,21 +375,24 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
     Nx, Ny, Nz, norb = eigenvalues.shape
     iomega = np.array([(2.0 * i + 1.0 - nmat) * np.pi for i in range(nmat)]) / beta
 
-    green_kw = np.zeros((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
+    # Vectorized Green's function construction:
+    # G_{ij}(k, iwn) = sum_m U_{im}(k) U*_{jm}(k) / (iwn - (e_m(k) - mu))
 
-    for ix in range(Nx):
-        for iy in range(Ny):
-            for iz in range(Nz):
-                vals = eigenvalues[ix, iy, iz, :]
-                vecs = eigenvectors[ix, iy, iz, :, :]
-                vec_conj = np.conjugate(vecs)
-                # factor[i,j,m] = vecs[i,m] * conj(vecs[j,m])
-                factor = np.einsum('im,jm->ijm', vecs, vec_conj)
-                for iw in range(nmat):
-                    green_kw[:, :, ix, iy, iz, iw] = np.sum(
-                        factor / (1j * iomega[iw] - (vals - mu))[None, None, :],
-                        axis=2
-                    )
+    # factor[kx,ky,kz,i,j,m] = U[kx,ky,kz,i,m] * conj(U[kx,ky,kz,j,m])
+    factor = np.einsum('...im,...jm->...ijm', eigenvectors, np.conj(eigenvectors))
+    # factor shape: (Nx, Ny, Nz, norb, norb, norb)
+
+    # denom[kx,ky,kz,m,w] = 1 / (iwn_w - (e_m(k) - mu))
+    xi = eigenvalues - mu  # (Nx, Ny, Nz, norb)
+    denom = 1.0 / (1j * iomega[None, None, None, None, :] - xi[:, :, :, :, None])
+    # denom shape: (Nx, Ny, Nz, norb, nmat)
+
+    # G[kx,ky,kz,i,j,w] = sum_m factor[...,i,j,m] * denom[...,m,w]
+    green_kw_tmp = np.einsum('...ijm,...mw->...ijw', factor, denom)
+    # shape: (Nx, Ny, Nz, norb, norb, nmat)
+
+    # Transpose to output convention: (norb, norb, Nx, Ny, Nz, nmat)
+    green_kw = green_kw_tmp.transpose(3, 4, 0, 1, 2, 5)
 
     return green_kw
 
@@ -400,6 +400,93 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 # ---------------------------------------------------------------------------
 # RPA vertices
 # ---------------------------------------------------------------------------
+
+def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
+    """Build spin (S) and charge (C) interaction matrices for all q-points at once.
+
+    Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
+        S_{l1l2,l3l4}, C_{l1l2,l3l4} for multi-orbital systems.
+
+    Parameters
+    ----------
+    inter_k : dict
+        Interactions in k-space from _build_interaction_k.
+    norb : int
+        Number of orbitals.
+    Nx, Ny, Nz : int
+        Grid dimensions.
+
+    Returns
+    -------
+    S_all : ndarray
+        Spin interaction matrices, shape (Nx, Ny, Nz, norb^2, norb^2).
+    C_all : ndarray
+        Charge interaction matrices, shape (Nx, Ny, Nz, norb^2, norb^2).
+    """
+    nd = norb * norb
+    S_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+    C_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+
+    def _get(itype):
+        if itype in inter_k:
+            return inter_k[itype]  # (norb, norb, Nx, Ny, Nz)
+        return None
+
+    U_mat = _get("CoulombIntra")
+    Up_mat = _get("CoulombInter")
+    J_mat = _get("Hund")
+    Jp_mat = _get("Exchange")
+    I_mat = _get("Ising")
+    PH_mat = _get("PairHop")
+
+    # Build using vectorized index conditions
+    for l1 in range(norb):
+        for l2 in range(norb):
+            idx12 = l1 * norb + l2
+            for l3 in range(norb):
+                for l4 in range(norb):
+                    idx34 = l3 * norb + l4
+
+                    if l1 == l2 == l3 == l4:
+                        if U_mat is not None:
+                            S_all[:, :, :, idx12, idx34] = U_mat[l1, l1]
+                            C_all[:, :, :, idx12, idx34] = U_mat[l1, l1]
+                    elif l1 == l3 and l2 == l4 and l1 != l2:
+                        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+                        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+                        if Up_mat is not None:
+                            s_q += Up_mat[l1, l2]
+                            c_q -= Up_mat[l1, l2]
+                        if I_mat is not None:
+                            s_q -= I_mat[l1, l2]
+                            c_q -= I_mat[l1, l2]
+                        if J_mat is not None:
+                            c_q += J_mat[l1, l2]
+                        S_all[:, :, :, idx12, idx34] = s_q
+                        C_all[:, :, :, idx12, idx34] = c_q
+                    elif l1 == l2 and l3 == l4 and l1 != l3:
+                        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+                        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+                        if J_mat is not None:
+                            s_q += J_mat[l1, l3]
+                            c_q -= J_mat[l1, l3]
+                        if I_mat is not None:
+                            s_q -= 2.0 * I_mat[l1, l3]
+                        if Up_mat is not None:
+                            c_q += 2.0 * Up_mat[l1, l3]
+                        S_all[:, :, :, idx12, idx34] = s_q
+                        C_all[:, :, :, idx12, idx34] = c_q
+                    elif l1 == l4 and l2 == l3 and l1 != l2:
+                        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+                        if Jp_mat is not None:
+                            s_q += Jp_mat[l1, l2]
+                        if PH_mat is not None:
+                            s_q += PH_mat[l1, l2]
+                        S_all[:, :, :, idx12, idx34] = s_q
+                        C_all[:, :, :, idx12, idx34] = s_q  # S = C for this channel
+
+    return S_all, C_all
+
 
 def _build_sc_matrices(inter_k, norb, ix, iy, iz):
     """Build spin (S) and charge (C) interaction matrices at a given q-point.
@@ -552,39 +639,38 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     U_k = inter_k.get("CoulombIntra", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
     V_k = inter_k.get("CoulombInter", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
 
-    Pc_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
-    Ps_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
-    I = np.identity(norb)
+    # Transpose to batch dimension first: (Nx, Ny, Nz, norb, norb)
+    Wc = (U_k + 2.0 * V_k).transpose(2, 3, 4, 0, 1).copy()
+    Ws = (-U_k).transpose(2, 3, 4, 0, 1).copy()
 
-    for ix in range(Nx):
-        for iy in range(Ny):
-            for iz in range(Nz):
-                _U = U_k[:, :, ix, iy, iz]
-                _V = V_k[:, :, ix, iy, iz]
-                Wc = _U + 2.0 * _V
-                Ws = -_U
+    # chi0 at static limit: (Nx, Ny, Nz, norb, norb)
+    chi0_static = chi0q[:, :, :, :, :, nmat // 2].transpose(2, 3, 4, 0, 1).copy()
 
-                _chi0 = np.ascontiguousarray(
-                    chi0q[:, :, ix, iy, iz, nmat // 2].astype(np.complex128)
-                )
+    I_mat = np.broadcast_to(np.eye(norb, dtype=complex), (Nx, Ny, Nz, norb, norb)).copy()
 
-                chis = np.linalg.solve(I + _chi0 @ Ws, _chi0)
-                chic = np.linalg.solve(I + _chi0 @ Wc, _chi0)
+    # Batched solve
+    mat_s = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, Ws)
+    mat_c = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, Wc)
 
-                WsChisWs = Ws @ chis @ Ws
-                WcChicWc = Wc @ chic @ Wc
+    chis = np.linalg.solve(mat_s, chi0_static)
+    chic = np.linalg.solve(mat_c, chi0_static)
 
-                if pairing_type == "singlet":
-                    # V^s = (3/2) Ws chi_s Ws - (1/2) Wc chi_c Wc + (1/2)(S+C)
-                    Pc_q[:, :, ix, iy, iz] = (Wc + Ws) / 2.0 - 0.5 * WcChicWc
-                    Ps_q[:, :, ix, iy, iz] = -Ws + 1.5 * WsChisWs
-                elif pairing_type == "triplet":
-                    # V^t = -(1/2) Ws chi_s Ws - (1/2) Wc chi_c Wc + (1/2)(C-S)
-                    Pc_q[:, :, ix, iy, iz] = (Wc - Ws) / 2.0 - 0.5 * WcChicWc
-                    Ps_q[:, :, ix, iy, iz] = Ws - 0.5 * WsChisWs
-                else:
-                    raise ValueError("Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
-                        pairing_type))
+    WsChisWs = Ws @ chis @ Ws
+    WcChicWc = Wc @ chic @ Wc
+
+    if pairing_type == "singlet":
+        Pc_all = (Wc + Ws) / 2.0 - 0.5 * WcChicWc
+        Ps_all = -Ws + 1.5 * WsChisWs
+    elif pairing_type == "triplet":
+        Pc_all = (Wc - Ws) / 2.0 - 0.5 * WcChicWc
+        Ps_all = Ws - 0.5 * WsChisWs
+    else:
+        raise ValueError("Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
+            pairing_type))
+
+    # Transpose back: (Nx, Ny, Nz, norb, norb) -> (norb, norb, Nx, Ny, Nz)
+    Pc_q = Pc_all.transpose(3, 4, 0, 1, 2)
+    Ps_q = Ps_all.transpose(3, 4, 0, 1, 2)
 
     return Pc_q, Ps_q
 
@@ -612,61 +698,54 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         Effective pairing interaction, shape (norb, norb, norb, norb, Nx, Ny, Nz).
     """
     nd = norb * norb
-    Vs_q = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
-    I = np.identity(nd)
-
     chi0q_is_4index = (chi0q.ndim == 8)
 
-    for ix in range(Nx):
-        for iy in range(Ny):
-            for iz in range(Nz):
-                S_mat, C_mat = _build_sc_matrices(inter_k, norb, ix, iy, iz)
+    # Build S, C matrices for all q-points at once: (Nx, Ny, Nz, nd, nd)
+    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
 
-                if chi0q_is_4index:
-                    # 4-index chi0q: (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-                    # Extract at static limit and reshape to (norb^2, norb^2)
-                    _chi0 = np.ascontiguousarray(
-                        chi0q[:, :, :, :, ix, iy, iz, nmat // 2].astype(np.complex128)
-                    ).reshape(nd, nd)
-                else:
-                    # 2-index chi0q: (norb, norb, Nx, Ny, Nz, nmat)
-                    _chi0_2d = np.ascontiguousarray(
-                        chi0q[:, :, ix, iy, iz, nmat // 2].astype(np.complex128)
-                    )
-                    if norb == 1:
-                        _chi0 = _chi0_2d.reshape(1, 1)
-                    else:
-                        # Expand reduced chi0 to (norb^2, norb^2)
-                        # chi0_{l1l2,l3l4} = chi0_{l1,l3} delta_{l2,l4}
-                        logger.debug(
-                            "Warning: expanding 2-index chi0q to 4-index "
-                            "diagonal approximation at q=({},{},{})".format(ix, iy, iz))
-                        _chi0 = np.zeros((nd, nd), dtype=complex)
-                        for l1 in range(norb):
-                            for l3 in range(norb):
-                                for l2 in range(norb):
-                                    _chi0[l1*norb + l2, l3*norb + l2] = _chi0_2d[l1, l3]
+    # Extract chi0 at static limit for all q-points
+    if chi0q_is_4index:
+        # (norb, norb, norb, norb, Nx, Ny, Nz, nmat) -> (Nx, Ny, Nz, nd, nd)
+        chi0_static = chi0q[:, :, :, :, :, :, :, nmat // 2].reshape(
+            nd, nd, Nx, Ny, Nz).transpose(2, 3, 4, 0, 1).copy()
+    else:
+        # (norb, norb, Nx, Ny, Nz, nmat) -> expand to (Nx, Ny, Nz, nd, nd)
+        chi0_2d = chi0q[:, :, :, :, :, nmat // 2].transpose(2, 3, 4, 0, 1).copy()
+        # chi0_2d shape: (Nx, Ny, Nz, norb, norb)
+        if norb == 1:
+            chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
+        else:
+            # Expand: chi0_{l1*norb+l2, l3*norb+l2} = chi0_2d[l1, l3]
+            chi0_static = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+            for l2 in range(norb):
+                chi0_static[:, :, :,
+                            l2::norb,
+                            l2::norb] = chi0_2d
 
-                # RPA: chi_s = [1 - chi0 S]^{-1} chi0
-                #      chi_c = [1 + chi0 C]^{-1} chi0
-                chis = np.linalg.solve(I - _chi0 @ S_mat, _chi0)
-                chic = np.linalg.solve(I + _chi0 @ C_mat, _chi0)
+    # Batched RPA solve for all q-points simultaneously
+    # chi_s = [I - chi0 @ S]^{-1} @ chi0
+    # chi_c = [I + chi0 @ C]^{-1} @ chi0
+    I_mat = np.broadcast_to(np.eye(nd, dtype=complex), (Nx, Ny, Nz, nd, nd)).copy()
 
-                SChisS = S_mat @ chis @ S_mat
-                CChicC = C_mat @ chic @ C_mat
+    mat_s = I_mat - np.einsum('...ab,...bc->...ac', chi0_static, S_all)
+    mat_c = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, C_all)
 
-                if pairing_type == "singlet":
-                    # V^s = (3/2) S chi_s S - (1/2) C chi_c C + (1/2)(S + C)
-                    Vs_mat = 1.5 * SChisS - 0.5 * CChicC + 0.5 * (S_mat + C_mat)
-                elif pairing_type == "triplet":
-                    # V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S)
-                    Vs_mat = -0.5 * SChisS - 0.5 * CChicC + 0.5 * (C_mat - S_mat)
-                else:
-                    raise ValueError("Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
-                        pairing_type))
+    chis = np.linalg.solve(mat_s, chi0_static)  # batched solve
+    chic = np.linalg.solve(mat_c, chi0_static)
 
-                # Reshape (norb^2, norb^2) -> (norb, norb, norb, norb)
-                Vs_q[:, :, :, :, ix, iy, iz] = Vs_mat.reshape(norb, norb, norb, norb)
+    SChisS = S_all @ chis @ S_all
+    CChicC = C_all @ chic @ C_all
+
+    if pairing_type == "singlet":
+        Vs_all = 1.5 * SChisS - 0.5 * CChicC + 0.5 * (S_all + C_all)
+    elif pairing_type == "triplet":
+        Vs_all = -0.5 * SChisS - 0.5 * CChicC + 0.5 * (C_all - S_all)
+    else:
+        raise ValueError("Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
+            pairing_type))
+
+    # Reshape (Nx, Ny, Nz, nd, nd) -> (norb, norb, norb, norb, Nx, Ny, Nz)
+    Vs_q = Vs_all.reshape(Nx, Ny, Nz, norb, norb, norb, norb).transpose(3, 4, 5, 6, 0, 1, 2)
 
     return Vs_q
 
@@ -728,17 +807,11 @@ def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
     """
     if V_q.ndim == 5:
         # Simple mode: V_q is (norb, norb, Nx, Ny, Nz)
-        # Original implementation (backward compatible)
         G2Sigma = np.einsum("ijlmpqs, jmpqs -> ilpqs", G2, sigma_old)
 
-        P_r = np.array([
-            [ifftn(V_q[i, j, :, :, :]) for j in range(norb)]
-            for i in range(norb)
-        ])
-        G2Sigma_r = np.array([
-            [ifftn(G2Sigma[i, j, :, :, :]) for j in range(norb)]
-            for i in range(norb)
-        ])
+        # Vectorized IFFT over all orbital pairs at once
+        P_r = ifftn(V_q, axes=(-3, -2, -1))
+        G2Sigma_r = ifftn(G2Sigma, axes=(-3, -2, -1))
 
         Sigma_r = P_r * G2Sigma_r
         sigma_new = fftn(Sigma_r, axes=(-3, -2, -1))
@@ -746,29 +819,11 @@ def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
 
     else:
         # General mode: V_q is (norb, norb, norb, norb, Nx, Ny, Nz)
-        # F_{l2l3}(q) = sum_{l5l6} G2_{l2l5l3l6}(q) * sigma_{l5l6}
-        # = sum_{l5l6} G_{l2l5}(k) sigma_{l5l6}(k) G_{l3l6}(-k+q)
-        # G2 already stores this structure: G2_{ijlm,pqs}
         F_q = np.einsum("ijlmpqs, jmpqs -> ilpqs", G2, sigma_old)
 
-        # FFT convolution: sigma_{l1l4}(k) = -sum_q V_{l1l2,l3l4}(q) F_{l2l3}(q)
-        # = -IFFT[ V_{l1l2,l3l4}(q) ] * IFFT[ F_{l2l3}(q) ] -> FFT
-        Nx = V_q.shape[4]
-        Ny = V_q.shape[5]
-        Nz = V_q.shape[6]
-
-        # Transform to real space
-        V_r = np.zeros_like(V_q)
-        for l1 in range(norb):
-            for l2 in range(norb):
-                for l3 in range(norb):
-                    for l4 in range(norb):
-                        V_r[l1, l2, l3, l4] = ifftn(V_q[l1, l2, l3, l4])
-
-        F_r = np.array([
-            [ifftn(F_q[i, j, :, :, :]) for j in range(norb)]
-            for i in range(norb)
-        ])
+        # Vectorized IFFT: all orbital indices transformed at once
+        V_r = ifftn(V_q, axes=(-3, -2, -1))
+        F_r = ifftn(F_q, axes=(-3, -2, -1))
 
         # sigma_{l1l4}(r) = sum_{l2l3} V_{l1l2,l3l4}(r) * F_{l2l3}(r)
         sigma_r = np.einsum("ijklpqs, jkpqs -> ilpqs", V_r, F_r)
