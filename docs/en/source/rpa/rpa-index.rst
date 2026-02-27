@@ -7,5 +7,6 @@ Random Phase Approximation (RPA)
    :maxdepth: 2
 
    tutorial/tu-index
+   tutorial/sc-index
    filespecification/fi-index
 

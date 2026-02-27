@@ -7,5 +7,6 @@
    :maxdepth: 3
 
    tutorial/tu-index
+   tutorial/sc-index
    filespecification/fi-index
 

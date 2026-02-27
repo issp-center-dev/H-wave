@@ -197,4 +197,99 @@ It is noted that the vertex correction may be taken into account as a means to c
 higher order correlations. See, for example, reference [1]_ for the details.
 
 
+Block-diagonal optimization
+*****************************
+
+When the interaction Hamiltonian has a block-diagonal structure
+(e.g., due to spin conservation or orbital decoupling),
+the RPA equation can be solved independently for each block,
+significantly reducing the computational cost.
+
+The block structure is detected automatically by analyzing
+the connectivity of the interaction matrix:
+
+1. Sum the absolute values of the interaction Hamiltonian over all k-points
+   to obtain a connectivity pattern matrix.
+2. Build an adjacency graph from non-zero off-diagonal entries (threshold: :math:`10^{-12}`).
+3. Find connected components via label propagation (union-find algorithm).
+
+If the matrix decomposes into :math:`m` blocks of sizes :math:`n_1, n_2, \ldots, n_m`,
+the computational cost of solving the RPA equation is reduced from
+:math:`O(N^3)` to :math:`O(n_1^3 + n_2^3 + \cdots + n_m^3)`,
+where :math:`N = n_1 + n_2 + \cdots + n_m`.
+
+This optimization is applied automatically and is transparent to the user.
+
+
+Transverse susceptibility (ladder diagram)
+*******************************************
+
+In addition to the standard (ring diagram) RPA susceptibility,
+H-wave can compute the transverse susceptibility
+:math:`\chi_{+-}(\mathbf{q})`, which describes spin-flip correlations
+:math:`\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle`.
+
+The transverse bare susceptibility is
+
+.. math::
+
+   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+   = -\frac{T}{N_L} \sum_{\mathbf{k},n}
+     G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
+     G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)
+
+The transverse vertex :math:`W_{+-}` is obtained by crossing the
+Hartree (Fock exchange) vertex from the longitudinal channel:
+
+.. math::
+
+   W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
+
+For the standard Kanamori interactions, the transverse vertex takes the form:
+
+- ``CoulombIntra`` :math:`U`: :math:`W_{+-} = -U`
+- ``CoulombInter`` :math:`V`: :math:`W_{+-} = 0`
+- ``Hund`` :math:`J`: :math:`W_{+-} = -J`
+- ``Ising`` :math:`I`: :math:`W_{+-} = 2I`
+
+The full Kanamori interaction (:math:`U, V = U-2J, J, J' = J`)
+satisfies :math:`W_{+-} = -(U - 2J) = W_{zz}` (SU(2) symmetry),
+which implies :math:`\chi_{+-} = \chi_{zz}` for paramagnetic systems.
+
+The transverse RPA susceptibility is obtained as
+
+.. math::
+
+   \hat{X}_{+-}(\mathbf{q})
+   = \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
+     \hat{X}^{(0)}_{+-}(\mathbf{q})
+
+To enable the transverse channel calculation, set ``calc_type = "ring+ladder"``
+in the input TOML file. This requires the ``general`` calculation scheme
+(automatically selected).
+
+
+Spin-orbital mode
+*****************************
+
+H-wave supports a spin-orbital mode where spin and orbital indices
+are interleaved rather than block-separated.
+
+In the normal mode, the combined index is :math:`i = s \cdot n_{\rm orb} + a`
+(spin-block first), where :math:`s = 0, 1` is the spin index and
+:math:`a = 0, \ldots, n_{\rm orb}-1` is the orbital index.
+In the spin-orbital mode, the index is :math:`i = 2a + s`
+(interleaved), which naturally accommodates spin-orbit coupling.
+
+The spin-orbital mode is activated by setting ``enable_spin_orbital = true``
+in the input TOML file. In this mode:
+
+- The Hamiltonian is constructed in the full :math:`2n_{\rm orb} \times 2n_{\rm orb}` space
+  without assuming spin conservation.
+- All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
+  ``Ising``, ``PairHop``) are supported.
+- Block-diagonal optimization is applied automatically when possible.
+- The ``squashed`` calculation scheme is also supported for spin-orbital systems.
+
+
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

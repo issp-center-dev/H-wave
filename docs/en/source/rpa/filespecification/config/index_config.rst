@@ -64,6 +64,18 @@ Parameters
 
   - ``auto``: scheme is automatically chosen according to the specifications of interaction terms. This option is not available when only ``chi0q`` is to be calculated.
 
+- ``calc_type`` (default value is ``"ring"``)
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies which RPA diagrams to include.
+
+  - ``ring``: Standard RPA (ring diagram only). Computes the longitudinal susceptibility.
+
+  - ``ring+ladder``: Includes the transverse (ladder) susceptibility :math:`\chi_{+-}(\mathbf{q})` in addition to the standard RPA. This requires the ``general`` calculation scheme (automatically selected). See :ref:`Ch:Algorithm` for details.
+
 
 ``mode.param`` section
 ================================

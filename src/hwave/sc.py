@@ -754,13 +754,19 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
 
-def _calc_g2(green_kw):
-    """Calculate G2 = sum_n G(k, wn) G(-k+q, -wn).
+def _calc_g2(green_kw, beta):
+    """Calculate G2 = T * sum_n G(k, wn) G(-k+q, -wn).
+
+    The temperature factor T = 1/beta is included so that the
+    Eliashberg kernel correctly computes:
+        lambda * sigma(k) = -(T/N_L) sum_{k',n'} P(k-k') G(k') G(-k') sigma(k')
 
     Parameters
     ----------
     green_kw : ndarray
         Green's function, shape (norb, norb, Nx, Ny, Nz, nmat).
+    beta : float
+        Inverse temperature.
 
     Returns
     -------
@@ -773,7 +779,7 @@ def _calc_g2(green_kw):
         (1, 1, 1), (2, 3, 4)
     )
     G2 = np.einsum("ijpqsk, lmpqsk -> ijlmpqs", green_kw, green_kw_inv)
-    return G2
+    return G2 / beta
 
 
 def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
@@ -1640,7 +1646,7 @@ def calc_eliashberg(input_dict):
 
     # --- Step 10: Compute G2 ---
     logger.info("Computing G2...")
-    G2 = _calc_g2(green_kw)
+    G2 = _calc_g2(green_kw, beta)
 
     # --- Step 11: Initialize gap function ---
     sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
