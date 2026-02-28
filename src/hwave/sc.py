@@ -56,7 +56,8 @@ def _load_chi0q(input_dict):
     return chi0q
 
 
-def _calc_chi0q_internal(input_dict, chi0q_tensor="auto"):
+def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
+                         precomputed_mu=None):
     """Compute chi0q internally using H-wave's RPA module.
 
     Instead of loading chi0q from a file, this function creates an RPA solver
@@ -77,6 +78,10 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto"):
           present, as their S/C matrices couple different orbital-pair indices.
         - "auto": Use "general" if CoulombInter/Hund/Exchange are present,
           otherwise "reduced".
+    precomputed_mu : float, optional
+        If provided, skip chemical potential determination and use this value
+        directly. This avoids redundant eigenvalue decomposition and mu search
+        when the caller has already computed mu (e.g. calc_eliashberg).
 
     Returns
     -------
@@ -136,7 +141,11 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto"):
 
     solver._calc_epsilon_k(green_info)
 
-    if solver.calc_mu:
+    if precomputed_mu is not None:
+        # Reuse mu from caller to skip redundant bisection
+        mu = precomputed_mu
+        logger.info("Using precomputed mu = {}".format(mu))
+    elif solver.calc_mu:
         if solver.spin_mode == "spin-free":
             Ncond = solver.Ncond / 2
         else:
@@ -439,51 +448,68 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     I_mat = _get("Ising")
     PH_mat = _get("PairHop")
 
-    # Build using vectorized index conditions
-    for l1 in range(norb):
-        for l2 in range(norb):
-            idx12 = l1 * norb + l2
-            for l3 in range(norb):
-                for l4 in range(norb):
-                    idx34 = l3 * norb + l4
+    # Build using precomputed index arrays to avoid Python loops
+    # for small norb (1-3), the loop overhead is negligible;
+    # for larger norb the vectorized approach helps
+    l1_arr, l2_arr, l3_arr, l4_arr = np.meshgrid(
+        np.arange(norb), np.arange(norb), np.arange(norb), np.arange(norb),
+        indexing='ij')
+    l1f, l2f, l3f, l4f = l1_arr.ravel(), l2_arr.ravel(), l3_arr.ravel(), l4_arr.ravel()
+    idx12 = l1f * norb + l2f
+    idx34 = l3f * norb + l4f
 
-                    if l1 == l2 == l3 == l4:
-                        if U_mat is not None:
-                            S_all[:, :, :, idx12, idx34] = U_mat[l1, l1]
-                            C_all[:, :, :, idx12, idx34] = U_mat[l1, l1]
-                    elif l1 == l3 and l2 == l4 and l1 != l2:
-                        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
-                        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
-                        if Up_mat is not None:
-                            s_q += Up_mat[l1, l2]
-                            c_q -= Up_mat[l1, l2]
-                        if I_mat is not None:
-                            s_q -= I_mat[l1, l2]
-                            c_q -= I_mat[l1, l2]
-                        if J_mat is not None:
-                            c_q += J_mat[l1, l2]
-                        S_all[:, :, :, idx12, idx34] = s_q
-                        C_all[:, :, :, idx12, idx34] = c_q
-                    elif l1 == l2 and l3 == l4 and l1 != l3:
-                        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
-                        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
-                        if J_mat is not None:
-                            s_q += J_mat[l1, l3]
-                            c_q -= J_mat[l1, l3]
-                        if I_mat is not None:
-                            s_q -= 2.0 * I_mat[l1, l3]
-                        if Up_mat is not None:
-                            c_q += 2.0 * Up_mat[l1, l3]
-                        S_all[:, :, :, idx12, idx34] = s_q
-                        C_all[:, :, :, idx12, idx34] = c_q
-                    elif l1 == l4 and l2 == l3 and l1 != l2:
-                        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
-                        if Jp_mat is not None:
-                            s_q += Jp_mat[l1, l2]
-                        if PH_mat is not None:
-                            s_q += PH_mat[l1, l2]
-                        S_all[:, :, :, idx12, idx34] = s_q
-                        C_all[:, :, :, idx12, idx34] = s_q  # S = C for this channel
+    # Case 1: l1 == l2 == l3 == l4
+    mask1 = (l1f == l2f) & (l2f == l3f) & (l3f == l4f)
+    if U_mat is not None and np.any(mask1):
+        for i in np.where(mask1)[0]:
+            _l = l1f[i]
+            S_all[:, :, :, idx12[i], idx34[i]] = U_mat[_l, _l]
+            C_all[:, :, :, idx12[i], idx34[i]] = U_mat[_l, _l]
+
+    # Case 2: l1==l3, l2==l4, l1!=l2
+    mask2 = (l1f == l3f) & (l2f == l4f) & (l1f != l2f)
+    for i in np.where(mask2)[0]:
+        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        _l1, _l2 = l1f[i], l2f[i]
+        if Up_mat is not None:
+            s_q += Up_mat[_l1, _l2]
+            c_q -= Up_mat[_l1, _l2]
+        if I_mat is not None:
+            s_q -= I_mat[_l1, _l2]
+            c_q -= I_mat[_l1, _l2]
+        if J_mat is not None:
+            c_q += J_mat[_l1, _l2]
+        S_all[:, :, :, idx12[i], idx34[i]] = s_q
+        C_all[:, :, :, idx12[i], idx34[i]] = c_q
+
+    # Case 3: l1==l2, l3==l4, l1!=l3
+    mask3 = (l1f == l2f) & (l3f == l4f) & (l1f != l3f)
+    for i in np.where(mask3)[0]:
+        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        _l1, _l3 = l1f[i], l3f[i]
+        if J_mat is not None:
+            s_q += J_mat[_l1, _l3]
+            c_q -= J_mat[_l1, _l3]
+        if I_mat is not None:
+            s_q -= 2.0 * I_mat[_l1, _l3]
+        if Up_mat is not None:
+            c_q += 2.0 * Up_mat[_l1, _l3]
+        S_all[:, :, :, idx12[i], idx34[i]] = s_q
+        C_all[:, :, :, idx12[i], idx34[i]] = c_q
+
+    # Case 4: l1==l4, l2==l3, l1!=l2
+    mask4 = (l1f == l4f) & (l2f == l3f) & (l1f != l2f)
+    for i in np.where(mask4)[0]:
+        s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        _l1, _l2 = l1f[i], l2f[i]
+        if Jp_mat is not None:
+            s_q += Jp_mat[_l1, _l2]
+        if PH_mat is not None:
+            s_q += PH_mat[_l1, _l2]
+        S_all[:, :, :, idx12[i], idx34[i]] = s_q
+        C_all[:, :, :, idx12[i], idx34[i]] = s_q  # S = C for this channel
 
     return S_all, C_all
 
@@ -750,6 +776,149 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     return Vs_q
 
 
+def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                           pairing_type="singlet"):
+    """Compute pairing vertex from pre-computed FLEX susceptibilities.
+
+    Uses the same formula as _compute_vertices_general but takes
+    chi_s and chi_c directly instead of computing them from chi0q via RPA.
+    This allows using dressed susceptibilities from the FLEX solver.
+
+    Parameters
+    ----------
+    chis : ndarray
+        Spin susceptibility at static limit, shape (Nx, Ny, Nz, nd, nd)
+        where nd = norb^2.
+    chic : ndarray
+        Charge susceptibility at static limit, same shape.
+    inter_k : dict
+        Interactions in k-space from _build_interaction_k.
+    norb : int
+        Number of orbitals.
+    Nx, Ny, Nz : int
+        Grid dimensions.
+    pairing_type : str
+        "singlet" or "triplet".
+
+    Returns
+    -------
+    Vs_q : ndarray
+        Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz).
+    """
+    nd = norb * norb
+
+    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+
+    SChisS = S_all @ chis @ S_all
+    CChicC = C_all @ chic @ C_all
+
+    if pairing_type == "singlet":
+        Vs_all = 1.5 * SChisS - 0.5 * CChicC + 0.5 * (S_all + C_all)
+    elif pairing_type == "triplet":
+        Vs_all = -0.5 * SChisS - 0.5 * CChicC + 0.5 * (C_all - S_all)
+    else:
+        raise ValueError("Unknown pairing_type: '{}'".format(pairing_type))
+
+    Vs_q = Vs_all.reshape(Nx, Ny, Nz, norb, norb, norb, norb).transpose(
+        3, 4, 5, 6, 0, 1, 2)
+
+    return Vs_q
+
+
+def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
+    """Load FLEX-computed susceptibilities from NPZ files.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Parsed TOML configuration.
+    norb : int
+        Number of orbitals.
+    Nx, Ny, Nz : int
+        Grid dimensions.
+
+    Returns
+    -------
+    chis : ndarray
+        Spin susceptibility at static limit, shape (Nx, Ny, Nz, nd, nd).
+    chic : ndarray
+        Charge susceptibility at static limit, shape (Nx, Ny, Nz, nd, nd).
+    green_dressed : ndarray or None
+        Dressed Green's function if available, shape (norb, norb, Nx, Ny, Nz, nmat).
+    """
+    nd = norb * norb
+    file_input = input_dict.get("file", {}).get("input", {})
+    flex_dir = file_input.get("path_to_flex_output",
+                              input_dict.get("file", {}).get("output", {}).get(
+                                  "path_to_output", "output"))
+
+    eli_param = input_dict.get("eliashberg", {})
+    chi_s_file = eli_param.get("flex_chi_s", "chiq_s.npz")
+    chi_c_file = eli_param.get("flex_chi_c", "chiq_c.npz")
+    green_file = eli_param.get("flex_green", "green.npz")
+
+    # Load spin susceptibility
+    chi_s_path = os.path.join(flex_dir, chi_s_file)
+    logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
+    data_s = np.load(chi_s_path)
+    chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+
+    # Load charge susceptibility
+    chi_c_path = os.path.join(flex_dir, chi_c_file)
+    logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
+    data_c = np.load(chi_c_path)
+    chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+
+    # Convert from H-wave format (nmat, nvol, nd, nd) to
+    # reference format (Nx, Ny, Nz, nd, nd) at static limit
+    nmat_s = chi_s_raw.shape[0]
+    center = nmat_s // 2
+
+    # Extract static limit (center Matsubara frequency)
+    chi_s_static = chi_s_raw[center].reshape(Nx, Ny, Nz, -1)
+    chi_c_static = chi_c_raw[center].reshape(Nx, Ny, Nz, -1)
+
+    # Determine dimensionality
+    nd_chi = int(np.sqrt(chi_s_static.shape[-1]))
+    chi_s_static = chi_s_static.reshape(Nx, Ny, Nz, nd_chi, nd_chi)
+    chi_c_static = chi_c_static.reshape(Nx, Ny, Nz, nd_chi, nd_chi)
+
+    # If chi is in spin-orbital space (nd_chi = norb*ns), extract orbital block
+    # and convert to norb^2 x norb^2 Eliashberg space
+    if nd_chi != nd:
+        # Spin-orbital reduced space: nd_chi = norb*ns
+        ns = nd_chi // norb
+        # Extract the spin-up block (diagonal in spin)
+        chis_orb = chi_s_static[:, :, :, :norb, :norb]
+        chic_orb = chi_c_static[:, :, :, :norb, :norb]
+
+        # Expand to norb^2 x norb^2 (diagonal in l2 index)
+        chis = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        chic = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        for l2 in range(norb):
+            chis[:, :, :, l2::norb, l2::norb] = chis_orb
+            chic[:, :, :, l2::norb, l2::norb] = chic_orb
+    else:
+        chis = chi_s_static
+        chic = chi_c_static
+
+    # Load dressed Green's function if available
+    green_dressed = None
+    green_path = os.path.join(flex_dir, green_file)
+    if os.path.exists(green_path):
+        logger.info("Loading FLEX dressed Green from: {}".format(green_path))
+        data_g = np.load(green_path)
+        green_raw = data_g["green"]
+        # H-wave format: (nblock, nmat, nvol, norb, norb)
+        nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+        # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nmat)
+        green_dressed = green_raw[0].reshape(
+            nmat_g, Nx, Ny, Nz, norb, norb
+        ).transpose(4, 5, 1, 2, 3, 0).copy()
+
+    return chis, chic, green_dressed
+
+
 # ---------------------------------------------------------------------------
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
@@ -773,12 +942,27 @@ def _calc_g2(green_kw, beta):
     G2 : ndarray
         Shape (norb, norb, norb, norb, Nx, Ny, Nz).
     """
+    norb = green_kw.shape[0]
+    Nx, Ny, Nz, nmat = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4], green_kw.shape[5]
+    nvol = Nx * Ny * Nz
+
     # G(-k, -wn) via roll+flip
     green_kw_inv = np.roll(
         green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
         (1, 1, 1), (2, 3, 4)
     )
-    G2 = np.einsum("ijpqsk, lmpqsk -> ijlmpqs", green_kw, green_kw_inv)
+    # einsum("ijpqsk, lmpqsk -> ijlmpqs") sums over k (nmat dimension)
+    # Reshape to use tensordot for BLAS: contract last axis (nmat) after
+    # merging spatial dims
+    # A: (norb, norb, nvol, nmat) -> (norb^2, nvol*nmat) -- but need per-site sum
+    # Better: reshape to (norb*norb, nvol, nmat) then per-site outer product
+    A = green_kw.reshape(norb * norb, nvol, nmat)       # (ij, site, k)
+    B = green_kw_inv.reshape(norb * norb, nvol, nmat)   # (lm, site, k)
+    # G2[ij, lm, site] = sum_k A[ij, site, k] * B[lm, site, k]
+    # = (A * B contracted over k) but with site preserved
+    # Use einsum with optimized contraction over nmat only
+    G2 = np.einsum('isn,jsn->ijs', A, B)  # (norb^2, norb^2, nvol)
+    G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
     return G2 / beta
 
 
@@ -811,11 +995,26 @@ def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
     sigma_new : ndarray
         Updated gap function, shape (norb, norb, Nx, Ny, Nz).
     """
+    Nx, Ny, Nz = sigma_old.shape[-3], sigma_old.shape[-2], sigma_old.shape[-1]
+    nvol = Nx * Ny * Nz
+
+    # G2Sigma contraction: "ijlmpqs, jmpqs -> ilpqs"
+    # = matrix-vector product treating (j,m) as contracted index
+    # G2: (norb,norb,norb,norb,Nx,Ny,Nz) -> (norb, norb*norb, norb, nvol)
+    # sigma: (norb,norb,Nx,Ny,Nz) -> (norb*norb, nvol)
+    sigma_flat = sigma_old.reshape(norb * norb, nvol)  # (jm, site)
+    G2_flat = G2.reshape(norb, norb * norb, norb, nvol)  # (i, jm, l, site) -- wrong
+    # Need (i, l, jm, site) for matmul on jm
+    # Actually einsum is: G2[i,j,l,m,s] * sigma[j,m,s] -> result[i,l,s]
+    # Reshape G2 to (norb, norb, norb*norb, nvol): G2[i, l, jm, s]
+    G2_r = G2.reshape(norb, norb, norb, norb, nvol)
+    G2_r = G2_r.transpose(0, 2, 1, 3, 4).reshape(norb, norb, norb * norb, nvol)
+    # G2_r[i, l, jm, s], sigma_flat[jm, s]
+    # result[i,l,s] = sum_jm G2_r[i,l,jm,s] * sigma_flat[jm,s]
+    G2Sigma = np.einsum('iljs,js->ils', G2_r, sigma_flat).reshape(norb, norb, Nx, Ny, Nz)
+
     if V_q.ndim == 5:
         # Simple mode: V_q is (norb, norb, Nx, Ny, Nz)
-        G2Sigma = np.einsum("ijlmpqs, jmpqs -> ilpqs", G2, sigma_old)
-
-        # Vectorized IFFT over all orbital pairs at once
         P_r = ifftn(V_q, axes=(-3, -2, -1))
         G2Sigma_r = ifftn(G2Sigma, axes=(-3, -2, -1))
 
@@ -825,14 +1024,17 @@ def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
 
     else:
         # General mode: V_q is (norb, norb, norb, norb, Nx, Ny, Nz)
-        F_q = np.einsum("ijlmpqs, jmpqs -> ilpqs", G2, sigma_old)
+        F_q = G2Sigma  # (norb, norb, Nx, Ny, Nz) = (l2, l3, ...)
 
-        # Vectorized IFFT: all orbital indices transformed at once
         V_r = ifftn(V_q, axes=(-3, -2, -1))
         F_r = ifftn(F_q, axes=(-3, -2, -1))
 
-        # sigma_{l1l4}(r) = sum_{l2l3} V_{l1l2,l3l4}(r) * F_{l2l3}(r)
-        sigma_r = np.einsum("ijklpqs, jkpqs -> ilpqs", V_r, F_r)
+        # sigma[i,l,s] = sum_{j,k} V_r[i,j,k,l,s] * F_r[j,k,s]
+        # Reshape for matmul: V_r -> (norb, norb^2, norb, nvol), F_r -> (norb^2, nvol)
+        V_r_flat = V_r.reshape(norb, norb * norb, norb, nvol)
+        F_r_flat = F_r.reshape(norb * norb, nvol)
+        sigma_r = np.einsum('ijls,js->ils', V_r_flat, F_r_flat).reshape(
+            norb, norb, Nx, Ny, Nz)
 
         sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
         return -sigma_new
@@ -1011,11 +1213,41 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
         Size of the flattened vector.
     """
     vec_size = norb * norb * Nx * Ny * Nz
+    nvol = Nx * Ny * Nz
+
+    # Precompute invariants that don't change per matvec call:
+    # 1. V_r = IFFT(Vs_q) — used every matvec
+    V_r = ifftn(Vs_q, axes=(-3, -2, -1))
+
+    # 2. Precompute G2 reshaped for contraction
+    G2_r = G2.reshape(norb, norb, norb, norb, nvol)
+    G2_pre = G2_r.transpose(0, 2, 1, 3, 4).reshape(norb, norb, norb * norb, nvol)
+
+    is_simple = (Vs_q.ndim == 5)
+
+    if not is_simple:
+        V_r_flat = V_r.reshape(norb, norb * norb, norb, nvol)
 
     def matvec(v):
         sigma = v.reshape(norb, norb, Nx, Ny, Nz)
-        result = _eliashberg_kernel_fft(Vs_q, G2, sigma, norb)
-        return result.real.ravel()
+        sigma_flat = sigma.reshape(norb * norb, nvol)
+
+        # G2Sigma contraction
+        G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
+            norb, norb, Nx, Ny, Nz)
+
+        if is_simple:
+            G2Sigma_r = ifftn(G2Sigma, axes=(-3, -2, -1))
+            Sigma_r = V_r * G2Sigma_r
+            sigma_new = fftn(Sigma_r, axes=(-3, -2, -1))
+        else:
+            F_r = ifftn(G2Sigma, axes=(-3, -2, -1))
+            F_r_flat = F_r.reshape(norb * norb, nvol)
+            sigma_r = np.einsum('ijls,js->ils', V_r_flat, F_r_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
+            sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
+
+        return (-sigma_new).real.ravel()
 
     A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=float)
     return A, vec_size
@@ -1585,12 +1817,6 @@ def calc_eliashberg(input_dict):
     logger.info("Nmat = {}, filling = {}".format(nmat, n_filling))
     logger.info("solver_mode = {}, chi0q_mode = {}".format(solver_mode, chi0q_mode))
 
-    # --- Step 1: Load or compute chi0q ---
-    if chi0q_mode == "calc":
-        chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor=chi0q_tensor)
-    else:
-        chi0q_raw = _load_chi0q(input_dict)
-
     # --- Step 2: Read input files ---
     geom_info, hr, interactions = _read_interaction_files(input_dict)
     norb = geom_info["norb"]
@@ -1612,37 +1838,64 @@ def calc_eliashberg(input_dict):
     mu = _determine_mu(eigenvalues, beta, n_filling, norb)
     logger.info("mu = {:.6f}".format(mu))
 
-    # --- Step 6: Calculate Green's function ---
-    logger.info("Calculating Green's function G(k, iwn)...")
-    green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
-
     # --- Step 7: Build interaction in k-space ---
     logger.info("Building interactions in k-space...")
     inter_k = _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb)
 
-    # --- Step 8: Convert chi0q format ---
-    # Determine nmat from chi0q shape
-    # H-wave format: first axis is nmat for both 4D and 6D
-    if chi0q_raw.ndim in (4, 6):
-        nmat_chi0q = chi0q_raw.shape[0]
-    else:
-        nmat_chi0q = chi0q_raw.shape[-1]
-    chi0q = _convert_chi0q_to_ref_format(chi0q_raw, norb, Nx, Ny, Nz, nmat_chi0q)
-    logger.info("chi0q converted to shape: {}".format(chi0q.shape))
+    if chi0q_mode == "flex":
+        # --- FLEX mode: use pre-computed dressed susceptibilities ---
+        logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
-    # --- Step 9: Compute RPA vertices ---
-    logger.info("Computing RPA vertices (pairing_type={})...".format(pairing_type))
-    vertex_result = _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
+        chis, chic, green_dressed = _load_flex_susceptibilities(
+            input_dict, norb, Nx, Ny, Nz)
+
+        # Use dressed Green's function if available, otherwise use bare
+        if green_dressed is not None:
+            green_kw = green_dressed
+            logger.info("Using FLEX dressed Green's function")
+        else:
+            logger.info("Calculating bare Green's function G(k, iwn)...")
+            green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+
+        # Compute pairing vertex from FLEX susceptibilities
+        logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
+        Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type=pairing_type)
-    if isinstance(vertex_result, tuple):
-        # Simple mode: (Pc_q, Ps_q) -> combine to single vertex
-        Pc_q, Ps_q = vertex_result
-        Vs_q = Pc_q + Ps_q
-        logger.info("Simple mode: Pc + Ps vertex, shape {}".format(Vs_q.shape))
+        logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
+
     else:
-        # General mode: 4-index V^s
-        Vs_q = vertex_result
-        logger.info("General mode: 4-index V^s vertex, shape {}".format(Vs_q.shape))
+        # --- Standard RPA mode ---
+
+        # Step 6: Calculate bare Green's function
+        logger.info("Calculating Green's function G(k, iwn)...")
+        green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+
+        # Step 1: Load or compute chi0q
+        if chi0q_mode == "calc":
+            chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor=chi0q_tensor,
+                                                precomputed_mu=mu)
+        else:
+            chi0q_raw = _load_chi0q(input_dict)
+
+        # Step 8: Convert chi0q format
+        if chi0q_raw.ndim in (4, 6):
+            nmat_chi0q = chi0q_raw.shape[0]
+        else:
+            nmat_chi0q = chi0q_raw.shape[-1]
+        chi0q = _convert_chi0q_to_ref_format(chi0q_raw, norb, Nx, Ny, Nz, nmat_chi0q)
+        logger.info("chi0q converted to shape: {}".format(chi0q.shape))
+
+        # Step 9: Compute RPA vertices
+        logger.info("Computing RPA vertices (pairing_type={})...".format(pairing_type))
+        vertex_result = _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
+                                          pairing_type=pairing_type)
+        if isinstance(vertex_result, tuple):
+            Pc_q, Ps_q = vertex_result
+            Vs_q = Pc_q + Ps_q
+            logger.info("Simple mode: Pc + Ps vertex, shape {}".format(Vs_q.shape))
+        else:
+            Vs_q = vertex_result
+            logger.info("General mode: 4-index V^s vertex, shape {}".format(Vs_q.shape))
 
     # --- Step 10: Compute G2 ---
     logger.info("Computing G2...")

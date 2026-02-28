@@ -1425,12 +1425,9 @@ class RPA:
 
         from scipy import optimize
 
-        # load eigenvalues and eigenvectors
+        # load eigenvalues (eigenvectors not needed thanks to unitarity)
         w = self.H0_eigenvalue
-        v = self.H0_eigenvector
         # fetch parameters
-        # Ncond = self.Ncond
-        # T = self.T
         ene_cutoff = self.ene_cutoff
 
         ev = np.sort(w.flatten())
@@ -1444,10 +1441,12 @@ class RPA:
             v_ = np.where( mask_, v1_, 0.0 )
             return v_
 
+        # Exploit unitarity of eigenvectors:
+        # Tr[V† diag(f) V] = sum_l f(ε_l)
+        # This eliminates the O(nd²) einsum per iteration.
         def _calc_delta_n(mu):
             ff = _fermi(T, mu, w)
-            nn = np.einsum('gkal,gkl,gkal->', np.conjugate(v), ff, v)
-            return nn.real - occupied_number
+            return np.sum(ff).real - occupied_number
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
@@ -1484,7 +1483,6 @@ class RPA:
         ev = self.H0_eigenvector
 
         nx,ny,nz = self.lattice.shape
-        #nvol = self.lattice.nvol
 
         nblock,nvol,nd = ew.shape
         assert nvol == self.lattice.nvol
@@ -1493,17 +1491,27 @@ class RPA:
 
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
-        # 1 / (iw_{n} - (e_i(k) - mu)) -> g[n,k,i]
-        wn = np.transpose(np.tile(1j * iomega, (nblock,nvol,nd,1)), axes=(0,3,1,2))
-        ek = np.transpose(np.tile((ew - mu), (nmat,1,1,1)), axes=(1,0,2,3))
+        # 1 / (iw_{n} - (e_i(k) - mu)) -> g[g,l,k,i] via broadcasting
+        # iomega: (nmat,), ew: (nblock, nvol, nd)
+        wn = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis]  # (1,nmat,1,1)
+        ek = (ew - mu)[:, np.newaxis, :, :]  # (nblock,1,nvol,nd)
 
         # tail improvement
         aa = self.coeff_tail
-        g = 1.0 / (wn - ek) - aa / wn
+        g = 1.0 / (wn - ek) - aa / wn  # (nblock,nmat,nvol,nd)
 
-        # G_ab(k,iw_n) = sum_j d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
-        green = np.einsum('gkaj,gkbj,glkj->glkab', ev, np.conj(ev), g)
-        green_tail = np.einsum('gkaj,gkbj,gl->glkab', ev, np.conj(ev), np.tile(np.ones(nmat), (nblock,1))) * aa * 0.5 * beta
+        # G_ab(k,iw_n) = sum_j V_{a,j} V*_{b,j} * g_j
+        # = (V * g) @ V†  -- use matmul (BLAS) instead of einsum
+        ev_conj_t = np.conj(ev).swapaxes(-2, -1)  # (nblock,nvol,nd,nd): V†[g,k]
+
+        # Vg = V * g: broadcast g into eigenvector columns
+        Vg = ev[:, np.newaxis, :, :, :] * g[:, :, :, np.newaxis, :]  # (nblock,nmat,nvol,nd,nd)
+        green = Vg @ ev_conj_t[:, np.newaxis, :, :, :]  # (nblock,nmat,nvol,nd,nd)
+
+        # Tail: G_tail = V @ V† * aa * 0.5 * beta = I * aa * 0.5 * beta (unitarity)
+        # But original code retains V V† form for non-complete basis cases
+        VVt = ev @ ev_conj_t  # (nblock,nvol,nd,nd)
+        green_tail = VVt[:, np.newaxis, :, :, :] * np.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta
 
         return green, green_tail
 
@@ -1550,16 +1558,18 @@ class RPA:
         # Fourier transform from Matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
-        green_kt = (FFT.fft(green_kw.reshape(nblock,nmat,nvol*nd*nd), axis=1)
-                    * omg[np.newaxis, :, np.newaxis]
-                    ).reshape(nblock,nmat,nx,ny,nz,nd,nd)
-        green_kt -= green0_tail.reshape(nblock,nmat,nx,ny,nz,nd,nd)
+        # In-place multiply to avoid extra copy
+        green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
+        green_kt = FFT.fft(green_flat, axis=1)
+        green_kt *= omg[np.newaxis, :, np.newaxis]
+        green_kt = green_kt.reshape(nblock, nmat, nx, ny, nz, nd, nd)
+        green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
 
         # Fourier transform from wave number space to coordinate space
-        green_rt = FFT.ifftn(green_kt.reshape(nblock,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
+        green_rt = FFT.ifftn(green_kt.reshape(nblock, nmat, nx, ny, nz, nd * nd), axes=(2, 3, 4))
 
         # calculate chi0 in real space and imaginary time
-        green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nblock,nmat,nvol,nd,nd)
+        green_rev = np.flip(np.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
         sgn = np.full(nmat, -1)
         sgn[0] = 1
@@ -1567,29 +1577,36 @@ class RPA:
         if self.enable_reduced:
             # reduced index calculation
             # chi0[g,l,r,a,b] = G[g,l,r,a,b] * G_rev[g,l,r,b,a] * sgn[l]
-            green_rt_5d = green_rt.reshape(nblock,nmat,nvol,nd,nd)
+            green_rt_5d = green_rt.reshape(nblock, nmat, nvol, nd, nd)
             chi0_rt = (green_rt_5d
                        * green_rev.swapaxes(-2, -1)
                        * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
-            nd_shape=(nd,nd)
-            nds=nd**2
+            nd_shape = (nd, nd)
+            nds = nd ** 2
         else:
-            chi0_rt = np.einsum('glrab,glrdc,l->glracbd',
-                                green_rt.reshape(nblock,nmat,nvol,nd,nd),
-                                green_rev,
-                                sgn)
-            nd_shape=(nd,nd,nd,nd)
-            nds=nd**4
+            # General index: chi0[g,l,r,a,c,b,d] = G[g,l,r,a,b] * G_rev[g,l,r,d,c] * sgn[l]
+            # Use outer product via broadcasting instead of einsum
+            G_fwd = green_rt.reshape(nblock, nmat, nvol, nd, nd)
+            sgn_bc = sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
+            # G_fwd[:,:,:,a,b] * sgn -> shape (g,l,r,a,b)
+            # G_rev[:,:,:,d,c]        -> shape (g,l,r,d,c)
+            # result[:,:,:,a,c,b,d] = G_fwd[:,:,:,a,b] * G_rev[:,:,:,d,c] * sgn
+            chi0_rt = ((G_fwd * sgn_bc)[:, :, :, :, np.newaxis, :, np.newaxis]
+                       * green_rev[:, :, :, np.newaxis, :, np.newaxis, :])
+            # shape: (g,l,r,a,d,b,c) -> need (g,l,r,a,c,b,d)
+            chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
+            nd_shape = (nd, nd, nd, nd)
+            nds = nd ** 4
 
         # Fourier transform to wave number space
-        chi0_qt = FFT.fftn(chi0_rt.reshape(nblock,nmat,nx,ny,nz,nds), axes=(2,3,4))
+        chi0_qt = FFT.fftn(chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds), axes=(2, 3, 4))
 
         # Fourier transform to matsubara freq
-        omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
+        omg2 = np.exp(1j * np.pi * (-1) * np.arange(nmat))
 
-        chi0_qw = FFT.ifft(
-            chi0_qt.reshape(nblock,nmat,nvol*nds) * omg[np.newaxis, :, np.newaxis],
-            axis=1).reshape(nblock,nmat,nvol,*nd_shape) * (-1.0/beta)
+        chi0_qt_flat = chi0_qt.reshape(nblock, nmat, nvol * nds)
+        chi0_qt_flat *= omg2[np.newaxis, :, np.newaxis]
+        chi0_qw = FFT.ifft(chi0_qt_flat, axis=1).reshape(nblock, nmat, nvol, *nd_shape) * (-1.0 / beta)
 
         return chi0_qw
 
@@ -1824,6 +1841,11 @@ class RPA:
 
         When the matrices have block-diagonal structure (e.g. spin-diagonal case),
         the solver automatically detects and exploits this to reduce problem size.
+        Block structure is cached per ham shape+content to avoid re-detection.
+
+        Frequency parallelization: since ham is frequency-independent, each
+        frequency slice can be solved independently. When nmat is large enough,
+        the solve is distributed across threads using concurrent.futures.
         """
         logger.debug(">>> RPA._solve_rpa")
 
@@ -1835,8 +1857,39 @@ class RPA:
         chi0q_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
         ham_2d = ham.reshape(nvol, ndx, ndx)
 
-        # Detect block-diagonal structure from ham
-        blocks = self._find_block_diagonal(ham_2d)
+        # Use cached block structure if available for same ham
+        cache_key = (ham_2d.shape, ham_2d.dtype)
+        if not hasattr(self, '_block_cache'):
+            self._block_cache = {}
+
+        if cache_key in self._block_cache:
+            cached_hash, blocks = self._block_cache[cache_key]
+            # Verify by hash (cheap compared to re-detection)
+            cur_hash = hash(ham_2d.data.tobytes())
+            if cur_hash != cached_hash:
+                blocks = self._find_block_diagonal(ham_2d)
+                self._block_cache[cache_key] = (cur_hash, blocks)
+        else:
+            blocks = self._find_block_diagonal(ham_2d)
+            self._block_cache[cache_key] = (hash(ham_2d.data.tobytes()), blocks)
+
+        # Determine thread-parallel chunking for frequency axis
+        # LAPACK releases the GIL, so threading gives real parallelism.
+        # Only parallelize when there is enough work per thread.
+        # LAPACK's batched zgesv already uses internal threads for large batches,
+        # so explicit threading only helps for very large problems where the
+        # per-chunk overhead is negligible relative to compute.
+        # Users can force threading via HWAVE_RPA_THREADS env var.
+        import os as _os
+        n_workers = int(_os.environ.get("HWAVE_RPA_THREADS", "0"))
+        if n_workers == 0:
+            import multiprocessing
+            n_workers = min(multiprocessing.cpu_count(), 4)
+        # Heuristic: only parallelize for large multi-orbital problems
+        # where ndx >= 16 (8+ orbitals spinful) and enough frequency points.
+        # For small ndx, batched LAPACK is faster than thread pool overhead.
+        use_parallel = (n_workers > 1 and nmat >= 4 * n_workers
+                        and ndx >= 16 and nmat * nvol * ndx * ndx >= 1000000)
 
         if blocks is not None and len(blocks) > 1:
             logger.info("_solve_rpa: block-diagonal structure detected, "
@@ -1850,17 +1903,63 @@ class RPA:
                 ham_blk = ham_2d[:, ix[0], ix[1]]
                 nb = len(idx)
 
-                mat_blk = np.tile(np.eye(nb, dtype=np.complex128), (nmat, nvol, 1, 1))
-                mat_blk += np.einsum('lkab,kbc->lkac', chi0q_blk, ham_blk)
-
-                sol[:, :, ix[0], ix[1]] = np.linalg.solve(mat_blk, chi0q_blk)
+                if use_parallel:
+                    sol[:, :, ix[0], ix[1]] = self._solve_rpa_parallel(
+                        chi0q_blk, ham_blk, nb, n_workers)
+                else:
+                    mat_blk = (np.eye(nb, dtype=np.complex128)
+                               + (chi0q_blk @ ham_blk[np.newaxis, :, :, :]))
+                    sol[:, :, ix[0], ix[1]] = np.linalg.solve(mat_blk, chi0q_blk)
         else:
-            # Full matrix solve (original path)
-            mat = np.tile(np.eye(ndx, dtype=np.complex128), (nmat, nvol, 1, 1))
-            mat += np.einsum('lkab,kbc->lkac', chi0q_2d, ham_2d)
-            sol = np.linalg.solve(mat, chi0q_2d)
+            if use_parallel:
+                sol = self._solve_rpa_parallel(chi0q_2d, ham_2d, ndx, n_workers)
+            else:
+                mat = (np.eye(ndx, dtype=np.complex128)
+                       + (chi0q_2d @ ham_2d[np.newaxis, :, :, :]))
+                sol = np.linalg.solve(mat, chi0q_2d)
 
         return sol.reshape(chi_shape)
+
+    @staticmethod
+    def _solve_rpa_parallel(chi0q_2d, ham_2d, ndx, n_workers):
+        """Solve RPA equation with frequency-axis thread parallelism.
+
+        Parameters
+        ----------
+        chi0q_2d : ndarray, shape (nmat, nvol, ndx, ndx)
+            Bare susceptibility in 2D matrix form.
+        ham_2d : ndarray, shape (nvol, ndx, ndx)
+            Frequency-independent interaction Hamiltonian.
+        ndx : int
+            Matrix dimension.
+        n_workers : int
+            Number of threads.
+
+        Returns
+        -------
+        sol : ndarray, shape (nmat, nvol, ndx, ndx)
+            RPA susceptibility.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        nmat = chi0q_2d.shape[0]
+        sol = np.empty_like(chi0q_2d)
+        eye = np.eye(ndx, dtype=np.complex128)
+        ham_bc = ham_2d[np.newaxis, :, :, :]  # broadcast-ready
+
+        # Split frequency axis into contiguous chunks
+        chunk_size = (nmat + n_workers - 1) // n_workers
+        slices = [slice(i, min(i + chunk_size, nmat))
+                  for i in range(0, nmat, chunk_size)]
+
+        def _solve_chunk(sl):
+            chi0q_chunk = chi0q_2d[sl]
+            mat = eye + (chi0q_chunk @ ham_bc)
+            sol[sl] = np.linalg.solve(mat, chi0q_chunk)
+
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            list(pool.map(_solve_chunk, slices))
+
+        return sol
 
     def _find_block_diagonal(self, ham_2d):
         """Detect block-diagonal structure from the interaction Hamiltonian.
@@ -1887,27 +1986,35 @@ class RPA:
         threshold = 1.0e-12
         adj = (np.abs(connectivity) > threshold) | (np.abs(connectivity.T) > threshold)
 
-        # Find connected components via iterative propagation
-        labels = np.arange(ndx)
-        while True:
-            new_labels = labels.copy()
-            for i in range(ndx):
-                neighbors = np.where(adj[i])[0]
-                if len(neighbors) > 0:
-                    min_label = np.min(labels[neighbors])
-                    new_labels[i] = min(new_labels[i], min_label)
-            # Propagate labels
-            new_labels = np.array([new_labels[new_labels[i]] for i in range(ndx)])
-            if np.array_equal(new_labels, labels):
-                break
-            labels = new_labels
+        # Union-Find with path halving for connected components
+        parent = list(range(ndx))
 
-        unique_labels = np.unique(labels)
-        if len(unique_labels) <= 1:
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]  # path halving
+                x = parent[x]
+            return x
+
+        rows, cols = np.where(np.triu(adj, k=1))
+        for i, j in zip(rows, cols):
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                if ri > rj:
+                    ri, rj = rj, ri
+                parent[rj] = ri
+
+        # Collect components
+        components = {}
+        for i in range(ndx):
+            r = find(i)
+            if r not in components:
+                components[r] = []
+            components[r].append(i)
+
+        if len(components) <= 1:
             return None
 
-        blocks = [np.where(labels == lbl)[0].tolist() for lbl in unique_labels]
-        return blocks
+        return list(components.values())
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
