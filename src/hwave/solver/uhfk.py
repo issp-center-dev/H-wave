@@ -119,7 +119,15 @@ class UHFk(solver_base):
                     f"Expected boolean (true/false)."
                 )
         if isinstance(value, (int, float)):
-            return bool(value)
+            if value == 0:
+                return False
+            elif value == 1:
+                return True
+            else:
+                raise ValueError(
+                    f"Parameter '{param_name}' has invalid numeric value {value}. "
+                    f"Expected 0 or 1 (or boolean true/false)."
+                )
         raise ValueError(
             f"Parameter '{param_name}' has invalid type {type(value).__name__}. "
             f"Expected boolean."
@@ -370,7 +378,7 @@ class UHFk(solver_base):
             _reshape_orbit = _reshape_orbit_
 
         def _round(x, n):
-            return x % n if x >= 0 else x % -n
+            return x % n
 
         ham_new = {}
         for (irvec,orbvec), v in ham.items():
@@ -1018,11 +1026,18 @@ class UHFk(solver_base):
             # data structure of T_ab(r): T(rx,ry,rz,a,b)
             tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
+            has_spin_dep = False
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
                     tab_r[(*irvec, *orbvec)] = v
                 else:
-                    pass # skip spin dependence
+                    has_spin_dep = True
+            if has_spin_dep:
+                logger.warning(
+                    "Transfer has orbital indices >= norb (spin-dependent terms) "
+                    "but enable_spin_orbital is False. "
+                    "These terms are ignored. Set enable_spin_orbital = true to use them."
+                )
 
             # fourier transform
             tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -1292,7 +1307,8 @@ class UHFk(solver_base):
         the problem into smaller independent sub-problems.
 
         Sets self.block_info: list of arrays, each containing nd-space indices
-        for one independent block. Also sets self.Nconds for each block.
+        for one independent block. Also sets self.group_nconds and
+        self.block_to_group for global chemical potential determination.
         """
         logger.debug(">>> _detect_blocks")
 
@@ -1388,55 +1404,48 @@ class UHFk(solver_base):
         # Sort blocks by first index
         blocks.sort(key=lambda b: b[0])
 
-        # Determine Nconds for each block
+        # Group blocks by spin sector for shared chemical potential.
+        # Instead of distributing Ncond per block (which can violate the
+        # global energy minimum), we group blocks that share the same
+        # electron reservoir and find a single mu per group.
         if self.sz_free:
-            # All indices in one or more blocks, total Ncond distributed
-            total_ncond = self.Nconds[0]
-            if len(blocks) == 1:
-                block_nconds = [total_ncond]
-            else:
-                # Distribute proportionally to block size
-                # (user may override via filling)
-                block_nconds = []
-                remaining = total_ncond
-                for i, blk in enumerate(blocks):
-                    if i < len(blocks) - 1:
-                        nc = int(round(total_ncond * len(blk) / nd))
-                        block_nconds.append(nc)
-                        remaining -= nc
-                    else:
-                        block_nconds.append(remaining)
+            # All blocks share one global mu
+            # group_nconds[g] = target electron count for group g
+            # block_to_group[b] = which group block b belongs to
+            block_to_group = [0] * len(blocks)
+            group_nconds = [self.Nconds[0]]
         else:
-            # 2Sz is specified: blocks should align with spin sectors
+            # Classify blocks by spin content
             ncond_up, ncond_down = self.Nconds[0], self.Nconds[1]
-            block_nconds = []
+            block_to_group = []
+            # group 0 = up-only, group 1 = down-only, group 2 = mixed
+            group_nconds_dict = {}  # group_id -> ncond
             for blk in blocks:
                 if self.enable_spin_orbital:
-                    # In spin-orbital mode: even indices=up, odd indices=down
                     n_up = np.sum(blk % 2 == 0)
                     n_down = np.sum(blk % 2 == 1)
-                    norb_phys = self.norb_phys
-                    total_up = norb_phys
-                    total_down = norb_phys
                 else:
-                    # Normal mode: 0..norb-1 = up, norb..nd-1 = down
                     n_up = np.sum(blk < norb)
                     n_down = np.sum(blk >= norb)
-                    total_up = norb
-                    total_down = norb
                 if n_up > 0 and n_down == 0:
-                    nc = int(round(ncond_up * n_up / total_up))
-                    block_nconds.append(nc)
+                    block_to_group.append(0)
+                    group_nconds_dict[0] = ncond_up
                 elif n_up == 0 and n_down > 0:
-                    nc = int(round(ncond_down * n_down / total_down))
-                    block_nconds.append(nc)
+                    block_to_group.append(1)
+                    group_nconds_dict[1] = ncond_down
                 else:
-                    # Mixed spin block - distribute proportionally
-                    nc = int(round((ncond_up + ncond_down) * len(blk) / nd))
-                    block_nconds.append(nc)
+                    # Mixed spin block: use total ncond
+                    block_to_group.append(2)
+                    group_nconds_dict[2] = ncond_up + ncond_down
+            # Build ordered list: group_nconds[g] for each unique group
+            unique_groups = sorted(set(block_to_group))
+            group_remap = {g: i for i, g in enumerate(unique_groups)}
+            block_to_group = [group_remap[g] for g in block_to_group]
+            group_nconds = [group_nconds_dict[g] for g in unique_groups]
 
         self.block_info = blocks
-        self.Nconds = block_nconds
+        self.block_to_group = block_to_group
+        self.group_nconds = group_nconds
 
         # Log detected structure
         if len(blocks) == 1:
@@ -1445,9 +1454,10 @@ class UHFk(solver_base):
             block_desc = ", ".join(
                 ["{}".format(len(b)) for b in blocks]
             )
-            logger.info("Block detection: {} blocks of sizes [{}] "
-                        "with Nconds={}".format(
-                            len(blocks), block_desc, block_nconds))
+            logger.info("Block detection: {} blocks of sizes [{}], "
+                        "{} mu-group(s) with Nconds={}".format(
+                            len(blocks), block_desc,
+                            len(group_nconds), group_nconds))
 
     def _so_to_virtual_green(self, G_so):
         """Convert spin-orbital Green function to virtual (ns=2, norb_phys) form.
@@ -1651,24 +1661,41 @@ class UHFk(solver_base):
 
         ws_list = self._green_list["eigenvalue"]
         vs_list = self._green_list["eigenvector"]
-        nconds = self.Nconds
         blocks = self.block_info
         nblock = len(blocks)
+        block_to_group = self.block_to_group
+        group_nconds = self.group_nconds
+        ngroup = len(group_nconds)
 
-        self._green_list["mu"] = np.zeros(nblock, dtype=float)
+        # Find a single global mu per group (shared across all blocks in the group)
+        self._green_list["mu"] = np.zeros(ngroup, dtype=float)
+
+        # Group blocks by mu-group
+        group_blocks = [[] for _ in range(ngroup)]
+        for b in range(nblock):
+            group_blocks[block_to_group[b]].append(b)
+
+        # Find mu for each group using all eigenvalues in that group
+        group_dists = [None] * nblock
+        for g in range(ngroup):
+            blist = group_blocks[g]
+            ws_group = [ws_list[b] for b in blist]
+            vs_group = [vs_list[b] for b in blist]
+            ncond = group_nconds[g]
+
+            dists, mu = self._find_dist_group(ws_group, vs_group, ncond)
+
+            self._green_list["mu"][g] = mu
+            logger.debug("mu[group {}] = {}".format(g, mu))
+            for i, b in enumerate(blist):
+                group_dists[b] = dists[i]
 
         # Build full Green's function in k-space by assembling blocks
         gab_k = np.zeros((nvol, nd, nd), dtype=np.complex128)
 
         for k in range(nblock):
-            w = ws_list[k]
             v = vs_list[k]
-            ncond = nconds[k]
-
-            dist, mu = self._find_dist(w, v, ncond)
-
-            self._green_list["mu"][k] = mu
-            logger.debug("mu[{}] = {}".format(k, mu))
+            dist = group_dists[k]
 
             # G_ab(k) for this block
             gg_blk = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
@@ -1686,13 +1713,31 @@ class UHFk(solver_base):
         self.Green_prev = self.Green
         self.Green = gab_r.reshape(nvol, ns, norb, ns, norb)
 
-    def _find_dist(self, w, v, ncond):
-        if self.T == 0:
-            return self._find_dist_zero_t(w, v, ncond)
-        else:
-            return self._find_dist_nonzero_t(w, v, ncond)
+    def _find_dist_group(self, ws_list, vs_list, ncond):
+        """Find occupation distribution using a single mu across multiple blocks.
 
-    def _find_dist_zero_t(self, w, v, ncond):
+        Parameters
+        ----------
+        ws_list : list of ndarray
+            Eigenvalues for each block in the group, shape (nvol, block_size)
+        vs_list : list of ndarray
+            Eigenvectors for each block, shape (nvol, block_size, block_size)
+        ncond : int
+            Total electron count for the entire group
+
+        Returns
+        -------
+        dists : list of ndarray
+            Occupation distribution for each block
+        mu : float
+            Chemical potential
+        """
+        if self.T == 0:
+            return self._find_dist_group_zero_t(ws_list, vs_list, ncond)
+        else:
+            return self._find_dist_group_nonzero_t(ws_list, vs_list, ncond)
+
+    def _find_dist_group_zero_t(self, ws_list, vs_list, ncond):
         def _ksq_table(width):
             nx,ny,nz = self.shape
             nvol = self.nvol
@@ -1708,20 +1753,42 @@ class UHFk(solver_base):
 
             return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
 
-        k_sq = _ksq_table(w.shape[1]).flatten()
+        # Collect all eigenvalues across blocks with block labels
+        all_ww = []
+        all_ksq = []
+        all_block_idx = []  # which block each eigenvalue belongs to
+        all_local_idx = []  # flat index within that block's w array
+        for b, w in enumerate(ws_list):
+            k_sq = _ksq_table(w.shape[1]).flatten()
+            ww = w.flatten()
+            all_ww.append(ww)
+            all_ksq.append(k_sq)
+            all_block_idx.append(np.full(ww.size, b, dtype=int))
+            all_local_idx.append(np.arange(ww.size))
 
-        ww = w.flatten()
-        ev_idx = np.lexsort((k_sq, ww))[0:ncond]
+        all_ww = np.concatenate(all_ww)
+        all_ksq = np.concatenate(all_ksq)
+        all_block_idx = np.concatenate(all_block_idx)
+        all_local_idx = np.concatenate(all_local_idx)
 
-        dist = np.zeros(w.size)
-        dist[ev_idx] = 1.0
+        # Sort globally and pick lowest ncond states
+        ev_idx = np.lexsort((all_ksq, all_ww))[0:ncond]
 
-        return dist.reshape(w.shape), 0.0
+        # Distribute back to per-block arrays
+        dists = [np.zeros(w.size) for w in ws_list]
+        for idx in ev_idx:
+            b = all_block_idx[idx]
+            li = all_local_idx[idx]
+            dists[b][li] = 1.0
+        dists = [d.reshape(w.shape) for d, w in zip(dists, ws_list)]
 
-    def _find_dist_nonzero_t(self, w, v, ncond):
+        return dists, 0.0
+
+    def _find_dist_group_nonzero_t(self, ws_list, vs_list, ncond):
         from scipy import optimize
 
-        ev = np.sort(w.flatten())
+        # Collect all eigenvalues for bracket search
+        all_ev = np.sort(np.concatenate([w.flatten() for w in ws_list]))
         occupied_number = ncond
 
         def _fermi(t, mu, ev):
@@ -1733,26 +1800,28 @@ class UHFk(solver_base):
             return v_
 
         def _calc_delta_n(mu):
-            ff = _fermi(self.T, mu, w)
-            nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
-            return nn.real - occupied_number
+            nn = 0.0
+            for w, v in zip(ws_list, vs_list):
+                ff = _fermi(self.T, mu, w)
+                nn += np.einsum('kal,kl,kal->', np.conjugate(v), ff, v).real
+            return nn - occupied_number
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
-        if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+        if (_calc_delta_n(all_ev[0]) * _calc_delta_n(all_ev[-1])) < 0.0:
             logger.debug("+++ find mu: try bisection")
-            mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+            mu, r = optimize.bisect(_calc_delta_n, all_ev[0], all_ev[-1], full_output=True, disp=False)
             is_converged = r.converged
         if not is_converged:
             logger.debug("+++ find mu: try newton")
-            mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+            mu, r = optimize.newton(_calc_delta_n, all_ev[0], full_output=True)
             is_converged = r.converged
         if not is_converged:
             logger.error("find mu: not converged. abort")
             exit(1)
 
-        dist = _fermi(self.T, mu, w)
-        return dist, mu
+        dists = [_fermi(self.T, mu, w) for w in ws_list]
+        return dists, mu
 
     @do_profile
     def _calc_phys(self):
@@ -1822,13 +1891,20 @@ class UHFk(solver_base):
         vs_list = self._green_list["eigenvector"]
         mus = self._green_list["mu"]
         nblock = len(ws_list)
+        block_to_group = self.block_to_group
+        group_nconds = self.group_nconds
+        ngroup = len(group_nconds)
 
         if self.T == 0:
+            # Compute band energy using global sorting per group
             e_band = 0.0
-            for k in range(nblock):
-                w = ws_list[k]
-                ev = np.sort(w.flatten())
-                e_band += np.sum(ev[:self.Nconds[k]])
+            for g in range(ngroup):
+                # Collect eigenvalues from all blocks in this group
+                blist = [b for b in range(nblock) if block_to_group[b] == g]
+                all_ev = np.sort(np.concatenate(
+                    [ws_list[b].flatten() for b in blist]
+                ))
+                e_band += np.sum(all_ev[:group_nconds[g]])
 
             energy["Band"] = e_band
             logger.debug("energy: Band = {}".format(energy["Band"]))
@@ -1836,19 +1912,19 @@ class UHFk(solver_base):
         else:
             T = self.T
 
+            def _fermi(t, mu, ev):
+                w_ = (ev - mu) / t
+                mask_ = w_ < self.ene_cutoff
+                w1 = np.where( mask_, w_, 0.0 )
+                v1 = 1.0 / (1.0 + np.exp(w1))
+                v_ = np.where( mask_, v1, 0.0 )
+                return v_
+
             e_band = 0.0
             for k in range(nblock):
                 w = ws_list[k]
                 v = vs_list[k]
-                mu = mus[k]
-
-                def _fermi(t, mu, ev):
-                    w_ = (ev - mu) / t
-                    mask_ = w_ < self.ene_cutoff
-                    w1 = np.where( mask_, w_, 0.0 )
-                    v1 = 1.0 / (1.0 + np.exp(w1))
-                    v_ = np.where( mask_, v1, 0.0 )
-                    return v_
+                mu = mus[block_to_group[k]]
 
                 wt = -(w - mu) / T
                 mask_ = wt < self.ene_cutoff

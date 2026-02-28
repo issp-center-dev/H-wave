@@ -1550,9 +1550,9 @@ class RPA:
         # Fourier transform from Matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
-        green_kt = np.einsum('gtv,t->gtv',
-                             FFT.fft(green_kw.reshape(nblock,nmat,nvol*nd*nd), axis=1),
-                             omg).reshape(nblock,nmat,nx,ny,nz,nd,nd)
+        green_kt = (FFT.fft(green_kw.reshape(nblock,nmat,nvol*nd*nd), axis=1)
+                    * omg[np.newaxis, :, np.newaxis]
+                    ).reshape(nblock,nmat,nx,ny,nz,nd,nd)
         green_kt -= green0_tail.reshape(nblock,nmat,nx,ny,nz,nd,nd)
 
         # Fourier transform from wave number space to coordinate space
@@ -1566,10 +1566,11 @@ class RPA:
 
         if self.enable_reduced:
             # reduced index calculation
-            chi0_rt = np.einsum('glrab,glrba,l->glrab',
-                                green_rt.reshape(nblock,nmat,nvol,nd,nd),
-                                green_rev,
-                                sgn)
+            # chi0[g,l,r,a,b] = G[g,l,r,a,b] * G_rev[g,l,r,b,a] * sgn[l]
+            green_rt_5d = green_rt.reshape(nblock,nmat,nvol,nd,nd)
+            chi0_rt = (green_rt_5d
+                       * green_rev.swapaxes(-2, -1)
+                       * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
             nd_shape=(nd,nd)
             nds=nd**2
         else:
@@ -1587,8 +1588,85 @@ class RPA:
         omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
 
         chi0_qw = FFT.ifft(
-            np.einsum('gtv,t->gtv', chi0_qt.reshape(nblock,nmat,nvol*nds), omg),
+            chi0_qt.reshape(nblock,nmat,nvol*nds) * omg[np.newaxis, :, np.newaxis],
             axis=1).reshape(nblock,nmat,nvol,*nd_shape) * (-1.0/beta)
+
+        return chi0_qw
+
+    def _calc_chi0q_transverse(self, green_kw, green0_tail, beta):
+        """Calculate the transverse bare susceptibility chi0_+-(q,iω).
+
+        chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+
+        This crosses spin-up and spin-down Green's functions, unlike the
+        longitudinal chi0 which uses same-spin products.
+
+        Parameters
+        ----------
+        green_kw : ndarray, shape (2, nmat, nvol, norb, norb)
+            Green's function with block 0=↑, block 1=↓.
+        green0_tail : ndarray
+            High-frequency tail correction.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            Transverse chi0_+- with block dimension removed (shape depends
+            on enable_reduced).
+        """
+        logger.debug(">>> RPA._calc_chi0q_transverse")
+
+        nx, ny, nz = self.lattice.shape
+        nblock, nmat, nvol, nd, nd2 = green_kw.shape
+        assert nblock == 2, "Transverse chi0 requires spin-diag (nblock=2)"
+
+        # Fourier transform from Matsubara freq to imaginary time
+        omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
+
+        green_kt = (FFT.fft(green_kw.reshape(nblock, nmat, nvol*nd*nd), axis=1)
+                    * omg[np.newaxis, :, np.newaxis]
+                    ).reshape(nblock, nmat, nx, ny, nz, nd, nd)
+        green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
+
+        # Fourier transform from k-space to real space
+        green_rt = FFT.ifftn(green_kt.reshape(nblock, nmat, nx, ny, nz, nd*nd),
+                             axes=(2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+
+        # G_↓(-r,-τ): flip r and τ, then shift
+        green_dn_rev = np.flip(np.roll(green_rt[1:2], -1, axis=(1, 2, 3, 4)),
+                               axis=(1, 2, 3, 4)).reshape(nmat, nvol, nd, nd)
+
+        # G_↑(r,τ)
+        green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
+
+        sgn = np.full(nmat, -1)
+        sgn[0] = 1
+
+        if self.enable_reduced:
+            # chi0_+-[l,r,a,b] = G_↑[l,r,a,b] * G_↓_rev[l,r,b,a] * sgn[l]
+            # (same contraction as longitudinal but crossing spin blocks)
+            chi0_rt = (green_up_rt
+                       * green_dn_rev.swapaxes(-2, -1)
+                       * sgn[:, np.newaxis, np.newaxis, np.newaxis])
+            nd_shape = (nd, nd)
+            nds = nd**2
+        else:
+            # chi0_+-[l,r,a,c,b,d] = G_↑[l,r,a,b] * G_↓_rev[l,r,d,c] * sgn[l]
+            chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
+                                green_up_rt, green_dn_rev, sgn)
+            nd_shape = (nd, nd, nd, nd)
+            nds = nd**4
+
+        # Fourier transform to k-space
+        chi0_qt = FFT.fftn(chi0_rt.reshape(nmat, nx, ny, nz, nds), axes=(1, 2, 3))
+
+        # Fourier transform to Matsubara frequency
+        omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
+        chi0_qw = FFT.ifft(
+            chi0_qt.reshape(nmat, nvol*nds) * omg[:, np.newaxis],
+            axis=0).reshape(nmat, nvol, *nd_shape) * (-1.0/beta)
 
         return chi0_qw
 
@@ -1645,15 +1723,34 @@ class RPA:
                 chi0q_pm = chi0q_orig.copy()
 
         elif self.spin_mode == "spin-diag":
-            # chi0q_orig shape: (nblock=2, nfreq, nvol, ...)
-            # For transverse: chi0_+- = -G_↑ * G_↓
-            # Use average of ↑ and ↓ blocks for paramagnetic-like treatment
-            # More precisely: chi0_+-[a,c,b,d] = G_↑[a,b]*G_↓_rev[d,c]
-            # For now, use spin-↑ block (they should be close for near-paramagnetic)
-            if chi0q_orig.ndim == 5:
-                chi0q_pm = chi0q_orig[0].copy()  # ↑ block
+            # Compute exact chi0_+- from G_↑ and G_↓ Green's functions.
+            # chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+            if hasattr(self, 'green0') and self.green0 is not None:
+                chi0q_pm_full = self._calc_chi0q_transverse(
+                    self.green0, self.green0_tail, 1.0 / self.T)
+                # Filter by freq_index if needed
+                if len(self.freq_index) < self.nmat:
+                    chi0q_pm = chi0q_pm_full[self.freq_index]
+                else:
+                    chi0q_pm = chi0q_pm_full
+                # Expand reduced to general if needed for vertex contraction
+                if self.enable_reduced and chi0q_pm.ndim == 4:
+                    nfreq, nvol_c, n1, n2 = chi0q_pm.shape
+                    chi0q_pm_gen = np.zeros(
+                        (nfreq, nvol_c, norb, norb, norb, norb),
+                        dtype=np.complex128)
+                    for l2 in range(norb):
+                        chi0q_pm_gen[:, :, :, l2, :, l2] = chi0q_pm
+                    chi0q_pm = chi0q_pm_gen
             else:
-                chi0q_pm = chi0q_orig[0].copy()
+                # Fallback: Green's functions not stored (e.g. chi0q provided externally)
+                logger.warning(
+                    "spin-diag transverse channel: Green's functions not available, "
+                    "falling back to spin-↑ block approximation for chi0_+-")
+                if chi0q_orig.ndim == 5:
+                    chi0q_pm = chi0q_orig[0].copy()
+                else:
+                    chi0q_pm = chi0q_orig[0].copy()
 
         elif self.spin_mode == "spinful":
             # Already in spin-orbital space
