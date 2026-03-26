@@ -40,6 +40,10 @@ numfig = True
 
 highlight_language = 'none'
 
+# Syntax highlighting style
+pygments_style = 'friendly'
+pygments_dark_style = 'monokai'
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
@@ -91,34 +95,34 @@ todo_include_todos = False
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'furo'
 
-# Theme options are theme-specific and customize the look and feel of a theme
-# further.  For a list of options available for each theme, see the
-# documentation.
-#
 html_theme_options = {
-    'logo': 'Hwave_logo.png',
-    'font_family': 'Georgia',
-    'sidebar_search_button': 'pink_1'
+    'light_logo': 'Hwave_logo.png',
+    'dark_logo': 'Hwave_logo.png',
+    'sidebar_hide_name': True,
+    'light_css_variables': {
+        'color-brand-primary': '#1a5276',
+        'color-brand-content': '#1a5276',
+        'color-background-primary': '#f5f3ef',
+        'color-background-secondary': '#eae7e0',
+        'color-background-border': '#d5d0c8',
+        'color-admonition-background': '#e8e4dc',
+        'color-foreground-primary': '#2c2c2c',
+        'color-foreground-secondary': '#504e4a',
+    },
+    'dark_css_variables': {
+        'color-brand-primary': '#7fb3d3',
+        'color-brand-content': '#7fb3d3',
+    },
+    'navigation_with_keys': True,
 }
 
-# Add any paths that contain custom static files (such as style sheets) here,
-# relative to this directory. They are copied after the builtin static files,
-# so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static', '../../figs']
 
-# Custom sidebar templates, must be a dictionary that maps document names
-# to template names.
-#
-# This is required for the alabaster theme
-# refs: http://alabaster.readthedocs.io/en/latest/installation.html#sidebars
-html_sidebars = {
-    '**': [
-        'relations.html',  # needs 'show_related': True theme option to display
-        'searchbox.html',
-    ]
-}
+html_css_files = [
+    'custom.css',
+]
 
 
 # -- Options for HTMLHelp output ------------------------------------------
@@ -179,12 +183,3 @@ texinfo_documents = [
      'Miscellaneous'),
 ]
 
-html_sidebars = {
-    '**': [
-        'about.html',
-        'navigation.html',
-        'relations.html',
-        'searchbox.html',
-        'donate.html',
-    ]
-}
