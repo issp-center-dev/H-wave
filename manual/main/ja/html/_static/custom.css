@@ -1,1 +1,65 @@
-/* This file intentionally left blank. */
+/* H-wave documentation custom styles for furo theme */
+
+/* Improved table styling */
+table.docutils {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+}
+
+table.docutils th {
+    background-color: #2c3e50;
+    color: #eee;
+    padding: 0.6em 1em;
+    text-align: left;
+}
+
+table.docutils td {
+    padding: 0.5em 1em;
+    border-bottom: 1px solid var(--color-background-border);
+}
+
+table.docutils tr:hover td {
+    background-color: var(--color-admonition-background);
+}
+
+/* Code block refinements */
+pre {
+    border-radius: 6px;
+}
+
+code.literal {
+    border-radius: 3px;
+    padding: 0.1em 0.3em;
+    font-size: 0.9em;
+}
+
+/* Math equations */
+div.math {
+    margin: 1.2em 0;
+    padding: 0.5em;
+}
+
+/* Admonition refinements */
+.admonition {
+    border-radius: 6px;
+    margin: 1.5em 0;
+}
+
+/* Figure captions */
+.figure .caption,
+figure figcaption {
+    font-style: italic;
+    color: var(--color-foreground-secondary);
+    margin-top: 0.5em;
+}
+
+/* Toctree items spacing */
+.toctree-wrapper li {
+    margin: 0.3em 0;
+}
+
+/* Smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}

@@ -1,40 +1,333 @@
-<!DOCTYPE html>
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="6.2. Random Phase Approximation" href="rpa.html"><link rel="prev" title="6. Algorithms" href="al-index.html">
+        <link rel="prefetch" href="../_static/Hwave_logo.png" as="image">
+        <link rel="prefetch" href="../_static/Hwave_logo.png" as="image">
 
-<html lang="en" data-content_root="../">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>6.1. Unrestricted Hartree-Fock method - H-wave Users Guide 1.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=c053f535" />
+    
+    
 
-    <title>6.1. Unrestricted Hartree-Fock method &#8212; H-wave Users Guide 1.0.1 documentation</title>
-    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
-    <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
-    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
-    <script src="../_static/documentation_options.js?v=292eb321"></script>
-    <script src="../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
-    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-    <link rel="index" title="Index" href="../genindex.html" />
-    <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="6.2. Random Phase Approximation" href="rpa.html" />
-    <link rel="prev" title="6. Algorithms" href="al-index.html" />
-   
-  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+
+<style>
+  body {
+    --color-code-background: #eeffcc;
+  --color-code-foreground: black;
+  --color-brand-primary: #1a5276;
+  --color-brand-content: #1a5276;
+  --color-background-primary: #f5f3ef;
+  --color-background-secondary: #eae7e0;
+  --color-background-border: #d5d0c8;
+  --color-admonition-background: #e8e4dc;
+  --color-foreground-primary: #2c2c2c;
+  --color-foreground-secondary: #504e4a;
   
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #272822;
+  --color-code-foreground: #f8f8f2;
+  --color-brand-primary: #7fb3d3;
+  --color-brand-content: #7fb3d3;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #272822;
+  --color-code-foreground: #f8f8f2;
+  --color-brand-primary: #7fb3d3;
+  --color-brand-content: #7fb3d3;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
 
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">H-wave Users Guide 1.0.1 documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../_static/Hwave_logo.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../_static/Hwave_logo.png" alt="Dark Logo"/>
+  </div>
   
   
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. What is H-wave?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. Basic usage</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../uhfr/uhfr-index.html">3. Coordinate-space UHF (UHFr)</a><input aria-label="Toggle navigation of 3. Coordinate-space UHF (UHFr)" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../uhfr/tutorial/tu-index.html">3.1. Tutorial</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../uhfr/filespecification/fi-index.html">3.2. File specifications</a><input aria-label="Toggle navigation of 3.2. File specifications" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../uhfr/filespecification/config/index_config.html">3.2.1. Parameter file</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../uhfr/filespecification/inputfiles/index_inputfiles.html">3.2.2. Input files for UHFr</a><input aria-label="Toggle navigation of 3.2.2. Input files for UHFr" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/Trans_file.html">Trans file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/InterAll_file.html">InterAll file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/CoulombIntra_file.html">CoulombIntra file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/CoulombInter_file.html">CoulombInter file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/Hund_file.html">Hund file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/PairHop_file.html">PairHop file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/Exchange_file.html">Exchange file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/Ising_file.html">Ising file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/PairLift_file.html">PairLift file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/Initial_file.html">Initial file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/inputfiles/OneBodyG_file.html">OneBodyG file</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../uhfr/filespecification/outputfiles/index_outputfiles.html">3.2.3. Output files for UHFr</a><input aria-label="Toggle navigation of 3.2.3. Output files for UHFr" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/outputfiles/energy.html">Energy</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/outputfiles/eigen.html">eigen</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfr/filespecification/outputfiles/green.html">green</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../uhfk/uhfk-index.html">4. Wave-number space UHF (UHFk)</a><input aria-label="Toggle navigation of 4. Wave-number space UHF (UHFk)" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../uhfk/tutorial/tu-index.html">4.1. Tutorial</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../uhfk/filespecification/fi-index.html">4.2. File specifications</a><input aria-label="Toggle navigation of 4.2. File specifications" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../uhfk/filespecification/config/index_config.html">4.2.1. Parameter files</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/index_inputfiles_uhfk.html">4.2.2. Input files for UHFk</a><input aria-label="Toggle navigation of 4.2.2. Input files for UHFk" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/geometry.html">Geometry input file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/interaction.html">Interaction definition files</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../uhfk/filespecification/outputfiles_uhfk/index_outputfiles_uhfk.html">4.2.3. Output files of UHFk</a><input aria-label="Toggle navigation of 4.2.3. Output files of UHFk" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../uhfk/filespecification/outputfiles_uhfk/energy_uhfk.html">energy</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfk/filespecification/outputfiles_uhfk/eigen_uhfk.html">eigen</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../uhfk/filespecification/outputfiles_uhfk/green_uhfk.html">green</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../rpa/rpa-index.html">5. Random Phase Approximation (RPA)</a><input aria-label="Toggle navigation of 5. Random Phase Approximation (RPA)" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../rpa/tutorial/tu-index.html">5.1. Tutorial</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../rpa/filespecification/fi-index.html">5.2. File specifications</a><input aria-label="Toggle navigation of 5.2. File specifications" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../rpa/filespecification/config/index_config.html">5.2.1. Parameter files</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../rpa/filespecification/inputfiles/index_inputfiles.html">5.2.2. Input files for RPA</a><input aria-label="Toggle navigation of 5.2.2. Input files for RPA" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../rpa/filespecification/inputfiles/geometry.html">Geometry input file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../rpa/filespecification/inputfiles/interaction.html">Interaction definition files</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../rpa/filespecification/outputfiles/index_outputfiles.html">5.2.3. Output files of RPA</a><input aria-label="Toggle navigation of 5.2.3. Output files of RPA" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../rpa/filespecification/outputfiles/chiq_rpa.html">chiq and chi0q</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../rpa/filespecification/outputfiles/chiq_rpa.html#data-format-of-chi0q">Data format of chi0q</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../rpa/filespecification/outputfiles/chiq_rpa.html#data-format-of-chiq">Data format of chiq</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../rpa/filespecification/outputfiles/chiq_rpa.html#example-for-reading-data">Example for reading data</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="al-index.html">6. Algorithms</a><input aria-label="Toggle navigation of 6. Algorithms" checked="" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">6.1. Unrestricted Hartree-Fock method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="rpa.html">6.2. Random Phase Approximation</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. Acknowledgments</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../appendix/app-index.html">8. Appendix</a><input aria-label="Toggle navigation of 8. Appendix" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../appendix/stdface.html">8.1. Generation of interaction files using StdFace library</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../appendix/message/msg-index.html">8.2. List of error messages</a></li>
+</ul>
+</li>
+</ul>
 
-  </head><body>
-  
+</div>
+</div>
 
-    <div class="document">
-      <div class="documentwrapper">
-        <div class="bodywrapper">
-          
-
-          <div class="body" role="main">
-            
-  <section id="unrestricted-hartree-fock-method">
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/algorithm/uhf.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="unrestricted-hartree-fock-method">
 <span id="algorithm-sec"></span><h1><span class="section-number">6.1. </span>Unrestricted Hartree-Fock method<a class="headerlink" href="#unrestricted-hartree-fock-method" title="Link to this heading">¶</a></h1>
 <section id="overview">
 <h2><span class="section-number">6.1.1. </span>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
@@ -42,6 +335,7 @@
 two-body interactions into one-body terms by taking account of the fluctuation
 of the one-body operators up to first order.
 For a general two-body interactions, it leads to the following approximation:</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-0">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-0">
 <span class="eqno">(6.1)<a class="headerlink" href="#equation-algorithm-uhf-0" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
 c_{i}^{\dagger} c_{j}^{\dagger} c_{k} c_{l}
@@ -54,7 +348,9 @@ c_{i}^{\dagger} c_{j}^{\dagger} c_{k} c_{l}
 - (\langle c_{i}^{\dagger} c_l \rangle \langle c_{j}^{\dagger} c_k \rangle
 - \langle c_{i}^{\dagger} c_k\rangle \langle c_{j}^{\dagger} c_l\rangle) .
 \end{aligned}\end{split}\]</div>
+</div>
 <p>In H-wave, the two-body interaction terms are defined as</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-1">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-1">
 <span class="eqno">(6.2)<a class="headerlink" href="#equation-algorithm-uhf-1" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
 \mathcal{H}_\text{InterAll}
@@ -69,13 +365,16 @@ I_{ijkl\alpha\beta\gamma\delta} (
 c^\dagger_{i\alpha\sigma_1} c^\dagger_{k\gamma\sigma_3} c_{l\gamma\sigma_4} c_{j\beta\sigma_2}
 + c^\dagger_{i\alpha\sigma_1} c_{l\delta\sigma_4} \delta_{j,k}\delta_{\beta,\gamma}\delta_{\sigma_2,\sigma_3} ) .
 \end{aligned}\end{split}\]</div>
+</div>
 <p>It is noted that there is a one-body term as depicted in the second term of
 the above expression.
 Then, the Hamiltonian given by the one-body terms is generally denoted as</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-2">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-2">
 <span class="eqno">(6.3)<a class="headerlink" href="#equation-algorithm-uhf-2" title="Link to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \sum_{ij} H_{ij} c^\dagger_{i} c_{j} = \hat{c}^\dagger H \hat{c}
 \end{aligned}\]</div>
+</div>
 <p>where we adopt a notation <span class="math notranslate nohighlight">\(i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)\)</span> for brevity,
 <span class="math notranslate nohighlight">\(H\)</span> denotes a matrix whose elements are <span class="math notranslate nohighlight">\(H_{ij}\)</span>, and
 <span class="math notranslate nohighlight">\(\hat{c}\)</span> denotes a column vector whose elements are <span class="math notranslate nohighlight">\(c_{i}\)</span>.</p>
@@ -85,58 +384,71 @@ where
 <span class="math notranslate nohighlight">\(\hat{\xi}\)</span> is a matrix whose diagonal elements are the eigenvalues of <span class="math notranslate nohighlight">\(H\)</span>,
 and <span class="math notranslate nohighlight">\(U\)</span> is a matrix composed of the corresponding eigenvectors.</p>
 <p>Then, let <span class="math notranslate nohighlight">\(\hat{d} = U^\dagger \hat{c}\)</span>, and <span class="math notranslate nohighlight">\(\mathcal{H}_\text{UHF}\)</span> leads to</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-3">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-3">
 <span class="eqno">(6.4)<a class="headerlink" href="#equation-algorithm-uhf-3" title="Link to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \hat{d}^\dagger \hat{\xi} \hat{d} =  \sum_{k} \xi_k d_k^\dagger d_k .
 \end{aligned}\]</div>
+</div>
 <p>Therefore, the energy derived from the one-body interaction term of the UHF approximation
 is obtained by</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-4">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-4">
 <span class="eqno">(6.5)<a class="headerlink" href="#equation-algorithm-uhf-4" title="Link to this equation">¶</a></span>\[\begin{aligned}
 E_\text{UHF} = \langle \mathcal{H}_\text{UHF} \rangle = \sum_{k} \xi_k \langle d_k^\dagger d_k \rangle .
 \end{aligned}\]</div>
+</div>
 <p>In the numerical calculation, as <span class="math notranslate nohighlight">\(H\)</span> depends on the one-body Green’s function
 <span class="math notranslate nohighlight">\(\langle c_{i}^\dagger c_{j}\rangle\)</span>
 through the UHF approximation, the equation is iteratively solved to satisfy the self-consistency.
 Starting from a one-body Green’s function given as an initial value, it is updated through the relation</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-5">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-5">
 <span class="eqno">(6.6)<a class="headerlink" href="#equation-algorithm-uhf-5" title="Link to this equation">¶</a></span>\[\begin{aligned}
 \langle c_{i}^\dagger c_{j}\rangle = \sum_{l} U_{il}^* U_{jl} \langle d_l^\dagger d_l \rangle = \sum_{l} \frac{U_{il}^* U_{jl}}{1+\exp^{\beta(\xi_l -\mu)}}
 \end{aligned}\]</div>
+</div>
 <p>until the one-body Green’s function converges.
 Here, <span class="math notranslate nohighlight">\(\beta\)</span> denotes the inverse temperature <span class="math notranslate nohighlight">\(1/ k_B T\)</span>, and
 <span class="math notranslate nohighlight">\(\mu\)</span> denotes the chemical potential.
 In the canonical calculation in which the number of particles is fixed,
 <span class="math notranslate nohighlight">\(\mu\)</span> is determined to satisfy the relation</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-6">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-6">
 <span class="eqno">(6.7)<a class="headerlink" href="#equation-algorithm-uhf-6" title="Link to this equation">¶</a></span>\[\begin{aligned}
 N = \sum_{i} \langle c_i^{\dagger} c_i \rangle
 \end{aligned}\]</div>
+</div>
 <p>for the number of particles <span class="math notranslate nohighlight">\(N\)</span> at every step.</p>
 <p>In H-wave, the simple-mixing algorithm is employed to update the configuration.
 If we denote the one-body Green’s function at <em>n</em>-th step by
 <span class="math notranslate nohighlight">\(\langle c_{i}^\dagger c_{j}\rangle^{(n)}\)</span>,
 the Green’s function at <em>n+1</em>-th step is chosen by mixing that of <em>n</em>-th step
 with the new one obtained in <em>n+1</em>-th step as</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-7">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-7">
 <span class="eqno">(6.8)<a class="headerlink" href="#equation-algorithm-uhf-7" title="Link to this equation">¶</a></span>\[\begin{aligned}
 \langle c_{i}^\dagger c_{j}\rangle^{(n+1)} := (1-\alpha) \langle c_{i}^\dagger c_{j}\rangle^{(n)} +  \alpha \langle c_{i}^\dagger c_{j}\rangle^{(n+1)},
 \end{aligned}\]</div>
+</div>
 <p>where <span class="math notranslate nohighlight">\(\alpha\)</span> is a parameter between 0 and 1.
 There are other update algorithms such as Anderson mixing, though they are not supported
 in the present version of H-wave.</p>
 <p>In the coordinate-space UHF mode of H-wave, all interactions are mapped to InterAll form.
 The free energy at finite temperature is given by</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-8">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-8">
 <span class="eqno">(6.9)<a class="headerlink" href="#equation-algorithm-uhf-8" title="Link to this equation">¶</a></span>\[\begin{aligned}
 F = \mu N -\frac{1}{\beta}\sum_k \ln \left[ 1+\exp (-\beta(\xi_k - \mu)) \right]
  - \sum_{ijkl} I_{ijkl} (\langle c_{i}^{\dagger} c_j\rangle \langle c_{k}^{\dagger} c_l\rangle - \langle c_{i}^{\dagger} c_l\rangle \langle c_{k}^{\dagger} c_j\rangle) .
 \end{aligned}\]</div>
+</div>
 </section>
 <section id="extension-to-wave-number-space">
 <h2><span class="section-number">6.1.2. </span>Extension to wave-number space<a class="headerlink" href="#extension-to-wave-number-space" title="Link to this heading">¶</a></h2>
 <p>The Hamiltonian given by the one-body terms is rewritten in the wave-number representation
 by the Fourier transform <span class="math notranslate nohighlight">\(c_i = \dfrac{1}{\sqrt{V}} \sum_k e^{ikr_i} c_k\)</span> as</p>
+<div class="math-wrapper docutils container" id="equation-algorithm-uhf-9">
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-9">
 <span class="eqno">(6.10)<a class="headerlink" href="#equation-algorithm-uhf-9" title="Link to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF}
@@ -145,6 +457,7 @@ by the Fourier transform <span class="math notranslate nohighlight">\(c_i = \dfr
 h_{\alpha\beta\sigma\sigma^\prime}(k)\,
 c_{k\alpha\sigma}^\dagger c_{k\beta\sigma^\prime}^{\phantom\dagger}
 \end{aligned}\]</div>
+</div>
 <p>Here, the interaction is assumed to have translational symmetry so that
 the coefficients depend only on the translation vectors <span class="math notranslate nohighlight">\(r_{ij}=r_j - r_i\)</span>.
 It is noted that InterAll type of interaction is not considered in the
@@ -162,94 +475,79 @@ Here,
 </section>
 </section>
 
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="rpa.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title"><span class="section-number">6.2. </span>Random Phase Approximation</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="al-index.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title"><span class="section-number">6. </span>Algorithms</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2022-, The University of Tokyo
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">6.1. Unrestricted Hartree-Fock method</a><ul>
+<li><a class="reference internal" href="#overview">6.1.1. Overview</a></li>
+<li><a class="reference internal" href="#extension-to-wave-number-space">6.1.2. Extension to wave-number space</a></li>
+</ul>
+</li>
+</ul>
 
           </div>
-          
         </div>
       </div>
-      <div class="sphinxsidebar" role="navigation" aria-label="Main">
-        <div class="sphinxsidebarwrapper">
-<p class="logo">
-  <a href="../index.html">
-    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo" />
-    
-  </a>
-</p>
-
-
-
-
-
-
-
-
-<h3>Navigation</h3>
-<ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. What is H-wave?</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. Basic usage</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. Coordinate-space UHF (UHFr)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. Wave-number space UHF (UHFk)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. Random Phase Approximation (RPA)</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">6. Algorithms</a><ul class="current">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">6.1. Unrestricted Hartree-Fock method</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#overview">6.1.1. Overview</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#extension-to-wave-number-space">6.1.2. Extension to wave-number space</a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="rpa.html">6.2. Random Phase Approximation</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. Acknowledgments</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">8. Appendix</a></li>
-</ul>
-
-<div class="relations">
-<h3>Related Topics</h3>
-<ul>
-  <li><a href="../index.html">Documentation overview</a><ul>
-  <li><a href="al-index.html"><span class="section-number">6. </span>Algorithms</a><ul>
-      <li>Previous: <a href="al-index.html" title="previous chapter"><span class="section-number">6. </span>Algorithms</a></li>
-      <li>Next: <a href="rpa.html" title="next chapter"><span class="section-number">6.2. </span>Random Phase Approximation</a></li>
-  </ul></li>
-  </ul></li>
-</ul>
-</div>
-<search id="searchbox" style="display: none" role="search">
-  <h3 id="searchlabel">Quick search</h3>
-    <div class="searchformwrapper">
-    <form class="search" action="../search.html" method="get">
-      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
-      <input type="submit" value="Go" />
-    </form>
-    </div>
-</search>
-<script>document.getElementById('searchbox').style.display = "block"</script>
-
-
-
-
-
-
-
-
-        </div>
-      </div>
-      <div class="clearer"></div>
-    </div>
-    <div class="footer">
-      &#169;2022-, The University of Tokyo.
       
-      |
-      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
-      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
       
-      |
-      <a href="../_sources/algorithm/uhf.rst.txt"
-          rel="nofollow">Page source</a>
-    </div>
-
-    
-
-    
-  </body>
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=e7fff540"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    </body>
 </html>
