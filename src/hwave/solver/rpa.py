@@ -1857,21 +1857,18 @@ class RPA:
         chi0q_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
         ham_2d = ham.reshape(nvol, ndx, ndx)
 
-        # Use cached block structure if available for same ham
-        cache_key = (ham_2d.shape, ham_2d.dtype)
-        if not hasattr(self, '_block_cache'):
-            self._block_cache = {}
-
-        if cache_key in self._block_cache:
-            cached_hash, blocks = self._block_cache[cache_key]
-            # Verify by hash (cheap compared to re-detection)
-            cur_hash = hash(ham_2d.data.tobytes())
-            if cur_hash != cached_hash:
-                blocks = self._find_block_diagonal(ham_2d)
-                self._block_cache[cache_key] = (cur_hash, blocks)
-        else:
-            blocks = self._find_block_diagonal(ham_2d)
-            self._block_cache[cache_key] = (hash(ham_2d.data.tobytes()), blocks)
+        # Detect block structure from the COMBINED sparsity of chi0q AND ham.
+        # Block-solving chi = [1 + chi0 ham]^{-1} chi0 is only valid when
+        # neither chi0q nor ham couples indices across blocks: if ham is
+        # block-diagonal but chi0q has off-block entries (e.g. spin-mixing
+        # bands with a spin-diagonal interaction), 1 + chi0 ham acquires
+        # off-block entries and the per-block solve is wrong. Detecting from
+        # ham alone would miss this, so include chi0q's connectivity.
+        # (The sum over (nmat, nvol) is O(nmat*nvol*ndx^2), cheaper than the
+        #  O(nmat*nvol*ndx^3) solve, so we recompute it each call.)
+        combined = np.concatenate(
+            [ham_2d, chi0q_2d.reshape(-1, ndx, ndx)], axis=0)
+        blocks = self._find_block_diagonal(combined)
 
         # Determine thread-parallel chunking for frequency axis
         # LAPACK releases the GIL, so threading gives real parallelism.

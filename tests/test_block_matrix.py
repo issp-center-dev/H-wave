@@ -9,6 +9,48 @@ import unittest
 import numpy as np
 
 
+class TestRPABlockSolveDenseChi0q(unittest.TestCase):
+    """Block-solving the RPA equation is only valid when neither chi0q nor ham
+    couples indices across blocks. If ham is block-diagonal but chi0q has
+    off-block entries (e.g. spin-mixing bands with a spin-diagonal interaction),
+    detecting blocks from ham alone gives the wrong answer. The solver must
+    fall back to the correct (full) result in that case."""
+
+    def _make_stub(self, nvol):
+        import hwave.solver.rpa as rpa_module
+
+        class LatticeStub:
+            pass
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.lattice = LatticeStub()
+        stub.lattice.nvol = nvol
+        return stub
+
+    def test_block_ham_dense_chi0q_matches_full(self):
+        import hwave.solver.rpa as rpa_module
+        nmat, nvol, ndx = 3, 1, 4
+        rng = np.random.default_rng(1)
+        # ham block-diagonal in {0,1},{2,3}
+        ham = np.zeros((nvol, ndx, ndx), dtype=np.complex128)
+        ham[0, :2, :2] = rng.standard_normal((2, 2)) + 1j * rng.standard_normal((2, 2))
+        ham[0, 2:, 2:] = rng.standard_normal((2, 2)) + 1j * rng.standard_normal((2, 2))
+        # chi0q dense (off-block entries present)
+        chi0q = 0.1 * (rng.standard_normal((nmat, nvol, ndx, ndx))
+                       + 1j * rng.standard_normal((nmat, nvol, ndx, ndx)))
+
+        stub = self._make_stub(nvol)
+        sol = rpa_module.RPA._solve_rpa(stub, chi0q, ham)
+
+        # full reference
+        I = np.eye(ndx, dtype=np.complex128)
+        ref = np.linalg.solve(I + chi0q @ ham[np.newaxis], chi0q)
+
+        np.testing.assert_allclose(
+            sol, ref, atol=1e-10,
+            err_msg="block-solve with dense chi0q must match the full solve")
+
+
 class TestRPABlockDiagonal(unittest.TestCase):
     """Test block-diagonal optimization in RPA._solve_rpa."""
 
