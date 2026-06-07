@@ -80,6 +80,28 @@ class FLEX(RPA):
         """Initialize FLEX-specific parameters."""
         logger.debug(">>> FLEX._init_flex_param")
 
+        # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
+        # interaction via the density-density diagonal ('kaabb->kab'), so it
+        # only supports reduced/squashed schemes with density-density vertices.
+        scheme = self.calc_scheme.lower()
+        if scheme not in ("reduced", "squashed"):
+            logger.error(
+                "FLEX requires calc_scheme='reduced' or 'squashed', "
+                "got '{}'.".format(self.calc_scheme))
+            raise ValueError(
+                "FLEX requires calc_scheme='reduced' or 'squashed', "
+                "got '{}'".format(self.calc_scheme))
+        if self.ham_info.has_interaction_exchange():
+            # FLEX reduces the vertex via the density-density diagonal
+            # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
+            # are dropped.  This is a deliberate (common) approximation, but
+            # warn so it is not silent (cf. the inherited reduced+exchange
+            # guard, which does not cover the squashed scheme).
+            logger.warning(
+                "FLEX uses the density-density reduction; exchange-type "
+                "interactions are approximated by their density-density part "
+                "(off-diagonal vertices are dropped).")
+
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
 
@@ -519,6 +541,16 @@ class FLEX(RPA):
         nd_block = green_kw.shape[-1]
         nd_v = v_eff.shape[-1]
         nfreq = v_eff.shape[0]
+
+        # The self-energy convolution Sigma(r,tau) = V_eff(r,tau) * G(r,tau)
+        # requires V_eff and G to share the same imaginary-time grid, i.e. the
+        # bosonic frequency count must equal the fermionic one.  A smaller
+        # nfreq would silently leave tau slices at zero (n_common below), so
+        # fail loudly instead of returning a wrong self-energy.
+        if nfreq != nmat:
+            raise ValueError(
+                "FLEX self-energy requires a full bosonic frequency grid: "
+                "V_eff has nfreq={} but Nmat={}".format(nfreq, nmat))
 
         # --- Transform Green's function to (r, tau) space ---
 

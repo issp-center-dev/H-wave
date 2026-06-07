@@ -887,6 +887,135 @@ class TestSelfEnergyConvolution(unittest.TestCase):
             "solver self-energy unexpectedly matches the matmul rule")
 
 
+class TestSelfEnergyGuards(unittest.TestCase):
+    """Guard against a partial bosonic frequency grid in the self-energy.
+
+    _calc_self_energy combines V_eff (nfreq bosonic freqs) and G (nmat
+    fermionic freqs) over n_common = min(nfreq, nmat).  If nfreq < nmat the
+    remaining tau slices are silently left at zero, which is physically wrong.
+    The solver must fail loudly instead.
+    """
+
+    def test_partial_bosonic_grid_raises(self):
+        solver, green_info = _make_1orb_solver(
+            Lx=4, Ly=4, Nmat=16, T=1.0, mu=0.0, U=1.0,
+            max_iter=1, mix=1.0, eps=1)
+        solver.solve(green_info, 'tests/flex/output_anal')
+
+        beta = 1.0 / solver.T
+        nblock = 1
+        nd_block = solver.norb
+        sigma0 = np.zeros((nblock, solver.nmat, solver.lattice.nvol,
+                           nd_block, nd_block), dtype=complex)
+        green_kw = solver._calc_dressed_green(beta, solver.mu, sigma0)
+        chi0q_raw = solver._calc_chi0q(green_kw, solver.green0_tail, beta)
+        if solver.spin_mode in ["spin-free", "spinful"]:
+            chi0q_raw = chi0q_raw[0]
+        _, v_eff, _, _ = solver._flex_compute_veff(
+            chi0q_raw, solver.ham_info.ham_inter_q)
+
+        # truncate the bosonic frequency axis -> nfreq < nmat
+        v_eff_partial = v_eff[:solver.nmat // 2]
+        with self.assertRaises(ValueError):
+            solver._calc_self_energy(green_kw, v_eff_partial, beta)
+
+    def test_full_grid_does_not_raise(self):
+        """The normal full-grid path (nfreq == nmat) must still work."""
+        solver, green_info = _make_1orb_solver(
+            Lx=4, Ly=4, Nmat=16, T=1.0, mu=0.0, U=1.0,
+            max_iter=1, mix=1.0, eps=1)
+        # solve() exercises _calc_self_energy on the full grid
+        solver.solve(green_info, 'tests/flex/output_anal')
+        self.assertIn("sigma", green_info)
+
+
+def _make_flex_solver_with(calc_scheme='reduced', interactions=None,
+                           Lx=4, Ly=4, Nmat=8, T=1.0, mu=0.0):
+    """Build a FLEX solver with a given calc_scheme and interaction files.
+
+    interactions: dict mapping the TOML interaction keyword (e.g. 'CoulombIntra',
+    'Exchange') to the file body to write.  Returns the constructed solver
+    (construction may raise, which is what the guard tests check).
+    """
+    import tempfile
+    import shutil
+
+    if interactions is None:
+        interactions = {
+            'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
+                            "   0    0    0    1    1   1.000000000000   0.0\n",
+        }
+
+    tmpdir = tempfile.mkdtemp(prefix='flex_guard_')
+    src_dir = 'tests/rpa/input'
+    for fn in ['geom.dat', 'transfer.dat']:
+        shutil.copy2(os.path.join(src_dir, fn), os.path.join(tmpdir, fn))
+
+    inter_cfg = {'path_to_input': tmpdir, 'Geometry': 'geom.dat',
+                 'Transfer': 'transfer.dat'}
+    for key, body in interactions.items():
+        fname = key.lower() + '.dat'
+        with open(os.path.join(tmpdir, fname), 'w') as f:
+            f.write(body)
+        inter_cfg[key] = fname
+
+    info_log = {}
+    info_mode = {
+        'mode': 'FLEX',
+        'param': {'T': T, 'mu': mu, 'CellShape': [Lx, Ly, 1],
+                  'SubShape': [1, 1, 1], 'Nmat': Nmat,
+                  'IterationMax': 1, 'Mix': 1.0, 'EPS': 1},
+        'calc_scheme': calc_scheme,
+    }
+    info_file_input = {'path_to_input': tmpdir, 'interaction': inter_cfg}
+
+    import hwave.qlmsio.read_input_k as read_input_k
+    read_io = read_input_k.QLMSkInput(info_file_input)
+    ham_info = read_io.get_param("ham")
+
+    import hwave.solver.flex as solver_flex
+    try:
+        solver = solver_flex.FLEX(ham_info, info_log, info_mode)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return solver
+
+
+class TestFLEXSchemeGuards(unittest.TestCase):
+    """FLEX-specific compatibility guards.
+
+    FLEX consumes the reduced-shape (4-dim) chi0q and reduces the interaction
+    via the density-density diagonal 'kaabb->kab', so it requires a
+    reduced/squashed scheme and density-density interactions only.
+    """
+
+    # transfer-format body that registers as an Exchange interaction
+    _EXCHANGE_BODY = ("Exchange\n1\n1\n 1\n"
+                      "   0    0    0    1    1   0.500000000000   0.0\n")
+
+    def test_general_scheme_rejected(self):
+        """calc_scheme='general' would feed FLEX a 6/7-dim chi0q -> reject."""
+        with self.assertRaises((ValueError, SystemExit)):
+            _make_flex_solver_with(calc_scheme='general')
+
+    def test_exchange_interaction_warns(self):
+        """Exchange under 'squashed' is approximated by its density-density
+        part; FLEX must warn (not silently drop) and still construct."""
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            solver = _make_flex_solver_with(
+                calc_scheme='squashed',
+                interactions={'Exchange': self._EXCHANGE_BODY})
+        self.assertTrue(
+            any('density-density' in msg for msg in cm.output),
+            "expected a warning about the density-density approximation")
+        self.assertEqual(solver.calc_scheme, 'squashed')
+
+    def test_reduced_density_density_ok(self):
+        """The standard reduced + density-density path must still construct."""
+        solver = _make_flex_solver_with(calc_scheme='reduced')
+        self.assertEqual(solver.calc_scheme, 'reduced')
+
+
 class TestFLEXSpinSymmetry(unittest.TestCase):
     """Verify SU(2) spin symmetry properties in spin-free mode.
 
