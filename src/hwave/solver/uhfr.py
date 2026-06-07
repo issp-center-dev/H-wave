@@ -37,6 +37,9 @@ def _split_occupation(occupied, sizes):
         Per-block occupations.
     """
     total = sum(sizes)
+    if not (0 <= occupied <= total):
+        raise ValueError(
+            "occupied={} must be in [0, sum(sizes)={}]".format(occupied, total))
     if total == 0:
         return [0 for _ in sizes]
     exact = [occupied * sz / total for sz in sizes]

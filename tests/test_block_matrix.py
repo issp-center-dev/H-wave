@@ -35,6 +35,15 @@ class TestUHFrOccupationSplit(unittest.TestCase):
         # equal sizes, divisible -> equal split
         self.assertEqual(_split_occupation(4, [2, 2]), [2, 2])
 
+    def test_invalid_occupied_raises(self):
+        from hwave.solver.uhfr import _split_occupation
+        with self.assertRaises(ValueError):
+            _split_occupation(5, [2, 2])     # occupied > total
+        with self.assertRaises(ValueError):
+            _split_occupation(-1, [2, 2])    # negative occupied
+        with self.assertRaises(ValueError):
+            _split_occupation(1, [])         # empty sizes, nonzero occupied
+
 
 class TestRPABlockSolveDenseChi0q(unittest.TestCase):
     """Block-solving the RPA equation is only valid when neither chi0q nor ham

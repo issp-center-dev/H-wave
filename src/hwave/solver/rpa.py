@@ -1865,10 +1865,14 @@ class RPA:
         # off-block entries and the per-block solve is wrong. Detecting from
         # ham alone would miss this, so include chi0q's connectivity.
         # (The sum over (nmat, nvol) is O(nmat*nvol*ndx^2), cheaper than the
-        #  O(nmat*nvol*ndx^3) solve, so we recompute it each call.)
-        combined = np.concatenate(
-            [ham_2d, chi0q_2d.reshape(-1, ndx, ndx)], axis=0)
-        blocks = self._find_block_diagonal(combined)
+        #  O(nmat*nvol*ndx^3) solve. We reduce chi0q to its (ndx, ndx)
+        #  connectivity first to avoid materializing a large concatenated
+        #  array.)
+        conn_stack = np.stack([
+            np.sum(np.abs(ham_2d), axis=0),
+            np.sum(np.abs(chi0q_2d), axis=(0, 1)),
+        ])  # (2, ndx, ndx); _find_block_diagonal sums |.| over axis 0
+        blocks = self._find_block_diagonal(conn_stack)
 
         # Determine thread-parallel chunking for frequency axis
         # LAPACK releases the GIL, so threading gives real parallelism.
