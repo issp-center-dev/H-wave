@@ -85,12 +85,17 @@ class FLEX(RPA):
         # only supports reduced/squashed schemes with density-density vertices.
         scheme = self.calc_scheme.lower()
         if scheme not in ("reduced", "squashed"):
-            logger.error(
-                "FLEX requires calc_scheme='reduced' or 'squashed', "
-                "got '{}'.".format(self.calc_scheme))
-            raise ValueError(
-                "FLEX requires calc_scheme='reduced' or 'squashed', "
-                "got '{}'".format(self.calc_scheme))
+            if getattr(self, "calc_type", "ring") == "ring+ladder":
+                # ring+ladder forces calc_scheme='general' (full rank-4 tensor),
+                # which FLEX cannot consume.
+                msg = ("FLEX does not support calc_type='ring+ladder' "
+                       "(it requires the 'general' scheme); use the default "
+                       "'ring' with calc_scheme='reduced' or 'squashed'.")
+            else:
+                msg = ("FLEX requires calc_scheme='reduced' or 'squashed', "
+                       "got '{}'.".format(self.calc_scheme))
+            logger.error(msg)
+            raise ValueError(msg)
         if self.ham_info.has_interaction_exchange():
             # FLEX reduces the vertex via the density-density diagonal
             # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
@@ -126,6 +131,15 @@ class FLEX(RPA):
             Dictionary containing Green's function information.
         path_to_output : str
             Path to output directory.
+
+        Notes
+        -----
+        FLEX starts the SCF loop from zero self-energy and recomputes chi0q from
+        the dressed Green's function every iteration, so a `chi0q_init` entry
+        loaded by the inherited RPA `read_init` is NOT consumed.  `green_init`
+        and `trans_mod`, however, ARE consumed: the inherited `_calc_epsilon_k`
+        uses them to build the (mean-field-shifted) transfer H0(k), exactly as
+        in RPA.
         """
         logger.info("Start FLEX calculations")
 

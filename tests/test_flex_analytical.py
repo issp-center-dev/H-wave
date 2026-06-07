@@ -929,12 +929,43 @@ class TestSelfEnergyGuards(unittest.TestCase):
         self.assertIn("sigma", green_info)
 
 
+class TestFLEXIgnoresChi0qInit(unittest.TestCase):
+    """FLEX recomputes chi0q from the dressed Green's function every iteration,
+    so a chi0q_init entry (stored as green_info['chi0q']) is not consumed.
+
+    Note: green_init / trans_mod ARE consumed (the inherited _calc_epsilon_k
+    uses them to build H0), so only chi0q_init is inert for FLEX.
+    """
+
+    def test_chi0q_init_is_ignored(self):
+        cfg = dict(Lx=4, Ly=4, Nmat=16, T=1.0, mu=0.0, U=1.0,
+                   max_iter=2, mix=1.0, eps=8)
+
+        solver_a, gi_a = _make_1orb_solver(**cfg)
+        solver_a.solve(gi_a, 'tests/flex/output_anal')
+        sigma_ref = gi_a["sigma"].copy()
+
+        # Inject a bogus chi0q_init; FLEX.solve must overwrite it and produce
+        # the same self-energy.
+        solver_b, gi_b = _make_1orb_solver(**cfg)
+        gi_b["chi0q"] = np.full(
+            (solver_b.nmat, solver_b.lattice.nvol, solver_b.norb, solver_b.norb),
+            1.0e3, dtype=np.complex128)
+        solver_b.solve(gi_b, 'tests/flex/output_anal')
+
+        np.testing.assert_allclose(
+            gi_b["sigma"], sigma_ref, atol=1e-12,
+            err_msg="FLEX self-energy changed when chi0q_init was set; "
+                    "FLEX recomputes chi0q and should ignore the init entry")
+
+
 def _make_flex_solver_with(calc_scheme='reduced', interactions=None,
-                           Lx=4, Ly=4, Nmat=8, T=1.0, mu=0.0):
+                           calc_type=None, Lx=4, Ly=4, Nmat=8, T=1.0, mu=0.0):
     """Build a FLEX solver with a given calc_scheme and interaction files.
 
     interactions: dict mapping the TOML interaction keyword (e.g. 'CoulombIntra',
-    'Exchange') to the file body to write.  Returns the constructed solver
+    'Exchange') to the file body to write.  calc_type optionally sets
+    [mode].calc_type ('ring' or 'ring+ladder').  Returns the constructed solver
     (construction may raise, which is what the guard tests check).
     """
     import tempfile
@@ -967,6 +998,8 @@ def _make_flex_solver_with(calc_scheme='reduced', interactions=None,
                   'IterationMax': 1, 'Mix': 1.0, 'EPS': 1},
         'calc_scheme': calc_scheme,
     }
+    if calc_type is not None:
+        info_mode['calc_type'] = calc_type
     info_file_input = {'path_to_input': tmpdir, 'interaction': inter_cfg}
 
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1014,6 +1047,27 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         """The standard reduced + density-density path must still construct."""
         solver = _make_flex_solver_with(calc_scheme='reduced')
         self.assertEqual(solver.calc_scheme, 'reduced')
+
+    def test_auto_scheme_exchange_warns(self):
+        """auto + exchange resolves to squashed (inherited RPA logic) and FLEX
+        must warn about the density-density approximation, not error."""
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            solver = _make_flex_solver_with(
+                calc_scheme='auto',
+                interactions={
+                    'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
+                                    "   0    0    0    1    1   1.0   0.0\n",
+                    'Exchange': self._EXCHANGE_BODY,
+                })
+        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertTrue(
+            any('density-density' in msg for msg in cm.output))
+
+    def test_auto_ring_ladder_rejected_with_clear_message(self):
+        """auto + calc_type='ring+ladder' resolves to general (inherited), which
+        FLEX rejects; the message must name ring+ladder explicitly."""
+        with self.assertRaisesRegex(ValueError, r'ring\+ladder'):
+            _make_flex_solver_with(calc_scheme='auto', calc_type='ring+ladder')
 
 
 class TestFLEXSpinSymmetry(unittest.TestCase):
