@@ -42,6 +42,7 @@ class UHFk(solver_base):
         # Initialize physical quantities
         self.physics = {
             "Ene": { "Total": 0.0, "Band": 0.0 },
+            "FreeEne": { "Total": 0.0, "Band": 0.0 },
             "NCond": 0.0,  # Total particle number
             "Sz": 0.0,     # Total spin
             "Rest": 1.0    # Convergence measure
@@ -1802,7 +1803,18 @@ class UHFk(solver_base):
             dists[b][li] = 1.0
         dists = [d.reshape(w.shape) for d, w in zip(dists, ws_list)]
 
-        return dists, 0.0
+        # Chemical potential (Fermi level) at T=0: midpoint of the HOMO-LUMO
+        # gap. This is the T -> 0+ limit of the finite-temperature mu equation.
+        sorted_ww = np.sort(all_ww)
+        ntot = sorted_ww.size
+        if ncond <= 0:
+            mu = sorted_ww[0]
+        elif ncond >= ntot:
+            mu = sorted_ww[-1]
+        else:
+            mu = 0.5 * (sorted_ww[ncond - 1] + sorted_ww[ncond])
+
+        return dists, mu
 
     def _find_dist_group_nonzero_t(self, ws_list, vs_list, ncond):
         from scipy import optimize
@@ -1918,7 +1930,9 @@ class UHFk(solver_base):
         ns       = self.ns
 
         energy = {}
+        free_energy = {}
         energy_total = 0.0
+        free_total = 0.0
 
         ws_list = self._green_list["eigenvalue"]
         vs_list = self._green_list["eigenvector"]
@@ -1939,9 +1953,11 @@ class UHFk(solver_base):
                 ))
                 e_band += np.sum(all_ev[:group_nconds[g]])
 
-            energy["Band"] = e_band
-            logger.debug("energy: Band = {}".format(energy["Band"]))
-            energy_total += energy["Band"]
+            # At T=0 the entropy vanishes, so internal energy and free energy
+            # coincide.
+            e_band_internal = e_band
+            e_band_free = e_band
+            logger.debug("energy: Band = {}".format(e_band))
         else:
             T = self.T
 
@@ -1953,23 +1969,36 @@ class UHFk(solver_base):
                 v_ = np.where( mask_, v1, 0.0 )
                 return v_
 
-            e_band = 0.0
+            # Internal band energy  E_band = sum_n eps_n f(eps_n)
+            # Free   band energy    F_band = mu*N + Omega_0
+            #                              = mu*N - T*sum_n ln(1+exp(-(eps_n-mu)/T))
+            e_band_internal = 0.0
+            e_band_free = 0.0
             for k in range(nblock):
                 w = ws_list[k]
                 v = vs_list[k]
                 mu = mus[block_to_group[k]]
 
+                fermi = _fermi(T, mu, w)
+
                 wt = -(w - mu) / T
                 mask_ = wt < self.ene_cutoff
                 ln_e = np.where( mask_, np.log1p(np.exp(wt)), wt)
 
-                nn = np.einsum('kal,kl,kal->', np.conjugate(v), _fermi(T, mu, w), v)
+                nn = np.einsum('kal,kl,kal->', np.conjugate(v), fermi, v)
 
-                e_band += mu * nn - T * np.sum(ln_e)
+                e_band_internal += np.sum(w * fermi)
+                e_band_free += mu * nn - T * np.sum(ln_e)
 
-            energy["Band"] = e_band.real
-            energy_total += energy["Band"]
-            logger.debug("energy: Band = {}".format(e_band))
+            e_band_internal = np.real(e_band_internal)
+            e_band_free = np.real(e_band_free)
+            logger.debug("energy: Band (internal) = {}".format(e_band_internal))
+            logger.debug("free energy: Band = {}".format(e_band_free))
+
+        energy["Band"] = e_band_internal
+        free_energy["Band"] = e_band_free
+        energy_total += e_band_internal
+        free_total += e_band_free
 
         # In spin-orbital mode, convert Green to virtual form for interaction energy
         if self.enable_spin_orbital:
@@ -2007,14 +2036,19 @@ class UHFk(solver_base):
                         ee = np.einsum('rab, rab->', jab_r, w1b)
                     energy[type] = -ee/2.0*nvol
 
+                # Interaction (double-counting corrected) energy is identical
+                # for the internal energy and the free energy.
                 energy_total += energy[type].real
+                free_total += energy[type].real
                 logger.debug("energy: {} = {}".format(type, energy[type]))
             else:
                 # logger.info("energy: {} skip".format(type))
                 pass
 
         energy["Total"] = energy_total
+        free_energy["Total"] = free_total
         self.physics["Ene"] = energy.copy()
+        self.physics["FreeEne"] = free_energy.copy()
 
     @do_profile
     def get_results(self):
@@ -2055,8 +2089,26 @@ class UHFk(solver_base):
                     else:
                         fw.write("Energy_{:<12s} = {}\n".format(type, self.physics["Ene"][type].real))
 
+                # Free energy F = E - T*S (Helmholtz). At T=0 it equals the
+                # internal energy above; at finite T it is the quantity the
+                # self-consistent loop minimizes.
+                if "FreeEne" in self.physics:
+                    for type in type_ex:
+                        fw.write("FreeEnergy_{:<8} = {}\n".format(
+                            type, self.physics["FreeEne"][type].real))
+
                 fw.write("NCond   = {}\n".format(self.physics["NCond"]))
                 fw.write("Sz      = {}\n".format(self.physics["Sz"]))
+                # Chemical potential (Fermi level). One value per mu-group; at
+                # T=0 it is the midpoint of the HOMO-LUMO gap.
+                mu_arr = self._green_list.get("mu", None)
+                if mu_arr is not None:
+                    mu_arr = np.atleast_1d(mu_arr)
+                    if mu_arr.size == 1:
+                        fw.write("ChemicalPotential = {}\n".format(float(mu_arr[0])))
+                    else:
+                        for g, mu in enumerate(mu_arr):
+                            fw.write("ChemicalPotential_{} = {}\n".format(g, float(mu)))
                 # Transverse spin (Sx, Sy) is only meaningful with spin mixing;
                 # emit it only in spin-orbital mode to keep the normal-mode
                 # energy.dat format backward-compatible.
