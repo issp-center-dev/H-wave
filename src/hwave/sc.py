@@ -1444,6 +1444,9 @@ def _shift_from_eigenvalues(vals, factor=0.9):
     # so numerical-noise eigenvalues (~1e-16) do not pull the shift to zero.
     if scale > 0 and np.any(real > 1e-8 * scale):
         return float(np.max(real)) * factor
+    # No significant positive eigenvalue: track the dominant magnitude. Note a
+    # purely imaginary / all-zero sample yields a 0.0 shift, which sits at a
+    # possible zero mode; physical FLEX inputs have a real dominant eigenvalue.
     return float(vals[np.argmax(np.abs(vals))].real) * factor
 
 
@@ -1517,10 +1520,15 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
             # largest-magnitude eigenvalues and aim at the largest *real* part
             # (the physical SC eigenvalue), not the largest magnitude (which
             # can be a large negative repulsive mode).
-            logger.info("Estimating shift with preliminary Arnoldi...")
             k_pre = min(6, vec_size - 2)
-            vals_pre, _ = eigs(A, k=max(1, k_pre), which='LM')
-            sigma_shift = _shift_from_eigenvalues(vals_pre)
+            if k_pre < 1:
+                # Operator too small for a preliminary ARPACK pass (ARPACK
+                # needs k < N-1); fall back to a neutral shift.
+                sigma_shift = 0.0
+            else:
+                logger.info("Estimating shift with preliminary Arnoldi...")
+                vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                sigma_shift = _shift_from_eigenvalues(vals_pre)
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
         vals, vecs = _eigs_shift_invert(
             A, vec_size, max_ev, method, sigma=sigma_shift
