@@ -32,6 +32,8 @@ from hwave.sc import (
     _determine_mu,
     _eliashberg_kernel_fft,
     _initialize_gap,
+    _order_eigenpairs,
+    _resolve_init_gap,
     _solve_eigenvalue,
     _solve_iteration,
     _solve_subspace_iteration,
@@ -407,6 +409,50 @@ class TestInitializeGap(unittest.TestCase):
                 err_msg="p_z should be odd under kz -> -kz")
 
 
+class TestEigenpairOrdering(unittest.TestCase):
+    """The leading eigenpair must be the algebraically largest (largest real
+    part), since the SC eigenvalue is the largest positive one (-> 1 at Tc).
+    A large-magnitude negative eigenvalue must not be reported first."""
+
+    def test_orders_by_largest_real_not_magnitude(self):
+        vals = np.array([-5.0, 2.0, 0.5], dtype=complex)
+        vecs = np.eye(3, dtype=complex)
+        ovals, ovecs = _order_eigenpairs(vals, vecs)
+        # leading is the largest real (2.0), not the largest |.| (-5.0)
+        self.assertAlmostEqual(ovals[0].real, 2.0)
+        npt.assert_allclose(ovecs[:, 0], vecs[:, 1])
+        npt.assert_allclose([v.real for v in ovals], [2.0, 0.5, -5.0])
+
+
+class TestResolveInitGap(unittest.TestCase):
+    """The default initial gap must match the pairing channel's parity.
+
+    The Eliashberg kernel preserves parity, so an even seed (e.g. 'cos')
+    cannot reach the odd triplet solution. When the user does not specify
+    init_gap, the default must be even for singlet and odd for triplet.
+    """
+
+    def test_triplet_default_is_odd_seed(self):
+        mode = _resolve_init_gap(None, "triplet")
+        # the resolved default must be an odd (p-wave) seed
+        N = 8
+        k = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+        sigma = _initialize_gap(mode, 1, k, k, kz)
+        for ix in range(N):
+            ix_inv = (N - ix) % N
+            npt.assert_allclose(
+                sigma[0, 0, ix, 0, 0], -sigma[0, 0, ix_inv, 0, 0], atol=1e-10,
+                err_msg="triplet default seed must be odd under k -> -k")
+
+    def test_singlet_default_is_even_cos(self):
+        self.assertEqual(_resolve_init_gap(None, "singlet"), "cos")
+
+    def test_explicit_init_gap_is_respected(self):
+        self.assertEqual(_resolve_init_gap("d_x2y2", "triplet"), "d_x2y2")
+        self.assertEqual(_resolve_init_gap("s", "singlet"), "s")
+
+
 class TestChi0qConversion(unittest.TestCase):
     """Test chi0q format conversion."""
 
@@ -679,10 +725,12 @@ class TestEigenvalueMethods(unittest.TestCase):
             num_eigenvalues=3, method="shift-invert-gmres"
         )
 
-        # Leading eigenvalue should agree across methods
-        ev_arnoldi = abs(vals_arnoldi[0])
-        ev_bicgstab = abs(vals_bicgstab[0])
-        ev_gmres = abs(vals_gmres[0])
+        # Methods should agree on the dominant eigenvalue. Compare by largest
+        # magnitude (order-independent): the reported ordering is now by real
+        # part, so vals[0] is the largest-real, not the dominant, eigenvalue.
+        ev_arnoldi = np.max(np.abs(vals_arnoldi))
+        ev_bicgstab = np.max(np.abs(vals_bicgstab))
+        ev_gmres = np.max(np.abs(vals_gmres))
 
         npt.assert_allclose(ev_bicgstab, ev_arnoldi, rtol=0.1,
                             err_msg="BiCGSTAB should agree with Arnoldi")
@@ -734,8 +782,8 @@ class TestSubspaceIteration(unittest.TestCase):
         )
         self.assertEqual(len(eigenvalues), 4)
         self.assertEqual(eigenvectors.shape[0], 4)
-        # Should find non-trivial eigenvalues
-        self.assertGreater(abs(eigenvalues[0]), 1e-5)
+        # Should find non-trivial eigenvalues (order-independent check)
+        self.assertGreater(np.max(np.abs(eigenvalues)), 1e-5)
 
     def test_subspace_via_interface(self):
         """Test subspace method via _solve_eigenvalue interface."""
@@ -748,7 +796,7 @@ class TestSubspaceIteration(unittest.TestCase):
         self.assertEqual(len(eigenvalues), 3)
 
     def test_subspace_agrees_with_arnoldi(self):
-        """Test subspace iteration agrees with Arnoldi on leading eigenvalue."""
+        """Test subspace iteration agrees with Arnoldi on the dominant eigenvalue."""
         Vs_q, G2, norb, Nx, Ny, Nz = self._setup_2orb_problem()
 
         vals_arnoldi, _ = _solve_eigenvalue(
@@ -760,10 +808,13 @@ class TestSubspaceIteration(unittest.TestCase):
             num_eigenvalues=3, max_iter=300, tol=1e-6
         )
 
-        # Leading eigenvalue should agree
+        # Methods should agree on the dominant eigenvalue (largest magnitude).
+        # Compared order-independently since reporting is now ordered by real
+        # part, not magnitude.
         npt.assert_allclose(
-            abs(vals_subspace[0]), abs(vals_arnoldi[0]), rtol=0.01,
-            err_msg="Subspace should agree with Arnoldi on leading eigenvalue"
+            np.max(np.abs(vals_subspace)), np.max(np.abs(vals_arnoldi)),
+            rtol=0.01,
+            err_msg="Subspace should agree with Arnoldi on the dominant eigenvalue"
         )
 
     def test_shifted_bicg_scan(self):

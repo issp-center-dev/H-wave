@@ -1129,6 +1129,31 @@ def _initialize_gap(mode, norb, kx_array, ky_array, kz_array):
     return sigma
 
 
+def _resolve_init_gap(init_gap, pairing_type):
+    """Resolve the initial-gap symmetry, defaulting to the channel's parity.
+
+    The Eliashberg kernel preserves parity (it commutes with k -> -k), so an
+    even seed cannot reach the odd triplet solution and vice versa. When the
+    user does not specify ``init_gap``, default to an even s-wave ('cos') seed
+    for singlet and an odd p-wave ('p_x') seed for triplet.
+
+    Parameters
+    ----------
+    init_gap : str or None
+        User-specified gap symmetry, or None to use the default.
+    pairing_type : str
+        "singlet" or "triplet".
+
+    Returns
+    -------
+    str
+        The gap symmetry mode to pass to _initialize_gap.
+    """
+    if init_gap is not None:
+        return init_gap
+    return "p_x" if pairing_type == "triplet" else "cos"
+
+
 # ---------------------------------------------------------------------------
 # Solvers
 # ---------------------------------------------------------------------------
@@ -1253,6 +1278,36 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
     return A, vec_size
 
 
+def _order_eigenpairs(vals, vecs):
+    """Order eigenpairs by descending real part (largest first).
+
+    The superconducting eigenvalue is the algebraically largest one
+    (lambda -> 1 at Tc); only positive eigenvalues are physically relevant.
+    The leading eigenpair must therefore be the largest by real part, NOT the
+    largest by magnitude: a large-magnitude *negative* eigenvalue is an
+    unphysical repulsive mode and must not be reported first (nor mask a
+    smaller positive eigenvalue).
+
+    Note: ARPACK still finds eigenvalues by magnitude (which='LM'), so a small
+    positive eigenvalue masked by much larger negative ones may not be among
+    the returned set; request more eigenvalues, or use a shift-invert method
+    targeting a positive shift, to resolve such cases.
+
+    Parameters
+    ----------
+    vals : ndarray
+        Eigenvalues.
+    vecs : ndarray
+        Eigenvectors as columns, shape (vec_size, n).
+
+    Returns
+    -------
+    vals, vecs ordered so that vals[0] has the largest real part.
+    """
+    idx = np.argsort(-vals.real)
+    return vals[idx], vecs[:, idx]
+
+
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
                       method="arnoldi", sigma_shift=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
@@ -1296,7 +1351,7 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     Returns
     -------
     eigenvalues : ndarray
-        Leading eigenvalues sorted by magnitude.
+        Leading eigenvalues ordered by descending real part (largest first).
     eigenvectors : ndarray
         Corresponding eigenvectors reshaped to (num_ev, norb, norb, Nx, Ny, Nz).
     """
@@ -1331,10 +1386,8 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     else:
         raise ValueError("Unknown eigenvalue method: {}".format(method))
 
-    # Sort by magnitude (descending)
-    idx = np.argsort(-np.abs(vals))
-    vals = vals[idx]
-    vecs = vecs[:, idx]
+    # Order by largest real part (the physical SC eigenvalue), not magnitude.
+    vals, vecs = _order_eigenpairs(vals, vecs)
 
     eigenvectors = np.array([
         vecs[:, i].real.reshape(norb, norb, Nx, Ny, Nz)
@@ -1457,7 +1510,7 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     Returns
     -------
     eigenvalues : ndarray
-        Converged eigenvalues sorted by magnitude.
+        Converged eigenvalues ordered by descending magnitude.
     eigenvectors : ndarray
         Shape (num_eigenvalues, norb, norb, Nx, Ny, Nz).
     """
@@ -1516,6 +1569,10 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
         W[:, j] = A.matvec(V[:, j])
     H = V.T @ W
     evals_h, evecs_h = np.linalg.eig(H)
+    # Subspace (block power) iteration is magnitude-based: it converges to the
+    # dominant-magnitude invariant subspace, so report its modes by magnitude.
+    # The physical SC selection (largest real) is applied in the default
+    # arnoldi path; use that to read off the leading SC eigenvalue.
     idx = np.argsort(-np.abs(evals_h))
 
     eigenvalues = evals_h[idx[:num_ev]]
@@ -1599,6 +1656,7 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
         try:
             nus, vecs = eigs(A_inv, k=max_ev, which='LM')
             eigenvalues = 1.0 / nus + sigma
+            # Eigenvalues found near this shift; report by magnitude.
             idx = np.argsort(-np.abs(eigenvalues))
             eigenvalues = eigenvalues[idx]
             eigvecs = np.array([
@@ -1799,10 +1857,13 @@ def calc_eliashberg(input_dict):
     max_iter = eli_param.get("max_iter", 1000)
     alpha = eli_param.get("alpha", 0.5)
     tol = eli_param.get("convergence_tol", 1.0e-5)
-    init_gap_mode = eli_param.get("init_gap", "cos")
     num_eigenvalues = eli_param.get("num_eigenvalues", 10)
     eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
     pairing_type = eli_param.get("pairing_type", "singlet")
+    # Default the initial gap to the channel's parity (even for singlet, odd
+    # for triplet) when the user did not specify one; the kernel preserves
+    # parity so a wrong-parity seed cannot reach the physical solution.
+    init_gap_mode = _resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     chi0q_mode = eli_param.get("chi0q_mode", "load")
     chi0q_tensor = eli_param.get("chi0q_tensor", "auto")
     gap_file = eli_param.get("output_gap", "gap.dat")
