@@ -1854,6 +1854,10 @@ class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
         stub_n.norb_phys = norb_phys
         stub_n.block_info = [np.arange(nd)]
         stub_n.Nconds = Nconds if Nconds is not None else [nd]
+        # Single block in one mu-group (sz_free): mirror _init_block_structure,
+        # which sets block_info, block_to_group and group_nconds together.
+        stub_n.block_to_group = [0]
+        stub_n.group_nconds = [stub_n.Nconds[0]]
         stub_n.threshold = 1e-12
 
         # --- Spin-orbital mode stub ---
@@ -1886,6 +1890,10 @@ class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
         stub_so.norb_phys = norb_phys
         stub_so.block_info = [np.arange(nd)]
         stub_so.Nconds = Nconds if Nconds is not None else [nd]
+        # Single block in one mu-group (sz_free): mirror _init_block_structure,
+        # which sets block_info, block_to_group and group_nconds together.
+        stub_so.block_to_group = [0]
+        stub_so.group_nconds = [stub_so.Nconds[0]]
         stub_so.threshold = 1e-12
 
         return stub_n, stub_so
