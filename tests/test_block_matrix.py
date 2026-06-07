@@ -1434,6 +1434,42 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         self.assertTrue(hasattr(stub, "group_nconds"))
         self.assertEqual(sum(stub.group_nconds), 2)
 
+    def test_2sz_fixed_single_mixed_block_ok(self):
+        """A single mixed block spanning the whole system is allowed: it takes
+        the total ncond and does not over-count."""
+        norb, ns, nvol = 2, 2, 1
+        nd = norb * ns
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = 1.0
+        # connect all four indices into one block, with up<->down coupling
+        ham_trans[:, 0, 1] = 0.5; ham_trans[:, 1, 0] = 0.5   # up0-up1
+        ham_trans[:, 1, norb] = 0.5; ham_trans[:, norb, 1] = 0.5   # up1-dn0
+        ham_trans[:, norb, norb + 1] = 0.5; ham_trans[:, norb + 1, norb] = 0.5  # dn0-dn1
+        stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
+                                    sz_free=False, Nconds=[2, 1])
+        stub._detect_blocks()  # must not raise
+        self.assertEqual(len(stub.block_info), 1)
+        self.assertEqual(sum(stub.group_nconds), 3)  # ncond_up + ncond_down
+
+    def test_2sz_fixed_multiple_mixed_blocks_ok(self):
+        """Several mixed blocks (no pure block) are allowed (no over-count)."""
+        norb, ns, nvol = 2, 2, 1
+        nd = norb * ns
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = 1.0
+        # two mixed blocks {0,norb} and {1,norb+1}, no pure block remains
+        ham_trans[:, 0, norb] = 0.5; ham_trans[:, norb, 0] = 0.5
+        ham_trans[:, 1, norb + 1] = 0.5; ham_trans[:, norb + 1, 1] = 0.5
+        stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
+                                    sz_free=False, Nconds=[1, 1])
+        stub._detect_blocks()  # must not raise
+        self.assertEqual(len(stub.block_info), 2)
+        # both blocks are mixed -> a single mu-group holding the total ncond
+        self.assertEqual(list(stub.block_to_group), [0, 0])
+        self.assertEqual(sum(stub.group_nconds), 2)
+
     # ----------------------------------------------------------------
     # Pattern 16: Partial orbital mixing via interaction only
     #   Transfer: diagonal (no orbital coupling).
