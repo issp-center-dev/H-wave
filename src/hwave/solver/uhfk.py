@@ -1861,21 +1861,34 @@ class UHFk(solver_base):
 
         logger.debug("ncond = {}".format(n))
 
-        # expectation value of Sz
+        # expectation value of the spin vector (Sx, Sy, Sz)
         if self.enable_spin_orbital:
-            # In spin-orbital basis: index = 2*orb + spin
-            # Sz = sum_a (G[2a, 2a] - G[2a+1, 2a+1]) / 2
-            g0 = np.diagonal(gab_r[0])  # shape (nd,)
+            # In spin-orbital basis: index = 2*orb + spin. The on-site density
+            # matrix rho_{ij} = <c^dag_j c_i> has spin structure, so the full
+            # spin vector is meaningful (Sx, Sy nonzero under spin mixing / SOC).
+            #   S_alpha = (1/2) sum_a Tr[ sigma_alpha rho_a ]
+            # with rho_a the 2x2 (up,down) on-site block of orbital a.
+            m = gab_r[0]
+            g0 = np.diagonal(m)                  # rho_{ii}
+            ud = np.diagonal(m, offset=1)[0::2]  # G[2a, 2a+1] = <c^dag_down c_up>
+            du = np.diagonal(m, offset=-1)[0::2] # G[2a+1, 2a] = <c^dag_up c_down>
             sz_diag = np.zeros(nd)
             sz_diag[0::2] = 1.0   # up spins
             sz_diag[1::2] = -1.0  # down spins
             sz = np.sum(g0 * sz_diag) * nvol
+            sx = np.sum(ud + du) * nvol
+            sy = np.sum(1j * (ud - du)) * nvol
             self.physics["Sz"] = 0.5 * sz.real
+            self.physics["Sx"] = 0.5 * sx.real
+            self.physics["Sy"] = 0.5 * sy.real
         else:
             gab_r = self.Green
             sigma_z = np.array(np.array([[1,0],[0,-1]]))
             sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
             self.physics["Sz"] = 0.5 * sz.real
+            # collinear normal mode: the transverse spin vanishes by construction
+            self.physics["Sx"] = 0.0
+            self.physics["Sy"] = 0.0
 
         logger.debug("sz = {}".format(sz))
 
@@ -2044,6 +2057,10 @@ class UHFk(solver_base):
 
                 fw.write("NCond   = {}\n".format(self.physics["NCond"]))
                 fw.write("Sz      = {}\n".format(self.physics["Sz"]))
+                if "Sx" in self.physics:
+                    fw.write("Sx      = {}\n".format(self.physics["Sx"]))
+                if "Sy" in self.physics:
+                    fw.write("Sy      = {}\n".format(self.physics["Sy"]))
 
             logger.info("save_results: save energy in file {}".format(file_name))
 

@@ -2028,6 +2028,43 @@ class TestUHFkSublatticeInvarianceSO(unittest.TestCase):
                               subshape=[2, 2, 1], with_y=True)
 
 
+class TestUHFkSOSpinVector(unittest.TestCase):
+    """In spin-orbital mode the on-site density matrix has spin-off-diagonal
+    elements, so the full spin vector (Sx, Sy, Sz) is meaningful. The previous
+    code only computed Sz; Sx, Sy capture spin canting / texture from SOC."""
+
+    def _stub_calc_phys(self, rho):
+        import hwave.solver.uhfk as uhfk_module
+        stub = object.__new__(uhfk_module.UHFk)
+        stub.shape = (1, 1, 1)
+        stub.nvol, stub.nd, stub.norb, stub.ns = 1, 2, 2, 1
+        stub.enable_spin_orbital = True
+        stub.Green = np.asarray(rho, dtype=complex).reshape(1, 2, 2)
+        stub.Green_prev = stub.Green.copy()
+        stub.param_mod = {"Mix": 1.0}
+        stub.threshold = 1e-12
+        stub.physics = {}
+        stub._calc_phys()
+        return stub.physics
+
+    def test_so_spin_vector(self):
+        # on-site density matrix rho_{ij} = <c^dag_j c_i>, spin (up,down)
+        rho = [[0.6, 0.1 + 0.2j],
+               [0.1 - 0.2j, 0.4]]
+        phys = self._stub_calc_phys(rho)
+        self.assertAlmostEqual(phys["NCond"], 1.0)
+        self.assertAlmostEqual(phys["Sz"], 0.1)
+        self.assertAlmostEqual(phys["Sx"], 0.1)
+        self.assertAlmostEqual(phys["Sy"], -0.2)
+
+    def test_collinear_has_zero_transverse(self):
+        # diagonal (collinear) density matrix -> Sx = Sy = 0
+        phys = self._stub_calc_phys([[0.7, 0.0], [0.0, 0.3]])
+        self.assertAlmostEqual(phys["Sz"], 0.2)
+        self.assertAlmostEqual(phys["Sx"], 0.0)
+        self.assertAlmostEqual(phys["Sy"], 0.0)
+
+
 class TestUHFkOrbitalIndexCheck(unittest.TestCase):
     """In spin-orbital mode the Geometry norb already includes spin
     (norb = nd = 2*norb_phys), so valid Transfer indices are [0, norb). The
