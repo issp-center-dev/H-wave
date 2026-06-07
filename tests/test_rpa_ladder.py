@@ -605,6 +605,17 @@ class TestRPAParamValidation(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._build(Ncond=128)
 
+    def test_ncond_zero_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._build(Ncond=0)
+
+    def test_nmat_one_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._build(Nmat=1)
+
+    def test_min_even_nmat_ok(self):
+        self._build(Nmat=2)  # smallest valid (even) grid -> no exit
+
     def test_valid_params_ok(self):
         self._build()  # T>0, even Nmat, 0<Ncond<Nstate -> no exit
 

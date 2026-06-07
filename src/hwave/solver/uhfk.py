@@ -2057,9 +2057,11 @@ class UHFk(solver_base):
 
                 fw.write("NCond   = {}\n".format(self.physics["NCond"]))
                 fw.write("Sz      = {}\n".format(self.physics["Sz"]))
-                if "Sx" in self.physics:
+                # Transverse spin (Sx, Sy) is only meaningful with spin mixing;
+                # emit it only in spin-orbital mode to keep the normal-mode
+                # energy.dat format backward-compatible.
+                if self.enable_spin_orbital:
                     fw.write("Sx      = {}\n".format(self.physics["Sx"]))
-                if "Sy" in self.physics:
                     fw.write("Sy      = {}\n".format(self.physics["Sy"]))
 
             logger.info("save_results: save energy in file {}".format(file_name))
