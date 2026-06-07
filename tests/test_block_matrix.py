@@ -1404,6 +1404,36 @@ class TestUHFkDetectBlocks(unittest.TestCase):
                                  "Spin-down block Ncond should be 1")
 
 
+    def test_2sz_fixed_rejects_spin_mixing_block(self):
+        """In 2Sz-fixed mode a spin-mixing (mixed) block means Sz is not
+        conserved, so a fixed 2Sz is ill-defined and would mis-count electrons
+        (the per-group ncond would double-count). _detect_blocks must reject it."""
+        norb, ns, nvol = 2, 2, 1
+        nd = norb * ns
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = 1.0
+        # couple up-orbital 0 (idx 0) with down-orbital 0 (idx norb): spin mixing
+        ham_trans[:, 0, norb] = 0.5
+        ham_trans[:, norb, 0] = 0.5
+        stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
+                                    sz_free=False, Nconds=[2, 2])
+        with self.assertRaises(ValueError):
+            stub._detect_blocks()
+
+    def test_2sz_fixed_pure_blocks_ok(self):
+        """2Sz-fixed with spin-diagonal (pure) blocks must still work."""
+        norb, ns, nvol = 2, 2, 1
+        nd = norb * ns
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = 1.0
+        stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
+                                    sz_free=False, Nconds=[1, 1])
+        stub._detect_blocks()  # must not raise
+        self.assertTrue(hasattr(stub, "group_nconds"))
+        self.assertEqual(sum(stub.group_nconds), 2)
+
     # ----------------------------------------------------------------
     # Pattern 16: Partial orbital mixing via interaction only
     #   Transfer: diagonal (no orbital coupling).

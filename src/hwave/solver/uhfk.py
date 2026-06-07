@@ -1434,9 +1434,25 @@ class UHFk(solver_base):
                     block_to_group.append(1)
                     group_nconds_dict[1] = ncond_down
                 else:
-                    # Mixed spin block: use total ncond
+                    # Mixed block (couples up and down indices). A single mixed
+                    # block spanning the whole system is fine -- it just takes
+                    # the total ncond. But if a mixed block COEXISTS with pure
+                    # up/down blocks, assigning each group its own (global)
+                    # ncond double-counts the electrons (sum > Ncond), and the
+                    # per-spin split cannot be enforced on the mixed block.
                     block_to_group.append(2)
                     group_nconds_dict[2] = ncond_up + ncond_down
+            # Guard the genuine over-count: a mixed group together with a pure
+            # up/down group.
+            if 2 in block_to_group and (0 in block_to_group or 1 in block_to_group):
+                logger.error(
+                    "2Sz-fixed mode found a spin-mixed block coexisting with "
+                    "pure-spin blocks; the per-group electron counts would "
+                    "double-count (sum != Ncond). Use the Sz-free mode (global "
+                    "chemical potential) for such systems.")
+                raise ValueError(
+                    "2Sz-fixed mode cannot mix a spin-coupled block with "
+                    "pure-spin blocks; use Sz-free mode.")
             # Build ordered list: group_nconds[g] for each unique group
             unique_groups = sorted(set(block_to_group))
             group_remap = {g: i for i, g in enumerate(unique_groups)}
