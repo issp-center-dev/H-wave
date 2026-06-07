@@ -433,9 +433,12 @@ class FLEX(RPA):
     def _calc_veff(self, chi0q, chi_s, chi_c, ham_inflated):
         """Compute effective FLEX interaction V_eff(q, ivn).
 
-        V_eff = W * [3/2*(chi_s - chi0) + 1/2*(chi_c - chi0)] * W
+        V_eff = W * [3/2*chi_s + 1/2*chi_c - chi0] * W
 
-        The subtraction of chi0 removes the double-counted second-order diagram.
+        chi0 is subtracted exactly once: at zeroth order chi_s = chi_c = chi0,
+        so the kernel reduces to chi0 and V_eff = W chi0 W reproduces the
+        second-order (SOPT) bubble.  This single subtraction removes the
+        double-counted second-order diagram contained in chi_s and chi_c.
 
         Parameters
         ----------
@@ -465,8 +468,13 @@ class FLEX(RPA):
         chi_c_2d = chi_c.reshape(nfreq, nvol, nd, nd)
         ham_2d = ham_inflated.reshape(nvol, nd, nd)
 
-        # Fluctuation susceptibility
-        fluct_chi = 1.5 * (chi_s_2d - chi0q_2d) + 0.5 * (chi_c_2d - chi0q_2d)
+        # Fluctuation susceptibility.
+        # FLEX kernel: 3/2 chi_s + 1/2 chi_c - chi0.  chi0 must be subtracted
+        # exactly ONCE: at zeroth order chi_s = chi_c = chi0, so the kernel is
+        # 3/2 chi0 + 1/2 chi0 - chi0 = chi0, giving V_eff = W chi0 W ~ U^2 (the
+        # second-order bubble).  Subtracting chi0 in *both* terms would cancel
+        # the O(U^0) part and lose the leading SOPT self-energy.
+        fluct_chi = 1.5 * chi_s_2d + 0.5 * chi_c_2d - chi0q_2d
 
         # V_eff = W * fluct_chi * W
         # Use batched matmul instead of einsum for better BLAS utilization
