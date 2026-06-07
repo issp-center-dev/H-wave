@@ -1247,11 +1247,16 @@ class TestUHFkDetectBlocks(unittest.TestCase):
     # Pattern 14: Ncond distribution for sz_free blocks
     # ----------------------------------------------------------------
     def test_ncond_distribution_sz_free(self):
-        """Check Ncond is correctly distributed for sz_free mode.
+        """Check Ncond handling for sz_free mode (group-based chemical potential).
 
         norb=3, ns=2, nd=6. Transfer fully couples all orbs within each spin.
         Creates 2 spin blocks of size 3 each.
-        Total Ncond=4, should split 2+2.
+
+        In sz_free mode the total Ncond is NOT split per block; instead all
+        blocks share a single mu-group and one chemical potential is found
+        across them (a forced per-block split could violate the global energy
+        minimum).  So Nconds stays the global [4], block_to_group maps both
+        blocks to group 0, and group_nconds preserves the total ([4]).
         """
         norb, ns, nvol = 3, 2, 4
         nd = norb * ns
@@ -1272,11 +1277,14 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         blocks = stub.block_info
         self.assertEqual(len(blocks), 2,
                          "Spin-diagonal transfer -> 2 spin blocks")
-        self.assertEqual(sum(stub.Nconds), 4,
-                         "Total Ncond must be preserved")
-        # Equal-size blocks should get equal Ncond
-        self.assertEqual(stub.Nconds[0], 2)
-        self.assertEqual(stub.Nconds[1], 2)
+        # sz_free keeps the original global Ncond (no per-block split).
+        self.assertEqual(list(stub.Nconds), [4],
+                         "sz_free keeps the global Ncond")
+        # Both blocks share one mu-group, which preserves the total Ncond.
+        self.assertEqual(list(stub.block_to_group), [0, 0],
+                         "sz_free blocks should share one mu group")
+        self.assertEqual(list(stub.group_nconds), [4],
+                         "the shared mu group must preserve the total Ncond")
 
     # ----------------------------------------------------------------
     # Pattern 15: Ncond distribution for 2Sz fixed (sz_free=False)
