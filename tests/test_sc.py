@@ -32,7 +32,9 @@ from hwave.sc import (
     _determine_mu,
     _eliashberg_kernel_fft,
     _initialize_gap,
+    _is_gap_parity,
     _order_eigenpairs,
+    _reorder_eigenpairs_by_parity,
     _resolve_init_gap,
     _solve_eigenvalue,
     _solve_iteration,
@@ -470,6 +472,48 @@ class TestEigenpairOrdering(unittest.TestCase):
         self.assertAlmostEqual(ovals[0].real, 2.0)
         npt.assert_allclose(ovecs[:, 0], vecs[:, 1])
         npt.assert_allclose([v.real for v in ovals], [2.0, 0.5, -5.0])
+
+
+class TestParitySelection(unittest.TestCase):
+    """The gap of a singlet channel is even (Δ(k)=Δ(-k)); a triplet gap is odd
+    (Δ(k)=-Δ(-k)). The eigenvalue solver must be able to identify and prefer
+    eigenvectors of the requested parity (the kernel preserves parity, so the
+    leading eigenvector may belong to the other channel)."""
+
+    def _k(self, N=8):
+        k = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+        return k, k, kz
+
+    def test_even_gap_classified_as_singlet(self):
+        kx, ky, kz = self._k()
+        gap = _initialize_gap("cos", 1, kx, ky, kz)  # cos(kx+ky) is even
+        self.assertTrue(_is_gap_parity(gap, "singlet"))
+        self.assertFalse(_is_gap_parity(gap, "triplet"))
+
+    def test_odd_gap_classified_as_triplet(self):
+        kx, ky, kz = self._k()
+        gap = _initialize_gap("p_x", 1, kx, ky, kz)  # sin(kx) is odd
+        self.assertTrue(_is_gap_parity(gap, "triplet"))
+        self.assertFalse(_is_gap_parity(gap, "singlet"))
+
+    def test_reorder_puts_requested_parity_first(self):
+        kx, ky, kz = self._k()
+        even = _initialize_gap("cos", 1, kx, ky, kz)
+        odd = _initialize_gap("p_x", 1, kx, ky, kz)
+        gaps = np.array([even, odd])           # even has the larger eigenvalue
+        vals = np.array([2.0, 1.0], dtype=complex)
+
+        # triplet: the odd gap must be promoted to the front even though it has
+        # the smaller eigenvalue
+        v2, g2 = _reorder_eigenpairs_by_parity(vals, gaps, "triplet")
+        self.assertTrue(_is_gap_parity(g2[0], "triplet"))
+        self.assertAlmostEqual(v2[0].real, 1.0)
+
+        # singlet: the even gap stays in front
+        v1, g1 = _reorder_eigenpairs_by_parity(vals, gaps, "singlet")
+        self.assertTrue(_is_gap_parity(g1[0], "singlet"))
+        self.assertAlmostEqual(v1[0].real, 2.0)
 
 
 class TestResolveInitGap(unittest.TestCase):

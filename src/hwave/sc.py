@@ -1322,6 +1322,88 @@ def _order_eigenpairs(vals, vecs):
     return vals[idx], vecs[:, idx]
 
 
+def _reverse_k_and_orbital(gap):
+    """Return the gap evaluated at (-k) with orbital indices transposed.
+
+    For the pairing gap Delta_{ab}(k), the singlet/triplet parity condition is
+    Delta_{ab}(k) = +/- Delta_{ba}(-k). This helper builds Delta_{ba}(-k):
+    it reverses each spatial axis (k -> -k on the FFT grid, index i -> (N-i)%N)
+    and swaps the two orbital indices.
+
+    Parameters
+    ----------
+    gap : ndarray
+        Gap function, shape (norb, norb, Nx, Ny, Nz).
+
+    Returns
+    -------
+    ndarray
+        Delta_{ba}(-k), same shape.
+    """
+    rev = gap[:, :, ::-1, ::-1, ::-1]
+    rev = np.roll(rev, 1, axis=(2, 3, 4))   # index i -> (N - i) % N
+    rev = np.swapaxes(rev, 0, 1)            # orbital transpose a <-> b
+    return rev
+
+
+def _is_gap_parity(gap, pairing_type, tol=0.9):
+    """Test whether a gap has the parity of the pairing channel.
+
+    Singlet gaps are even (Delta_{ab}(k) = +Delta_{ba}(-k)); triplet gaps are
+    odd (Delta_{ab}(k) = -Delta_{ba}(-k)). Returns True when the projection of
+    the gap onto the requested parity sector retains at least ``tol`` of its
+    norm.
+
+    Parameters
+    ----------
+    gap : ndarray
+        Gap function, shape (norb, norb, Nx, Ny, Nz).
+    pairing_type : str
+        "singlet" or "triplet".
+    tol : float
+        Minimum fraction of the norm that must survive the parity projection.
+
+    Returns
+    -------
+    bool
+    """
+    sign = 1.0 if pairing_type == "singlet" else -1.0
+    g_rev = _reverse_k_and_orbital(gap)
+    proj = 0.5 * (gap + sign * g_rev)
+    n = np.linalg.norm(gap)
+    if n == 0:
+        return False
+    return np.linalg.norm(proj) / n >= tol
+
+
+def _reorder_eigenpairs_by_parity(vals, gaps, pairing_type):
+    """Stable-reorder eigenpairs so those matching the channel parity come first.
+
+    The Eliashberg kernel preserves parity, so its eigenvectors split into even
+    (singlet) and odd (triplet) sectors. When solving for a given channel, the
+    physical solution is the leading eigenpair of the matching parity, which is
+    not necessarily the globally leading one. This keeps every eigenpair (so the
+    returned count is unchanged) but promotes the requested-parity ones,
+    preserving their existing order.
+
+    Parameters
+    ----------
+    vals : ndarray
+        Eigenvalues, shape (n,).
+    gaps : ndarray
+        Eigenvectors as gaps, shape (n, norb, norb, Nx, Ny, Nz).
+    pairing_type : str
+        "singlet" or "triplet".
+
+    Returns
+    -------
+    vals, gaps reordered with matching-parity eigenpairs first.
+    """
+    match = np.array([_is_gap_parity(g, pairing_type) for g in gaps])
+    idx = np.concatenate([np.where(match)[0], np.where(~match)[0]])
+    return vals[idx], gaps[idx]
+
+
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
                       method="arnoldi", sigma_shift=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
@@ -2000,6 +2082,11 @@ def calc_eliashberg(input_dict):
             num_eigenvalues=num_eigenvalues,
             method=eigenvalue_method
         )
+        # The kernel preserves parity; promote the eigenpairs whose gap has the
+        # requested channel parity (singlet even / triplet odd) so the reported
+        # leading eigenpair is the physical solution for this channel.
+        eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
+            eigenvalues_eig, eigenvectors_eig, pairing_type)
         logger.info("Leading eigenvalues:")
         for i, ev in enumerate(eigenvalues_eig):
             logger.info("  {:3d}: {:.6f} (|ev| = {:.6f})".format(i, ev.real, abs(ev)))
