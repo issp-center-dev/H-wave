@@ -29,6 +29,7 @@ from hwave.sc import (
     _compute_vertices,
     _compute_vertices_simple,
     _compute_vertices_general,
+    _compute_vertices_flex,
     _convert_chi0q_to_ref_format,
     _determine_mu,
     _eliashberg_kernel_fft,
@@ -37,6 +38,7 @@ from hwave.sc import (
     _order_eigenpairs,
     _reorder_eigenpairs_by_parity,
     _resolve_init_gap,
+    _shift_from_eigenvalues,
     _solve_eigenvalue,
     _solve_iteration,
     _solve_subspace_iteration,
@@ -552,6 +554,50 @@ class TestParitySelection(unittest.TestCase):
         v1, g1 = _reorder_eigenpairs_by_parity(vals, gaps, "singlet")
         self.assertTrue(_is_gap_parity(g1[0], "singlet"))
         self.assertAlmostEqual(v1[0].real, 2.0)
+
+    def test_no_parity_match_warns(self):
+        """If no eigenpair has the requested parity, warn (the leading gap then
+        belongs to the wrong channel)."""
+        kx, ky, kz = self._k()
+        even = _initialize_gap("cos", 1, kx, ky, kz)
+        gaps = np.array([even, even])
+        vals = np.array([2.0, 1.0], dtype=complex)
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _reorder_eigenpairs_by_parity(vals, gaps, "triplet")
+        self.assertTrue(any("parity" in m.lower() for m in cm.output))
+
+
+class TestShiftEstimate(unittest.TestCase):
+    """Shift-invert target must aim at the largest real eigenvalue (the SC
+    instability), not the largest magnitude (which can be a large negative)."""
+
+    def test_shift_from_largest_real(self):
+        vals = np.array([-6.0, 0.9, -3.0], dtype=complex)
+        self.assertAlmostEqual(_shift_from_eigenvalues(vals), 0.9 * 0.9)
+
+    def test_shift_factor(self):
+        vals = np.array([-6.0, 2.0], dtype=complex)
+        self.assertAlmostEqual(_shift_from_eigenvalues(vals, factor=0.5), 1.0)
+
+
+class TestFlexVertexWarnings(unittest.TestCase):
+    """PairLift is inert in the FLEX pairing-vertex path too -> must warn."""
+
+    def test_pairlift_warns_in_flex_path(self):
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        nd = norb * norb
+        chis = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        chic = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        U = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        U[0, 0] = 1.0
+        U[1, 1] = 1.0
+        PL = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        PL[0, 1] = 0.3
+        PL[1, 0] = 0.3
+        inter_k = {"CoulombIntra": U, "PairLift": PL}
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz)
+        self.assertTrue(any("PairLift" in m for m in cm.output))
 
 
 class TestResolveInitGap(unittest.TestCase):

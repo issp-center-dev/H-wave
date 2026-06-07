@@ -821,6 +821,11 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
     """
     nd = norb * norb
 
+    if "PairLift" in inter_k:
+        logger.warning(
+            "PairLift is configured but does not contribute to the S/C pairing "
+            "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
+
     S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
 
     SChisS = S_all @ chis @ S_all
@@ -1403,8 +1408,43 @@ def _reorder_eigenpairs_by_parity(vals, gaps, pairing_type):
     vals, gaps reordered with matching-parity eigenpairs first.
     """
     match = np.array([_is_gap_parity(g, pairing_type) for g in gaps])
+    if not np.any(match):
+        logger.warning(
+            "No computed eigenpair matches the requested '%s' parity; the "
+            "reported leading gap belongs to the other channel. Increase "
+            "num_eigenvalues or check the pairing_type.", pairing_type)
     idx = np.concatenate([np.where(match)[0], np.where(~match)[0]])
     return vals[idx], gaps[idx]
+
+
+def _shift_from_eigenvalues(vals, factor=0.9):
+    """Estimate a shift-invert target near the physical (largest-real) eigenvalue.
+
+    The superconducting eigenvalue is the algebraically largest one, so when a
+    positive eigenvalue is present among the sampled values, aim the shift at
+    the largest real part (NOT the largest magnitude, which could be a large
+    negative repulsive mode that masks it). If no positive eigenvalue was
+    sampled (no SC instability in range), fall back to the largest-magnitude
+    eigenvalue so shift-invert still tracks the dominant mode.
+
+    Parameters
+    ----------
+    vals : ndarray
+        Sampled eigenvalues (e.g. a few largest-magnitude ARPACK values).
+    factor : float
+        Fraction of the target eigenvalue to use as the shift.
+
+    Returns
+    -------
+    float
+    """
+    real = vals.real
+    scale = float(np.max(np.abs(vals)))
+    # "positive" means significantly positive relative to the spectrum scale,
+    # so numerical-noise eigenvalues (~1e-16) do not pull the shift to zero.
+    if scale > 0 and np.any(real > 1e-8 * scale):
+        return float(np.max(real)) * factor
+    return float(vals[np.argmax(np.abs(vals))].real) * factor
 
 
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
@@ -1473,10 +1513,14 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
 
     elif method.startswith("shift-invert"):
         if sigma_shift is None:
-            # Estimate shift from a quick Arnoldi run
+            # Estimate shift from a quick Arnoldi run. Sample a few
+            # largest-magnitude eigenvalues and aim at the largest *real* part
+            # (the physical SC eigenvalue), not the largest magnitude (which
+            # can be a large negative repulsive mode).
             logger.info("Estimating shift with preliminary Arnoldi...")
-            vals_pre, _ = eigs(A, k=1, which='LM')
-            sigma_shift = vals_pre[0].real * 0.9
+            k_pre = min(6, vec_size - 2)
+            vals_pre, _ = eigs(A, k=max(1, k_pre), which='LM')
+            sigma_shift = _shift_from_eigenvalues(vals_pre)
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
         vals, vecs = _eigs_shift_invert(
             A, vec_size, max_ev, method, sigma=sigma_shift
@@ -1624,7 +1668,7 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     V = rng.standard_normal((vec_size, n_work))
     V, _ = np.linalg.qr(V)
 
-    eigenvalues_old = np.zeros(num_ev)
+    eigenvalues_old = np.zeros(num_ev, dtype=complex)
 
     for iteration in range(max_iter):
         # Apply kernel to all vectors: W = A @ V (kernel may be complex)
@@ -1646,8 +1690,9 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
         # Re-orthogonalize
         V, _ = np.linalg.qr(V)
 
-        # Check convergence of the wanted eigenvalues
-        eigenvalues_new = evals_h[:num_ev].real
+        # Check convergence of the wanted eigenvalues (track the full complex
+        # value so imaginary motion is not ignored for a complex kernel).
+        eigenvalues_new = evals_h[:num_ev]
         diff = np.max(np.abs(eigenvalues_new - eigenvalues_old))
 
         if iteration % 10 == 0 or diff < tol:
