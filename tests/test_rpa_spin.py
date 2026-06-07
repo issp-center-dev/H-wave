@@ -265,5 +265,83 @@ class TestRPAspin(unittest.TestCase):
     #     })
 
 
+class TestRPASublatticeInvarianceSO(unittest.TestCase):
+    """Spin-orbital mode must be sublattice-invariant.
+
+    Folding a physical lattice into a supercell (SubShape != [1,1,1]) describes
+    the same physics, so the band structure and the chi0q spectrum must be
+    identical with and without folding. This exercises the SO sublattice
+    reshaping of both the transfer (SO indices, spin-decoded) and the
+    interactions (physical-orbital indices) together -- a path the other RPA SO
+    tests skip by always using SubShape=[1,1,1].
+    """
+
+    def _write_inputs(self, d):
+        # 1 physical orbital; SO transfer has on-site spin-flip + inter-cell hop
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0   0.0   0.0\n  0.0   1.0   0.0\n  0.0   0.0   1.0\n")
+            f.write("1\n   0.0   0.0   0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer SO\n2\n6\n 1 1 1 1 1 1\n")
+            f.write("   0    0    0    1    2  0.300000  0.0\n")  # on-site up<->down
+            f.write("   0    0    0    2    1  0.300000  0.0\n")
+            f.write("   1    0    0    1    1  1.000000  0.0\n")  # inter-cell, up
+            f.write("  -1    0    0    1    1  1.000000  0.0\n")
+            f.write("   1    0    0    2    2  1.000000  0.0\n")  # inter-cell, down
+            f.write("  -1    0    0    2    2  1.000000  0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            # interaction uses the physical orbital index
+            f.write("CoulombIntra\n1\n1\n 1\n   0    0    0    1    1   2.000000   0.0\n")
+
+    def _run(self, d, subshape):
+        info_mode = {
+            'mode': 'RPA',
+            'param': {'T': 1.0, 'mu': 0.0, 'CellShape': [2, 1, 1],
+                      'SubShape': subshape, 'Nmat': 16},
+            'enable_spin_orbital': True,
+            'calc_scheme': 'reduced',
+        }
+        info_input = {
+            'path_to_input': d,
+            'interaction': {'path_to_input': d, 'Geometry': 'geom.dat',
+                            'Transfer': 'transfer.dat',
+                            'CoulombIntra': 'coulombintra.dat'},
+        }
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as solver_rpa
+        read_io = read_input_k.QLMSkInput(info_input)
+        solver = solver_rpa.RPA(read_io.get_param("ham"), {}, info_mode)
+        green_info = read_io.get_param("green")
+        solver.solve(green_info, os.path.join(d, "out"))
+
+        bands = np.sort(np.ravel(solver.H0_eigenvalue.real))
+        chi0 = green_info["chi0q"]
+        nd = chi0.shape[-1]
+        chi0_eig = np.sort(
+            np.linalg.eigvals(chi0.reshape(-1, nd, nd)).real.ravel())
+        return bands, chi0_eig
+
+    def test_band_and_chi0q_sublattice_invariant(self):
+        import tempfile
+        import shutil
+        d = tempfile.mkdtemp(prefix="rpa_so_sub_")
+        try:
+            self._write_inputs(d)
+            b1, c1 = self._run(d, [1, 1, 1])
+            b2, c2 = self._run(d, [2, 1, 1])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+        # same number of states / chi0q entries, just re-blocked
+        self.assertEqual(len(b1), len(b2))
+        self.assertEqual(len(c1), len(c2))
+        np.testing.assert_allclose(
+            b1, b2, atol=1e-8,
+            err_msg="SO band structure must be sublattice-invariant")
+        np.testing.assert_allclose(
+            c1, c2, atol=1e-6,
+            err_msg="SO chi0q spectrum must be sublattice-invariant")
+
+
 if __name__ == '__main__':
     unittest.main()
