@@ -616,14 +616,24 @@ class RPA:
 
         # check parameters
         err = 0
-        if self.T < 0.0:
-            logger.error("T must be greater than or equal to zero: T={}".format(self.T))
+        # Finite-temperature Matsubara formalism: T must be strictly positive
+        # (beta = 1/T is used directly).
+        if self.T <= 0.0:
+            logger.error("T must be greater than zero: T={}".format(self.T))
             err += 1
-        if self.calc_mu and self.Ncond <= 0:
-            logger.error("Ncond must be greater than zero: Ncond={}".format(self.Ncond))
+        # The chemical-potential search needs a partially-filled band; full
+        # (Ncond == Nstate) or empty filling leaves mu unbracketed.
+        if self.calc_mu and not (0 < self.Ncond < self.Nstate):
+            logger.error("Ncond must satisfy 0 < Ncond < Nstate ({}): Ncond={}".format(
+                self.Nstate, self.Ncond))
             err += 1
         if self.nmat <= 0:
             logger.error("Nmat must be greater than zero: Nmat={}".format(self.nmat))
+            err += 1
+        # Fermionic Matsubara grid iomega = (2n+1-Nmat)*pi/beta is symmetric and
+        # never zero only when Nmat is even; an odd Nmat injects omega=0.
+        if self.nmat % 2 != 0:
+            logger.error("Nmat must be even: Nmat={}".format(self.nmat))
             err += 1
         if err > 0:
             sys.exit(1)
@@ -1496,7 +1506,18 @@ class RPA:
         wn = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis]  # (1,nmat,1,1)
         ek = (ew - mu)[:, np.newaxis, :, :]  # (nblock,1,nvol,nd)
 
-        # tail improvement
+        # High-frequency tail improvement (optional; default coeff_tail=0 keeps
+        # the bare Green's function). The 1/(iw) part of G(iw) decays slowly and
+        # truncating the Matsubara sum at finite Nmat leaves an error. Here a
+        # term aa/(iw) is *subtracted* in frequency space so the FFT'd
+        # quantity decays faster; its contribution is added back analytically in
+        # imaginary time as green_tail below, using the exact Fourier identity
+        #   T * sum_n e^{-iw_n tau} / (iw_n) = -1/2   for 0 < tau < beta,
+        # i.e. the back-transform of aa/(iw) is -aa/2, and green_tail carries the
+        # aa*0.5*beta normalization expected by _calc_chi0q's tau-space product.
+        # NOTE: aa is a user coefficient; it should match the true 1/(iw)
+        # coefficient of G (= 1 by unitarity) to *accelerate* convergence -- any
+        # other value is a deliberate modification of G, not just acceleration.
         aa = self.coeff_tail
         g = 1.0 / (wn - ek) - aa / wn  # (nblock,nmat,nvol,nd)
 

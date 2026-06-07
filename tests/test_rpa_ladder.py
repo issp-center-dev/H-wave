@@ -569,5 +569,45 @@ class TestRPALadderBareResponse(unittest.TestCase):
         )
 
 
+class TestRPAParamValidation(unittest.TestCase):
+    """RPA finite-temperature Matsubara setup requires T > 0 and an even Nmat
+    (odd Nmat would place omega=0 in the fermionic grid). The chemical-potential
+    search also needs 0 < Ncond < Nstate."""
+
+    def _build(self, T=2.0, Nmat=64, Ncond=2):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as solver_rpa
+        info_mode = {
+            'mode': 'RPA',
+            'param': {'T': T, 'Ncond': Ncond, 'CellShape': [8, 8, 1],
+                      'SubShape': [1, 1, 1], 'Nmat': Nmat},
+            'calc_scheme': 'general',
+        }
+        info_input = {
+            'path_to_input': 'tests/rpa/input',
+            'interaction': {'path_to_input': 'tests/rpa/input',
+                            'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                            'CoulombIntra': 'coulombintra.dat'},
+        }
+        read_io = read_input_k.QLMSkInput(info_input)
+        return solver_rpa.RPA(read_io.get_param("ham"), {}, info_mode)
+
+    def test_T_zero_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._build(T=0.0)
+
+    def test_odd_nmat_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._build(Nmat=5)
+
+    def test_ncond_full_filling_rejected(self):
+        # Nstate = nvol * nd = 64 * 2 = 128; Ncond=128 is full filling
+        with self.assertRaises(SystemExit):
+            self._build(Ncond=128)
+
+    def test_valid_params_ok(self):
+        self._build()  # T>0, even Nmat, 0<Ncond<Nstate -> no exit
+
+
 if __name__ == '__main__':
     unittest.main()
