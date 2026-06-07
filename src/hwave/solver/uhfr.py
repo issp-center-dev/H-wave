@@ -827,7 +827,6 @@ class UHFr(solver_base):
     @do_profile
     def _makeham_mat(self):
         """Construct interaction matrix."""
-        # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         if self.iflag_fock is True:
             type = "hartreefock"
