@@ -1947,29 +1947,41 @@ class TestUHFkSublatticeInvarianceSO(unittest.TestCase):
     (_reshape_orbit_spin), which the SO equivalence tests skip (they use
     SubShape=[1,1,1] / stubbed ham_trans)."""
 
-    def _write_inputs(self, d):
+    def _write_inputs(self, d, norb_phys=1, with_y=False):
         import os
-        # SO geometry: norb = 2 * norb_phys (here norb_phys=1)
+        nso = 2 * norb_phys  # spin-orbital count (geometry norb in SO mode)
         with open(os.path.join(d, "geom.dat"), "w") as f:
             f.write("  1.0   0.0   0.0\n  0.0   1.0   0.0\n  0.0   0.0   1.0\n")
-            f.write("2\n   0.0   0.0   0.0\n   0.0   0.0   0.0\n")
-        # SO transfer: on-site spin-flip (1<->2) + inter-cell spin-diag hop
+            f.write("{}\n".format(nso))
+            for _ in range(nso):
+                f.write("   0.0   0.0   0.0\n")
+        rows = []
+        # on-site spin-flip per physical orbital: (2p+1)<->(2p+2) in 1-based
+        for p in range(norb_phys):
+            up, dn = 2 * p + 1, 2 * p + 2
+            rows.append((0, 0, 0, up, dn, 0.3))
+            rows.append((0, 0, 0, dn, up, 0.3))
+        # inter-cell spin-diagonal hops in x (and optionally y) for all SO states
+        for so in range(1, nso + 1):
+            rows.append((1, 0, 0, so, so, 1.0))
+            rows.append((-1, 0, 0, so, so, 1.0))
+            if with_y:
+                rows.append((0, 1, 0, so, so, 0.7))
+                rows.append((0, -1, 0, so, so, 0.7))
         with open(os.path.join(d, "transfer.dat"), "w") as f:
-            f.write("Transfer SO\n2\n6\n 1 1 1 1 1 1\n")
-            f.write("   0    0    0    1    2  0.300000  0.0\n")
-            f.write("   0    0    0    2    1  0.300000  0.0\n")
-            f.write("   1    0    0    1    1  1.000000  0.0\n")
-            f.write("  -1    0    0    1    1  1.000000  0.0\n")
-            f.write("   1    0    0    2    2  1.000000  0.0\n")
-            f.write("  -1    0    0    2    2  1.000000  0.0\n")
-        # interaction uses the physical orbital index [0, norb_phys)
+            f.write("Transfer SO\n{}\n1\n 1\n".format(nso))
+            for (rx, ry, rz, a, b, v) in rows:
+                f.write("  {:3d} {:3d} {:3d} {:3d} {:3d}  {:.6f}  0.0\n".format(
+                    rx, ry, rz, a, b, v))
         with open(os.path.join(d, "coulombintra.dat"), "w") as f:
-            f.write("CoulombIntra\n1\n1\n 1\n   0    0    0    1    1   2.000000   0.0\n")
+            f.write("CoulombIntra\n{}\n1\n 1\n".format(norb_phys))
+            for p in range(1, norb_phys + 1):
+                f.write("   0    0    0  {0:3d}  {0:3d}   2.000000   0.0\n".format(p))
 
-    def _bands(self, d, subshape):
+    def _bands(self, d, subshape, cellshape):
         info_mode = {
             'mode': 'UHFk',
-            'param': {'Ncond': 2, 'T': 0.1, 'CellShape': [4, 1, 1],
+            'param': {'Ncond': 2, 'T': 0.1, 'CellShape': cellshape,
                       'SubShape': subshape, 'IterationMax': 1, 'EPS': 8,
                       'Mix': 0.5, 'RndSeed': 1},
             'enable_spin_orbital': True,
@@ -1989,20 +2001,31 @@ class TestUHFkSublatticeInvarianceSO(unittest.TestCase):
         w = np.linalg.eigvalsh(solver.ham_trans)
         return np.sort(np.ravel(w.real))
 
-    def test_band_structure_sublattice_invariant(self):
+    def _check_invariant(self, norb_phys, cellshape, subshape, with_y):
         import tempfile
         import shutil
         d = tempfile.mkdtemp(prefix="uhfk_so_sub_")
         try:
-            self._write_inputs(d)
-            b1 = self._bands(d, [1, 1, 1])
-            b2 = self._bands(d, [2, 1, 1])
+            self._write_inputs(d, norb_phys=norb_phys, with_y=with_y)
+            b1 = self._bands(d, [1, 1, 1], cellshape)
+            b2 = self._bands(d, subshape, cellshape)
         finally:
             shutil.rmtree(d, ignore_errors=True)
         self.assertEqual(len(b1), len(b2))
         np.testing.assert_allclose(
             b1, b2, atol=1e-8,
             err_msg="SO band structure must be sublattice-invariant")
+
+    def test_band_structure_sublattice_invariant_1orb_x(self):
+        # 1 physical orbital, x-direction sublattice folding
+        self._check_invariant(norb_phys=1, cellshape=[4, 1, 1],
+                              subshape=[2, 1, 1], with_y=False)
+
+    def test_band_structure_sublattice_invariant_2orb_2d(self):
+        # 2 physical orbitals, 2D (x and y) sublattice folding -- exercises the
+        # multi-orbital and Bx*By factors of _reshape_orbit_spin
+        self._check_invariant(norb_phys=2, cellshape=[4, 4, 1],
+                              subshape=[2, 2, 1], with_y=True)
 
 
 class TestUHFkOrbitalIndexCheck(unittest.TestCase):
