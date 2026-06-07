@@ -1940,6 +1940,71 @@ class TestUHFrDetectBlocks(unittest.TestCase):
                          "Total Ncond must be preserved after splitting")
 
 
+class TestUHFkSublatticeInvarianceSO(unittest.TestCase):
+    """UHFk spin-orbital mode must be sublattice-invariant: the band structure
+    of the SO transfer must be identical with and without sublattice folding
+    (SubShape != [1,1,1]). Exercises the SO sublattice transfer reshaping
+    (_reshape_orbit_spin), which the SO equivalence tests skip (they use
+    SubShape=[1,1,1] / stubbed ham_trans)."""
+
+    def _write_inputs(self, d):
+        import os
+        # SO geometry: norb = 2 * norb_phys (here norb_phys=1)
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0   0.0   0.0\n  0.0   1.0   0.0\n  0.0   0.0   1.0\n")
+            f.write("2\n   0.0   0.0   0.0\n   0.0   0.0   0.0\n")
+        # SO transfer: on-site spin-flip (1<->2) + inter-cell spin-diag hop
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer SO\n2\n6\n 1 1 1 1 1 1\n")
+            f.write("   0    0    0    1    2  0.300000  0.0\n")
+            f.write("   0    0    0    2    1  0.300000  0.0\n")
+            f.write("   1    0    0    1    1  1.000000  0.0\n")
+            f.write("  -1    0    0    1    1  1.000000  0.0\n")
+            f.write("   1    0    0    2    2  1.000000  0.0\n")
+            f.write("  -1    0    0    2    2  1.000000  0.0\n")
+        # interaction uses the physical orbital index [0, norb_phys)
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("CoulombIntra\n1\n1\n 1\n   0    0    0    1    1   2.000000   0.0\n")
+
+    def _bands(self, d, subshape):
+        info_mode = {
+            'mode': 'UHFk',
+            'param': {'Ncond': 2, 'T': 0.1, 'CellShape': [4, 1, 1],
+                      'SubShape': subshape, 'IterationMax': 1, 'EPS': 8,
+                      'Mix': 0.5, 'RndSeed': 1},
+            'enable_spin_orbital': True,
+        }
+        info_input = {
+            'path_to_input': d,
+            'interaction': {'path_to_input': d, 'Geometry': 'geom.dat',
+                            'Transfer': 'transfer.dat',
+                            'CoulombIntra': 'coulombintra.dat'},
+        }
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.uhfk as uhfk_module
+        read_io = read_input_k.QLMSkInput(info_input)
+        solver = uhfk_module.UHFk(read_io.get_param("ham"), {}, info_mode)
+        solver._make_ham_trans()  # build T_ab(k)
+        # band structure = eigenvalues of the (non-interacting) transfer
+        w = np.linalg.eigvalsh(solver.ham_trans)
+        return np.sort(np.ravel(w.real))
+
+    def test_band_structure_sublattice_invariant(self):
+        import tempfile
+        import shutil
+        d = tempfile.mkdtemp(prefix="uhfk_so_sub_")
+        try:
+            self._write_inputs(d)
+            b1 = self._bands(d, [1, 1, 1])
+            b2 = self._bands(d, [2, 1, 1])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(len(b1), len(b2))
+        np.testing.assert_allclose(
+            b1, b2, atol=1e-8,
+            err_msg="SO band structure must be sublattice-invariant")
+
+
 class TestUHFkOrbitalIndexCheck(unittest.TestCase):
     """In spin-orbital mode the Geometry norb already includes spin
     (norb = nd = 2*norb_phys), so valid Transfer indices are [0, norb). The
