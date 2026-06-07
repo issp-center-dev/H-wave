@@ -728,10 +728,14 @@ class UHFk(solver_base):
             if k in ["Geometry", "Initial"]:
                 pass
             elif k == "Transfer":
+                # In spin-orbital mode the Geometry norb already includes spin
+                # (norb = nd), so valid Transfer indices are [0, norb). In normal
+                # mode the file may carry spin indices up to 2*norb (the spin
+                # block, which _make_ham_trans then drops).
+                trans_max = norb if self.enable_spin_orbital else norb * 2
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
-                    # allow spin-orbital interaction, i.e. twice norb
-                    if not all([ 0 <= orbvec[i] < norb*2 for i in range(2) ]):
+                    if not all([ 0 <= orbvec[i] < trans_max for i in range(2) ]):
                         fail += 1
                 if fail > 0:
                     logger.error("orbital index check failed for {}.".format(k))

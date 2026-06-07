@@ -1940,6 +1940,32 @@ class TestUHFrDetectBlocks(unittest.TestCase):
                          "Total Ncond must be preserved after splitting")
 
 
+class TestUHFkOrbitalIndexCheck(unittest.TestCase):
+    """In spin-orbital mode the Geometry norb already includes spin
+    (norb = nd = 2*norb_phys), so valid Transfer indices are [0, norb). The
+    check must reject indices >= norb rather than allowing up to 2*norb."""
+
+    def _stub(self, transfer):
+        import hwave.solver.uhfk as uhfk_module
+        stub = object.__new__(uhfk_module.UHFk)
+        stub.enable_spin_orbital = True
+        stub.norb_phys_orig = 1  # physical orbitals -> SO norb = 2
+        stub.param_ham = {"Geometry": {"norb": 2}, "Transfer": transfer}
+        return stub
+
+    def test_invalid_so_transfer_index_rejected(self):
+        # index 2 is out of range in SO mode (valid [0,2)) but < 2*norb=4
+        stub = self._stub({((0, 0, 0), (0, 2)): 1.0})
+        with self.assertRaises(SystemExit):
+            stub._check_orbital_index()
+
+    def test_valid_so_transfer_index_ok(self):
+        # indices 0,1 are valid spin-orbital indices
+        stub = self._stub({((0, 0, 0), (0, 1)): 1.0,
+                           ((0, 0, 0), (1, 0)): 1.0})
+        stub._check_orbital_index()  # must not exit
+
+
 class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
     """Test spin-orbital mode with interaction terms.
 
