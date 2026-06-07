@@ -223,6 +223,54 @@ class TestVertexComputation(unittest.TestCase):
                 )
 
 
+class TestVertexWarnings(unittest.TestCase):
+    """Silent approximations in the pairing vertex must warn the user."""
+
+    def _simple_inputs(self, norb=2, extra=None):
+        Nx, Ny, Nz, nmat = 2, 2, 1, 4
+        chi0q = np.full((norb, norb, Nx, Ny, Nz, nmat), 0.1, dtype=complex)
+        U = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        for a in range(norb):
+            U[a, a] = 1.0
+        inter_k = {"CoulombIntra": U}
+        if extra:
+            inter_k.update(extra)
+        return chi0q, inter_k, norb, Nx, Ny, Nz, nmat
+
+    def test_multiorbital_coulombinter_simple_mode_warns(self):
+        """Multi-orbital CoulombInter in 2-index (simple) mode drops the
+        inter-orbital cross channel -> must warn."""
+        V = np.zeros((2, 2, 2, 2, 1), dtype=complex)
+        V[0, 1] = 0.5
+        V[1, 0] = 0.5
+        chi0q, inter_k, norb, Nx, Ny, Nz, nmat = self._simple_inputs(
+            extra={"CoulombInter": V})
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat)
+        self.assertTrue(any("CoulombInter" in m for m in cm.output))
+
+    def test_pairlift_warns_it_is_inert(self):
+        """PairLift contributes nothing to the S/C pairing vertex -> warn."""
+        PL = np.zeros((2, 2, 2, 2, 1), dtype=complex)
+        PL[0, 1] = 0.3
+        PL[1, 0] = 0.3
+        chi0q, inter_k, norb, Nx, Ny, Nz, nmat = self._simple_inputs(
+            extra={"PairLift": PL})
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat)
+        self.assertTrue(any("PairLift" in m for m in cm.output))
+
+    def test_single_orbital_no_coulombinter_warning(self):
+        """1-orbital CoulombIntra-only must NOT emit the CoulombInter warning."""
+        chi0q, inter_k, norb, Nx, Ny, Nz, nmat = self._simple_inputs(norb=1)
+        import logging
+        logger = logging.getLogger("hwave_sc")
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            logger.warning("sentinel")  # ensure the context has >=1 record
+            _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat)
+        self.assertFalse(any("CoulombInter" in m for m in cm.output))
+
+
 class TestG2Calculation(unittest.TestCase):
     """Test G2 two-particle Green's function."""
 

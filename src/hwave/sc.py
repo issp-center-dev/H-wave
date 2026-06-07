@@ -630,6 +630,14 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                   ["Hund", "Exchange", "Ising", "PairHop"])
     chi0q_is_4index = (chi0q.ndim == 8)
 
+    # PairLift does not enter the spin/charge (particle-hole) pairing vertex in
+    # either mode (its S=C=0 contribution, verified against the full 4-index
+    # RPA), so a configured PairLift term is silently inert. Warn the user.
+    if "PairLift" in inter_k:
+        logger.warning(
+            "PairLift is configured but does not contribute to the S/C pairing "
+            "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
+
     if chi0q_is_4index or has_interorbital_vertex:
         # General mode: 4-index S,C matrices
         # Required when 4-index chi0q is available or Hund/Exchange present
@@ -638,6 +646,12 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     else:
         # Simple mode: backward compatible with original implementation
         # Only used for 2-index chi0q without Hund/Exchange
+        if "CoulombInter" in inter_k and norb > 1:
+            logger.warning(
+                "Multi-orbital CoulombInter in the simple (2-index) vertex mode "
+                "uses the reduced density-density approximation: inter-orbital "
+                "cross-channel contributions are dropped. Provide a 4-index "
+                "chi0q (general mode) for the full Kuroki S/C treatment.")
         return _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                         pairing_type=pairing_type)
 
