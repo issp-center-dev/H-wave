@@ -15,6 +15,41 @@ from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhfr")
 
+
+def _split_occupation(occupied, sizes):
+    """Distribute ``occupied`` electrons across sub-blocks of the given sizes.
+
+    Returns non-negative integer occupations that sum exactly to ``occupied``
+    and never exceed the block size, using the largest-remainder method.
+    (The previous proportional rounding ``round(occupied*size/total)`` could
+    over-allocate and leave a negative remainder for the last block.)
+
+    Parameters
+    ----------
+    occupied : int
+        Total electron count to distribute (0 <= occupied <= sum(sizes)).
+    sizes : list of int
+        Sizes of the sub-blocks.
+
+    Returns
+    -------
+    list of int
+        Per-block occupations.
+    """
+    total = sum(sizes)
+    if total == 0:
+        return [0 for _ in sizes]
+    exact = [occupied * sz / total for sz in sizes]
+    alloc = [int(np.floor(e)) for e in exact]
+    remainder = int(round(occupied - sum(alloc)))
+    # hand out the remaining electrons to the largest fractional parts
+    order = sorted(range(len(sizes)),
+                   key=lambda i: exact[i] - alloc[i], reverse=True)
+    for i in order[:remainder]:
+        alloc[i] += 1
+    return alloc
+
+
 class Interact_UHFr_base:
     """Base class for interaction terms in UHF calculations.
     
@@ -738,17 +773,12 @@ class UHFr(solver_base):
                 # No further splitting
                 new_green_list[k] = block_g_info
             else:
-                # Split this block
-                total_size = len(g_label)
-                remaining_occ = occupied
+                # Split this block, keeping per-block occupations non-negative
+                # and summing to the original occupancy.
+                sub_occs = _split_occupation(occupied, [len(s) for s in sub_blocks])
                 for i, sub in enumerate(sub_blocks):
                     sub_key = "{}_blk{}".format(k, i)
-                    if i < len(sub_blocks) - 1:
-                        sub_occ = int(round(occupied * len(sub) / total_size))
-                        remaining_occ -= sub_occ
-                    else:
-                        sub_occ = remaining_occ
-                    sub_info = {"label": sub, "occupied": sub_occ}
+                    sub_info = {"label": sub, "occupied": sub_occs[i]}
                     if "value" in block_g_info:
                         sub_info["value"] = block_g_info["value"]
                     new_green_list[sub_key] = sub_info

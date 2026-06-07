@@ -9,6 +9,33 @@ import unittest
 import numpy as np
 
 
+class TestUHFrOccupationSplit(unittest.TestCase):
+    """Splitting a block's electron count across detected sub-blocks must give
+    non-negative integer occupations that sum to the original (the previous
+    proportional-rounding split could produce negative occupations)."""
+
+    def test_no_negative_occupation(self):
+        from hwave.solver.uhfr import _split_occupation
+        # 6 electrons over 8 size-1 sub-blocks: the buggy round() split gave -1
+        occ = _split_occupation(6, [1] * 8)
+        self.assertEqual(sum(occ), 6)
+        self.assertTrue(all(o >= 0 for o in occ), "occupations must be >= 0")
+        self.assertTrue(all(o <= 1 for o in occ), "occupation cannot exceed block size")
+
+    def test_sum_preserved_various(self):
+        from hwave.solver.uhfr import _split_occupation
+        for occupied, sizes in [(3, [2, 2]), (5, [3, 1, 4]), (0, [2, 3]),
+                                (7, [7]), (4, [1, 1, 1, 1])]:
+            occ = _split_occupation(occupied, sizes)
+            self.assertEqual(sum(occ), occupied)
+            self.assertTrue(all(0 <= o <= s for o, s in zip(occ, sizes)))
+
+    def test_proportional_allocation(self):
+        from hwave.solver.uhfr import _split_occupation
+        # equal sizes, divisible -> equal split
+        self.assertEqual(_split_occupation(4, [2, 2]), [2, 2])
+
+
 class TestRPABlockSolveDenseChi0q(unittest.TestCase):
     """Block-solving the RPA equation is only valid when neither chi0q nor ham
     couples indices across blocks. If ham is block-diagonal but chi0q has
