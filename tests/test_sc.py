@@ -21,6 +21,7 @@ from hwave.sc import (
     _build_hamiltonian_k,
     _build_interaction_k,
     _build_sc_matrices,
+    _make_kernel_operator,
     _calc_chi0q_internal,
     _calc_eigenvalues,
     _calc_g2,
@@ -457,6 +458,43 @@ class TestInitializeGap(unittest.TestCase):
                 sigma[0, 0, 0, 0, iz], -sigma[0, 0, 0, 0, iz_inv],
                 atol=1e-10,
                 err_msg="p_z should be odd under kz -> -kz")
+
+
+class TestComplexKernel(unittest.TestCase):
+    """The Eliashberg kernel operator must preserve complex components.
+
+    For complex hopping (e.g. spin-orbit coupling), non-centrosymmetric models,
+    or chiral gaps the kernel is genuinely complex; projecting the operator to
+    real silently discards the imaginary part and changes the spectrum.
+    """
+
+    def _vsq_g2(self):
+        norb, Nx, Ny, Nz, nmat = 1, 4, 4, 1, 16
+        beta, t = 5.0, 1.0
+        hr = {((1, 0, 0), (0, 0)): t, ((-1, 0, 0), (0, 0)): t,
+              ((0, 1, 0), (0, 0)): t, ((0, -1, 0), (0, 0)): t}
+        kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+        ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+        ek = _build_hamiltonian_k(kx, ky, kz, hr, norb)
+        ev, evec = _calc_eigenvalues(ek)
+        mu = _determine_mu(ev, beta, 0.5, norb)
+        g = _calc_green(ev, evec, mu, beta, nmat)
+        U = np.ones((norb, norb, Nx, Ny, Nz), dtype=complex) * 2.0
+        chi0q = np.full((norb, norb, Nx, Ny, Nz, nmat), 0.1, dtype=complex)
+        Pc, Ps = _compute_vertices(chi0q, {"CoulombIntra": U}, norb, Nx, Ny, Nz, nmat)
+        return Pc + Ps, _calc_g2(g, beta), norb, Nx, Ny, Nz
+
+    def test_kernel_preserves_imaginary_part(self):
+        Vs_q, G2, norb, Nx, Ny, Nz = self._vsq_g2()
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        rng = np.random.default_rng(7)
+        v = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        out = A.matvec(v)
+        # A real-projected operator would zero the imaginary part of the output.
+        self.assertGreater(
+            np.max(np.abs(np.imag(out))), 1e-10,
+            "kernel operator discards the imaginary part (forced real)")
 
 
 class TestEigenpairOrdering(unittest.TestCase):

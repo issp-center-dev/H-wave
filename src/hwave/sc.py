@@ -1286,9 +1286,12 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
                 norb, norb, Nx, Ny, Nz)
             sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
 
-        return (-sigma_new).real.ravel()
+        # Keep complex: for complex hopping (e.g. spin-orbit coupling),
+        # non-centrosymmetric models, or chiral gaps the kernel is genuinely
+        # complex; projecting to real would discard physical components.
+        return (-sigma_new).ravel()
 
-    A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=float)
+    A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=complex)
     return A, vec_size
 
 
@@ -1486,7 +1489,7 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     vals, vecs = _order_eigenpairs(vals, vecs)
 
     eigenvectors = np.array([
-        vecs[:, i].real.reshape(norb, norb, Nx, Ny, Nz)
+        vecs[:, i].reshape(norb, norb, Nx, Ny, Nz)
         for i in range(len(vals))
     ])
 
@@ -1543,7 +1546,7 @@ def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8)
         return A.matvec(v) - sigma * v
 
     A_shifted = LinearOperator((vec_size, vec_size),
-                               matvec=shifted_matvec, dtype=float)
+                               matvec=shifted_matvec, dtype=complex)
 
     solve_count = [0]
     fail_count = [0]
@@ -1562,7 +1565,7 @@ def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8)
         return x
 
     A_inv = LinearOperator((vec_size, vec_size),
-                           matvec=inv_matvec, dtype=float)
+                           matvec=inv_matvec, dtype=complex)
 
     # eigs on (A - sigma*I)^{-1} finds eigenvalues nu = 1/(lambda - sigma)
     # largest |nu| correspond to lambda closest to sigma
@@ -1624,13 +1627,13 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     eigenvalues_old = np.zeros(num_ev)
 
     for iteration in range(max_iter):
-        # Apply kernel to all vectors: W = A @ V
-        W = np.zeros_like(V)
+        # Apply kernel to all vectors: W = A @ V (kernel may be complex)
+        W = np.zeros((vec_size, n_work), dtype=complex)
         for j in range(n_work):
             W[:, j] = A.matvec(V[:, j])
 
-        # Rayleigh quotient: H = V^T A V (small n_work x n_work matrix)
-        H = V.T @ W
+        # Rayleigh quotient: H = V^dagger A V (conjugate transpose for complex)
+        H = V.conj().T @ W
 
         # Eigendecomposition of small matrix
         evals_h, evecs_h = np.linalg.eig(H)
@@ -1660,10 +1663,10 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
 
     # Extract final Ritz vectors for the wanted eigenvalues
     # Recompute from final V
-    W = np.zeros((vec_size, n_work))
+    W = np.zeros((vec_size, n_work), dtype=complex)
     for j in range(n_work):
         W[:, j] = A.matvec(V[:, j])
-    H = V.T @ W
+    H = V.conj().T @ W
     evals_h, evecs_h = np.linalg.eig(H)
     # Subspace (block power) iteration is magnitude-based: it converges to the
     # dominant-magnitude invariant subspace, so report its modes by magnitude.
@@ -1675,7 +1678,7 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     ritz_vecs = V @ evecs_h[:, idx[:num_ev]]
 
     eigenvectors = np.array([
-        ritz_vecs[:, i].real.reshape(norb, norb, Nx, Ny, Nz)
+        ritz_vecs[:, i].reshape(norb, norb, Nx, Ny, Nz)
         for i in range(num_ev)
     ])
 
@@ -1738,7 +1741,7 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
             return A.matvec(v) - s * v
 
         A_shifted = LinearOperator(
-            (vec_size, vec_size), matvec=shifted_matvec, dtype=float
+            (vec_size, vec_size), matvec=shifted_matvec, dtype=complex
         )
 
         def inv_matvec(v):
@@ -1746,7 +1749,7 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
             return x
 
         A_inv = LinearOperator(
-            (vec_size, vec_size), matvec=inv_matvec, dtype=float
+            (vec_size, vec_size), matvec=inv_matvec, dtype=complex
         )
 
         try:
@@ -1756,7 +1759,7 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
             idx = np.argsort(-np.abs(eigenvalues))
             eigenvalues = eigenvalues[idx]
             eigvecs = np.array([
-                vecs[:, j].real.reshape(norb, norb, Nx, Ny, Nz)
+                vecs[:, j].reshape(norb, norb, Nx, Ny, Nz)
                 for j in idx
             ])
         except Exception as e:
