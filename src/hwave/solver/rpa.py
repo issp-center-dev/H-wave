@@ -1760,14 +1760,21 @@ class RPA:
                         chi0q_pm_gen[:, :, :, l2, :, l2] = chi0q_pm
                     chi0q_pm = chi0q_pm_gen
             else:
-                # Fallback: Green's functions not stored (e.g. chi0q provided externally)
-                logger.warning(
-                    "spin-diag transverse channel: Green's functions not available, "
-                    "falling back to spin-↑ block approximation for chi0_+-")
-                if chi0q_orig.ndim == 5:
-                    chi0q_pm = chi0q_orig[0].copy()
-                else:
-                    chi0q_pm = chi0q_orig[0].copy()
+                # The transverse bubble chi0_+- = -G_up * G_down cannot be
+                # reconstructed from the longitudinal chi0q alone (which carries
+                # G_up*G_up and G_down*G_down). When the Green's functions are
+                # not available -- e.g. chi0q was supplied externally
+                # (chi0q_init) on a spin-split system -- using the up-up block
+                # would silently give a wrong chi_+-. Fail loudly instead.
+                logger.error(
+                    "spin-diag transverse (ladder) channel requires the Green's "
+                    "functions to build chi0_+- = G_up*G_down, but they are not "
+                    "available (chi0q was supplied externally). Recompute chi0q "
+                    "internally (do not use chi0q_init) for the ladder channel.")
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be computed "
+                    "from an externally-supplied chi0q; recompute chi0q "
+                    "internally.")
 
         elif self.spin_mode == "spinful":
             # Already in spin-orbital space
@@ -1777,13 +1784,27 @@ class RPA:
             #   = chi0_SO[(↑,a),(↓,c),(↑,b),(↓,d)]  (when s1=↑=s3, s2=↓=s4)
             #   which is just the orbital diagonal of chi0
             if chi0q_orig.ndim == 6:
+                # Extract chi0_{(up a)(dn c)(up b)(dn d)} = -G_up*G_down, the
+                # transverse bubble. NB this assumes Sz is conserved (no genuine
+                # spin mixing): for spin-orbit-coupled systems the off-diagonal
+                # spin components contribute additional cross terms that this
+                # slice does not include.
+                logger.warning(
+                    "spinful transverse (ladder) channel extracts the "
+                    "Sz-conserving block (G_up*G_down); for genuine spin-mixing "
+                    "(spin-orbit coupling) the cross terms are not included.")
                 nfreq = chi0q_orig.shape[0]
                 chi0q_pm = chi0q_orig[:, :,
                                       0:norb, norb:2*norb,
                                       0:norb, norb:2*norb].copy()
             else:
-                nfreq = chi0q_orig.shape[0]
-                chi0q_pm = chi0q_orig[:, :, 0:norb, 0:norb].copy()
+                # ring+ladder forces the general scheme, so a spinful chi0q must
+                # be the full rank-4 (6-dim) tensor here. A reduced/2-index
+                # spinful chi0q cannot supply the spin-flip block.
+                raise ValueError(
+                    "spinful transverse (ladder) channel requires the full "
+                    "(general-scheme) chi0q tensor, got shape {}".format(
+                        chi0q_orig.shape))
 
         # --- Build W_+- (transverse vertex) ---
         # The transverse vertex for the +- (spin-flip) channel:

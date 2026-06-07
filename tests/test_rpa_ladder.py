@@ -99,6 +99,29 @@ class TestRPALadder(unittest.TestCase):
 
         return solver, green_info
 
+    def test_transverse_spin_diag_external_chi0q_raises(self):
+        """spin-diag transverse channel needs G_up, G_down to build
+        chi0_+- = G_up*G_down. With an externally-supplied chi0q (no Green's
+        functions), chi0_+- cannot be reconstructed from the longitudinal
+        chi0q, so it must raise instead of silently using the up-up block."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.norb, stub.ns, stub.nd = 1, 2, 2
+        stub.lattice = types.SimpleNamespace(nvol=4)
+        stub.spin_mode = "spin-diag"
+        stub.T, stub.nmat = 1.0, 4
+        stub.freq_index = np.arange(4)
+        stub.enable_reduced = True
+        # no green0 attribute -> the external-chi0q fallback path
+
+        nfreq, nvol, norb, nd = 4, 4, 1, 2
+        chi0q_orig = np.zeros((2, nfreq, nvol, norb, norb), dtype=complex)
+        ham_orig = np.zeros((nvol, nd, nd, nd, nd), dtype=complex)
+        with self.assertRaises(ValueError):
+            stub._build_transverse_channel(chi0q_orig, ham_orig)
+
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.
 
