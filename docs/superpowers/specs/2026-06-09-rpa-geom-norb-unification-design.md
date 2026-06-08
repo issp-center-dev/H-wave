@@ -2,7 +2,21 @@
 
 **Date:** 2026-06-09
 **Branch:** `feature/flex-approximation`
-**Status:** design approved, spec for review
+**Status:** APPROVED — Codex GO (5th review pass). Findings 7→2→3→1→GO across
+passes (D1-D7, N1/N2, P1/P3/P4, B1 all resolved). Ready for writing-plans.
+
+**Implementation cautions (Codex, priority order):**
+1. `_reshape_interaction` fold-stride split (P4) is the **highest correctness
+   risk** — Transfer vs non-Transfer (rpa.py:251 distinguishes them).
+2. SO `norb` derivation must run **after** folding (N1) — `Interaction`
+   (rpa.py:195,197) and the shared-geometry `RPA._init_param` (rpa.py:638).
+3. B1 guard stays **narrow**; do **not** delete `RPA._reshape_green` (D1
+   corrected); the `self.norb_orig` assignment is deferred with the real fix.
+4. `_solve_rpa` / block-diagonal / transverse slices (rpa.py:1904) are
+   shape-driven and safe, but cover the transverse boundary with a regression.
+5. **Out of scope (noted):** `FLEX.save_results` lacks the
+   `index_convention` marker (flex.py:687) — a separate FLEX concern, not this
+   spec; flagged so it is not lost.
 
 ## 1. Problem
 
