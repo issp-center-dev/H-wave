@@ -438,6 +438,11 @@ class Interaction:
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                if not (0 <= orbvec[0] < nd and 0 <= orbvec[1] < nd):
+                    raise ValueError(
+                        "spin-orbital Transfer index {} out of range [0,{}); "
+                        "geom norb (SO count) must cover all transfer indices"
+                        .format(orbvec, nd))
                 a = _so_interleaved_to_spinblock(orbvec[0])
                 b = _so_interleaved_to_spinblock(orbvec[1])
                 tab_r[(*irvec, a, b)] = v
