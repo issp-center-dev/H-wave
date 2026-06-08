@@ -174,17 +174,21 @@ class Interaction:
         logger.debug(">>> Interaction._init_interaction")
 
         # The spin-orbital -> spin-block remap in _make_ham_trans handles the
-        # non-sublattice case, but the sublattice folding path
+        # case without sublattice folding, but the folding path
         # (_reshape_orbit_spin) does not perform the interleaved decode, and its
         # convention is entangled with a separate solver difference (RPA uses
         # geometry norb = physical, UHFk uses the spin-orbital count). For more
         # than one physical orbital this would silently produce a wrong chi0q,
-        # so fail loudly instead.
+        # so fail loudly instead. Sublattice folding is active whenever the
+        # SubShape volume exceeds 1 (note: SubShape defaults to CellShape);
+        # set SubShape = [1,1,1] to run multi-orbital spin-orbital RPA.
+        # TODO: support folding by giving _reshape_orbit_spin the interleaved
+        # decode once the RPA/UHFk geometry-norb convention is unified.
         if (self.enable_spin_orbital and self.lattice.has_sublattice
                 and self.param_ham["Geometry"]["norb"] > 1):
-            msg = ("RPA: enable_spin_orbital with sublattice "
-                   "(SubShape != CellShape) and more than one orbital is not "
-                   "supported.")
+            msg = ("RPA: enable_spin_orbital with sublattice folding "
+                   "(SubShape volume > 1) and more than one orbital is not "
+                   "supported; set SubShape = [1,1,1] to disable folding.")
             logger.error(msg)
             raise NotImplementedError(msg)
 

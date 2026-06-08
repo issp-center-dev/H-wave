@@ -55,17 +55,14 @@ def _run(transfer, spin_orbital, geom):
 
 
 class TestRPAMultiOrbitalSOSublatticeGuard(unittest.TestCase):
-    def test_multiorbital_so_with_sublattice_is_rejected(self):
-        # The sublattice-folding path for >=2-orbital spin-orbital input is not
-        # handled (its index convention is entangled with a separate solver
-        # difference); it must fail loudly rather than return a wrong chi0q.
+    def _construct(self, cellshape, subshape):
         info_mode = {
             "mode": "RPA",
             "param": {
                 "T": 2.0,
                 "filling": 0.5,
-                "CellShape": [8, 1, 1],
-                "SubShape": [2, 1, 1],  # real sub-cell folding
+                "CellShape": cellshape,
+                "SubShape": subshape,
                 "Nmat": 32,
             },
             "enable_spin_orbital": True,
@@ -85,8 +82,19 @@ class TestRPAMultiOrbitalSOSublatticeGuard(unittest.TestCase):
         os.makedirs(info_file["output"]["path_to_output"], exist_ok=True)
         read_io = read_input_k.QLMSkInput(info_file["input"])
         ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_multiorbital_so_with_subcell_folding_is_rejected(self):
+        # Genuine sub-cell folding (several supercells): unsupported -> reject.
         with self.assertRaises(NotImplementedError):
-            solver_rpa.RPA(ham, {}, info_mode)
+            self._construct([8, 1, 1], [2, 1, 1])
+
+    def test_multiorbital_so_with_whole_cell_folding_is_rejected(self):
+        # SubShape == CellShape still folds (subvol > 1, one big supercell);
+        # this is also the default when SubShape is omitted, and must be
+        # rejected too rather than silently producing a wrong chi0q.
+        with self.assertRaises(NotImplementedError):
+            self._construct([8, 1, 1], [8, 1, 1])
 
 
 class TestRPAMultiOrbitalSO(unittest.TestCase):
