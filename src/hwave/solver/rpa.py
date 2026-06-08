@@ -325,8 +325,8 @@ class Interaction:
         # physical orbital indices, so the stride for non-SO folding is norb_phys.
         geom_norb_orig = self.param_ham_orig["Geometry"]["norb"]
         norb_orig = geom_norb_orig  # SO count (used by _reshape_orbit_spin)
-        norb_phys_orig = (geom_norb_orig // 2 if self.enable_spin_orbital
-                          else geom_norb_orig)  # physical count (non-SO stride)
+        # physical count (stride for non-SO / physical-orbital-indexed terms)
+        norb_phys_orig = _so_physical_norb(geom_norb_orig, self.enable_spin_orbital)
 
         def _reshape_orbit_(a, x):
             return a + norb_phys_orig * ( x[0] + Bx * (x[1] + By * (x[2])))

@@ -26,6 +26,10 @@ class TestSoPhysicalNorb(unittest.TestCase):
         with self.assertRaises(ValueError):
             _so_physical_norb(8, True, check_norb=3)
 
+    def test_so_check_norb_even_but_different_returns_geom_half(self):
+        # post-fold geom_norb=8 with even pre-fold check_norb=4 -> halve geom_norb
+        self.assertEqual(_so_physical_norb(8, True, check_norb=4), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
