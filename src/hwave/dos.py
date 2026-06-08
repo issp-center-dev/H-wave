@@ -22,19 +22,21 @@ class DoS:
     ----------
     ene : np.ndarray
         Energy grid points
-    dos : np.ndarray 
-        Density of states values for each orbital at each energy point
-        
+    dos : np.ndarray
+        Density of states values for each band at each energy point.
+        This is band-resolved (one row per eigenvalue/band of the diagonalized
+        Hamiltonian), not an orbital-projected DOS.
+
     Attributes
     ----------
     dos : np.ndarray
-        Density of states array with shape (norb, nene)
+        Density of states array with shape (nband, nene)
     ene : np.ndarray
         Energy grid points array with shape (nene,)
     ene_num : int
         Number of energy points
     norb : int
-        Number of orbitals
+        Number of bands (rows of ``dos``)
     """
 
     def __init__(self, ene: np.ndarray, dos: np.ndarray):
@@ -131,6 +133,15 @@ def calc_dos(
     verbose: bool = False,
 ) -> DoS:
     """Calculate density of states.
+
+    Notes
+    -----
+    This consumes the k-resolved eigenvalues written by the UHFk solver (a
+    single ``<eigen>.npz`` with an ``eigenvalue`` array of shape
+    ``(nk_sub, nband)``) and uses the tetrahedron method over the k-grid. It is
+    UHFk-only: the per-block ``<block>_<eigen>.npz`` files written by UHFr are
+    not consumed here. The energy axis is the raw eigenvalue scale (the chemical
+    potential is not subtracted).
 
     Parameters
     ----------

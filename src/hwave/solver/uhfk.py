@@ -2234,6 +2234,15 @@ class UHFk(solver_base):
             logger.error("_save_greenone: onebodyg_uhf and geometry_uhf are required")
             return None
 
+        if self.enable_spin_orbital:
+            # In spin-orbital mode spin is folded into the orbital index (ns=1),
+            # so the (i, s, j, t) one-body Green output cannot be expressed on
+            # the (spin, orbital, spin, orbital) axes. Reject rather than crash.
+            logger.error(
+                "_save_greenone: one-body Green output (onebodyg) is not "
+                "supported in spin-orbital mode")
+            return None
+
         if self.has_sublattice:
             gr = self._deflate_green(self.Green)
         else:
@@ -2336,11 +2345,13 @@ class UHFk(solver_base):
                     fw.write("\n")
                 fw.write(" 1")
             fw.write("\n")
-            # write index and elements
+            # write index and elements. Orbital indices are stored 0-based in
+            # memory but the wannier90-like format is 1-based (read_w90 subtracts
+            # one), so emit orbvec + 1 to keep the file round-trippable.
             for (irvec,orbvec), v in self.param_ham[type].items():
                 if (abs(v) > 1.0e-12):
                     fw.write("{:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
-                        *irvec, *orbvec, v.real, v.imag
+                        *irvec, orbvec[0] + 1, orbvec[1] + 1, v.real, v.imag
                     ))
 
     def _export_hamiltonian(self, path_to_output, prefix):

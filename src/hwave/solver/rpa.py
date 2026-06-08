@@ -938,12 +938,16 @@ class RPA:
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
-                np.savez(file_name,
-                         chiq = green_info["chiq"],
-                         freq_index = self.freq_index,
-                         wavevector_unit = self.kvec,
-                         wavevector_index = self.wavenum_table,
+                save_kwargs = dict(
+                    chiq = green_info["chiq"],
+                    freq_index = self.freq_index,
+                    wavevector_unit = self.kvec,
+                    wavevector_index = self.wavenum_table,
                 )
+                # transverse channel chi_+-(q), present for calc_type ring+ladder
+                if green_info.get("chiq_pm") is not None:
+                    save_kwargs["chiq_pm"] = green_info["chiq_pm"]
+                np.savez(file_name, **save_kwargs)
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
                 logger.info("save_results: chiq not calculated. skip")
