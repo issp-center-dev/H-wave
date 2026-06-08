@@ -152,7 +152,7 @@ SO mode.
 | `_read_chi0q` shape checks `rpa.py:1185,1201,1218,1232` | classify `nd==self.nd`→spinful, `nd==self.norb`→spin-free | `self.nd=SOcount`, `self.norb=norb_phys` | OK once derivation fixed; add SO regression |
 | `_calc_trans_mod` `rpa.py:1390,1393` | `norb=self.norb` | physical | OK |
 | `_calc_epsilon_k` `rpa.py:1415,1448-1449` | `nd=self.nd; norb=self.norb` | nd=SOcount, norb=physical | OK |
-| `RPA._reshape_green` `rpa.py:1306-1349` (`self.norb_orig`, 1316) | `green` reshaped `(Lvol,ns,norb_orig,ns,norb_orig)` | physical (ns=2) | **Resolve D1:** `self.norb_orig` is **never assigned** in rpa.py and this method has **no caller** (only `self.lattice._reshape_green` at rpa.py:1281 is invoked). Confirm dead, then **delete `RPA._reshape_green`**; if instead it is to be revived, assign `self.norb_orig = norb_phys` in SO mode. |
+| `RPA._reshape_green` `rpa.py:1306-1349` (`self.norb_orig`, 1316) | `green` reshaped `(Lvol,ns,norb_orig,ns,norb_orig)` | physical (ns=2) | **D1 corrected → see B1.** This method is **not dead**: `_read_trans_mod` at rpa.py:1281 calls `self.lattice._reshape_green(tab_r)`, but `Lattice` (rpa.py:71-174) has **no** `_reshape_green` — the intended target is **`self._reshape_green`** (this RPA method). The `self.lattice.` is a mis-wire (pre-existing since 2023, commit 2d7128c). So do **not** delete it; resolve via B1. `self.norb_orig` is still never assigned → must be set to `norb_phys` (physical) if this path is fixed. |
 
 Anything the audit finds to be physical-count-specific while reading raw
 `geom['norb']` (now SO count) gets an explicit `norb_phys` substitution.
@@ -202,6 +202,36 @@ Order of operations (TDD):
 
 If an equivalence test cannot be made to pass (folded path genuinely wrong),
 stop and re-scope — do not delete the guard.
+
+## 5b. Pre-existing `trans_mod` + sublattice bug (B1)
+
+The audit surfaced a **pre-existing, independent** bug (since 2023, commit
+`2d7128c`). `RPA._read_trans_mod` (rpa.py:1281) calls
+`self.lattice._reshape_green(tab_r)` inside `if self.lattice.has_sublattice`,
+but `Lattice` (rpa.py:71-174) has no `_reshape_green` method — the real method
+is `RPA._reshape_green` (rpa.py:1306). So **any** `trans_mod` input combined
+with sublattice folding raises `AttributeError`, regardless of SO mode. No test
+exercises this path (only `test_flex_analytical.py` uses `trans_mod`, without a
+folding `SubShape`), so it has gone unnoticed.
+
+This is **orthogonal to geom-norb unification**: it breaks for non-SO and
+`norb_phys=1` SO sublattice runs too, and removing the multi-orbital chi0q guard
+(§5) does not newly expose it. But the spec must not let guard removal advertise
+"SO + sublattice + multi-orbital supported" while this sub-path crashes.
+
+**Decision (to confirm with user) — recommended: narrow-guard + defer.**
+- **Option B1-guard (recommended):** add a focused fail-fast — `trans_mod`
+  provided together with `has_sublattice` raises a clear `NotImplementedError`
+  pointing at this known gap — and track the real fix as a separate follow-up
+  issue. Keeps this spec scoped to the chi0q core path.
+- **Option B1-fix:** correct the mis-wire to `self._reshape_green(tab_r)`,
+  assign `self.norb_orig = norb_phys` (SO) / `norb` (non-SO), and add a
+  `trans_mod` + sublattice (+ SO) regression test. Larger scope; pulls a 2023
+  bug into this change.
+
+Either way: **do not delete `RPA._reshape_green`** (corrects D1). Whichever
+option, it becomes a gate item — guard removal in §5 must not leave a reachable
+`AttributeError` in the SO + sublattice space.
 
 ## 6. Fixture migration
 
@@ -266,9 +296,11 @@ CHANGELOG / migration note.
 - **`_reshape_geometry` center array** semantics under SO-count: resolved by
   audit — raw-file norb (= SO count) gives one center per spin-orbital, correct
   for W90 SOI; keep as-is with SO-count geom files.
-- **Dead `RPA._reshape_green` / unassigned `self.norb_orig`** (D1): delete the
-  dead method during the refactor to avoid leaving a latent `AttributeError`;
-  if revived, bind `self.norb_orig = norb_phys`.
+- **`trans_mod` + sublattice `AttributeError`** (B1, corrects D1): `RPA._reshape_green`
+  is *not* dead — it is the mis-wired target of `self.lattice._reshape_green`
+  (rpa.py:1281). Pre-existing since 2023, orthogonal to geom-norb, untested.
+  Resolve per §5b (recommended: narrow `trans_mod`+sublattice guard + defer);
+  do **not** delete the method. Bind `self.norb_orig = norb_phys` if fixed.
 - **Implementation must re-verify every audit-table line number** before
   writing tasks (D2 showed two stale citations in the first draft).
 - **Physical-vs-SO fold stride (P4)** is the highest-risk item: the two-body
