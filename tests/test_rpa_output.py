@@ -37,6 +37,9 @@ class TestRPASaveChiqPm(unittest.TestCase):
             data = np.load(os.path.join(tmpdir, "chiq.npz"))
             self.assertIn("chiq_pm", data.files)
             self.assertAlmostEqual(data["chiq_pm"].flat[0].real, 2.0, places=10)
+            # spin-orbital axis ordering must be recorded for downstream consumers
+            self.assertIn("index_convention", data.files)
+            self.assertEqual(str(data["index_convention"]), "spin_block")
         finally:
             import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)

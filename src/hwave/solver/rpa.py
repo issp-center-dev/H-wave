@@ -324,11 +324,21 @@ class Interaction:
             return
 
         if self.enable_spin_orbital == True:
-            # assume orbital index includes spin index
+            # The SO transfer file uses the interleaved convention
+            # (index = 2*orb + spin, matching UHFk and the docs), while RPA
+            # works internally in spin-block order (index = spin*norb + orb).
+            # Remap each orbital index P(i) = (i % 2) * norb + i // 2 on both
+            # the row and column so the (spin, orbital) reshapes downstream are
+            # correct. For norb_phys = 1 this is the identity.
+            def _so_interleaved_to_spinblock(i):
+                return (i % 2) * norb + i // 2
+
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec,*orbvec)] = v
+                a = _so_interleaved_to_spinblock(orbvec[0])
+                b = _so_interleaved_to_spinblock(orbvec[1])
+                tab_r[(*irvec, a, b)] = v
 
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
@@ -943,6 +953,10 @@ class RPA:
                     freq_index = self.freq_index,
                     wavevector_unit = self.kvec,
                     wavevector_index = self.wavenum_table,
+                    # RPA orders spin-orbital axes as spin-block (spin*norb+orb),
+                    # unlike UHFk's interleaved (2*orb+spin) output; record it so
+                    # consumers do not silently mix the two conventions.
+                    index_convention = "spin_block",
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -959,6 +973,8 @@ class RPA:
                      freq_index = self.freq_index,
                      wavevector_unit = self.kvec,
                      wavevector_index = self.wavenum_table,
+                     # spin-orbital axes are spin-block ordered (spin*norb+orb)
+                     index_convention = "spin_block",
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
