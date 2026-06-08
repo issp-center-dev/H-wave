@@ -69,6 +69,16 @@ downstream (`_calc_epsilon_k` reshape `(nvol, ns, norb, ns, norb)`, transverse
 slices `[:norb]`/`[norb:2·norb]`, `_solve_rpa`). Those sites stay correct
 unchanged once `self.norb` carries the physical count.
 
+**Construction-order constraint (D3).** In `Interaction.__init__`,
+`self._init_interaction()` (rpa.py:195) currently runs *before*
+`self.norb = Geometry["norb"]` (rpa.py:197). The unified derivation
+(`norb_phys`, even-check) and `self.norb`/`self.nd` assignment must be computed
+**before** `_init_interaction()` so any norb-dependent interaction setup and the
+(removed) guard logic see the physical count. Implementation: hoist the
+geom-norb parsing / `norb_phys` derivation to the top of `__init__`, then call
+`_init_interaction()`. Apply the same ordering in `RPA._init_param`
+(rpa.py:638) if `self.norb` is consumed before its assignment there.
+
 **Why this fixes the fold path automatically.** `_reshape_interaction`'s
 `_reshape_orbit_spin` (rpa.py:295) decodes `s_ = a // norb_orig` where
 `norb_orig = Geometry["norb"]`. Under the new convention `norb_orig` = SO count,
@@ -92,13 +102,17 @@ SO mode.
 | `_reshape_geometry` `rpa.py:265,268,274` | `norb = geom['norb']`; `center` sized `norb*bvol`; `geom_new['norb']=geom['norb']*bvol` | SO mode: W90 gives one center per spin-orbital → SO-count centers is correct for the *input*; verify no downstream consumer assumes physical-count centers | audit + test; expected no-op but must confirm |
 | `_reshape_interaction` `rpa.py:290` | `norb_orig = Geometry["norb"]` | SO count (for `s_=0` fold) | OK; becomes SO-count → matches UHFk |
 | `_make_ham_trans` `rpa.py:377` | `norb = self.norb` | physical | OK |
-| `_make_ham_extern` `rpa.py:466` | `norb = self.norb` | physical | OK |
+| `_make_ham_inter` `rpa.py:466` | `norb = self.norb` | physical | OK |
 | `_read_chi0q` shape checks `rpa.py:1185,1201,1218,1232` | classify `nd==self.nd`→spinful, `nd==self.norb`→spin-free | `self.nd=SOcount`, `self.norb=norb_phys` | OK once derivation fixed; add SO regression |
-| `_calc_epsilon_k` `rpa.py:1393-1394,1448-1449` | `nd=self.nd; norb=self.norb` | nd=SOcount, norb=physical | OK |
-| `self.norb_orig` use `rpa.py:1316-1317` | `norb_orig=self.norb_orig` | verify where `norb_orig` is set in RPA and its dimension | audit |
+| `_calc_trans_mod` `rpa.py:1390,1393` | `norb=self.norb` | physical | OK |
+| `_calc_epsilon_k` `rpa.py:1415,1448-1449` | `nd=self.nd; norb=self.norb` | nd=SOcount, norb=physical | OK |
+| `RPA._reshape_green` `rpa.py:1306-1349` (`self.norb_orig`, 1316) | `green` reshaped `(Lvol,ns,norb_orig,ns,norb_orig)` | physical (ns=2) | **Resolve D1:** `self.norb_orig` is **never assigned** in rpa.py and this method has **no caller** (only `self.lattice._reshape_green` at rpa.py:1281 is invoked). Confirm dead, then **delete `RPA._reshape_green`**; if instead it is to be revived, assign `self.norb_orig = norb_phys` in SO mode. |
+| `_make_ham_inter` `Extern`/two-body `rpa.py:442` | physical-orbital indexed allocation | physical | **Resolve D5:** specify SO-mode behavior; add test (§5) |
 
 Anything the audit finds to be physical-count-specific while reading raw
 `geom['norb']` (now SO count) gets an explicit `norb_phys` substitution.
+(Citations re-verified 2026-06-09; earlier draft mis-cited 1393 as
+`_calc_epsilon_k` and 466 as `_make_ham_extern`.)
 
 ## 5. Guard removal (test-first)
 
@@ -109,14 +123,26 @@ Order of operations (TDD):
 1. **Rewrite** the guard tests in `test_rpa_so_multiorb.py`
    (`TestRPAMultiOrbitalSOSublatticeGuard`, currently asserting the exception)
    to assert *success* — RED until the refactor lands.
-2. **Add** equivalence/invariance tests (RED first):
+2. **Add** equivalence/invariance/validation tests (RED first):
    - **SO vs non-SO**: a spin-independent multi-orbital system encoded in SO
      form yields the same `chi0q` as the equivalent non-SO (`ns=2`) run, *with*
      `SubShape != [1,1,1]` sublattice folding. (Extends the existing
      `test_rpa_so_multiorb` pattern to the folded case.)
-   - **Folded vs unfolded invariance**: `chi0q` for an SO system is invariant
-     under choice of `SubShape` (physical observable must not depend on the
-     fold), mirroring `TestUHFkSublatticeInvarianceSO`.
+   - **Multi-orbital folded vs unfolded invariance**: `chi0q` for a
+     `norb_phys ≥ 2` SO system is invariant under choice of `SubShape`
+     (physical observable must not depend on the fold), mirroring
+     `TestUHFkSublatticeInvarianceSO`. (Existing invariance coverage is
+     1-orbital only — D5.)
+   - **Odd-`norb` fail-fast (D5)**: SO mode with odd `geom_norb` raises a clear
+     `ValueError`/error (not a downstream shape crash).
+   - **SO transfer index range validation (D7)**: RPA must reject an SO
+     transfer file whose index is outside `[0, geom_norb)` — UHFk has this
+     check (exercised in `test_block_matrix.py`); RPA currently has no
+     equivalent. The `_reshape_orbit_spin` no-op argument (§3) depends on every
+     interaction/transfer index being `< SO count`, so this validation is a
+     correctness precondition, not just hygiene.
+   - **Extern / two-body in SO mode (D5)**: pin behavior of the
+     `_make_ham_inter` allocation (`rpa.py:442`) under the SO-count convention.
 3. **Implement** §3/§4 until those go GREEN.
 4. **Delete** the guard only after green; keep the odd-`norb` fail-fast.
 
@@ -131,14 +157,21 @@ files are unchanged (their index count was already SO-count).
 
 | New fixture | `norb` | Replaces (for SO cases) | Used by |
 |---|---|---|---|
-| `tests/rpa/input/geom_so.dat` | 2 | `geom.dat` (norb=1) | `test_rpa_spin.py` SO cases, `test_rpa_ladder.py` SO cases (if any) |
+| `tests/rpa/input/geom_so.dat` | 2 | `geom.dat` (norb=1) | `test_rpa_spin.py` SO cases; `test_rpa_1orb.py::test_U_and_V_spin_orbital` (D4) |
 | `tests/rpa/input/geom_so_2orb.dat` | 4 | `geom_2orb.dat` (norb=2) | `test_rpa_so_multiorb.py` SO run |
 
 Update each SO test config to point `Geometry` at the new SO-count file.
-Non-SO configs keep the existing physical-count geom files. The non-SO
-comparison runs in `test_rpa_so_multiorb` keep `geom_2orb.dat` (norb=2).
-`test_block_matrix.py` and the stub-based ladder tests construct `norb`/`nd`
-directly via `object.__new__` and are convention-agnostic — no change.
+Affected SO-using test files (verified 2026-06-09): `test_rpa_spin.py`,
+`test_rpa_1orb.py` (the `test_U_and_V_spin_orbital` case at line 278, hardcodes
+`geom.dat` at line 181 — **D4**), and `test_rpa_so_multiorb.py`. Non-SO configs
+keep the existing physical-count geom files; the non-SO comparison run in
+`test_rpa_so_multiorb` keeps `geom_2orb.dat` (norb=2).
+
+**No migration needed** (verified — D6): `test_rpa_ladder.py` has **no SO
+full-run case** (no `enable_spin_orbital=True` solver run); its SO-adjacent
+tests use `object.__new__` stubs with `norb`/`nd` set directly.
+`test_block_matrix.py` likewise constructs `norb`/`nd` via stubs and is
+convention-agnostic.
 
 ## 7. Documentation
 
@@ -176,5 +209,11 @@ CHANGELOG / migration note.
   audit table (mitigated by §4 audit + equivalence tests).
 - **Folded path genuinely incorrect** even after unification (mitigated by
   test-first guard removal in §5 — stop if equivalence fails).
-- **`_reshape_geometry` center array** semantics under SO-count (flagged for
-  audit; expected correct for W90 SOI but unverified downstream).
+- **`_reshape_geometry` center array** semantics under SO-count: resolved by
+  audit — raw-file norb (= SO count) gives one center per spin-orbital, correct
+  for W90 SOI; keep as-is with SO-count geom files.
+- **Dead `RPA._reshape_green` / unassigned `self.norb_orig`** (D1): delete the
+  dead method during the refactor to avoid leaving a latent `AttributeError`;
+  if revived, bind `self.norb_orig = norb_phys`.
+- **Implementation must re-verify every audit-table line number** before
+  writing tasks (D2 showed two stale citations in the first draft).
