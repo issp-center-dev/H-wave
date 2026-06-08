@@ -57,5 +57,44 @@ class TestSoTransferIndexRange(unittest.TestCase):
             self._construct_with_transfer("transfer_so_oob.dat")
 
 
+class _FakeLattice:
+    def __init__(self, shape, subshape):
+        self.shape = shape
+        self.subshape = subshape
+
+
+class TestReshapeInteractionStride(unittest.TestCase):
+    """P4: non-Transfer (physical-indexed) interactions fold with the physical
+    stride, while Transfer (spin-orbital-indexed) folds with the SO-count stride."""
+
+    def _make_interaction(self, geom_norb_orig, enable_spin_orbital, subshape):
+        obj = object.__new__(solver_rpa.Interaction)
+        obj.enable_spin_orbital = enable_spin_orbital
+        obj.lattice = _FakeLattice(shape=(2, 1, 1), subshape=subshape)
+        obj.param_ham_orig = {"Geometry": {"norb": geom_norb_orig}}
+        return obj
+
+    def test_two_body_stride_is_physical_in_so_mode(self):
+        # SO mode, geom norb (SO count) = 4 -> physical = 2. A two-body term
+        # (enable_spin_orbital=False call) on physical orbital index 1, folded
+        # over subshape (2,1,1), must land within [0, norb_phys*subvol) = [0,4),
+        # not stride by the SO count (which would reach 5).
+        obj = self._make_interaction(4, True, subshape=(2, 1, 1))
+        ham = {((0, 0, 0), (1, 1)): 1.0}
+        out = obj._reshape_interaction(ham, enable_spin_orbital=False)
+        folded_indices = [i for (_ir, ov) in out.keys() for i in ov]
+        self.assertTrue(all(0 <= i < 4 for i in folded_indices),
+                        "physical-indexed fold must stride by norb_phys; got "
+                        "{}".format(folded_indices))
+
+    def test_transfer_stride_is_so_count_in_so_mode(self):
+        # Transfer (enable_spin_orbital=True call) keeps the SO-count stride;
+        # subshape (1,1,1) => identity fold, index 3 preserved (< SO count 4).
+        obj = self._make_interaction(4, True, subshape=(1, 1, 1))
+        ham = {((0, 0, 0), (3, 3)): 1.0}
+        out = obj._reshape_interaction(ham, enable_spin_orbital=True)
+        self.assertIn(((0, 0, 0), (3, 3)), out)
+
+
 if __name__ == "__main__":
     unittest.main()
