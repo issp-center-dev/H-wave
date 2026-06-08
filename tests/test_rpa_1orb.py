@@ -178,7 +178,7 @@ class TestRPA(unittest.TestCase):
                 'path_to_input': 'tests/rpa/input',
                 'interaction': {
                     'path_to_input': 'tests/rpa/input',
-                    'Geometry': 'geom.dat',
+                    'Geometry': 'geom_so.dat' if spin_orbital else 'geom.dat',
                     'Transfer': 'transfer.dat',
                 },
             },

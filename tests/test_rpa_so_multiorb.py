@@ -73,7 +73,7 @@ class TestRPAMultiOrbitalSOSublatticeGuard(unittest.TestCase):
                 "path_to_input": "tests/rpa/input",
                 "interaction": {
                     "path_to_input": "tests/rpa/input",
-                    "Geometry": "geom_2orb.dat",
+                    "Geometry": "geom_so_2orb.dat",
                     "Transfer": "transfer_so_2orb.dat",
                 },
             },
@@ -99,13 +99,13 @@ class TestRPAMultiOrbitalSOSublatticeGuard(unittest.TestCase):
 
 class TestRPAMultiOrbitalSO(unittest.TestCase):
     def test_spin_independent_2orbital_so_is_spin_free(self):
-        solver, _ = _run("transfer_so_2orb.dat", True, "geom_2orb.dat")
+        solver, _ = _run("transfer_so_2orb.dat", True, "geom_so_2orb.dat")
         # A spin-independent system must be detected as spin-free, not spin-diag.
         self.assertEqual(solver.spin_mode, "spin-free")
 
     def test_so_chi0q_matches_nonso(self):
         s_nonso, g_nonso = _run("transfer_nonso_2orb.dat", False, "geom_2orb.dat")
-        s_so, g_so = _run("transfer_so_2orb.dat", True, "geom_2orb.dat")
+        s_so, g_so = _run("transfer_so_2orb.dat", True, "geom_so_2orb.dat")
         self.assertEqual(s_nonso.spin_mode, "spin-free")
         self.assertEqual(s_so.spin_mode, "spin-free")
         self.assertTrue(

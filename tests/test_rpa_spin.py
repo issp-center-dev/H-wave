@@ -35,7 +35,7 @@ class TestRPAspin(unittest.TestCase):
                 'path_to_input': 'tests/rpa/input',
                 'interaction': {
                     'path_to_input': 'tests/rpa/input',
-                    'Geometry': 'geom.dat',
+                    'Geometry': 'geom_so.dat' if spin_orbital else 'geom.dat',
                     'CoulombIntra': 'coulombintra.dat',
                     'CoulombInter': 'coulombinter.dat',
                 },
@@ -277,10 +277,10 @@ class TestRPASublatticeInvarianceSO(unittest.TestCase):
     """
 
     def _write_inputs(self, d):
-        # 1 physical orbital; SO transfer has on-site spin-flip + inter-cell hop
+        # 1 physical orbital (SO count = 2); SO transfer has on-site spin-flip + inter-cell hop
         with open(os.path.join(d, "geom.dat"), "w") as f:
             f.write("  1.0   0.0   0.0\n  0.0   1.0   0.0\n  0.0   0.0   1.0\n")
-            f.write("1\n   0.0   0.0   0.0\n")
+            f.write("2\n   0.0   0.0   0.0\n   0.0   0.0   0.0\n")
         with open(os.path.join(d, "transfer.dat"), "w") as f:
             f.write("Transfer SO\n2\n6\n 1 1 1 1 1 1\n")
             f.write("   0    0    0    1    2  0.300000  0.0\n")  # on-site up<->down

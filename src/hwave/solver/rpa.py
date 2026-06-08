@@ -68,6 +68,27 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
             "current RPA solver.".format(file_name, conv)
         )
 
+def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
+                      source="geom.dat"):
+    """Physical orbital count from a geometry ``norb``.
+
+    In spin-orbital mode ``geom.dat``'s ``norb`` is the spin-orbital count
+    (= 2 * physical orbitals = Wannier90 num_wann), matching UHFk, so halve it.
+    Evenness is validated on ``check_norb`` (the *original*, pre-sublattice-fold
+    value) so the error names the user's actual ``geom.dat`` entry, while the
+    returned count is derived from ``geom_norb`` (which may be the post-fold
+    value ``orig * subvol``).
+    """
+    if not enable_spin_orbital:
+        return geom_norb
+    cn = check_norb if check_norb is not None else geom_norb
+    if cn % 2 != 0:
+        raise ValueError(
+            "spin-orbital mode requires an even Geometry norb (the spin-orbital "
+            "count = 2 * physical orbitals); got {} in {}".format(cn, source))
+    return geom_norb // 2
+
+
 class Lattice:
     """
     Lattice parameters:
@@ -194,7 +215,17 @@ class Interaction:
         # initialize, and reshape if use sublattice
         self._init_interaction()
 
-        self.norb = param_ham["Geometry"]["norb"]
+        # geom norb is the spin-orbital count in SO mode (UHFk/W90 convention).
+        # _init_interaction may have folded the geometry (norb -> norb*subvol),
+        # so read the POST-fold value here; validate evenness on the pre-fold
+        # original (param_ham_orig exists only when has_sublattice).
+        post_fold_norb = param_ham["Geometry"]["norb"]
+        if self.lattice.has_sublattice:
+            orig_norb = self.param_ham_orig["Geometry"]["norb"]
+        else:
+            orig_norb = post_fold_norb
+        self.norb = _so_physical_norb(post_fold_norb, self.enable_spin_orbital,
+                                      check_norb=orig_norb, source="Geometry")
 
         # create hamiltonian
         self._make_ham_trans()
@@ -228,8 +259,11 @@ class Interaction:
         # set SubShape = [1,1,1] to run multi-orbital spin-orbital RPA.
         # TODO: support folding by giving _reshape_orbit_spin the interleaved
         # decode once the RPA/UHFk geometry-norb convention is unified.
+        _geom_norb_prefold = self.param_ham["Geometry"]["norb"]
+        _phys_norb_prefold = (_geom_norb_prefold // 2 if self.enable_spin_orbital
+                              else _geom_norb_prefold)
         if (self.enable_spin_orbital and self.lattice.has_sublattice
-                and self.param_ham["Geometry"]["norb"] > 1):
+                and _phys_norb_prefold > 1):
             msg = ("RPA: enable_spin_orbital with sublattice folding "
                    "(SubShape volume > 1) and more than one orbital is not "
                    "supported; set SubShape = [1,1,1] to disable folding.")
@@ -287,10 +321,15 @@ class Interaction:
         Bx,By,Bz = self.lattice.subshape
         nx,ny,nz = self.lattice.shape
 
-        norb_orig = self.param_ham_orig["Geometry"]["norb"]
+        # In SO mode, geom norb is the spin-orbital count; interactions use
+        # physical orbital indices, so the stride for non-SO folding is norb_phys.
+        geom_norb_orig = self.param_ham_orig["Geometry"]["norb"]
+        norb_orig = geom_norb_orig  # SO count (used by _reshape_orbit_spin)
+        norb_phys_orig = (geom_norb_orig // 2 if self.enable_spin_orbital
+                          else geom_norb_orig)  # physical count (non-SO stride)
 
         def _reshape_orbit_(a, x):
-            return a + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+            return a + norb_phys_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
 
         def _reshape_orbit_spin(a, x):
             a_, s_ = a%norb_orig, a//norb_orig
@@ -635,7 +674,9 @@ class RPA:
 
         self.nmat = self.param_mod.get("Nmat", 1024)
 
-        self.norb = self.param_ham["geometry"]["norb"]
+        # Stay consistent with the Interaction's physical-orbital count
+        # (already SO-halved and validated); avoids re-deriving / re-checking.
+        self.norb = self.ham_info.norb
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
