@@ -69,15 +69,36 @@ downstream (`_calc_epsilon_k` reshape `(nvol, ns, norb, ns, norb)`, transverse
 slices `[:norb]`/`[norb:2·norb]`, `_solve_rpa`). Those sites stay correct
 unchanged once `self.norb` carries the physical count.
 
-**Construction-order constraint (D3).** In `Interaction.__init__`,
-`self._init_interaction()` (rpa.py:195) currently runs *before*
-`self.norb = Geometry["norb"]` (rpa.py:197). The unified derivation
-(`norb_phys`, even-check) and `self.norb`/`self.nd` assignment must be computed
-**before** `_init_interaction()` so any norb-dependent interaction setup and the
-(removed) guard logic see the physical count. Implementation: hoist the
-geom-norb parsing / `norb_phys` derivation to the top of `__init__`, then call
-`_init_interaction()`. Apply the same ordering in `RPA._init_param`
-(rpa.py:638) if `self.norb` is consumed before its assignment there.
+**Construction-order constraint (D3 + N1) — derive AFTER folding.** This is
+subtle: `_init_interaction()` (rpa.py:195) *folds the geometry* when
+`has_sublattice` — `_reshape_geometry` replaces `param_ham["Geometry"]["norb"]`
+with `orig_norb × subvol` (rpa.py:249,268). Only afterwards does rpa.py:197 read
+`self.norb = param_ham["Geometry"]["norb"]` (the **post-fold** value), and then
+`_make_ham_trans`/`_make_ham_inter` (rpa.py:200-201) consume `self.norb`.
+
+Therefore the `norb_phys` derivation must operate on the **post-fold** value and
+must stay **after** `_init_interaction()` — *not* hoisted before it (an earlier
+draft of this spec said "hoist before"; that is wrong because it would drop the
+`× subvol` factor). `_init_interaction` and `_reshape_interaction` read raw
+`param_ham["Geometry"]["norb"]` / lattice attributes and do **not** reference
+`self.norb`, so leaving the assignment after folding introduces no dependency
+problem (verified: neither method uses `self.norb`/`self.norb_phys`).
+
+Implementation at rpa.py:197 (and the analogous `RPA._init_param` rpa.py:638 —
+verify whether its `param_ham` is folded or raw, and match):
+
+```
+geom_norb = param_ham["Geometry"]["norb"]     # post-fold (= SO_count × subvol in SO mode)
+if enable_spin_orbital:
+    require (orig SO geom_norb) even -> else fail-fast ValueError   # check on pre-fold backup
+    self.norb = geom_norb // 2                # = norb_phys × subvol
+else:
+    self.norb = geom_norb
+self.ns = 2 ; self.nd = self.norb * 2
+```
+
+The even-check targets the *original* (pre-fold) SO geom norb via
+`param_ham_orig` so the error message names the user's actual `geom.dat` value.
 
 **Why this fixes the fold path automatically.** `_reshape_interaction`'s
 `_reshape_orbit_spin` (rpa.py:295) decodes `s_ = a // norb_orig` where
@@ -95,19 +116,19 @@ SO mode.
 
 | Site | Current code | Intended dimension | Action |
 |---|---|---|---|
-| `Interaction.__init__` `rpa.py:197` | `self.norb = Geometry["norb"]` | physical | SO: `self.norb = geom_norb//2`; even-check |
-| `RPA._init_param` `rpa.py:638` | `self.norb = geometry["norb"]` | physical | SO: `self.norb = geom_norb//2`; even-check |
+| `Interaction.__init__` `rpa.py:197` | `self.norb = Geometry["norb"]` (reads **post-fold** value, after `_init_interaction` at :195) | physical (× subvol) | SO: `self.norb = post_fold_norb//2`; even-check on pre-fold backup. Keep assignment **after** `_init_interaction` (N1) |
+| `RPA._init_param` `rpa.py:638` | `self.norb = geometry["norb"]` | physical | SO: `self.norb = geom_norb//2`; even-check. Verify fold state of this `param_ham` and match |
 | `rpa.py:639-640` | `self.ns=2; self.nd=self.norb*2` | `nd = SOcount` | OK once `self.norb=norb_phys` |
 | `_init_interaction` guard `rpa.py:232` | `Geometry["norb"] > 1` | — | remove (test-first, §5) |
 | `_reshape_geometry` `rpa.py:265,268,274` | `norb = geom['norb']`; `center` sized `norb*bvol`; `geom_new['norb']=geom['norb']*bvol` | SO mode: W90 gives one center per spin-orbital → SO-count centers is correct for the *input*; verify no downstream consumer assumes physical-count centers | audit + test; expected no-op but must confirm |
 | `_reshape_interaction` `rpa.py:290` | `norb_orig = Geometry["norb"]` | SO count (for `s_=0` fold) | OK; becomes SO-count → matches UHFk |
-| `_make_ham_trans` `rpa.py:377` | `norb = self.norb` | physical | OK |
-| `_make_ham_inter` `rpa.py:466` | `norb = self.norb` | physical | OK |
+| `_make_ham_trans` (transfer) `rpa.py:377` | `norb = self.norb` | physical | OK |
+| `_make_ham_trans` (`Extern` alloc) `rpa.py:439-455` (esp. 442) | `hab_r` sized `(nx,ny,nz,norb,norb)`, `norb=self.norb`; skips spin (comment :453) | physical | OK once `self.norb=norb_phys` (N2: this block is in `_make_ham_trans`, *not* `_make_ham_inter`) |
+| `_make_ham_inter` (two-body) `rpa.py:466,473` | `norb=self.norb`, `nd=norb*ns`, tensor `(ns,norb)*4`, explicit `spin_table` | physical, ns=2 | OK once `self.norb=norb_phys` |
 | `_read_chi0q` shape checks `rpa.py:1185,1201,1218,1232` | classify `nd==self.nd`→spinful, `nd==self.norb`→spin-free | `self.nd=SOcount`, `self.norb=norb_phys` | OK once derivation fixed; add SO regression |
 | `_calc_trans_mod` `rpa.py:1390,1393` | `norb=self.norb` | physical | OK |
 | `_calc_epsilon_k` `rpa.py:1415,1448-1449` | `nd=self.nd; norb=self.norb` | nd=SOcount, norb=physical | OK |
 | `RPA._reshape_green` `rpa.py:1306-1349` (`self.norb_orig`, 1316) | `green` reshaped `(Lvol,ns,norb_orig,ns,norb_orig)` | physical (ns=2) | **Resolve D1:** `self.norb_orig` is **never assigned** in rpa.py and this method has **no caller** (only `self.lattice._reshape_green` at rpa.py:1281 is invoked). Confirm dead, then **delete `RPA._reshape_green`**; if instead it is to be revived, assign `self.norb_orig = norb_phys` in SO mode. |
-| `_make_ham_inter` `Extern`/two-body `rpa.py:442` | physical-orbital indexed allocation | physical | **Resolve D5:** specify SO-mode behavior; add test (§5) |
 
 Anything the audit finds to be physical-count-specific while reading raw
 `geom['norb']` (now SO count) gets an explicit `norb_phys` substitution.
@@ -141,8 +162,10 @@ Order of operations (TDD):
      equivalent. The `_reshape_orbit_spin` no-op argument (§3) depends on every
      interaction/transfer index being `< SO count`, so this validation is a
      correctness precondition, not just hygiene.
-   - **Extern / two-body in SO mode (D5)**: pin behavior of the
-     `_make_ham_inter` allocation (`rpa.py:442`) under the SO-count convention.
+   - **Extern / two-body in SO mode (D5)**: pin behavior of the `Extern`
+     allocation in `_make_ham_trans` (`rpa.py:439-455`) and the two-body
+     `_make_ham_inter` (`rpa.py:461+`) under the SO-count convention (both use
+     `norb=self.norb`; expected correct once `self.norb=norb_phys`).
 3. **Implement** §3/§4 until those go GREEN.
 4. **Delete** the guard only after green; keep the odd-`norb` fail-fast.
 
