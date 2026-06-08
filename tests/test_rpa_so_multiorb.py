@@ -21,14 +21,14 @@ import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
 
 
-def _run(transfer, spin_orbital, geom):
+def _run(transfer, spin_orbital, geom, subshape=(1, 1, 1)):
     info_mode = {
         "mode": "RPA",
         "param": {
             "T": 2.0,
             "filling": 0.5,
             "CellShape": [8, 1, 1],
-            "SubShape": [1, 1, 1],
+            "SubShape": list(subshape),
             "Nmat": 32,
         },
         "enable_spin_orbital": spin_orbital,
@@ -54,47 +54,44 @@ def _run(transfer, spin_orbital, geom):
     return solver, green
 
 
-class TestRPAMultiOrbitalSOSublatticeGuard(unittest.TestCase):
-    def _construct(self, cellshape, subshape):
-        info_mode = {
-            "mode": "RPA",
-            "param": {
-                "T": 2.0,
-                "filling": 0.5,
-                "CellShape": cellshape,
-                "SubShape": subshape,
-                "Nmat": 32,
-            },
-            "enable_spin_orbital": True,
-            "calc_scheme": "general",
-        }
-        info_file = {
-            "input": {
-                "path_to_input": "tests/rpa/input",
-                "interaction": {
-                    "path_to_input": "tests/rpa/input",
-                    "Geometry": "geom_so_2orb.dat",
-                    "Transfer": "transfer_so_2orb.dat",
-                },
-            },
-            "output": {"path_to_output": "tests/rpa/output"},
-        }
-        os.makedirs(info_file["output"]["path_to_output"], exist_ok=True)
-        read_io = read_input_k.QLMSkInput(info_file["input"])
-        ham = read_io.get_param("ham")
-        return solver_rpa.RPA(ham, {}, info_mode)
+class TestRPAMultiOrbitalSOSublatticeFold(unittest.TestCase):
+    """Folding (SubShape vol > 1) with multi-orbital SO is now supported."""
 
-    def test_multiorbital_so_with_subcell_folding_is_rejected(self):
-        # Genuine sub-cell folding (several supercells): unsupported -> reject.
-        with self.assertRaises(NotImplementedError):
-            self._construct([8, 1, 1], [2, 1, 1])
+    def test_subcell_folding_runs(self):
+        solver, _ = _run("transfer_so_2orb.dat", True, "geom_so_2orb.dat",
+                         subshape=(2, 1, 1))
+        self.assertEqual(solver.spin_mode, "spin-free")
 
-    def test_multiorbital_so_with_whole_cell_folding_is_rejected(self):
-        # SubShape == CellShape still folds (subvol > 1, one big supercell);
-        # this is also the default when SubShape is omitted, and must be
-        # rejected too rather than silently producing a wrong chi0q.
-        with self.assertRaises(NotImplementedError):
-            self._construct([8, 1, 1], [8, 1, 1])
+    def test_folded_chi0q_matches_unfolded(self):
+        # Physical observable must not depend on the (artificial) sublattice fold.
+        _su, g_unfold = _run("transfer_so_2orb.dat", True,
+                             "geom_so_2orb.dat", subshape=(1, 1, 1))
+        _sf, g_fold = _run("transfer_so_2orb.dat", True,
+                           "geom_so_2orb.dat", subshape=(2, 1, 1))
+        #
+        # The raw |chi0q|.sum() is NOT fold-invariant: folding by SubShape
+        # [2,1,1] moves a factor of 2 from the q-index into the orbital index
+        # (unfold shape (Nm,8,2,2,2,2) -> fold shape (Nm,4,4,4,4,4)), so the
+        # array layout and BZ grid differ. The genuinely fold-invariant physical
+        # quantity is the UNIFORM (q=0) static susceptibility per physical site:
+        # the q=0 component is the same physical point (uniform response) in both
+        # Brillouin zones, and the uniform response is independent of the choice
+        # of unit cell. We sum over all orbital pairs chi_{a,a,b,b}(q=0) (over
+        # both spin-orbitals and, in the folded supercell, both sublattice
+        # sites -- capturing the full uniform response of the cell) and divide
+        # by the number of physical sites in the cell (1 unfolded, 2 folded).
+        def uniform_q0_per_site(chi0q, n_sites):
+            no = chi0q.shape[2]
+            s = 0j
+            for a in range(no):
+                for b in range(no):
+                    s += chi0q[:, 0, a, a, b, b].sum()
+            return s / n_sites
+
+        u = uniform_q0_per_site(g_unfold["chi0q"], 1)
+        f = uniform_q0_per_site(g_fold["chi0q"], 2)
+        self.assertAlmostEqual(u.real, f.real, places=10)
+        self.assertAlmostEqual(u.imag, f.imag, places=10)
 
 
 class TestRPAMultiOrbitalSO(unittest.TestCase):
