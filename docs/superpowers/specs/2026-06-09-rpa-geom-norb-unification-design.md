@@ -2,8 +2,17 @@
 
 **Date:** 2026-06-09
 **Branch:** `feature/flex-approximation`
-**Status:** APPROVED — Codex GO (5th review pass). Findings 7→2→3→1→GO across
-passes (D1-D7, N1/N2, P1/P3/P4, B1 all resolved). Ready for writing-plans.
+**Status:** IMPLEMENTED (2026-06-09) — plan
+`docs/superpowers/plans/2026-06-09-rpa-geom-norb-unification.md` executed
+subagent-driven (commits d66e982..4269ec5); 405 tests pass; final Codex review
+GO. Design approval history below: findings 7→2→3→1→GO across 5 spec-review
+passes (D1-D7, N1/N2, P1/P3/P4, B1 all resolved).
+
+**Follow-up (separate task, out of scope here):** correct the pre-existing
+`RPA._read_trans_mod` mis-wire — `self.lattice._reshape_green` → `self._reshape_green`
+— and assign `self.norb_orig = norb_phys`, then replace the B1 narrow guard with
+a real `trans_mod` + sublattice (+SO) regression test. The B1 guard currently
+fails-fast on `trans_mod` + sublattice (any mode).
 
 **Implementation cautions (Codex, priority order):**
 1. `_reshape_interaction` fold-stride split (P4) is the **highest correctness
