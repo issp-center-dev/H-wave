@@ -136,5 +136,30 @@ class TestTransModSublatticeSupported(unittest.TestCase):
         self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
 
 
+class TestTransModSOMultiOrbitalGuard(unittest.TestCase):
+    def _solver(self, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": list(subshape), "Nmat": 32},
+            "enable_spin_orbital": True,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom_so_2orb.dat",
+                                               "Transfer": "transfer_so_2orb.dat"}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_so_multiorbital_trans_mod_is_rejected(self):
+        solver = self._solver(subshape=(1, 1, 1))
+        with self.assertRaises(NotImplementedError):
+            solver._read_trans_mod("tests/rpa/input/whatever.npz")
+
+
 if __name__ == "__main__":
     unittest.main()

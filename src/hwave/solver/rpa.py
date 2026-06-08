@@ -1296,6 +1296,18 @@ class RPA:
         """
         logger.debug(">>> RPA._read_trans_mod")
 
+        if self.ham_info.enable_spin_orbital and self.norb_orig > 1:
+            # UHFk writes SO trans_mod in interleaved (2*orb+spin) order, but
+            # _read_trans_mod/_reshape_green consume it as spin-block. They differ
+            # for >1 physical orbital, so reject rather than silently mix orbitals.
+            # (norb_phys=1 is harmless: interleaved == spin-block.) Follow-up:
+            # remap interleaved->spin-block like _make_ham_trans does for Transfer.
+            raise NotImplementedError(
+                "spin-orbital trans_mod with more than one physical orbital is "
+                "not yet supported (interleaved vs spin-block index convention); "
+                "norb_phys=1 spin-orbital and non-spin-orbital trans_mod are "
+                "supported.")
+
         try:
             logger.info("read trans_mod from {}".format(file_name))
             data = np.load(file_name)
