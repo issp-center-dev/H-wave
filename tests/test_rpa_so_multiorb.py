@@ -21,7 +21,7 @@ import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
 
 
-def _run(transfer, spin_orbital, geom, subshape=(1, 1, 1)):
+def _run(transfer, spin_orbital, geom, subshape=(1, 1, 1), interaction=None):
     info_mode = {
         "mode": "RPA",
         "param": {
@@ -34,14 +34,17 @@ def _run(transfer, spin_orbital, geom, subshape=(1, 1, 1)):
         "enable_spin_orbital": spin_orbital,
         "calc_scheme": "general",
     }
+    inter = {
+        "path_to_input": "tests/rpa/input",
+        "Geometry": geom,
+        "Transfer": transfer,
+    }
+    if interaction:
+        inter.update(interaction)
     info_file = {
         "input": {
             "path_to_input": "tests/rpa/input",
-            "interaction": {
-                "path_to_input": "tests/rpa/input",
-                "Geometry": geom,
-                "Transfer": transfer,
-            },
+            "interaction": inter,
         },
         "output": {"path_to_output": "tests/rpa/output"},
     }
@@ -90,6 +93,32 @@ class TestRPAMultiOrbitalSOSublatticeFold(unittest.TestCase):
 
         u = uniform_q0_per_site(g_unfold["chi0q"], 1)
         f = uniform_q0_per_site(g_fold["chi0q"], 2)
+        self.assertAlmostEqual(u.real, f.real, places=10)
+        self.assertAlmostEqual(u.imag, f.imag, places=10)
+
+    def test_folded_chiq_with_interaction_matches_unfolded(self):
+        # chi0q is the bare (interaction-independent) susceptibility, so the
+        # chi0q test above never exercises the interaction-fold path
+        # (_reshape_orbit_, the "P4" stride). The interacting RPA susceptibility
+        # chiq DOES depend on the folded interaction Hamiltonian, so compare it
+        # instead. Same fold-invariant construction: the q=0 uniform static
+        # susceptibility per physical site is independent of the sublattice fold.
+        inter = {"CoulombIntra": "coulombintra_2orb.dat"}
+        _su, g_unfold = _run("transfer_so_2orb.dat", True, "geom_so_2orb.dat",
+                             subshape=(1, 1, 1), interaction=inter)
+        _sf, g_fold = _run("transfer_so_2orb.dat", True, "geom_so_2orb.dat",
+                           subshape=(2, 1, 1), interaction=inter)
+
+        def uniform_q0_per_site(chiq, n_sites):
+            no = chiq.shape[2]
+            s = 0j
+            for a in range(no):
+                for b in range(no):
+                    s += chiq[:, 0, a, a, b, b].sum()
+            return s / n_sites
+
+        u = uniform_q0_per_site(g_unfold["chiq"], 1)
+        f = uniform_q0_per_site(g_fold["chiq"], 2)
         self.assertAlmostEqual(u.real, f.real, places=10)
         self.assertAlmostEqual(u.imag, f.imag, places=10)
 
