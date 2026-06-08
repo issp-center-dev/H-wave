@@ -23,6 +23,7 @@ from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
 
 import hwave
 import hwave.qlmsio.wan90 as wan90
+from hwave.solver.rpa import validate_chi0q_index_convention
 
 logger = logging.getLogger("hwave_sc")
 
@@ -51,6 +52,9 @@ def _load_chi0q(input_dict):
 
     logger.info("Loading chi0q from {}".format(file_name))
     data = np.load(file_name)
+    enable_spin_orbital = input_dict.get("mode", {}).get(
+        "enable_spin_orbital", False)
+    validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
     return chi0q

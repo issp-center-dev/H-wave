@@ -24,6 +24,50 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 
+
+def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
+    """Reject a stored chi0q whose spin-orbital index convention is unknown.
+
+    RPA writes ``index_convention="spin_block"`` (spin*norb+orb) into its
+    chi0q.npz / chiq.npz. UHFk instead uses the interleaved (2*orb+spin)
+    ordering, and chi0q files produced before the SO convention fix
+    (commit 9dd9a21) carry no ``index_convention`` key at all. In spin-orbital
+    mode the two orderings differ, so silently accepting such a file would mix
+    conventions and corrupt the result. Outside spin-orbital mode the
+    convention is irrelevant and this is a no-op.
+
+    Parameters
+    ----------
+    data : Mapping
+        Loaded npz (e.g. ``numpy.load(...)``); must support ``in`` and ``[]``.
+    enable_spin_orbital : bool
+        Whether the consuming calculation runs in spin-orbital mode.
+    file_name : str, optional
+        Source path, used only for the error message.
+
+    Raises
+    ------
+    ValueError
+        If spin-orbital mode is on and the file lacks a ``spin_block``
+        ``index_convention`` marker.
+    """
+    if not enable_spin_orbital:
+        return
+    if "index_convention" not in data:
+        raise ValueError(
+            "chi0q file '{}' lacks an 'index_convention' marker. It predates "
+            "the spin-orbital index convention fix and may use the interleaved "
+            "(2*orb+spin) ordering; regenerate it with the current RPA solver "
+            "(which writes index_convention='spin_block').".format(file_name)
+        )
+    conv = str(data["index_convention"])
+    if conv != "spin_block":
+        raise ValueError(
+            "chi0q file '{}' has index_convention='{}', but spin-orbital mode "
+            "requires 'spin_block' (spin*norb+orb). Regenerate it with the "
+            "current RPA solver.".format(file_name, conv)
+        )
+
 class Lattice:
     """
     Lattice parameters:
@@ -1126,6 +1170,9 @@ class RPA:
         except Exception as e:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
+
+        validate_chi0q_index_convention(
+            data, self.ham_info.enable_spin_orbital, file_name)
 
         # check size
         if self.calc_scheme == "general":
