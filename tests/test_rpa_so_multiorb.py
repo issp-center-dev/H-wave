@@ -54,6 +54,41 @@ def _run(transfer, spin_orbital, geom):
     return solver, green
 
 
+class TestRPAMultiOrbitalSOSublatticeGuard(unittest.TestCase):
+    def test_multiorbital_so_with_sublattice_is_rejected(self):
+        # The sublattice-folding path for >=2-orbital spin-orbital input is not
+        # handled (its index convention is entangled with a separate solver
+        # difference); it must fail loudly rather than return a wrong chi0q.
+        info_mode = {
+            "mode": "RPA",
+            "param": {
+                "T": 2.0,
+                "filling": 0.5,
+                "CellShape": [8, 1, 1],
+                "SubShape": [2, 1, 1],  # real sub-cell folding
+                "Nmat": 32,
+            },
+            "enable_spin_orbital": True,
+            "calc_scheme": "general",
+        }
+        info_file = {
+            "input": {
+                "path_to_input": "tests/rpa/input",
+                "interaction": {
+                    "path_to_input": "tests/rpa/input",
+                    "Geometry": "geom_2orb.dat",
+                    "Transfer": "transfer_so_2orb.dat",
+                },
+            },
+            "output": {"path_to_output": "tests/rpa/output"},
+        }
+        os.makedirs(info_file["output"]["path_to_output"], exist_ok=True)
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        with self.assertRaises(NotImplementedError):
+            solver_rpa.RPA(ham, {}, info_mode)
+
+
 class TestRPAMultiOrbitalSO(unittest.TestCase):
     def test_spin_independent_2orbital_so_is_spin_free(self):
         solver, _ = _run("transfer_so_2orb.dat", True, "geom_2orb.dat")
