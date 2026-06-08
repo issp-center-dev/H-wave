@@ -46,7 +46,20 @@ Parameters
 
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.
-  If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` and the spin index :math:`s` by :math:`\alpha + N_\text{orb} \cdot s`.
+  If it is set to ``true``, the orbital indices in the Transfer term use the interleaved
+  spin-orbital convention: the combined index is :math:`2 \alpha + s`, where
+  :math:`\alpha` is the physical-orbital index (0-based) and :math:`s \in \{0, 1\}`
+  is the spin index.
+
+  In spin-orbital mode, the ``Norbit`` value in the geometry file (``geom.dat``) is
+  the **spin-orbital count** (= 2 × the number of physical orbitals = Wannier90
+  ``num_wann``), the same convention as UHFk.
+
+  .. note::
+
+     **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
+     spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
+     ``Norbit``.
 
 - ``calc_scheme`` (default value is ``"auto"``)
 

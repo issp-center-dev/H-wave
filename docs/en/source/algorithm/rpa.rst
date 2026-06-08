@@ -290,6 +290,15 @@ in the input TOML file. In this mode:
   ``Ising``, ``PairHop``) are supported.
 - Block-diagonal optimization is applied automatically when possible.
 - The ``squashed`` calculation scheme is also supported for spin-orbital systems.
+- The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital
+  count** (= 2 × the number of physical orbitals = Wannier90 ``num_wann``), the same
+  convention as UHFk.
+
+.. note::
+
+   **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
+   spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
+   ``Norbit``.
 
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

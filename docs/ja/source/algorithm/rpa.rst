@@ -273,6 +273,13 @@ H-waveはスピンと軌道のインデックスが
   ``Ising`` 、 ``PairHop`` ）がサポートされます。
 - 可能な場合、ブロック対角化最適化が自動的に適用されます。
 - ``squashed`` 計算スキームもスピン軌道系で利用可能です。
+- 幾何情報ファイル（``geom.dat``）の ``Norbit`` はスピン軌道の総数
+  （= 物理軌道数 × 2 = Wannier90 の ``num_wann``）を表し、UHFk と同じ規約です。
+
+.. note::
+
+   **移行上の注意（RPA）：** スピン軌道入力の幾何 ``Norbit`` はスピン軌道数になりました。
+   既存の RPA スピン軌道計算の ``geom.dat`` の ``Norbit`` は2倍にしてください。
 
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
