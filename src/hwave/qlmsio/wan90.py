@@ -189,16 +189,72 @@ def read_w90(name_in):
     if nr % nints_per_line != 0:
         skip_line += 1
 
-    mat_size = len(l_strip[2 + skip_line:])
+    # Degeneracy (ndegen) block: nr integers, 15 per line. In the Wannier90
+    # convention H(k) = sum_R exp(i k.R) H(R) / ndegen(R), so each matrix
+    # element must be divided by the degeneracy of its R-point. H-wave's own
+    # "wannier90-like" format is sparse (only nonzero entries are listed) and
+    # always uses degeneracy 1, in which case this division is a no-op; for a
+    # dense standard Wannier90 hr.dat the R-points appear in file order, so the
+    # i-th distinct R-vector carries ndegen[i].
+    ndegen = []
+    for line in l_strip[2:2 + skip_line]:
+        ndegen.extend(int(x) for x in line.split())
+    if len(ndegen) != nr:
+        logger.error(
+            "read_w90: degeneracy count mismatch in {}: expected={}, found={}"
+            .format(name_in, nr, len(ndegen)))
+        exit(1)
+
+    # When every degeneracy is 1 the division is a no-op, which covers H-wave's
+    # own files; in that case nr may be a placeholder and the number of listed
+    # R-points is left unconstrained. Only a genuine Wannier90 file (some
+    # ndegen != 1) needs the positional R -> ndegen[i] mapping, which in turn
+    # requires a dense listing.
+    all_unit = all(d == 1 for d in ndegen)
+
     data = {}
-    for idx, line in enumerate(l_strip[2 + skip_line:]):
+    deg_of_r = {}  # irvec -> ndegen, by order of first appearance (non-unit only)
+    ndup = 0
+    for line in l_strip[2 + skip_line:]:
         values = line.split()
         # if data is empty, break
         if len(values) == 0:
             break
         irvec = (int(values[0]), int(values[1]), int(values[2]))
         orbvec = (int(values[3]) - 1, int(values[4]) - 1)
-        data[(irvec, orbvec)] = float(values[5]) + 1J * float(values[6])
+
+        if all_unit:
+            deg = 1
+        else:
+            # The i-th distinct R-vector (in file order) carries ndegen[i].
+            if irvec not in deg_of_r:
+                idx_r = len(deg_of_r)
+                if idx_r >= len(ndegen):
+                    logger.error(
+                        "read_w90: more distinct R-points than declared (nr={}) in {}"
+                        .format(nr, name_in))
+                    exit(1)
+                deg_of_r[irvec] = ndegen[idx_r]
+            deg = deg_of_r[irvec]
+
+        key = (irvec, orbvec)
+        if key in data:
+            ndup += 1
+        data[key] = (float(values[5]) + 1J * float(values[6])) / deg
+
+    # Reject duplicate (R, orbital) entries, matching the strictness of the
+    # real-space reader (read_input.py).
+    if ndup > 0:
+        logger.error("read_w90: duplicate (R, orbital) entries found in {}".format(name_in))
+        exit(1)
+
+    # With non-unit degeneracies the positional mapping requires every R-grid
+    # point to be listed (dense file); reject a sparse listing rather than guess.
+    if not all_unit and len(deg_of_r) != nr:
+        logger.error(
+            "read_w90: non-unit degeneracies require a dense file listing all "
+            "{} R-points (found {}) in {}".format(nr, len(deg_of_r), name_in))
+        exit(1)
 
     return data
 

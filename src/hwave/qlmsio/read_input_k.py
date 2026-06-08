@@ -62,7 +62,7 @@ class QLMSkInput():
         Read Green's function indices from file
     """
 
-    valid_namelist = [s.lower() for s in ["path_to_input", "Geometry", "Transfer", "CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop", "Extern"]]
+    valid_namelist = [s.lower() for s in ["path_to_input", "Geometry", "Transfer", "Coulomb", "CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop", "Extern"]]
 
     def __init__(self, info_inputfile, solver_type="UHFk"):
         logger.debug(">>> QLMSkInput init")

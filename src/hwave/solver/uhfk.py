@@ -404,11 +404,14 @@ class UHFk(solver_base):
                 aa = _reshape_orbit(alpha,(x0,y0,z0))
                 bb = _reshape_orbit(beta, (xr1,yr1,zr1))
 
-                # check wrap-around: maybe overwritten by duplicate entries
+                # Wrap-around can map distinct original R-vectors onto the same
+                # folded (ir, ov) key (e.g. when the hopping range reaches the
+                # cell size, allowed under relax_checks); accumulate so such
+                # contributions are summed rather than overwritten.
                 ir = (_round(xx1, nx), _round(yy1, ny), _round(zz1, nz))
                 ov = (aa, bb)
 
-                ham_new[(ir, ov)] = v
+                ham_new[(ir, ov)] = ham_new.get((ir, ov), 0.0) + v
 
         return ham_new
 
@@ -1078,6 +1081,16 @@ class UHFk(solver_base):
         # Coulomb Intra and Coulomb Inter
         #----------------
         if 'Coulomb' in self.param_ham.keys():
+            # The aggregate 'Coulomb' input already provides both the intra and
+            # inter parts; combining it with explicit CoulombIntra/CoulombInter
+            # is ambiguous (the explicit terms would be silently dropped).
+            if ('CoulombIntra' in self.param_ham.keys()
+                    or 'CoulombInter' in self.param_ham.keys()):
+                logger.error(
+                    "Coulomb cannot be specified together with "
+                    "CoulombIntra or CoulombInter")
+                exit(1)
+
             # assume zvo_ur.dat
             # divide into r=0 (coulomb intra) and r!=0 (coulomb inter)
 
