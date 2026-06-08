@@ -1291,6 +1291,14 @@ class RPA:
         """
         logger.debug(">>> RPA._read_trans_mod")
 
+        if self.lattice.has_sublattice:
+            # Known pre-existing gap (since 2023): the sublattice reshape path
+            # calls a non-existent Lattice._reshape_green. Fail fast instead of
+            # raising AttributeError mid-read. Tracked as a separate follow-up.
+            raise NotImplementedError(
+                "trans_mod input combined with sublattice folding "
+                "(SubShape volume > 1) is not yet supported in RPA.")
+
         try:
             logger.info("read trans_mod from {}".format(file_name))
             data = np.load(file_name)

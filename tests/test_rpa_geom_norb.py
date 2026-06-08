@@ -96,5 +96,30 @@ class TestReshapeInteractionStride(unittest.TestCase):
         self.assertIn(((0, 0, 0), (3, 3)), out)
 
 
+class TestTransModSublatticeGuard(unittest.TestCase):
+    def _solver(self, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": list(subshape), "Nmat": 32},
+            "enable_spin_orbital": False,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom.dat",
+                                               "Transfer": "transfer.dat"}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_trans_mod_with_sublattice_is_rejected(self):
+        solver = self._solver(subshape=(2, 1, 1))
+        with self.assertRaises(NotImplementedError):
+            solver._read_trans_mod("tests/rpa/input/transfer.dat")
+
+
 if __name__ == "__main__":
     unittest.main()
