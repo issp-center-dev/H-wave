@@ -219,19 +219,18 @@ This is **orthogonal to geom-norb unification**: it breaks for non-SO and
 (§5) does not newly expose it. But the spec must not let guard removal advertise
 "SO + sublattice + multi-orbital supported" while this sub-path crashes.
 
-**Decision (to confirm with user) — recommended: narrow-guard + defer.**
-- **Option B1-guard (recommended):** add a focused fail-fast — `trans_mod`
-  provided together with `has_sublattice` raises a clear `NotImplementedError`
-  pointing at this known gap — and track the real fix as a separate follow-up
-  issue. Keeps this spec scoped to the chi0q core path.
-- **Option B1-fix:** correct the mis-wire to `self._reshape_green(tab_r)`,
-  assign `self.norb_orig = norb_phys` (SO) / `norb` (non-SO), and add a
-  `trans_mod` + sublattice (+ SO) regression test. Larger scope; pulls a 2023
-  bug into this change.
+**Decision (confirmed 2026-06-09): B1-guard — narrow fail-fast + defer.**
+Add a focused guard in `_read_trans_mod` (or `read_init`): when `trans_mod` is
+provided together with `self.lattice.has_sublattice`, raise a clear
+`NotImplementedError` naming this known gap (the `self.lattice._reshape_green`
+mis-wire). Add a test asserting the fail-fast fires. Track the real fix
+(correct the mis-wire to `self._reshape_green`, assign `self.norb_orig`, add a
+trans_mod+sublattice regression) as a **separate follow-up issue**, out of scope
+here. This keeps the spec scoped to the chi0q core path while guaranteeing guard
+removal in §5 leaves **no reachable `AttributeError`** in the SO+sublattice
+space.
 
-Either way: **do not delete `RPA._reshape_green`** (corrects D1). Whichever
-option, it becomes a gate item — guard removal in §5 must not leave a reachable
-`AttributeError` in the SO + sublattice space.
+**Do not delete `RPA._reshape_green`** (corrects D1) — the follow-up needs it.
 
 ## 6. Fixture migration
 
