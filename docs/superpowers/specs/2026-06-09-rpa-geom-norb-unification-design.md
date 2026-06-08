@@ -90,24 +90,48 @@ verify whether its `param_ham` is folded or raw, and match):
 ```
 geom_norb = param_ham["Geometry"]["norb"]     # post-fold (= SO_count × subvol in SO mode)
 if enable_spin_orbital:
-    require (orig SO geom_norb) even -> else fail-fast ValueError   # check on pre-fold backup
+    # even-check target (P1): param_ham_orig exists ONLY when has_sublattice
+    # (rpa.py:240-242); otherwise use the current (unfolded) geom norb.
+    check_norb = param_ham_orig["Geometry"]["norb"] if has_sublattice else geom_norb
+    require check_norb even -> else fail-fast ValueError naming geom.dat value
     self.norb = geom_norb // 2                # = norb_phys × subvol
 else:
     self.norb = geom_norb
 self.ns = 2 ; self.nd = self.norb * 2
 ```
 
-The even-check targets the *original* (pre-fold) SO geom norb via
-`param_ham_orig` so the error message names the user's actual `geom.dat` value.
+**`RPA._init_param` fold-state contract (P3).** `RPA.__init__` constructs the
+`Interaction` (rpa.py:579) — which mutates the *shared* `param_ham["Geometry"]`
+in place when `has_sublattice` — *before* calling `_init_param` (rpa.py:583).
+So `_init_param` (rpa.py:638) reads the **post-fold** geom norb when
+`has_sublattice`, and the **raw** value otherwise — the same value
+`Interaction` saw. Apply the identical SO derivation there
+(`self.norb = geom_norb // 2` in SO mode), keeping the two paths consistent by
+construction (shared mutated dict). State this explicitly; do not leave it as
+"verify and match".
 
-**Why this fixes the fold path automatically.** `_reshape_interaction`'s
+**Two distinct orbital-index spaces (the root of P4).** RPA mixes two index
+conventions and unification must respect both:
+- **Transfer** is **spin-orbital-indexed** (file index `2*orb+spin`, range
+  `[0, SO_count)`); its fold stride is the SO count.
+- **Two-body interactions and Extern** are **physical-orbital-indexed**
+  (`_make_ham_inter` writes `a,b` into the `norb=self.norb` physical axis with
+  spin carried explicitly by `spin_table`, rpa.py:491-497); their fold stride
+  is `norb_phys = SO_count/2`.
+
+Before unification (geom norb = physical) these happened to coincide for the
+only unguarded SO case (`norb_phys=1`). After unification (geom norb = SO count)
+they diverge by a factor of 2, so `_reshape_interaction` must use the right
+stride per term — see §4 (P4).
+
+**Why this fixes the Transfer fold path.** `_reshape_interaction`'s
 `_reshape_orbit_spin` (rpa.py:295) decodes `s_ = a // norb_orig` where
 `norb_orig = Geometry["norb"]`. Under the new convention `norb_orig` = SO count,
-and every interaction spin-orbital index `a` satisfies `a < SO count`, so
+and every Transfer spin-orbital index `a` satisfies `a < SO count`, so
 `s_ = 0` always — the helper collapses to the opaque-generalized-orbital fold,
 **identical to UHFk's verified behavior** (uhfk.py:372, where `norb_orig` is
-already the SO count). The divergence disappears, which is the precondition for
-removing the guard.
+already the SO count). The divergence disappears for Transfer. The non-Transfer
+stride is handled separately (P4).
 
 ## 4. Audit table — `rpa.py` `norb` / `nd` / raw-geom sites
 
@@ -121,7 +145,7 @@ SO mode.
 | `rpa.py:639-640` | `self.ns=2; self.nd=self.norb*2` | `nd = SOcount` | OK once `self.norb=norb_phys` |
 | `_init_interaction` guard `rpa.py:232` | `Geometry["norb"] > 1` | — | remove (test-first, §5) |
 | `_reshape_geometry` `rpa.py:265,268,274` | `norb = geom['norb']`; `center` sized `norb*bvol`; `geom_new['norb']=geom['norb']*bvol` | SO mode: W90 gives one center per spin-orbital → SO-count centers is correct for the *input*; verify no downstream consumer assumes physical-count centers | audit + test; expected no-op but must confirm |
-| `_reshape_interaction` `rpa.py:290` | `norb_orig = Geometry["norb"]` | SO count (for `s_=0` fold) | OK; becomes SO-count → matches UHFk |
+| `_reshape_interaction` `rpa.py:284-297` (fold stride `norb_orig`, :290) | `norb_orig = param_ham_orig["Geometry"]["norb"]` used as fold stride for **all** terms | **per-term, differs (P4)** | **Blocker P4 — split the stride.** Transfer is SO-indexed → stride = SO count (pre-fold geom norb). Two-body / Extern are **physical-indexed** (`_make_ham_inter` writes `a,b` into the `norb=self.norb` physical axis, rpa.py:491-497) → stride must be `norb_phys = geom_norb//2` in SO mode, else folded indices overrun `self.norb=norb_phys·subvol`. Currently `_reshape_interaction` is called with `enable_spin_orbital=True` only for Transfer (rpa.py:252) and `False` for the rest (rpa.py:255), so distinguish via the solver's `self.enable_spin_orbital`: `stride = geom_norb` for the SO-indexed Transfer call, `geom_norb//2` for non-Transfer when `self.enable_spin_orbital`, `geom_norb` otherwise (non-SO, unchanged). `param_ham_orig` always exists here (only reached inside the `has_sublattice` branch). |
 | `_make_ham_trans` (transfer) `rpa.py:377` | `norb = self.norb` | physical | OK |
 | `_make_ham_trans` (`Extern` alloc) `rpa.py:439-455` (esp. 442) | `hab_r` sized `(nx,ny,nz,norb,norb)`, `norb=self.norb`; skips spin (comment :453) | physical | OK once `self.norb=norb_phys` (N2: this block is in `_make_ham_trans`, *not* `_make_ham_inter`) |
 | `_make_ham_inter` (two-body) `rpa.py:466,473` | `norb=self.norb`, `nd=norb*ns`, tensor `(ns,norb)*4`, explicit `spin_table` | physical, ns=2 | OK once `self.norb=norb_phys` |
@@ -166,6 +190,13 @@ Order of operations (TDD):
      allocation in `_make_ham_trans` (`rpa.py:439-455`) and the two-body
      `_make_ham_inter` (`rpa.py:461+`) under the SO-count convention (both use
      `norb=self.norb`; expected correct once `self.norb=norb_phys`).
+   - **Multi-orbital SO + sublattice + two-body interaction fold (P4)**: the
+     key newly-unguarded path. A `norb_phys ≥ 2` SO system with a two-body term
+     (e.g. CoulombInter) **and** `SubShape != [1,1,1]` must give the same
+     `chi0q` folded vs unfolded. This is the test that catches the
+     `_reshape_interaction` physical-vs-SO stride bug (P4); it must be RED
+     before the stride split and GREEN after. Without it the guard removal is
+     unsafe.
 3. **Implement** §3/§4 until those go GREEN.
 4. **Delete** the guard only after green; keep the odd-`norb` fail-fast.
 
@@ -240,3 +271,7 @@ CHANGELOG / migration note.
   if revived, bind `self.norb_orig = norb_phys`.
 - **Implementation must re-verify every audit-table line number** before
   writing tasks (D2 showed two stale citations in the first draft).
+- **Physical-vs-SO fold stride (P4)** is the highest-risk item: the two-body
+  interaction fold stride must be `norb_phys`, not the SO count. Gated by the
+  §5 multi-orbital SO + sublattice + two-body invariance test — do not remove
+  the guard until it is GREEN.
