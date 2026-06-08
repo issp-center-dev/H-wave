@@ -226,6 +226,10 @@ class Interaction:
             orig_norb = post_fold_norb
         self.norb = _so_physical_norb(post_fold_norb, self.enable_spin_orbital,
                                       check_norb=orig_norb, source="Geometry")
+        # Pre-fold physical orbital count (per ORIGINAL cell). Equals self.norb
+        # without sublattice; under folding self.norb = norb_orig * subvol.
+        # Reused by RPA._reshape_green to decode the folded orbital index.
+        self.norb_orig = _so_physical_norb(orig_norb, self.enable_spin_orbital)
 
         # create hamiltonian
         self._make_ham_trans()
@@ -660,6 +664,7 @@ class RPA:
         # Stay consistent with the Interaction's physical-orbital count
         # (already SO-halved and validated); avoids re-deriving / re-checking.
         self.norb = self.ham_info.norb
+        self.norb_orig = self.ham_info.norb_orig
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
@@ -1291,14 +1296,6 @@ class RPA:
         """
         logger.debug(">>> RPA._read_trans_mod")
 
-        if self.lattice.has_sublattice:
-            # Known pre-existing gap (since 2023): the sublattice reshape path
-            # calls a non-existent Lattice._reshape_green. Fail fast instead of
-            # raising AttributeError mid-read. Tracked as a separate follow-up.
-            raise NotImplementedError(
-                "trans_mod input combined with sublattice folding "
-                "(SubShape volume > 1) is not yet supported in RPA.")
-
         try:
             logger.info("read trans_mod from {}".format(file_name))
             data = np.load(file_name)
@@ -1310,7 +1307,7 @@ class RPA:
 
         if self.lattice.has_sublattice:
             # use reshape green to convert layout
-            tab_r = self.lattice._reshape_green(tab_r)
+            tab_r = self._reshape_green(tab_r)
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol

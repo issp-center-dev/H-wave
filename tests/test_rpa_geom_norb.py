@@ -96,7 +96,11 @@ class TestReshapeInteractionStride(unittest.TestCase):
         self.assertIn(((0, 0, 0), (3, 3)), out)
 
 
-class TestTransModSublatticeGuard(unittest.TestCase):
+class TestTransModSublatticeSupported(unittest.TestCase):
+    """trans_mod + sublattice folding is now supported (was a NotImplemented
+    guard over a pre-existing 2023 mis-wire; see test_rpa_trans_mod.py for the
+    folded-vs-unfolded chiq invariance gate)."""
+
     def _solver(self, subshape):
         import hwave.qlmsio.read_input_k as read_input_k
         info_mode = {
@@ -115,10 +119,21 @@ class TestTransModSublatticeGuard(unittest.TestCase):
         ham = read_io.get_param("ham")
         return solver_rpa.RPA(ham, {}, info_mode)
 
-    def test_trans_mod_with_sublattice_is_rejected(self):
+    def test_trans_mod_with_sublattice_folds(self):
+        import tempfile
         solver = self._solver(subshape=(2, 1, 1))
-        with self.assertRaises(NotImplementedError):
-            solver._read_trans_mod("tests/rpa/input/transfer.dat")
+        # geom.dat is norb=1 (non-SO): nd0 = ns*norb_orig = 2, cellvol = 8.
+        ns, norb_orig, cellvol = 2, 1, 8
+        nd0 = ns * norb_orig
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((cellvol, nd0, nd0))
+        tab = (a + a.transpose(0, 2, 1)) * 0.5  # symmetric (real Hermitian)
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=tab)
+            tab_k = solver._read_trans_mod(fn)  # must NOT raise
+        # folded supercell: nvol = 4, nd = norb*subvol*ns = 1*2*2 = 4
+        self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
 
 
 if __name__ == "__main__":
