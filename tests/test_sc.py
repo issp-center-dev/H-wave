@@ -355,6 +355,44 @@ class TestKernel(unittest.TestCase):
             # (~1e-16), far below the suite's 1e-8 tolerance.
             np.testing.assert_allclose(via_op, ref, rtol=1e-13, atol=1e-13)
 
+    def test_matmat_matches_columnwise_matvec(self):
+        """Batched matmat equals column-by-column matvec to machine precision.
+
+        The subspace eigensolver applies the kernel to a whole work block at
+        once via matmat (one batched FFT) instead of column-by-column. This
+        must be numerically identical to applying matvec to each column. A
+        wrong batch/FFT-axis layout would produce a large discrepancy here.
+        Checked for both simple (5-d vertex) and general (7-d vertex) modes,
+        with k > 1 random columns.
+        """
+        norb = 2
+        Nx, Ny, Nz = 4, 4, 1
+        vec_size = norb * norb * Nx * Ny * Nz
+        k = 7
+        rng = np.random.default_rng(2024)
+
+        def cplx(*shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape))
+
+        G2 = cplx(norb, norb, norb, norb, Nx, Ny, Nz)
+        # mix of real and complex columns (subspace iteration uses real V)
+        V = rng.standard_normal((vec_size, k))
+        Vc = cplx(vec_size, k)
+
+        for V_q in (cplx(norb, norb, Nx, Ny, Nz),
+                    cplx(norb, norb, norb, norb, Nx, Ny, Nz)):
+            A, n = _make_kernel_operator(V_q, G2, norb, Nx, Ny, Nz)
+            self.assertEqual(n, vec_size)
+            for B in (V, Vc):
+                ref = np.column_stack(
+                    [A.matvec(B[:, j]) for j in range(k)])
+                batched = A.matmat(B)
+                self.assertEqual(batched.shape, ref.shape)
+                # At most last-ULP einsum reduction-order differences from
+                # multi-threaded BLAS; far below the suite's 1e-8 tolerance.
+                np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-12)
+
 
 class TestInitializeGap(unittest.TestCase):
     """Test gap function initialization."""

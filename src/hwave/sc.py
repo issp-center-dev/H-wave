@@ -1310,7 +1310,39 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
         # complex; projecting to real would discard physical components.
         return (-sigma_new).ravel()
 
-    A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=complex)
+    def matmat(B):
+        # Batched form of matvec: apply the SAME kernel to every column of the
+        # (vec_size, k) block B in a single FFT, instead of column-by-column.
+        # The batch/column axis is appended as the LAST axis so the spatial FFT
+        # axes keep their absolute positions (2, 3, 4) and the precomputed
+        # V_r / G2_pre (which have no column axis) broadcast over it.
+        B = np.asarray(B)
+        if B.ndim == 1:
+            return matvec(B)
+        k = B.shape[1]
+        # (norb, norb, Nx, Ny, Nz, k)
+        sigma = B.reshape(norb, norb, Nx, Ny, Nz, k)
+        sigma_flat = sigma.reshape(norb * norb, nvol, k)
+
+        # G2Sigma contraction (z = column/batch axis, contracted independently)
+        G2Sigma = np.einsum('iljs,jsz->ilsz', G2_pre, sigma_flat).reshape(
+            norb, norb, Nx, Ny, Nz, k)
+
+        if is_simple:
+            G2Sigma_r = ifftn(G2Sigma, axes=(2, 3, 4))
+            Sigma_r = V_r[..., np.newaxis] * G2Sigma_r
+            sigma_new = fftn(Sigma_r, axes=(2, 3, 4))
+        else:
+            F_r = ifftn(G2Sigma, axes=(2, 3, 4))
+            F_r_flat = F_r.reshape(norb * norb, nvol, k)
+            sigma_r = np.einsum('ijls,jsz->ilsz', V_r_flat, F_r_flat).reshape(
+                norb, norb, Nx, Ny, Nz, k)
+            sigma_new = fftn(sigma_r, axes=(2, 3, 4))
+
+        return (-sigma_new).reshape(vec_size, k)
+
+    A = LinearOperator((vec_size, vec_size), matvec=matvec, matmat=matmat,
+                       dtype=complex)
     return A, vec_size
 
 
@@ -1693,10 +1725,10 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     eigenvalues_old = np.zeros(num_ev, dtype=complex)
 
     for iteration in range(max_iter):
-        # Apply kernel to all vectors: W = A @ V (kernel may be complex)
-        W = np.zeros((vec_size, n_work), dtype=complex)
-        for j in range(n_work):
-            W[:, j] = A.matvec(V[:, j])
+        # Apply kernel to all vectors at once: W = A @ V (kernel may be
+        # complex). matmat batches all columns into a single FFT (numerically
+        # identical to the per-column matvec).
+        W = A.matmat(V)
 
         # Rayleigh quotient: H = V^dagger A V (conjugate transpose for complex)
         H = V.conj().T @ W
@@ -1729,10 +1761,8 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
         eigenvalues_old = eigenvalues_new.copy()
 
     # Extract final Ritz vectors for the wanted eigenvalues
-    # Recompute from final V
-    W = np.zeros((vec_size, n_work), dtype=complex)
-    for j in range(n_work):
-        W[:, j] = A.matvec(V[:, j])
+    # Recompute from final V (batched matmat = per-column matvec)
+    W = A.matmat(V)
     H = V.conj().T @ W
     evals_h, evecs_h = np.linalg.eig(H)
     # Subspace (block power) iteration is magnitude-based: it converges to the
