@@ -401,7 +401,12 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
     # denom shape: (Nx, Ny, Nz, norb, nmat)
 
     # G[kx,ky,kz,i,j,w] = sum_m factor[...,i,j,m] * denom[...,m,w]
-    green_kw_tmp = np.einsum('...ijm,...mw->...ijw', factor, denom)
+    # Batched GEMM over the flattened spatial axes (C-order, reshape-only):
+    #   (nv, ij, m) @ (nv, m, w) -> (nv, ij, w). numpy.einsum does NOT lower
+    #   the '...ijm,...mw->...ijw' form to BLAS GEMM, so reshape to matmul.
+    nv = Nx * Ny * Nz
+    G = factor.reshape(nv, norb * norb, norb) @ denom.reshape(nv, norb, nmat)
+    green_kw_tmp = G.reshape(Nx, Ny, Nz, norb, norb, nmat)
     # shape: (Nx, Ny, Nz, norb, norb, nmat)
 
     # Transpose to output convention: (norb, norb, Nx, Ny, Nz, nmat)
@@ -693,8 +698,8 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     I_mat = np.broadcast_to(np.eye(norb, dtype=complex), (Nx, Ny, Nz, norb, norb)).copy()
 
     # Batched solve
-    mat_s = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, Ws)
-    mat_c = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, Wc)
+    mat_s = I_mat + chi0_static @ Ws
+    mat_c = I_mat + chi0_static @ Wc
 
     chis = np.linalg.solve(mat_s, chi0_static)
     chic = np.linalg.solve(mat_c, chi0_static)
@@ -771,8 +776,8 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     # chi_c = [I + chi0 @ C]^{-1} @ chi0
     I_mat = np.broadcast_to(np.eye(nd, dtype=complex), (Nx, Ny, Nz, nd, nd)).copy()
 
-    mat_s = I_mat - np.einsum('...ab,...bc->...ac', chi0_static, S_all)
-    mat_c = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, C_all)
+    mat_s = I_mat - chi0_static @ S_all
+    mat_c = I_mat + chi0_static @ C_all
 
     chis = np.linalg.solve(mat_s, chi0_static)  # batched solve
     chic = np.linalg.solve(mat_c, chi0_static)
@@ -982,9 +987,12 @@ def _calc_g2(green_kw, beta):
     A = green_kw.reshape(norb * norb, nvol, nmat)       # (ij, site, k)
     B = green_kw_inv.reshape(norb * norb, nvol, nmat)   # (lm, site, k)
     # G2[ij, lm, site] = sum_k A[ij, site, k] * B[lm, site, k]
-    # = (A * B contracted over k) but with site preserved
-    # Use einsum with optimized contraction over nmat only
-    G2 = np.einsum('isn,jsn->ijs', A, B)  # (norb^2, norb^2, nvol)
+    # Per-site batched GEMM over the Matsubara axis n. numpy.einsum does NOT
+    # lower 'isn,jsn->ijs' to BLAS GEMM; move site to the batch axis and matmul:
+    #   As[s] @ Bs[s].T -> [i, j] per site; moveaxis(...,0,2) -> (i, j, s).
+    As = np.moveaxis(A, 1, 0)             # (nvol, norb^2, nmat)
+    Bs = np.moveaxis(B, 1, 0)             # (nvol, norb^2, nmat)
+    G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)  # (norb^2, norb^2, nvol)
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
     return G2 / beta
 
@@ -1218,9 +1226,19 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     """
     sigma_old = sigma_init.copy()
 
+    # Precompute the Eliashberg kernel operator once. The vertex IFFT
+    # (V_r = ifftn(Vs_q)) and the G2 reshape/transpose are invariant across
+    # iterations (only sigma_old changes); _make_kernel_operator hoists them out
+    # of the per-matvec closure, saving one full vertex IFFT (and the G2
+    # preprocessing) on every one of the up-to-max_iter iterations. The matvec
+    # is numerically identical to _eliashberg_kernel_fft(Vs_q, G2, sigma, norb).
+    Nx, Ny, Nz = sigma_init.shape[-3], sigma_init.shape[-2], sigma_init.shape[-1]
+    A, _ = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    shape = (norb, norb, Nx, Ny, Nz)
+
     eigenvalue = 0.0
     for iteration in range(max_iter):
-        sigma_new = _eliashberg_kernel_fft(Vs_q, G2, sigma_old, norb)
+        sigma_new = A.matvec(sigma_old.ravel()).reshape(shape)
         norm = np.linalg.norm(sigma_new)
         eigenvalue = norm
 
@@ -1273,26 +1291,50 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
 
     is_simple = (Vs_q.ndim == 5)
 
+    # General (4-index) mode: the two contractions
+    #   G2Sigma[i,l,s] = sum_j G2_pre[i,l,j,s] * sigma_flat[j,s]
+    #   sigma_r[i,l,s] = sum_j V_r_flat[i,j,l,s] * F_r_flat[j,s]
+    # are, per spatial point s, a small dense matvec over j (size norb*norb).
+    # numpy.einsum does NOT lower these to batched BLAS GEMM, so we precompute
+    # the operator tensors ONCE in GEMM-friendly (nvol, M=il, K=j) layout and
+    # apply them with np.matmul (s, and the column axis z for matmat, as
+    # leading batch axes). This is NOT bit-identical to the einsum (GEMM
+    # changes the reduction order) but matches it to ~1e-13.
     if not is_simple:
+        # G2_pre is (i, l, j, s); we need (s, (i,l), j).
+        G2_gemm = G2_pre.transpose(3, 0, 1, 2).reshape(
+            nvol, norb * norb, norb * norb)
+        # V_r_flat is (i, j, l, s); the GEMM M-axis (i,l) needs i (axis0) and
+        # l (axis2) adjacent, so transpose to (s, i, l, j) -> (s, (i,l), j).
         V_r_flat = V_r.reshape(norb, norb * norb, norb, nvol)
+        V_r_gemm = V_r_flat.transpose(3, 0, 2, 1).reshape(
+            nvol, norb * norb, norb * norb)
 
     def matvec(v):
         sigma = v.reshape(norb, norb, Nx, Ny, Nz)
         sigma_flat = sigma.reshape(norb * norb, nvol)
 
-        # G2Sigma contraction
-        G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
-            norb, norb, Nx, Ny, Nz)
-
         if is_simple:
+            G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
             G2Sigma_r = ifftn(G2Sigma, axes=(-3, -2, -1))
             Sigma_r = V_r * G2Sigma_r
             sigma_new = fftn(Sigma_r, axes=(-3, -2, -1))
         else:
+            # G2Sigma[i,l,s] = sum_j G2_gemm[s,(i,l),j] * sigma_flat[j,s]
+            # sigma_flat (j, s) -> (s, j, 1); matmul -> (s, (i,l), 1).
+            sig = np.moveaxis(sigma_flat, 1, 0)[..., np.newaxis]
+            G2Sigma = (G2_gemm @ sig)[..., 0]            # (s, (i,l))
+            # Back to the einsum's (i, l, s) order, then to spatial grid.
+            G2Sigma = G2Sigma.reshape(nvol, norb, norb).transpose(
+                1, 2, 0).reshape(norb, norb, Nx, Ny, Nz)
+
             F_r = ifftn(G2Sigma, axes=(-3, -2, -1))
             F_r_flat = F_r.reshape(norb * norb, nvol)
-            sigma_r = np.einsum('ijls,js->ils', V_r_flat, F_r_flat).reshape(
-                norb, norb, Nx, Ny, Nz)
+            f = np.moveaxis(F_r_flat, 1, 0)[..., np.newaxis]
+            sigma_r = (V_r_gemm @ f)[..., 0]             # (s, (i,l))
+            sigma_r = sigma_r.reshape(nvol, norb, norb).transpose(
+                1, 2, 0).reshape(norb, norb, Nx, Ny, Nz)
             sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
 
         # Keep complex: for complex hopping (e.g. spin-orbit coupling),
@@ -1300,7 +1342,46 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
         # complex; projecting to real would discard physical components.
         return (-sigma_new).ravel()
 
-    A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=complex)
+    def matmat(B):
+        # Batched form of matvec: apply the SAME kernel to every column of the
+        # (vec_size, k) block B in a single FFT, instead of column-by-column.
+        # The batch/column axis is appended as the LAST axis so the spatial FFT
+        # axes keep their absolute positions (2, 3, 4) and the precomputed
+        # V_r / G2_pre (which have no column axis) broadcast over it.
+        B = np.asarray(B)
+        if B.ndim == 1:
+            return matvec(B)
+        k = B.shape[1]
+        # (norb, norb, Nx, Ny, Nz, k)
+        sigma = B.reshape(norb, norb, Nx, Ny, Nz, k)
+        sigma_flat = sigma.reshape(norb * norb, nvol, k)
+
+        if is_simple:
+            G2Sigma = np.einsum('iljs,jsz->ilsz', G2_pre, sigma_flat).reshape(
+                norb, norb, Nx, Ny, Nz, k)
+            G2Sigma_r = ifftn(G2Sigma, axes=(2, 3, 4))
+            Sigma_r = V_r[..., np.newaxis] * G2Sigma_r
+            sigma_new = fftn(Sigma_r, axes=(2, 3, 4))
+        else:
+            # The column axis z is an extra trailing dim carried through the
+            # GEMM: sigma_flat (j, s, k) -> (s, j, k); matmul -> (s, (i,l), k).
+            sig = np.moveaxis(sigma_flat, 1, 0)          # (nvol, norb*norb, k)
+            G2Sigma = G2_gemm @ sig                      # (s, (i,l), k)
+            G2Sigma = G2Sigma.reshape(nvol, norb, norb, k).transpose(
+                1, 2, 0, 3).reshape(norb, norb, Nx, Ny, Nz, k)
+
+            F_r = ifftn(G2Sigma, axes=(2, 3, 4))
+            F_r_flat = F_r.reshape(norb * norb, nvol, k)
+            f = np.moveaxis(F_r_flat, 1, 0)              # (nvol, norb*norb, k)
+            sigma_r = V_r_gemm @ f                       # (s, (i,l), k)
+            sigma_r = sigma_r.reshape(nvol, norb, norb, k).transpose(
+                1, 2, 0, 3).reshape(norb, norb, Nx, Ny, Nz, k)
+            sigma_new = fftn(sigma_r, axes=(2, 3, 4))
+
+        return (-sigma_new).reshape(vec_size, k)
+
+    A = LinearOperator((vec_size, vec_size), matvec=matvec, matmat=matmat,
+                       dtype=complex)
     return A, vec_size
 
 
@@ -1683,10 +1764,10 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     eigenvalues_old = np.zeros(num_ev, dtype=complex)
 
     for iteration in range(max_iter):
-        # Apply kernel to all vectors: W = A @ V (kernel may be complex)
-        W = np.zeros((vec_size, n_work), dtype=complex)
-        for j in range(n_work):
-            W[:, j] = A.matvec(V[:, j])
+        # Apply kernel to all vectors at once: W = A @ V (kernel may be
+        # complex). matmat batches all columns into a single FFT (numerically
+        # identical to the per-column matvec).
+        W = A.matmat(V)
 
         # Rayleigh quotient: H = V^dagger A V (conjugate transpose for complex)
         H = V.conj().T @ W
@@ -1719,10 +1800,8 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
         eigenvalues_old = eigenvalues_new.copy()
 
     # Extract final Ritz vectors for the wanted eigenvalues
-    # Recompute from final V
-    W = np.zeros((vec_size, n_work), dtype=complex)
-    for j in range(n_work):
-        W[:, j] = A.matvec(V[:, j])
+    # Recompute from final V (batched matmat = per-column matvec)
+    W = A.matmat(V)
     H = V.conj().T @ W
     evals_h, evecs_h = np.linalg.eig(H)
     # Subspace (block power) iteration is magnitude-based: it converges to the

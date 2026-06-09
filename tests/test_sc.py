@@ -35,6 +35,7 @@ from hwave.sc import (
     _eliashberg_kernel_fft,
     _initialize_gap,
     _is_gap_parity,
+    _make_kernel_operator,
     _order_eigenpairs,
     _reorder_eigenpairs_by_parity,
     _resolve_init_gap,
@@ -322,6 +323,139 @@ class TestKernel(unittest.TestCase):
 
         sigma_new = _eliashberg_kernel_fft(P_q, G2, sigma_old, norb)
         self.assertEqual(sigma_new.shape, (norb, norb, Nx, Ny, Nz))
+
+    def test_kernel_operator_matches_standalone(self):
+        """Precomputed-operator matvec is bit-identical to standalone kernel.
+
+        _solve_iteration applies the _make_kernel_operator matvec (which hoists
+        the invariant vertex IFFT + G2 preprocessing out of the loop). This must
+        be numerically identical to a direct _eliashberg_kernel_fft call.
+        Checked for both simple (2-index) and general (4-index) vertices.
+        """
+        norb = 2
+        Nx, Ny, Nz = 4, 4, 1
+        rng = np.random.default_rng(123)
+
+        def cplx(*shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape))
+
+        G2 = cplx(norb, norb, norb, norb, Nx, Ny, Nz)
+        sigma = cplx(norb, norb, Nx, Ny, Nz)
+
+        # simple (5-d vertex) and general (7-d vertex) modes
+        for V_q in (cplx(norb, norb, Nx, Ny, Nz),
+                    cplx(norb, norb, norb, norb, Nx, Ny, Nz)):
+            ref = _eliashberg_kernel_fft(V_q, G2, sigma, norb)
+            A, _ = _make_kernel_operator(V_q, G2, norb, Nx, Ny, Nz)
+            via_op = A.matvec(sigma.ravel()).reshape(ref.shape)
+            # Same ops in the same source order, just with the invariant vertex
+            # IFFT + G2 preprocessing precomputed. Differences are at most the
+            # last ULP from multi-threaded BLAS reduction-order nondeterminism
+            # (~1e-16), far below the suite's 1e-8 tolerance.
+            np.testing.assert_allclose(via_op, ref, rtol=1e-13, atol=1e-13)
+
+    def test_matmat_matches_columnwise_matvec(self):
+        """Batched matmat equals column-by-column matvec to machine precision.
+
+        The subspace eigensolver applies the kernel to a whole work block at
+        once via matmat (one batched FFT) instead of column-by-column. This
+        must be numerically identical to applying matvec to each column. A
+        wrong batch/FFT-axis layout would produce a large discrepancy here.
+        Checked for both simple (5-d vertex) and general (7-d vertex) modes,
+        with k > 1 random columns.
+        """
+        norb = 2
+        Nx, Ny, Nz = 4, 4, 1
+        vec_size = norb * norb * Nx * Ny * Nz
+        k = 7
+        rng = np.random.default_rng(2024)
+
+        def cplx(*shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape))
+
+        G2 = cplx(norb, norb, norb, norb, Nx, Ny, Nz)
+        # mix of real and complex columns (subspace iteration uses real V)
+        V = rng.standard_normal((vec_size, k))
+        Vc = cplx(vec_size, k)
+
+        for V_q in (cplx(norb, norb, Nx, Ny, Nz),
+                    cplx(norb, norb, norb, norb, Nx, Ny, Nz)):
+            A, n = _make_kernel_operator(V_q, G2, norb, Nx, Ny, Nz)
+            self.assertEqual(n, vec_size)
+            for B in (V, Vc):
+                ref = np.column_stack(
+                    [A.matvec(B[:, j]) for j in range(k)])
+                batched = A.matmat(B)
+                self.assertEqual(batched.shape, ref.shape)
+                # At most last-ULP einsum reduction-order differences from
+                # multi-threaded BLAS; far below the suite's 1e-8 tolerance.
+                np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-12)
+
+
+    def test_general_kernel_matches_einsum_reference(self):
+        """General-mode matmul kernel matches the original einsum contractions.
+
+        The general (4-index) kernel was rewritten from two
+        batched-over-spatial-point einsums ('iljs,js->ils' and 'ijls,js->ils')
+        into batched np.matmul (GEMM). This is NOT bit-identical (GEMM changes
+        the floating-point reduction order) but must match the einsum to ~1e-13,
+        far below the suite's atol=1e-8. This test recomputes the kernel with
+        the ORIGINAL einsums as an explicit reference for both matvec (single
+        column) and matmat (k>1 columns).
+        """
+        norb = 3
+        Nx, Ny, Nz = 4, 3, 2
+        nvol = Nx * Ny * Nz
+        vec_size = norb * norb * nvol
+        k = 5
+        rng = np.random.default_rng(7)
+
+        def cplx(*shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape))
+
+        G2 = cplx(norb, norb, norb, norb, Nx, Ny, Nz)
+        Vs_q = cplx(norb, norb, norb, norb, Nx, Ny, Nz)  # general (7-d) vertex
+
+        # Explicit reference using the ORIGINAL einsum contractions.
+        V_r = ifftn(Vs_q, axes=(-3, -2, -1))
+        V_r_flat = V_r.reshape(norb, norb * norb, norb, nvol)
+        G2_r = G2.reshape(norb, norb, norb, norb, nvol)
+        G2_pre = G2_r.transpose(0, 2, 1, 3, 4).reshape(
+            norb, norb, norb * norb, nvol)
+
+        def ref_matvec(v):
+            sigma = v.reshape(norb, norb, Nx, Ny, Nz)
+            sigma_flat = sigma.reshape(norb * norb, nvol)
+            G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
+            F_r = ifftn(G2Sigma, axes=(-3, -2, -1))
+            F_r_flat = F_r.reshape(norb * norb, nvol)
+            sigma_r = np.einsum('ijls,js->ils', V_r_flat, F_r_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
+            sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
+            return (-sigma_new).ravel()
+
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        self.assertEqual(n, vec_size)
+
+        # matvec
+        v = cplx(vec_size)
+        new_mv = A.matvec(v)
+        ref_mv = ref_matvec(v)
+        maxdiff_mv = np.abs(new_mv - ref_mv).max()
+        self.assertLess(maxdiff_mv, 1e-10)
+        np.testing.assert_allclose(new_mv, ref_mv, rtol=1e-10, atol=1e-10)
+
+        # matmat (k columns)
+        B = cplx(vec_size, k)
+        new_mm = A.matmat(B)
+        ref_mm = np.column_stack([ref_matvec(B[:, j]) for j in range(k)])
+        maxdiff_mm = np.abs(new_mm - ref_mm).max()
+        self.assertLess(maxdiff_mm, 1e-10)
+        np.testing.assert_allclose(new_mm, ref_mm, rtol=1e-10, atol=1e-10)
 
 
 class TestInitializeGap(unittest.TestCase):
@@ -2504,6 +2638,79 @@ class TestKanamoriInteraction(unittest.TestCase):
                     chi_c = np.linalg.solve(I_mat + chi0_q @ C_all, chi0_q)
                     self.assertTrue(np.all(np.isfinite(chi_c)),
                                     "chi_c should be finite at q=(%d,%d)" % (ix, iy))
+
+
+class TestBatchedMatmulEquivalence(unittest.TestCase):
+    """Prove the batched-matmul rewrites equal the original einsums.
+
+    Each test builds random operands of the documented shapes, computes the
+    ORIGINAL einsum (pasted as reference) and the NEW matmul form, and asserts
+    they agree to ~1e-10 or tighter. The rewrites only change the floating-point
+    reduction order (BLAS GEMM vs numpy's einsum loop), so differences are at
+    machine-epsilon level, far below the suite's atol=1e-8.
+    """
+
+    def _calc_green_reference(self, factor, denom, Nx, Ny, Nz, norb, nmat):
+        return np.einsum('...ijm,...mw->...ijw', factor, denom)
+
+    def _calc_green_matmul(self, factor, denom, Nx, Ny, Nz, norb, nmat):
+        nv = Nx * Ny * Nz
+        G = factor.reshape(nv, norb * norb, norb) @ denom.reshape(nv, norb, nmat)
+        return G.reshape(Nx, Ny, Nz, norb, norb, nmat)
+
+    def test_calc_green_einsum_equivalence(self):
+        rng = np.random.default_rng(0)
+        for norb in (2, 3):
+            Nx, Ny, Nz, nmat = 3, 4, 2, 5
+            factor = (rng.standard_normal((Nx, Ny, Nz, norb, norb, norb))
+                      + 1j * rng.standard_normal((Nx, Ny, Nz, norb, norb, norb)))
+            denom = (rng.standard_normal((Nx, Ny, Nz, norb, nmat))
+                     + 1j * rng.standard_normal((Nx, Ny, Nz, norb, nmat)))
+            ref = self._calc_green_reference(factor, denom, Nx, Ny, Nz, norb, nmat)
+            new = self._calc_green_matmul(factor, denom, Nx, Ny, Nz, norb, nmat)
+            self.assertEqual(ref.shape, new.shape)
+            maxdiff = np.max(np.abs(ref - new))
+            self.assertTrue(np.allclose(ref, new, rtol=1e-10, atol=1e-10),
+                            "norb=%d maxdiff=%g" % (norb, maxdiff))
+
+    def _calc_g2_reference(self, A, B):
+        return np.einsum('isn,jsn->ijs', A, B)
+
+    def _calc_g2_matmul(self, A, B):
+        As = np.moveaxis(A, 1, 0)
+        Bs = np.moveaxis(B, 1, 0)
+        return np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)
+
+    def test_calc_g2_einsum_equivalence(self):
+        rng = np.random.default_rng(1)
+        for norb in (2, 3):
+            Nx, Ny, Nz, nmat = 3, 2, 2, 6
+            nvol = Nx * Ny * Nz
+            nd = norb * norb
+            A = (rng.standard_normal((nd, nvol, nmat))
+                 + 1j * rng.standard_normal((nd, nvol, nmat)))
+            B = (rng.standard_normal((nd, nvol, nmat))
+                 + 1j * rng.standard_normal((nd, nvol, nmat)))
+            ref = self._calc_g2_reference(A, B)
+            new = self._calc_g2_matmul(A, B)
+            self.assertEqual(ref.shape, new.shape)
+            maxdiff = np.max(np.abs(ref - new))
+            self.assertTrue(np.allclose(ref, new, rtol=1e-10, atol=1e-10),
+                            "norb=%d maxdiff=%g" % (norb, maxdiff))
+
+    def test_compute_vertices_batched_matmul_equivalence(self):
+        rng = np.random.default_rng(2)
+        for nd in (2, 3, 4, 9):
+            Nx, Ny, Nz = 3, 4, 2
+            X = (rng.standard_normal((Nx, Ny, Nz, nd, nd))
+                 + 1j * rng.standard_normal((Nx, Ny, Nz, nd, nd)))
+            Y = (rng.standard_normal((Nx, Ny, Nz, nd, nd))
+                 + 1j * rng.standard_normal((Nx, Ny, Nz, nd, nd)))
+            ref = np.einsum('...ab,...bc->...ac', X, Y)
+            new = X @ Y
+            maxdiff = np.max(np.abs(ref - new))
+            self.assertTrue(np.allclose(ref, new, rtol=1e-12, atol=1e-12),
+                            "nd=%d maxdiff=%g" % (nd, maxdiff))
 
 
 if __name__ == '__main__':
