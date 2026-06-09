@@ -366,11 +366,16 @@ class FLEX(RPA):
             # chi0q_raw shape: (nmat, nvol, norb, norb) for reduced
             nfreq = chi0q_raw.shape[0]
 
-            # Inflate to spin-orbital reduced space
-            spin_tensor = np.identity(ns)
-            chi0q = np.einsum('lkab,st->lksatb',
-                              chi0q_raw.reshape(nfreq, nvol, norb, norb),
-                              spin_tensor).reshape(nfreq, nvol, nd, nd)
+            # Inflate to spin-orbital reduced space.
+            # Equivalent to a Kronecker product with I_ns: scatter chi0q onto
+            # the spin-block diagonal (same spin block for row and col),
+            # leaving off-diagonal spin blocks exactly zero. Bit-identical to
+            # np.einsum('lkab,st->lksatb', chi0q, I_ns), but faster.
+            chi0q_src = chi0q_raw.reshape(nfreq, nvol, norb, norb)
+            chi0q = np.zeros((nfreq, nvol, nd, nd), dtype=chi0q_src.dtype)
+            for s in range(ns):
+                sl = slice(s * norb, (s + 1) * norb)
+                chi0q[..., sl, sl] = chi0q_src
 
             ham = np.einsum('ksasatbtb->ksatb',
                             ham_orig.reshape(nvol, *(ns, norb) * 4)
@@ -380,10 +385,14 @@ class FLEX(RPA):
             # chi0q_raw shape: (nblock=2, nmat, nvol, norb, norb) for reduced
             nblock_s, nfreq, nvol_c, norb1, norb2 = chi0q_raw.shape
 
-            spin_tensor = np.identity(ns)
-            chi0q = np.einsum('glkab,gh->lkgahb',
-                              chi0q_raw,
-                              spin_tensor).reshape(nfreq, nvol, nd, nd)
+            # Inflate per-spin-block chi0q to spin-orbital reduced space.
+            # Source block g goes to spin block (g, g) on the diagonal, with
+            # off-diagonal spin blocks exactly zero. Bit-identical to
+            # np.einsum('glkab,gh->lkgahb', chi0q, I_ns), but faster.
+            chi0q = np.zeros((nfreq, nvol, nd, nd), dtype=chi0q_raw.dtype)
+            for s in range(ns):
+                sl = slice(s * norb, (s + 1) * norb)
+                chi0q[..., sl, sl] = chi0q_raw[s]
 
             ham = np.einsum('ksasatbtb->ksatb',
                             ham_orig.reshape(nvol, *(ns, norb) * 4)
@@ -459,9 +468,15 @@ class FLEX(RPA):
         # For _solve_rpa [1 + chi0 * ham]^{-1} chi0:
         #   ham_s = -U_s  -> [1 - U_s chi0]^{-1} chi0  (Stoner enhancement)
         #   ham_c = +U_c  -> [1 + U_c chi0]^{-1} chi0  (charge suppression)
-        spin_id = np.eye(ns)
-        ham_s = np.einsum('kab,st->ksatb', -u_s, spin_id).reshape(nvol, nd, nd)
-        ham_c = np.einsum('kab,st->ksatb', u_c, spin_id).reshape(nvol, nd, nd)
+        # Inflate channel vertices to spin-orbital reduced space by scattering
+        # onto the spin-block diagonal (Kronecker product with I_ns).
+        # Bit-identical to np.einsum('kab,st->ksatb', u, I_ns), but faster.
+        ham_s = np.zeros((nvol, nd, nd), dtype=u_s.dtype)
+        ham_c = np.zeros((nvol, nd, nd), dtype=u_c.dtype)
+        for s in range(ns):
+            sl = slice(s * norb, (s + 1) * norb)
+            ham_s[..., sl, sl] = -u_s
+            ham_c[..., sl, sl] = u_c
 
         return ham_s, ham_c
 
