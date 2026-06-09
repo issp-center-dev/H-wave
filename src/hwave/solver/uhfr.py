@@ -15,6 +15,44 @@ from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhfr")
 
+
+def _split_occupation(occupied, sizes):
+    """Distribute ``occupied`` electrons across sub-blocks of the given sizes.
+
+    Returns non-negative integer occupations that sum exactly to ``occupied``
+    and never exceed the block size, using the largest-remainder method.
+    (The previous proportional rounding ``round(occupied*size/total)`` could
+    over-allocate and leave a negative remainder for the last block.)
+
+    Parameters
+    ----------
+    occupied : int
+        Total electron count to distribute (0 <= occupied <= sum(sizes)).
+    sizes : list of int
+        Sizes of the sub-blocks.
+
+    Returns
+    -------
+    list of int
+        Per-block occupations.
+    """
+    total = sum(sizes)
+    if not (0 <= occupied <= total):
+        raise ValueError(
+            "occupied={} must be in [0, sum(sizes)={}]".format(occupied, total))
+    if total == 0:
+        return [0 for _ in sizes]
+    exact = [occupied * sz / total for sz in sizes]
+    alloc = [int(np.floor(e)) for e in exact]
+    remainder = int(round(occupied - sum(alloc)))
+    # hand out the remaining electrons to the largest fractional parts
+    order = sorted(range(len(sizes)),
+                   key=lambda i: exact[i] - alloc[i], reverse=True)
+    for i in order[:remainder]:
+        alloc[i] += 1
+    return alloc
+
+
 class Interact_UHFr_base:
     """Base class for interaction terms in UHF calculations.
     
@@ -513,7 +551,7 @@ class UHFr(solver_base):
     def __init__(self, param_ham, info_log, info_mode, param_mod=None):
         self.name = "uhfr"
         super().__init__(param_ham, info_log, info_mode, param_mod)
-        self.physics = {"Ene": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
+        self.physics = {"Ene": 0, "FreeEne": 0, "NCond": 0, "Sz": 0, "Rest": 1.0}
 
         output_str = "Show input parameters"
         for k, v in self.param_mod.items():
@@ -578,6 +616,7 @@ class UHFr(solver_base):
             logger.info("step, rest, energy, NCond, Sz")
         self._makeham_const()
         self._makeham_mat()
+        self._detect_blocks()
         import time
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
@@ -658,6 +697,108 @@ class UHFr(solver_base):
         return green
 
     @do_profile
+    def _detect_blocks(self):
+        """Detect block-diagonal structure from transfer and interaction terms.
+
+        Analyzes the connectivity in the 2*Nsize index space from:
+        1. Ham_trans: direct transfer connectivity
+        2. Ham_local: interaction connectivity (which indices couple via interactions)
+
+        Refines self.green_list by splitting existing blocks into sub-blocks
+        when independent groups are found.
+        """
+        nd = 2 * self.Nsize
+
+        # Build connectivity matrix
+        connectivity = np.abs(self.Ham_trans)
+
+        # Add interaction connectivity from Ham_local
+        # Ham_local[i,j,k,l] != 0 means G[k,l] affects Ham[i,j].
+        # For block independence, we need: if i is in block A and k is in block B,
+        # blocks A and B must be merged. So connect i<->k and j<->l.
+        ham_local_4d = self.Ham_local.reshape(nd, nd, nd, nd)
+        nonzero = np.abs(ham_local_4d) > 1e-12
+
+        # Connect i with k: project out j and l dimensions
+        ik_conn = np.any(nonzero, axis=(1, 3))  # (nd, nd) : ik_conn[i,k]
+        connectivity += ik_conn.astype(np.float64)
+
+        # Connect j with l: project out i and k dimensions
+        jl_conn = np.any(nonzero, axis=(0, 2))  # (nd, nd) : jl_conn[j,l]
+        connectivity += jl_conn.astype(np.float64)
+
+        # Symmetrize
+        connectivity = connectivity + connectivity.T
+
+        # Find connected components
+        threshold = 1e-12
+        adj = np.abs(connectivity) > threshold
+
+        labels = np.arange(nd)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(nd):
+                neighbors = np.where(adj[i])[0]
+                if len(neighbors) > 0:
+                    min_label = min(labels[i], np.min(labels[neighbors]))
+                    if labels[i] != min_label:
+                        labels[i] = min_label
+                        changed = True
+                    for n in neighbors:
+                        if labels[n] != min_label:
+                            labels[n] = min_label
+                            changed = True
+
+        unique_labels = np.unique(labels)
+        if len(unique_labels) <= 1:
+            logger.info("Block detection (UHFr): single block (nd={})".format(nd))
+            return
+
+        # Build block list
+        all_blocks = [np.where(labels == lbl)[0] for lbl in unique_labels]
+        all_blocks.sort(key=lambda b: b[0])
+
+        # Refine green_list: split existing blocks into sub-blocks
+        new_green_list = {}
+        for k, block_g_info in self.green_list.items():
+            g_label = set(block_g_info["label"])
+            occupied = block_g_info["occupied"]
+
+            # Find sub-blocks within this green_list block
+            sub_blocks = []
+            for blk in all_blocks:
+                overlap = sorted(set(blk.tolist()) & g_label)
+                if overlap:
+                    sub_blocks.append(overlap)
+
+            if len(sub_blocks) <= 1:
+                # No further splitting
+                new_green_list[k] = block_g_info
+            else:
+                # Split this block, keeping per-block occupations non-negative
+                # and summing to the original occupancy.
+                sub_occs = _split_occupation(occupied, [len(s) for s in sub_blocks])
+                for i, sub in enumerate(sub_blocks):
+                    sub_key = "{}_blk{}".format(k, i)
+                    sub_info = {"label": sub, "occupied": sub_occs[i]}
+                    if "value" in block_g_info:
+                        sub_info["value"] = block_g_info["value"]
+                    new_green_list[sub_key] = sub_info
+
+                block_desc = ", ".join(
+                    ["{}".format(len(s)) for s in sub_blocks])
+                logger.info("Block detection (UHFr): block '{}' split into "
+                            "{} sub-blocks of sizes [{}]".format(
+                                k, len(sub_blocks), block_desc))
+
+        self.green_list = new_green_list
+
+        block_desc = ", ".join(
+            ["{}:{}".format(k, len(v["label"])) for k, v in self.green_list.items()])
+        logger.info("Block detection (UHFr): final blocks: {}".format(block_desc))
+
+    @do_profile
     def _makeham_const(self):
         """Initialize constant part of Hamiltonian."""
         self.Ham_trans = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
@@ -669,17 +810,23 @@ class UHFr(solver_base):
     @do_profile
     def _makeham(self):
         """Construct full Hamiltonian."""
-        import time
-        self.Ham = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
+        nd = 2 * self.Nsize
         self.Ham = self.Ham_trans.copy()
-        green_local = self.Green.reshape((2 * self.Nsize) ** 2)
+        green_local = self.Green.reshape(nd ** 2)
         ham_dot_green = np.dot(self.Ham_local, green_local)
-        self.Ham += ham_dot_green.reshape((2 * self.Nsize), (2 * self.Nsize))
+        self.Ham += ham_dot_green.reshape(nd, nd)
+
+        # Enforce block structure: zero out cross-block entries
+        if len(self.green_list) > 1:
+            mask = np.zeros((nd, nd), dtype=bool)
+            for info in self.green_list.values():
+                idx = np.array(info["label"])
+                mask[np.ix_(idx, idx)] = True
+            self.Ham[~mask] = 0.0
 
     @do_profile
     def _makeham_mat(self):
         """Construct interaction matrix."""
-        # TODO Add Hund, Exchange, Ising, PairHop, and PairLift
         self.Ham_local = np.zeros(tuple([(2 * self.Nsize) for i in range(4)]), dtype=complex)
         if self.iflag_fock is True:
             type = "hartreefock"
@@ -721,15 +868,8 @@ class UHFr(solver_base):
         """Diagonalize Hamiltonian."""
         _green_list = self.green_list
         for k, block_g_info in _green_list.items():
-            g_label = block_g_info["label"]
-            block_size = len(g_label)
-            mat = np.zeros((block_size, block_size), dtype=complex)
-            for site1, org_site1 in enumerate(g_label):
-                for site2, org_site2 in enumerate(g_label):
-                    mat[site1][site2] = self.Ham[org_site1][org_site2]
-            # w: The eigenvalues in ascending order, each repeated according to its multiplicity.
-            # v: The column v[:, i] is the normalized eigenvector corresponding to the eigenvalue w[i].
-            # Will return a matrix object if a is a matrix object.
+            g_label = np.array(block_g_info["label"])
+            mat = self.Ham[np.ix_(g_label, g_label)]
             w, v = np.linalg.eigh(mat)
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
@@ -737,26 +877,47 @@ class UHFr(solver_base):
     @do_profile
     def _fermi(self, mu, eigenvalue):
         """Calculate Fermi-Dirac distribution.
-        
+
         Parameters
         ----------
         mu : float
             Chemical potential
         eigenvalue : ndarray
             Eigenvalues
-            
+
         Returns
         -------
         ndarray
             Fermi-Dirac distribution
         """
-        fermi = np.zeros(eigenvalue.shape)
-        for idx, value in enumerate(eigenvalue):
-            if (value - mu) / self.T > self.ene_cutoff:
-                fermi[idx] = 0
-            else:
-                fermi[idx] = 1.0 / (np.exp((value - mu) / self.T) + 1.0)
+        x = (eigenvalue - mu) / self.T
+        fermi = np.where(x > self.ene_cutoff, 0.0, 1.0 / (np.exp(x) + 1.0))
         return fermi
+
+    def _fermi_level_zero_t(self, eigenvalue, occupied):
+        """Chemical potential (Fermi level) at zero temperature.
+
+        Parameters
+        ----------
+        eigenvalue : ndarray
+            Eigenvalues of the block (need not be pre-sorted).
+        occupied : int
+            Number of occupied states in the block.
+
+        Returns
+        -------
+        float
+            The Fermi level, taken as the midpoint of the HOMO-LUMO gap.
+            This is the T -> 0+ limit of the finite-temperature mu equation.
+            When the band is empty/full the lowest/highest level is returned.
+        """
+        w_sorted = np.sort(np.asarray(eigenvalue).real)
+        ntot = w_sorted.size
+        if occupied <= 0:
+            return w_sorted[0]
+        if occupied >= ntot:
+            return w_sorted[-1]
+        return 0.5 * (w_sorted[occupied - 1] + w_sorted[occupied])
 
     @do_profile
     def _green(self):
@@ -783,32 +944,27 @@ class UHFr(solver_base):
         3. Constructs Green's function using eigenvectors and occupations
         """
         _green_list = self.green_list
-        # R_SLT = U^{*} in _green
-        # L_SLT = U^T in _green
-        R_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
-        L_SLT = np.zeros((2 * self.Nsize, 2 * self.Nsize), dtype=complex)
         # Store previous Green's function for convergence check
         self.Green_old = self.Green.copy()
 
         if self.T == 0:  # Zero temperature case
+            nd = 2 * self.Nsize
+            self.Green = np.zeros((nd, nd), dtype=complex)
             for k, block_g_info in _green_list.items():
-                g_label = block_g_info["label"]  # List of orbital indices for this block
-                occupied_number = block_g_info["occupied"]  # Number of occupied states
-                eigenvec = self.green_list[k]["eigenvector"]  # Eigenvectors for this block
-                eigen_start = self.green_list[k]["eigen_start"]  # Starting index for eigenvalues
+                g_label = np.array(block_g_info["label"])
+                occupied_number = block_g_info["occupied"]
+                eigenvalue = self.green_list[k]["eigenvalue"]
+                eigenvec = self.green_list[k]["eigenvector"]
 
-                # Construct Green's function from occupied eigenvectors
-                # G = U^* U^T where U contains occupied eigenvectors
-                for eigen_i in range(occupied_number):
-                    evec_i = eigenvec[:, eigen_i]  # Get i-th eigenvector
-                    for idx, org_site in enumerate(g_label):
-                        # Build U^* and U^T matrices
-                        R_SLT[org_site][eigen_start + eigen_i] = np.conjugate(evec_i[idx])
-                        L_SLT[eigen_start + eigen_i][org_site] = evec_i[idx]
+                # Chemical potential (Fermi level) at T=0: midpoint of the
+                # HOMO-LUMO gap (the T -> 0+ limit of the mu equation).
+                self.green_list[k]["mu"] = self._fermi_level_zero_t(
+                    eigenvalue, occupied_number)
 
-            # Multiply matrices to get Green's function
-            RMat = np.dot(R_SLT, L_SLT)
-            self.Green = RMat.copy()
+                # G_block = U^* U^T for occupied states
+                occ_vecs = eigenvec[:, :occupied_number]
+                g_block = np.dot(np.conjugate(occ_vecs), occ_vecs.T)
+                self.Green[np.ix_(g_label, g_label)] = g_block
 
         else:  # Finite temperature case
             from scipy import optimize
@@ -857,10 +1013,9 @@ class UHFr(solver_base):
                 # G = U^* f U where f is diagonal matrix of Fermi-Dirac occupations
                 tmp_green = np.einsum("ij, j, kj -> ik", np.conjugate(eigenvec), fermi, eigenvec)
 
-                # Store block of Green's function
-                for idx1, org_site1 in enumerate(g_label):
-                    for idx2, org_site2 in enumerate(g_label):
-                        self.Green[org_site1][org_site2] += tmp_green[idx1][idx2]
+                # Store block of Green's function (vectorized)
+                g_idx = np.array(g_label)
+                self.Green[np.ix_(g_idx, g_idx)] += tmp_green
 
     @do_profile
     def _calc_energy(self):
@@ -932,65 +1087,67 @@ class UHFr(solver_base):
             - If -(e-mu)/T < cutoff: use log1p for numerical stability
             - If -(e-mu)/T >= cutoff: approximate as -(e-mu)/T
             """
-            ln_Ene = np.zeros(eigenvalue.shape)
-            for idx, value in enumerate(eigenvalue):
-                # Check if exponential will overflow
-                if -(value - mu) / self.T < self.ene_cutoff:
-                    # Use log1p for numerical stability
-                    ln_Ene[idx] = np.log1p(np.exp(-(value - mu) / self.T))
-                else:
-                    # For large negative arguments, approximate as -(e-mu)/T
-                    ln_Ene[idx] = -(value - mu) / self.T
+            x = -(eigenvalue - mu) / self.T
+            ln_Ene = np.where(x < self.ene_cutoff, np.log1p(np.exp(x)), x)
             return ln_Ene
     
         def _calc_finite_temp_energy(green_list):
             """Calculate band energy for finite temperature case.
-            
+
             Parameters
             ----------
             green_list : dict
                 Dictionary containing Green's function blocks
-                
+
             Returns
             -------
-            float
-                Band energy at finite temperature
-                
+            tuple of float
+                (internal band energy, free band energy) at finite temperature
+
             Notes
             -----
-            At finite T, band energy includes:
-            1. Chemical potential term: mu * n where n is particle number
-            2. Entropy term: -T * sum(ln(1 + exp(-(e-mu)/T)))
-            Uses Fermi-Dirac distribution and logarithmic terms.
+            Two band energies are returned:
+
+            * Internal energy  E_band = sum_n eps_n f(eps_n)
+            * Free energy      F_band = mu*N + Omega_0
+                                      = mu*N - T*sum_n ln(1 + exp(-(eps_n-mu)/T))
+
+            so that F_band = E_band - T*S_band.  Uses the Fermi-Dirac
+            distribution and logarithmic (grand-potential) terms.
             """
-            energy = 0
+            energy_internal = 0
+            energy_free = 0
             # Loop through each block (spin up/down or sz-free)
             for k, block_g_info in green_list.items():
                 eigenvalue = self.green_list[k]["eigenvalue"]  # Get eigenvalues
-                eigenvec = self.green_list[k]["eigenvector"]   # Get eigenvectors  
+                eigenvec = self.green_list[k]["eigenvector"]   # Get eigenvectors
                 mu = self.green_list[k]["mu"]                  # Chemical potential
-                
-        
+
+
                 # Calculate Fermi-Dirac occupations
                 fermi = self._fermi(mu, eigenvalue)
                 # Calculate logarithmic terms for entropy
                 ln_Ene = _calc_log_terms(eigenvalue, mu)
                 # Calculate particle number using eigenvectors and occupations
                 tmp_n = np.einsum("ij, j, ij -> i", np.conjugate(eigenvec), fermi, eigenvec)
-                
-                # Add mu*N term and entropy term
-                energy += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
-            return energy      
+
+                # Internal band energy: sum of occupied eigenvalues weighted by f
+                energy_internal += np.sum(eigenvalue * fermi)
+                # Free band energy: mu*N term and entropy term
+                energy_free += mu*np.sum(tmp_n) - self.T * np.sum(ln_Ene)
+            return energy_internal, energy_free
    
         
         # Zero temperature case - sum up energies of occupied states
         if self.T == 0:
+            # At T=0 the entropy vanishes: internal energy == free energy.
             Ene["band"] = _calc_zero_temp_energy(_green_list)
+            band_free = Ene["band"]
         else:
-            Ene["band"] = _calc_finite_temp_energy(_green_list)
+            Ene["band"], band_free = _calc_finite_temp_energy(_green_list)
 
-
-
+        # Interaction (double-counting corrected) energy is the same for the
+        # internal energy and the free energy.
         Ene["InterAll"] = 0
         green_local = self.Green.reshape((2 * self.Nsize) ** 2)
         Ene["InterAll"] -= np.dot(green_local.T, np.dot(self.Ham_local, green_local))/2.0
@@ -1000,7 +1157,16 @@ class UHFr(solver_base):
             ene += value
         Ene["Total"] = ene
         self.physics["Ene"] = Ene
+
+        # Free energy F = E - T*S (Helmholtz); equals the internal energy at T=0.
+        FreeEne = {}
+        FreeEne["band"] = band_free
+        FreeEne["InterAll"] = Ene["InterAll"]
+        FreeEne["Total"] = band_free + Ene["InterAll"]
+        self.physics["FreeEne"] = FreeEne
+
         logger.debug(Ene)
+        logger.debug(FreeEne)
 
     @do_profile
     def _calc_phys(self):
@@ -1022,24 +1188,18 @@ class UHFr(solver_base):
         -----
         Also performs mixing of old and new Green's functions for convergence
         """
-        n = 0
-        for site in range(2 * self.Nsize):
-            n += self.Green[site][site]
-        self.physics["NCond"] = n.real
+        self.physics["NCond"] = np.trace(self.Green).real
 
-        sz = 0
-        for site in range(self.Nsize):
-            sz += self.Green[site][site]
-            sz -= self.Green[site + self.Nsize][site + self.Nsize]
-        self.physics["Sz"] = (0.5 * sz).real
+        N = self.Nsize
+        diag = np.diag(self.Green).real
+        self.physics["Sz"] = 0.5 * (np.sum(diag[:N]) - np.sum(diag[N:]))
 
-        rest = 0.0
+        diff = self.Green - self.Green_old
+        rest = np.sum(np.abs(diff) ** 2)
         mix = self.param_mod["mix"]
-        for site1, site2 in itertools.product(range(2 * self.Nsize), range(2 * self.Nsize)):
-            rest += abs(self.Green[site1][site2] - self.Green_old[site1][site2])**2
-            self.Green[site1][site2] = self.Green_old[site1][site2] * (1.0 - mix) + mix * self.Green[site1][site2]
-        self.physics["Rest"] = np.sqrt(rest) / (2.0 * self.Nsize * self.Nsize)
-        self.Green[np.where(abs(self.Green) < self.threshold)] = 0
+        self.Green = self.Green_old * (1.0 - mix) + mix * self.Green
+        self.physics["Rest"] = np.sqrt(rest) / (2.0 * N * N)
+        self.Green[np.abs(self.Green) < self.threshold] = 0
 
     @do_profile
     def get_results(self):
@@ -1076,8 +1236,20 @@ class UHFr(solver_base):
             output_str  = "Energy_total = {}\n".format(self.physics["Ene"]["Total"].real)
             output_str += "Energy_band = {}\n".format(self.physics["Ene"]["band"].real)
             output_str += "Energy_interall = {}\n".format(self.physics["Ene"]["InterAll"].real)
+            # Free energy F = E - T*S (Helmholtz); equals the internal energy at T=0.
+            if "FreeEne" in self.physics:
+                output_str += "FreeEnergy_total = {}\n".format(self.physics["FreeEne"]["Total"].real)
+                output_str += "FreeEnergy_band = {}\n".format(self.physics["FreeEne"]["band"].real)
             output_str += "NCond = {}\n".format(self.physics["NCond"])
             output_str += "Sz = {}\n".format(self.physics["Sz"])
+            # Chemical potential (Fermi level). One value per block; at T=0 it is
+            # the midpoint of the HOMO-LUMO gap.
+            mus = [(k, v["mu"]) for k, v in self.green_list.items() if "mu" in v]
+            if len(mus) == 1:
+                output_str += "ChemicalPotential = {}\n".format(mus[0][1])
+            elif len(mus) > 1:
+                for k, mu in mus:
+                    output_str += "ChemicalPotential_{} = {}\n".format(k, mu)
             with open(os.path.join(path_to_output, info_outputfile["energy"]), "w") as fw:
                 fw.write(output_str)
 

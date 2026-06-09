@@ -140,6 +140,18 @@ Usage rules
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 
--  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}`, in which the indices :math:`1 \dots N_\text{orbital}` correspond to spin-up, and the indices :math:`N_\text{orbital}+1 \dots 2N_\text{orbital}` correspond to spin-down. Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
+-  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of the
+   Transfer term use the interleaved spin-orbital convention and range from 1 to
+   :math:`2 N_\text{orbital}`.  The combined index is :math:`2\alpha + s + 1`
+   (1-based), where :math:`\alpha = 0, \ldots, N_\text{orbital}-1` is the
+   physical-orbital index and :math:`s \in \{0,1\}` is the spin index.
+   Otherwise, only the entries with the orbital indices from 1 to
+   :math:`N_\text{orbital}` are taken into account.
+
+   .. note::
+
+      **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
+      spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
+      spin-orbital ``geom.dat`` ``Norbit``.
 
 .. raw:: latex

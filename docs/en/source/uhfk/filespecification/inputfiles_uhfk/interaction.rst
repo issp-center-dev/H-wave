@@ -16,6 +16,8 @@ in the wave-number space UHF.
       :math:`\sum_{i\alpha} U_\alpha\,n_ {i\alpha\uparrow} n_{i\alpha\downarrow}, \quad (n_{i\alpha\sigma}=c_{i\alpha\sigma}^{\dagger}c_{i\alpha\sigma}^{\phantom{\dagger}})`
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad (n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow})`
+    **Coulomb**:
+      A combined form of CoulombIntra and CoulombInter (intended for RESPACK ``zvo_ur.dat``). The on-site same-orbital components (:math:`r=0` and :math:`\alpha=\beta`) are read as CoulombIntra and the rest as CoulombInter; this is equivalent to specifying CoulombIntra and CoulombInter separately.
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
@@ -138,6 +140,6 @@ Usage rules
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 
--  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}`, in which the indices :math:`1 \dots N_\text{orbital}` correspond to spin-up, and the indices :math:`N_\text{orbital}+1 \dots 2N_\text{orbital}` correspond to spin-down. Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
+-  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}`. The spin is the inner (interleaved) index: the odd indices (1, 3, 5, …) correspond to spin-up of each orbital, and the even indices (2, 4, 6, …) correspond to spin-down (for the orbital :math:`\alpha` starting from 0 and the spin :math:`s` with 0 for up and 1 for down, the file index starting from 1 is :math:`2\alpha + s + 1`). Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
 
 .. raw:: latex

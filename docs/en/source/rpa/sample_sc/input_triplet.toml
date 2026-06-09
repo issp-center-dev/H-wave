@@ -1,0 +1,41 @@
+[log]
+  print_level = 1
+
+[mode]
+  mode = "RPA"
+
+[mode.param]
+  T = 0.1
+  CellShape = [32, 32, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 512
+  filling = 0.75
+
+[file]
+[file.input]
+  path_to_input = "."
+
+[file.input.interaction]
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+
+[file.output]
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+
+[eliashberg]
+  solver_mode = "both"
+  chi0q_mode = "load"
+  pairing_type = "triplet"
+  init_gap = "cos"
+  max_iter = 500
+  alpha = 0.5
+  convergence_tol = 1.0e-5
+  num_eigenvalues = 10
+  eigenvalue_method = "arnoldi"
+  output_gap = "gap_triplet.dat"
+  output_eigenvalue = "eigenvalue_triplet.dat"

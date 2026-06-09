@@ -42,6 +42,7 @@ class UHFk(solver_base):
         # Initialize physical quantities
         self.physics = {
             "Ene": { "Total": 0.0, "Band": 0.0 },
+            "FreeEne": { "Total": 0.0, "Band": 0.0 },
             "NCond": 0.0,  # Total particle number
             "Sz": 0.0,     # Total spin
             "Rest": 1.0    # Convergence measure
@@ -119,7 +120,15 @@ class UHFk(solver_base):
                     f"Expected boolean (true/false)."
                 )
         if isinstance(value, (int, float)):
-            return bool(value)
+            if value == 0:
+                return False
+            elif value == 1:
+                return True
+            else:
+                raise ValueError(
+                    f"Parameter '{param_name}' has invalid numeric value {value}. "
+                    f"Expected 0 or 1 (or boolean true/false)."
+                )
         raise ValueError(
             f"Parameter '{param_name}' has invalid type {type(value).__name__}. "
             f"Expected boolean."
@@ -153,7 +162,10 @@ class UHFk(solver_base):
 
             Lx,Ly,Lz = self.param_mod.get("CellShape")
             norb = self.param_ham["Geometry"]["norb"]
-            Nstate = Lx*Ly*Lz*norb*2
+            if self.enable_spin_orbital:
+                Nstate = Lx*Ly*Lz*norb  # norb already includes spin
+            else:
+                Nstate = Lx*Ly*Lz*norb*2
 
             ncond = self._round_to_int(Nstate * self.filling, round_mode)
             self.param_mod["Ncond"] = ncond  # overwrite
@@ -222,25 +234,30 @@ class UHFk(solver_base):
     @do_profile
     def _init_orbit(self):
         """Initialize orbital structure.
-        
+
         Sets up:
         - Number of orbitals
         - Spin degrees of freedom
         - Total basis dimension
         Takes into account supercell structure if present.
-        
+
         When enable_spin_orbital is True, the orbital index from input files
         already includes spin (Wannier90 format: index = 2*orb + spin).
         In this case, ns=1 since spin is encoded in the orbital index.
         """
         norb = self.param_ham["Geometry"]["norb"]
-        
+
         if self.enable_spin_orbital:
             # Spin is already encoded in orbital index (Wannier90 SOI format)
             ns = 1
+            if norb % 2 != 0:
+                logger.error("In spin-orbital mode, norb must be even (got {})".format(norb))
+                exit(1)
+            self.norb_phys_orig = norb // 2
         else:
             # Spin is separate degree of freedom
             ns = 2
+            self.norb_phys_orig = norb
 
         # take account of supercell
         self.norb_orig = norb
@@ -248,6 +265,11 @@ class UHFk(solver_base):
 
         self.nd = self.norb * ns
         self.ns = ns
+
+        if self.enable_spin_orbital:
+            self.norb_phys = self.norb_phys_orig * self.subvol
+        else:
+            self.norb_phys = self.norb
 
     @do_profile
     def _show_param(self):
@@ -357,7 +379,7 @@ class UHFk(solver_base):
             _reshape_orbit = _reshape_orbit_
 
         def _round(x, n):
-            return x % n if x >= 0 else x % -n
+            return x % n
 
         ham_new = {}
         for (irvec,orbvec), v in ham.items():
@@ -382,11 +404,14 @@ class UHFk(solver_base):
                 aa = _reshape_orbit(alpha,(x0,y0,z0))
                 bb = _reshape_orbit(beta, (xr1,yr1,zr1))
 
-                # check wrap-around: maybe overwritten by duplicate entries
+                # Wrap-around can map distinct original R-vectors onto the same
+                # folded (ir, ov) key (e.g. when the hopping range reaches the
+                # cell size, allowed under relax_checks); accumulate so such
+                # contributions are summed rather than overwritten.
                 ir = (_round(xx1, nx), _round(yy1, ny), _round(zz1, nz))
                 ov = (aa, bb)
 
-                ham_new[(ir, ov)] = v
+                ham_new[(ir, ov)] = ham_new.get((ir, ov), 0.0) + v
 
         return ham_new
 
@@ -624,10 +649,40 @@ class UHFk(solver_base):
         - Cell size compatibility
         - Orbital index validity
         - Hermiticity of terms
+        - Spin-orbital mode compatibility
         """
         self._check_cellsize()
         self._check_orbital_index()
         self._check_hermite()
+        self._check_spin_orbital_compatibility()
+
+    def _check_spin_orbital_compatibility(self):
+        """Check if interaction terms are compatible with spin-orbital mode.
+
+        When enable_spin_orbital=True, interaction terms are supported by
+        converting the spin-orbital Green function to a virtual (ns=2, norb_phys)
+        form for the interaction contractions. The interaction file orbital indices
+        must refer to physical orbitals [0, norb/2).
+        """
+        if not self.enable_spin_orbital:
+            return
+
+        supported_types = [
+            "CoulombIntra", "CoulombInter", "Coulomb",
+            "Hund", "Ising", "PairLift", "Exchange", "PairHop"
+        ]
+
+        found_interactions = []
+        for itype in supported_types:
+            if itype in self.param_ham and self.param_ham[itype]:
+                found_interactions.append(itype)
+
+        if found_interactions:
+            logger.info(
+                "Spin-orbital mode: interaction terms {} will be handled "
+                "using virtual spin decomposition (norb_phys={})".format(
+                    found_interactions, self.norb_phys_orig)
+            )
 
     def _check_cellsize(self):
         err = 0
@@ -670,15 +725,21 @@ class UHFk(solver_base):
 
     def _check_orbital_index(self):
         norb = self.param_ham["Geometry"]["norb"]
+        # In spin-orbital mode, interaction orbital indices refer to physical orbitals
+        norb_inter = self.norb_phys_orig if self.enable_spin_orbital else norb
         err = 0
         for k in self.param_ham.keys():
             if k in ["Geometry", "Initial"]:
                 pass
             elif k == "Transfer":
+                # In spin-orbital mode the Geometry norb already includes spin
+                # (norb = nd), so valid Transfer indices are [0, norb). In normal
+                # mode the file may carry spin indices up to 2*norb (the spin
+                # block, which _make_ham_trans then drops).
+                trans_max = norb if self.enable_spin_orbital else norb * 2
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
-                    # allow spin-orbital interaction, i.e. twice norb
-                    if not all([ 0 <= orbvec[i] < norb*2 for i in range(2) ]):
+                    if not all([ 0 <= orbvec[i] < trans_max for i in range(2) ]):
                         fail += 1
                 if fail > 0:
                     logger.error("orbital index check failed for {}.".format(k))
@@ -688,7 +749,7 @@ class UHFk(solver_base):
             elif k == "CoulombIntra":
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
-                    if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
+                    if not all([ 0 <= orbvec[i] < norb_inter for i in range(2) ]):
                         fail += 1
                 for (irvec,orbvec), v in self.param_ham[k].items():
                     if not orbvec[0] == orbvec[1]:
@@ -701,7 +762,7 @@ class UHFk(solver_base):
             else:
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
-                    if not all([ 0 <= orbvec[i] < norb for i in range(2) ]):
+                    if not all([ 0 <= orbvec[i] < norb_inter for i in range(2) ]):
                         fail += 1
                 if fail > 0:
                     logger.error("orbital index check failed for {}.".format(k))
@@ -773,6 +834,7 @@ class UHFk(solver_base):
 
         self._make_ham_trans() # T_ab(k)
         self._make_ham_inter() # J_ab(r)
+        self._detect_blocks()  # Detect block-diagonal structure
 
         self.Green = self._initial_green(green_info)
 
@@ -972,11 +1034,18 @@ class UHFk(solver_base):
             # data structure of T_ab(r): T(rx,ry,rz,a,b)
             tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
+            has_spin_dep = False
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
                     tab_r[(*irvec, *orbvec)] = v
                 else:
-                    pass # skip spin dependence
+                    has_spin_dep = True
+            if has_spin_dep:
+                logger.warning(
+                    "Transfer has orbital indices >= norb (spin-dependent terms) "
+                    "but enable_spin_orbital is False. "
+                    "These terms are ignored. Set enable_spin_orbital = true to use them."
+                )
 
             # fourier transform
             tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -998,7 +1067,8 @@ class UHFk(solver_base):
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
-        norb     = self.norb
+        # In spin-orbital mode, interaction arrays use physical orbital count
+        norb     = self.norb_phys if self.enable_spin_orbital else self.norb
         nd       = self.nd
 
         #----------------
@@ -1011,6 +1081,16 @@ class UHFk(solver_base):
         # Coulomb Intra and Coulomb Inter
         #----------------
         if 'Coulomb' in self.param_ham.keys():
+            # The aggregate 'Coulomb' input already provides both the intra and
+            # inter parts; combining it with explicit CoulombIntra/CoulombInter
+            # is ambiguous (the explicit terms would be silently dropped).
+            if ('CoulombIntra' in self.param_ham.keys()
+                    or 'CoulombInter' in self.param_ham.keys()):
+                logger.error(
+                    "Coulomb cannot be specified together with "
+                    "CoulombIntra or CoulombInter")
+                exit(1)
+
             # assume zvo_ur.dat
             # divide into r=0 (coulomb intra) and r!=0 (coulomb inter)
 
@@ -1233,18 +1313,259 @@ class UHFk(solver_base):
             self.inter_table["PairHop"] = None
 
     @do_profile
+    def _detect_blocks(self):
+        """Detect block-diagonal structure from transfer and interaction terms.
+
+        Analyzes the connectivity in the (spin, orbital) index space by
+        combining the non-zero patterns of:
+        1. Transfer Hamiltonian ham_trans (summed over k-points)
+        2. Interaction terms inter_table x spin_table (expanded to nd x nd)
+
+        The detected blocks are used by _diag() and _green() to decompose
+        the problem into smaller independent sub-problems.
+
+        Sets self.block_info: list of arrays, each containing nd-space indices
+        for one independent block. Also sets self.group_nconds and
+        self.block_to_group for global chemical potential determination.
+        """
+        logger.debug(">>> _detect_blocks")
+
+        nd = self.nd
+        norb = self.norb
+        ns = self.ns
+
+        # Build connectivity matrix in nd x nd space
+        connectivity = np.zeros((nd, nd), dtype=np.float64)
+
+        # 1. Transfer Hamiltonian: sum |ham_trans(k)| over k
+        connectivity += np.sum(np.abs(self.ham_trans), axis=0)
+
+        # 2. Interaction terms: expand (norb_inter, norb_inter) x spin(2,2,2,2) -> (nd, nd)
+        norb_inter = self.norb_phys if self.enable_spin_orbital else norb
+
+        for type_name in self.inter_table:
+            if self.inter_table[type_name] is not None:
+                jab = self.inter_table[type_name]
+                spin = self.spin_table[type_name]
+
+                # Sum |J_ab(r)| over r to get orbital connectivity
+                jab_sum = np.sum(np.abs(jab.reshape(-1, norb_inter, norb_inter)), axis=0)
+
+                # For Hartree: spin_mat_h[s,t] = any(spin[s,:,:,t] != 0)
+                spin_mat_h = np.any(spin != 0, axis=(1, 2)).astype(float)
+                orb_connected_h = (jab_sum > 0).any(axis=1).astype(float)
+
+                if self.enable_spin_orbital:
+                    # In spin-orbital mode: (s, a) -> so_idx = 2*a + s
+                    for s in range(2):
+                        for t in range(2):
+                            if spin_mat_h[s, t] > 0:
+                                for a in range(norb_inter):
+                                    if orb_connected_h[a]:
+                                        connectivity[2 * a + s, 2 * a + t] += 1.0
+                    if self.iflag_fock:
+                        spin_fock = np.max(np.abs(spin), axis=(1, 3))
+                        for s in range(2):
+                            for t in range(2):
+                                if spin_fock[s, t] > 0:
+                                    for a in range(norb_inter):
+                                        for b in range(norb_inter):
+                                            if jab_sum[a, b] > 0:
+                                                connectivity[2 * a + s, 2 * b + t] += jab_sum[a, b]
+                else:
+                    # Normal mode: (s, a) -> nd_idx = s * norb + a
+                    for s in range(ns):
+                        for t in range(ns):
+                            if spin_mat_h[s, t] > 0:
+                                for a in range(norb):
+                                    if orb_connected_h[a]:
+                                        connectivity[s * norb + a, t * norb + a] += 1.0
+
+                    if self.iflag_fock:
+                        spin_mat_f = np.any(
+                            spin.transpose(0, 2, 1, 3).reshape(ns * ns, ns * ns) != 0
+                        ).astype(float) if ns > 1 else np.ones((1, 1))
+                        spin_fock = np.max(np.abs(spin), axis=(1, 3))
+                        for s in range(ns):
+                            for t in range(ns):
+                                if spin_fock[s, t] > 0:
+                                    connectivity[s * norb:(s + 1) * norb,
+                                                 t * norb:(t + 1) * norb] += jab_sum
+
+        # Symmetrize
+        connectivity = connectivity + connectivity.T
+
+        # Find connected components
+        threshold = 1.0e-12
+        adj = np.abs(connectivity) > threshold
+
+        # BFS/label propagation
+        labels = np.arange(nd)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(nd):
+                neighbors = np.where(adj[i])[0]
+                if len(neighbors) > 0:
+                    min_label = min(labels[i], np.min(labels[neighbors]))
+                    if labels[i] != min_label:
+                        labels[i] = min_label
+                        changed = True
+                    for n in neighbors:
+                        if labels[n] != min_label:
+                            labels[n] = min_label
+                            changed = True
+
+        unique_labels = np.unique(labels)
+        blocks = [np.where(labels == lbl)[0] for lbl in unique_labels]
+
+        # Sort blocks by first index
+        blocks.sort(key=lambda b: b[0])
+
+        # Group blocks by spin sector for shared chemical potential.
+        # Instead of distributing Ncond per block (which can violate the
+        # global energy minimum), we group blocks that share the same
+        # electron reservoir and find a single mu per group.
+        if self.sz_free:
+            # All blocks share one global mu
+            # group_nconds[g] = target electron count for group g
+            # block_to_group[b] = which group block b belongs to
+            block_to_group = [0] * len(blocks)
+            group_nconds = [self.Nconds[0]]
+        else:
+            # Classify blocks by spin content
+            ncond_up, ncond_down = self.Nconds[0], self.Nconds[1]
+            block_to_group = []
+            # group 0 = up-only, group 1 = down-only, group 2 = mixed
+            group_nconds_dict = {}  # group_id -> ncond
+            for blk in blocks:
+                if self.enable_spin_orbital:
+                    n_up = np.sum(blk % 2 == 0)
+                    n_down = np.sum(blk % 2 == 1)
+                else:
+                    n_up = np.sum(blk < norb)
+                    n_down = np.sum(blk >= norb)
+                if n_up > 0 and n_down == 0:
+                    block_to_group.append(0)
+                    group_nconds_dict[0] = ncond_up
+                elif n_up == 0 and n_down > 0:
+                    block_to_group.append(1)
+                    group_nconds_dict[1] = ncond_down
+                else:
+                    # Mixed block (couples up and down indices). A single mixed
+                    # block spanning the whole system is fine -- it just takes
+                    # the total ncond. But if a mixed block COEXISTS with pure
+                    # up/down blocks, assigning each group its own (global)
+                    # ncond double-counts the electrons (sum > Ncond), and the
+                    # per-spin split cannot be enforced on the mixed block.
+                    block_to_group.append(2)
+                    group_nconds_dict[2] = ncond_up + ncond_down
+            # Guard the genuine over-count: a mixed group together with a pure
+            # up/down group.
+            if 2 in block_to_group and (0 in block_to_group or 1 in block_to_group):
+                logger.error(
+                    "2Sz-fixed mode found a spin-mixed block coexisting with "
+                    "pure-spin blocks; the per-group electron counts would "
+                    "double-count (sum != Ncond). Use the Sz-free mode (global "
+                    "chemical potential) for such systems.")
+                raise ValueError(
+                    "2Sz-fixed mode cannot mix a spin-coupled block with "
+                    "pure-spin blocks; use Sz-free mode.")
+            # Build ordered list: group_nconds[g] for each unique group
+            unique_groups = sorted(set(block_to_group))
+            group_remap = {g: i for i, g in enumerate(unique_groups)}
+            block_to_group = [group_remap[g] for g in block_to_group]
+            group_nconds = [group_nconds_dict[g] for g in unique_groups]
+
+        self.block_info = blocks
+        self.block_to_group = block_to_group
+        self.group_nconds = group_nconds
+
+        # Log detected structure
+        if len(blocks) == 1:
+            logger.info("Block detection: single block (nd={})".format(nd))
+        else:
+            block_desc = ", ".join(
+                ["{}".format(len(b)) for b in blocks]
+            )
+            logger.info("Block detection: {} blocks of sizes [{}], "
+                        "{} mu-group(s) with Nconds={}".format(
+                            len(blocks), block_desc,
+                            len(group_nconds), group_nconds))
+
+    def _so_to_virtual_green(self, G_so):
+        """Convert spin-orbital Green function to virtual (ns=2, norb_phys) form.
+
+        In spin-orbital mode, index = 2*orb + spin (interleaved).
+        This converts to the standard (nvol, 2, norb_phys, 2, norb_phys) form
+        so existing interaction contractions can be reused.
+
+        Parameters
+        ----------
+        G_so : ndarray, shape (nvol, 1, nd, 1, nd)
+            Green function in spin-orbital basis
+
+        Returns
+        -------
+        ndarray, shape (nvol, 2, norb_phys, 2, norb_phys)
+            Green function in virtual spin-separate form
+        """
+        nvol = G_so.shape[0]
+        norb_phys = self.norb_phys
+        G_flat = G_so.reshape(nvol, self.nd, self.nd)
+        G_virt = np.zeros((nvol, 2, norb_phys, 2, norb_phys), dtype=np.complex128)
+        for s in range(2):
+            for t in range(2):
+                G_virt[:, s, :, t, :] = G_flat[:, s::2, t::2]
+        return G_virt
+
+    def _virtual_ham_to_so(self, H_virt):
+        """Convert virtual (ns=2, norb_phys) Hamiltonian to spin-orbital form.
+
+        Inverse of _so_to_virtual_green for the Hamiltonian matrix.
+        Converts from (nvol, 2, norb_phys, 2, norb_phys) ordering
+        where index = s*norb_phys + a, to spin-orbital ordering
+        where index = 2*a + s.
+
+        Parameters
+        ----------
+        H_virt : ndarray, shape (nvol, 2, norb_phys, 2, norb_phys)
+            Hamiltonian in virtual spin-separate form
+
+        Returns
+        -------
+        ndarray, shape (nvol, nd, nd)
+            Hamiltonian in spin-orbital basis
+        """
+        nvol = H_virt.shape[0]
+        norb_phys = self.norb_phys
+        nd = self.nd
+        H_so = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for s in range(2):
+            for t in range(2):
+                H_so[:, s::2, t::2] = H_virt[:, s, :, t, :]
+        return H_so
+
+    @do_profile
     def _make_ham(self):
         logger.debug(">>> _make_ham")
 
         nx,ny,nz = self.shape
         nvol     = self.nvol
         nd       = self.nd
-        norb     = self.norb
         ns       = self.ns
 
-        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
-        gab_r = self.Green
+        # In spin-orbital mode, use virtual (ns=2, norb_phys) form for interactions
+        if self.enable_spin_orbital:
+            norb_inter = self.norb_phys
+            nd_virt = 2 * norb_inter
+            gab_r = self._so_to_virtual_green(self.Green)
+        else:
+            norb_inter = self.norb
+            nd_virt = nd
+            gab_r = self.Green
 
+        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
         # diagonal part G_{bb,st}(r=0) : gbb(s,t,b)
         gbb = np.diagonal(gab_r, axis1=2, axis2=4)[0,:,:,:]
 
@@ -1261,7 +1582,7 @@ class UHFk(solver_base):
                 logger.debug(type)
 
                 # coefficient of interaction term J_{ab}(r)
-                jab_r = self.inter_table[type].reshape(nvol,norb,norb)
+                jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
                 # and its spin combination  Spin(s1,s2,s3,s4)
                 spin = self.spin_table[type]
 
@@ -1269,10 +1590,18 @@ class UHFk(solver_base):
                 #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
                 hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
                 hh1 = np.einsum('rab, stb -> rsta', jab_r, hh0)
-                hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb, norb))
-                hh3 = np.sum(hh2, axis=0).reshape(nd,nd)
+                hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb_inter, norb_inter))
+                hh3 = np.sum(hh2, axis=0)  # shape: (2, norb_inter, 2, norb_inter)
 
-                ham += np.broadcast_to(hh3, (nvol,nd,nd))
+                if self.enable_spin_orbital:
+                    hh3_nd = self._virtual_ham_to_so(
+                        np.broadcast_to(hh3.reshape(1, 2, norb_inter, 2, norb_inter),
+                                       (nvol, 2, norb_inter, 2, norb_inter)).copy()
+                    )
+                else:
+                    hh3_nd = np.broadcast_to(hh3.reshape(nd, nd), (nvol, nd, nd))
+
+                ham += hh3_nd
 
                 # cross term
                 #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
@@ -1280,9 +1609,14 @@ class UHFk(solver_base):
                     hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
 
                     #   fourier transform: sum_r (*) e^{ikr}
-                    hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                    hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
 
-                    ham -= hh5.reshape(nvol, nd, nd)
+                    if self.enable_spin_orbital:
+                        ham -= self._virtual_ham_to_so(
+                            hh5.reshape(nvol, 2, norb_inter, 2, norb_inter)
+                        )
+                    else:
+                        ham -= hh5.reshape(nvol, nd, nd)
 
         # interaction term: PairHop type
         for type in ['PairHop']:
@@ -1290,7 +1624,7 @@ class UHFk(solver_base):
                 logger.debug(type)
 
                 # coefficient of interaction term J_{ab}(r)
-                jab_r = self.inter_table[type].reshape(nvol,norb,norb)
+                jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
                 # and its spin combination  Spin(s1,s2,s3,s4)
                 spin = self.spin_table[type]
 
@@ -1302,13 +1636,27 @@ class UHFk(solver_base):
                     hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
                     hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
                     hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
-                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
                 else:
                     hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
                     hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, hh1)
-                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd,nd), axes=(0,1,2), norm='forward')
+                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
 
-                ham += hh4.reshape(nvol, nd, nd)
+                if self.enable_spin_orbital:
+                    ham += self._virtual_ham_to_so(
+                        hh4.reshape(nvol, 2, norb_inter, 2, norb_inter)
+                    )
+                else:
+                    ham += hh4.reshape(nvol, nd, nd)
+
+        # Enforce block structure: zero out cross-block entries
+        if len(self.block_info) > 1:
+            mask = np.zeros((nd, nd), dtype=bool)
+            for blk in self.block_info:
+                idx = np.array(blk)
+                ix = np.ix_(idx, idx)
+                mask[ix] = True
+            ham[:, ~mask] = 0.0
 
         # store
         self.ham = ham
@@ -1317,26 +1665,23 @@ class UHFk(solver_base):
     def _diag(self):
         logger.debug(">>> _diag")
 
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
-        nd       = self.nd
-        norb     = self.norb
-        ns       = self.ns
+        nvol = self.nvol
+        blocks = self.block_info
 
-        if self.sz_free:
-            # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
-            mat = self.ham.reshape(1,nvol,nd,nd)
-            # note: number of spin blocks = 1
-        else:
-            # hamiltonian H_{ab}(k, spin) : ham(s,k,(a,b)) : spin-diagonal
-            mat = np.einsum('ksasb->skab', self.ham.reshape(nvol,ns,norb,ns,norb))
+        # Diagonalize each block independently
+        eigenvalues = []
+        eigenvectors = []
+        for blk in blocks:
+            idx = np.array(blk)
+            ix = np.ix_(idx, idx)
+            mat_blk = self.ham[:, ix[0], ix[1]]  # (nvol, blk_size, blk_size)
+            w, v = np.linalg.eigh(mat_blk)
+            eigenvalues.append(w)
+            eigenvectors.append(v)
 
-        # diagonalize
-        w,v = np.linalg.eigh(mat)
-
-        # store
-        self._green_list["eigenvalue"] = w
-        self._green_list["eigenvector"] = v
+        # Store as list of per-block arrays
+        self._green_list["eigenvalue"] = eigenvalues
+        self._green_list["eigenvector"] = eigenvectors
 
     @do_profile
     def _green(self):
@@ -1348,45 +1693,85 @@ class UHFk(solver_base):
         norb     = self.norb
         ns       = self.ns
 
-        ws = self._green_list["eigenvalue"]
-        vs = self._green_list["eigenvector"]
-        nconds = self.Nconds
+        ws_list = self._green_list["eigenvalue"]
+        vs_list = self._green_list["eigenvector"]
+        blocks = self.block_info
+        nblock = len(blocks)
+        block_to_group = self.block_to_group
+        group_nconds = self.group_nconds
+        ngroup = len(group_nconds)
 
-        self._green_list["mu"] = np.zeros(ws.shape[0], dtype=float)
+        # Find a single global mu per group (shared across all blocks in the group)
+        self._green_list["mu"] = np.zeros(ngroup, dtype=float)
 
-        gg = []
-        for k in range(ws.shape[0]):
-            w = ws[k]
-            v = vs[k]
-            ncond = nconds[k]
+        # Group blocks by mu-group
+        group_blocks = [[] for _ in range(ngroup)]
+        for b in range(nblock):
+            group_blocks[block_to_group[b]].append(b)
 
-            dist, mu = self._find_dist(w, v, ncond)
+        # Find mu for each group using all eigenvalues in that group
+        group_dists = [None] * nblock
+        for g in range(ngroup):
+            blist = group_blocks[g]
+            ws_group = [ws_list[b] for b in blist]
+            vs_group = [vs_list[b] for b in blist]
+            ncond = group_nconds[g]
 
-            self._green_list["mu"][k] = mu
-            logger.debug("mu[{}] = {}".format(k,mu))
+            dists, mu = self._find_dist_group(ws_group, vs_group, ncond)
 
-            # G_ab(k) = sum_l v_al(k)^* v_bl(k) f(ev(k))
-            gg.append(
-                np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
-            )
+            self._green_list["mu"][g] = mu
+            logger.debug("mu[group {}] = {}".format(g, mu))
+            for i, b in enumerate(blist):
+                group_dists[b] = dists[i]
 
-        # merge spin-diagonal blocks
-        gab_k = np.einsum('skab,st->ksatb', np.array(gg), np.eye(ws.shape[0])).reshape(nx,ny,nz,nd,nd)
+        # Build full Green's function in k-space by assembling blocks
+        gab_k = np.zeros((nvol, nd, nd), dtype=np.complex128)
+
+        for k in range(nblock):
+            v = vs_list[k]
+            dist = group_dists[k]
+
+            # G_ab(k) for this block
+            gg_blk = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+
+            # Place into full matrix
+            idx = np.array(blocks[k])
+            ix = np.ix_(idx, idx)
+            gab_k[:, ix[0], ix[1]] = gg_blk
 
         # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-        gab_r = np.fft.fftn(gab_k, axes=(0,1,2), norm='forward')
+        gab_r = np.fft.fftn(gab_k.reshape(nx, ny, nz, nd, nd),
+                            axes=(0, 1, 2), norm='forward')
 
         # store
         self.Green_prev = self.Green
-        self.Green = gab_r.reshape(nvol,ns,norb,ns,norb)
+        self.Green = gab_r.reshape(nvol, ns, norb, ns, norb)
 
-    def _find_dist(self, w, v, ncond):
+    def _find_dist_group(self, ws_list, vs_list, ncond):
+        """Find occupation distribution using a single mu across multiple blocks.
+
+        Parameters
+        ----------
+        ws_list : list of ndarray
+            Eigenvalues for each block in the group, shape (nvol, block_size)
+        vs_list : list of ndarray
+            Eigenvectors for each block, shape (nvol, block_size, block_size)
+        ncond : int
+            Total electron count for the entire group
+
+        Returns
+        -------
+        dists : list of ndarray
+            Occupation distribution for each block
+        mu : float
+            Chemical potential
+        """
         if self.T == 0:
-            return self._find_dist_zero_t(w, v, ncond)
+            return self._find_dist_group_zero_t(ws_list, vs_list, ncond)
         else:
-            return self._find_dist_nonzero_t(w, v, ncond)
+            return self._find_dist_group_nonzero_t(ws_list, vs_list, ncond)
 
-    def _find_dist_zero_t(self, w, v, ncond):
+    def _find_dist_group_zero_t(self, ws_list, vs_list, ncond):
         def _ksq_table(width):
             nx,ny,nz = self.shape
             nvol = self.nvol
@@ -1402,20 +1787,53 @@ class UHFk(solver_base):
 
             return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
 
-        k_sq = _ksq_table(w.shape[1]).flatten()
+        # Collect all eigenvalues across blocks with block labels
+        all_ww = []
+        all_ksq = []
+        all_block_idx = []  # which block each eigenvalue belongs to
+        all_local_idx = []  # flat index within that block's w array
+        for b, w in enumerate(ws_list):
+            k_sq = _ksq_table(w.shape[1]).flatten()
+            ww = w.flatten()
+            all_ww.append(ww)
+            all_ksq.append(k_sq)
+            all_block_idx.append(np.full(ww.size, b, dtype=int))
+            all_local_idx.append(np.arange(ww.size))
 
-        ww = w.flatten()
-        ev_idx = np.lexsort((k_sq, ww))[0:ncond]
+        all_ww = np.concatenate(all_ww)
+        all_ksq = np.concatenate(all_ksq)
+        all_block_idx = np.concatenate(all_block_idx)
+        all_local_idx = np.concatenate(all_local_idx)
 
-        dist = np.zeros(w.size)
-        dist[ev_idx] = 1.0
+        # Sort globally and pick lowest ncond states
+        ev_idx = np.lexsort((all_ksq, all_ww))[0:ncond]
 
-        return dist.reshape(w.shape), 0.0
+        # Distribute back to per-block arrays
+        dists = [np.zeros(w.size) for w in ws_list]
+        for idx in ev_idx:
+            b = all_block_idx[idx]
+            li = all_local_idx[idx]
+            dists[b][li] = 1.0
+        dists = [d.reshape(w.shape) for d, w in zip(dists, ws_list)]
 
-    def _find_dist_nonzero_t(self, w, v, ncond):
+        # Chemical potential (Fermi level) at T=0: midpoint of the HOMO-LUMO
+        # gap. This is the T -> 0+ limit of the finite-temperature mu equation.
+        sorted_ww = np.sort(all_ww)
+        ntot = sorted_ww.size
+        if ncond <= 0:
+            mu = sorted_ww[0]
+        elif ncond >= ntot:
+            mu = sorted_ww[-1]
+        else:
+            mu = 0.5 * (sorted_ww[ncond - 1] + sorted_ww[ncond])
+
+        return dists, mu
+
+    def _find_dist_group_nonzero_t(self, ws_list, vs_list, ncond):
         from scipy import optimize
 
-        ev = np.sort(w.flatten())
+        # Collect all eigenvalues for bracket search
+        all_ev = np.sort(np.concatenate([w.flatten() for w in ws_list]))
         occupied_number = ncond
 
         def _fermi(t, mu, ev):
@@ -1427,26 +1845,28 @@ class UHFk(solver_base):
             return v_
 
         def _calc_delta_n(mu):
-            ff = _fermi(self.T, mu, w)
-            nn = np.einsum('kal,kl,kal->', np.conjugate(v), ff, v)
-            return nn.real - occupied_number
+            nn = 0.0
+            for w, v in zip(ws_list, vs_list):
+                ff = _fermi(self.T, mu, w)
+                nn += np.einsum('kal,kl,kal->', np.conjugate(v), ff, v).real
+            return nn - occupied_number
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
-        if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
+        if (_calc_delta_n(all_ev[0]) * _calc_delta_n(all_ev[-1])) < 0.0:
             logger.debug("+++ find mu: try bisection")
-            mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+            mu, r = optimize.bisect(_calc_delta_n, all_ev[0], all_ev[-1], full_output=True, disp=False)
             is_converged = r.converged
         if not is_converged:
             logger.debug("+++ find mu: try newton")
-            mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
+            mu, r = optimize.newton(_calc_delta_n, all_ev[0], full_output=True)
             is_converged = r.converged
         if not is_converged:
             logger.error("find mu: not converged. abort")
             exit(1)
 
-        dist = _fermi(self.T, mu, w)
-        return dist, mu
+        dists = [_fermi(self.T, mu, w) for w in ws_list]
+        return dists, mu
 
     @do_profile
     def _calc_phys(self):
@@ -1466,11 +1886,34 @@ class UHFk(solver_base):
 
         logger.debug("ncond = {}".format(n))
 
-        # expectation value of Sz
-        gab_r = self.Green
-        sigma_z = np.array(np.array([[1,0],[0,-1]]))
-        sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
-        self.physics["Sz"] = 0.5 * sz.real
+        # expectation value of the spin vector (Sx, Sy, Sz)
+        if self.enable_spin_orbital:
+            # In spin-orbital basis: index = 2*orb + spin. The on-site density
+            # matrix rho_{ij} = <c^dag_j c_i> has spin structure, so the full
+            # spin vector is meaningful (Sx, Sy nonzero under spin mixing / SOC).
+            #   S_alpha = (1/2) sum_a Tr[ sigma_alpha rho_a ]
+            # with rho_a the 2x2 (up,down) on-site block of orbital a.
+            m = gab_r[0]
+            g0 = np.diagonal(m)                  # rho_{ii}
+            ud = np.diagonal(m, offset=1)[0::2]  # G[2a, 2a+1] = <c^dag_down c_up>
+            du = np.diagonal(m, offset=-1)[0::2] # G[2a+1, 2a] = <c^dag_up c_down>
+            sz_diag = np.zeros(nd)
+            sz_diag[0::2] = 1.0   # up spins
+            sz_diag[1::2] = -1.0  # down spins
+            sz = np.sum(g0 * sz_diag) * nvol
+            sx = np.sum(ud + du) * nvol
+            sy = np.sum(1j * (ud - du)) * nvol
+            self.physics["Sz"] = 0.5 * sz.real
+            self.physics["Sx"] = 0.5 * sx.real
+            self.physics["Sy"] = 0.5 * sy.real
+        else:
+            gab_r = self.Green
+            sigma_z = np.array(np.array([[1,0],[0,-1]]))
+            sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
+            self.physics["Sz"] = 0.5 * sz.real
+            # collinear normal mode: the transverse spin vanishes by construction
+            self.physics["Sx"] = 0.0
+            self.physics["Sy"] = 0.0
 
         logger.debug("sz = {}".format(sz))
 
@@ -1500,58 +1943,89 @@ class UHFk(solver_base):
         ns       = self.ns
 
         energy = {}
+        free_energy = {}
         energy_total = 0.0
+        free_total = 0.0
+
+        ws_list = self._green_list["eigenvalue"]
+        vs_list = self._green_list["eigenvector"]
+        mus = self._green_list["mu"]
+        nblock = len(ws_list)
+        block_to_group = self.block_to_group
+        group_nconds = self.group_nconds
+        ngroup = len(group_nconds)
 
         if self.T == 0:
-            ws = self._green_list["eigenvalue"]
-
+            # Compute band energy using global sorting per group
             e_band = 0.0
-            for k in range(ws.shape[0]):
-                w = ws[k]
-                ev = np.sort(w.flatten())
-                e_band += np.sum(ev[:self.Nconds[k]])
+            for g in range(ngroup):
+                # Collect eigenvalues from all blocks in this group
+                blist = [b for b in range(nblock) if block_to_group[b] == g]
+                all_ev = np.sort(np.concatenate(
+                    [ws_list[b].flatten() for b in blist]
+                ))
+                e_band += np.sum(all_ev[:group_nconds[g]])
 
-            energy["Band"] = e_band
-            logger.debug("energy: Band = {}".format(energy["Band"]))
-            energy_total += energy["Band"]
+            # At T=0 the entropy vanishes, so internal energy and free energy
+            # coincide.
+            e_band_internal = e_band
+            e_band_free = e_band
+            logger.debug("energy: Band = {}".format(e_band))
         else:
-            ws = self._green_list["eigenvalue"]
-            vs = self._green_list["eigenvector"]
-            mus = self._green_list["mu"]
             T = self.T
 
-            e_band = 0.0
-            for k in range(ws.shape[0]):
-                w = ws[k]
-                v = vs[k]
-                mu = mus[k]
+            def _fermi(t, mu, ev):
+                w_ = (ev - mu) / t
+                mask_ = w_ < self.ene_cutoff
+                w1 = np.where( mask_, w_, 0.0 )
+                v1 = 1.0 / (1.0 + np.exp(w1))
+                v_ = np.where( mask_, v1, 0.0 )
+                return v_
 
-                def _fermi(t, mu, ev):
-                    w = (ev - mu) / t
-                    mask_ = w < self.ene_cutoff
-                    w1 = np.where( mask_, w, 0.0 )
-                    v1 = 1.0 / (1.0 + np.exp(w1))
-                    v = np.where( mask_, v1, 0.0 )
-                    #v = np.where( w > self.ene_cutoff, 0.0, 1.0 / (1.0 + np.exp(w)) ) )
-                    return v
+            # Internal band energy  E_band = sum_n eps_n f(eps_n)
+            # Free   band energy    F_band = mu*N + Omega_0
+            #                              = mu*N - T*sum_n ln(1+exp(-(eps_n-mu)/T))
+            e_band_internal = 0.0
+            e_band_free = 0.0
+            for k in range(nblock):
+                w = ws_list[k]
+                v = vs_list[k]
+                mu = mus[block_to_group[k]]
+
+                fermi = _fermi(T, mu, w)
 
                 wt = -(w - mu) / T
                 mask_ = wt < self.ene_cutoff
                 ln_e = np.where( mask_, np.log1p(np.exp(wt)), wt)
 
-                nn = np.einsum('kal,kl,kal->', np.conjugate(v), _fermi(T, mu, w), v)
+                nn = np.einsum('kal,kl,kal->', np.conjugate(v), fermi, v)
 
-                e_band += mu * nn - T * np.sum(ln_e)
+                e_band_internal += np.sum(w * fermi)
+                e_band_free += mu * nn - T * np.sum(ln_e)
 
-            energy["Band"] = e_band.real
-            energy_total += energy["Band"]
-            logger.debug("energy: Band = {}".format(e_band))
+            e_band_internal = np.real(e_band_internal)
+            e_band_free = np.real(e_band_free)
+            logger.debug("energy: Band (internal) = {}".format(e_band_internal))
+            logger.debug("free energy: Band = {}".format(e_band_free))
+
+        energy["Band"] = e_band_internal
+        free_energy["Band"] = e_band_free
+        energy_total += e_band_internal
+        free_total += e_band_free
+
+        # In spin-orbital mode, convert Green to virtual form for interaction energy
+        if self.enable_spin_orbital:
+            norb_inter = self.norb_phys
+            gab_r_inter = self._so_to_virtual_green(self.Green)
+        else:
+            norb_inter = norb
+            gab_r_inter = self.Green
 
         for type in self.inter_table.keys():
             if self.inter_table[type] is not None:
-                jab_r = self.inter_table[type].reshape(nvol,norb,norb)
+                jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
                 spin  = self.spin_table[type]
-                gab_r = self.Green
+                gab_r = gab_r_inter
 
                 if type == "PairHop":
                     if self.iflag_fock:
@@ -1566,23 +2040,28 @@ class UHFk(solver_base):
                 else:
                     if self.iflag_fock:
                         w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
-                        w1b = np.broadcast_to(w1, (nvol,norb,norb))
+                        w1b = np.broadcast_to(w1, (nvol,norb_inter,norb_inter))
                         w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
                         ee = np.einsum('rab, rab->', jab_r, w1b-w2)
                     else:
                         w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
-                        w1b = np.broadcast_to(w1, (nvol,norb,norb))
+                        w1b = np.broadcast_to(w1, (nvol,norb_inter,norb_inter))
                         ee = np.einsum('rab, rab->', jab_r, w1b)
                     energy[type] = -ee/2.0*nvol
 
+                # Interaction (double-counting corrected) energy is identical
+                # for the internal energy and the free energy.
                 energy_total += energy[type].real
+                free_total += energy[type].real
                 logger.debug("energy: {} = {}".format(type, energy[type]))
             else:
                 # logger.info("energy: {} skip".format(type))
                 pass
 
         energy["Total"] = energy_total
+        free_energy["Total"] = free_total
         self.physics["Ene"] = energy.copy()
+        self.physics["FreeEne"] = free_energy.copy()
 
     @do_profile
     def get_results(self):
@@ -1623,21 +2102,56 @@ class UHFk(solver_base):
                     else:
                         fw.write("Energy_{:<12s} = {}\n".format(type, self.physics["Ene"][type].real))
 
+                # Free energy F = E - T*S (Helmholtz). At T=0 it equals the
+                # internal energy above; at finite T it is the quantity the
+                # self-consistent loop minimizes.
+                if "FreeEne" in self.physics:
+                    for type in type_ex:
+                        fw.write("FreeEnergy_{:<8} = {}\n".format(
+                            type, self.physics["FreeEne"][type].real))
+
                 fw.write("NCond   = {}\n".format(self.physics["NCond"]))
                 fw.write("Sz      = {}\n".format(self.physics["Sz"]))
+                # Chemical potential (Fermi level). One value per mu-group; at
+                # T=0 it is the midpoint of the HOMO-LUMO gap.
+                mu_arr = self._green_list.get("mu", None)
+                if mu_arr is not None:
+                    mu_arr = np.atleast_1d(mu_arr)
+                    if mu_arr.size == 1:
+                        fw.write("ChemicalPotential = {}\n".format(float(mu_arr[0])))
+                    else:
+                        for g, mu in enumerate(mu_arr):
+                            fw.write("ChemicalPotential_{} = {}\n".format(g, float(mu)))
+                # Transverse spin (Sx, Sy) is only meaningful with spin mixing;
+                # emit it only in spin-orbital mode to keep the normal-mode
+                # energy.dat format backward-compatible.
+                if self.enable_spin_orbital:
+                    fw.write("Sx      = {}\n".format(self.physics["Sx"]))
+                    fw.write("Sy      = {}\n".format(self.physics["Sy"]))
 
             logger.info("save_results: save energy in file {}".format(file_name))
 
         if "eigen" in info_outputfile.keys():
 
-            # eigenvalue[spin_block,k,eigen_index] -> [k,spin_block*eigen_index]
-            eg = self._green_list["eigenvalue"]
-            egs = eg.shape
-            egg = np.transpose(eg,(1,0,2)).reshape(egs[1],egs[0]*egs[2])
+            # Reconstruct full eigenvalue/eigenvector arrays from blocks
+            nvol = self.nvol
+            nd = self.nd
+            blocks = self.block_info
+            eg_list = self._green_list["eigenvalue"]
+            ev_list = self._green_list["eigenvector"]
 
-            ev = self._green_list["eigenvector"]
-            evs = ev.shape
-            evv = np.einsum('skab,st->ksatb', ev, np.eye(evs[0])).reshape(evs[1],evs[0]*evs[2],evs[0]*evs[3])
+            egg = np.zeros((nvol, nd), dtype=np.float64)
+            evv = np.zeros((nvol, nd, nd), dtype=np.complex128)
+
+            col_offset = 0
+            for i, blk in enumerate(blocks):
+                idx = np.array(blk)
+                blk_size = len(idx)
+                egg[:, col_offset:col_offset + blk_size] = eg_list[i]
+                # Place eigenvectors in correct rows
+                evv[np.ix_(np.arange(nvol), idx,
+                     np.arange(col_offset, col_offset + blk_size))] = ev_list[i]
+                col_offset += blk_size
 
             # # wavevec[k,eigen_index] = \vec(k)
             # wv = self.wave_table
@@ -1718,6 +2232,15 @@ class UHFk(solver_base):
     def _save_greenone(self, file_name, green_info):
         if not "onebodyg_uhf" in green_info or not "geometry_uhf" in green_info:
             logger.error("_save_greenone: onebodyg_uhf and geometry_uhf are required")
+            return None
+
+        if self.enable_spin_orbital:
+            # In spin-orbital mode spin is folded into the orbital index (ns=1),
+            # so the (i, s, j, t) one-body Green output cannot be expressed on
+            # the (spin, orbital, spin, orbital) axes. Reject rather than crash.
+            logger.error(
+                "_save_greenone: one-body Green output (onebodyg) is not "
+                "supported in spin-orbital mode")
             return None
 
         if self.has_sublattice:
@@ -1822,11 +2345,13 @@ class UHFk(solver_base):
                     fw.write("\n")
                 fw.write(" 1")
             fw.write("\n")
-            # write index and elements
+            # write index and elements. Orbital indices are stored 0-based in
+            # memory but the wannier90-like format is 1-based (read_w90 subtracts
+            # one), so emit orbvec + 1 to keep the file round-trippable.
             for (irvec,orbvec), v in self.param_ham[type].items():
                 if (abs(v) > 1.0e-12):
                     fw.write("{:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
-                        *irvec, *orbvec, v.real, v.imag
+                        *irvec, orbvec[0] + 1, orbvec[1] + 1, v.real, v.imag
                     ))
 
     def _export_hamiltonian(self, path_to_output, prefix):

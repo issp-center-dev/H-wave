@@ -1,0 +1,768 @@
+==========================================
+Tutorial: FLEX solver
+==========================================
+
+This tutorial demonstrates how to use the FLEX
+(Fluctuation Exchange Approximation) solver in H-wave.
+FLEX extends RPA by using dressed (self-consistent) Green's functions
+instead of bare ones, providing a more accurate description of
+correlated electron systems.
+
+The sample files for this tutorial are located in
+``docs/en/source/flex/sample`` directory.
+
+
+Overview
+----------------------------
+
+The FLEX approximation [1]_ is a self-consistent diagrammatic method
+for itinerant electron systems. Unlike RPA, which uses the bare
+Green's function :math:`G_0`, FLEX iterates the following self-consistent loop
+until convergence:
+
+1. Compute the dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`
+   from the Dyson equation.
+2. Compute the bare susceptibility :math:`\chi_0(\mathbf{q}, i\nu_m)`
+   from the dressed :math:`G`.
+3. Decompose the interaction into spin and charge channels.
+4. Solve the RPA equations for spin/charge susceptibilities
+   :math:`\chi_s` and :math:`\chi_c`.
+5. Construct the effective interaction :math:`V_{\mathrm{eff}}`.
+6. Compute the self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)` via
+   FFT convolution.
+7. Check convergence; if not converged, go to step 1.
+
+
+Theory
+----------------------------
+
+Dressed Green's function
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The dressed Green's function is obtained from the Dyson equation:
+
+.. math::
+
+   G(\mathbf{k}, i\omega_n)
+   = \left[ G_0^{-1}(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, i\omega_n) \right]^{-1}
+
+where :math:`G_0^{-1}(\mathbf{k}, i\omega_n) = i\omega_n + \mu - H_0(\mathbf{k})`
+is the inverse bare Green's function.
+
+Spin and charge susceptibilities
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The bare susceptibility is computed from the dressed Green's function:
+
+.. math::
+
+   \chi_0(\mathbf{q}, i\nu_m) = -\frac{T}{N_k} \sum_{\mathbf{k}, n}
+   G(\mathbf{k}+\mathbf{q}, i\omega_n + i\nu_m)\, G(\mathbf{k}, i\omega_n)
+
+The spin and charge susceptibilities are:
+
+.. math::
+
+   \chi_s = \left[ I - \chi_0 \, U_s \right]^{-1} \chi_0
+
+.. math::
+
+   \chi_c = \left[ I + \chi_0 \, U_c \right]^{-1} \chi_0
+
+where :math:`U_s` and :math:`U_c` are the spin and charge interaction vertices
+decomposed from the full interaction Hamiltonian.
+For the single-band Hubbard model, :math:`U_s = U_c = U`.
+
+Effective interaction
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The effective FLEX interaction combines spin and charge fluctuations [1]_:
+
+.. math::
+
+   V_{\mathrm{eff}}(\mathbf{q}, i\nu_m)
+   = W \left[ \frac{3}{2}\chi_s
+            + \frac{1}{2}\chi_c - \chi_0 \right] W
+
+where :math:`W` is the bare interaction vertex.
+:math:`\chi_0` is subtracted **once**: at lowest order
+:math:`\chi_s = \chi_c = \chi_0`, so the bracket reduces to :math:`\chi_0` and
+:math:`V_{\mathrm{eff}} = W \chi_0 W` (the second-order :math:`U^2` bubble).
+This single subtraction removes the double-counted second-order diagram
+contained in :math:`\chi_s` and :math:`\chi_c`.
+
+Self-energy
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The self-energy is computed via convolution in real space and
+imaginary time:
+
+.. math::
+
+   \Sigma(\mathbf{r}, \tau) = V_{\mathrm{eff}}(\mathbf{r}, \tau) \cdot G(\mathbf{r}, \tau)
+
+This element-wise (Hadamard) product is efficiently evaluated using FFT.
+
+.. [1] N. E. Bickers and D. J. Scalapino,
+   Ann. Phys. (N.Y.) **193**, 206 (1989).
+
+
+Sample 1: Single-orbital Hubbard model
+-----------------------------------------
+
+Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The first sample is a **single-orbital Hubbard model** on a
+two-dimensional square lattice at half filling (:math:`n = 1`).
+
+.. math::
+
+   H = -\sum_{\langle i,j \rangle, \sigma} t_{ij}\,
+       c^\dagger_{i\sigma} c_{j\sigma}
+     + U \sum_i n_{i\uparrow} n_{i\downarrow}
+
+with nearest-neighbor hopping :math:`t = 1.0`,
+next-nearest-neighbor hopping :math:`t' = 0.5`,
+on-site Coulomb repulsion :math:`U = 4.0`,
+and temperature :math:`T = 0.5`.
+
+This model is known to exhibit strong antiferromagnetic (AF) spin
+fluctuations with a peak at :math:`\mathbf{Q} = (\pi, \pi)`.
+
+Prepare input files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The sample files are in ``docs/en/source/flex/sample/1orb/``.
+
+**Parameter file** (``input.toml``):
+
+.. literalinclude:: ../sample/1orb/input.toml
+
+Key parameters:
+
+- ``mode = "FLEX"``: Selects the FLEX solver.
+- ``T = 0.5``: Temperature.
+- ``CellShape = [8, 8, 1]``: 8 x 8 k-point mesh for a 2D system.
+- ``Nmat = 64``: Number of Matsubara frequencies.
+- ``filling = 0.5``: Half filling.
+- ``IterationMax = 100``: Maximum number of SCF iterations.
+- ``Mix = 0.2``: Mixing parameter for self-energy update
+  (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`).
+- ``EPS = 6``: Convergence criterion :math:`10^{-6}`.
+
+**Geometry** (``geom.dat``):
+
+.. literalinclude:: ../sample/1orb/geom.dat
+
+A single orbital at the origin.
+
+**Transfer integrals** (``transfer.dat``):
+
+.. literalinclude:: ../sample/1orb/transfer.dat
+
+Nearest-neighbor (:math:`t = 1.0`) and next-nearest-neighbor
+(:math:`t' = 0.5`) hopping on the square lattice.
+
+**On-site interaction** (``coulombintra.dat``):
+
+.. literalinclude:: ../sample/1orb/coulombintra.dat
+
+On-site Coulomb repulsion :math:`U = 4.0`.
+
+
+Run the calculation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+    $ cd docs/en/source/flex/sample/1orb
+    $ hwave input.toml
+
+The output log shows the SCF convergence:
+
+.. code-block:: text
+
+    FLEX iteration 1/100
+      convergence: |dSigma|/|Sigma| = 1.000e+00
+    FLEX iteration 2/100
+      convergence: |dSigma|/|Sigma| = 9.827e-01
+    ...
+    FLEX iteration 72/100
+      convergence: |dSigma|/|Sigma| = 1.008e-06
+    FLEX iteration 73/100
+      convergence: |dSigma|/|Sigma| = 8.292e-07
+    FLEX converged after 73 iterations
+
+
+Results
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After convergence, the solver produces the following output files
+in the ``output`` directory:
+
+- ``chi0q.npz``: Bare susceptibility :math:`\chi_0(\mathbf{q}, i\nu_m)`
+- ``chiq_s.npz``: Spin susceptibility :math:`\chi_s(\mathbf{q}, i\nu_m)`
+- ``chiq_c.npz``: Charge susceptibility :math:`\chi_c(\mathbf{q}, i\nu_m)`
+- ``chiq.npz``: Combined susceptibility file
+- ``sigma.npz``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`
+- ``green.npz``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`
+
+**Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
+
+.. figure:: ../sample/1orb/chi_s.png
+   :width: 60%
+   :align: center
+
+   Static spin susceptibility :math:`\chi_s(\mathbf{q})` of the
+   single-orbital Hubbard model at half filling.
+   The peak at :math:`\mathbf{Q} = (\pi, \pi)` indicates strong
+   antiferromagnetic spin fluctuations, consistent with the nesting
+   of the Fermi surface.
+
+**Self-energy** :math:`\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)`:
+
+.. figure:: ../sample/1orb/sigma_kspace.png
+   :width: 60%
+   :align: center
+
+   Imaginary part of the self-energy at the lowest Matsubara frequency.
+   The k-dependence reflects the scattering of quasiparticles by
+   spin fluctuations, with stronger damping near the antiferromagnetic
+   hot spots.
+
+**Self-energy vs Matsubara frequency**:
+
+.. figure:: ../sample/1orb/sigma_matsubara.png
+   :width: 80%
+   :align: center
+
+   Frequency dependence of the self-energy at selected k-points.
+   The imaginary part :math:`\mathrm{Im}\,\Sigma(i\omega_n) < 0`
+   shows quasiparticle damping, while the
+   :math:`1/\omega_n` tail at high frequencies indicates
+   Fermi liquid behavior.
+
+
+Sample 2: Two-orbital Hubbard model
+-----------------------------------------
+
+Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The second sample is a **two-orbital Hubbard model** with
+inter-orbital Coulomb interaction and Hund's coupling:
+
+.. math::
+
+   H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+       \varepsilon_{\alpha\beta}(\mathbf{k})\,
+       c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
+     + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+     + V \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
+     - 2J \sum_{i,\alpha\neq\beta}
+       \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
+
+with :math:`U = 4.0`, :math:`V = 1.0`, :math:`J = 0.5`,
+and temperature :math:`T = 1.0`.
+
+Prepare input files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The sample files are in ``docs/en/source/flex/sample/2orb/``.
+
+**Parameter file** (``input.toml``):
+
+.. literalinclude:: ../sample/2orb/input.toml
+
+Key differences from the 1-orbital sample:
+
+- ``T = 1.0``: Higher temperature for stability.
+- ``IterationMax = 200``: More iterations for multi-orbital convergence.
+- Additional interaction files: ``CoulombInter`` and ``Hund``.
+
+**Geometry** (``geom.dat``):
+
+.. literalinclude:: ../sample/2orb/geom.dat
+
+Two orbitals per unit cell.
+
+**Transfer integrals** (``transfer.dat``):
+
+.. literalinclude:: ../sample/2orb/transfer.dat
+
+Intra-orbital hopping (:math:`t = 1.0` along y) and
+inter-orbital hybridization (:math:`t' = 0.5`).
+
+**On-site interaction** (``coulombintra.dat``):
+
+.. literalinclude:: ../sample/2orb/coulombintra.dat
+
+Intra-orbital Coulomb :math:`U = 4.0` on both orbitals.
+
+**Inter-orbital Coulomb** (``coulombinter.dat``):
+
+.. literalinclude:: ../sample/2orb/coulombinter.dat
+
+Inter-orbital Coulomb :math:`V = 1.0`.
+
+**Hund's coupling** (``hund.dat``):
+
+.. literalinclude:: ../sample/2orb/hund.dat
+
+Hund's coupling :math:`J = 0.5`.
+
+
+Run the calculation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+    $ cd docs/en/source/flex/sample/2orb
+    $ hwave input.toml
+
+.. code-block:: text
+
+    FLEX iteration 1/200
+      convergence: |dSigma|/|Sigma| = 1.000e+00
+    FLEX iteration 2/200
+      convergence: |dSigma|/|Sigma| = 3.587e-01
+    ...
+    FLEX iteration 58/200
+      convergence: |dSigma|/|Sigma| = 1.188e-06
+    FLEX iteration 59/200
+      convergence: |dSigma|/|Sigma| = 9.684e-07
+    FLEX converged after 59 iterations
+
+
+Results
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
+
+.. figure:: ../sample/2orb/chi_s.png
+   :width: 60%
+   :align: center
+
+   Static spin susceptibility of the two-orbital model.
+   The peak at :math:`\mathbf{Q} = (\pi, \pi)` is enhanced by
+   Hund's coupling, which promotes ferromagnetic alignment within
+   each site while allowing antiferromagnetic inter-site correlations.
+
+**Self-energy** :math:`\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)`:
+
+.. figure:: ../sample/2orb/sigma_kspace.png
+   :width: 60%
+   :align: center
+
+   Imaginary part of the self-energy for the two-orbital model.
+   The orbital-dependent k-structure reflects the different
+   scattering channels in the multi-orbital system.
+
+**Self-energy vs Matsubara frequency**:
+
+.. figure:: ../sample/2orb/sigma_matsubara.png
+   :width: 80%
+   :align: center
+
+   Frequency dependence of the self-energy for the two-orbital model.
+   The larger magnitude compared to the single-orbital case reflects
+   the enhanced correlations from inter-orbital interactions.
+
+
+Plotting
+----------------------------
+
+The figures above can be reproduced using the plotting script:
+
+.. code-block:: bash
+
+    $ cd docs/en/source/flex/sample
+    $ python plot_results.py
+
+Or from within a single sample directory:
+
+.. code-block:: bash
+
+    $ cd docs/en/source/flex/sample/1orb
+    $ python ../plot_results.py
+
+
+Output file format
+----------------------------
+
+The FLEX solver produces NumPy ``.npz`` files with the following contents:
+
+``chi0q.npz``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``chi0q``: Bare susceptibility :math:`\chi_0(\mathbf{q}, i\nu_m)`,
+  shape ``(nmat, nvol, nd, nd)``.
+- ``freq_index``: Matsubara frequency indices.
+- ``wavevector_unit``: k-point vectors.
+- ``wavevector_index``: Wavenum table.
+
+``chiq_s.npz``, ``chiq_c.npz``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``chiq_s`` / ``chiq_c``: Spin / charge susceptibility,
+  same shape as ``chi0q``.
+
+``sigma.npz``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``sigma``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`,
+  shape ``(nblock, nmat, nvol, nd_block, nd_block)``
+  where ``nblock`` is the number of spin blocks (1 for spin-free mode).
+
+``green.npz``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``green``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`,
+  same shape as ``sigma``.
+
+These output files can also be used as input for the
+Eliashberg equation solver (``hwave_sc``) to analyze
+superconducting instabilities. See :doc:`/rpa/tutorial/sc-index` for details.
+
+
+FLEX-specific parameters
+----------------------------
+
+The FLEX solver accepts the following parameters in the
+``[mode.param]`` section:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 60
+
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - ``IterationMax``
+     - int
+     - 100
+     - Maximum number of SCF iterations.
+   * - ``Mix``
+     - float
+     - 0.2
+     - Mixing parameter :math:`\alpha` for self-energy update.
+       Smaller values give more stable convergence but slower progress.
+   * - ``EPS``
+     - int/float
+     - 6
+     - Convergence criterion. If integer :math:`n`, the threshold is
+       :math:`10^{-n}`. If float < 1, used directly as threshold.
+
+All other parameters (``T``, ``CellShape``, ``Nmat``, ``filling``, etc.)
+are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
+
+
+Sample 3: Iron pnictide 2-orbital model
+-----------------------------------------
+
+Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The third sample is a **two-orbital minimal model for iron-based
+superconductors** proposed by Raghu et al. [2]_
+The model describes the Fe-As plane using :math:`d_{xz}` and
+:math:`d_{yz}` orbitals on a square lattice (1-Fe unit cell).
+
+.. math::
+
+   H_0(\mathbf{k}) = \begin{pmatrix}
+   \varepsilon_x(\mathbf{k}) & \varepsilon_{xy}(\mathbf{k}) \\
+   \varepsilon_{xy}(\mathbf{k}) & \varepsilon_y(\mathbf{k})
+   \end{pmatrix}
+
+where
+
+.. math::
+
+   \varepsilon_x(\mathbf{k}) &= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+   \varepsilon_y(\mathbf{k}) &= -2t_2 \cos k_x - 2t_1 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+   \varepsilon_{xy}(\mathbf{k}) &= -4t_4 \sin k_x \sin k_y
+
+with :math:`t_1 = -1.0`, :math:`t_2 = 1.3`, :math:`t_3 = t_4 = -0.85`.
+
+The interactions follow the Kanamori parameterization:
+
+.. math::
+
+   H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+   + U' \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
+   - 2J \sum_{i,\alpha\neq\beta} \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
+   + J' \sum_{i,\alpha\neq\beta} c^\dagger_{i\alpha\uparrow} c^\dagger_{i\alpha\downarrow}
+     c_{i\beta\downarrow} c_{i\beta\uparrow}
+
+with :math:`U = 1.5`, :math:`J = J' = 0.25`, :math:`U' = U - 2J = 1.0`,
+at temperature :math:`T = 0.1` and half filling (:math:`n = 2`).
+
+The Fermi surface consists of hole pockets at :math:`\Gamma` and
+electron pockets at :math:`M = (\pi, 0)` / :math:`(0, \pi)`.
+The nesting between these pockets drives strong spin fluctuations
+at :math:`\mathbf{Q} = (\pi, 0)`, which is the hallmark of iron pnictides.
+
+.. [2] S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
+   Phys. Rev. B **77**, 220503(R) (2008).
+
+Prepare input files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The sample files are in ``docs/en/source/flex/sample/iron_2orb/``.
+
+**Parameter file** (``input.toml``):
+
+.. literalinclude:: ../sample/iron_2orb/input.toml
+
+**Geometry** (``geom.dat``):
+
+.. literalinclude:: ../sample/iron_2orb/geom.dat
+
+Two orbitals (:math:`d_{xz}` and :math:`d_{yz}`) at the same site.
+
+**Transfer integrals** (``transfer.dat``):
+
+.. literalinclude:: ../sample/iron_2orb/transfer.dat
+
+The hopping parameters produce the characteristic two-pocket Fermi surface.
+
+**Interactions**:
+
+.. literalinclude:: ../sample/iron_2orb/coulombintra.dat
+
+.. literalinclude:: ../sample/iron_2orb/coulombinter.dat
+
+.. literalinclude:: ../sample/iron_2orb/hund.dat
+
+.. literalinclude:: ../sample/iron_2orb/exchange.dat
+
+
+Run the calculation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+    $ cd docs/en/source/flex/sample/iron_2orb
+    $ hwave input.toml
+
+.. code-block:: text
+
+    FLEX iteration 1/200
+      convergence: |dSigma|/|Sigma| = 1.000e+00
+    FLEX iteration 2/200
+      convergence: |dSigma|/|Sigma| = 7.139e-01
+    ...
+    FLEX iteration 62/200
+      convergence: |dSigma|/|Sigma| = 1.055e-06
+    FLEX iteration 63/200
+      convergence: |dSigma|/|Sigma| = 8.419e-07
+    FLEX converged after 63 iterations
+
+
+Results
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Spin and charge susceptibilities**:
+
+.. figure:: ../sample/iron_2orb/chi_spin_charge.png
+   :width: 90%
+   :align: center
+
+   Static spin susceptibility :math:`\chi_s(\mathbf{q})` (left) and charge
+   susceptibility :math:`\chi_c(\mathbf{q})` (right).
+   The spin susceptibility peaks at :math:`\mathbf{Q} = (\pi, 0)` and
+   :math:`(0, \pi)`, reflecting the nesting between hole and electron
+   Fermi pockets. This is qualitatively different from the single-band
+   Hubbard model where :math:`\chi_s` peaks at :math:`(\pi, \pi)`.
+
+**Orbital-resolved self-energy**:
+
+.. figure:: ../sample/iron_2orb/sigma_orbital.png
+   :width: 90%
+   :align: center
+
+   Imaginary part of the self-energy at the lowest Matsubara frequency,
+   resolved by orbital. The :math:`d_{xz}` orbital shows stronger
+   scattering along :math:`k_y` direction, while :math:`d_{yz}` shows
+   stronger scattering along :math:`k_x`. This orbital anisotropy
+   arises from the orbital character of the Fermi surface.
+
+**Self-energy vs Matsubara frequency**:
+
+.. figure:: ../sample/iron_2orb/sigma_matsubara_orbital.png
+   :width: 90%
+   :align: center
+
+   Frequency dependence of the orbital-resolved self-energy at
+   high-symmetry k-points. At :math:`M = (\pi, 0)`, the
+   :math:`d_{yz}` orbital is more strongly damped than :math:`d_{xz}`,
+   reflecting orbital-selective correlations.
+
+**Plotting script**:
+
+.. code-block:: bash
+
+    $ python plot_results.py
+
+
+Tips
+----------------------------
+
+- **Convergence issues**: If the SCF loop does not converge, try
+  reducing ``Mix`` (e.g., 0.1 or 0.05) or increasing the temperature.
+  Strong correlations near magnetic instabilities can make convergence
+  difficult.
+
+- **Matsubara frequencies**: A sufficient number of Matsubara
+  frequencies (``Nmat``) is needed for accurate results. A good rule
+  of thumb is :math:`N_{\mathrm{mat}} \geq 10 / T` to capture the
+  low-frequency structure.
+
+- **k-point mesh**: The mesh size (``CellShape``) should be large enough
+  to resolve the momentum structure of susceptibilities and self-energy.
+  For 2D systems, 8x8 is sufficient for qualitative results; 32x32 or
+  larger is recommended for quantitative calculations.
+
+- **Computational cost**: FLEX is more expensive than RPA due to the
+  SCF loop. The cost scales as
+  :math:`O(N_{\mathrm{iter}} \times N_k \times N_\omega \times N_d^3)`
+  where :math:`N_d = N_{\mathrm{orb}} \times N_{\mathrm{spin}}`.
+
+- **Connection to Eliashberg equation**: The FLEX output files
+  (``chiq_s.npz`` and ``chiq_c.npz``) can be used with ``hwave_sc``
+  by setting ``chi0q_mode = "flex"`` in the ``[eliashberg]`` section.
+  This enables analysis of superconducting instabilities with
+  FLEX-level spin and charge fluctuations.
+
+
+Implementation details and limitations
+-----------------------------------------
+
+Supported interaction types
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The FLEX solver supports the following interaction types:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Interaction type
+     - Support
+     - Notes
+   * - ``CoulombIntra``
+     - Yes
+     - Intra-orbital Coulomb repulsion :math:`U`
+   * - ``CoulombInter``
+     - Yes
+     - Inter-orbital Coulomb repulsion :math:`V`
+   * - ``Hund``
+     - Yes
+     - Hund's coupling :math:`J`
+   * - ``Exchange``
+     - Yes
+     - Exchange interaction :math:`J'`
+   * - ``Ising``
+     - Yes
+     - Ising-type interaction
+   * - ``PairLift``
+     - Yes
+     - Pair lifting interaction
+   * - ``PairHop``
+     - Yes
+     - Pair hopping interaction
+   * - ``InterAll``
+     - **No**
+     - Arbitrary 4-body interaction (UHFr solver only)
+
+.. note::
+
+   The ``InterAll`` format is not available in k-space solvers (RPA/FLEX).
+   Interactions described by ``InterAll`` should be decomposed into
+   the individual interaction types listed above.
+
+
+Momentum-dependent interactions (long-range interactions)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Interactions are specified in Wannier90-format input files.
+Each line has the format ``rx ry rz a b Re Im``,
+where ``(rx, ry, rz)`` is a real-space lattice vector.
+
+**On-site interactions** (only ``rx = ry = rz = 0``):
+
+After FFT, these become momentum-independent interactions
+:math:`W(\mathbf{q}) = W_0`, constant across all q-points.
+All current sample files use this case.
+
+**Long-range interactions** (with non-zero ``(rx, ry, rz)``):
+
+These are automatically transformed into momentum-dependent
+interactions via FFT:
+
+.. math::
+
+   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{-i\mathbf{q}\cdot\mathbf{r}}
+
+For example, to include nearest-neighbor Coulomb interactions,
+add entries with lattice vectors ``(1,0,0)``, ``(0,1,0)``, etc.
+to the interaction file.
+
+.. note::
+
+   There is no built-in facility to automatically discretize a
+   continuous :math:`1/r` Coulomb potential. Users must explicitly
+   specify the interaction value at each lattice point in the input file.
+
+
+Spin-charge channel decomposition constraint
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The FLEX solver decomposes the interaction tensor into spin and charge
+channels for the self-energy calculation. This decomposition reduces
+the 4-body interaction tensor
+:math:`W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}`
+to a 2-body contracted form :math:`W_{\alpha\sigma,\beta\sigma'}`.
+
+Specifically, same-spin and cross-spin components are separated:
+
+.. math::
+
+   U_s &= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
+   U_c &= W_{\mathrm{cross}} + W_{\mathrm{same}}
+
+where :math:`W_{\mathrm{same}}` is the same-spin interaction and
+:math:`W_{\mathrm{cross}}` is the cross-spin interaction.
+
+This contraction is exact for **density-density type interactions**.
+``CoulombIntra``, ``CoulombInter``, ``Hund``, and ``Ising``
+are all density-density type and are handled correctly.
+``Exchange`` and ``PairHop`` are also properly treated within the
+standard Kanamori parameterization.
+
+
+Spin degrees of freedom (spin-free mode)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The FLEX solver operates in **spin-free mode** by default.
+This mode assumes SU(2) spin symmetry to reduce computational cost.
+
+In spin-free mode:
+
+- Green's functions are represented in orbital space only
+  (shape: ``(1, nmat, nvol, norb, norb)``).
+- Susceptibilities and effective interactions are internally inflated to
+  spin-orbital space (``nd = norb × ns``) for computation.
+- After self-energy computation, the properties guaranteed by SU(2) symmetry
+  — :math:`\Sigma_{\uparrow\uparrow} = \Sigma_{\downarrow\downarrow}` and
+  :math:`\Sigma_{\uparrow\downarrow} = 0` — are used to contract back
+  to orbital space.
+
+.. note::
+
+   Spin-free mode assumes a paramagnetic state (no magnetic order).
+   Describing magnetically ordered phases requires an extension that
+   treats spin degrees of freedom explicitly.

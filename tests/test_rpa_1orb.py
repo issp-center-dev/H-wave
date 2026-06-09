@@ -178,7 +178,7 @@ class TestRPA(unittest.TestCase):
                 'path_to_input': 'tests/rpa/input',
                 'interaction': {
                     'path_to_input': 'tests/rpa/input',
-                    'Geometry': 'geom.dat',
+                    'Geometry': 'geom_so.dat' if spin_orbital else 'geom.dat',
                     'Transfer': 'transfer.dat',
                 },
             },
@@ -275,12 +275,17 @@ class TestRPA(unittest.TestCase):
              }
         )
 
-    # def test_U_and_V_spin_orbital(self):
-    #     self.run_test(
-    #         { 'Transfer': 'transfer_spin_orbital.dat', 'CoulombIntra': 'coulombintra.dat', 'CoulombInter': 'coulombinter.dat' },
-    #         { 't1': 0.5, 'U': 4.0, 'V': 1.0 },
-    #         True
-    #     )
+    def test_U_and_V_spin_orbital(self):
+        # The trivial spin-orbital embedding (transfer replicated for both spins
+        # with no spin mixing) of the t1=0.5 model must reproduce the analytic
+        # one-orbital RPA result. (The previously referenced spin_orbital.dat
+        # adds an on-site spin-flip term, so it is a different system and does
+        # not match this non-spin-mixed reference.)
+        self.run_test(
+            { 'Transfer': 'transfer_spin_orbital_trivial.dat', 'CoulombIntra': 'coulombintra.dat', 'CoulombInter': 'coulombinter.dat' },
+            { 't1': 0.5, 'U': 4.0, 'V': 1.0 },
+            True
+        )
 
 if __name__ == '__main__':
     unittest.main()

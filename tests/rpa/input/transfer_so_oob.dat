@@ -1,0 +1,5 @@
+SO 2orb with out-of-range index (5 -> 0-based 4, nd=4)
+1
+2
+1 1
+-1 0 0 5 5 1.0 0.0

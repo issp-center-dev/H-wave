@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""geom-norb SO-count convention: derivation, validation, fold stride, guards."""
+
+import os
+import unittest
+
+import numpy as np
+
+import hwave.solver.rpa as solver_rpa
+from hwave.solver.rpa import _so_physical_norb
+
+
+class TestSoPhysicalNorb(unittest.TestCase):
+    def test_non_so_passthrough(self):
+        self.assertEqual(_so_physical_norb(3, False), 3)
+
+    def test_so_halves_even(self):
+        self.assertEqual(_so_physical_norb(4, True), 2)
+
+    def test_so_odd_raises(self):
+        with self.assertRaises(ValueError):
+            _so_physical_norb(3, True)
+
+    def test_so_check_norb_targets_prefold(self):
+        # divide the post-fold value (8) but validate evenness on pre-fold (3)
+        with self.assertRaises(ValueError):
+            _so_physical_norb(8, True, check_norb=3)
+
+    def test_so_check_norb_even_but_different_returns_geom_half(self):
+        # post-fold geom_norb=8 with even pre-fold check_norb=4 -> halve geom_norb
+        self.assertEqual(_so_physical_norb(8, True, check_norb=4), 4)
+
+
+class TestSoTransferIndexRange(unittest.TestCase):
+    def _construct_with_transfer(self, transfer_name):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": [1, 1, 1], "Nmat": 32},
+            "enable_spin_orbital": True,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom_so_2orb.dat",
+                                               "Transfer": transfer_name}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        os.makedirs(info_file["input"]["interaction"]["path_to_input"], exist_ok=True)
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_out_of_range_so_index_raises(self):
+        # geom_so_2orb.dat declares nd=4 (indices 0..3); an index of 4 is illegal.
+        with self.assertRaises(ValueError):
+            self._construct_with_transfer("transfer_so_oob.dat")
+
+
+class _FakeLattice:
+    def __init__(self, shape, subshape):
+        self.shape = shape
+        self.subshape = subshape
+
+
+class TestReshapeInteractionStride(unittest.TestCase):
+    """P4: non-Transfer (physical-indexed) interactions fold with the physical
+    stride, while Transfer (spin-orbital-indexed) folds with the SO-count stride."""
+
+    def _make_interaction(self, geom_norb_orig, enable_spin_orbital, subshape):
+        obj = object.__new__(solver_rpa.Interaction)
+        obj.enable_spin_orbital = enable_spin_orbital
+        obj.lattice = _FakeLattice(shape=(2, 1, 1), subshape=subshape)
+        obj.param_ham_orig = {"Geometry": {"norb": geom_norb_orig}}
+        return obj
+
+    def test_two_body_stride_is_physical_in_so_mode(self):
+        # SO mode, geom norb (SO count) = 4 -> physical = 2. A two-body term
+        # (enable_spin_orbital=False call) on physical orbital index 1, folded
+        # over subshape (2,1,1), must land within [0, norb_phys*subvol) = [0,4),
+        # not stride by the SO count (which would reach 5).
+        obj = self._make_interaction(4, True, subshape=(2, 1, 1))
+        ham = {((0, 0, 0), (1, 1)): 1.0}
+        out = obj._reshape_interaction(ham, enable_spin_orbital=False)
+        folded_indices = [i for (_ir, ov) in out.keys() for i in ov]
+        self.assertTrue(all(0 <= i < 4 for i in folded_indices),
+                        "physical-indexed fold must stride by norb_phys; got "
+                        "{}".format(folded_indices))
+
+    def test_transfer_stride_is_so_count_in_so_mode(self):
+        # Transfer (enable_spin_orbital=True call) keeps the SO-count stride;
+        # subshape (1,1,1) => identity fold, index 3 preserved (< SO count 4).
+        obj = self._make_interaction(4, True, subshape=(1, 1, 1))
+        ham = {((0, 0, 0), (3, 3)): 1.0}
+        out = obj._reshape_interaction(ham, enable_spin_orbital=True)
+        self.assertIn(((0, 0, 0), (3, 3)), out)
+
+
+class TestTransModSublatticeSupported(unittest.TestCase):
+    """trans_mod + sublattice folding is now supported (was a NotImplemented
+    guard over a pre-existing 2023 mis-wire; see test_rpa_trans_mod.py for the
+    folded-vs-unfolded chiq invariance gate)."""
+
+    def _solver(self, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": list(subshape), "Nmat": 32},
+            "enable_spin_orbital": False,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom.dat",
+                                               "Transfer": "transfer.dat"}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_trans_mod_with_sublattice_folds(self):
+        import tempfile
+        solver = self._solver(subshape=(2, 1, 1))
+        # geom.dat is norb=1 (non-SO): nd0 = ns*norb_orig = 2, cellvol = 8.
+        ns, norb_orig, cellvol = 2, 1, 8
+        nd0 = ns * norb_orig
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((cellvol, nd0, nd0))
+        tab = (a + a.transpose(0, 2, 1)) * 0.5  # symmetric (real Hermitian)
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=tab)
+            tab_k = solver._read_trans_mod(fn)  # must NOT raise
+        # folded supercell: nvol = 4, nd = norb*subvol*ns = 1*2*2 = 4
+        self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
+
+
+class TestTransModSOMultiOrbitalSupported(unittest.TestCase):
+    """SO multi-orbital trans_mod is now SUPPORTED: the loaded array is remapped
+    interleaved->spin-block before reshape/FFT (mirroring _make_ham_trans's
+    Transfer remap), instead of fail-fasting with NotImplementedError.
+    See tests/test_rpa_so_trans_mod.py for the correctness/fold-invariance gate.
+    """
+
+    def _solver(self, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": list(subshape), "Nmat": 32},
+            "enable_spin_orbital": True,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom_so_2orb.dat",
+                                               "Transfer": "transfer_so_2orb.dat"}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_so_multiorbital_trans_mod_reads_right_shape(self):
+        import tempfile
+        solver = self._solver(subshape=(1, 1, 1))
+        # geom_so_2orb.dat: SO count 4 -> norb_orig (physical) = 2, nd0 = 4,
+        # cellvol = 8. Interleaved Hermitian real-space trans_mod.
+        norb_phys, cellvol = 2, 8
+        nd0 = 2 * norb_phys
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((cellvol, nd0, nd0))
+        tab = (a + a.transpose(0, 2, 1)) * 0.5  # symmetric (real Hermitian)
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=tab)
+            tab_k = solver._read_trans_mod(fn)  # must NOT raise
+        # unfolded SO: nvol = 8, nd = ns*norb = 2*2 = 4
+        self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
+
+
+class TestTransModShapeValidation(unittest.TestCase):
+    """B3: _read_trans_mod must reject arrays whose shape does not match
+    (cellvol, ns*norb_orig, ns*norb_orig), even if the total element count
+    happens to be the same.
+
+    Uses SubShape=[2,1,1] (same fixture as TestTransModSublatticeSupported) to
+    avoid the transfer.dat y-offset incompatibility with SubShape=[1,1,1].
+    With CellShape=[8,1,1] and geom.dat norb=1 (non-SO):
+      cellvol=8, ns=2, norb_orig=1  ->  expected (8, 2, 2) = 32 elements.
+    """
+
+    def _solver(self, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": list(subshape), "Nmat": 32},
+            "enable_spin_orbital": False,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom.dat",
+                                               "Transfer": "transfer.dat"}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_wrong_shape_trans_mod_raises(self):
+        import tempfile
+        # Use SubShape=[2,1,1]: cellvol=8, nd0=2, expected (8,2,2)=32 elements.
+        # Provide (2,4,4)=32 elements: same total size, wrong axis layout.
+        solver = self._solver(subshape=(2, 1, 1))
+        bad = np.zeros((2, 4, 4))
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=bad)
+            with self.assertRaises(ValueError):
+                solver._read_trans_mod(fn)
+
+    def test_correct_shape_trans_mod_does_not_raise(self):
+        """Sanity-check: the valid shape (cellvol, nd0, nd0) must not raise."""
+        import tempfile
+        # Use SubShape=[2,1,1]: expected (8, 2, 2)
+        solver = self._solver(subshape=(2, 1, 1))
+        good = np.zeros((8, 2, 2))
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=good)
+            # must not raise
+            solver._read_trans_mod(fn)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -13,6 +13,7 @@ import hwave.qlmsio as qlmsio
 import hwave.solver.uhfr as sol_uhfr
 import hwave.solver.uhfk as sol_uhfk
 import hwave.solver.rpa as sol_rpa
+import hwave.solver.flex as sol_flex
 from requests.structures import CaseInsensitiveDict
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
@@ -125,6 +126,19 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         ham_info = read_io.get_param("ham")
 
         solver = sol_rpa.RPA(ham_info, info_log, info_mode)
+
+        green_info = read_io.get_param("green")
+        green_info.update(solver.read_init(info_inputfile))
+
+    elif mode == "FLEX":
+        # Fluctuation Exchange approximation (self-consistent RPA)
+        logger.info("FLEX mode")
+
+        logger.info("Read interaction definitions from files")
+        read_io = qlmsio.read_input_k.QLMSkInput(info_inputfile)
+        ham_info = read_io.get_param("ham")
+
+        solver = sol_flex.FLEX(ham_info, info_log, info_mode)
 
         green_info = read_io.get_param("green")
         green_info.update(solver.read_init(info_inputfile))

@@ -127,7 +127,18 @@
 -  並進ベクトルは全て ``CellShape`` 内に収まるとします。
    ``r_x``, ``r_y``, ``r_z`` の範囲が ``CellShape`` のx,y,z軸のサイズを超える場合はエラーで終了します。
 
--  ``mode.enable_spin_orbital`` が ``true`` の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 :math:`2 N_\text{orbital}` の値をとります。1〜 :math:`N_\text{orbital}` が spin up、:math:`N_\text{orbital}+1` 〜 :math:`2 N_\text{orbital}` が spin down に対応します。 ``mode.enable_spin_orbital`` が ``false`` の場合は、インデックスの範囲が 1〜 :math:`N_\text{orbital}` の行のみ考慮します。
+-  ``mode.enable_spin_orbital`` が ``true`` の場合、Transfer項の軌道インデックスは
+   インターリーブ規約で解釈され、1〜 :math:`2 N_\text{orbital}` の値をとります。
+   複合インデックスは :math:`2\alpha + s + 1`（1始まり）であり、
+   :math:`\alpha = 0, \ldots, N_\text{orbital}-1` が物理軌道インデックス、
+   :math:`s \in \{0, 1\}` がスピンインデックスです。
+   ``mode.enable_spin_orbital`` が ``false`` の場合は、インデックスの範囲が
+   1〜 :math:`N_\text{orbital}` の行のみ考慮します。
+
+   .. note::
+
+      **移行上の注意（RPA）：** スピン軌道入力の幾何 ``Norbit`` はスピン軌道数（= 物理軌道数 × 2）
+      になりました。既存の RPA スピン軌道計算の ``geom.dat`` の ``Norbit`` は2倍にしてください。
 
    
 .. raw:: latex

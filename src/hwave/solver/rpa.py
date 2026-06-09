@@ -24,6 +24,71 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 
+
+def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
+    """Reject a stored chi0q whose spin-orbital index convention is unknown.
+
+    RPA writes ``index_convention="spin_block"`` (spin*norb+orb) into its
+    chi0q.npz / chiq.npz. UHFk instead uses the interleaved (2*orb+spin)
+    ordering, and chi0q files produced before the SO convention fix
+    (commit 9dd9a21) carry no ``index_convention`` key at all. In spin-orbital
+    mode the two orderings differ, so silently accepting such a file would mix
+    conventions and corrupt the result. Outside spin-orbital mode the
+    convention is irrelevant and this is a no-op.
+
+    Parameters
+    ----------
+    data : Mapping
+        Loaded npz (e.g. ``numpy.load(...)``); must support ``in`` and ``[]``.
+    enable_spin_orbital : bool
+        Whether the consuming calculation runs in spin-orbital mode.
+    file_name : str, optional
+        Source path, used only for the error message.
+
+    Raises
+    ------
+    ValueError
+        If spin-orbital mode is on and the file lacks a ``spin_block``
+        ``index_convention`` marker.
+    """
+    if not enable_spin_orbital:
+        return
+    if "index_convention" not in data:
+        raise ValueError(
+            "chi0q file '{}' lacks an 'index_convention' marker. It predates "
+            "the spin-orbital index convention fix and may use the interleaved "
+            "(2*orb+spin) ordering; regenerate it with the current RPA solver "
+            "(which writes index_convention='spin_block').".format(file_name)
+        )
+    conv = str(data["index_convention"])
+    if conv != "spin_block":
+        raise ValueError(
+            "chi0q file '{}' has index_convention='{}', but spin-orbital mode "
+            "requires 'spin_block' (spin*norb+orb). Regenerate it with the "
+            "current RPA solver.".format(file_name, conv)
+        )
+
+def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
+                      source="geom.dat"):
+    """Physical orbital count from a geometry ``norb``.
+
+    In spin-orbital mode ``geom.dat``'s ``norb`` is the spin-orbital count
+    (= 2 * physical orbitals = Wannier90 num_wann), matching UHFk, so halve it.
+    Evenness is validated on ``check_norb`` (the *original*, pre-sublattice-fold
+    value) so the error names the user's actual ``geom.dat`` entry, while the
+    returned count is derived from ``geom_norb`` (which may be the post-fold
+    value ``orig * subvol``).
+    """
+    if not enable_spin_orbital:
+        return geom_norb
+    cn = check_norb if check_norb is not None else geom_norb
+    if cn % 2 != 0:
+        raise ValueError(
+            "spin-orbital mode requires an even Geometry norb (the spin-orbital "
+            "count = 2 * physical orbitals); got {} in {}".format(cn, source))
+    return geom_norb // 2
+
+
 class Lattice:
     """
     Lattice parameters:
@@ -150,7 +215,21 @@ class Interaction:
         # initialize, and reshape if use sublattice
         self._init_interaction()
 
-        self.norb = param_ham["Geometry"]["norb"]
+        # geom norb is the spin-orbital count in SO mode (UHFk/W90 convention).
+        # _init_interaction may have folded the geometry (norb -> norb*subvol),
+        # so read the POST-fold value here; validate evenness on the pre-fold
+        # original (param_ham_orig exists only when has_sublattice).
+        post_fold_norb = param_ham["Geometry"]["norb"]
+        if self.lattice.has_sublattice:
+            orig_norb = self.param_ham_orig["Geometry"]["norb"]
+        else:
+            orig_norb = post_fold_norb
+        self.norb = _so_physical_norb(post_fold_norb, self.enable_spin_orbital,
+                                      check_norb=orig_norb, source="Geometry")
+        # Pre-fold physical orbital count (per ORIGINAL cell). Equals self.norb
+        # without sublattice; under folding self.norb = norb_orig * subvol.
+        # Reused by RPA._reshape_green to decode the folded orbital index.
+        self.norb_orig = _so_physical_norb(orig_norb, self.enable_spin_orbital)
 
         # create hamiltonian
         self._make_ham_trans()
@@ -224,10 +303,15 @@ class Interaction:
         Bx,By,Bz = self.lattice.subshape
         nx,ny,nz = self.lattice.shape
 
-        norb_orig = self.param_ham_orig["Geometry"]["norb"]
+        # In SO mode, geom norb is the spin-orbital count; interactions use
+        # physical orbital indices, so the stride for non-SO folding is norb_phys.
+        geom_norb_orig = self.param_ham_orig["Geometry"]["norb"]
+        norb_orig = geom_norb_orig  # SO count (used by _reshape_orbit_spin)
+        # physical count (stride for non-SO / physical-orbital-indexed terms)
+        norb_phys_orig = _so_physical_norb(geom_norb_orig, self.enable_spin_orbital)
 
         def _reshape_orbit_(a, x):
-            return a + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
+            return a + norb_phys_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
 
         def _reshape_orbit_spin(a, x):
             a_, s_ = a%norb_orig, a//norb_orig
@@ -324,11 +408,26 @@ class Interaction:
             return
 
         if self.enable_spin_orbital == True:
-            # assume orbital index includes spin index
+            # The SO transfer file uses the interleaved convention
+            # (index = 2*orb + spin, matching UHFk and the docs), while RPA
+            # works internally in spin-block order (index = spin*norb + orb).
+            # Remap each orbital index P(i) = (i % 2) * norb + i // 2 on both
+            # the row and column so the (spin, orbital) reshapes downstream are
+            # correct. For norb_phys = 1 this is the identity.
+            def _so_interleaved_to_spinblock(i):
+                return (i % 2) * norb + i // 2
+
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec,*orbvec)] = v
+                if not (0 <= orbvec[0] < nd and 0 <= orbvec[1] < nd):
+                    raise ValueError(
+                        "spin-orbital Transfer index {} out of range [0,{}); "
+                        "geom norb (SO count) must cover all transfer indices"
+                        .format(orbvec, nd))
+                a = _so_interleaved_to_spinblock(orbvec[0])
+                b = _so_interleaved_to_spinblock(orbvec[1])
+                tab_r[(*irvec, a, b)] = v
 
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
@@ -517,13 +616,23 @@ class RPA:
 
         self.calc_scheme = info_mode.get("calc_scheme", "auto")
 
+        # calc_type: "ring" (default) or "ring+ladder"
+        self.calc_type = info_mode.get("calc_type", "ring")
+        if self.calc_type not in ["ring", "ring+ladder"]:
+            logger.error("calc_type must be 'ring' or 'ring+ladder', got '{}'".format(self.calc_type))
+            sys.exit(1)
+
         # auto choose
         if self.calc_scheme == "auto":
             if not self.ham_info.has_interaction():
                 logger.error("calc_scheme must be specified for chi0q-only mode.")
                 sys.exit(1)
             else:
-                if self.ham_info.has_interaction_exchange():
+                if self.calc_type == "ring+ladder":
+                    # ladder diagrams require general scheme (full rank-4 tensor)
+                    self.calc_scheme = "general"
+                    logger.info("auto mode for calc_scheme: set to general (ring+ladder)")
+                elif self.ham_info.has_interaction_exchange():
                     self.calc_scheme = "squashed"
                     logger.info("auto mode for calc_scheme: set to squashed")
                 else:
@@ -533,6 +642,9 @@ class RPA:
         # consistency check
         if self.calc_scheme == "reduced" and self.ham_info.has_interaction_exchange():
             logger.error("calc_scheme=reduced is not compatible with exchange-type interaction.")
+            sys.exit(1)
+        if self.calc_type == "ring+ladder" and self.calc_scheme != "general":
+            logger.error("calc_type='ring+ladder' requires calc_scheme='general' or 'auto'.")
             sys.exit(1)
 
         # calc chiq if interaction term exists; otherwise chi0q-only mode
@@ -549,7 +661,10 @@ class RPA:
 
         self.nmat = self.param_mod.get("Nmat", 1024)
 
-        self.norb = self.param_ham["geometry"]["norb"]
+        # Stay consistent with the Interaction's physical-orbital count
+        # (already SO-halved and validated); avoids re-deriving / re-checking.
+        self.norb = self.ham_info.norb
+        self.norb_orig = self.ham_info.norb_orig
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
@@ -603,14 +718,24 @@ class RPA:
 
         # check parameters
         err = 0
-        if self.T < 0.0:
-            logger.error("T must be greater than or equal to zero: T={}".format(self.T))
+        # Finite-temperature Matsubara formalism: T must be strictly positive
+        # (beta = 1/T is used directly).
+        if self.T <= 0.0:
+            logger.error("T must be greater than zero: T={}".format(self.T))
             err += 1
-        if self.calc_mu and self.Ncond <= 0:
-            logger.error("Ncond must be greater than zero: Ncond={}".format(self.Ncond))
+        # The chemical-potential search needs a partially-filled band; full
+        # (Ncond == Nstate) or empty filling leaves mu unbracketed.
+        if self.calc_mu and not (0 < self.Ncond < self.Nstate):
+            logger.error("Ncond must satisfy 0 < Ncond < Nstate ({}): Ncond={}".format(
+                self.Nstate, self.Ncond))
             err += 1
         if self.nmat <= 0:
             logger.error("Nmat must be greater than zero: Nmat={}".format(self.nmat))
+            err += 1
+        # Fermionic Matsubara grid iomega = (2n+1-Nmat)*pi/beta is symmetric and
+        # never zero only when Nmat is even; an odd Nmat injects omega=0.
+        if self.nmat % 2 != 0:
+            logger.error("Nmat must be even: Nmat={}".format(self.nmat))
             err += 1
         if err > 0:
             sys.exit(1)
@@ -674,6 +799,7 @@ class RPA:
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
         logger.info("    calc_scheme     = {}".format(self.calc_scheme))
+        logger.info("    calc_type       = {}".format(self.calc_type))
         pass
 
     @do_profile
@@ -750,15 +876,14 @@ class RPA:
                 chi0q_orig = chi0q
                 ham_orig = self.ham_info.ham_inter_q
 
-                if self.calc_scheme == "reduced":
-                    # alpha=alpha', beta=beta' case
+                if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+                    # Treat combined spin-orbital indices as general orbitals.
+                    # squashed degenerates to reduced; block structure is
+                    # exploited by _find_block_diagonal inside _solve_rpa.
                     nvol = self.lattice.nvol
                     nd = self.nd
                     ham = np.einsum('kaabb->kab',
                                     ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
-                elif self.calc_scheme == "squashed":
-                    logger.error("squash is not available with spin-orbital interaction")
-                    sys.exit(1)
                 else:
                     ham = ham_orig
 
@@ -872,11 +997,18 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_orig
 
-            # solve
+            # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
 
             # adhoc store
             green_info["chiq"] = sol
+
+            # Solve transverse (ladder) RPA if requested
+            if self.calc_type == "ring+ladder":
+                chi0q_pm, ham_pm = self._build_transverse_channel(
+                    chi0q_orig, ham_orig)
+                sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
+                green_info["chiq_pm"] = sol_pm
 
         logger.info("End RPA calculations")
         pass
@@ -908,12 +1040,20 @@ class RPA:
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
-                np.savez(file_name,
-                         chiq = green_info["chiq"],
-                         freq_index = self.freq_index,
-                         wavevector_unit = self.kvec,
-                         wavevector_index = self.wavenum_table,
+                save_kwargs = dict(
+                    chiq = green_info["chiq"],
+                    freq_index = self.freq_index,
+                    wavevector_unit = self.kvec,
+                    wavevector_index = self.wavenum_table,
+                    # RPA orders spin-orbital axes as spin-block (spin*norb+orb),
+                    # unlike UHFk's interleaved (2*orb+spin) output; record it so
+                    # consumers do not silently mix the two conventions.
+                    index_convention = "spin_block",
                 )
+                # transverse channel chi_+-(q), present for calc_type ring+ladder
+                if green_info.get("chiq_pm") is not None:
+                    save_kwargs["chiq_pm"] = green_info["chiq_pm"]
+                np.savez(file_name, **save_kwargs)
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
                 logger.info("save_results: chiq not calculated. skip")
@@ -925,6 +1065,8 @@ class RPA:
                      freq_index = self.freq_index,
                      wavevector_unit = self.kvec,
                      wavevector_index = self.wavenum_table,
+                     # spin-orbital axes are spin-block ordered (spin*norb+orb)
+                     index_convention = "spin_block",
                      )
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
@@ -949,13 +1091,16 @@ class RPA:
 
         self.wavenum_table = np.array([(i,j,k) for i in _klist(nx) for j in _klist(ny) for k in _klist(nz)])
 
-        wtable = np.zeros((nx,ny,nz,3), dtype=float)
-        for ix, kx in enumerate(_klist(nx)):
-            for iy, ky in enumerate(_klist(ny)):
-                for iz, kz in enumerate(_klist(nz)):
-                    v = kvec[0] * kx + kvec[1] * ky + kvec[2] * kz
-                    wtable[ix,iy,iz] = v
-        self.wave_table = wtable.reshape(nvol,3)
+        kx = _klist(nx)
+        ky = _klist(ny)
+        kz = _klist(nz)
+        # Build (nx,ny,nz) grids for each k-component
+        kx_g, ky_g, kz_g = np.meshgrid(kx, ky, kz, indexing='ij')
+        # wtable[ix,iy,iz,:] = kvec[0]*kx + kvec[1]*ky + kvec[2]*kz
+        wtable = (kx_g[..., np.newaxis] * kvec[0]
+                + ky_g[..., np.newaxis] * kvec[1]
+                + kz_g[..., np.newaxis] * kvec[2])
+        self.wave_table = wtable.reshape(nvol, 3)
 
     def _find_index_range(self, freq_range):
         # decode matsubara frequency index list
@@ -1054,6 +1199,9 @@ class RPA:
         except Exception as e:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
+
+        validate_chi0q_index_convention(
+            data, self.ham_info.enable_spin_orbital, file_name)
 
         # check size
         if self.calc_scheme == "general":
@@ -1157,9 +1305,28 @@ class RPA:
             logger.error("read_trans_mod failed: {}".format(e))
             sys.exit(1)
 
+        expected = (self.lattice.cellvol, self.ns * self.norb_orig, self.ns * self.norb_orig)
+        if tab_r.shape != expected:
+            raise ValueError(
+                "trans_mod array shape {} does not match expected {} "
+                "(cellvol, ns*norb_orig, ns*norb_orig)".format(tab_r.shape, expected))
+
+        if self.ham_info.enable_spin_orbital:
+            # UHFk writes the SO trans_mod with the orbital axis in INTERLEAVED
+            # order (index = 2*orb + spin), matching the SO Transfer file, but
+            # _reshape_green / the (ns, norb) reshapes downstream consume H0 in
+            # SPIN-BLOCK order (index = spin*norb_phys + orb). Reorder both
+            # orbital axes interleaved->spin-block, mirroring _make_ham_trans's
+            # remap of the Transfer file. For norb_phys=1 this is the identity,
+            # so non-multi-orbital SO and non-SO paths are unaffected.
+            norb_phys = self.norb_orig            # pre-fold physical orbital count
+            nd0 = tab_r.shape[-1]                 # = 2 * norb_phys
+            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
+            tab_r = tab_r[:, inv, :][:, :, inv]   # interleaved -> spin-block
+
         if self.lattice.has_sublattice:
             # use reshape green to convert layout
-            tab_r = self.lattice._reshape_green(tab_r)
+            tab_r = self._reshape_green(tab_r)
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
@@ -1179,6 +1346,40 @@ class RPA:
         except Exception as e:
             logger.error("read_green failed: {}".format(e))
             sys.exit(1)
+
+        # UHFk saves green as 5D (Lvol, ns, norb_orig, ns, norb_orig); collapse
+        # the (ns, norb) pairs into single orbital axes to get the (Lvol, nd0, nd0)
+        # layout the rest of this method expects. trans_mod is already saved 3D.
+        if green.ndim == 5:
+            lvol, s1, o1, s2, o2 = green.shape
+            green = green.reshape(lvol, s1 * o1, s2 * o2)
+
+        # green_init is produced by UHFk's _save_green (saves self.Green), the
+        # DEFLATED pre-fold green for sublattice -- the same (cellvol, nd0, nd0)
+        # layout and conventions as trans_mod. Mirror _read_trans_mod exactly:
+        # shape validation, SO interleaved->spin-block remap, then sublattice
+        # fold, so green_init is consumed in spin-block order.
+        expected = (self.lattice.cellvol, self.ns * self.norb_orig, self.ns * self.norb_orig)
+        if green.shape != expected:
+            raise ValueError(
+                "green array shape {} does not match expected {} "
+                "(cellvol, ns*norb_orig, ns*norb_orig)".format(green.shape, expected))
+
+        if self.ham_info.enable_spin_orbital:
+            # UHFk writes the SO green with the orbital axis in INTERLEAVED order
+            # (index = 2*orb + spin); _calc_trans_mod consumes green_init in
+            # SPIN-BLOCK order (index = spin*norb_phys + orb), using self.norb /
+            # self.nd. Reorder both orbital axes interleaved->spin-block, mirroring
+            # _read_trans_mod (and _make_ham_trans's remap of the Transfer file).
+            # For norb_phys=1 this is the identity.
+            norb_phys = self.norb_orig            # pre-fold physical orbital count
+            nd0 = green.shape[-1]                 # = 2 * norb_phys
+            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
+            green = green[:, inv, :][:, :, inv]   # interleaved -> spin-block
+
+        if self.lattice.has_sublattice:
+            # use reshape green to convert layout
+            green = self._reshape_green(green)
 
         nvol = self.lattice.nvol
         nd = self.nd
@@ -1214,27 +1415,61 @@ class RPA:
             _iz = (x // (_nx * _ny)) % _nz
             return (_ix, _iy, _iz)
 
-        green_sub = np.zeros((Nvol,ns,norb,ns,norb), dtype=np.complex128)
+        # Build index mapping tables (vectorized)
+        # Supercell site indices.
+        # Flat SITE indices are C-order (z fastest): isite = iz + Nz*(iy + Ny*ix),
+        # matching the data layout used everywhere else -- UHFk._deflate_green's
+        # _pack_site/_unpack_site and RPA's reshape(nx,ny,nz) lattice flattening.
+        # (1D folds coincide with Fortran order, which masked this for years.)
+        isite_arr = np.arange(Nvol)
+        izz = isite_arr % Nz
+        iyy = (isite_arr // Nz) % Ny
+        ixx = (isite_arr // (Nz * Ny)) % Nx
+        ix0 = ixx * Bx  # (Nvol,)
+        iy0 = iyy * By
+        iz0 = izz * Bz
 
-        for isite in range(Nvol):
-            ixx, iyy, izz = _unpack_index(isite, (Nx,Ny,Nz))
-            ix0, iy0, iz0 = ixx * Bx, iyy * By, izz * Bz
+        # Orbital decomposition
+        orb_arr = np.arange(norb)
+        a_arr = orb_arr % norb_orig          # original orbital index
+        ri_arr = orb_arr // norb_orig         # sublattice index
+        rix = ri_arr % Bx
+        riy = (ri_arr // Bx) % By
+        riz = (ri_arr // (Bx * By)) % Bz
 
-            for aa, bb in itertools.product(range(norb), range(norb)):
-                a, ri = aa % norb_orig, aa // norb_orig
-                b, rj = bb % norb_orig, bb // norb_orig
+        # Compute jsite for all (isite, aa, bb) combinations
+        # drx[aa,bb] = rjx[bb] - rix[aa], etc.
+        drx = rix[np.newaxis, :] - rix[:, np.newaxis]  # (norb, norb)
+        dry = riy[np.newaxis, :] - riy[:, np.newaxis]
+        drz = riz[np.newaxis, :] - riz[:, np.newaxis]
 
-                rix, riy, riz = _unpack_index(ri, (Bx,By,Bz))
-                rjx, rjy, rjz = _unpack_index(rj, (Bx,By,Bz))
+        # ix[isite, aa, bb] = (ix0[isite] + drx[aa, bb]) % Lx
+        jx = (ix0[:, np.newaxis, np.newaxis] + drx[np.newaxis, :, :]) % Lx  # (Nvol, norb, norb)
+        jy = (iy0[:, np.newaxis, np.newaxis] + dry[np.newaxis, :, :]) % Ly
+        jz = (iz0[:, np.newaxis, np.newaxis] + drz[np.newaxis, :, :]) % Lz
+        # Pack target SITE in C-order (z fastest), consistent with the unpack
+        # above and UHFk._deflate_green's _pack_site.
+        jsite_map = jz + Lz * (jy + Ly * jx)  # (Nvol, norb, norb)
 
-                ix = (ix0 + rjx - rix) % Lx
-                iy = (iy0 + rjy - riy) % Ly
-                iz = (iz0 + rjz - riz) % Lz
+        # Source orbital indices: a_arr[aa], a_arr[bb]
+        a_src = a_arr  # (norb,) - maps aa -> original orbital a
+        b_src = a_arr  # (norb,) - maps bb -> original orbital b
 
-                jsite = _pack_index((ix,iy,iz), (Lx,Ly,Lz))
+        # Gather using advanced indexing
+        # green[jsite, s, a, t, b] -> green_sub[isite, s, aa, t, bb]
+        green_sub = green[jsite_map][:, :, :, :, a_src, :, :][:, :, :, :, :, :, b_src]
+        # Shape: (Nvol, norb, norb, ns, norb, ns, norb) - need to select diagonal
+        # Use explicit indexing for clarity
+        green_sub = green[
+            jsite_map[:, :, :, np.newaxis, np.newaxis],   # (Nvol, norb, norb, 1, 1)
+            np.arange(ns)[np.newaxis, np.newaxis, np.newaxis, :, np.newaxis],  # s
+            a_src[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis],          # a
+            np.arange(ns)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :],  # t
+            b_src[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis],          # b
+        ]  # shape: (Nvol, norb, norb, ns, ns)
 
-                for s, t in itertools.product(range(ns), range(ns)):
-                    green_sub[isite, s, aa, t, bb] = green[jsite, s, a, t, b]
+        # Transpose to match (Nvol, ns, norb, ns, norb)
+        green_sub = green_sub.transpose(0, 3, 1, 4, 2)
 
         return green_sub
 
@@ -1340,8 +1575,30 @@ class RPA:
                 H0 = H0.reshape(1,*H0.shape)
                 self.spin_mode = "spin-free"
 
-        # diagonalize H0(k)
-        w,v = np.linalg.eigh(H0)
+        # diagonalize H0(k) with optional block decomposition
+        nblock_spin = H0.shape[0]
+        nd_block = H0.shape[-1]
+        blocks = self._find_block_diagonal(H0.reshape(nblock_spin * nvol, nd_block, nd_block))
+
+        if blocks is not None and len(blocks) > 1:
+            logger.info("_calc_epsilon_k: orbital block structure detected, "
+                        "nd={} -> {} blocks of sizes {}".format(
+                            nd_block, len(blocks), [len(b) for b in blocks]))
+            w = np.zeros((nblock_spin, nvol, nd_block), dtype=np.float64)
+            v = np.zeros((nblock_spin, nvol, nd_block, nd_block), dtype=np.complex128)
+            col_offset = 0
+            for blk_idx in blocks:
+                idx = np.array(blk_idx)
+                ix = np.ix_(idx, idx)
+                H0_blk = H0[:, :, ix[0], ix[1]]
+                wb, vb = np.linalg.eigh(H0_blk)
+                nb = len(idx)
+                w[:, :, col_offset:col_offset + nb] = wb
+                v[np.ix_(np.arange(nblock_spin), np.arange(nvol), idx,
+                  np.arange(col_offset, col_offset + nb))] = vb
+                col_offset += nb
+        else:
+            w,v = np.linalg.eigh(H0)
 
         self.H0_eigenvalue = w
         self.H0_eigenvector = v
@@ -1352,12 +1609,9 @@ class RPA:
 
         from scipy import optimize
 
-        # load eigenvalues and eigenvectors
+        # load eigenvalues (eigenvectors not needed thanks to unitarity)
         w = self.H0_eigenvalue
-        v = self.H0_eigenvector
         # fetch parameters
-        # Ncond = self.Ncond
-        # T = self.T
         ene_cutoff = self.ene_cutoff
 
         ev = np.sort(w.flatten())
@@ -1371,10 +1625,12 @@ class RPA:
             v_ = np.where( mask_, v1_, 0.0 )
             return v_
 
+        # Exploit unitarity of eigenvectors:
+        # Tr[V† diag(f) V] = sum_l f(ε_l)
+        # This eliminates the O(nd²) einsum per iteration.
         def _calc_delta_n(mu):
             ff = _fermi(T, mu, w)
-            nn = np.einsum('gkal,gkl,gkal->', np.conjugate(v), ff, v)
-            return nn.real - occupied_number
+            return np.sum(ff).real - occupied_number
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
@@ -1411,7 +1667,6 @@ class RPA:
         ev = self.H0_eigenvector
 
         nx,ny,nz = self.lattice.shape
-        #nvol = self.lattice.nvol
 
         nblock,nvol,nd = ew.shape
         assert nvol == self.lattice.nvol
@@ -1420,17 +1675,38 @@ class RPA:
 
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
-        # 1 / (iw_{n} - (e_i(k) - mu)) -> g[n,k,i]
-        wn = np.transpose(np.tile(1j * iomega, (nblock,nvol,nd,1)), axes=(0,3,1,2))
-        ek = np.transpose(np.tile((ew - mu), (nmat,1,1,1)), axes=(1,0,2,3))
+        # 1 / (iw_{n} - (e_i(k) - mu)) -> g[g,l,k,i] via broadcasting
+        # iomega: (nmat,), ew: (nblock, nvol, nd)
+        wn = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis]  # (1,nmat,1,1)
+        ek = (ew - mu)[:, np.newaxis, :, :]  # (nblock,1,nvol,nd)
 
-        # tail improvement
+        # High-frequency tail improvement (optional; default coeff_tail=0 keeps
+        # the bare Green's function). The 1/(iw) part of G(iw) decays slowly and
+        # truncating the Matsubara sum at finite Nmat leaves an error. Here a
+        # term aa/(iw) is *subtracted* in frequency space so the FFT'd
+        # quantity decays faster; its contribution is added back analytically in
+        # imaginary time as green_tail below, using the exact Fourier identity
+        #   T * sum_n e^{-iw_n tau} / (iw_n) = -1/2   for 0 < tau < beta,
+        # i.e. the back-transform of aa/(iw) is -aa/2, and green_tail carries the
+        # aa*0.5*beta normalization expected by _calc_chi0q's tau-space product.
+        # NOTE: aa is a user coefficient; it should match the true 1/(iw)
+        # coefficient of G (= 1 by unitarity) to *accelerate* convergence -- any
+        # other value is a deliberate modification of G, not just acceleration.
         aa = self.coeff_tail
-        g = 1.0 / (wn - ek) - aa / wn
+        g = 1.0 / (wn - ek) - aa / wn  # (nblock,nmat,nvol,nd)
 
-        # G_ab(k,iw_n) = sum_j d_{a,j} d_{b,j}^* / (iw_{n} - (e_j(k) - mu))
-        green = np.einsum('gkaj,gkbj,glkj->glkab', ev, np.conj(ev), g)
-        green_tail = np.einsum('gkaj,gkbj,gl->glkab', ev, np.conj(ev), np.tile(np.ones(nmat), (nblock,1))) * aa * 0.5 * beta
+        # G_ab(k,iw_n) = sum_j V_{a,j} V*_{b,j} * g_j
+        # = (V * g) @ V†  -- use matmul (BLAS) instead of einsum
+        ev_conj_t = np.conj(ev).swapaxes(-2, -1)  # (nblock,nvol,nd,nd): V†[g,k]
+
+        # Vg = V * g: broadcast g into eigenvector columns
+        Vg = ev[:, np.newaxis, :, :, :] * g[:, :, :, np.newaxis, :]  # (nblock,nmat,nvol,nd,nd)
+        green = Vg @ ev_conj_t[:, np.newaxis, :, :, :]  # (nblock,nmat,nvol,nd,nd)
+
+        # Tail: G_tail = V @ V† * aa * 0.5 * beta = I * aa * 0.5 * beta (unitarity)
+        # But original code retains V V† form for non-complete basis cases
+        VVt = ev @ ev_conj_t  # (nblock,nvol,nd,nd)
+        green_tail = VVt[:, np.newaxis, :, :, :] * np.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta
 
         return green, green_tail
 
@@ -1477,47 +1753,285 @@ class RPA:
         # Fourier transform from Matsubara freq to imaginary time
         omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
 
-        green_kt = np.einsum('gtv,t->gtv',
-                             FFT.fft(green_kw.reshape(nblock,nmat,nvol*nd*nd), axis=1),
-                             omg).reshape(nblock,nmat,nx,ny,nz,nd,nd)
-        green_kt -= green0_tail.reshape(nblock,nmat,nx,ny,nz,nd,nd)
+        # In-place multiply to avoid extra copy
+        green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
+        green_kt = FFT.fft(green_flat, axis=1)
+        green_kt *= omg[np.newaxis, :, np.newaxis]
+        green_kt = green_kt.reshape(nblock, nmat, nx, ny, nz, nd, nd)
+        green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
 
         # Fourier transform from wave number space to coordinate space
-        green_rt = FFT.ifftn(green_kt.reshape(nblock,nmat,nx,ny,nz,nd*nd), axes=(2,3,4))
+        green_rt = FFT.ifftn(green_kt.reshape(nblock, nmat, nx, ny, nz, nd * nd), axes=(2, 3, 4))
 
         # calculate chi0 in real space and imaginary time
-        green_rev = np.flip(np.roll(green_rt, -1, axis=(1,2,3,4)), axis=(1,2,3,4)).reshape(nblock,nmat,nvol,nd,nd)
+        green_rev = np.flip(np.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
         sgn = np.full(nmat, -1)
         sgn[0] = 1
 
         if self.enable_reduced:
             # reduced index calculation
-            chi0_rt = np.einsum('glrab,glrba,l->glrab',
-                                green_rt.reshape(nblock,nmat,nvol,nd,nd),
-                                green_rev,
-                                sgn)
-            nd_shape=(nd,nd)
-            nds=nd**2
+            # chi0[g,l,r,a,b] = G[g,l,r,a,b] * G_rev[g,l,r,b,a] * sgn[l]
+            green_rt_5d = green_rt.reshape(nblock, nmat, nvol, nd, nd)
+            chi0_rt = (green_rt_5d
+                       * green_rev.swapaxes(-2, -1)
+                       * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
+            nd_shape = (nd, nd)
+            nds = nd ** 2
         else:
-            chi0_rt = np.einsum('glrab,glrdc,l->glracbd',
-                                green_rt.reshape(nblock,nmat,nvol,nd,nd),
-                                green_rev,
-                                sgn)
-            nd_shape=(nd,nd,nd,nd)
-            nds=nd**4
+            # General index: chi0[g,l,r,a,c,b,d] = G[g,l,r,a,b] * G_rev[g,l,r,d,c] * sgn[l]
+            # Use outer product via broadcasting instead of einsum
+            G_fwd = green_rt.reshape(nblock, nmat, nvol, nd, nd)
+            sgn_bc = sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
+            # G_fwd[:,:,:,a,b] * sgn -> shape (g,l,r,a,b)
+            # G_rev[:,:,:,d,c]        -> shape (g,l,r,d,c)
+            # result[:,:,:,a,c,b,d] = G_fwd[:,:,:,a,b] * G_rev[:,:,:,d,c] * sgn
+            chi0_rt = ((G_fwd * sgn_bc)[:, :, :, :, np.newaxis, :, np.newaxis]
+                       * green_rev[:, :, :, np.newaxis, :, np.newaxis, :])
+            # shape: (g,l,r,a,d,b,c) -> need (g,l,r,a,c,b,d)
+            chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
+            nd_shape = (nd, nd, nd, nd)
+            nds = nd ** 4
 
         # Fourier transform to wave number space
-        chi0_qt = FFT.fftn(chi0_rt.reshape(nblock,nmat,nx,ny,nz,nds), axes=(2,3,4))
+        chi0_qt = FFT.fftn(chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds), axes=(2, 3, 4))
 
         # Fourier transform to matsubara freq
-        omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
+        omg2 = np.exp(1j * np.pi * (-1) * np.arange(nmat))
 
-        chi0_qw = FFT.ifft(
-            np.einsum('gtv,t->gtv', chi0_qt.reshape(nblock,nmat,nvol*nds), omg),
-            axis=1).reshape(nblock,nmat,nvol,*nd_shape) * (-1.0/beta)
+        chi0_qt_flat = chi0_qt.reshape(nblock, nmat, nvol * nds)
+        chi0_qt_flat *= omg2[np.newaxis, :, np.newaxis]
+        chi0_qw = FFT.ifft(chi0_qt_flat, axis=1).reshape(nblock, nmat, nvol, *nd_shape) * (-1.0 / beta)
 
         return chi0_qw
+
+    def _calc_chi0q_transverse(self, green_kw, green0_tail, beta):
+        """Calculate the transverse bare susceptibility chi0_+-(q,iω).
+
+        chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+
+        This crosses spin-up and spin-down Green's functions, unlike the
+        longitudinal chi0 which uses same-spin products.
+
+        Parameters
+        ----------
+        green_kw : ndarray, shape (2, nmat, nvol, norb, norb)
+            Green's function with block 0=↑, block 1=↓.
+        green0_tail : ndarray
+            High-frequency tail correction.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            Transverse chi0_+- with block dimension removed (shape depends
+            on enable_reduced).
+        """
+        logger.debug(">>> RPA._calc_chi0q_transverse")
+
+        nx, ny, nz = self.lattice.shape
+        nblock, nmat, nvol, nd, nd2 = green_kw.shape
+        assert nblock == 2, "Transverse chi0 requires spin-diag (nblock=2)"
+
+        # Fourier transform from Matsubara freq to imaginary time
+        omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
+
+        green_kt = (FFT.fft(green_kw.reshape(nblock, nmat, nvol*nd*nd), axis=1)
+                    * omg[np.newaxis, :, np.newaxis]
+                    ).reshape(nblock, nmat, nx, ny, nz, nd, nd)
+        green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
+
+        # Fourier transform from k-space to real space
+        green_rt = FFT.ifftn(green_kt.reshape(nblock, nmat, nx, ny, nz, nd*nd),
+                             axes=(2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+
+        # G_↓(-r,-τ): flip r and τ, then shift
+        green_dn_rev = np.flip(np.roll(green_rt[1:2], -1, axis=(1, 2, 3, 4)),
+                               axis=(1, 2, 3, 4)).reshape(nmat, nvol, nd, nd)
+
+        # G_↑(r,τ)
+        green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
+
+        sgn = np.full(nmat, -1)
+        sgn[0] = 1
+
+        if self.enable_reduced:
+            # chi0_+-[l,r,a,b] = G_↑[l,r,a,b] * G_↓_rev[l,r,b,a] * sgn[l]
+            # (same contraction as longitudinal but crossing spin blocks)
+            chi0_rt = (green_up_rt
+                       * green_dn_rev.swapaxes(-2, -1)
+                       * sgn[:, np.newaxis, np.newaxis, np.newaxis])
+            nd_shape = (nd, nd)
+            nds = nd**2
+        else:
+            # chi0_+-[l,r,a,c,b,d] = G_↑[l,r,a,b] * G_↓_rev[l,r,d,c] * sgn[l]
+            chi0_rt = np.einsum('lrab,lrdc,l->lracbd',
+                                green_up_rt, green_dn_rev, sgn)
+            nd_shape = (nd, nd, nd, nd)
+            nds = nd**4
+
+        # Fourier transform to k-space
+        chi0_qt = FFT.fftn(chi0_rt.reshape(nmat, nx, ny, nz, nds), axes=(1, 2, 3))
+
+        # Fourier transform to Matsubara frequency
+        omg = np.exp(1j * np.pi * (-1) * np.arange(nmat))
+        chi0_qw = FFT.ifft(
+            chi0_qt.reshape(nmat, nvol*nds) * omg[:, np.newaxis],
+            axis=0).reshape(nmat, nvol, *nd_shape) * (-1.0/beta)
+
+        return chi0_qw
+
+    def _build_transverse_channel(self, chi0q_orig, ham_orig):
+        """Build transverse (ladder) channel for RPA.
+
+        The transverse susceptibility chi_+-(q) describes spin-flip
+        correlations <S^+(q) S^-(-q)>.
+
+        For paramagnetic systems, the transverse bare susceptibility
+        has the same numerical values as the longitudinal chi0:
+            chi0_+-[a,c,b,d] = -G_↑[a,b] * G_↓[d,c] = chi0_orb[a,c,b,d]
+
+        The transverse vertex W_+- is obtained by crossing the Hartree
+        vertex (Fock exchange):
+            W_+-[a,c,b,d] = Gamma_H[(↑,d),(↓,c),(↑,a),(↓,b)]
+
+        Parameters
+        ----------
+        chi0q_orig : ndarray
+            Original bare susceptibility (before spin inflation).
+        ham_orig : ndarray
+            Original interaction Hamiltonian in spin-orbital space.
+
+        Returns
+        -------
+        chi0q_pm : ndarray
+            Transverse bare susceptibility, shape matches general scheme.
+        ham_pm : ndarray
+            Transverse vertex, shape (nvol, norb, norb, norb, norb).
+        """
+        norb = self.norb
+        ns = self.ns
+        nd = norb * ns
+        nvol = self.lattice.nvol
+
+        # --- Build chi0_+- ---
+        # For paramagnetic and spin-diagonal cases, chi0_+- = chi0_orb
+        # (same numerical values, just interpreted as transverse bubble)
+        if self.spin_mode == "spin-free":
+            # chi0q_orig shape: (nfreq, nvol, norb, norb, norb, norb) for general
+            # or (nfreq, nvol, norb, norb) for reduced
+            if chi0q_orig.ndim == 4:
+                # reduced: expand to general
+                # chi0q_pm[:, :, l1, l2, l3, l2] = chi0q_orig[:, :, l1, l3]
+                # i.e., delta_{l2,l4} structure
+                nfreq, nvol_c, n1, n2 = chi0q_orig.shape
+                chi0q_pm = np.zeros((nfreq, nvol_c, norb, norb, norb, norb),
+                                    dtype=np.complex128)
+                # Vectorized: broadcast chi0q_orig into diagonal l2=l4 positions
+                for l2 in range(norb):
+                    chi0q_pm[:, :, :, l2, :, l2] = chi0q_orig
+            else:
+                chi0q_pm = chi0q_orig.copy()
+
+        elif self.spin_mode == "spin-diag":
+            # Compute exact chi0_+- from G_↑ and G_↓ Green's functions.
+            # chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+            if hasattr(self, 'green0') and self.green0 is not None:
+                chi0q_pm_full = self._calc_chi0q_transverse(
+                    self.green0, self.green0_tail, 1.0 / self.T)
+                # Filter by freq_index if needed
+                if len(self.freq_index) < self.nmat:
+                    chi0q_pm = chi0q_pm_full[self.freq_index]
+                else:
+                    chi0q_pm = chi0q_pm_full
+                # Expand reduced to general if needed for vertex contraction
+                if self.enable_reduced and chi0q_pm.ndim == 4:
+                    nfreq, nvol_c, n1, n2 = chi0q_pm.shape
+                    chi0q_pm_gen = np.zeros(
+                        (nfreq, nvol_c, norb, norb, norb, norb),
+                        dtype=np.complex128)
+                    for l2 in range(norb):
+                        chi0q_pm_gen[:, :, :, l2, :, l2] = chi0q_pm
+                    chi0q_pm = chi0q_pm_gen
+            else:
+                # The transverse bubble chi0_+- = -G_up * G_down cannot be
+                # reconstructed from the longitudinal chi0q alone (which carries
+                # G_up*G_up and G_down*G_down). When the Green's functions are
+                # not available -- e.g. chi0q was supplied externally
+                # (chi0q_init) on a spin-split system -- using the up-up block
+                # would silently give a wrong chi_+-. Fail loudly instead.
+                logger.error(
+                    "spin-diag transverse (ladder) channel requires the Green's "
+                    "functions to build chi0_+- = G_up*G_down, but they are not "
+                    "available (chi0q was supplied externally). Recompute chi0q "
+                    "internally (do not use chi0q_init) for the ladder channel.")
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be computed "
+                    "from an externally-supplied chi0q; recompute chi0q "
+                    "internally.")
+
+        elif self.spin_mode == "spinful":
+            # Already in spin-orbital space
+            # chi0_+- requires re-extraction with proper spin indices
+            # For now, extract from the chi0_SO structure
+            # chi0_SO[a,c,b,d] -> chi0_+-[a_orb,c_orb,b_orb,d_orb]
+            #   = chi0_SO[(↑,a),(↓,c),(↑,b),(↓,d)]  (when s1=↑=s3, s2=↓=s4)
+            #   which is just the orbital diagonal of chi0
+            if chi0q_orig.ndim == 6:
+                # Extract chi0_{(up a)(dn c)(up b)(dn d)} = -G_up*G_down, the
+                # transverse bubble. NB this assumes Sz is conserved (no genuine
+                # spin mixing): for spin-orbit-coupled systems the off-diagonal
+                # spin components contribute additional cross terms that this
+                # slice does not include.
+                logger.warning(
+                    "spinful transverse (ladder) channel extracts the "
+                    "Sz-conserving block (G_up*G_down); for genuine spin-mixing "
+                    "(spin-orbit coupling) the cross terms are not included.")
+                nfreq = chi0q_orig.shape[0]
+                chi0q_pm = chi0q_orig[:, :,
+                                      0:norb, norb:2*norb,
+                                      0:norb, norb:2*norb].copy()
+            else:
+                # ring+ladder forces the general scheme, so a spinful chi0q must
+                # be the full rank-4 (6-dim) tensor here. A reduced/2-index
+                # spinful chi0q cannot supply the spin-flip block.
+                raise ValueError(
+                    "spinful transverse (ladder) channel requires the full "
+                    "(general-scheme) chi0q tensor, got shape {}".format(
+                        chi0q_orig.shape))
+
+        # --- Build W_+- (transverse vertex) ---
+        # The transverse vertex for the +- (spin-flip) channel:
+        #   W_+-[a,c,b,d] = ham[↑a,↑c,↑b,↑d] - ham[↓d,↓b,↑c,↑a]
+        #
+        # First term: same-spin (↑↑↑↑) block of the Hartree vertex
+        # Second term: cross-spin (↓↓↑↑) block (subtracted)
+        #
+        # Verification for each interaction type:
+        #   CoulombIntra U: ham[↑↑↑↑]=0, ham[↓↓↑↑]=U  → W_+-= -U  (correct)
+        #   CoulombInter V: ham[↑↑↑↑]=V, ham[↓↓↑↑]=V  → W_+-=  0  (SU(2) correct)
+        #   Exchange J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
+        #   PairLift J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
+        #   Hund J:         ham[↑↑↑↑]=-J, ham[↓↓↑↑]=0  → W_+-= -J  (not SU(2) alone)
+        #   Ising J:        ham[↑↑↑↑]=J, ham[↓↓↑↑]=-J  → W_+-= 2J  (not SU(2) alone)
+        #   Full Kanamori:  W_+- = -(U-2J) = W_zz  (SU(2) correct)
+        ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
+
+        # Vectorized extraction using index arrays (replaces norb^4 Python loop)
+        # Same-spin block: ham[(↑,a),(↑,c),(↑,b),(↑,d)]
+        up_block = ham_4d[:, :norb, :norb, :norb, :norb]  # (nvol, norb, norb, norb, norb)
+        # Cross-spin block: ham[(↓,d),(↓,b),(↑,c),(↑,a)] with index reordering
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]  # (nvol, norb, norb, norb, norb)
+        # cross_block[:, d, b, c, a] -> need to transpose to match ham_pm[:, a, c, b, d]
+        cross_reordered = cross_block.transpose(0, 4, 3, 2, 1)  # (nvol, a, c, b, d)
+        ham_pm = up_block - cross_reordered
+
+        logger.info("ring+ladder: built transverse channel "
+                    "(chi0_pm shape={}, ham_pm shape={})".format(
+                        chi0q_pm.shape, ham_pm.shape))
+
+        return chi0q_pm, ham_pm
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):
@@ -1540,27 +2054,184 @@ class RPA:
         Solves the equation:
         chiq = [1 + chi0q * W]^(-1) * chi0q
         where W is the interaction vertex.
+
+        When the matrices have block-diagonal structure (e.g. spin-diagonal case),
+        the solver automatically detects and exploits this to reduce problem size.
+        Block structure is cached per ham shape+content to avoid re-detection.
+
+        Frequency parallelization: since ham is frequency-independent, each
+        frequency slice can be solved independently. When nmat is large enough,
+        the solve is distributed across threads using concurrent.futures.
         """
         logger.debug(">>> RPA._solve_rpa")
 
         nvol = self.lattice.nvol
-        #nmat = self.nmat
         nmat = chi0q.shape[0]
-        #nd = self.nd
-        #ndx = nd**2  # combined index a = (alpha, alpha')
         chi_shape = chi0q.shape  # [nmat,nvol,(spin_orbital structure)]
         ndx = np.prod(chi_shape[2:2+(len(chi_shape)-2)//2])
 
-        # 1 + X^0(l,k,aa,bb) W(k,bb,cc)
-        mat  = np.tile(np.eye(ndx, dtype=np.complex128), (nmat,nvol,1,1))
-        mat += np.einsum('lkab,kbc->lkac',
-                         chi0q.reshape(nmat,nvol,ndx,ndx),
-                         ham.reshape(nvol,ndx,ndx))
+        chi0q_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+        ham_2d = ham.reshape(nvol, ndx, ndx)
 
-        # [ 1 + X^0 W ]^-1 X^0
-        sol = np.linalg.solve(mat, chi0q.reshape(nmat,nvol,ndx,ndx))
+        # Detect block structure from the COMBINED sparsity of chi0q AND ham.
+        # Block-solving chi = [1 + chi0 ham]^{-1} chi0 is only valid when
+        # neither chi0q nor ham couples indices across blocks: if ham is
+        # block-diagonal but chi0q has off-block entries (e.g. spin-mixing
+        # bands with a spin-diagonal interaction), 1 + chi0 ham acquires
+        # off-block entries and the per-block solve is wrong. Detecting from
+        # ham alone would miss this, so include chi0q's connectivity.
+        # (The sum over (nmat, nvol) is O(nmat*nvol*ndx^2), cheaper than the
+        #  O(nmat*nvol*ndx^3) solve. We reduce chi0q to its (ndx, ndx)
+        #  connectivity first to avoid materializing a large concatenated
+        #  array.)
+        conn_stack = np.stack([
+            np.sum(np.abs(ham_2d), axis=0),
+            np.sum(np.abs(chi0q_2d), axis=(0, 1)),
+        ])  # (2, ndx, ndx); _find_block_diagonal sums |.| over axis 0
+        blocks = self._find_block_diagonal(conn_stack)
+
+        # Determine thread-parallel chunking for frequency axis
+        # LAPACK releases the GIL, so threading gives real parallelism.
+        # Only parallelize when there is enough work per thread.
+        # LAPACK's batched zgesv already uses internal threads for large batches,
+        # so explicit threading only helps for very large problems where the
+        # per-chunk overhead is negligible relative to compute.
+        # Users can force threading via HWAVE_RPA_THREADS env var.
+        import os as _os
+        n_workers = int(_os.environ.get("HWAVE_RPA_THREADS", "0"))
+        if n_workers == 0:
+            import multiprocessing
+            n_workers = min(multiprocessing.cpu_count(), 4)
+        # Heuristic: only parallelize for large multi-orbital problems
+        # where ndx >= 16 (8+ orbitals spinful) and enough frequency points.
+        # For small ndx, batched LAPACK is faster than thread pool overhead.
+        use_parallel = (n_workers > 1 and nmat >= 4 * n_workers
+                        and ndx >= 16 and nmat * nvol * ndx * ndx >= 1000000)
+
+        if blocks is not None and len(blocks) > 1:
+            logger.info("_solve_rpa: block-diagonal structure detected, "
+                        "ndx={} -> {} blocks of sizes {}".format(
+                            ndx, len(blocks), [len(b) for b in blocks]))
+            sol = np.zeros_like(chi0q_2d)
+            for block_idx in blocks:
+                idx = np.array(block_idx)
+                ix = np.ix_(idx, idx)
+                chi0q_blk = chi0q_2d[:, :, ix[0], ix[1]]
+                ham_blk = ham_2d[:, ix[0], ix[1]]
+                nb = len(idx)
+
+                if use_parallel:
+                    sol[:, :, ix[0], ix[1]] = self._solve_rpa_parallel(
+                        chi0q_blk, ham_blk, nb, n_workers)
+                else:
+                    mat_blk = (np.eye(nb, dtype=np.complex128)
+                               + (chi0q_blk @ ham_blk[np.newaxis, :, :, :]))
+                    sol[:, :, ix[0], ix[1]] = np.linalg.solve(mat_blk, chi0q_blk)
+        else:
+            if use_parallel:
+                sol = self._solve_rpa_parallel(chi0q_2d, ham_2d, ndx, n_workers)
+            else:
+                mat = (np.eye(ndx, dtype=np.complex128)
+                       + (chi0q_2d @ ham_2d[np.newaxis, :, :, :]))
+                sol = np.linalg.solve(mat, chi0q_2d)
 
         return sol.reshape(chi_shape)
+
+    @staticmethod
+    def _solve_rpa_parallel(chi0q_2d, ham_2d, ndx, n_workers):
+        """Solve RPA equation with frequency-axis thread parallelism.
+
+        Parameters
+        ----------
+        chi0q_2d : ndarray, shape (nmat, nvol, ndx, ndx)
+            Bare susceptibility in 2D matrix form.
+        ham_2d : ndarray, shape (nvol, ndx, ndx)
+            Frequency-independent interaction Hamiltonian.
+        ndx : int
+            Matrix dimension.
+        n_workers : int
+            Number of threads.
+
+        Returns
+        -------
+        sol : ndarray, shape (nmat, nvol, ndx, ndx)
+            RPA susceptibility.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        nmat = chi0q_2d.shape[0]
+        sol = np.empty_like(chi0q_2d)
+        eye = np.eye(ndx, dtype=np.complex128)
+        ham_bc = ham_2d[np.newaxis, :, :, :]  # broadcast-ready
+
+        # Split frequency axis into contiguous chunks
+        chunk_size = (nmat + n_workers - 1) // n_workers
+        slices = [slice(i, min(i + chunk_size, nmat))
+                  for i in range(0, nmat, chunk_size)]
+
+        def _solve_chunk(sl):
+            chi0q_chunk = chi0q_2d[sl]
+            mat = eye + (chi0q_chunk @ ham_bc)
+            sol[sl] = np.linalg.solve(mat, chi0q_chunk)
+
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            list(pool.map(_solve_chunk, slices))
+
+        return sol
+
+    def _find_block_diagonal(self, ham_2d):
+        """Detect block-diagonal structure from the interaction Hamiltonian.
+
+        Parameters
+        ----------
+        ham_2d : ndarray, shape (nvol, ndx, ndx)
+            Interaction Hamiltonian reshaped to 2D matrices.
+
+        Returns
+        -------
+        list of list of int, or None
+            List of index groups forming independent blocks.
+            Returns None if no block structure is found (single block).
+        """
+        ndx = ham_2d.shape[-1]
+        if ndx <= 1:
+            return None
+
+        # Sum absolute values over nvol to get connectivity pattern
+        connectivity = np.sum(np.abs(ham_2d), axis=0)
+
+        # Build adjacency from non-zero off-diagonal entries
+        threshold = 1.0e-12
+        adj = (np.abs(connectivity) > threshold) | (np.abs(connectivity.T) > threshold)
+
+        # Union-Find with path halving for connected components
+        parent = list(range(ndx))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]  # path halving
+                x = parent[x]
+            return x
+
+        rows, cols = np.where(np.triu(adj, k=1))
+        for i, j in zip(rows, cols):
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                if ri > rj:
+                    ri, rj = rj, ri
+                parent[rj] = ri
+
+        # Collect components
+        components = {}
+        for i in range(ndx):
+            r = find(i)
+            if r not in components:
+                components[r] = []
+            components[r].append(i)
+
+        if len(components) <= 1:
+            return None
+
+        return list(components.values())
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):

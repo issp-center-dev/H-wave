@@ -13,6 +13,8 @@
       :math:`\sum_{i\alpha} U_\alpha\,n_ {i\alpha\uparrow} n_{i\alpha\downarrow}` (\ :math:`n_{i\alpha\sigma}=c_{i\alpha\sigma}^{\dagger}c_{i\alpha\sigma}^{\phantom{\dagger}}`)
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}` (\ :math:`n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`)
+    **Coulomb**:
+      CoulombIntra と CoulombInter をまとめた形式（RESPACK の ``zvo_ur.dat`` を想定）。:math:`r=0` かつ同一軌道（:math:`\alpha=\beta`）の成分を CoulombIntra、それ以外を CoulombInter として読み込みます。CoulombIntra/CoulombInter を個別に指定するのと等価です。
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
@@ -125,6 +127,6 @@
 -  並進ベクトルは全て ``CellShape`` 内に収まるとします。
    ``r_x``, ``r_y``, ``r_z`` の範囲が ``CellShape`` のx,y,z軸のサイズを超える場合はエラーで終了します。
 
--  ``mode.enable_spin_orbital`` が ``true`` の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 :math:`2 N_\text{orbital}` の値をとります。1〜 :math:`N_\text{orbital}` が spin up、:math:`N_\text{orbital}+1` 〜 :math:`2 N_\text{orbital}` が spin down に対応します。 ``mode.enable_spin_orbital`` が ``false`` の場合は、インデックスの範囲が 1〜 :math:`N_\text{orbital}` の行のみ考慮します。
+-  ``mode.enable_spin_orbital`` が ``true`` の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 :math:`2 N_\text{orbital}` の値をとります。スピンを内側に並べたインターリーブ順で、奇数インデックス (1, 3, 5, …) が各軌道の spin up、偶数インデックス (2, 4, 6, …) が spin down に対応します（軌道 :math:`\alpha` (0 起点) とスピン :math:`s` (0: up, 1: down) に対しファイル上のインデックス（1 起点）は :math:`2\alpha + s + 1`）。 ``mode.enable_spin_orbital`` が ``false`` の場合は、インデックスの範囲が 1〜 :math:`N_\text{orbital}` の行のみ考慮します。
 
 .. raw:: latex

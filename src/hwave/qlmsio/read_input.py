@@ -63,7 +63,13 @@ class QLMSInput():
     def _read_green(self, file_key):
         if file_key in self.file_names:
             file_name = self.file_names[file_key]
-            data = np.loadtxt(file_name, skiprows = 5)
+            try:
+                # ndmin=2 so that a single-entry file is still a (1, ncol) array
+                # rather than a 1D array that breaks per-row iteration downstream.
+                data = np.loadtxt(file_name, skiprows = 5, ndmin = 2)
+            except OSError:
+                logger.error("read_input: file not found: {}".format(file_name))
+                exit(1)
         else:
             return None
         return data
@@ -79,21 +85,38 @@ class QLMSInput():
             value_width = 0
             _make_value = lambda v: None
 
+        try:
+            with open(file_name, "r") as f:
+                lines = f.readlines()
+        except OSError:
+            logger.error("read_input: file not found: {}".format(file_name))
+            exit(1)
+
+        count = int(lines[1].split()[1])
         data = {}
-        with open(file_name, "r") as f:
-            lines = f.readlines()
-            count = int(lines[1].split()[1])
-            data = {}
-            ndup = 0
-            for line in lines[5:]:
-                values = line.split()
-                list = tuple([int(i) for i in values[:-value_width]])
-                value = _make_value(values[-value_width:])
-                if list in data:
-                    ndup += 1
-                    data[list] += value
-                else:
-                    data[list] = value
+        ndup = 0
+        ncols = None
+        comment = re.compile(r'^\s*(#.*)?$')
+        for line in lines[5:]:
+            # skip blank and comment lines in the data section
+            if comment.match(line):
+                continue
+            values = line.split()
+            # all data rows must have the same width and at least one index
+            # column in addition to the value column(s)
+            if ncols is None:
+                ncols = len(values)
+            if len(values) != ncols or len(values) <= value_width:
+                logger.error(
+                    "malformed line in {}: {!r}".format(file_name, line.rstrip()))
+                exit(1)
+            list = tuple([int(i) for i in values[:-value_width]])
+            value = _make_value(values[-value_width:])
+            if list in data:
+                ndup += 1
+                data[list] += value
+            else:
+                data[list] = value
 
         # check
         err = 0
