@@ -250,6 +250,12 @@ Statistics
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --plot dos.png
 </pre></div>
 </div>
+<p><code class="docutils literal notranslate"><span class="pre">--subtract-mu</span></code> オプションを指定すると、状態密度のエネルギー軸を <span class="math notranslate nohighlight">\(E-\mu\)</span> にシフトし、フェルミ準位が0になるようにします。
+化学ポテンシャル <span class="math notranslate nohighlight">\(\mu\)</span> は、出力ディレクトリにある <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> の <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> の行（UHFkソルバーが出力します）から読み込まれます。
+<code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> のエントリが見つからない場合は、警告を出力したうえで、シフトしない固有値のエネルギー軸が使用されます。</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --subtract-mu
+</pre></div>
+</div>
 </section>
 </section>
 

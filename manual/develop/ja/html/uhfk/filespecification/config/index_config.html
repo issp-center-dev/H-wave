@@ -96,7 +96,7 @@
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
-<p><strong>説明 :</strong> スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 <span class="math notranslate nohighlight">\(\alpha\)</span> (0 から <span class="math notranslate nohighlight">\(N_\text{orb}-1\)</span>) とスピン <span class="math notranslate nohighlight">\(s\)</span> (0: up, 1: down) に対して <span class="math notranslate nohighlight">\(2\alpha + s\)</span> となります（スピンを内側に並べたインターリーブ順）。</p>
+<p><strong>説明 :</strong> スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 <span class="math notranslate nohighlight">\(\alpha\)</span> (0 から <span class="math notranslate nohighlight">\(N_\text{orb}-1\)</span>) とスピン <span class="math notranslate nohighlight">\(s\)</span> (0: up, 1: down) に対して <span class="math notranslate nohighlight">\(2\alpha + s\)</span> となります（スピンを内側に並べたインターリーブ順）。相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）もスピン軌道モードで利用でき、仮想スピン分解を介して取り扱われます。</p>
 </li>
 </ul>
 </section>
@@ -234,7 +234,7 @@ true の場合、warning を表示して実行を継続し、 false の場合、
 <p><strong>形式 :</strong> str型</p>
 <p><strong>説明 :</strong> 幾何情報のファイル名を指定します。</p>
 </li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p>
 <p><strong>形式 :</strong> str型</p>
 <p><strong>説明 :</strong> 各相互作用の係数ファイル名を指定します。</p>
 </li>

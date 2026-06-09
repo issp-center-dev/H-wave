@@ -539,6 +539,15 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 </table>
 <p>その他のパラメータ (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code> 等)
 はRPAソルバーと共通です。詳細は <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a> を参照してください。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>FLEXソルバーは縮約形の感受率を利用し、相互作用を密度-密度成分に
+縮約します。そのため <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> または
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;squashed&quot;</span></code> が必要であり、
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> （ <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> スキームを強制します）
+には対応していません。これらを満たさない場合、ソルバーは
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出します。</p>
+</div>
 </section>
 <section id="id22">
 <h2>サンプル 3: 鉄系超伝導体2軌道モデル<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h2>
@@ -815,20 +824,23 @@ FLEX converged after 63 iterations
 <td><p>フント結合 <span class="math notranslate nohighlight">\(J\)</span></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
-<td><p>対応</p></td>
-<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span></p></td>
+<td><p>部分的に対応</p></td>
+<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span> （密度-密度成分のみ。
+スピンフリップ・対散乱などの非対角頂点は無視されます）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
 <td><p>対応</p></td>
 <td><p>イジング型相互作用</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
-<td><p>対応</p></td>
-<td><p>ペアリフト相互作用</p></td>
+<td><p>部分的に対応</p></td>
+<td><p>ペアリフト相互作用 （密度-密度成分のみ。
+非対角頂点は無視されます）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
-<td><p>対応</p></td>
-<td><p>ペアホッピング相互作用</p></td>
+<td><p>部分的に対応</p></td>
+<td><p>ペアホッピング相互作用 （密度-密度成分のみ。
+非対角頂点は無視されます）</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
 <td><p><strong>非対応</strong></p></td>
@@ -882,8 +894,11 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>この縮約は <strong>密度-密度型相互作用</strong> に対して正確です。
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
 はすべて密度-密度型であり正しく扱われます。
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> も標準的なKanamoriパラメータ化の範囲内で
-適切に処理されます。</p>
+一方、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は純粋な密度-密度型では
+<strong>なく</strong>、縮約においては密度-密度成分のみが保持され、非対角
+（スピンフリップ・対散乱）頂点は無視されます。これらの相互作用が
+含まれる場合、ソルバーはこの近似をユーザーに知らせるための警告を
+出力します。</p>
 </section>
 <section id="spin-free">
 <h3>スピン自由度の扱い（spin-freeモード）<a class="headerlink" href="#spin-free" title="Link to this heading">¶</a></h3>

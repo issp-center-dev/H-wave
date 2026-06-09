@@ -21,7 +21,11 @@ chiq, chi0q
 - ``wavevector_unit`` および ``wavevector_index``:
 
   波数ベクトルの情報を格納します。詳細は :ref:`UHFk の出力ファイル<Subsec:eigen_uhfk.dat>` を参照してください。
-  
+
+- ``index_convention``:
+
+  スピン軌道の軸が spin*norb+orb（スピンブロック）順で並んでいることを示す文字列マーカー(常に ``"spin_block"``)です。これは UHFk のインターリーブ(2*orb+spin)出力とは異なります。このマーカーを持たない ``chi0q`` ファイル(規約修正前に出力されたもの)は、スピン軌道モードで再読み込みする際に拒否されます。
+
 副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。
    
 ``chi0q`` の出力ファイルは、計算済み既約感受率データとして ``file.input`` セクションの ``chi0q_init`` に指定して使用できます。
@@ -74,6 +78,8 @@ chiq のデータ形式
 - ``calc_scheme = reduced`` の場合、データ配列は ``ndarray(l,q,a,b)`` となります。 ``a``, ``b`` はスピンを含む一般化軌道インデックス :math:`\tilde\alpha`, :math:`\tilde\beta` に対応します。
 
 - ``calc_scheme = squashed`` の場合、データ配列は ``ndarray(l,q,s1,s2,a,s3,s4,b)`` となります。 ``a``, ``b`` は軌道インデックス :math:`\alpha`, :math:`\beta` に対応し、 ``s1`` 〜 ``s4`` はスピンインデックス :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime` にそれぞれ対応します。
+
+``calc_type = ring+ladder`` の場合、 ``chiq`` ファイルには配列 ``chiq_pm`` も追加で格納されます。これは横感受率 :math:`\chi_{+-}(q)` を保持し、 ``chiq`` と同じ配列形式を持ちます。
 
 
 データ読み込みの例

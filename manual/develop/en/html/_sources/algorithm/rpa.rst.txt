@@ -287,7 +287,7 @@ in the input TOML file. In this mode:
 - The Hamiltonian is constructed in the full :math:`2n_{\rm orb} \times 2n_{\rm orb}` space
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
-  ``Ising``, ``PairHop``) are supported.
+  ``Ising``, ``PairLift``, ``PairHop``) are supported.
 - Block-diagonal optimization is applied automatically when possible.
 - The ``squashed`` calculation scheme is also supported for spin-orbital systems.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital

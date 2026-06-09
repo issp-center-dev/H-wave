@@ -50,6 +50,9 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">wavevector_unit</span></code> および <code class="docutils literal notranslate"><span class="pre">wavevector_index</span></code>:</p>
 <p>波数ベクトルの情報を格納します。詳細は <a class="reference internal" href="../../../uhfk/filespecification/outputfiles_uhfk/eigen_uhfk.html#subsec-eigen-uhfk-dat"><span class="std std-ref">UHFk の出力ファイル</span></a> を参照してください。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">index_convention</span></code>:</p>
+<p>スピン軌道の軸が spin*norb+orb（スピンブロック）順で並んでいることを示す文字列マーカー(常に <code class="docutils literal notranslate"><span class="pre">&quot;spin_block&quot;</span></code>)です。これは UHFk のインターリーブ(2*orb+spin)出力とは異なります。このマーカーを持たない <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> ファイル(規約修正前に出力されたもの)は、スピン軌道モードで再読み込みする際に拒否されます。</p>
+</li>
 </ul>
 <p>副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> の出力ファイルは、計算済み既約感受率データとして <code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクションの <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> に指定して使用できます。</p>
@@ -95,6 +98,7 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">reduced</span></code> の場合、データ配列は <code class="docutils literal notranslate"><span class="pre">ndarray(l,q,a,b)</span></code> となります。 <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code> はスピンを含む一般化軌道インデックス <span class="math notranslate nohighlight">\(\tilde\alpha\)</span>, <span class="math notranslate nohighlight">\(\tilde\beta\)</span> に対応します。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">squashed</span></code> の場合、データ配列は <code class="docutils literal notranslate"><span class="pre">ndarray(l,q,s1,s2,a,s3,s4,b)</span></code> となります。 <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code> は軌道インデックス <span class="math notranslate nohighlight">\(\alpha\)</span>, <span class="math notranslate nohighlight">\(\beta\)</span> に対応し、 <code class="docutils literal notranslate"><span class="pre">s1</span></code> 〜 <code class="docutils literal notranslate"><span class="pre">s4</span></code> はスピンインデックス <span class="math notranslate nohighlight">\(\sigma\)</span>, <span class="math notranslate nohighlight">\(\sigma^\prime\)</span>, <span class="math notranslate nohighlight">\(\sigma_1\)</span>, <span class="math notranslate nohighlight">\(\sigma_1^\prime\)</span> にそれぞれ対応します。</p></li>
 </ul>
+<p><code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">ring+ladder</span></code> の場合、 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> ファイルには配列 <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> も追加で格納されます。これは横感受率 <span class="math notranslate nohighlight">\(\chi_{+-}(q)\)</span> を保持し、 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> と同じ配列形式を持ちます。</p>
 </section>
 <section id="id1">
 <h1>データ読み込みの例<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>

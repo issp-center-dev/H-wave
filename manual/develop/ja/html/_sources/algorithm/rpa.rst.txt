@@ -270,7 +270,7 @@ H-waveはスピンと軌道のインデックスが
 - ハミルトニアンはスピン保存を仮定せず、
   完全な :math:`2n_{\rm orb} \times 2n_{\rm orb}` 空間で構成されます。
 - 全ての相互作用型（ ``CoulombIntra`` 、 ``CoulombInter`` 、 ``Hund`` 、 ``Exchange`` 、
-  ``Ising`` 、 ``PairHop`` ）がサポートされます。
+  ``Ising`` 、 ``PairLift`` 、 ``PairHop`` ）がサポートされます。
 - 可能な場合、ブロック対角化最適化が自動的に適用されます。
 - ``squashed`` 計算スキームもスピン軌道系で利用可能です。
 - 幾何情報ファイル（``geom.dat``）の ``Norbit`` はスピン軌道の総数

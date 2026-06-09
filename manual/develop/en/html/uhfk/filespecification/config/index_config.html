@@ -103,7 +103,8 @@ If <code class="docutils literal notranslate"><span class="pre">true</span></cod
 Boolean</p>
 <p><strong>Description :</strong>
 This parameter specifies whether to allow spin-orbital interaction.
-If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index <span class="math notranslate nohighlight">\(\alpha\)</span> (from 0 to <span class="math notranslate nohighlight">\(N_\text{orb}-1\)</span>) and the spin index <span class="math notranslate nohighlight">\(s\)</span> (0 for up, 1 for down) by <span class="math notranslate nohighlight">\(2\alpha + s\)</span>, i.e. the spin is the inner (interleaved) index.</p>
+If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index <span class="math notranslate nohighlight">\(\alpha\)</span> (from 0 to <span class="math notranslate nohighlight">\(N_\text{orb}-1\)</span>) and the spin index <span class="math notranslate nohighlight">\(s\)</span> (0 for up, 1 for down) by <span class="math notranslate nohighlight">\(2\alpha + s\)</span>, i.e. the spin is the inner (interleaved) index.
+Interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported in spin-orbital mode, handled via a virtual spin decomposition.</p>
 </li>
 </ul>
 </section>
@@ -306,7 +307,7 @@ String</p>
 <p><strong>Description :</strong>
 This parameter specifies the filename for the geometry information.</p>
 </li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p>
+<li><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p>
 <p><strong>Type :</strong>
 String</p>
 <p><strong>Description :</strong>

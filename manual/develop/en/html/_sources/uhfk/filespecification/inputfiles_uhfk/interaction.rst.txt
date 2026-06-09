@@ -142,4 +142,6 @@ Usage rules
 
 -  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}`. The spin is the inner (interleaved) index: the odd indices (1, 3, 5, …) correspond to spin-up of each orbital, and the even indices (2, 4, 6, …) correspond to spin-down (for the orbital :math:`\alpha` starting from 0 and the spin :math:`s` with 0 for up and 1 for down, the file index starting from 1 is :math:`2\alpha + s + 1`). Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
 
+-  In spin-orbital mode the interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported, handled via a virtual spin decomposition. The doubled ``2α+s+1`` index convention applies to the Transfer file only. Interaction definition files use physical-orbital indices (1 .. :math:`N_\text{orbital}/2`).
+
 .. raw:: latex

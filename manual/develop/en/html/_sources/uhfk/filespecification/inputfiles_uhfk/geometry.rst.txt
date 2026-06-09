@@ -51,6 +51,7 @@ Parameters
 
    **Description :**
    This parameter specifies the number of orbitals :math:`N_\text{orbit}` in a unitcell.
+   In spin-orbital mode (``enable_spin_orbital = true``), ``Norbit`` is the spin-orbital count (= 2 × physical orbitals = Wannier90 ``num_wann``) and must be even.
 
 -  ``[vx_i]``, ``[vy_i]``, ``[vz_i]``
 

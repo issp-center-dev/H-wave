@@ -45,7 +45,7 @@
 <li><p>requests module</p></li>
 <li><p>tomli module</p></li>
 </ul>
-<p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk and rpa modes.</p>
+<p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.</p>
 </li>
 <li><p>Official Page</p>
 <blockquote>
@@ -95,6 +95,8 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 |   |-- hwave/
 |       |-- __init__.py
 |       |-- qlms.py
+|       |-- dos.py
+|       |-- sc.py
 |       |-- qlmsio/
 |       |   |-- __init__.py
 |       |   |-- read_input.py
@@ -106,6 +108,7 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 |           |-- uhfr.py
 |           |-- uhfk.py
 |           |-- rpa.py
+|           |-- flex.py
 |           |-- perf.py
 |-- tests/
 </pre></div>
@@ -131,6 +134,8 @@ You may consult File format sections for the details.</p>
 </div>
 <p>When the calculation is completed, the results will be written in the output directory.
 See File format sections for the details of the output files.</p>
+<p>The package also provides the post-processing tools <code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> (density of states)
+and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> (Eliashberg / superconducting analysis), which take the same input file.</p>
 </li>
 </ol>
 </li>

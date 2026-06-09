@@ -47,7 +47,7 @@
 <li><p>requests モジュール</p></li>
 <li><p>tomli モジュール</p></li>
 </ul>
-<p>なお、H-waveのUHFkとRPAモードでは <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> をFFT計算に利用しています。</p>
+<p>なお、H-waveのUHFk、RPA、FLEXモードでは <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> をFFT計算に利用しています。</p>
 </div></blockquote>
 </li>
 <li><p>Official Page</p>
@@ -109,6 +109,8 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 |   |-- hwave/
 |       |-- __init__.py
 |       |-- qlms.py
+|       |-- dos.py
+|       |-- sc.py
 |       |-- qlmsio/
 |       |   |-- __init__.py
 |       |   |-- read_input.py
@@ -120,6 +122,7 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 |           |-- uhfr.py
 |           |-- uhfk.py
 |           |-- rpa.py
+|           |-- flex.py
 |           |-- perf.py
 |-- tests/
 </pre></div>
@@ -145,6 +148,8 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 </div>
 <p>計算終了後、計算結果が出力ディレクトリに出力されます。
 出力ファイルの詳細については、ファイルフォーマットの章を参照してください。</p>
+<p>また、本パッケージには後処理ツール <code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code> （状態密度）および
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> （Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。</p>
 </li>
 </ol>
 </li>

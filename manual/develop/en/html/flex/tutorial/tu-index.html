@@ -555,6 +555,14 @@ Smaller values give more stable convergence but slower progress.</p></td>
 </table>
 <p>All other parameters (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>, etc.)
 are shared with the RPA solver. See <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">Parameter files</span></a> for details.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The FLEX solver consumes the reduced-shape susceptibility and reduces
+the interaction to its density-density part. It therefore requires
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;squashed&quot;</span></code> and does
+<strong>not</strong> support <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> (which forces the
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> scheme). The solver raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> otherwise.</p>
+</div>
 </section>
 <section id="sample-3-iron-pnictide-2-orbital-model">
 <h2>Sample 3: Iron pnictide 2-orbital model<a class="headerlink" href="#sample-3-iron-pnictide-2-orbital-model" title="Link to this heading">¶</a></h2>
@@ -833,20 +841,23 @@ FLEX-level spin and charge fluctuations.</p></li>
 <td><p>Hund’s coupling <span class="math notranslate nohighlight">\(J\)</span></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
-<td><p>Yes</p></td>
-<td><p>Exchange interaction <span class="math notranslate nohighlight">\(J'\)</span></p></td>
+<td><p>Partial</p></td>
+<td><p>Exchange interaction <span class="math notranslate nohighlight">\(J'\)</span> (density-density part only;
+off-diagonal spin-flip/pair vertices are dropped)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
 <td><p>Yes</p></td>
 <td><p>Ising-type interaction</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
-<td><p>Yes</p></td>
-<td><p>Pair lifting interaction</p></td>
+<td><p>Partial</p></td>
+<td><p>Pair lifting interaction (density-density part only;
+off-diagonal vertices are dropped)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
-<td><p>Yes</p></td>
-<td><p>Pair hopping interaction</p></td>
+<td><p>Partial</p></td>
+<td><p>Pair hopping interaction (density-density part only;
+off-diagonal vertices are dropped)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
 <td><p><strong>No</strong></p></td>
@@ -901,8 +912,11 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>This contraction is exact for <strong>density-density type interactions</strong>.
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, and <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
 are all density-density type and are handled correctly.
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are also properly treated within the
-standard Kanamori parameterization.</p>
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are <strong>not</strong> purely
+density-density: only their density-density part is retained, while
+their off-diagonal (spin-flip / pair-scattering) vertices are dropped
+in the reduction. The solver emits a warning when such interactions are
+present, so the user is aware of this approximation.</p>
 </section>
 <section id="spin-degrees-of-freedom-spin-free-mode">
 <h3>Spin degrees of freedom (spin-free mode)<a class="headerlink" href="#spin-degrees-of-freedom-spin-free-mode" title="Link to this heading">¶</a></h3>

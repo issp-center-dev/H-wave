@@ -279,6 +279,12 @@ The number of the energy points for the DOS calculation is specified by <code cl
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --plot dos.png
 </pre></div>
 </div>
+<p>The <code class="docutils literal notranslate"><span class="pre">--subtract-mu</span></code> option shifts the DoS energy axis to <span class="math notranslate nohighlight">\(E-\mu\)</span> so that the Fermi level sits at 0.
+The chemical potential <span class="math notranslate nohighlight">\(\mu\)</span> is read from the <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> line of <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> in the output directory (written by the UHFk solver).
+If no <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> entry is found, a warning is emitted and the raw eigenvalue axis is used:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>$ hwave_dos input.toml --subtract-mu
+</pre></div>
+</div>
 </section>
 </section>
 

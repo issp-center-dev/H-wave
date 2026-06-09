@@ -25,6 +25,10 @@ The file contains several arrays bound to the following keys:
 
   These arrays refer to the information of the wave number vectors. See :ref:`Output files of UHFk <Subsec:eigen_uhfk.dat>` for details.
 
+- ``index_convention``:
+
+  A string marker (always ``"spin_block"``) recording that the spin-orbital axes are ordered as spin*norb+orb (spin-block), distinct from UHFk's interleaved 2*orb+spin output. A ``chi0q`` file lacking this marker (produced before the convention fix) is rejected when reloaded in spin-orbital mode.
+
 When the sublattice is considered, the indices of the wave numbers and the orbitals are
 regarded as those of the sublattice.
 
@@ -78,6 +82,8 @@ Data format of ``chiq`` takes the following form depending on the value of ``cal
 - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(l,q,a,b)``, where ``a`` and ``b`` correspond to the generalized orbital indices :math:`\tilde\alpha` and :math:`\tilde\beta`, respectively.
 
 - When ``calc_scheme = squashed``, the array format takes the form of ``ndarray(l,q,s1,s2,a,s3,s4,b)``, where ``a`` and ``b`` correspond to the orbital indices :math:`\alpha` and :math:`\beta`, respectively, and ``s1``, ``s2``, ``s3``, ``s4`` denote spin indices :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime`, respectively. See :ref:`Algorithm<Algorithm_sec>` section for the notation.
+
+When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)` and has the same array layout as ``chiq``.
 
 
 Example for reading data

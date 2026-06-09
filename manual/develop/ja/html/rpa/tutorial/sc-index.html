@@ -200,9 +200,13 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は内部で計算します。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: 反復法の初期ギャップ対称性。
-<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x + \cos k_y\)</span>)、
-<code class="docutils literal notranslate"><span class="pre">&quot;dx2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>)、
-<code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code> などが利用可能です。</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>)、
+<code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>)、
+<code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code> などが利用可能です。
+有効な形状因子の一覧は
+<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;s&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;s_ext&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;s_ext_2d&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">&quot;d_xy&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_xz&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_z2&quot;</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;p_z&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code> です。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: 自己無撞着反復の最大回数。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: 混合パラメータ（0: 混合なし、1: 古い解を完全保持）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>: ギャップ関数の収束条件。</p></li>
