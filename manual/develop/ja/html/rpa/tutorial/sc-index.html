@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+
+<html lang="ja" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>5.2. チュートリアル: Eliashberg方程式ソルバー &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=9814fe92" />
+    <script src="../../_static/documentation_options.js?v=c6080ef3"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/translations.js?v=4755f45a"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="検索" href="../../search.html" />
+    <link rel="next" title="5.3. ファイルフォーマット" href="../filespecification/fi-index.html" />
+    <link rel="prev" title="5.1. チュートリアル" href="tu-index.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="eliashberg">
+<h1><span class="section-number">5.2. </span>チュートリアル: Eliashberg方程式ソルバー<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h1>
+<p>本チュートリアルでは、H-waveに含まれる線形化Eliashberg方程式ソルバー
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> の使い方を説明します。
+このツールは、RPAソルバーで計算した裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>
+を用いて線形化Eliashberg方程式を解き、超伝導不安定性を解析します。</p>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/rpa/sample_sc</span></code> ディレクトリにあります。</p>
+<section id="id1">
+<h2><span class="section-number">5.2.1. </span>計算の流れ<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<p>計算は2つのステップで行います:</p>
+<ol class="arabic simple">
+<li><p><strong>RPA計算</strong> (<code class="docutils literal notranslate"><span class="pre">hwave</span></code>): 裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を計算し、
+<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> に保存します。</p></li>
+<li><p><strong>Eliashberg方程式ソルバー</strong> (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>): <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> を読み込み、
+グリーン関数を再構成し、RPA頂点を計算した後、
+線形化Eliashberg方程式を解きます。</p></li>
+</ol>
+</section>
+<section id="id2">
+<h2><span class="section-number">5.2.2. </span>モデル<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
+<p>本チュートリアルでは、二次元正方格子上の <strong>2軌道タイトバインディングモデル</strong>
+を3/4フィリングで扱います。ハミルトニアンは以下の通りです:</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-0">
+<span class="eqno">(5.1)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-0" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+    \varepsilon_{\alpha\beta}(\mathbf{k})\,
+    c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
+  + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+  + \sum_{i,\alpha\neq\beta} V_{\alpha\beta}\,
+    n_{i\alpha} n_{i\beta}\]</div>
+<p>ここで、オンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 0.4\)</span>、
+軌道間クーロン相互作用 <span class="math notranslate nohighlight">\(V\)</span> を使用します。</p>
+<p>このサンプルは有機導体 <span class="math notranslate nohighlight">\(\beta\)</span>-(meso-DMBEDT-TTF)<span class="math notranslate nohighlight">\(_2\)</span>PF<span class="math notranslate nohighlight">\(_6\)</span>
+の伝導層モデルに基づいており、
+トランスファー積分は拡張ヒュッケル法による計算値を使用しています。 <a class="footnote-reference brackets" href="#id7" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a></p>
+</section>
+<section id="id4">
+<h2><span class="section-number">5.2.3. </span>理論<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
+<section id="id5">
+<h3>超伝導感受率<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<p>RPA電荷感受率 <span class="math notranslate nohighlight">\(\hat{X}^c\)</span> およびスピン感受率 <span class="math notranslate nohighlight">\(\hat{X}^s\)</span> は
+以下のように与えられます:</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-1">
+<span class="eqno">(5.2)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-1" title="Link to this equation">¶</a></span>\[\hat{X}^c = (\hat{I} + \hat{X}^{(0)} (\hat{U} + 2\hat{V}))^{-1} \hat{X}^{(0)}\]</div>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-2">
+<span class="eqno">(5.3)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-2" title="Link to this equation">¶</a></span>\[\hat{X}^s = (\hat{I} - \hat{X}^{(0)} \hat{U})^{-1} \hat{X}^{(0)}\]</div>
+<p>ここで <span class="math notranslate nohighlight">\(\hat{X}^{(0)}\)</span> は裸感受率、
+<span class="math notranslate nohighlight">\(\hat{U}\)</span> はオンサイト相互作用行列、
+<span class="math notranslate nohighlight">\(\hat{V}\)</span> はサイト間相互作用行列です。</p>
+</section>
+<section id="id6">
+<h3>線形化Eliashberg方程式<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<p>一重項超伝導の線形化Eliashberg方程式は次のように書けます:</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-3">
+<span class="eqno">(5.4)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-3" title="Link to this equation">¶</a></span>\[\lambda_S \Sigma^a_{\alpha\sigma;\beta\bar{\sigma}}(\mathbf{k})
+= -\frac{T}{N_L} \sum_{\mathbf{k}',n',\alpha',\beta'}
+P^S_{\alpha\sigma;\beta\bar{\sigma}}(\mathbf{k} - \mathbf{k}')
+G^{(0)}_{\alpha\alpha'}(\mathbf{k}', i\varepsilon_{n'})
+G^{(0)}_{\beta\beta'}(-\mathbf{k}', -i\varepsilon_{n'})
+\Sigma^a_{\alpha'\sigma;\beta'\bar{\sigma}}(\mathbf{k}')\]</div>
+<p>ペアリング相互作用は、一重項の場合:</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-4">
+<span class="eqno">(5.5)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-4" title="Link to this equation">¶</a></span>\[\hat{P}^S = \hat{U} + \hat{V}
++ \frac{3}{2} \hat{U} \hat{X}^s \hat{U}
+- \frac{1}{2} (\hat{U} + 2\hat{V}) \hat{X}^c (\hat{U} + 2\hat{V})\]</div>
+<p>三重項の場合:</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-5">
+<span class="eqno">(5.6)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-5" title="Link to this equation">¶</a></span>\[\hat{P}^T = \hat{V}
+- \frac{1}{2} \hat{U} \hat{X}^s \hat{U}
+- \frac{1}{2} (\hat{U} + 2\hat{V}) \hat{X}^c (\hat{U} + 2\hat{V})\]</div>
+<p><span class="math notranslate nohighlight">\(\lambda_S = 1\)</span> (<span class="math notranslate nohighlight">\(\lambda_T = 1\)</span>) が超伝導転移点に対応します。
+<span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span> （正の固有値）のとき常伝導状態は超伝導に対して不安定です。
+負の固有値は符号反転ギャップに対応しますが、
+自己無撞着条件 <span class="math notranslate nohighlight">\(\Delta = K\Delta\)</span> を満たさないため
+超伝導不安定性を示しません。</p>
+<p>Eliashberg方程式の数値解法として、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> では自己無撞着べき乗反復法
+（固有値が最大のモードに収束）とArnoldi法による固有値解析を実装しています。</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id7" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
+<span class="backrefs">(<a role="doc-backlink" href="#id3">1</a>,<a role="doc-backlink" href="#id20">2</a>)</span>
+<p>K. Yoshimi, M. Nakamura, and H. Mori,
+J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
+<a class="reference external" href="https://arxiv.org/abs/cond-mat/0608466">arXiv:cond-mat/0608466</a>.</p>
+</aside>
+</aside>
+</section>
+</section>
+<section id="id8">
+<h2><span class="section-number">5.2.4. </span>入力ファイルの準備<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h2>
+<section id="id9">
+<h3>パラメータファイル<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h3>
+<p>TOML形式のパラメータファイル <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> を作成します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;RPA&quot;
+
+[mode.param]
+  T = 0.1
+  CellShape = [32, 32, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 512
+  filling = 0.75
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+
+[eliashberg]
+  solver_mode = &quot;both&quot;
+  chi0q_mode = &quot;load&quot;
+  pairing_type = &quot;singlet&quot;
+  init_gap = &quot;cos&quot;
+  max_iter = 500
+  alpha = 0.5
+  convergence_tol = 1.0e-5
+  num_eigenvalues = 10
+  eigenvalue_method = &quot;arnoldi&quot;
+  output_gap = &quot;gap.dat&quot;
+  output_eigenvalue = &quot;eigenvalue.dat&quot;
+</pre></div>
+</div>
+<p>このファイルは以下のセクションから構成されます。</p>
+<section id="mode-param">
+<h4><code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> セクション<a class="headerlink" href="#mode-param" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span></code>: 温度。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CellShape</span></code>: k点メッシュのサイズ（2次元系では 32 x 32 x 1）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code>: 松原振動数の数（512）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">filling</span></code>: 1軌道1スピンあたりの電子充填率（0.75 = 3/4フィリング）。</p></li>
+</ul>
+</section>
+<section id="file">
+<h4><code class="docutils literal notranslate"><span class="pre">[file]</span></code> セクション<a class="headerlink" href="#file" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code>: 幾何情報、トランスファー積分、
+相互作用パラメータのファイルを指定します。RPAステップと共通です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>: <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> および
+<span class="math notranslate nohighlight">\(\chi(\mathbf{q})\)</span> の出力先ディレクトリとファイル名。</p></li>
+</ul>
+</section>
+<section id="id10">
+<h4><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクション<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h4>
+<p>Eliashberg方程式ソルバーの設定です。主なパラメータ:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (自己無撞着べき乗法)、
+<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi固有値解析)、または <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> はRPA出力ファイルから
+<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を読み込みます。
+<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は内部で計算します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: 反復法の初期ギャップ対称性。
+<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x + \cos k_y\)</span>)、
+<code class="docutils literal notranslate"><span class="pre">&quot;dx2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>)、
+<code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code> などが利用可能です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: 自己無撞着反復の最大回数。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: 混合パラメータ（0: 混合なし、1: 古い解を完全保持）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>: ギャップ関数の収束条件。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: 固有値モードで計算する固有値の数。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> （デフォルト）、 <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
+<code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
+</ul>
+</section>
+</section>
+<section id="id11">
+<h3>相互作用定義ファイル<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
+<p>相互作用定義ファイルはWannier90形式で記述し、
+RPAソルバーと共通です。詳細は <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a> を参照してください。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Geometry</span></code> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+ 2
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+    0.000000000000000e+00     5.000000000000000e-01     0.000000000000000e+00
+</pre></div>
+</div>
+<p>2軌道の単位胞を定義します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+2
+9
+ 1 1 1 1 1 1 1 1 1
+   0    1    0    1    2   -0.082400000000   0.000000000000
+   0   -1    0    2    1   -0.082400000000   0.000000000000
+   0    0    0    1    2   -0.226000000000   0.000000000000
+   0    0    0    2    1   -0.226000000000   0.000000000000
+  -1    0    0    1    1    0.047500000000   0.000000000000
+  -1    0    0    2    2    0.047500000000   0.000000000000
+   1    0    0    1    1    0.047500000000   0.000000000000
+   1    0    0    2    2    0.047500000000   0.000000000000
+  -1    0    0    1    2   -0.043800000000   0.000000000000
+   1    0    0    2    1   -0.043800000000   0.000000000000
+   1    1    0    1    2   -0.115000000000   0.000000000000
+  -1   -1    0    2    1   -0.115000000000   0.000000000000
+</pre></div>
+</div>
+<p>2軌道モデルのホッピング積分を定義します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (<code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+2
+1
+1
+   0    0    0    1    1   0.400000000000   0.000000000000
+   0    0    0    2    2   0.400000000000   0.000000000000
+</pre></div>
+</div>
+<p>各軌道のオンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 0.4\)</span>。</p>
+<p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombInter in wannier90-like format for uhfk
+2
+9
+ 1 1 1 1 1 1 1 1 1
+   0    1    0    1    2    0.096000000000   0.000000000000
+   0   -1    0    2    1    0.096000000000   0.000000000000
+   0    0    0    1    2    0.320000000000   0.000000000000
+   0    0    0    2    1    0.320000000000   0.000000000000
+  -1    0    0    1    1    0.204800000000   0.000000000000
+  -1    0    0    2    2    0.204800000000   0.000000000000
+   1    0    0    1    1    0.204800000000   0.000000000000
+   1    0    0    2    2    0.204800000000   0.000000000000
+  -1    0    0    1    2    0.096000000000   0.000000000000
+   1    0    0    2    1    0.096000000000   0.000000000000
+   1    1    0    1    2    0.204800000000   0.000000000000
+  -1   -1    0    2    1    0.204800000000   0.000000000000
+</pre></div>
+</div>
+<p>軌道間・サイト間クーロン相互作用。</p>
+</section>
+</section>
+<section id="rpa">
+<h2><span class="section-number">5.2.5. </span>ステップ1: RPA計算の実行<a class="headerlink" href="#rpa" title="Link to this heading">¶</a></h2>
+<p>まず、RPAソルバーを実行して裸感受率を計算します:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code> が生成されます。
+32 x 32メッシュの場合、数秒で完了します。</p>
+</section>
+<section id="id12">
+<h2><span class="section-number">5.2.6. </span>ステップ2: Eliashberg方程式ソルバーの実行<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h2>
+<p>次に、同じ入力ファイルを使ってEliashberg方程式ソルバーを実行します:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave_sc<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>ソルバーは以下の処理を行います:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> から <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を読み込みます。</p></li>
+<li><p>相互作用ファイルを読み込み、ハミルトニアンを構築します。</p></li>
+<li><p>非相互作用グリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span> を構成します。</p></li>
+<li><p>RPA電荷・スピン頂点 <span class="math notranslate nohighlight">\(V_c(\mathbf{q})\)</span>、
+<span class="math notranslate nohighlight">\(V_s(\mathbf{q})\)</span> を計算します。</p></li>
+<li><p>線形化Eliashberg方程式を自己無撞着反復法および/または
+固有値解析で解きます。</p></li>
+</ol>
+<p>実行ログの例:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>hwave_sc: === Self-consistent iteration ===
+hwave_sc: Iteration    0: eigenvalue = 0.924446, diff = 3.544353e-01
+hwave_sc: Iteration    1: eigenvalue = 0.817270, diff = 7.893848e-02
+...
+hwave_sc: Iteration  192: eigenvalue = 0.959725, diff = 9.900091e-06
+hwave_sc: Converged at iteration 193
+hwave_sc: Iteration result: eigenvalue = 0.959725, converged = True, n_iter = 193
+</pre></div>
+</div>
+<p>引き続き固有値解析の結果が表示されます:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>hwave_sc: === Eigenvalue analysis ===
+hwave_sc: Leading eigenvalues:
+hwave_sc:     0: -1.345390 (|ev| = 1.345390)
+hwave_sc:     1: -1.121834 (|ev| = 1.121834)
+hwave_sc:     2: -1.100188 (|ev| = 1.100188)
+...
+hwave_sc:     4: 0.922684 (|ev| = 0.922684)
+</pre></div>
+</div>
+<p>正の固有値 <span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span> は、その温度で超伝導不安定性が
+存在することを示します。負の固有値は符号反転ギャップに対応しますが、
+超伝導不安定性は示しません。</p>
+</section>
+<section id="id13">
+<h2><span class="section-number">5.2.7. </span>計算結果<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h2>
+<section id="id14">
+<h3>ギャップ関数<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h3>
+<p>以下の図は、自己無撞着反復から得られた
+ギャップ関数 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
+の運動量空間での分布を示しています。</p>
+<p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
+<figure class="align-center" id="id22">
+<a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-number">図 5.3 </span><span class="caption-text">一重項ギャップ関数のk空間分布。
+左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
+右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
+軌道間成分が軌道内成分の約5倍大きく、
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id22" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 1.58\)</span>):</p>
+<figure class="align-center" id="id23">
+<a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-number">図 5.4 </span><span class="caption-text">三重項ギャップ関数のk空間分布。
+左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
+右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
+一重項の場合とは異なり、軌道内成分が支配的である。</span><a class="headerlink" href="#id23" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="id15">
+<h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
+<p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
+<figure class="align-center" id="id24">
+<a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
+</a>
+<figcaption>
+<p><span class="caption-number">図 5.5 </span><span class="caption-text">線形化Eliashberg方程式の正の固有値スペクトル <span class="math notranslate nohighlight">\(\lambda\)</span> 。
+赤破線は <span class="math notranslate nohighlight">\(\lambda = 1\)</span> （超伝導不安定性の判定基準）を示す。
+一重項の全固有値は1未満であり、三重項では2つの固有値が1を超えている。</span><a class="headerlink" href="#id24" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p>Arnoldi固有値解析は複数の固有値を検出します。
+図には超伝導不安定性の判定基準 <span class="math notranslate nohighlight">\(\lambda = 1\)</span> に関連する
+正の固有値のみを示しています。
+一重項チャネルでは最大の正の固有値が <span class="math notranslate nohighlight">\(\lambda \approx 0.92 &lt; 1\)</span> であり、
+自己無撞着反復法の結果 （ <span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span> ）と一致します。
+この温度では一重項SC不安定性は存在しません。</p>
+<p>三重項チャネルでは、最大の正の固有値が
+<span class="math notranslate nohighlight">\(\lambda \approx 1.58 &gt; 1\)</span> であり、
+三重項SC不安定性を示しています。</p>
+</section>
+<section id="id16">
+<h3>描画スクリプト<a class="headerlink" href="#id16" title="Link to this heading">¶</a></h3>
+<p>上記の図はサンプルディレクトリに含まれる描画スクリプトで再現できます:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>plot_results.py
+</pre></div>
+</div>
+</section>
+</section>
+<section id="id17">
+<h2><span class="section-number">5.2.8. </span>出力ファイル<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h2>
+<p>ソルバーは <code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに以下のファイルを出力します。</p>
+<section id="gap-dat">
+<h3><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code><a class="headerlink" href="#gap-dat" title="Link to this heading">¶</a></h3>
+<p>収束したギャップ関数 <span class="math notranslate nohighlight">\(\Delta_{\alpha\beta}(\mathbf{k})\)</span>
+のk空間表示。各行の形式:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>kx  ky  kz  Re(Δ_00)  Im(Δ_00)  Re(Δ_01)  Im(Δ_01)  Re(Δ_10)  Im(Δ_10)  Re(Δ_11)  Im(Δ_11)
+</pre></div>
+</div>
+<p>ここで <span class="math notranslate nohighlight">\(\alpha, \beta\)</span> は軌道インデックスです。</p>
+</section>
+<section id="eigenvalue-dat">
+<h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
+<p>線形化Eliashberg方程式の固有値:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># Iteration eigenvalue
+9.59724792e-01
+# Eigenvalue analysis
+# index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|
+   0 -1.34539047e+00  0.00000000e+00  1.34539047e+00
+   1 -1.12183387e+00  0.00000000e+00  1.12183387e+00
+   ...
+</pre></div>
+</div>
+</section>
+</section>
+<section id="id18">
+<h2><span class="section-number">5.2.9. </span>物理的解釈<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h2>
+<p>線形化Eliashberg方程式の最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span> は
+超伝導の発生を判定します:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span>: 常伝導状態は超伝導に対して不安定です。
+対応する固有ベクトルがギャップ関数の対称性を与えます。</p></li>
+<li><p><span class="math notranslate nohighlight">\(\lambda &lt; 1\)</span> （全ての正の固有値について）:
+その温度では常伝導状態が安定です。</p></li>
+</ul>
+<p>負の固有値は、多軌道系における <span class="math notranslate nohighlight">\(s_\pm\)</span> 波のような
+符号反転ペアリング対称性に対応しますが、
+自己無撞着条件 <span class="math notranslate nohighlight">\(\Delta = K\Delta\)</span> は <span class="math notranslate nohighlight">\(\lambda = 1\)</span>
+（ <span class="math notranslate nohighlight">\(\lambda = -1\)</span> ではない）を要求するため、
+負の固有値はその大きさによらず超伝導不安定性を <strong>示しません</strong> 。</p>
+<p>温度を変化させて最大の正の固有値が <span class="math notranslate nohighlight">\(\lambda = 1\)</span> となる点を
+求めることで、超伝導転移温度 <span class="math notranslate nohighlight">\(T_c\)</span> を決定できます。</p>
+<p>本チュートリアルでは、<span class="math notranslate nohighlight">\(T = 0.1\)</span> で一重項チャネルの最大正固有値が
+<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96 &lt; 1\)</span> （SC不安定性なし）、
+三重項チャネルでは <span class="math notranslate nohighlight">\(\lambda_T \approx 1.58 &gt; 1\)</span>
+（SC不安定性あり）となります。</p>
+<section id="id19">
+<h3>一重項と三重項の比較<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
+<p>入力ファイルの <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> を <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code> に変更することで、
+一重項と三重項の不安定性を比較できます。
+同じパラメータで <span class="math notranslate nohighlight">\(T = 0.1\)</span> の場合、三重項チャネルでは
+主要固有値が <span class="math notranslate nohighlight">\(\lambda_T \approx 1.58\)</span> となり、
+一重項の値 (<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>) より大きくなります。
+これは、この温度では三重項SC状態が支配的であることを示し、
+文献 <a class="footnote-reference brackets" href="#id7" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> の結果と一致しています。
+同文献では、<span class="math notranslate nohighlight">\(T &gt; 0.05\)</span> で三重項SC状態が一重項SC状態と
+競合し、低温 (<span class="math notranslate nohighlight">\(T &lt; 0.05\)</span>) ではスピンゆらぎの増大により
+一重項SC転移が支配的になることが報告されています。</p>
+</section>
+</section>
+<section id="id21">
+<h2><span class="section-number">5.2.10. </span>対応する相互作用<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h2>
+<p>Eliashberg方程式ソルバーは、H-waveで利用可能な
+全ての相互作用型に対応しています:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (<span class="math notranslate nohighlight">\(U\)</span>): 軌道内クーロン斥力</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (<span class="math notranslate nohighlight">\(V\)</span>): 軌道間クーロン斥力</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> (<span class="math notranslate nohighlight">\(J\)</span>): フント結合</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (<span class="math notranslate nohighlight">\(J'\)</span>): ペアホッピング（交換）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> (<span class="math notranslate nohighlight">\(I\)</span>): イジング型スピン相互作用</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (<span class="math notranslate nohighlight">\(P\)</span>): ペアホッピング</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+相互作用が存在する場合、ソルバーは自動的に
+一般化 <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> 行列定式化
+（Kuroki et al., PRB 79, 224511）を使用し、
+4インデックスの頂点構造で計算します。</p>
+</section>
+<section id="tips">
+<h2><span class="section-number">5.2.11. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>大規模系では <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> と設定すると、
+<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を内部計算し、
+大きなファイルの読み込みを回避できます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> 固有値法は少数の主要固有値を求めるのに最速です。
+縮退した固有値がある場合は <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code> がより堅牢です。</p></li>
+<li><p>反復法では異なる <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> 対称性を使用して、
+特定のペアリングチャネルを狙うことができます。
+固有値法は全ての主要対称性を自動的に見つけます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span> <span class="pre">=</span> <span class="pre">&quot;triplet&quot;</span></code> オプションで、
+適切な頂点を用いた三重項ペアリング不安定性を解析できます。</p></li>
+</ul>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../index.html">
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo" />
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../rpa-index.html">5. 乱雑位相近似 (RPA)</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="tu-index.html">5.1. チュートリアル</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">5.2. チュートリアル: Eliashberg方程式ソルバー</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id1">5.2.1. 計算の流れ</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id2">5.2.2. モデル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id4">5.2.3. 理論</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id8">5.2.4. 入力ファイルの準備</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#rpa">5.2.5. ステップ1: RPA計算の実行</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id12">5.2.6. ステップ2: Eliashberg方程式ソルバーの実行</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id13">5.2.7. 計算結果</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id17">5.2.8. 出力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id18">5.2.9. 物理的解釈</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id21">5.2.10. 対応する相互作用</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.11. Tips</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. ファイルフォーマット</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">6. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">8. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../rpa-index.html"><span class="section-number">5. </span>乱雑位相近似 (RPA)</a><ul>
+      <li>Previous: <a href="tu-index.html" title="前の章へ"><span class="section-number">5.1. </span>チュートリアル</a></li>
+      <li>Next: <a href="../filespecification/fi-index.html" title="次の章へ"><span class="section-number">5.3. </span>ファイルフォーマット</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.0.4</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="../../_sources/rpa/tutorial/sc-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -43,8 +43,11 @@
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Energy_total = -5.88984624257707
 Energy_band = -0.9265413257740396
 Energy_interall = -4.963304916803031
+FreeEnergy_total = -5.91234017896271
+FreeEnergy_band = -0.9490352621596976
 NCond = 8.000000000000007
 Sz = 3.2822430107160017e-07
+ChemicalPotential = 0.123456789
 </pre></div>
 </div>
 <section id="id1">
@@ -53,8 +56,11 @@ Sz = 3.2822430107160017e-07
 <li><p>Energy_total = <code class="docutils literal notranslate"><span class="pre">[energy_total]</span></code></p></li>
 <li><p>Energy_band = <code class="docutils literal notranslate"><span class="pre">[energy_band]</span></code></p></li>
 <li><p>Energy_interall = <code class="docutils literal notranslate"><span class="pre">[energy_interall]</span></code></p></li>
+<li><p>FreeEnergy_total = <code class="docutils literal notranslate"><span class="pre">[free_energy_total]</span></code></p></li>
+<li><p>FreeEnergy_band = <code class="docutils literal notranslate"><span class="pre">[free_energy_band]</span></code></p></li>
 <li><p>NCond = <code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p></li>
 <li><p>Sz = <code class="docutils literal notranslate"><span class="pre">[sz]</span></code></p></li>
+<li><p>ChemicalPotential = <code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p></li>
 </ul>
 </section>
 <section id="id2">
@@ -73,6 +79,20 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
 <p><strong>形式 :</strong> float型</p>
 <p><strong>説明 :</strong> 相互作用分のエネルギー。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[free_energy_total]</span></code></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong>
+自由エネルギー <span class="math notranslate nohighlight">\(F = E - TS\)</span> （Helmholtz自由エネルギー）。
+有限温度の自己無撞着計算で最小化される量。
+<span class="math notranslate nohighlight">\(T=0\)</span> では内部エネルギー <code class="docutils literal notranslate"><span class="pre">[energy_total]</span></code> と一致する。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[free_energy_band]</span></code></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong>
+自由エネルギーのバンド寄与 <span class="math notranslate nohighlight">\(\mu N + \Omega_0\)</span>
+（<span class="math notranslate nohighlight">\(\Omega_0 = -T\sum_n \ln(1+e^{-(\varepsilon_n-\mu)/T})\)</span>）。
+<span class="math notranslate nohighlight">\(T=0\)</span> では <code class="docutils literal notranslate"><span class="pre">[energy_band]</span></code> と一致する。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p>
 <p><strong>形式 :</strong> float型</p>
 <dl class="simple">
@@ -86,6 +106,17 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
 <dt><strong>説明 :</strong> 全スピンの <span class="math notranslate nohighlight">\(z\)</span> 成分 <span class="math notranslate nohighlight">\(S_z\)</span> の期待値。</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2\)</span></p>
 </dd>
 </dl>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p>
+<p><strong>形式 :</strong> float型</p>
+<p><strong>説明 :</strong>
+化学ポテンシャル（Fermi準位）。
+<span class="math notranslate nohighlight">\(T=0\)</span> ではHOMO-LUMOギャップの中点（有限温度の <span class="math notranslate nohighlight">\(\mu\)</span> の
+<span class="math notranslate nohighlight">\(T\to 0^+\)</span> 極限）を採用する。
+なお絶縁体ではギャップ内で粒子数が <span class="math notranslate nohighlight">\(\mu\)</span> に依らず一定のため、
+有限温度の <span class="math notranslate nohighlight">\(\mu\)</span> はギャップ内で一意に定まらない点に注意。
+スピン上下などブロックが複数ある場合は <code class="docutils literal notranslate"><span class="pre">ChemicalPotential_{block}</span></code>
+としてブロックごとに出力される。</p>
 </li>
 </ul>
 </section>

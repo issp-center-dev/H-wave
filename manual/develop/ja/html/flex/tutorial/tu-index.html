@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+
+<html lang="ja" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>チュートリアル: FLEXソルバー &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=9814fe92" />
+    <script src="../../_static/documentation_options.js?v=c6080ef3"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/translations.js?v=4755f45a"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="検索" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="flex">
+<h1>チュートリアル: FLEXソルバー<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h1>
+<p>本チュートリアルでは、H-waveのFLEX
+(Fluctuation Exchange Approximation; ゆらぎ交換近似) ソルバーの使い方を
+説明します。FLEXはRPAを拡張し、裸のグリーン関数の代わりに
+ドレスド（自己無撞着な）グリーン関数を用いることで、
+相関電子系のより正確な記述を提供します。</p>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample</span></code> ディレクトリにあります。</p>
+<section id="id1">
+<h2>概要<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<p>FLEX近似 <a class="footnote-reference brackets" href="#id9" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> は遍歴電子系のための自己無撞着ダイアグラム法です。
+裸のグリーン関数 <span class="math notranslate nohighlight">\(G_0\)</span> を用いるRPAと異なり、
+FLEXは以下の自己無撞着ループを収束まで繰り返します:</p>
+<ol class="arabic simple">
+<li><p>Dyson方程式からドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span> を計算</p></li>
+<li><p>ドレスド <span class="math notranslate nohighlight">\(G\)</span> から裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span> を計算</p></li>
+<li><p>相互作用をスピンチャネルと電荷チャネルに分解</p></li>
+<li><p>スピン/電荷感受率 <span class="math notranslate nohighlight">\(\chi_s\)</span>, <span class="math notranslate nohighlight">\(\chi_c\)</span> のRPA方程式を解く</p></li>
+<li><p>有効相互作用 <span class="math notranslate nohighlight">\(V_{\mathrm{eff}}\)</span> を構成</p></li>
+<li><p>FFT畳み込みにより自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span> を計算</p></li>
+<li><p>収束判定; 未収束なら1に戻る</p></li>
+</ol>
+</section>
+<section id="id3">
+<h2>理論<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<section id="id4">
+<h3>ドレスドグリーン関数<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p>ドレスドグリーン関数はDyson方程式から得られます:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-0">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-0" title="Link to this equation">¶</a></span>\[G(\mathbf{k}, i\omega_n)
+= \left[ G_0^{-1}(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, i\omega_n) \right]^{-1}\]</div>
+<p>ここで <span class="math notranslate nohighlight">\(G_0^{-1}(\mathbf{k}, i\omega_n) = i\omega_n + \mu - H_0(\mathbf{k})\)</span>
+は裸のグリーン関数の逆です。</p>
+</section>
+<section id="id5">
+<h3>スピン・電荷感受率<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<p>裸感受率はドレスドグリーン関数から計算されます:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-1">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-1" title="Link to this equation">¶</a></span>\[\chi_0(\mathbf{q}, i\nu_m) = -\frac{T}{N_k} \sum_{\mathbf{k}, n}
+G(\mathbf{k}+\mathbf{q}, i\omega_n + i\nu_m)\, G(\mathbf{k}, i\omega_n)\]</div>
+<p>スピン感受率と電荷感受率は:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-2">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-2" title="Link to this equation">¶</a></span>\[\chi_s = \left[ I - \chi_0 \, U_s \right]^{-1} \chi_0\]</div>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-3">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-3" title="Link to this equation">¶</a></span>\[\chi_c = \left[ I + \chi_0 \, U_c \right]^{-1} \chi_0\]</div>
+<p>ここで <span class="math notranslate nohighlight">\(U_s\)</span>, <span class="math notranslate nohighlight">\(U_c\)</span> は全相互作用ハミルトニアンから
+分解されたスピンおよび電荷相互作用頂点です。
+単一バンドHubbardモデルでは <span class="math notranslate nohighlight">\(U_s = U_c = U\)</span> となります。</p>
+</section>
+<section id="id6">
+<h3>有効相互作用<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<p>FLEX有効相互作用はスピンゆらぎと電荷ゆらぎを結合します <a class="footnote-reference brackets" href="#id9" id="id7" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-4">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-4" title="Link to this equation">¶</a></span>\[V_{\mathrm{eff}}(\mathbf{q}, i\nu_m)
+= W \left[ \frac{3}{2}\chi_s
+         + \frac{1}{2}\chi_c - \chi_0 \right] W\]</div>
+<p>ここで <span class="math notranslate nohighlight">\(W\)</span> は裸の相互作用頂点です。
+<span class="math notranslate nohighlight">\(\chi_0\)</span> は <strong>1回だけ</strong> 減算します。最低次では <span class="math notranslate nohighlight">\(\chi_s = \chi_c = \chi_0\)</span>
+となるため括弧内は <span class="math notranslate nohighlight">\(\chi_0\)</span> に帰着し、<span class="math notranslate nohighlight">\(V_{\mathrm{eff}} = W \chi_0 W\)</span>
+（2次の <span class="math notranslate nohighlight">\(U^2\)</span> バブル）を与えます。この1回の減算により、<span class="math notranslate nohighlight">\(\chi_s\)</span> と
+<span class="math notranslate nohighlight">\(\chi_c\)</span> に含まれる二重計上された2次ダイアグラムが除去されます。</p>
+</section>
+<section id="id8">
+<h3>自己エネルギー<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
+<p>自己エネルギーは実空間・虚時間での畳み込みにより計算されます:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-5">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-5" title="Link to this equation">¶</a></span>\[\Sigma(\mathbf{r}, \tau) = V_{\mathrm{eff}}(\mathbf{r}, \tau) \cdot G(\mathbf{r}, \tau)\]</div>
+<p>この要素ごとの（Hadamard）積はFFTを用いて効率的に評価されます。</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id9" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
+<span class="backrefs">(<a role="doc-backlink" href="#id2">1</a>,<a role="doc-backlink" href="#id7">2</a>)</span>
+<p>N. E. Bickers and D. J. Scalapino,
+Ann. Phys. (N.Y.) <strong>193</strong>, 206 (1989).</p>
+</aside>
+</aside>
+</section>
+</section>
+<section id="hubbard">
+<h2>サンプル 1: 1軌道Hubbardモデル<a class="headerlink" href="#hubbard" title="Link to this heading">¶</a></h2>
+<section id="id10">
+<h3>モデル<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h3>
+<p>最初のサンプルは、二次元正方格子上のハーフフィリング (<span class="math notranslate nohighlight">\(n = 1\)</span>)
+における <strong>1軌道Hubbardモデル</strong> です。</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-6">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-6" title="Link to this equation">¶</a></span>\[H = -\sum_{\langle i,j \rangle, \sigma} t_{ij}\,
+    c^\dagger_{i\sigma} c_{j\sigma}
+  + U \sum_i n_{i\uparrow} n_{i\downarrow}\]</div>
+<p>最近接ホッピング <span class="math notranslate nohighlight">\(t = 1.0\)</span>、
+次近接ホッピング <span class="math notranslate nohighlight">\(t' = 0.5\)</span>、
+オンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 4.0\)</span>、
+温度 <span class="math notranslate nohighlight">\(T = 0.5\)</span> を使用します。</p>
+<p>このモデルは <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> にピークを持つ
+強い反強磁性 (AF) スピンゆらぎを示すことが知られています。</p>
+</section>
+<section id="id11">
+<h3>入力ファイルの準備<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/1orb/</span></code> にあります。</p>
+<p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;FLEX&quot;
+
+[mode.param]
+  T = 0.5
+  CellShape = [8, 8, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 64
+  filling = 0.5
+  IterationMax = 100
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+  sigma = &quot;sigma&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p>主要パラメータ:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>: FLEXソルバーを選択</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0.5</span></code>: 温度</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CellShape</span> <span class="pre">=</span> <span class="pre">[8,</span> <span class="pre">8,</span> <span class="pre">1]</span></code>: 2D系の 8 x 8 k点メッシュ</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>: 松原周波数の数</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">=</span> <span class="pre">0.5</span></code>: ハーフフィリング</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">100</span></code>: SCF反復の最大回数</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0.2</span></code>: 自己エネルギー更新の混合パラメータ
+(<span class="math notranslate nohighlight">\(\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}\)</span>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EPS</span> <span class="pre">=</span> <span class="pre">6</span></code>: 収束判定基準 <span class="math notranslate nohighlight">\(10^{-6}\)</span></p></li>
+</ul>
+<p><strong>格子情報</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+1
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+</pre></div>
+</div>
+<p>原点に1つの軌道。</p>
+<p><strong>トランスファー積分</strong> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+1
+9
+ 1 1 1 1 1 1 1 1 1
+  -1   -1    0    1    1  0.500000000000  -0.000000000000
+  -1    0    0    1    1  1.000000000000  -0.000000000000
+   0   -1    0    1    1  1.000000000000  -0.000000000000
+   0    1    0    1    1  1.000000000000   0.000000000000
+   1    0    0    1    1  1.000000000000   0.000000000000
+   1    1    0    1    1  0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>正方格子上の最近接 (<span class="math notranslate nohighlight">\(t = 1.0\)</span>) および次近接 (<span class="math notranslate nohighlight">\(t' = 0.5\)</span>) ホッピング。</p>
+<p><strong>オンサイト相互作用</strong> (<code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+1
+1
+ 1
+   0    0    0    1    1   4.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>オンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 4.0\)</span>。</p>
+</section>
+<section id="id12">
+<h3>計算の実行<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/1orb
+$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>出力ログにSCFの収束過程が表示されます:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/100
+  convergence: |dSigma|/|Sigma| = 1.000e+00
+FLEX iteration 2/100
+  convergence: |dSigma|/|Sigma| = 9.827e-01
+...
+FLEX iteration 72/100
+  convergence: |dSigma|/|Sigma| = 1.008e-06
+FLEX iteration 73/100
+  convergence: |dSigma|/|Sigma| = 8.292e-07
+FLEX converged after 73 iterations
+</pre></div>
+</div>
+</section>
+<section id="id13">
+<h3>計算結果<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h3>
+<p>収束後、ソルバーは <code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに以下の出力ファイルを生成します:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>: 裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>: スピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_m)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>: 電荷感受率 <span class="math notranslate nohighlight">\(\chi_c(\mathbf{q}, i\nu_m)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>: 結合感受率ファイル</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: 自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: ドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
+</ul>
+<p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
+<figure class="align-center" id="id33">
+<a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">ハーフフィリングにおける1軌道Hubbardモデルの静的スピン感受率
+<span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span>。
+<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> のピークはフェルミ面の
+ネスティングに起因する強い反強磁性スピンゆらぎを示しています。</span><a class="headerlink" href="#id33" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>自己エネルギー</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
+<figure class="align-center" id="id34">
+<a class="reference internal image-reference" href="../../_images/sigma_kspace.png"><img alt="../../_images/sigma_kspace.png" src="../../_images/sigma_kspace.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">最低松原周波数における自己エネルギーの虚部。
+k依存性はスピンゆらぎによる準粒子の散乱を反映しており、
+反強磁性ホットスポット付近でより強いダンピングを示します。</span><a class="headerlink" href="#id34" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>自己エネルギーの周波数依存性</strong>:</p>
+<figure class="align-center" id="id35">
+<a class="reference internal image-reference" href="../../_images/sigma_matsubara.png"><img alt="../../_images/sigma_matsubara.png" src="../../_images/sigma_matsubara.png" style="width: 80%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">選択されたk点での自己エネルギーの周波数依存性。
+虚部 <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span> は
+準粒子のダンピングを示し、高周波数での
+<span class="math notranslate nohighlight">\(1/\omega_n\)</span> テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id35" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+</section>
+<section id="id14">
+<h2>サンプル 2: 2軌道Hubbardモデル<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h2>
+<section id="id15">
+<h3>モデル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
+<p>2番目のサンプルは、軌道間クーロン相互作用とフント結合を含む
+<strong>2軌道Hubbardモデル</strong> です:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-7">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-7" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+    \varepsilon_{\alpha\beta}(\mathbf{k})\,
+    c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
+  + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+  + V \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
+  - 2J \sum_{i,\alpha\neq\beta}
+    \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}\]</div>
+<p><span class="math notranslate nohighlight">\(U = 4.0\)</span>, <span class="math notranslate nohighlight">\(V = 1.0\)</span>, <span class="math notranslate nohighlight">\(J = 0.5\)</span>,
+温度 <span class="math notranslate nohighlight">\(T = 1.0\)</span> を使用します。</p>
+</section>
+<section id="id16">
+<h3>入力ファイルの準備<a class="headerlink" href="#id16" title="Link to this heading">¶</a></h3>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/2orb/</span></code> にあります。</p>
+<p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;FLEX&quot;
+
+[mode.param]
+  T = 1.0
+  CellShape = [8, 8, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 64
+  filling = 0.5
+  IterationMax = 200
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+  Hund = &quot;hund.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+  sigma = &quot;sigma&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p>1軌道サンプルとの主な違い:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">1.0</span></code>: 安定性のための高い温度</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">200</span></code>: 多軌道系の収束のためのより多い反復回数</p></li>
+<li><p>追加の相互作用ファイル: <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> と <code class="docutils literal notranslate"><span class="pre">Hund</span></code></p></li>
+</ul>
+<p><strong>格子情報</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+2
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+    5.000000000000000e-01     5.000000000000000e-01     0.000000000000000e+00
+</pre></div>
+</div>
+<p>単位胞あたり2つの軌道。</p>
+<p><strong>トランスファー積分</strong> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+2
+9
+ 1 1 1 1 1 1 1 1 1
+   0    1    0    1    1  1.000000000000   0.000000000000
+   0   -1    0    1    1  1.000000000000   0.000000000000
+   0    1    0    2    2  1.000000000000   0.000000000000
+   0   -1    0    2    2  1.000000000000   0.000000000000
+   0    0    0    1    2  0.500000000000   0.000000000000
+  -1    0    0    1    2  0.500000000000   0.000000000000
+   0    0    0    2    1  0.500000000000   0.000000000000
+   1    0    0    2    1  0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>軌道内ホッピング (<span class="math notranslate nohighlight">\(t = 1.0\)</span>) と軌道間混成 (<span class="math notranslate nohighlight">\(t' = 0.5\)</span>)。</p>
+<p><strong>オンサイト相互作用</strong> (<code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    1   4.000000000000   0.000000000000
+   0    0    0    2    2   4.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>両軌道の軌道内クーロン <span class="math notranslate nohighlight">\(U = 4.0\)</span>。</p>
+<p><strong>軌道間クーロン</strong> (<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombInter in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   1.000000000000   0.000000000000
+   0    0    0    2    1   1.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>軌道間クーロン <span class="math notranslate nohighlight">\(V = 1.0\)</span>。</p>
+<p><strong>フント結合</strong> (<code class="docutils literal notranslate"><span class="pre">hund.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Hund in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   0.500000000000   0.000000000000
+   0    0    0    2    1   0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>フント結合 <span class="math notranslate nohighlight">\(J = 0.5\)</span>。</p>
+</section>
+<section id="id17">
+<h3>計算の実行<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/2orb
+$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/200
+  convergence: |dSigma|/|Sigma| = 1.000e+00
+FLEX iteration 2/200
+  convergence: |dSigma|/|Sigma| = 3.587e-01
+...
+FLEX iteration 58/200
+  convergence: |dSigma|/|Sigma| = 1.188e-06
+FLEX iteration 59/200
+  convergence: |dSigma|/|Sigma| = 9.684e-07
+FLEX converged after 59 iterations
+</pre></div>
+</div>
+</section>
+<section id="id18">
+<h3>計算結果<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
+<p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
+<figure class="align-center" id="id36">
+<a class="reference internal image-reference" href="../../_images/chi_s1.png"><img alt="../../_images/chi_s1.png" src="../../_images/chi_s1.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">2軌道モデルの静的スピン感受率。
+<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> のピークはフント結合により増強されており、
+各サイト内での強磁性的な配列を促進しつつ、
+サイト間の反強磁性相関を許容しています。</span><a class="headerlink" href="#id36" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>自己エネルギー</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
+<figure class="align-center" id="id37">
+<a class="reference internal image-reference" href="../../_images/sigma_kspace1.png"><img alt="../../_images/sigma_kspace1.png" src="../../_images/sigma_kspace1.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">2軌道モデルの自己エネルギー虚部。
+軌道依存のk構造は多軌道系における異なる散乱チャネルを反映しています。</span><a class="headerlink" href="#id37" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>自己エネルギーの周波数依存性</strong>:</p>
+<figure class="align-center" id="id38">
+<a class="reference internal image-reference" href="../../_images/sigma_matsubara1.png"><img alt="../../_images/sigma_matsubara1.png" src="../../_images/sigma_matsubara1.png" style="width: 80%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">2軌道モデルの自己エネルギーの周波数依存性。
+1軌道の場合と比較して大きな振幅は、
+軌道間相互作用による増強された相関を反映しています。</span><a class="headerlink" href="#id38" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+</section>
+<section id="id19">
+<h2>プロット<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h2>
+<p>上記の図は以下のプロットスクリプトで再現できます:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample
+$<span class="w"> </span>python<span class="w"> </span>plot_results.py
+</pre></div>
+</div>
+<p>または、個々のサンプルディレクトリ内で:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/1orb
+$<span class="w"> </span>python<span class="w"> </span>../plot_results.py
+</pre></div>
+</div>
+</section>
+<section id="id20">
+<h2>出力ファイル形式<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h2>
+<p>FLEXソルバーは以下の内容を持つNumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code> ファイルを生成します:</p>
+<section id="chi0q-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code><a class="headerlink" href="#chi0q-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code>: 裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span>,
+形状 <code class="docutils literal notranslate"><span class="pre">(nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">freq_index</span></code>: 松原周波数インデックス</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">wavevector_unit</span></code>: k点ベクトル</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">wavevector_index</span></code>: 波数テーブル</p></li>
+</ul>
+</section>
+<section id="chiq-s-npz-chiq-c-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code><a class="headerlink" href="#chiq-s-npz-chiq-c-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: スピン / 電荷感受率、
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と同じ形状</p></li>
+</ul>
+</section>
+<section id="sigma-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code><a class="headerlink" href="#sigma-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma</span></code>: 自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>,
+形状 <code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
+(<code class="docutils literal notranslate"><span class="pre">nblock</span></code> はスピンブロック数、spin-freeモードでは1)</p></li>
+</ul>
+</section>
+<section id="green-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">green.npz</span></code><a class="headerlink" href="#green-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">green</span></code>: ドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>,
+<code class="docutils literal notranslate"><span class="pre">sigma</span></code> と同じ形状</p></li>
+</ul>
+<p>これらの出力ファイルはEliashberg方程式ソルバー (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) の
+入力としても使用できます。詳細は <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a> を参照してください。</p>
+</section>
+</section>
+<section id="id21">
+<h2>FLEX固有のパラメータ<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h2>
+<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> セクションで以下のパラメータを受け付けます:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 20.0%" />
+<col style="width: 10.0%" />
+<col style="width: 10.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>パラメータ</p></th>
+<th class="head"><p>型</p></th>
+<th class="head"><p>デフォルト</p></th>
+<th class="head"><p>説明</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span></code></p></td>
+<td><p>int</p></td>
+<td><p>100</p></td>
+<td><p>SCF反復の最大回数</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Mix</span></code></p></td>
+<td><p>float</p></td>
+<td><p>0.2</p></td>
+<td><p>自己エネルギー更新の混合パラメータ <span class="math notranslate nohighlight">\(\alpha\)</span>。
+小さい値はより安定な収束を与えますが、進行が遅くなります。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">EPS</span></code></p></td>
+<td><p>int/float</p></td>
+<td><p>6</p></td>
+<td><p>収束判定基準。整数 <span class="math notranslate nohighlight">\(n\)</span> の場合、閾値は <span class="math notranslate nohighlight">\(10^{-n}\)</span>。
+1未満の浮動小数点数の場合、直接閾値として使用。</p></td>
+</tr>
+</tbody>
+</table>
+<p>その他のパラメータ (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code> 等)
+はRPAソルバーと共通です。詳細は <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a> を参照してください。</p>
+</section>
+<section id="id22">
+<h2>サンプル 3: 鉄系超伝導体2軌道モデル<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h2>
+<section id="id23">
+<h3>モデル<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h3>
+<p>3番目のサンプルは、Raghu et al. <a class="footnote-reference brackets" href="#id25" id="id24" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a> が提案した
+<strong>鉄系超伝導体の2軌道最小モデル</strong> です。
+Fe-As面を正方格子（1-Fe単位胞）上の <span class="math notranslate nohighlight">\(d_{xz}\)</span> と
+<span class="math notranslate nohighlight">\(d_{yz}\)</span> 軌道で記述します。</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
+\varepsilon_x(\mathbf{k}) &amp; \varepsilon_{xy}(\mathbf{k}) \\
+\varepsilon_{xy}(\mathbf{k}) &amp; \varepsilon_y(\mathbf{k})
+\end{pmatrix}\end{split}\]</div>
+<p>ここで</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+\varepsilon_y(\mathbf{k}) &amp;= -2t_2 \cos k_x - 2t_1 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+\varepsilon_{xy}(\mathbf{k}) &amp;= -4t_4 \sin k_x \sin k_y\end{split}\]</div>
+<p>パラメータ: <span class="math notranslate nohighlight">\(t_1 = -1.0\)</span>, <span class="math notranslate nohighlight">\(t_2 = 1.3\)</span>,
+<span class="math notranslate nohighlight">\(t_3 = t_4 = -0.85\)</span>。</p>
+<p>相互作用はKanamoriパラメータ化に従います:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
++ U' \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
+- 2J \sum_{i,\alpha\neq\beta} \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
++ J' \sum_{i,\alpha\neq\beta} c^\dagger_{i\alpha\uparrow} c^\dagger_{i\alpha\downarrow}
+  c_{i\beta\downarrow} c_{i\beta\uparrow}\]</div>
+<p><span class="math notranslate nohighlight">\(U = 1.5\)</span>, <span class="math notranslate nohighlight">\(J = J' = 0.25\)</span>, <span class="math notranslate nohighlight">\(U' = U - 2J = 1.0\)</span>,
+温度 <span class="math notranslate nohighlight">\(T = 0.1\)</span>、ハーフフィリング (<span class="math notranslate nohighlight">\(n = 2\)</span>)。</p>
+<p>フェルミ面は <span class="math notranslate nohighlight">\(\Gamma\)</span> 点のホールポケットと
+<span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span> / <span class="math notranslate nohighlight">\((0, \pi)\)</span> の電子ポケットから成ります。
+これらのポケット間のネスティングが
+<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span> における強いスピンゆらぎを駆動します。
+これが鉄系超伝導体の特徴的な物理です。</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id25" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id24">2</a><span class="fn-bracket">]</span></span>
+<p>S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
+Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
+</aside>
+</aside>
+</section>
+<section id="id26">
+<h3>入力ファイルの準備<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb/</span></code> にあります。</p>
+<p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;FLEX&quot;
+
+[mode.param]
+  T = 0.1
+  CellShape = [16, 16, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 128
+  filling = 0.5
+  IterationMax = 200
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+  Hund = &quot;hund.dat&quot;
+  Exchange = &quot;exchange.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+  sigma = &quot;sigma&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p><strong>格子情報</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+2
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+</pre></div>
+</div>
+<p>同一サイトに2つの軌道 (<span class="math notranslate nohighlight">\(d_{xz}\)</span> と <span class="math notranslate nohighlight">\(d_{yz}\)</span>)。</p>
+<p><strong>トランスファー積分</strong> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer for 2-orbital iron pnictide model (Raghu et al. PRB 77, 220503, 2008)
+2
+9
+ 1 1 1 1 1 1 1 1 1
+   1    0    0    1    1   1.000000000000   0.000000000000
+  -1    0    0    1    1   1.000000000000   0.000000000000
+   0    1    0    1    1  -1.300000000000   0.000000000000
+   0   -1    0    1    1  -1.300000000000   0.000000000000
+   1    1    0    1    1   0.850000000000   0.000000000000
+   1   -1    0    1    1   0.850000000000   0.000000000000
+  -1    1    0    1    1   0.850000000000   0.000000000000
+  -1   -1    0    1    1   0.850000000000   0.000000000000
+   1    0    0    2    2  -1.300000000000   0.000000000000
+  -1    0    0    2    2  -1.300000000000   0.000000000000
+   0    1    0    2    2   1.000000000000   0.000000000000
+   0   -1    0    2    2   1.000000000000   0.000000000000
+   1    1    0    2    2   0.850000000000   0.000000000000
+   1   -1    0    2    2   0.850000000000   0.000000000000
+  -1    1    0    2    2   0.850000000000   0.000000000000
+  -1   -1    0    2    2   0.850000000000   0.000000000000
+   1    1    0    1    2  -0.850000000000   0.000000000000
+   1   -1    0    1    2   0.850000000000   0.000000000000
+  -1    1    0    1    2   0.850000000000   0.000000000000
+  -1   -1    0    1    2  -0.850000000000   0.000000000000
+   1    1    0    2    1  -0.850000000000   0.000000000000
+   1   -1    0    2    1   0.850000000000   0.000000000000
+  -1    1    0    2    1   0.850000000000   0.000000000000
+  -1   -1    0    2    1  -0.850000000000   0.000000000000
+</pre></div>
+</div>
+<p>特徴的な2ポケットフェルミ面を生成するホッピングパラメータ。</p>
+<p><strong>相互作用</strong>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    1   1.500000000000   0.000000000000
+   0    0    0    2    2   1.500000000000   0.000000000000
+</pre></div>
+</div>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombInter in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   1.000000000000   0.000000000000
+   0    0    0    2    1   1.000000000000   0.000000000000
+</pre></div>
+</div>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Hund in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   0.250000000000   0.000000000000
+   0    0    0    2    1   0.250000000000   0.000000000000
+</pre></div>
+</div>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Exchange in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   0.250000000000   0.000000000000
+   0    0    0    2    1   0.250000000000   0.000000000000
+</pre></div>
+</div>
+</section>
+<section id="id27">
+<h3>計算の実行<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/iron_2orb
+$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/200
+  convergence: |dSigma|/|Sigma| = 1.000e+00
+FLEX iteration 2/200
+  convergence: |dSigma|/|Sigma| = 7.139e-01
+...
+FLEX iteration 62/200
+  convergence: |dSigma|/|Sigma| = 1.055e-06
+FLEX iteration 63/200
+  convergence: |dSigma|/|Sigma| = 8.419e-07
+FLEX converged after 63 iterations
+</pre></div>
+</div>
+</section>
+<section id="id28">
+<h3>計算結果<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h3>
+<p><strong>スピン・電荷感受率</strong>:</p>
+<figure class="align-center" id="id39">
+<a class="reference internal image-reference" href="../../_images/chi_spin_charge.png"><img alt="../../_images/chi_spin_charge.png" src="../../_images/chi_spin_charge.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">静的スピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})`（左）と電荷感受率
+:math:\)</span>chi_c(mathbf{q})`（右）。
+スピン感受率は <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span> および <span class="math notranslate nohighlight">\((0, \pi)\)</span> に
+ピークを持ち、ホールポケットと電子ポケット間のネスティングを反映しています。
+これは単一バンドHubbardモデル（ <span class="math notranslate nohighlight">\((\pi, \pi)\)</span> にピーク）とは
+定性的に異なります。</span><a class="headerlink" href="#id39" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>軌道分解自己エネルギー</strong>:</p>
+<figure class="align-center" id="id40">
+<a class="reference internal image-reference" href="../../_images/sigma_orbital.png"><img alt="../../_images/sigma_orbital.png" src="../../_images/sigma_orbital.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">最低松原周波数での軌道分解自己エネルギー虚部。
+<span class="math notranslate nohighlight">\(d_{xz}\)</span> 軌道は <span class="math notranslate nohighlight">\(k_y\)</span> 方向でより強い散乱を示し、
+<span class="math notranslate nohighlight">\(d_{yz}\)</span> 軌道は <span class="math notranslate nohighlight">\(k_x\)</span> 方向で強い散乱を示します。
+この軌道異方性はフェルミ面の軌道構造に起因します。</span><a class="headerlink" href="#id40" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>自己エネルギーの周波数依存性</strong>:</p>
+<figure class="align-center" id="id41">
+<a class="reference internal image-reference" href="../../_images/sigma_matsubara_orbital.png"><img alt="../../_images/sigma_matsubara_orbital.png" src="../../_images/sigma_matsubara_orbital.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">高対称k点での軌道分解自己エネルギーの周波数依存性。
+<span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span> において <span class="math notranslate nohighlight">\(d_{yz}\)</span> 軌道は
+<span class="math notranslate nohighlight">\(d_{xz}\)</span> よりも強くダンピングされ、
+軌道選択的な相関を反映しています。</span><a class="headerlink" href="#id41" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>プロットスクリプト</strong>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>plot_results.py
+</pre></div>
+</div>
+</section>
+</section>
+<section id="tips">
+<h2>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>収束しない場合</strong>: SCFループが収束しない場合は、<code class="docutils literal notranslate"><span class="pre">Mix</span></code> を小さくする
+(例: 0.1 や 0.05)か、温度を上げてみてください。磁気不安定性に近い
+強相関領域では収束が困難になることがあります。</p></li>
+<li><p><strong>松原周波数</strong>: 正確な結果を得るには十分な数の松原周波数 (<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>)
+が必要です。目安として <span class="math notranslate nohighlight">\(N_{\mathrm{mat}} \geq 10 / T\)</span> で
+低周波構造を捉えられます。</p></li>
+<li><p><strong>k点メッシュ</strong>: メッシュサイズ (<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>) は感受率と自己エネルギーの
+運動量構造を分解するのに十分大きくする必要があります。2D系では
+8x8で定性的な結果が得られ、定量的な計算には32x32以上が推奨されます。</p></li>
+<li><p><strong>計算コスト</strong>: FLEXはSCFループのためRPAよりも計算コストが高くなります。
+コストは <span class="math notranslate nohighlight">\(O(N_{\mathrm{iter}} \times N_k \times N_\omega \times N_d^3)\)</span>
+(ここで <span class="math notranslate nohighlight">\(N_d = N_{\mathrm{orb}} \times N_{\mathrm{spin}}\)</span>)
+でスケールします。</p></li>
+<li><p><strong>Eliashberg方程式との連携</strong>: FLEX出力ファイル (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>,
+<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>) は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> の <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> と設定することで使用できます。
+これによりFLEXレベルのスピン・電荷ゆらぎを用いた超伝導不安定性の
+解析が可能になります。</p></li>
+</ul>
+</section>
+<section id="id29">
+<h2>実装の詳細と制限事項<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h2>
+<section id="id30">
+<h3>対応する相互作用型<a class="headerlink" href="#id30" title="Link to this heading">¶</a></h3>
+<p>FLEXソルバーは以下の相互作用型に対応しています:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 15.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>相互作用型</p></th>
+<th class="head"><p>対応</p></th>
+<th class="head"><p>備考</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>軌道内クーロン斥力 <span class="math notranslate nohighlight">\(U\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>軌道間クーロン斥力 <span class="math notranslate nohighlight">\(V\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>フント結合 <span class="math notranslate nohighlight">\(J\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>イジング型相互作用</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>ペアリフト相互作用</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
+<td><p>対応</p></td>
+<td><p>ペアホッピング相互作用</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
+<td><p><strong>非対応</strong></p></td>
+<td><p>任意の4体相互作用（UHFrソルバーのみ対応）</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code> 形式はk空間ソルバー (RPA/FLEX) では利用できません。
+<code class="docutils literal notranslate"><span class="pre">InterAll</span></code> で記述される相互作用は、上記の個別の相互作用型に
+分解して指定してください。</p>
+</div>
+</section>
+<section id="id31">
+<h3>相互作用の運動量依存性（長距離相互作用）<a class="headerlink" href="#id31" title="Link to this heading">¶</a></h3>
+<p>相互作用はWannier90形式の入力ファイルで指定します。
+各行の形式は <code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">ry</span> <span class="pre">rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">Re</span> <span class="pre">Im</span></code> であり、
+<code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code> は実空間の格子ベクトルです。</p>
+<p><strong>オンサイト相互作用</strong> (<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code> のみ):</p>
+<p>FFT変換後、すべてのq点で同一の値を持つ
+q非依存な相互作用 <span class="math notranslate nohighlight">\(W(\mathbf{q}) = W_0\)</span> となります。
+現在のサンプルはすべてこのケースです。</p>
+<p><strong>長距離相互作用</strong> (非零の <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code> を含む場合):</p>
+<p>FFT変換により自動的にq依存の相互作用となります:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{-i\mathbf{q}\cdot\mathbf{r}}\]</div>
+<p>例えば、最近接サイト間のクーロン相互作用を含める場合は、
+相互作用ファイルに <code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code> や <code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code> 等の格子ベクトルを持つ
+エントリを追加します。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>連続的な <span class="math notranslate nohighlight">\(1/r\)</span> クーロンポテンシャルを自動的に離散化する機能は
+ありません。各格子点での相互作用の値をユーザーが明示的に
+入力ファイルに指定する必要があります。</p>
+</div>
+</section>
+<section id="id32">
+<h3>スピン・電荷チャネル分解の制約<a class="headerlink" href="#id32" title="Link to this heading">¶</a></h3>
+<p>FLEXソルバーは、自己エネルギーの計算において相互作用テンソルを
+スピンチャネルとチャネルに分解します。
+この分解では、4体相互作用テンソル
+<span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}\)</span>
+を2体の縮約形式 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span> に変換します。</p>
+<p>具体的には、同一スピン成分と異スピン成分に分離されます:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
+U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
+<p>ここで <span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span> は同一スピン間、
+<span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span> は異スピン間の相互作用です。</p>
+<p>この縮約は <strong>密度-密度型相互作用</strong> に対して正確です。
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+はすべて密度-密度型であり正しく扱われます。
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> も標準的なKanamoriパラメータ化の範囲内で
+適切に処理されます。</p>
+</section>
+<section id="spin-free">
+<h3>スピン自由度の扱い（spin-freeモード）<a class="headerlink" href="#spin-free" title="Link to this heading">¶</a></h3>
+<p>FLEXソルバーはデフォルトで <strong>spin-freeモード</strong> で動作します。
+このモードでは SU(2) スピン対称性を仮定し、
+計算量を削減します。</p>
+<p>spin-freeモードでは:</p>
+<ul class="simple">
+<li><p>グリーン関数は軌道空間のみで表現されます
+(形状: <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">norb,</span> <span class="pre">norb)</span></code>)</p></li>
+<li><p>感受率や有効相互作用は内部的にスピン軌道空間
+(<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">×</span> <span class="pre">ns</span></code>) に膨張されて計算されます</p></li>
+<li><p>自己エネルギーの計算後、SU(2)対称性により保証される
+<span class="math notranslate nohighlight">\(\Sigma_{\uparrow\uparrow} = \Sigma_{\downarrow\downarrow}\)</span>,
+<span class="math notranslate nohighlight">\(\Sigma_{\uparrow\downarrow} = 0\)</span> の性質を利用して
+軌道空間に縮約されます</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>spin-freeモードは常磁性状態（磁気秩序のない状態）を前提としています。
+磁気秩序相の記述にはスピン自由度を陽に扱う拡張が必要です。</p>
+</div>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../index.html">
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo" />
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">6. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">7. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">8. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.0.4</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="../../_sources/flex/tutorial/tu-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

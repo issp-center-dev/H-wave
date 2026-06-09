@@ -44,8 +44,11 @@ The filename is specified by the keyword <code class="docutils literal notransla
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Energy_Total = -5.88984624257707
 Energy_Band = -0.9265413257740396
 Energy_Coulomb = -4.963304916803031
+FreeEnergy_Total = -5.91234017896271
+FreeEnergy_Band = -0.9490352621596976
 NCond = 8.000000000000007
 Sz = 3.2822430107160017e-07
+ChemicalPotential = 0.123456789
 </pre></div>
 </div>
 <section id="file-format">
@@ -54,8 +57,11 @@ Sz = 3.2822430107160017e-07
 <li><p><code class="docutils literal notranslate"><span class="pre">Energy_Total</span> <span class="pre">=</span> <span class="pre">[energy_total]</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Energy_Band</span> <span class="pre">=</span> <span class="pre">[energy_band]</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Energy_</span></code>{type} <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">[energy_</span></code>type <code class="docutils literal notranslate"><span class="pre">]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FreeEnergy_Total</span> <span class="pre">=</span> <span class="pre">[free_energy_total]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FreeEnergy_Band</span> <span class="pre">=</span> <span class="pre">[free_energy_band]</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">NCond</span> <span class="pre">=</span> <span class="pre">[ncond]</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Sz</span> <span class="pre">=</span> <span class="pre">[sz]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span> <span class="pre">=</span> <span class="pre">[mu]</span></code></p></li>
 </ul>
 </section>
 <section id="parameters">
@@ -80,6 +86,23 @@ Float</p>
 <p><strong>Description :</strong>
 The value of the energy calculated separately for each interaction type.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[free_energy_total]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The Helmholtz free energy <span class="math notranslate nohighlight">\(F = E - TS\)</span>, i.e. the quantity minimized
+by the finite-temperature self-consistent loop. At <span class="math notranslate nohighlight">\(T=0\)</span> it coincides
+with the internal energy <code class="docutils literal notranslate"><span class="pre">[energy_total]</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[free_energy_band]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The band contribution to the free energy,
+<span class="math notranslate nohighlight">\(\mu N + \Omega_0\)</span> with
+<span class="math notranslate nohighlight">\(\Omega_0 = -T\sum_n \ln(1+e^{-(\varepsilon_n-\mu)/T})\)</span>.
+At <span class="math notranslate nohighlight">\(T=0\)</span> it coincides with <code class="docutils literal notranslate"><span class="pre">[energy_band]</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p>
 <p><strong>Type :</strong>
 Float</p>
@@ -94,6 +117,18 @@ Float</p>
 The expectation value of the <span class="math notranslate nohighlight">\(z\)</span> component of total spin <span class="math notranslate nohighlight">\(S_z\)</span>
 denoted by
 <span class="math notranslate nohighlight">\(\sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2\)</span>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The chemical potential (Fermi level). At <span class="math notranslate nohighlight">\(T=0\)</span> it is taken as the
+midpoint of the HOMO-LUMO gap (the <span class="math notranslate nohighlight">\(T\to 0^+\)</span> limit of the
+finite-temperature <span class="math notranslate nohighlight">\(\mu\)</span>). Note that for an insulator the particle
+number is independent of <span class="math notranslate nohighlight">\(\mu\)</span> inside the gap, so the
+finite-temperature <span class="math notranslate nohighlight">\(\mu\)</span> is not uniquely fixed within the gap.
+When several <span class="math notranslate nohighlight">\(\mu\)</span>-groups exist, the value is written per group as
+<code class="docutils literal notranslate"><span class="pre">ChemicalPotential_{g}</span></code>.</p>
 </li>
 </ul>
 </section>

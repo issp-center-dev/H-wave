@@ -16,7 +16,7 @@
     <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="検索" href="../search.html" />
-    <link rel="next" title="7. 謝辞" href="../acknowledgement.html" />
+    <link rel="next" title="6.3. 線形化Eliashberg方程式" href="eliashberg.html" />
     <link rel="prev" title="6.1. 非制限Hartree-Fock法" href="uhf.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
@@ -175,13 +175,95 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
 この既約感受率を用いた計算では、対角化成分が混在してしまう状況で近似精度が悪くなりますが、
 バンド交差による <span class="math notranslate nohighlight">\(\gamma\)</span> への技術的な対応を行う必要がないというメリットもあります。
 先行研究との比較をするためにも、H-Waveではこの手法を採用しています(グリーン関数と既約感受率を正しく取り扱うモードについても実装する予定です)。
-なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 <a class="footnote-reference brackets" href="#id3" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を参考にしてください。</p>
+なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 <a class="footnote-reference brackets" href="#id6" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を参考にしてください。</p>
+<section id="id3">
+<h2><span class="section-number">6.2.1. </span>ブロック対角化最適化<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<p>相互作用ハミルトニアンがブロック対角構造を持つ場合
+（例：スピン保存や軌道間結合がない場合）、
+RPA方程式を各ブロックで独立に解くことができ、
+計算コストを大幅に削減できます。</p>
+<p>ブロック構造は相互作用行列の接続性を解析して自動検出されます:</p>
+<ol class="arabic simple">
+<li><p>全k点にわたって相互作用ハミルトニアンの絶対値を合計し、接続パターン行列を得る。</p></li>
+<li><p>非ゼロの非対角要素（閾値: <span class="math notranslate nohighlight">\(10^{-12}\)</span> ）から隣接グラフを構築する。</p></li>
+<li><p>ラベル伝播（union-findアルゴリズム）により連結成分を求める。</p></li>
+</ol>
+<p>行列が <span class="math notranslate nohighlight">\(m\)</span> 個のブロック（サイズ <span class="math notranslate nohighlight">\(n_1, n_2, \ldots, n_m\)</span> ）に
+分解される場合、RPA方程式の計算コストは
+<span class="math notranslate nohighlight">\(O(N^3)\)</span> から
+<span class="math notranslate nohighlight">\(O(n_1^3 + n_2^3 + \cdots + n_m^3)\)</span> に削減されます。
+ここで <span class="math notranslate nohighlight">\(N = n_1 + n_2 + \cdots + n_m\)</span> です。</p>
+<p>この最適化は自動的に適用され、ユーザーに対して透過的です。</p>
+</section>
+<section id="id4">
+<h2><span class="section-number">6.2.2. </span>横感受率（はしごダイアグラム）<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
+<p>標準的な（リングダイアグラム）RPA感受率に加えて、
+H-waveは横感受率 <span class="math notranslate nohighlight">\(\chi_{+-}(\mathbf{q})\)</span> を計算できます。
+これはスピン反転相関
+<span class="math notranslate nohighlight">\(\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle\)</span> を記述します。</p>
+<p>横方向の裸感受率は</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
+<span class="eqno">(6.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+= -\frac{T}{N_L} \sum_{\mathbf{k},n}
+  G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
+  G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)\]</div>
+<p>横方向の頂点 <span class="math notranslate nohighlight">\(W_{+-}\)</span> は、
+縦チャネルのハートリー（フォック交換）頂点の交差から得られます:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
+<span class="eqno">(6.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}\]</div>
+<p>標準的なカナモリ相互作用に対して、横方向の頂点は以下の形を取ります:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> <span class="math notranslate nohighlight">\(U\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -U\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -J\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = 2I\)</span></p></li>
+</ul>
+<p>完全なカナモリ相互作用 （ <span class="math notranslate nohighlight">\(U, V = U-2J, J, J' = J\)</span> ）では
+<span class="math notranslate nohighlight">\(W_{+-} = -(U - 2J) = W_{zz}\)</span> （SU(2)対称性）が成り立ち、
+常磁性系では <span class="math notranslate nohighlight">\(\chi_{+-} = \chi_{zz}\)</span> となります。</p>
+<p>横方向のRPA感受率は</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
+<span class="eqno">(6.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
+= \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
+  \hat{X}^{(0)}_{+-}(\mathbf{q})\]</div>
+<p>横チャネルの計算を有効にするには、入力TOMLファイルで
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> と設定します。
+これには <code class="docutils literal notranslate"><span class="pre">general</span></code> 計算スキームが必要です（自動選択されます）。</p>
+</section>
+<section id="id5">
+<h2><span class="section-number">6.2.3. </span>スピン軌道モード<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
+<p>H-waveはスピンと軌道のインデックスが
+ブロック分離ではなくインターリーブされるスピン軌道モードをサポートしています。</p>
+<p>通常モードでは、複合インデックスは <span class="math notranslate nohighlight">\(i = s \cdot n_{\rm orb} + a\)</span>
+（スピンブロック優先）であり、
+<span class="math notranslate nohighlight">\(s = 0, 1\)</span> はスピンインデックス、
+<span class="math notranslate nohighlight">\(a = 0, \ldots, n_{\rm orb}-1\)</span> は軌道インデックスです。
+スピン軌道モードでは、インデックスは <span class="math notranslate nohighlight">\(i = 2a + s\)</span>
+（インターリーブ）であり、スピン軌道相互作用を自然に扱えます。</p>
+<p>スピン軌道モードは入力TOMLファイルで <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>
+と設定して有効化します。このモードでは:</p>
+<ul class="simple">
+<li><p>ハミルトニアンはスピン保存を仮定せず、
+完全な <span class="math notranslate nohighlight">\(2n_{\rm orb} \times 2n_{\rm orb}\)</span> 空間で構成されます。</p></li>
+<li><p>全ての相互作用型（ <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> 、 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Hund</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code> 、 <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> ）がサポートされます。</p></li>
+<li><p>可能な場合、ブロック対角化最適化が自動的に適用されます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">squashed</span></code> 計算スキームもスピン軌道系で利用可能です。</p></li>
+<li><p>幾何情報ファイル（<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>）の <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> はスピン軌道の総数
+（= 物理軌道数 × 2 = Wannier90 の <code class="docutils literal notranslate"><span class="pre">num_wann</span></code>）を表し、UHFk と同じ規約です。</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> はスピン軌道数になりました。
+既存の RPA スピン軌道計算の <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> の <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> は2倍にしてください。</p>
+</div>
 <aside class="footnote-list brackets">
-<aside class="footnote brackets" id="id3" role="doc-footnote">
+<aside class="footnote brackets" id="id6" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>
 <p><a class="reference external" href="https://journals.jps.jp/doi/10.1143/JPSJ.78.104002">K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009).</a></p>
 </aside>
 </aside>
+</section>
 </section>
 
 
@@ -214,7 +296,13 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
 <li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="al-index.html">6. アルゴリズム</a><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="uhf.html">6.1. 非制限Hartree-Fock法</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">6.2. 乱雑位相近似法</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">6.2. 乱雑位相近似法</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id3">6.2.1. ブロック対角化最適化</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id4">6.2.2. 横感受率（はしごダイアグラム）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id5">6.2.3. スピン軌道モード</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="eliashberg.html">6.3. 線形化Eliashberg方程式</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. 謝辞</a></li>
@@ -227,7 +315,7 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
   <li><a href="../index.html">Documentation overview</a><ul>
   <li><a href="al-index.html"><span class="section-number">6. </span>アルゴリズム</a><ul>
       <li>Previous: <a href="uhf.html" title="前の章へ"><span class="section-number">6.1. </span>非制限Hartree-Fock法</a></li>
-      <li>Next: <a href="../acknowledgement.html" title="次の章へ"><span class="section-number">7. </span>謝辞</a></li>
+      <li>Next: <a href="eliashberg.html" title="次の章へ"><span class="section-number">6.3. </span>線形化Eliashberg方程式</a></li>
   </ul></li>
   </ul></li>
 </ul>

@@ -55,7 +55,7 @@ Parameters
 
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.
-  If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` and the spin index :math:`s` by :math:`\alpha + N_\text{orb} \cdot s`.
+  If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` (from 0 to :math:`N_\text{orb}-1`) and the spin index :math:`s` (0 for up, 1 for down) by :math:`2\alpha + s`, i.e. the spin is the inner (interleaved) index.
 
 ``mode.param`` section
 ================================

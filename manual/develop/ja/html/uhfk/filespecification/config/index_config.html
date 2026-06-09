@@ -96,7 +96,7 @@
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
-<p><strong>説明 :</strong> スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 <span class="math notranslate nohighlight">\(\alpha\)</span> とスピン <span class="math notranslate nohighlight">\(s\)</span> に対して <span class="math notranslate nohighlight">\(\alpha + N_\text{orb} \cdot s\)</span> となります。</p>
+<p><strong>説明 :</strong> スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 <span class="math notranslate nohighlight">\(\alpha\)</span> (0 から <span class="math notranslate nohighlight">\(N_\text{orb}-1\)</span>) とスピン <span class="math notranslate nohighlight">\(s\)</span> (0: up, 1: down) に対して <span class="math notranslate nohighlight">\(2\alpha + s\)</span> となります（スピンを内側に並べたインターリーブ順）。</p>
 </li>
 </ul>
 </section>

@@ -46,7 +46,20 @@ Parameters
 
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.
-  If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` and the spin index :math:`s` by :math:`\alpha + N_\text{orb} \cdot s`.
+  If it is set to ``true``, the orbital indices in the Transfer term use the interleaved
+  spin-orbital convention: the combined index is :math:`2 \alpha + s`, where
+  :math:`\alpha` is the physical-orbital index (0-based) and :math:`s \in \{0, 1\}`
+  is the spin index.
+
+  In spin-orbital mode, the ``Norbit`` value in the geometry file (``geom.dat``) is
+  the **spin-orbital count** (= 2 × the number of physical orbitals = Wannier90
+  ``num_wann``), the same convention as UHFk.
+
+  .. note::
+
+     **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
+     spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
+     ``Norbit``.
 
 - ``calc_scheme`` (default value is ``"auto"``)
 
@@ -63,6 +76,18 @@ Parameters
   - ``squashed``: Spins and orbitals are separately treated, and for the orbitals :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the susceptilibity matrix becomes :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega`. See :ref:`Ch:Algorithm` for details.
 
   - ``auto``: scheme is automatically chosen according to the specifications of interaction terms. This option is not available when only ``chi0q`` is to be calculated.
+
+- ``calc_type`` (default value is ``"ring"``)
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies which RPA diagrams to include.
+
+  - ``ring``: Standard RPA (ring diagram only). Computes the longitudinal susceptibility.
+
+  - ``ring+ladder``: Includes the transverse (ladder) susceptibility :math:`\chi_{+-}(\mathbf{q})` in addition to the standard RPA. This requires the ``general`` calculation scheme (automatically selected). See :ref:`Ch:Algorithm` for details.
 
 
 ``mode.param`` section

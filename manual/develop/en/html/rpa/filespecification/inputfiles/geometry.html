@@ -16,7 +16,7 @@
     <link rel="index" title="Index" href="../../../genindex.html" />
     <link rel="search" title="Search" href="../../../search.html" />
     <link rel="next" title="Interaction definition files" href="interaction.html" />
-    <link rel="prev" title="5.2.2. Input files for RPA" href="index_inputfiles.html" />
+    <link rel="prev" title="5.3.2. Input files for RPA" href="index_inputfiles.html" />
    
   <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
   
@@ -76,6 +76,16 @@ These parameters for <code class="docutils literal notranslate"><span class="pre
 Integer</p>
 <p><strong>Description :</strong>
 This parameter specifies the number of orbitals <span class="math notranslate nohighlight">\(N_\text{orbit}\)</span> in a unitcell.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>In spin-orbital mode (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>), <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> is the
+<strong>spin-orbital count</strong> (= 2 × the number of physical orbitals = Wannier90
+<code class="docutils literal notranslate"><span class="pre">num_wann</span></code>), the same convention as UHFk.
+The transfer-file orbital index uses the interleaved convention <code class="docutils literal notranslate"><span class="pre">2*orb</span> <span class="pre">+</span> <span class="pre">spin</span></code>.</p>
+<p><strong>Migration (RPA):</strong> the geometry <code class="docutils literal notranslate"><span class="pre">norb</span></code> for spin-orbital input is now the
+spin-orbital count; double any pre-existing RPA spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>
+<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
+</div>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[vx_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[vy_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[vz_i]</span></code></p>
 <p><strong>Type :</strong>
@@ -124,10 +134,11 @@ in the order of the Wannier centers.</p></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">4. Wave-number space UHF (UHFk)</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="../../rpa-index.html">5. Random Phase Approximation (RPA)</a><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">5.1. Tutorial</a></li>
-<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">5.2. File specifications</a><ul class="current">
-<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">5.2.1. Parameter files</a></li>
-<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">5.2.2. Input files for RPA</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">5.2.3. Output files of RPA</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/sc-index.html">5.2. Tutorial: Eliashberg equation solver</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">5.3. File specifications</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">5.3.1. Parameter files</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">5.3.2. Input files for RPA</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">5.3.3. Output files of RPA</a></li>
 </ul>
 </li>
 </ul>
@@ -142,9 +153,9 @@ in the order of the Wannier centers.</p></li>
 <ul>
   <li><a href="../../../index.html">Documentation overview</a><ul>
   <li><a href="../../rpa-index.html"><span class="section-number">5. </span>Random Phase Approximation (RPA)</a><ul>
-  <li><a href="../fi-index.html"><span class="section-number">5.2. </span>File specifications</a><ul>
-  <li><a href="index_inputfiles.html"><span class="section-number">5.2.2. </span>Input files for RPA</a><ul>
-      <li>Previous: <a href="index_inputfiles.html" title="previous chapter"><span class="section-number">5.2.2. </span>Input files for RPA</a></li>
+  <li><a href="../fi-index.html"><span class="section-number">5.3. </span>File specifications</a><ul>
+  <li><a href="index_inputfiles.html"><span class="section-number">5.3.2. </span>Input files for RPA</a><ul>
+      <li>Previous: <a href="index_inputfiles.html" title="previous chapter"><span class="section-number">5.3.2. </span>Input files for RPA</a></li>
       <li>Next: <a href="interaction.html" title="next chapter">Interaction definition files</a></li>
   </ul></li>
   </ul></li>

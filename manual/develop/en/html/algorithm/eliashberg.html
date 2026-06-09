@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>6.3. Linearized Eliashberg equation &#8212; H-wave Users Guide 1.1-dev documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
+    <script src="../_static/documentation_options.js?v=5f12b55d"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="7. Acknowledgments" href="../acknowledgement.html" />
+    <link rel="prev" title="6.2. Random Phase Approximation" href="rpa.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="linearized-eliashberg-equation">
+<span id="algorithm-eliashberg"></span><h1><span class="section-number">6.3. </span>Linearized Eliashberg equation<a class="headerlink" href="#linearized-eliashberg-equation" title="Link to this heading">¶</a></h1>
+<section id="overview">
+<h2><span class="section-number">6.3.1. </span>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>The linearized Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) analyzes
+superconducting instabilities by solving the eigenvalue problem
+of the linearized gap equation within the RPA framework.
+The superconducting transition temperature <span class="math notranslate nohighlight">\(T_c\)</span> is determined
+by the condition that the leading eigenvalue reaches <span class="math notranslate nohighlight">\(\lambda = 1\)</span>.</p>
+<p>The algorithm proceeds in the following steps:</p>
+<ol class="arabic simple">
+<li><p>Compute or load the bare susceptibility <span class="math notranslate nohighlight">\(\hat{X}^{(0)}(\mathbf{q})\)</span>.</p></li>
+<li><p>Construct the non-interacting Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>.</p></li>
+<li><p>Build the RPA pairing vertex <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span>.</p></li>
+<li><p>Solve the linearized Eliashberg equation for the leading eigenvalue.</p></li>
+</ol>
+</section>
+<section id="green-s-function">
+<h2><span class="section-number">6.3.2. </span>Green’s function<a class="headerlink" href="#green-s-function" title="Link to this heading">¶</a></h2>
+<p>The non-interacting one-body Hamiltonian in k-space is obtained
+by Fourier transformation of the hopping integrals:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-0">
+<span class="eqno">(6.30)<a class="headerlink" href="#equation-algorithm-eliashberg-0" title="Link to this equation">¶</a></span>\[\varepsilon_{\alpha\beta}(\mathbf{k})
+= \sum_{\mathbf{R}} t^{\alpha\beta}_{\mathbf{R}}\,
+  e^{i\mathbf{k}\cdot\mathbf{R}}\]</div>
+<p>Diagonalizing the Hamiltonian at each k-point:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-1">
+<span class="eqno">(6.31)<a class="headerlink" href="#equation-algorithm-eliashberg-1" title="Link to this equation">¶</a></span>\[\sum_\beta \varepsilon_{\alpha\beta}(\mathbf{k})\, u_{\beta m}(\mathbf{k})
+= \xi_m(\mathbf{k})\, u_{\alpha m}(\mathbf{k})\]</div>
+<p>the non-interacting Green’s function is given by</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-2">
+<span class="eqno">(6.32)<a class="headerlink" href="#equation-algorithm-eliashberg-2" title="Link to this equation">¶</a></span>\[G_{\alpha\beta}(\mathbf{k}, i\omega_n)
+= \sum_{m} \frac{u_{\alpha m}(\mathbf{k})\, u^*_{\beta m}(\mathbf{k})}
+                 {i\omega_n - (\xi_m(\mathbf{k}) - \mu)}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\omega_n = \pi(2n+1)/\beta\)</span> are the fermionic Matsubara frequencies,
+<span class="math notranslate nohighlight">\(\mu\)</span> is the chemical potential determined by the filling condition,
+and <span class="math notranslate nohighlight">\(\beta = 1/T\)</span> is the inverse temperature.</p>
+</section>
+<section id="pairing-vertex">
+<h2><span class="section-number">6.3.3. </span>Pairing vertex<a class="headerlink" href="#pairing-vertex" title="Link to this heading">¶</a></h2>
+<section id="simple-mode">
+<h3>Simple mode<a class="headerlink" href="#simple-mode" title="Link to this heading">¶</a></h3>
+<p>When only <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (<span class="math notranslate nohighlight">\(U\)</span>) and <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (<span class="math notranslate nohighlight">\(V\)</span>)
+are present, the pairing vertex is computed using the spin (<span class="math notranslate nohighlight">\(W_s\)</span>)
+and charge (<span class="math notranslate nohighlight">\(W_c\)</span>) channels:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-3">
+<span class="eqno">(6.33)<a class="headerlink" href="#equation-algorithm-eliashberg-3" title="Link to this equation">¶</a></span>\[W_s = -U, \qquad W_c = U + 2V\]</div>
+<p>The RPA susceptibilities are</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-4">
+<span class="eqno">(6.34)<a class="headerlink" href="#equation-algorithm-eliashberg-4" title="Link to this equation">¶</a></span>\[\hat{X}^s(\mathbf{q}) = \left[\hat{I} - \hat{X}^{(0)}(\mathbf{q})\, \hat{W}_s\right]^{-1} \hat{X}^{(0)}(\mathbf{q})\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-5">
+<span class="eqno">(6.35)<a class="headerlink" href="#equation-algorithm-eliashberg-5" title="Link to this equation">¶</a></span>\[\hat{X}^c(\mathbf{q}) = \left[\hat{I} + \hat{X}^{(0)}(\mathbf{q})\, \hat{W}_c\right]^{-1} \hat{X}^{(0)}(\mathbf{q})\]</div>
+<p>The singlet pairing vertex is</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-6">
+<span class="eqno">(6.36)<a class="headerlink" href="#equation-algorithm-eliashberg-6" title="Link to this equation">¶</a></span>\[V^S_{\alpha\beta}(\mathbf{q})
+= \frac{1}{2}(W_c + W_s)_{\alpha\beta}
+  + \frac{3}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
+  - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}\]</div>
+<p>and the triplet pairing vertex is</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-7">
+<span class="eqno">(6.37)<a class="headerlink" href="#equation-algorithm-eliashberg-7" title="Link to this equation">¶</a></span>\[V^T_{\alpha\beta}(\mathbf{q})
+= \frac{1}{2}(W_c - W_s)_{\alpha\beta}
+  - \frac{1}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
+  - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}\]</div>
+</section>
+<section id="general-mode-s-c-matrix-formulation">
+<h3>General mode (S/C matrix formulation)<a class="headerlink" href="#general-mode-s-c-matrix-formulation" title="Link to this heading">¶</a></h3>
+<p>When <code class="docutils literal notranslate"><span class="pre">Hund</span></code> (<span class="math notranslate nohighlight">\(J\)</span>), <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (<span class="math notranslate nohighlight">\(J'\)</span>),
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code> (<span class="math notranslate nohighlight">\(I\)</span>), or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (<span class="math notranslate nohighlight">\(P\)</span>) interactions
+are present, the solver uses the generalized <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> matrix
+formulation <a class="footnote-reference brackets" href="#id3" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>.</p>
+<p>The <span class="math notranslate nohighlight">\(S\)</span> and <span class="math notranslate nohighlight">\(C\)</span> matrices are defined in the composite index
+space <span class="math notranslate nohighlight">\((l_1, l_2)\)</span> where <span class="math notranslate nohighlight">\(l_1, l_2\)</span> are orbital indices.
+For a system with <span class="math notranslate nohighlight">\(n_{\rm orb}\)</span> orbitals, the matrices have
+dimension <span class="math notranslate nohighlight">\(n_{\rm orb}^2 \times n_{\rm orb}^2\)</span>.
+The matrix elements are:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 20.0%" />
+<col style="width: 25.0%" />
+<col style="width: 25.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Index condition</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(S\)</span> value</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(C\)</span> value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(l_1 = l_2 = l_3 = l_4\)</span></p></td>
+<td><p>Intra-orbital</p></td>
+<td><p><span class="math notranslate nohighlight">\(U\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(U\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(l_1 = l_3 \neq l_2 = l_4\)</span></p></td>
+<td><p>Cross</p></td>
+<td><p><span class="math notranslate nohighlight">\(U' - I\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(-U' + J - I\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(l_1 = l_2 \neq l_3 = l_4\)</span></p></td>
+<td><p>Density</p></td>
+<td><p><span class="math notranslate nohighlight">\(J - 2I\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(2U' - J\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(l_1 = l_4 \neq l_2 = l_3\)</span></p></td>
+<td><p>Exchange</p></td>
+<td><p><span class="math notranslate nohighlight">\(J' + P\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(J' + P\)</span></p></td>
+</tr>
+</tbody>
+</table>
+<p>The RPA susceptibilities are</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">
+<span class="eqno">(6.38)<a class="headerlink" href="#equation-algorithm-eliashberg-8" title="Link to this equation">¶</a></span>\[\hat{X}^s(\mathbf{q}) = \left[\hat{I} - \hat{X}^{(0)}(\mathbf{q})\, \hat{S}\right]^{-1} \hat{X}^{(0)}(\mathbf{q})\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-9">
+<span class="eqno">(6.39)<a class="headerlink" href="#equation-algorithm-eliashberg-9" title="Link to this equation">¶</a></span>\[\hat{X}^c(\mathbf{q}) = \left[\hat{I} + \hat{X}^{(0)}(\mathbf{q})\, \hat{C}\right]^{-1} \hat{X}^{(0)}(\mathbf{q})\]</div>
+<p>The singlet pairing vertex is</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-10">
+<span class="eqno">(6.40)<a class="headerlink" href="#equation-algorithm-eliashberg-10" title="Link to this equation">¶</a></span>\[\hat{V}^S(\mathbf{q})
+= \frac{3}{2}\, \hat{S}\, \hat{X}^s(\mathbf{q})\, \hat{S}
+  - \frac{1}{2}\, \hat{C}\, \hat{X}^c(\mathbf{q})\, \hat{C}
+  + \frac{1}{2}(\hat{S} + \hat{C})\]</div>
+<p>and the triplet pairing vertex is</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-11">
+<span class="eqno">(6.41)<a class="headerlink" href="#equation-algorithm-eliashberg-11" title="Link to this equation">¶</a></span>\[\hat{V}^T(\mathbf{q})
+= -\frac{1}{2}\, \hat{S}\, \hat{X}^s(\mathbf{q})\, \hat{S}
+  - \frac{1}{2}\, \hat{C}\, \hat{X}^c(\mathbf{q})\, \hat{C}
+  + \frac{1}{2}(\hat{C} - \hat{S})\]</div>
+</section>
+</section>
+<section id="id2">
+<h2><span class="section-number">6.3.4. </span>Linearized Eliashberg equation<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
+<p>The linearized Eliashberg equation is formulated as an eigenvalue problem:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-12">
+<span class="eqno">(6.42)<a class="headerlink" href="#equation-algorithm-eliashberg-12" title="Link to this equation">¶</a></span>\[\lambda\, \Sigma_{\alpha\beta}(\mathbf{k})
+= -\frac{T}{N_L} \sum_{\mathbf{k}', n', \alpha', \beta'}
+  V_{\alpha\alpha';\beta\beta'}(\mathbf{k} - \mathbf{k}')
+  \, G_{\alpha\alpha'}(\mathbf{k}', i\omega_{n'})
+  \, G_{\beta\beta'}(-\mathbf{k}', -i\omega_{n'})
+  \, \Sigma_{\alpha'\beta'}(\mathbf{k}')\]</div>
+<p>where <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span> is the anomalous self-energy
+(gap function), and the right-hand side defines the Eliashberg kernel
+<span class="math notranslate nohighlight">\(K[\Sigma]\)</span>.</p>
+<p>The superconducting instability occurs when <span class="math notranslate nohighlight">\(\lambda = 1\)</span>.
+Only positive eigenvalues are physically relevant for the SC transition.</p>
+<section id="two-particle-green-s-function">
+<h3>Two-particle Green’s function<a class="headerlink" href="#two-particle-green-s-function" title="Link to this heading">¶</a></h3>
+<p>The Matsubara frequency summation is performed analytically to obtain
+the two-particle Green’s function:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-13">
+<span class="eqno">(6.43)<a class="headerlink" href="#equation-algorithm-eliashberg-13" title="Link to this equation">¶</a></span>\[G^{(2)}_{\alpha\beta;\gamma\delta}(\mathbf{q})
+= \frac{T}{N_L} \sum_{\mathbf{k}, n}
+  G_{\alpha\gamma}(\mathbf{k}, i\omega_n)\,
+  G_{\beta\delta}(-\mathbf{k}+\mathbf{q}, -i\omega_n)\]</div>
+<p>This reduces the Eliashberg kernel to a convolution in k-space,
+which is efficiently computed using the Fast Fourier Transform (FFT).</p>
+</section>
+<section id="fft-based-kernel-evaluation">
+<h3>FFT-based kernel evaluation<a class="headerlink" href="#fft-based-kernel-evaluation" title="Link to this heading">¶</a></h3>
+<p>The kernel operation <span class="math notranslate nohighlight">\(\Sigma_{\rm new} = K[\Sigma_{\rm old}]\)</span> involves
+a convolution of the pairing vertex <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> with the product
+of <span class="math notranslate nohighlight">\(G^{(2)}\)</span> and the gap function.
+This convolution is computed efficiently as:</p>
+<ol class="arabic simple">
+<li><p>Inverse FFT of <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> and <span class="math notranslate nohighlight">\(G^{(2)}(\mathbf{q}) \cdot \Sigma(\mathbf{q})\)</span> to real space.</p></li>
+<li><p>Pointwise multiplication in real space.</p></li>
+<li><p>FFT back to k-space.</p></li>
+</ol>
+<p>This reduces the computational cost from <span class="math notranslate nohighlight">\(O(N_k^2)\)</span> to <span class="math notranslate nohighlight">\(O(N_k \log N_k)\)</span>.</p>
+</section>
+</section>
+<section id="numerical-methods">
+<h2><span class="section-number">6.3.5. </span>Numerical methods<a class="headerlink" href="#numerical-methods" title="Link to this heading">¶</a></h2>
+<section id="self-consistent-power-iteration">
+<h3>Self-consistent power iteration<a class="headerlink" href="#self-consistent-power-iteration" title="Link to this heading">¶</a></h3>
+<p>The self-consistent power iteration converges to the eigenmode
+with the largest positive eigenvalue:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-14">
+<span class="eqno">(6.44)<a class="headerlink" href="#equation-algorithm-eliashberg-14" title="Link to this equation">¶</a></span>\[\Sigma^{(i+1)} = K[\Sigma^{(i)}], \qquad
+\lambda^{(i)} = \|\Sigma^{(i+1)}\|, \qquad
+\Sigma^{(i+1)} \leftarrow \Sigma^{(i+1)} / \lambda^{(i)}\]</div>
+<p>Linear mixing is applied to stabilize convergence:</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-15">
+<span class="eqno">(6.45)<a class="headerlink" href="#equation-algorithm-eliashberg-15" title="Link to this equation">¶</a></span>\[\Sigma^{(i+1)} \leftarrow (1-\alpha)\, \Sigma^{(i+1)}_{\rm norm}
++ \alpha\, \Sigma^{(i)}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\alpha\)</span> is the mixing parameter.
+The iteration converges when
+<span class="math notranslate nohighlight">\(\|\Sigma^{(i+1)} - \Sigma^{(i)}\| &lt; \epsilon\)</span>.</p>
+<p>The initial gap function can be set to various symmetries
+(s-wave, <span class="math notranslate nohighlight">\(d_{x^2-y^2}\)</span>, <span class="math notranslate nohighlight">\(\cos k_x + \cos k_y\)</span>, random, etc.)
+to target specific pairing channels.</p>
+</section>
+<section id="arnoldi-eigenvalue-analysis">
+<h3>Arnoldi eigenvalue analysis<a class="headerlink" href="#arnoldi-eigenvalue-analysis" title="Link to this heading">¶</a></h3>
+<p>The Arnoldi method (implicitly restarted, via ARPACK) finds
+the leading eigenvalues of the Eliashberg kernel as a linear operator.
+This method efficiently computes multiple eigenvalues simultaneously
+without requiring explicit construction of the kernel matrix.</p>
+</section>
+<section id="subspace-iteration">
+<h3>Subspace iteration<a class="headerlink" href="#subspace-iteration" title="Link to this heading">¶</a></h3>
+<p>The subspace iteration method propagates multiple vectors simultaneously:</p>
+<ol class="arabic simple">
+<li><p>Apply the kernel to all vectors: <span class="math notranslate nohighlight">\(W = K \cdot V\)</span></p></li>
+<li><p>Compute the Rayleigh quotient: <span class="math notranslate nohighlight">\(H = V^T K V\)</span></p></li>
+<li><p>Eigendecompose the small matrix <span class="math notranslate nohighlight">\(H\)</span></p></li>
+<li><p>Update the subspace with Ritz vectors</p></li>
+<li><p>Re-orthogonalize via QR decomposition</p></li>
+</ol>
+<p>This method is more robust for degenerate eigenvalues.</p>
+</section>
+<section id="shift-invert-method">
+<h3>Shift-invert method<a class="headerlink" href="#shift-invert-method" title="Link to this heading">¶</a></h3>
+<p>The shift-invert transformation <span class="math notranslate nohighlight">\((K - \sigma I)^{-1}\)</span>
+is used to find eigenvalues near a target value <span class="math notranslate nohighlight">\(\sigma\)</span>.
+The linear system is solved iteratively using BiCGSTAB, GMRES,
+or LGMRES.</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id3" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>K. Kuroki, S. Onari, R. Arita, H. Usui, Y. Tanaka, H. Kontani,
+and H. Aoki, Phys. Rev. Lett. <strong>101</strong>, 087004 (2008);
+K. Kuroki, H. Usui, S. Onari, R. Arita, and H. Aoki,
+Phys. Rev. B <strong>79</strong>, 224511 (2009).</p>
+</aside>
+</aside>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../index.html">
+    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo" />
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. What is H-wave?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. Basic usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. Coordinate-space UHF (UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. Wave-number space UHF (UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">6. Algorithms</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="uhf.html">6.1. Unrestricted Hartree-Fock method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="rpa.html">6.2. Random Phase Approximation</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">6.3. Linearized Eliashberg equation</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">6.3.1. Overview</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#green-s-function">6.3.2. Green’s function</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#pairing-vertex">6.3.3. Pairing vertex</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id2">6.3.4. Linearized Eliashberg equation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#numerical-methods">6.3.5. Numerical methods</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">8. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+  <li><a href="al-index.html"><span class="section-number">6. </span>Algorithms</a><ul>
+      <li>Previous: <a href="rpa.html" title="previous chapter"><span class="section-number">6.2. </span>Random Phase Approximation</a></li>
+      <li>Next: <a href="../acknowledgement.html" title="next chapter"><span class="section-number">7. </span>Acknowledgments</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.0.4</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="../_sources/algorithm/eliashberg.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

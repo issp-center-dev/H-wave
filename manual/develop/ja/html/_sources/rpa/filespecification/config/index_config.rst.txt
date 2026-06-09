@@ -40,7 +40,18 @@ TOML形式
 
   **形式 :** bool型 (デフォルトは false)
 
-  **説明 :** スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 :math:`\alpha` とスピン :math:`s` に対して :math:`\alpha + N_\text{orb} \cdot s` となります。
+  **説明 :** スピン軌道相互作用を有効にします。``true`` にすると、Transfer項の軌道インデックスは
+  インターリーブ規約で解釈されます。複合インデックスは :math:`2\alpha + s`（物理軌道インデックス
+  :math:`\alpha`（0始まり）、スピンインデックス :math:`s \in \{0, 1\}`）です。
+
+  スピン軌道モードでは、幾何情報ファイル（``geom.dat``）の ``Norbit`` は
+  スピン軌道の総数（= 物理軌道数 × 2 = Wannier90 の ``num_wann``）を表し、
+  UHFk と同じ規約です。
+
+  .. note::
+
+     **移行上の注意（RPA）：** スピン軌道入力の幾何 ``Norbit`` はスピン軌道数になりました。
+     既存の RPA スピン軌道計算の ``geom.dat`` の ``Norbit`` は2倍にしてください。
 
 - ``calc_scheme``
 
@@ -55,6 +66,16 @@ TOML形式
   - ``squashed``: 軌道とスピンを分離し、軌道については :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ扱います。感受率行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega` となります。詳細は :ref:`Ch:Algorithm` の章を参照してください。
 
   - ``auto``: 相互作用項の指定に応じて自動判別します。 ``chi0q`` のみを計算する場合は指定できません。
+
+- ``calc_type``
+
+  **形式 :** string型 （デフォルトは ``"ring"`` ）
+
+  **説明 :** 計算するRPAダイアグラムの種類を指定します。
+
+  - ``ring``: 標準RPA（リングダイアグラムのみ）。縦感受率を計算します。
+
+  - ``ring+ladder``: 標準RPAに加えて横（はしご）感受率 :math:`\chi_{+-}(\mathbf{q})` も計算します。 ``general`` 計算スキームが必要です（自動選択されます）。詳細は :ref:`Ch:Algorithm` を参照してください。
 
 
 ``mode.param`` セクション

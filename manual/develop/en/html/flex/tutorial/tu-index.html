@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Tutorial: FLEX solver &#8212; H-wave Users Guide 1.1-dev documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=9814fe92" />
+    <script src="../../_static/documentation_options.js?v=5f12b55d"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="tutorial-flex-solver">
+<h1>Tutorial: FLEX solver<a class="headerlink" href="#tutorial-flex-solver" title="Link to this heading">¶</a></h1>
+<p>This tutorial demonstrates how to use the FLEX
+(Fluctuation Exchange Approximation) solver in H-wave.
+FLEX extends RPA by using dressed (self-consistent) Green’s functions
+instead of bare ones, providing a more accurate description of
+correlated electron systems.</p>
+<p>The sample files for this tutorial are located in
+<code class="docutils literal notranslate"><span class="pre">docs/en/source/flex/sample</span></code> directory.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>The FLEX approximation <a class="footnote-reference brackets" href="#id3" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> is a self-consistent diagrammatic method
+for itinerant electron systems. Unlike RPA, which uses the bare
+Green’s function <span class="math notranslate nohighlight">\(G_0\)</span>, FLEX iterates the following self-consistent loop
+until convergence:</p>
+<ol class="arabic simple">
+<li><p>Compute the dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>
+from the Dyson equation.</p></li>
+<li><p>Compute the bare susceptibility <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span>
+from the dressed <span class="math notranslate nohighlight">\(G\)</span>.</p></li>
+<li><p>Decompose the interaction into spin and charge channels.</p></li>
+<li><p>Solve the RPA equations for spin/charge susceptibilities
+<span class="math notranslate nohighlight">\(\chi_s\)</span> and <span class="math notranslate nohighlight">\(\chi_c\)</span>.</p></li>
+<li><p>Construct the effective interaction <span class="math notranslate nohighlight">\(V_{\mathrm{eff}}\)</span>.</p></li>
+<li><p>Compute the self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span> via
+FFT convolution.</p></li>
+<li><p>Check convergence; if not converged, go to step 1.</p></li>
+</ol>
+</section>
+<section id="theory">
+<h2>Theory<a class="headerlink" href="#theory" title="Link to this heading">¶</a></h2>
+<section id="dressed-green-s-function">
+<h3>Dressed Green’s function<a class="headerlink" href="#dressed-green-s-function" title="Link to this heading">¶</a></h3>
+<p>The dressed Green’s function is obtained from the Dyson equation:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-0">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-0" title="Link to this equation">¶</a></span>\[G(\mathbf{k}, i\omega_n)
+= \left[ G_0^{-1}(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, i\omega_n) \right]^{-1}\]</div>
+<p>where <span class="math notranslate nohighlight">\(G_0^{-1}(\mathbf{k}, i\omega_n) = i\omega_n + \mu - H_0(\mathbf{k})\)</span>
+is the inverse bare Green’s function.</p>
+</section>
+<section id="spin-and-charge-susceptibilities">
+<h3>Spin and charge susceptibilities<a class="headerlink" href="#spin-and-charge-susceptibilities" title="Link to this heading">¶</a></h3>
+<p>The bare susceptibility is computed from the dressed Green’s function:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-1">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-1" title="Link to this equation">¶</a></span>\[\chi_0(\mathbf{q}, i\nu_m) = -\frac{T}{N_k} \sum_{\mathbf{k}, n}
+G(\mathbf{k}+\mathbf{q}, i\omega_n + i\nu_m)\, G(\mathbf{k}, i\omega_n)\]</div>
+<p>The spin and charge susceptibilities are:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-2">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-2" title="Link to this equation">¶</a></span>\[\chi_s = \left[ I - \chi_0 \, U_s \right]^{-1} \chi_0\]</div>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-3">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-3" title="Link to this equation">¶</a></span>\[\chi_c = \left[ I + \chi_0 \, U_c \right]^{-1} \chi_0\]</div>
+<p>where <span class="math notranslate nohighlight">\(U_s\)</span> and <span class="math notranslate nohighlight">\(U_c\)</span> are the spin and charge interaction vertices
+decomposed from the full interaction Hamiltonian.
+For the single-band Hubbard model, <span class="math notranslate nohighlight">\(U_s = U_c = U\)</span>.</p>
+</section>
+<section id="effective-interaction">
+<h3>Effective interaction<a class="headerlink" href="#effective-interaction" title="Link to this heading">¶</a></h3>
+<p>The effective FLEX interaction combines spin and charge fluctuations <a class="footnote-reference brackets" href="#id3" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-4">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-4" title="Link to this equation">¶</a></span>\[V_{\mathrm{eff}}(\mathbf{q}, i\nu_m)
+= W \left[ \frac{3}{2}\chi_s
+         + \frac{1}{2}\chi_c - \chi_0 \right] W\]</div>
+<p>where <span class="math notranslate nohighlight">\(W\)</span> is the bare interaction vertex.
+<span class="math notranslate nohighlight">\(\chi_0\)</span> is subtracted <strong>once</strong>: at lowest order
+<span class="math notranslate nohighlight">\(\chi_s = \chi_c = \chi_0\)</span>, so the bracket reduces to <span class="math notranslate nohighlight">\(\chi_0\)</span> and
+<span class="math notranslate nohighlight">\(V_{\mathrm{eff}} = W \chi_0 W\)</span> (the second-order <span class="math notranslate nohighlight">\(U^2\)</span> bubble).
+This single subtraction removes the double-counted second-order diagram
+contained in <span class="math notranslate nohighlight">\(\chi_s\)</span> and <span class="math notranslate nohighlight">\(\chi_c\)</span>.</p>
+</section>
+<section id="self-energy">
+<h3>Self-energy<a class="headerlink" href="#self-energy" title="Link to this heading">¶</a></h3>
+<p>The self-energy is computed via convolution in real space and
+imaginary time:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-5">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-5" title="Link to this equation">¶</a></span>\[\Sigma(\mathbf{r}, \tau) = V_{\mathrm{eff}}(\mathbf{r}, \tau) \cdot G(\mathbf{r}, \tau)\]</div>
+<p>This element-wise (Hadamard) product is efficiently evaluated using FFT.</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id3" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
+<span class="backrefs">(<a role="doc-backlink" href="#id1">1</a>,<a role="doc-backlink" href="#id2">2</a>)</span>
+<p>N. E. Bickers and D. J. Scalapino,
+Ann. Phys. (N.Y.) <strong>193</strong>, 206 (1989).</p>
+</aside>
+</aside>
+</section>
+</section>
+<section id="sample-1-single-orbital-hubbard-model">
+<h2>Sample 1: Single-orbital Hubbard model<a class="headerlink" href="#sample-1-single-orbital-hubbard-model" title="Link to this heading">¶</a></h2>
+<section id="model">
+<h3>Model<a class="headerlink" href="#model" title="Link to this heading">¶</a></h3>
+<p>The first sample is a <strong>single-orbital Hubbard model</strong> on a
+two-dimensional square lattice at half filling (<span class="math notranslate nohighlight">\(n = 1\)</span>).</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-6">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-6" title="Link to this equation">¶</a></span>\[H = -\sum_{\langle i,j \rangle, \sigma} t_{ij}\,
+    c^\dagger_{i\sigma} c_{j\sigma}
+  + U \sum_i n_{i\uparrow} n_{i\downarrow}\]</div>
+<p>with nearest-neighbor hopping <span class="math notranslate nohighlight">\(t = 1.0\)</span>,
+next-nearest-neighbor hopping <span class="math notranslate nohighlight">\(t' = 0.5\)</span>,
+on-site Coulomb repulsion <span class="math notranslate nohighlight">\(U = 4.0\)</span>,
+and temperature <span class="math notranslate nohighlight">\(T = 0.5\)</span>.</p>
+<p>This model is known to exhibit strong antiferromagnetic (AF) spin
+fluctuations with a peak at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>.</p>
+</section>
+<section id="prepare-input-files">
+<h3>Prepare input files<a class="headerlink" href="#prepare-input-files" title="Link to this heading">¶</a></h3>
+<p>The sample files are in <code class="docutils literal notranslate"><span class="pre">docs/en/source/flex/sample/1orb/</span></code>.</p>
+<p><strong>Parameter file</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;FLEX&quot;
+
+[mode.param]
+  T = 0.5
+  CellShape = [8, 8, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 64
+  filling = 0.5
+  IterationMax = 100
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+  sigma = &quot;sigma&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p>Key parameters:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>: Selects the FLEX solver.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0.5</span></code>: Temperature.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CellShape</span> <span class="pre">=</span> <span class="pre">[8,</span> <span class="pre">8,</span> <span class="pre">1]</span></code>: 8 x 8 k-point mesh for a 2D system.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>: Number of Matsubara frequencies.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">=</span> <span class="pre">0.5</span></code>: Half filling.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">100</span></code>: Maximum number of SCF iterations.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0.2</span></code>: Mixing parameter for self-energy update
+(<span class="math notranslate nohighlight">\(\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}\)</span>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EPS</span> <span class="pre">=</span> <span class="pre">6</span></code>: Convergence criterion <span class="math notranslate nohighlight">\(10^{-6}\)</span>.</p></li>
+</ul>
+<p><strong>Geometry</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+1
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+</pre></div>
+</div>
+<p>A single orbital at the origin.</p>
+<p><strong>Transfer integrals</strong> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+1
+9
+ 1 1 1 1 1 1 1 1 1
+  -1   -1    0    1    1  0.500000000000  -0.000000000000
+  -1    0    0    1    1  1.000000000000  -0.000000000000
+   0   -1    0    1    1  1.000000000000  -0.000000000000
+   0    1    0    1    1  1.000000000000   0.000000000000
+   1    0    0    1    1  1.000000000000   0.000000000000
+   1    1    0    1    1  0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>Nearest-neighbor (<span class="math notranslate nohighlight">\(t = 1.0\)</span>) and next-nearest-neighbor
+(<span class="math notranslate nohighlight">\(t' = 0.5\)</span>) hopping on the square lattice.</p>
+<p><strong>On-site interaction</strong> (<code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+1
+1
+ 1
+   0    0    0    1    1   4.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>On-site Coulomb repulsion <span class="math notranslate nohighlight">\(U = 4.0\)</span>.</p>
+</section>
+<section id="run-the-calculation">
+<h3>Run the calculation<a class="headerlink" href="#run-the-calculation" title="Link to this heading">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/en/source/flex/sample/1orb
+$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>The output log shows the SCF convergence:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/100
+  convergence: |dSigma|/|Sigma| = 1.000e+00
+FLEX iteration 2/100
+  convergence: |dSigma|/|Sigma| = 9.827e-01
+...
+FLEX iteration 72/100
+  convergence: |dSigma|/|Sigma| = 1.008e-06
+FLEX iteration 73/100
+  convergence: |dSigma|/|Sigma| = 8.292e-07
+FLEX converged after 73 iterations
+</pre></div>
+</div>
+</section>
+<section id="results">
+<h3>Results<a class="headerlink" href="#results" title="Link to this heading">¶</a></h3>
+<p>After convergence, the solver produces the following output files
+in the <code class="docutils literal notranslate"><span class="pre">output</span></code> directory:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>: Bare susceptibility <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>: Spin susceptibility <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_m)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>: Charge susceptibility <span class="math notranslate nohighlight">\(\chi_c(\mathbf{q}, i\nu_m)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>: Combined susceptibility file</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: Self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: Dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
+</ul>
+<p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
+<figure class="align-center" id="id14">
+<a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Static spin susceptibility <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span> of the
+single-orbital Hubbard model at half filling.
+The peak at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> indicates strong
+antiferromagnetic spin fluctuations, consistent with the nesting
+of the Fermi surface.</span><a class="headerlink" href="#id14" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Self-energy</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
+<figure class="align-center" id="id15">
+<a class="reference internal image-reference" href="../../_images/sigma_kspace.png"><img alt="../../_images/sigma_kspace.png" src="../../_images/sigma_kspace.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Imaginary part of the self-energy at the lowest Matsubara frequency.
+The k-dependence reflects the scattering of quasiparticles by
+spin fluctuations, with stronger damping near the antiferromagnetic
+hot spots.</span><a class="headerlink" href="#id15" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Self-energy vs Matsubara frequency</strong>:</p>
+<figure class="align-center" id="id16">
+<a class="reference internal image-reference" href="../../_images/sigma_matsubara.png"><img alt="../../_images/sigma_matsubara.png" src="../../_images/sigma_matsubara.png" style="width: 80%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Frequency dependence of the self-energy at selected k-points.
+The imaginary part <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span>
+shows quasiparticle damping, while the
+<span class="math notranslate nohighlight">\(1/\omega_n\)</span> tail at high frequencies indicates
+Fermi liquid behavior.</span><a class="headerlink" href="#id16" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+</section>
+<section id="sample-2-two-orbital-hubbard-model">
+<h2>Sample 2: Two-orbital Hubbard model<a class="headerlink" href="#sample-2-two-orbital-hubbard-model" title="Link to this heading">¶</a></h2>
+<section id="id4">
+<h3>Model<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p>The second sample is a <strong>two-orbital Hubbard model</strong> with
+inter-orbital Coulomb interaction and Hund’s coupling:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-7">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-7" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+    \varepsilon_{\alpha\beta}(\mathbf{k})\,
+    c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
+  + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+  + V \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
+  - 2J \sum_{i,\alpha\neq\beta}
+    \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}\]</div>
+<p>with <span class="math notranslate nohighlight">\(U = 4.0\)</span>, <span class="math notranslate nohighlight">\(V = 1.0\)</span>, <span class="math notranslate nohighlight">\(J = 0.5\)</span>,
+and temperature <span class="math notranslate nohighlight">\(T = 1.0\)</span>.</p>
+</section>
+<section id="id5">
+<h3>Prepare input files<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<p>The sample files are in <code class="docutils literal notranslate"><span class="pre">docs/en/source/flex/sample/2orb/</span></code>.</p>
+<p><strong>Parameter file</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;FLEX&quot;
+
+[mode.param]
+  T = 1.0
+  CellShape = [8, 8, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 64
+  filling = 0.5
+  IterationMax = 200
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+  Hund = &quot;hund.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+  sigma = &quot;sigma&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p>Key differences from the 1-orbital sample:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">1.0</span></code>: Higher temperature for stability.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">200</span></code>: More iterations for multi-orbital convergence.</p></li>
+<li><p>Additional interaction files: <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> and <code class="docutils literal notranslate"><span class="pre">Hund</span></code>.</p></li>
+</ul>
+<p><strong>Geometry</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+2
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+    5.000000000000000e-01     5.000000000000000e-01     0.000000000000000e+00
+</pre></div>
+</div>
+<p>Two orbitals per unit cell.</p>
+<p><strong>Transfer integrals</strong> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer in wannier90-like format for uhfk
+2
+9
+ 1 1 1 1 1 1 1 1 1
+   0    1    0    1    1  1.000000000000   0.000000000000
+   0   -1    0    1    1  1.000000000000   0.000000000000
+   0    1    0    2    2  1.000000000000   0.000000000000
+   0   -1    0    2    2  1.000000000000   0.000000000000
+   0    0    0    1    2  0.500000000000   0.000000000000
+  -1    0    0    1    2  0.500000000000   0.000000000000
+   0    0    0    2    1  0.500000000000   0.000000000000
+   1    0    0    2    1  0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>Intra-orbital hopping (<span class="math notranslate nohighlight">\(t = 1.0\)</span> along y) and
+inter-orbital hybridization (<span class="math notranslate nohighlight">\(t' = 0.5\)</span>).</p>
+<p><strong>On-site interaction</strong> (<code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    1   4.000000000000   0.000000000000
+   0    0    0    2    2   4.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>Intra-orbital Coulomb <span class="math notranslate nohighlight">\(U = 4.0\)</span> on both orbitals.</p>
+<p><strong>Inter-orbital Coulomb</strong> (<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombInter in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   1.000000000000   0.000000000000
+   0    0    0    2    1   1.000000000000   0.000000000000
+</pre></div>
+</div>
+<p>Inter-orbital Coulomb <span class="math notranslate nohighlight">\(V = 1.0\)</span>.</p>
+<p><strong>Hund’s coupling</strong> (<code class="docutils literal notranslate"><span class="pre">hund.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Hund in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   0.500000000000   0.000000000000
+   0    0    0    2    1   0.500000000000   0.000000000000
+</pre></div>
+</div>
+<p>Hund’s coupling <span class="math notranslate nohighlight">\(J = 0.5\)</span>.</p>
+</section>
+<section id="id6">
+<h3>Run the calculation<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/en/source/flex/sample/2orb
+$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/200
+  convergence: |dSigma|/|Sigma| = 1.000e+00
+FLEX iteration 2/200
+  convergence: |dSigma|/|Sigma| = 3.587e-01
+...
+FLEX iteration 58/200
+  convergence: |dSigma|/|Sigma| = 1.188e-06
+FLEX iteration 59/200
+  convergence: |dSigma|/|Sigma| = 9.684e-07
+FLEX converged after 59 iterations
+</pre></div>
+</div>
+</section>
+<section id="id7">
+<h3>Results<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
+<p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
+<figure class="align-center" id="id17">
+<a class="reference internal image-reference" href="../../_images/chi_s1.png"><img alt="../../_images/chi_s1.png" src="../../_images/chi_s1.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Static spin susceptibility of the two-orbital model.
+The peak at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> is enhanced by
+Hund’s coupling, which promotes ferromagnetic alignment within
+each site while allowing antiferromagnetic inter-site correlations.</span><a class="headerlink" href="#id17" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Self-energy</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
+<figure class="align-center" id="id18">
+<a class="reference internal image-reference" href="../../_images/sigma_kspace1.png"><img alt="../../_images/sigma_kspace1.png" src="../../_images/sigma_kspace1.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Imaginary part of the self-energy for the two-orbital model.
+The orbital-dependent k-structure reflects the different
+scattering channels in the multi-orbital system.</span><a class="headerlink" href="#id18" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Self-energy vs Matsubara frequency</strong>:</p>
+<figure class="align-center" id="id19">
+<a class="reference internal image-reference" href="../../_images/sigma_matsubara1.png"><img alt="../../_images/sigma_matsubara1.png" src="../../_images/sigma_matsubara1.png" style="width: 80%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Frequency dependence of the self-energy for the two-orbital model.
+The larger magnitude compared to the single-orbital case reflects
+the enhanced correlations from inter-orbital interactions.</span><a class="headerlink" href="#id19" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+</section>
+<section id="plotting">
+<h2>Plotting<a class="headerlink" href="#plotting" title="Link to this heading">¶</a></h2>
+<p>The figures above can be reproduced using the plotting script:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/en/source/flex/sample
+$<span class="w"> </span>python<span class="w"> </span>plot_results.py
+</pre></div>
+</div>
+<p>Or from within a single sample directory:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/en/source/flex/sample/1orb
+$<span class="w"> </span>python<span class="w"> </span>../plot_results.py
+</pre></div>
+</div>
+</section>
+<section id="output-file-format">
+<h2>Output file format<a class="headerlink" href="#output-file-format" title="Link to this heading">¶</a></h2>
+<p>The FLEX solver produces NumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code> files with the following contents:</p>
+<section id="chi0q-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code><a class="headerlink" href="#chi0q-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code>: Bare susceptibility <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span>,
+shape <code class="docutils literal notranslate"><span class="pre">(nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">freq_index</span></code>: Matsubara frequency indices.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">wavevector_unit</span></code>: k-point vectors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">wavevector_index</span></code>: Wavenum table.</p></li>
+</ul>
+</section>
+<section id="chiq-s-npz-chiq-c-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code><a class="headerlink" href="#chiq-s-npz-chiq-c-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: Spin / charge susceptibility,
+same shape as <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>.</p></li>
+</ul>
+</section>
+<section id="sigma-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code><a class="headerlink" href="#sigma-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma</span></code>: Self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>,
+shape <code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
+where <code class="docutils literal notranslate"><span class="pre">nblock</span></code> is the number of spin blocks (1 for spin-free mode).</p></li>
+</ul>
+</section>
+<section id="green-npz">
+<h3><code class="docutils literal notranslate"><span class="pre">green.npz</span></code><a class="headerlink" href="#green-npz" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">green</span></code>: Dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>,
+same shape as <code class="docutils literal notranslate"><span class="pre">sigma</span></code>.</p></li>
+</ul>
+<p>These output files can also be used as input for the
+Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
+superconducting instabilities. See <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a> for details.</p>
+</section>
+</section>
+<section id="flex-specific-parameters">
+<h2>FLEX-specific parameters<a class="headerlink" href="#flex-specific-parameters" title="Link to this heading">¶</a></h2>
+<p>The FLEX solver accepts the following parameters in the
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> section:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 20.0%" />
+<col style="width: 10.0%" />
+<col style="width: 10.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span></code></p></td>
+<td><p>int</p></td>
+<td><p>100</p></td>
+<td><p>Maximum number of SCF iterations.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Mix</span></code></p></td>
+<td><p>float</p></td>
+<td><p>0.2</p></td>
+<td><p>Mixing parameter <span class="math notranslate nohighlight">\(\alpha\)</span> for self-energy update.
+Smaller values give more stable convergence but slower progress.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">EPS</span></code></p></td>
+<td><p>int/float</p></td>
+<td><p>6</p></td>
+<td><p>Convergence criterion. If integer <span class="math notranslate nohighlight">\(n\)</span>, the threshold is
+<span class="math notranslate nohighlight">\(10^{-n}\)</span>. If float &lt; 1, used directly as threshold.</p></td>
+</tr>
+</tbody>
+</table>
+<p>All other parameters (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>, etc.)
+are shared with the RPA solver. See <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">Parameter files</span></a> for details.</p>
+</section>
+<section id="sample-3-iron-pnictide-2-orbital-model">
+<h2>Sample 3: Iron pnictide 2-orbital model<a class="headerlink" href="#sample-3-iron-pnictide-2-orbital-model" title="Link to this heading">¶</a></h2>
+<section id="id8">
+<h3>Model<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
+<p>The third sample is a <strong>two-orbital minimal model for iron-based
+superconductors</strong> proposed by Raghu et al. <a class="footnote-reference brackets" href="#id10" id="id9" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>
+The model describes the Fe-As plane using <span class="math notranslate nohighlight">\(d_{xz}\)</span> and
+<span class="math notranslate nohighlight">\(d_{yz}\)</span> orbitals on a square lattice (1-Fe unit cell).</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
+\varepsilon_x(\mathbf{k}) &amp; \varepsilon_{xy}(\mathbf{k}) \\
+\varepsilon_{xy}(\mathbf{k}) &amp; \varepsilon_y(\mathbf{k})
+\end{pmatrix}\end{split}\]</div>
+<p>where</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+\varepsilon_y(\mathbf{k}) &amp;= -2t_2 \cos k_x - 2t_1 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+\varepsilon_{xy}(\mathbf{k}) &amp;= -4t_4 \sin k_x \sin k_y\end{split}\]</div>
+<p>with <span class="math notranslate nohighlight">\(t_1 = -1.0\)</span>, <span class="math notranslate nohighlight">\(t_2 = 1.3\)</span>, <span class="math notranslate nohighlight">\(t_3 = t_4 = -0.85\)</span>.</p>
+<p>The interactions follow the Kanamori parameterization:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
++ U' \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
+- 2J \sum_{i,\alpha\neq\beta} \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
++ J' \sum_{i,\alpha\neq\beta} c^\dagger_{i\alpha\uparrow} c^\dagger_{i\alpha\downarrow}
+  c_{i\beta\downarrow} c_{i\beta\uparrow}\]</div>
+<p>with <span class="math notranslate nohighlight">\(U = 1.5\)</span>, <span class="math notranslate nohighlight">\(J = J' = 0.25\)</span>, <span class="math notranslate nohighlight">\(U' = U - 2J = 1.0\)</span>,
+at temperature <span class="math notranslate nohighlight">\(T = 0.1\)</span> and half filling (<span class="math notranslate nohighlight">\(n = 2\)</span>).</p>
+<p>The Fermi surface consists of hole pockets at <span class="math notranslate nohighlight">\(\Gamma\)</span> and
+electron pockets at <span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span> / <span class="math notranslate nohighlight">\((0, \pi)\)</span>.
+The nesting between these pockets drives strong spin fluctuations
+at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>, which is the hallmark of iron pnictides.</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id10" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id9">2</a><span class="fn-bracket">]</span></span>
+<p>S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
+Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
+</aside>
+</aside>
+</section>
+<section id="id11">
+<h3>Prepare input files<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
+<p>The sample files are in <code class="docutils literal notranslate"><span class="pre">docs/en/source/flex/sample/iron_2orb/</span></code>.</p>
+<p><strong>Parameter file</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
+  print_level = 1
+
+[mode]
+  mode = &quot;FLEX&quot;
+
+[mode.param]
+  T = 0.1
+  CellShape = [16, 16, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 128
+  filling = 0.5
+  IterationMax = 200
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = &quot;.&quot;
+
+[file.input.interaction]
+  path_to_input = &quot;.&quot;
+  Geometry = &quot;geom.dat&quot;
+  Transfer = &quot;transfer.dat&quot;
+  CoulombIntra = &quot;coulombintra.dat&quot;
+  CoulombInter = &quot;coulombinter.dat&quot;
+  Hund = &quot;hund.dat&quot;
+  Exchange = &quot;exchange.dat&quot;
+
+[file.output]
+  path_to_output = &quot;output&quot;
+  chi0q = &quot;chi0q&quot;
+  chiq = &quot;chiq&quot;
+  sigma = &quot;sigma&quot;
+  green = &quot;green&quot;
+</pre></div>
+</div>
+<p><strong>Geometry</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+2
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+</pre></div>
+</div>
+<p>Two orbitals (<span class="math notranslate nohighlight">\(d_{xz}\)</span> and <span class="math notranslate nohighlight">\(d_{yz}\)</span>) at the same site.</p>
+<p><strong>Transfer integrals</strong> (<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Transfer for 2-orbital iron pnictide model (Raghu et al. PRB 77, 220503, 2008)
+2
+9
+ 1 1 1 1 1 1 1 1 1
+   1    0    0    1    1   1.000000000000   0.000000000000
+  -1    0    0    1    1   1.000000000000   0.000000000000
+   0    1    0    1    1  -1.300000000000   0.000000000000
+   0   -1    0    1    1  -1.300000000000   0.000000000000
+   1    1    0    1    1   0.850000000000   0.000000000000
+   1   -1    0    1    1   0.850000000000   0.000000000000
+  -1    1    0    1    1   0.850000000000   0.000000000000
+  -1   -1    0    1    1   0.850000000000   0.000000000000
+   1    0    0    2    2  -1.300000000000   0.000000000000
+  -1    0    0    2    2  -1.300000000000   0.000000000000
+   0    1    0    2    2   1.000000000000   0.000000000000
+   0   -1    0    2    2   1.000000000000   0.000000000000
+   1    1    0    2    2   0.850000000000   0.000000000000
+   1   -1    0    2    2   0.850000000000   0.000000000000
+  -1    1    0    2    2   0.850000000000   0.000000000000
+  -1   -1    0    2    2   0.850000000000   0.000000000000
+   1    1    0    1    2  -0.850000000000   0.000000000000
+   1   -1    0    1    2   0.850000000000   0.000000000000
+  -1    1    0    1    2   0.850000000000   0.000000000000
+  -1   -1    0    1    2  -0.850000000000   0.000000000000
+   1    1    0    2    1  -0.850000000000   0.000000000000
+   1   -1    0    2    1   0.850000000000   0.000000000000
+  -1    1    0    2    1   0.850000000000   0.000000000000
+  -1   -1    0    2    1  -0.850000000000   0.000000000000
+</pre></div>
+</div>
+<p>The hopping parameters produce the characteristic two-pocket Fermi surface.</p>
+<p><strong>Interactions</strong>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombIntra in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    1   1.500000000000   0.000000000000
+   0    0    0    2    2   1.500000000000   0.000000000000
+</pre></div>
+</div>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombInter in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   1.000000000000   0.000000000000
+   0    0    0    2    1   1.000000000000   0.000000000000
+</pre></div>
+</div>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Hund in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   0.250000000000   0.000000000000
+   0    0    0    2    1   0.250000000000   0.000000000000
+</pre></div>
+</div>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Exchange in wannier90-like format for uhfk
+2
+1
+ 1
+   0    0    0    1    2   0.250000000000   0.000000000000
+   0    0    0    2    1   0.250000000000   0.000000000000
+</pre></div>
+</div>
+</section>
+<section id="id12">
+<h3>Run the calculation<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/en/source/flex/sample/iron_2orb
+$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/200
+  convergence: |dSigma|/|Sigma| = 1.000e+00
+FLEX iteration 2/200
+  convergence: |dSigma|/|Sigma| = 7.139e-01
+...
+FLEX iteration 62/200
+  convergence: |dSigma|/|Sigma| = 1.055e-06
+FLEX iteration 63/200
+  convergence: |dSigma|/|Sigma| = 8.419e-07
+FLEX converged after 63 iterations
+</pre></div>
+</div>
+</section>
+<section id="id13">
+<h3>Results<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h3>
+<p><strong>Spin and charge susceptibilities</strong>:</p>
+<figure class="align-center" id="id20">
+<a class="reference internal image-reference" href="../../_images/chi_spin_charge.png"><img alt="../../_images/chi_spin_charge.png" src="../../_images/chi_spin_charge.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Static spin susceptibility <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span> (left) and charge
+susceptibility <span class="math notranslate nohighlight">\(\chi_c(\mathbf{q})\)</span> (right).
+The spin susceptibility peaks at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span> and
+<span class="math notranslate nohighlight">\((0, \pi)\)</span>, reflecting the nesting between hole and electron
+Fermi pockets. This is qualitatively different from the single-band
+Hubbard model where <span class="math notranslate nohighlight">\(\chi_s\)</span> peaks at <span class="math notranslate nohighlight">\((\pi, \pi)\)</span>.</span><a class="headerlink" href="#id20" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Orbital-resolved self-energy</strong>:</p>
+<figure class="align-center" id="id21">
+<a class="reference internal image-reference" href="../../_images/sigma_orbital.png"><img alt="../../_images/sigma_orbital.png" src="../../_images/sigma_orbital.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Imaginary part of the self-energy at the lowest Matsubara frequency,
+resolved by orbital. The <span class="math notranslate nohighlight">\(d_{xz}\)</span> orbital shows stronger
+scattering along <span class="math notranslate nohighlight">\(k_y\)</span> direction, while <span class="math notranslate nohighlight">\(d_{yz}\)</span> shows
+stronger scattering along <span class="math notranslate nohighlight">\(k_x\)</span>. This orbital anisotropy
+arises from the orbital character of the Fermi surface.</span><a class="headerlink" href="#id21" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Self-energy vs Matsubara frequency</strong>:</p>
+<figure class="align-center" id="id22">
+<a class="reference internal image-reference" href="../../_images/sigma_matsubara_orbital.png"><img alt="../../_images/sigma_matsubara_orbital.png" src="../../_images/sigma_matsubara_orbital.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Frequency dependence of the orbital-resolved self-energy at
+high-symmetry k-points. At <span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span>, the
+<span class="math notranslate nohighlight">\(d_{yz}\)</span> orbital is more strongly damped than <span class="math notranslate nohighlight">\(d_{xz}\)</span>,
+reflecting orbital-selective correlations.</span><a class="headerlink" href="#id22" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Plotting script</strong>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>plot_results.py
+</pre></div>
+</div>
+</section>
+</section>
+<section id="tips">
+<h2>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Convergence issues</strong>: If the SCF loop does not converge, try
+reducing <code class="docutils literal notranslate"><span class="pre">Mix</span></code> (e.g., 0.1 or 0.05) or increasing the temperature.
+Strong correlations near magnetic instabilities can make convergence
+difficult.</p></li>
+<li><p><strong>Matsubara frequencies</strong>: A sufficient number of Matsubara
+frequencies (<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) is needed for accurate results. A good rule
+of thumb is <span class="math notranslate nohighlight">\(N_{\mathrm{mat}} \geq 10 / T\)</span> to capture the
+low-frequency structure.</p></li>
+<li><p><strong>k-point mesh</strong>: The mesh size (<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>) should be large enough
+to resolve the momentum structure of susceptibilities and self-energy.
+For 2D systems, 8x8 is sufficient for qualitative results; 32x32 or
+larger is recommended for quantitative calculations.</p></li>
+<li><p><strong>Computational cost</strong>: FLEX is more expensive than RPA due to the
+SCF loop. The cost scales as
+<span class="math notranslate nohighlight">\(O(N_{\mathrm{iter}} \times N_k \times N_\omega \times N_d^3)\)</span>
+where <span class="math notranslate nohighlight">\(N_d = N_{\mathrm{orb}} \times N_{\mathrm{spin}}\)</span>.</p></li>
+<li><p><strong>Connection to Eliashberg equation</strong>: The FLEX output files
+(<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>) can be used with <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+by setting <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> in the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section.
+This enables analysis of superconducting instabilities with
+FLEX-level spin and charge fluctuations.</p></li>
+</ul>
+</section>
+<section id="implementation-details-and-limitations">
+<h2>Implementation details and limitations<a class="headerlink" href="#implementation-details-and-limitations" title="Link to this heading">¶</a></h2>
+<section id="supported-interaction-types">
+<h3>Supported interaction types<a class="headerlink" href="#supported-interaction-types" title="Link to this heading">¶</a></h3>
+<p>The FLEX solver supports the following interaction types:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 15.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Interaction type</p></th>
+<th class="head"><p>Support</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Intra-orbital Coulomb repulsion <span class="math notranslate nohighlight">\(U\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Inter-orbital Coulomb repulsion <span class="math notranslate nohighlight">\(V\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Hund’s coupling <span class="math notranslate nohighlight">\(J\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Exchange interaction <span class="math notranslate nohighlight">\(J'\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Ising-type interaction</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Pair lifting interaction</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Pair hopping interaction</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
+<td><p><strong>No</strong></p></td>
+<td><p>Arbitrary 4-body interaction (UHFr solver only)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">InterAll</span></code> format is not available in k-space solvers (RPA/FLEX).
+Interactions described by <code class="docutils literal notranslate"><span class="pre">InterAll</span></code> should be decomposed into
+the individual interaction types listed above.</p>
+</div>
+</section>
+<section id="momentum-dependent-interactions-long-range-interactions">
+<h3>Momentum-dependent interactions (long-range interactions)<a class="headerlink" href="#momentum-dependent-interactions-long-range-interactions" title="Link to this heading">¶</a></h3>
+<p>Interactions are specified in Wannier90-format input files.
+Each line has the format <code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">ry</span> <span class="pre">rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">Re</span> <span class="pre">Im</span></code>,
+where <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code> is a real-space lattice vector.</p>
+<p><strong>On-site interactions</strong> (only <code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code>):</p>
+<p>After FFT, these become momentum-independent interactions
+<span class="math notranslate nohighlight">\(W(\mathbf{q}) = W_0\)</span>, constant across all q-points.
+All current sample files use this case.</p>
+<p><strong>Long-range interactions</strong> (with non-zero <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>):</p>
+<p>These are automatically transformed into momentum-dependent
+interactions via FFT:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{-i\mathbf{q}\cdot\mathbf{r}}\]</div>
+<p>For example, to include nearest-neighbor Coulomb interactions,
+add entries with lattice vectors <code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code>, <code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code>, etc.
+to the interaction file.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>There is no built-in facility to automatically discretize a
+continuous <span class="math notranslate nohighlight">\(1/r\)</span> Coulomb potential. Users must explicitly
+specify the interaction value at each lattice point in the input file.</p>
+</div>
+</section>
+<section id="spin-charge-channel-decomposition-constraint">
+<h3>Spin-charge channel decomposition constraint<a class="headerlink" href="#spin-charge-channel-decomposition-constraint" title="Link to this heading">¶</a></h3>
+<p>The FLEX solver decomposes the interaction tensor into spin and charge
+channels for the self-energy calculation. This decomposition reduces
+the 4-body interaction tensor
+<span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}\)</span>
+to a 2-body contracted form <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span>.</p>
+<p>Specifically, same-spin and cross-spin components are separated:</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
+<span class="eqno">()<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
+U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
+<p>where <span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span> is the same-spin interaction and
+<span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span> is the cross-spin interaction.</p>
+<p>This contraction is exact for <strong>density-density type interactions</strong>.
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, and <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+are all density-density type and are handled correctly.
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are also properly treated within the
+standard Kanamori parameterization.</p>
+</section>
+<section id="spin-degrees-of-freedom-spin-free-mode">
+<h3>Spin degrees of freedom (spin-free mode)<a class="headerlink" href="#spin-degrees-of-freedom-spin-free-mode" title="Link to this heading">¶</a></h3>
+<p>The FLEX solver operates in <strong>spin-free mode</strong> by default.
+This mode assumes SU(2) spin symmetry to reduce computational cost.</p>
+<p>In spin-free mode:</p>
+<ul class="simple">
+<li><p>Green’s functions are represented in orbital space only
+(shape: <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">norb,</span> <span class="pre">norb)</span></code>).</p></li>
+<li><p>Susceptibilities and effective interactions are internally inflated to
+spin-orbital space (<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">×</span> <span class="pre">ns</span></code>) for computation.</p></li>
+<li><p>After self-energy computation, the properties guaranteed by SU(2) symmetry
+— <span class="math notranslate nohighlight">\(\Sigma_{\uparrow\uparrow} = \Sigma_{\downarrow\downarrow}\)</span> and
+<span class="math notranslate nohighlight">\(\Sigma_{\uparrow\downarrow} = 0\)</span> — are used to contract back
+to orbital space.</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Spin-free mode assumes a paramagnetic state (no magnetic order).
+Describing magnetically ordered phases requires an extension that
+treats spin degrees of freedom explicitly.</p>
+</div>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../../index.html">
+    <img class="logo" src="../../_static/Hwave_logo.png" alt="Logo" />
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about/index.html">1. What is H-wave?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../howtouse/ho-index.html">2. Basic usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfr/uhfr-index.html">3. Coordinate-space UHF (UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../uhfk/uhfk-index.html">4. Wave-number space UHF (UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../rpa/rpa-index.html">5. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">6. Algorithms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">7. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">8. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.0.4</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="../../_sources/flex/tutorial/tu-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

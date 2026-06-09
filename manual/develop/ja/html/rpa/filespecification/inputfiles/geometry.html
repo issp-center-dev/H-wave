@@ -17,7 +17,7 @@
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="検索" href="../../../search.html" />
     <link rel="next" title="相互作用指定ファイル" href="interaction.html" />
-    <link rel="prev" title="5.2.2. RPA用入力ファイル" href="index_inputfiles.html" />
+    <link rel="prev" title="5.3.2. RPA用入力ファイル" href="index_inputfiles.html" />
    
   <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
   
@@ -74,6 +74,14 @@
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 ユニットセル内の軌道の数 <span class="math notranslate nohighlight">\(N_\text{orbit}\)</span> を指定します。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>スピン軌道モード（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>）では、<code class="docutils literal notranslate"><span class="pre">Norbit</span></code> はスピン軌道の総数
+（= 物理軌道数 × 2 = Wannier90 の <code class="docutils literal notranslate"><span class="pre">num_wann</span></code>）を表し、UHFk と同じ規約です。
+トランスファーファイルの軌道インデックスは <code class="docutils literal notranslate"><span class="pre">2*orb</span> <span class="pre">+</span> <span class="pre">spin</span></code> のインターリーブ規約を用います。</p>
+<p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> はスピン軌道数になりました。
+既存の RPA スピン軌道計算の <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> の <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> は2倍にしてください。</p>
+</div>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[vx_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[vy_i]</span></code>, <code class="docutils literal notranslate"><span class="pre">[vz_i]</span></code></p>
 <p><strong>形式 :</strong> float型</p>
@@ -120,10 +128,11 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="../../rpa-index.html">5. 乱雑位相近似 (RPA)</a><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">5.1. チュートリアル</a></li>
-<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">5.2. ファイルフォーマット</a><ul class="current">
-<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">5.2.1. 環境設定ファイル</a></li>
-<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">5.2.2. RPA用入力ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">5.2.3. RPAの出力ファイル</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/sc-index.html">5.2. チュートリアル: Eliashberg方程式ソルバー</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">5.3. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">5.3.1. 環境設定ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">5.3.2. RPA用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">5.3.3. RPAの出力ファイル</a></li>
 </ul>
 </li>
 </ul>
@@ -138,9 +147,9 @@
 <ul>
   <li><a href="../../../index.html">Documentation overview</a><ul>
   <li><a href="../../rpa-index.html"><span class="section-number">5. </span>乱雑位相近似 (RPA)</a><ul>
-  <li><a href="../fi-index.html"><span class="section-number">5.2. </span>ファイルフォーマット</a><ul>
-  <li><a href="index_inputfiles.html"><span class="section-number">5.2.2. </span>RPA用入力ファイル</a><ul>
-      <li>Previous: <a href="index_inputfiles.html" title="前の章へ"><span class="section-number">5.2.2. </span>RPA用入力ファイル</a></li>
+  <li><a href="../fi-index.html"><span class="section-number">5.3. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_inputfiles.html"><span class="section-number">5.3.2. </span>RPA用入力ファイル</a><ul>
+      <li>Previous: <a href="index_inputfiles.html" title="前の章へ"><span class="section-number">5.3.2. </span>RPA用入力ファイル</a></li>
       <li>Next: <a href="interaction.html" title="次の章へ">相互作用指定ファイル</a></li>
   </ul></li>
   </ul></li>

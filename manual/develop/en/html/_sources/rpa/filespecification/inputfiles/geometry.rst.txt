@@ -52,6 +52,17 @@ Parameters
    **Description :**
    This parameter specifies the number of orbitals :math:`N_\text{orbit}` in a unitcell.
 
+   .. note::
+
+      In spin-orbital mode (``enable_spin_orbital = true``), ``Norbit`` is the
+      **spin-orbital count** (= 2 × the number of physical orbitals = Wannier90
+      ``num_wann``), the same convention as UHFk.
+      The transfer-file orbital index uses the interleaved convention ``2*orb + spin``.
+
+      **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
+      spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
+      ``Norbit``.
+
 -  ``[vx_i]``, ``[vy_i]``, ``[vz_i]``
 
    **Type :**

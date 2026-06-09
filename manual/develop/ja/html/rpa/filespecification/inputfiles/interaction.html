@@ -16,7 +16,7 @@
     <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="検索" href="../../../search.html" />
-    <link rel="next" title="5.2.3. RPAの出力ファイル" href="../outputfiles/index_outputfiles.html" />
+    <link rel="next" title="5.3.3. RPAの出力ファイル" href="../outputfiles/index_outputfiles.html" />
     <link rel="prev" title="幾何情報指定ファイル" href="geometry.html" />
    
   <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
@@ -135,12 +135,24 @@
 <section id="id4">
 <h2>使用ルール<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
 <p>本ファイルを使用するにあたってのルールは以下の通りです。</p>
-<ul class="simple">
+<ul>
 <li><p>行数固定で読み込みを行うため、ヘッダの省略はできません。</p></li>
 <li><p>係数行列のうち、省略された要素は 0と仮定します。</p></li>
 <li><p>並進ベクトルは全て <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> 内に収まるとします。
 <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, <code class="docutils literal notranslate"><span class="pre">r_z</span></code> の範囲が <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> のx,y,z軸のサイズを超える場合はエラーで終了します。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">true</span></code> の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 <span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span> の値をとります。1〜 <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> が spin up、<span class="math notranslate nohighlight">\(N_\text{orbital}+1\)</span> 〜 <span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span> が spin down に対応します。 <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">false</span></code> の場合は、インデックスの範囲が 1〜 <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> の行のみ考慮します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">true</span></code> の場合、Transfer項の軌道インデックスは
+インターリーブ規約で解釈され、1〜 <span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span> の値をとります。
+複合インデックスは <span class="math notranslate nohighlight">\(2\alpha + s + 1`（1始まり）であり、
+:math:\)</span>alpha = 0, ldots, <a href="#id5"><span class="problematic" id="id6">N_</span></a>text{orbital}-1` が物理軌道インデックス、
+<span class="math notranslate nohighlight">\(s \in \{0, 1\}\)</span> がスピンインデックスです。
+<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">false</span></code> の場合は、インデックスの範囲が
+1〜 <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> の行のみ考慮します。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> はスピン軌道数（= 物理軌道数 × 2）
+になりました。既存の RPA スピン軌道計算の <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> の <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> は2倍にしてください。</p>
+</div>
+</li>
 </ul>
 </section>
 </section>
@@ -174,10 +186,11 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="../../rpa-index.html">5. 乱雑位相近似 (RPA)</a><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="../../tutorial/tu-index.html">5.1. チュートリアル</a></li>
-<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">5.2. ファイルフォーマット</a><ul class="current">
-<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">5.2.1. 環境設定ファイル</a></li>
-<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">5.2.2. RPA用入力ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">5.2.3. RPAの出力ファイル</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorial/sc-index.html">5.2. チュートリアル: Eliashberg方程式ソルバー</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="../fi-index.html">5.3. ファイルフォーマット</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="../config/index_config.html">5.3.1. 環境設定ファイル</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="index_inputfiles.html">5.3.2. RPA用入力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../outputfiles/index_outputfiles.html">5.3.3. RPAの出力ファイル</a></li>
 </ul>
 </li>
 </ul>
@@ -192,10 +205,10 @@
 <ul>
   <li><a href="../../../index.html">Documentation overview</a><ul>
   <li><a href="../../rpa-index.html"><span class="section-number">5. </span>乱雑位相近似 (RPA)</a><ul>
-  <li><a href="../fi-index.html"><span class="section-number">5.2. </span>ファイルフォーマット</a><ul>
-  <li><a href="index_inputfiles.html"><span class="section-number">5.2.2. </span>RPA用入力ファイル</a><ul>
+  <li><a href="../fi-index.html"><span class="section-number">5.3. </span>ファイルフォーマット</a><ul>
+  <li><a href="index_inputfiles.html"><span class="section-number">5.3.2. </span>RPA用入力ファイル</a><ul>
       <li>Previous: <a href="geometry.html" title="前の章へ">幾何情報指定ファイル</a></li>
-      <li>Next: <a href="../outputfiles/index_outputfiles.html" title="次の章へ"><span class="section-number">5.2.3. </span>RPAの出力ファイル</a></li>
+      <li>Next: <a href="../outputfiles/index_outputfiles.html" title="次の章へ"><span class="section-number">5.3.3. </span>RPAの出力ファイル</a></li>
   </ul></li>
   </ul></li>
   </ul></li>

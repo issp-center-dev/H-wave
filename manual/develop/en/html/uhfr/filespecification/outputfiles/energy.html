@@ -43,8 +43,11 @@ An example of the output is presented below.</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Energy_total = -5.88984624257707
 Energy_band = -0.9265413257740396
 Energy_interall = -4.963304916803031
+FreeEnergy_total = -5.91234017896271
+FreeEnergy_band = -0.9490352621596976
 NCond = 8.000000000000007
 Sz = 3.2822430107160017e-07
+ChemicalPotential = 0.123456789
 </pre></div>
 </div>
 <section id="file-format">
@@ -53,8 +56,11 @@ Sz = 3.2822430107160017e-07
 <li><p>Energy_total = <code class="docutils literal notranslate"><span class="pre">[energy_total]</span></code></p></li>
 <li><p>Energy_band = <code class="docutils literal notranslate"><span class="pre">[energy_band]</span></code></p></li>
 <li><p>Energy_interall = <code class="docutils literal notranslate"><span class="pre">[energy_interall]</span></code></p></li>
+<li><p>FreeEnergy_total = <code class="docutils literal notranslate"><span class="pre">[free_energy_total]</span></code></p></li>
+<li><p>FreeEnergy_band = <code class="docutils literal notranslate"><span class="pre">[free_energy_band]</span></code></p></li>
 <li><p>NCond = <code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p></li>
 <li><p>Sz = <code class="docutils literal notranslate"><span class="pre">[sz]</span></code></p></li>
+<li><p>ChemicalPotential = <code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p></li>
 </ul>
 </section>
 <section id="parameters">
@@ -79,6 +85,23 @@ Float</p>
 <p><strong>Description :</strong>
 The value of the energy of the interaction terms.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[free_energy_total]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The Helmholtz free energy <span class="math notranslate nohighlight">\(F = E - TS\)</span>, i.e. the quantity minimized
+by the finite-temperature self-consistent loop. At <span class="math notranslate nohighlight">\(T=0\)</span> it coincides
+with the internal energy <code class="docutils literal notranslate"><span class="pre">[energy_total]</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[free_energy_band]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The band contribution to the free energy,
+<span class="math notranslate nohighlight">\(\mu N + \Omega_0\)</span> with
+<span class="math notranslate nohighlight">\(\Omega_0 = -T\sum_n \ln(1+e^{-(\varepsilon_n-\mu)/T})\)</span>.
+At <span class="math notranslate nohighlight">\(T=0\)</span> it coincides with <code class="docutils literal notranslate"><span class="pre">[energy_band]</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p>
 <p><strong>Type :</strong>
 Float</p>
@@ -92,6 +115,18 @@ Float</p>
 <p><strong>Description :</strong>
 The expectation value of the <span class="math notranslate nohighlight">\(z\)</span> component of the total spin,
 <span class="math notranslate nohighlight">\(S_z = \sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2\)</span> .</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The chemical potential (Fermi level). At <span class="math notranslate nohighlight">\(T=0\)</span> it is taken as the
+midpoint of the HOMO-LUMO gap (the <span class="math notranslate nohighlight">\(T\to 0^+\)</span> limit of the
+finite-temperature <span class="math notranslate nohighlight">\(\mu\)</span>). Note that for an insulator the particle
+number is independent of <span class="math notranslate nohighlight">\(\mu\)</span> inside the gap, so the
+finite-temperature <span class="math notranslate nohighlight">\(\mu\)</span> is not uniquely fixed within the gap.
+When several blocks (e.g. spin up/down) exist, the value is written per
+block as <code class="docutils literal notranslate"><span class="pre">ChemicalPotential_{block}</span></code>.</p>
 </li>
 </ul>
 </section>

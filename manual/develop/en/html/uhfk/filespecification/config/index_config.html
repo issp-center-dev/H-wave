@@ -103,7 +103,7 @@ If <code class="docutils literal notranslate"><span class="pre">true</span></cod
 Boolean</p>
 <p><strong>Description :</strong>
 This parameter specifies whether to allow spin-orbital interaction.
-If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index <span class="math notranslate nohighlight">\(\alpha\)</span> and the spin index <span class="math notranslate nohighlight">\(s\)</span> by <span class="math notranslate nohighlight">\(\alpha + N_\text{orb} \cdot s\)</span>.</p>
+If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index <span class="math notranslate nohighlight">\(\alpha\)</span> (from 0 to <span class="math notranslate nohighlight">\(N_\text{orb}-1\)</span>) and the spin index <span class="math notranslate nohighlight">\(s\)</span> (0 for up, 1 for down) by <span class="math notranslate nohighlight">\(2\alpha + s\)</span>, i.e. the spin is the inner (interleaved) index.</p>
 </li>
 </ul>
 </section>
