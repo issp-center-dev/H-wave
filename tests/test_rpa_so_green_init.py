@@ -308,5 +308,101 @@ class TestRPASOGreenInitSublatticeFold(unittest.TestCase):
         self.assertAlmostEqual(u.imag, f.imag, places=10)
 
 
+class TestRPAGreenInit5DSublattice(unittest.TestCase):
+    """UHFk's ``_save_green`` writes the deflated pre-fold green as 5D
+    ``(cellvol, ns, norb_orig, ns, norb_orig)``. For a sublattice system,
+    ``_read_green`` must:
+      1. Collapse 5D -> 3D (the same path as the non-fold 5D tests), then
+      2. Pass through ``_reshape_green`` to fold the sublattice in.
+
+    This test closes the one uncovered combination: 5D deflated green fed as
+    ``green_init`` AND a SubShape fold applied.  We use the two-orbital, non-SO
+    fixtures (norb_orig=2, ns=2) that are already used by TestRPAGreenInit5DLayout
+    (geom_2orb / transfer_nonso_2orb / coulombintra_2orb), so the 5D shape is
+    ``(cellvol=8, 2, 2, 2, 2)``.  A translation-invariant green must produce
+    fold-invariant q=0 chiq (unfolded SubShape=[1,1,1] vs folded SubShape=[2,1,1]).
+    """
+
+    NONSO5D_FOLD_NAME = "green_init_5d_nonso_fold2_fixture.npz"
+
+    def tearDown(self):
+        p = os.path.join(INPUT_DIR, self.NONSO5D_FOLD_NAME)
+        if os.path.exists(p):
+            os.remove(p)
+
+    def _write_fixture(self):
+        """Build a translation-invariant 5D non-SO green.
+
+        Shape: (CELLVOL, ns=2, norb_orig=2, ns=2, norb_orig=2).
+        Built from a site-uniform spin-block 3D green (all sites get the same
+        Hermitian block) then reshaped to 5D.  Because every site carries the
+        same value the system is translation-invariant, so the SubShape fold
+        must not change the physical observables.
+        """
+        ns, norb_orig = 2, NORB_PHYS  # ns=2, norb_orig=2
+        # Use the same site-uniform construction as _spin_block_green but with
+        # identical values at each site so the green is truly site-independent.
+        nd0 = ns * norb_orig  # = 4
+        blk = np.array(
+            [[0.8, 0.05, 0.0, 0.0],
+             [0.05, 0.6, 0.0, 0.0],
+             [0.0, 0.0, 0.8, 0.05],
+             [0.0, 0.0, 0.05, 0.6]],
+            dtype=np.complex128,
+        )
+        # Same block at every site -> translation invariant
+        green3d = np.tile(blk, (CELLVOL, 1, 1))   # (cellvol, 4, 4)
+        # Reshape to 5D: (cellvol, ns, norb_orig, ns, norb_orig)
+        green5d = green3d.reshape(CELLVOL, ns, norb_orig, ns, norb_orig)
+        np.savez(os.path.join(INPUT_DIR, self.NONSO5D_FOLD_NAME), green=green5d)
+        return green5d
+
+    @staticmethod
+    def _uniform_q0_per_site(chiq, n_sites):
+        """Sum diagonal-diagonal chiq elements at q=0 and normalise by site count."""
+        no = chiq.shape[2]
+        s = 0j
+        for a in range(no):
+            for b in range(no):
+                s += chiq[:, 0, a, a, b, b].sum()
+        return s / n_sites
+
+    def test_5d_nonso_fold_invariance(self):
+        """5D deflated non-SO green_init + SubShape=[2,1,1] fold must give the same
+        q=0 chiq per physical site as the unfolded (SubShape=[1,1,1]) run.
+
+        Path exercised:
+            _read_green: 5D collapse -> shape-validate -> no SO remap -> _reshape_green
+        """
+        self._write_fixture()
+        inter = {
+            "Geometry": "geom_2orb.dat",
+            "Transfer": "transfer_nonso_2orb.dat",
+            "CoulombIntra": "coulombintra_2orb.dat",
+        }
+        _su, g_unfold = _run(
+            {"enable_spin_orbital": False},
+            inter,
+            green_init_file=self.NONSO5D_FOLD_NAME,
+            subshape=(1, 1, 1),
+        )
+        _sf, g_fold = _run(
+            {"enable_spin_orbital": False},
+            inter,
+            green_init_file=self.NONSO5D_FOLD_NAME,
+            subshape=(2, 1, 1),
+        )
+        u = self._uniform_q0_per_site(g_unfold["chiq"], 1)
+        f = self._uniform_q0_per_site(g_fold["chiq"], 2)
+        self.assertAlmostEqual(
+            u.real, f.real, places=10,
+            msg="5D non-SO fold: chiq real part differs between unfolded and folded",
+        )
+        self.assertAlmostEqual(
+            u.imag, f.imag, places=10,
+            msg="5D non-SO fold: chiq imag part differs between unfolded and folded",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,11 +8,15 @@ density of states from Hartree-Fock calculations.
 from __future__ import annotations
 
 import itertools
+import logging
 import os
+import re
 
 import numpy as np
 
 import hwave
+
+logger = logging.getLogger("hwave.dos")
 
 
 class DoS:
@@ -126,11 +130,73 @@ def __read_geom(file_name="./dir-model/zvo_geom.dat"):
     return uvec
 
 
+def read_chemical_potential(file_name: str) -> float | None:
+    """Parse the chemical potential from an ``energy.dat`` file.
+
+    The file is written by the UHFk solver.  Two formats are recognised:
+
+    * **Single mu-group** (most common): a line ``ChemicalPotential = <value>``
+      is present.  The value is returned directly.
+    * **Multiple mu-groups**: only ``ChemicalPotential_<g> = <value>`` lines
+      are present (one per group).  The value for the *lowest* group number
+      present is returned and a warning is logged because the DoS energy axis
+      is ambiguous when multiple Fermi levels exist.
+    * **Absent**: no ``ChemicalPotential`` line at all → ``None`` is returned.
+
+    Parameters
+    ----------
+    file_name : str
+        Path to the ``energy.dat`` file produced by UHFk.
+
+    Returns
+    -------
+    float or None
+        Chemical potential value, or ``None`` if not found or file is missing.
+    """
+    try:
+        with open(file_name, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+
+    # Compiled patterns: exact match first, then per-group match.
+    pat_single = re.compile(r"^\s*ChemicalPotential\s*=\s*([-+0-9eE.]+)\s*$")
+    pat_group = re.compile(r"^\s*ChemicalPotential_(\d+)\s*=\s*([-+0-9eE.]+)\s*$")
+
+    group_vals: dict[int, float] = {}
+    for line in lines:
+        m = pat_single.match(line)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                pass
+        m = pat_group.match(line)
+        if m:
+            try:
+                group_vals[int(m.group(1))] = float(m.group(2))
+            except ValueError:
+                pass
+
+    if group_vals:
+        g0 = min(group_vals)
+        logger.warning(
+            "read_chemical_potential: only per-group ChemicalPotential entries "
+            "found in '%s'; using the lowest group %d (mu=%.6g) for the DoS "
+            "energy axis. The result is ambiguous for multi-group calculations.",
+            file_name, g0, group_vals[g0],
+        )
+        return group_vals[g0]
+
+    return None
+
+
 def calc_dos(
     input_dict: dict,
     ene_window: list | None = None,
     ene_num: int = 101,
     verbose: bool = False,
+    mu: float | None = None,
 ) -> DoS:
     """Calculate density of states.
 
@@ -140,19 +206,30 @@ def calc_dos(
     single ``<eigen>.npz`` with an ``eigenvalue`` array of shape
     ``(nk_sub, nband)``) and uses the tetrahedron method over the k-grid. It is
     UHFk-only: the per-block ``<block>_<eigen>.npz`` files written by UHFr are
-    not consumed here. The energy axis is the raw eigenvalue scale (the chemical
-    potential is not subtracted).
+    not consumed here.
+
+    By default (``mu=None``) the energy axis uses the raw eigenvalue scale.
+    When ``mu`` is given, eigenvalues are shifted to ``E - mu`` so that the
+    Fermi level appears at zero (standard condensed-matter convention).  Use
+    :func:`read_chemical_potential` to obtain ``mu`` from the ``energy.dat``
+    file written by the UHFk solver.
 
     Parameters
     ----------
     input_dict : dict
         Input parameters dictionary
     ene_window : list, optional
-        Energy window [min, max] for DoS calculation
+        Energy window [min, max] for DoS calculation.  Applied *after* the
+        ``mu`` shift when ``mu`` is given.
     ene_num : int, optional
         Number of energy points
     verbose : bool, optional
         If True, print additional output
+    mu : float or None, optional
+        Chemical potential to subtract from eigenvalues.  When ``None``
+        (default), eigenvalues are used as-is (backward-compatible behavior).
+        When a float is given, the energy axis is shifted to ``E - mu`` so
+        that the Fermi level sits at zero.
 
     Returns
     -------
@@ -179,6 +256,10 @@ def calc_dos(
         print("Reading eigenvalues from file: ", filename)
     data = np.load(os.path.join(filename))
     eigenvalues = data["eigenvalue"]
+    if mu is not None:
+        if verbose:
+            print("Subtracting chemical potential mu = ", mu, " from eigenvalues")
+        eigenvalues = eigenvalues - mu
     Lx, Ly, Lz = input_dict["mode"]["param"]["CellShape"]
     Lxsub, Lysub, Lzsub = input_dict["mode"]["param"].get("SubShape", (Lx,Ly,Lz))
     norb = eigenvalues.shape[1]
@@ -244,6 +325,18 @@ If omitted, [ene_min - 0.2, ene_max + 0.2]""",
     parser.add_argument("-p", "--plot", type=str, default="", help="plot DOS to file")
     parser.add_argument("-q", "--quiet", action="store_true", help="calculate quietly")
     parser.add_argument(
+        "--subtract-mu",
+        action="store_true",
+        default=False,
+        help=(
+            "Subtract the chemical potential μ from eigenvalues so that the "
+            "Fermi level appears at E=0.  μ is read from the 'energy.dat' file "
+            "in the output directory (written by the UHFk solver).  "
+            "If no ChemicalPotential line is found, a warning is emitted and the "
+            "raw eigenvalue axis is used."
+        ),
+    )
+    parser.add_argument(
         "-v", "--version", action="version", version=f"hwave_dos v{hwave.__version__}"
     )
     args = parser.parse_args()
@@ -257,11 +350,29 @@ If omitted, [ene_min - 0.2, ene_max + 0.2]""",
     else:
         raise ValueError("Input file does not exist")
 
+    mu = None
+    if args.subtract_mu:
+        output_dir_for_mu = input_dict["file"]["output"]["path_to_output"]
+        energy_file = os.path.join(
+            output_dir_for_mu,
+            input_dict["file"]["output"].get("energy", "energy.dat"),
+        )
+        mu = read_chemical_potential(energy_file)
+        if mu is None:
+            logger.warning(
+                "--subtract-mu requested but no ChemicalPotential was found in "
+                "'%s'; proceeding with the raw eigenvalue axis (Fermi level NOT "
+                "at 0).", energy_file,
+            )
+        elif verbose:
+            print("--subtract-mu: using mu = {} from '{}'".format(mu, energy_file))
+
     dos = calc_dos(
         input_dict,
         ene_window=args.ene_window,
         ene_num=args.ene_num,
         verbose=verbose,
+        mu=mu,
     )
     output_dir = input_dict["file"]["output"]["path_to_output"]
     if args.output != "":
