@@ -1296,18 +1296,6 @@ class RPA:
         """
         logger.debug(">>> RPA._read_trans_mod")
 
-        if self.ham_info.enable_spin_orbital and self.norb_orig > 1:
-            # UHFk writes SO trans_mod in interleaved (2*orb+spin) order, but
-            # _read_trans_mod/_reshape_green consume it as spin-block. They differ
-            # for >1 physical orbital, so reject rather than silently mix orbitals.
-            # (norb_phys=1 is harmless: interleaved == spin-block.) Follow-up:
-            # remap interleaved->spin-block like _make_ham_trans does for Transfer.
-            raise NotImplementedError(
-                "spin-orbital trans_mod with more than one physical orbital is "
-                "not yet supported (interleaved vs spin-block index convention); "
-                "norb_phys=1 spin-orbital and non-spin-orbital trans_mod are "
-                "supported.")
-
         try:
             logger.info("read trans_mod from {}".format(file_name))
             data = np.load(file_name)
@@ -1316,6 +1304,19 @@ class RPA:
         except Exception as e:
             logger.error("read_trans_mod failed: {}".format(e))
             sys.exit(1)
+
+        if self.ham_info.enable_spin_orbital:
+            # UHFk writes the SO trans_mod with the orbital axis in INTERLEAVED
+            # order (index = 2*orb + spin), matching the SO Transfer file, but
+            # _reshape_green / the (ns, norb) reshapes downstream consume H0 in
+            # SPIN-BLOCK order (index = spin*norb_phys + orb). Reorder both
+            # orbital axes interleaved->spin-block, mirroring _make_ham_trans's
+            # remap of the Transfer file. For norb_phys=1 this is the identity,
+            # so non-multi-orbital SO and non-SO paths are unaffected.
+            norb_phys = self.norb_orig            # pre-fold physical orbital count
+            nd0 = tab_r.shape[-1]                 # = 2 * norb_phys
+            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
+            tab_r = tab_r[:, inv, :][:, :, inv]   # interleaved -> spin-block
 
         if self.lattice.has_sublattice:
             # use reshape green to convert layout

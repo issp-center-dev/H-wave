@@ -136,7 +136,13 @@ class TestTransModSublatticeSupported(unittest.TestCase):
         self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
 
 
-class TestTransModSOMultiOrbitalGuard(unittest.TestCase):
+class TestTransModSOMultiOrbitalSupported(unittest.TestCase):
+    """SO multi-orbital trans_mod is now SUPPORTED: the loaded array is remapped
+    interleaved->spin-block before reshape/FFT (mirroring _make_ham_trans's
+    Transfer remap), instead of fail-fasting with NotImplementedError.
+    See tests/test_rpa_so_trans_mod.py for the correctness/fold-invariance gate.
+    """
+
     def _solver(self, subshape):
         import hwave.qlmsio.read_input_k as read_input_k
         info_mode = {
@@ -155,10 +161,22 @@ class TestTransModSOMultiOrbitalGuard(unittest.TestCase):
         ham = read_io.get_param("ham")
         return solver_rpa.RPA(ham, {}, info_mode)
 
-    def test_so_multiorbital_trans_mod_is_rejected(self):
+    def test_so_multiorbital_trans_mod_reads_right_shape(self):
+        import tempfile
         solver = self._solver(subshape=(1, 1, 1))
-        with self.assertRaises(NotImplementedError):
-            solver._read_trans_mod("tests/rpa/input/whatever.npz")
+        # geom_so_2orb.dat: SO count 4 -> norb_orig (physical) = 2, nd0 = 4,
+        # cellvol = 8. Interleaved Hermitian real-space trans_mod.
+        norb_phys, cellvol = 2, 8
+        nd0 = 2 * norb_phys
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((cellvol, nd0, nd0))
+        tab = (a + a.transpose(0, 2, 1)) * 0.5  # symmetric (real Hermitian)
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=tab)
+            tab_k = solver._read_trans_mod(fn)  # must NOT raise
+        # unfolded SO: nvol = 8, nd = ns*norb = 2*2 = 4
+        self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
 
 
 if __name__ == "__main__":
