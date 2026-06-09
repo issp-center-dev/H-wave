@@ -1787,34 +1787,35 @@ class UHFk(solver_base):
 
             return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
 
-        # Collect all eigenvalues across blocks with block labels
+        # Collect all eigenvalues across blocks (concatenated in block order)
         all_ww = []
         all_ksq = []
-        all_block_idx = []  # which block each eigenvalue belongs to
-        all_local_idx = []  # flat index within that block's w array
         for b, w in enumerate(ws_list):
             k_sq = _ksq_table(w.shape[1]).flatten()
             ww = w.flatten()
             all_ww.append(ww)
             all_ksq.append(k_sq)
-            all_block_idx.append(np.full(ww.size, b, dtype=int))
-            all_local_idx.append(np.arange(ww.size))
 
         all_ww = np.concatenate(all_ww)
         all_ksq = np.concatenate(all_ksq)
-        all_block_idx = np.concatenate(all_block_idx)
-        all_local_idx = np.concatenate(all_local_idx)
 
         # Sort globally and pick lowest ncond states
         ev_idx = np.lexsort((all_ksq, all_ww))[0:ncond]
 
-        # Distribute back to per-block arrays
-        dists = [np.zeros(w.size) for w in ws_list]
-        for idx in ev_idx:
-            b = all_block_idx[idx]
-            li = all_local_idx[idx]
-            dists[b][li] = 1.0
-        dists = [d.reshape(w.shape) for d, w in zip(dists, ws_list)]
+        # Distribute back to per-block arrays.
+        # The concatenated index space maps to (block b, local li) by the block
+        # offsets used during concatenation: a global index in [off_b, off_b+size_b)
+        # belongs to block b at local index (idx - off_b). Occupied states are
+        # distinct, so a single fancy-index assignment + split is exactly the
+        # per-element scatter loop, vectorized.
+        occ = np.zeros(all_ww.size)
+        occ[ev_idx] = 1.0
+        block_sizes = [w.size for w in ws_list]
+        split_points = np.cumsum(block_sizes)[:-1]
+        dists = [
+            d.reshape(w.shape)
+            for d, w in zip(np.split(occ, split_points), ws_list)
+        ]
 
         # Chemical potential (Fermi level) at T=0: midpoint of the HOMO-LUMO
         # gap. This is the T -> 0+ limit of the finite-temperature mu equation.
