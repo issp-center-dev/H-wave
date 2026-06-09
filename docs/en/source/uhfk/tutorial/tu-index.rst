@@ -162,3 +162,9 @@ The ``--plot`` option plots the DOS. ``matplotlib`` is required::
 
     $ hwave_dos input.toml --plot dos.png
 
+The ``--subtract-mu`` option shifts the DoS energy axis to :math:`E-\mu` so that the Fermi level sits at 0.
+The chemical potential :math:`\mu` is read from the ``ChemicalPotential`` line of ``energy.dat`` in the output directory (written by the UHFk solver).
+If no ``ChemicalPotential`` entry is found, a warning is emitted and the raw eigenvalue axis is used::
+
+    $ hwave_dos input.toml --subtract-mu
+

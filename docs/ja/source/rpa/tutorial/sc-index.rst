@@ -150,9 +150,13 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   ``"calc"`` は内部で計算します。
 - ``pairing_type``: ``"singlet"`` または ``"triplet"``。
 - ``init_gap``: 反復法の初期ギャップ対称性。
-  ``"cos"`` (:math:`\cos k_x + \cos k_y`)、
-  ``"dx2y2"`` (:math:`\cos k_x - \cos k_y`)、
+  ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`)、
+  ``"d_x2y2"`` (:math:`\cos k_x - \cos k_y`)、
   ``"random"`` などが利用可能です。
+  有効な形状因子の一覧は
+  ``"cos"`` 、 ``"s"`` 、 ``"s_ext"`` 、 ``"s_ext_2d"`` 、 ``"d_x2y2"`` 、
+  ``"d_xy"`` 、 ``"d_xz"`` 、 ``"d_yz"`` 、 ``"d_z2"`` 、
+  ``"p_x"`` 、 ``"p_y"`` 、 ``"p_z"`` 、 ``"random"`` です。
 - ``max_iter``: 自己無撞着反復の最大回数。
 - ``alpha``: 混合パラメータ（0: 混合なし、1: 古い解を完全保持）。
 - ``convergence_tol``: ギャップ関数の収束条件。

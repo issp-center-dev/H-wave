@@ -46,7 +46,7 @@ TOML形式
 
   **形式 :** bool型 (デフォルトは false)
 
-  **説明 :** スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 :math:`\alpha` (0 から :math:`N_\text{orb}-1`) とスピン :math:`s` (0: up, 1: down) に対して :math:`2\alpha + s` となります（スピンを内側に並べたインターリーブ順）。
+  **説明 :** スピン軌道相互作用を有効にします。Transfer項の軌道のインデックスはスピン自由度を含む形に解釈されます。インデックスの対応は、軌道 :math:`\alpha` (0 から :math:`N_\text{orb}-1`) とスピン :math:`s` (0: up, 1: down) に対して :math:`2\alpha + s` となります（スピンを内側に並べたインターリーブ順）。相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）もスピン軌道モードで利用でき、仮想スピン分解を介して取り扱われます。
 
 
 ``mode.param`` セクション
@@ -228,7 +228,7 @@ TOML形式
 
   **説明 :** 幾何情報のファイル名を指定します。
 
-- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``
+- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Coulomb``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``
 
   **形式 :** str型
 

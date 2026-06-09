@@ -129,4 +129,6 @@
 
 -  ``mode.enable_spin_orbital`` が ``true`` の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 :math:`2 N_\text{orbital}` の値をとります。スピンを内側に並べたインターリーブ順で、奇数インデックス (1, 3, 5, …) が各軌道の spin up、偶数インデックス (2, 4, 6, …) が spin down に対応します（軌道 :math:`\alpha` (0 起点) とスピン :math:`s` (0: up, 1: down) に対しファイル上のインデックス（1 起点）は :math:`2\alpha + s + 1`）。 ``mode.enable_spin_orbital`` が ``false`` の場合は、インデックスの範囲が 1〜 :math:`N_\text{orbital}` の行のみ考慮します。
 
+-  スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された ``2α+s+1`` のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜 :math:`N_\text{orbital}/2`）を用います。
+
 .. raw:: latex

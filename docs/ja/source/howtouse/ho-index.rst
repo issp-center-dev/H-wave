@@ -12,7 +12,7 @@
     - requests モジュール
     - tomli モジュール
 
-    なお、H-waveのUHFkとRPAモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
+    なお、H-waveのUHFk、RPA、FLEXモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
 
 - Official Page
 
@@ -77,6 +77,8 @@
       |   |-- hwave/
       |       |-- __init__.py
       |       |-- qlms.py
+      |       |-- dos.py
+      |       |-- sc.py
       |       |-- qlmsio/
       |       |   |-- __init__.py
       |       |   |-- read_input.py
@@ -88,6 +90,7 @@
       |           |-- uhfr.py
       |           |-- uhfk.py
       |           |-- rpa.py
+      |           |-- flex.py
       |           |-- perf.py
       |-- tests/
        
@@ -116,4 +119,7 @@
 
      計算終了後、計算結果が出力ディレクトリに出力されます。
      出力ファイルの詳細については、ファイルフォーマットの章を参照してください。
+
+     また、本パッケージには後処理ツール ``hwave_dos`` （状態密度）および
+     ``hwave_sc`` （Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。
 
