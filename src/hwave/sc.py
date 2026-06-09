@@ -1283,26 +1283,50 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
 
     is_simple = (Vs_q.ndim == 5)
 
+    # General (4-index) mode: the two contractions
+    #   G2Sigma[i,l,s] = sum_j G2_pre[i,l,j,s] * sigma_flat[j,s]
+    #   sigma_r[i,l,s] = sum_j V_r_flat[i,j,l,s] * F_r_flat[j,s]
+    # are, per spatial point s, a small dense matvec over j (size norb*norb).
+    # numpy.einsum does NOT lower these to batched BLAS GEMM, so we precompute
+    # the operator tensors ONCE in GEMM-friendly (nvol, M=il, K=j) layout and
+    # apply them with np.matmul (s, and the column axis z for matmat, as
+    # leading batch axes). This is NOT bit-identical to the einsum (GEMM
+    # changes the reduction order) but matches it to ~1e-13.
     if not is_simple:
+        # G2_pre is (i, l, j, s); we need (s, (i,l), j).
+        G2_gemm = G2_pre.transpose(3, 0, 1, 2).reshape(
+            nvol, norb * norb, norb * norb)
+        # V_r_flat is (i, j, l, s); the GEMM M-axis (i,l) needs i (axis0) and
+        # l (axis2) adjacent, so transpose to (s, i, l, j) -> (s, (i,l), j).
         V_r_flat = V_r.reshape(norb, norb * norb, norb, nvol)
+        V_r_gemm = V_r_flat.transpose(3, 0, 2, 1).reshape(
+            nvol, norb * norb, norb * norb)
 
     def matvec(v):
         sigma = v.reshape(norb, norb, Nx, Ny, Nz)
         sigma_flat = sigma.reshape(norb * norb, nvol)
 
-        # G2Sigma contraction
-        G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
-            norb, norb, Nx, Ny, Nz)
-
         if is_simple:
+            G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
             G2Sigma_r = ifftn(G2Sigma, axes=(-3, -2, -1))
             Sigma_r = V_r * G2Sigma_r
             sigma_new = fftn(Sigma_r, axes=(-3, -2, -1))
         else:
+            # G2Sigma[i,l,s] = sum_j G2_gemm[s,(i,l),j] * sigma_flat[j,s]
+            # sigma_flat (j, s) -> (s, j, 1); matmul -> (s, (i,l), 1).
+            sig = np.moveaxis(sigma_flat, 1, 0)[..., np.newaxis]
+            G2Sigma = (G2_gemm @ sig)[..., 0]            # (s, (i,l))
+            # Back to the einsum's (i, l, s) order, then to spatial grid.
+            G2Sigma = G2Sigma.reshape(nvol, norb, norb).transpose(
+                1, 2, 0).reshape(norb, norb, Nx, Ny, Nz)
+
             F_r = ifftn(G2Sigma, axes=(-3, -2, -1))
             F_r_flat = F_r.reshape(norb * norb, nvol)
-            sigma_r = np.einsum('ijls,js->ils', V_r_flat, F_r_flat).reshape(
-                norb, norb, Nx, Ny, Nz)
+            f = np.moveaxis(F_r_flat, 1, 0)[..., np.newaxis]
+            sigma_r = (V_r_gemm @ f)[..., 0]             # (s, (i,l))
+            sigma_r = sigma_r.reshape(nvol, norb, norb).transpose(
+                1, 2, 0).reshape(norb, norb, Nx, Ny, Nz)
             sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
 
         # Keep complex: for complex hopping (e.g. spin-orbit coupling),
@@ -1324,19 +1348,26 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
         sigma = B.reshape(norb, norb, Nx, Ny, Nz, k)
         sigma_flat = sigma.reshape(norb * norb, nvol, k)
 
-        # G2Sigma contraction (z = column/batch axis, contracted independently)
-        G2Sigma = np.einsum('iljs,jsz->ilsz', G2_pre, sigma_flat).reshape(
-            norb, norb, Nx, Ny, Nz, k)
-
         if is_simple:
+            G2Sigma = np.einsum('iljs,jsz->ilsz', G2_pre, sigma_flat).reshape(
+                norb, norb, Nx, Ny, Nz, k)
             G2Sigma_r = ifftn(G2Sigma, axes=(2, 3, 4))
             Sigma_r = V_r[..., np.newaxis] * G2Sigma_r
             sigma_new = fftn(Sigma_r, axes=(2, 3, 4))
         else:
+            # The column axis z is an extra trailing dim carried through the
+            # GEMM: sigma_flat (j, s, k) -> (s, j, k); matmul -> (s, (i,l), k).
+            sig = np.moveaxis(sigma_flat, 1, 0)          # (nvol, norb*norb, k)
+            G2Sigma = G2_gemm @ sig                      # (s, (i,l), k)
+            G2Sigma = G2Sigma.reshape(nvol, norb, norb, k).transpose(
+                1, 2, 0, 3).reshape(norb, norb, Nx, Ny, Nz, k)
+
             F_r = ifftn(G2Sigma, axes=(2, 3, 4))
             F_r_flat = F_r.reshape(norb * norb, nvol, k)
-            sigma_r = np.einsum('ijls,jsz->ilsz', V_r_flat, F_r_flat).reshape(
-                norb, norb, Nx, Ny, Nz, k)
+            f = np.moveaxis(F_r_flat, 1, 0)              # (nvol, norb*norb, k)
+            sigma_r = V_r_gemm @ f                       # (s, (i,l), k)
+            sigma_r = sigma_r.reshape(nvol, norb, norb, k).transpose(
+                1, 2, 0, 3).reshape(norb, norb, Nx, Ny, Nz, k)
             sigma_new = fftn(sigma_r, axes=(2, 3, 4))
 
         return (-sigma_new).reshape(vec_size, k)

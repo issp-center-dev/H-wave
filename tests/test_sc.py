@@ -394,6 +394,70 @@ class TestKernel(unittest.TestCase):
                 np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-12)
 
 
+    def test_general_kernel_matches_einsum_reference(self):
+        """General-mode matmul kernel matches the original einsum contractions.
+
+        The general (4-index) kernel was rewritten from two
+        batched-over-spatial-point einsums ('iljs,js->ils' and 'ijls,js->ils')
+        into batched np.matmul (GEMM). This is NOT bit-identical (GEMM changes
+        the floating-point reduction order) but must match the einsum to ~1e-13,
+        far below the suite's atol=1e-8. This test recomputes the kernel with
+        the ORIGINAL einsums as an explicit reference for both matvec (single
+        column) and matmat (k>1 columns).
+        """
+        norb = 3
+        Nx, Ny, Nz = 4, 3, 2
+        nvol = Nx * Ny * Nz
+        vec_size = norb * norb * nvol
+        k = 5
+        rng = np.random.default_rng(7)
+
+        def cplx(*shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape))
+
+        G2 = cplx(norb, norb, norb, norb, Nx, Ny, Nz)
+        Vs_q = cplx(norb, norb, norb, norb, Nx, Ny, Nz)  # general (7-d) vertex
+
+        # Explicit reference using the ORIGINAL einsum contractions.
+        V_r = ifftn(Vs_q, axes=(-3, -2, -1))
+        V_r_flat = V_r.reshape(norb, norb * norb, norb, nvol)
+        G2_r = G2.reshape(norb, norb, norb, norb, nvol)
+        G2_pre = G2_r.transpose(0, 2, 1, 3, 4).reshape(
+            norb, norb, norb * norb, nvol)
+
+        def ref_matvec(v):
+            sigma = v.reshape(norb, norb, Nx, Ny, Nz)
+            sigma_flat = sigma.reshape(norb * norb, nvol)
+            G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
+            F_r = ifftn(G2Sigma, axes=(-3, -2, -1))
+            F_r_flat = F_r.reshape(norb * norb, nvol)
+            sigma_r = np.einsum('ijls,js->ils', V_r_flat, F_r_flat).reshape(
+                norb, norb, Nx, Ny, Nz)
+            sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
+            return (-sigma_new).ravel()
+
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        self.assertEqual(n, vec_size)
+
+        # matvec
+        v = cplx(vec_size)
+        new_mv = A.matvec(v)
+        ref_mv = ref_matvec(v)
+        maxdiff_mv = np.abs(new_mv - ref_mv).max()
+        self.assertLess(maxdiff_mv, 1e-10)
+        np.testing.assert_allclose(new_mv, ref_mv, rtol=1e-10, atol=1e-10)
+
+        # matmat (k columns)
+        B = cplx(vec_size, k)
+        new_mm = A.matmat(B)
+        ref_mm = np.column_stack([ref_matvec(B[:, j]) for j in range(k)])
+        maxdiff_mm = np.abs(new_mm - ref_mm).max()
+        self.assertLess(maxdiff_mm, 1e-10)
+        np.testing.assert_allclose(new_mm, ref_mm, rtol=1e-10, atol=1e-10)
+
+
 class TestInitializeGap(unittest.TestCase):
     """Test gap function initialization."""
 
