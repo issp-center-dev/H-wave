@@ -1218,9 +1218,19 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     """
     sigma_old = sigma_init.copy()
 
+    # Precompute the Eliashberg kernel operator once. The vertex IFFT
+    # (V_r = ifftn(Vs_q)) and the G2 reshape/transpose are invariant across
+    # iterations (only sigma_old changes); _make_kernel_operator hoists them out
+    # of the per-matvec closure, saving one full vertex IFFT (and the G2
+    # preprocessing) on every one of the up-to-max_iter iterations. The matvec
+    # is numerically identical to _eliashberg_kernel_fft(Vs_q, G2, sigma, norb).
+    Nx, Ny, Nz = sigma_init.shape[-3], sigma_init.shape[-2], sigma_init.shape[-1]
+    A, _ = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    shape = (norb, norb, Nx, Ny, Nz)
+
     eigenvalue = 0.0
     for iteration in range(max_iter):
-        sigma_new = _eliashberg_kernel_fft(Vs_q, G2, sigma_old, norb)
+        sigma_new = A.matvec(sigma_old.ravel()).reshape(shape)
         norm = np.linalg.norm(sigma_new)
         eigenvalue = norm
 

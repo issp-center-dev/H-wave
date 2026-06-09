@@ -35,6 +35,7 @@ from hwave.sc import (
     _eliashberg_kernel_fft,
     _initialize_gap,
     _is_gap_parity,
+    _make_kernel_operator,
     _order_eigenpairs,
     _reorder_eigenpairs_by_parity,
     _resolve_init_gap,
@@ -322,6 +323,37 @@ class TestKernel(unittest.TestCase):
 
         sigma_new = _eliashberg_kernel_fft(P_q, G2, sigma_old, norb)
         self.assertEqual(sigma_new.shape, (norb, norb, Nx, Ny, Nz))
+
+    def test_kernel_operator_matches_standalone(self):
+        """Precomputed-operator matvec is bit-identical to standalone kernel.
+
+        _solve_iteration applies the _make_kernel_operator matvec (which hoists
+        the invariant vertex IFFT + G2 preprocessing out of the loop). This must
+        be numerically identical to a direct _eliashberg_kernel_fft call.
+        Checked for both simple (2-index) and general (4-index) vertices.
+        """
+        norb = 2
+        Nx, Ny, Nz = 4, 4, 1
+        rng = np.random.default_rng(123)
+
+        def cplx(*shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape))
+
+        G2 = cplx(norb, norb, norb, norb, Nx, Ny, Nz)
+        sigma = cplx(norb, norb, Nx, Ny, Nz)
+
+        # simple (5-d vertex) and general (7-d vertex) modes
+        for V_q in (cplx(norb, norb, Nx, Ny, Nz),
+                    cplx(norb, norb, norb, norb, Nx, Ny, Nz)):
+            ref = _eliashberg_kernel_fft(V_q, G2, sigma, norb)
+            A, _ = _make_kernel_operator(V_q, G2, norb, Nx, Ny, Nz)
+            via_op = A.matvec(sigma.ravel()).reshape(ref.shape)
+            # Same ops in the same source order, just with the invariant vertex
+            # IFFT + G2 preprocessing precomputed. Differences are at most the
+            # last ULP from multi-threaded BLAS reduction-order nondeterminism
+            # (~1e-16), far below the suite's 1e-8 tolerance.
+            np.testing.assert_allclose(via_op, ref, rtol=1e-13, atol=1e-13)
 
 
 class TestInitializeGap(unittest.TestCase):
