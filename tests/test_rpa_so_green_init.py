@@ -158,6 +158,119 @@ class TestRPASOGreenInitMultiOrbital(unittest.TestCase):
         )
 
 
+class TestRPAGreenInit5DLayout(unittest.TestCase):
+    """UHFk's ``_save_green`` ALWAYS writes a 5D green:
+    ``(Lvol, ns, norb_orig, ns, norb_orig)`` -- both the non-sublattice case
+    (``self.Green`` is 5D) and the sublattice case (``_deflate_green`` returns
+    5D). RPA._read_green must accept that real layout (collapse 5D->3D) before
+    the shape validation / SO remap / fold. These tests drive the input through
+    the REAL 5D layout instead of a synthetic 3D array.
+    """
+
+    SB5D_NAME = "green_init_5d_sb_fixture.npz"
+    IL5D_NAME = "green_init_5d_il_fixture.npz"
+
+    def tearDown(self):
+        for n in (self.SB5D_NAME, self.IL5D_NAME):
+            p = os.path.join(INPUT_DIR, n)
+            if os.path.exists(p):
+                os.remove(p)
+
+    def _write_5d_fixtures(self):
+        # non-SO 5D: (Lvol, ns=2, norb_phys, ns=2, norb_phys), C-order reshape
+        # of the spin-block 3D green -> flat orbital index = spin*norb_phys+orb.
+        tab_sb = _spin_block_green(CELLVOL, NORB_PHYS)            # (Lvol, 4, 4)
+        tab_sb_5d = tab_sb.reshape(CELLVOL, 2, NORB_PHYS, 2, NORB_PHYS)
+        np.savez(os.path.join(INPUT_DIR, self.SB5D_NAME), green=tab_sb_5d)
+        # SO 5D: (Lvol, ns=1, SO, ns=1, SO) with SO=2*norb_phys, orbital axis
+        # in INTERLEAVED order -> reshape of the interleaved 3D green.
+        tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)    # (Lvol, 4, 4)
+        SO = 2 * NORB_PHYS
+        tab_il_5d = tab_il.reshape(CELLVOL, 1, SO, 1, SO)
+        np.savez(os.path.join(INPUT_DIR, self.IL5D_NAME), green=tab_il_5d)
+        return tab_sb_5d, tab_il_5d
+
+    def test_5d_nonso_accepted_and_shape(self):
+        """A realistic non-SO 5D UHFk green must be accepted, yielding (nvol,nd,nd)."""
+        self._write_5d_fixtures()
+        s_nonso, g_nonso = _run(
+            {"enable_spin_orbital": False},
+            {"Geometry": "geom_2orb.dat",
+             "Transfer": "transfer_nonso_2orb.dat",
+             "CoulombIntra": "coulombintra_2orb.dat"},
+            green_init_file=self.SB5D_NAME,
+        )
+        nd = 2 * NORB_PHYS
+        self.assertEqual(g_nonso["green_init"].shape, (CELLVOL, nd, nd))
+
+    def test_5d_so_accepted_and_shape(self):
+        """A realistic SO 5D UHFk green (ns=1, interleaved) must be accepted."""
+        self._write_5d_fixtures()
+        s_so, g_so = _run(
+            {"enable_spin_orbital": True},
+            {"Geometry": "geom_so_2orb.dat",
+             "Transfer": "transfer_so_2orb.dat",
+             "CoulombIntra": "coulombintra_2orb.dat"},
+            green_init_file=self.IL5D_NAME,
+        )
+        nd = 2 * NORB_PHYS
+        self.assertEqual(g_so["green_init"].shape, (CELLVOL, nd, nd))
+
+    def test_5d_so_matches_5d_nonso(self):
+        """Equivalence driven through the REAL 5D layout: SO (interleaved, ns=1)
+        5D green must reproduce the non-SO (spin-block, ns=2) 5D run."""
+        self._write_5d_fixtures()
+        s_nonso, g_nonso = _run(
+            {"enable_spin_orbital": False},
+            {"Geometry": "geom_2orb.dat",
+             "Transfer": "transfer_nonso_2orb.dat",
+             "CoulombIntra": "coulombintra_2orb.dat"},
+            green_init_file=self.SB5D_NAME,
+        )
+        s_so, g_so = _run(
+            {"enable_spin_orbital": True},
+            {"Geometry": "geom_so_2orb.dat",
+             "Transfer": "transfer_so_2orb.dat",
+             "CoulombIntra": "coulombintra_2orb.dat"},
+            green_init_file=self.IL5D_NAME,
+        )
+        self.assertTrue(
+            np.allclose(g_nonso["chi0q"], g_so["chi0q"], atol=1e-10),
+            "5D SO green_init chi0q must match the equivalent 5D non-SO chi0q",
+        )
+        self.assertTrue(
+            np.allclose(g_nonso["chiq"], g_so["chiq"], atol=1e-10),
+            "5D SO green_init chiq must match the equivalent 5D non-SO chiq",
+        )
+
+    def test_5d_so_remap_has_teeth(self):
+        """Teeth: feeding the SO 5D green WITHOUT the interleaved->spin-block
+        remap (i.e. mislabeling an interleaved layout as already spin-block by
+        running it through the non-SO 5D path) must NOT reproduce the correct
+        chi0q for >1 physical orbital -- otherwise the remap is untested."""
+        self._write_5d_fixtures()
+        s_nonso, g_nonso = _run(
+            {"enable_spin_orbital": False},
+            {"Geometry": "geom_2orb.dat",
+             "Transfer": "transfer_nonso_2orb.dat",
+             "CoulombIntra": "coulombintra_2orb.dat"},
+            green_init_file=self.SB5D_NAME,
+        )
+        # Feed the INTERLEAVED 5D green to a non-SO run (no SO remap applied):
+        # this is the wrong convention, so chi0q must differ.
+        s_wrong, g_wrong = _run(
+            {"enable_spin_orbital": False},
+            {"Geometry": "geom_2orb.dat",
+             "Transfer": "transfer_nonso_2orb.dat",
+             "CoulombIntra": "coulombintra_2orb.dat"},
+            green_init_file=self.IL5D_NAME,
+        )
+        self.assertFalse(
+            np.allclose(g_nonso["chi0q"], g_wrong["chi0q"], atol=1e-10),
+            "interleaved green consumed as spin-block must NOT match (teeth)",
+        )
+
+
 class TestRPASOGreenInitSublatticeFold(unittest.TestCase):
     IL_NAME = "so_green_init_fold_fixture.npz"
 

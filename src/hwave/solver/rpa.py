@@ -1347,6 +1347,13 @@ class RPA:
             logger.error("read_green failed: {}".format(e))
             sys.exit(1)
 
+        # UHFk saves green as 5D (Lvol, ns, norb_orig, ns, norb_orig); collapse
+        # the (ns, norb) pairs into single orbital axes to get the (Lvol, nd0, nd0)
+        # layout the rest of this method expects. trans_mod is already saved 3D.
+        if green.ndim == 5:
+            lvol, s1, o1, s2, o2 = green.shape
+            green = green.reshape(lvol, s1 * o1, s2 * o2)
+
         # green_init is produced by UHFk's _save_green (saves self.Green), the
         # DEFLATED pre-fold green for sublattice -- the same (cellvol, nd0, nd0)
         # layout and conventions as trans_mod. Mirror _read_trans_mod exactly:
