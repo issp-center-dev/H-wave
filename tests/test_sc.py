@@ -2640,5 +2640,78 @@ class TestKanamoriInteraction(unittest.TestCase):
                                     "chi_c should be finite at q=(%d,%d)" % (ix, iy))
 
 
+class TestBatchedMatmulEquivalence(unittest.TestCase):
+    """Prove the batched-matmul rewrites equal the original einsums.
+
+    Each test builds random operands of the documented shapes, computes the
+    ORIGINAL einsum (pasted as reference) and the NEW matmul form, and asserts
+    they agree to ~1e-10 or tighter. The rewrites only change the floating-point
+    reduction order (BLAS GEMM vs numpy's einsum loop), so differences are at
+    machine-epsilon level, far below the suite's atol=1e-8.
+    """
+
+    def _calc_green_reference(self, factor, denom, Nx, Ny, Nz, norb, nmat):
+        return np.einsum('...ijm,...mw->...ijw', factor, denom)
+
+    def _calc_green_matmul(self, factor, denom, Nx, Ny, Nz, norb, nmat):
+        nv = Nx * Ny * Nz
+        G = factor.reshape(nv, norb * norb, norb) @ denom.reshape(nv, norb, nmat)
+        return G.reshape(Nx, Ny, Nz, norb, norb, nmat)
+
+    def test_calc_green_einsum_equivalence(self):
+        rng = np.random.default_rng(0)
+        for norb in (2, 3):
+            Nx, Ny, Nz, nmat = 3, 4, 2, 5
+            factor = (rng.standard_normal((Nx, Ny, Nz, norb, norb, norb))
+                      + 1j * rng.standard_normal((Nx, Ny, Nz, norb, norb, norb)))
+            denom = (rng.standard_normal((Nx, Ny, Nz, norb, nmat))
+                     + 1j * rng.standard_normal((Nx, Ny, Nz, norb, nmat)))
+            ref = self._calc_green_reference(factor, denom, Nx, Ny, Nz, norb, nmat)
+            new = self._calc_green_matmul(factor, denom, Nx, Ny, Nz, norb, nmat)
+            self.assertEqual(ref.shape, new.shape)
+            maxdiff = np.max(np.abs(ref - new))
+            self.assertTrue(np.allclose(ref, new, rtol=1e-10, atol=1e-10),
+                            "norb=%d maxdiff=%g" % (norb, maxdiff))
+
+    def _calc_g2_reference(self, A, B):
+        return np.einsum('isn,jsn->ijs', A, B)
+
+    def _calc_g2_matmul(self, A, B):
+        As = np.moveaxis(A, 1, 0)
+        Bs = np.moveaxis(B, 1, 0)
+        return np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)
+
+    def test_calc_g2_einsum_equivalence(self):
+        rng = np.random.default_rng(1)
+        for norb in (2, 3):
+            Nx, Ny, Nz, nmat = 3, 2, 2, 6
+            nvol = Nx * Ny * Nz
+            nd = norb * norb
+            A = (rng.standard_normal((nd, nvol, nmat))
+                 + 1j * rng.standard_normal((nd, nvol, nmat)))
+            B = (rng.standard_normal((nd, nvol, nmat))
+                 + 1j * rng.standard_normal((nd, nvol, nmat)))
+            ref = self._calc_g2_reference(A, B)
+            new = self._calc_g2_matmul(A, B)
+            self.assertEqual(ref.shape, new.shape)
+            maxdiff = np.max(np.abs(ref - new))
+            self.assertTrue(np.allclose(ref, new, rtol=1e-10, atol=1e-10),
+                            "norb=%d maxdiff=%g" % (norb, maxdiff))
+
+    def test_compute_vertices_batched_matmul_equivalence(self):
+        rng = np.random.default_rng(2)
+        for nd in (2, 3, 4, 9):
+            Nx, Ny, Nz = 3, 4, 2
+            X = (rng.standard_normal((Nx, Ny, Nz, nd, nd))
+                 + 1j * rng.standard_normal((Nx, Ny, Nz, nd, nd)))
+            Y = (rng.standard_normal((Nx, Ny, Nz, nd, nd))
+                 + 1j * rng.standard_normal((Nx, Ny, Nz, nd, nd)))
+            ref = np.einsum('...ab,...bc->...ac', X, Y)
+            new = X @ Y
+            maxdiff = np.max(np.abs(ref - new))
+            self.assertTrue(np.allclose(ref, new, rtol=1e-12, atol=1e-12),
+                            "nd=%d maxdiff=%g" % (nd, maxdiff))
+
+
 if __name__ == '__main__':
     unittest.main()

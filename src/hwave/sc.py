@@ -401,7 +401,12 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
     # denom shape: (Nx, Ny, Nz, norb, nmat)
 
     # G[kx,ky,kz,i,j,w] = sum_m factor[...,i,j,m] * denom[...,m,w]
-    green_kw_tmp = np.einsum('...ijm,...mw->...ijw', factor, denom)
+    # Batched GEMM over the flattened spatial axes (C-order, reshape-only):
+    #   (nv, ij, m) @ (nv, m, w) -> (nv, ij, w). numpy.einsum does NOT lower
+    #   the '...ijm,...mw->...ijw' form to BLAS GEMM, so reshape to matmul.
+    nv = Nx * Ny * Nz
+    G = factor.reshape(nv, norb * norb, norb) @ denom.reshape(nv, norb, nmat)
+    green_kw_tmp = G.reshape(Nx, Ny, Nz, norb, norb, nmat)
     # shape: (Nx, Ny, Nz, norb, norb, nmat)
 
     # Transpose to output convention: (norb, norb, Nx, Ny, Nz, nmat)
@@ -693,8 +698,8 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     I_mat = np.broadcast_to(np.eye(norb, dtype=complex), (Nx, Ny, Nz, norb, norb)).copy()
 
     # Batched solve
-    mat_s = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, Ws)
-    mat_c = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, Wc)
+    mat_s = I_mat + chi0_static @ Ws
+    mat_c = I_mat + chi0_static @ Wc
 
     chis = np.linalg.solve(mat_s, chi0_static)
     chic = np.linalg.solve(mat_c, chi0_static)
@@ -771,8 +776,8 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     # chi_c = [I + chi0 @ C]^{-1} @ chi0
     I_mat = np.broadcast_to(np.eye(nd, dtype=complex), (Nx, Ny, Nz, nd, nd)).copy()
 
-    mat_s = I_mat - np.einsum('...ab,...bc->...ac', chi0_static, S_all)
-    mat_c = I_mat + np.einsum('...ab,...bc->...ac', chi0_static, C_all)
+    mat_s = I_mat - chi0_static @ S_all
+    mat_c = I_mat + chi0_static @ C_all
 
     chis = np.linalg.solve(mat_s, chi0_static)  # batched solve
     chic = np.linalg.solve(mat_c, chi0_static)
@@ -982,9 +987,12 @@ def _calc_g2(green_kw, beta):
     A = green_kw.reshape(norb * norb, nvol, nmat)       # (ij, site, k)
     B = green_kw_inv.reshape(norb * norb, nvol, nmat)   # (lm, site, k)
     # G2[ij, lm, site] = sum_k A[ij, site, k] * B[lm, site, k]
-    # = (A * B contracted over k) but with site preserved
-    # Use einsum with optimized contraction over nmat only
-    G2 = np.einsum('isn,jsn->ijs', A, B)  # (norb^2, norb^2, nvol)
+    # Per-site batched GEMM over the Matsubara axis n. numpy.einsum does NOT
+    # lower 'isn,jsn->ijs' to BLAS GEMM; move site to the batch axis and matmul:
+    #   As[s] @ Bs[s].T -> [i, j] per site; moveaxis(...,0,2) -> (i, j, s).
+    As = np.moveaxis(A, 1, 0)             # (nvol, norb^2, nmat)
+    Bs = np.moveaxis(B, 1, 0)             # (nvol, norb^2, nmat)
+    G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)  # (norb^2, norb^2, nvol)
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
     return G2 / beta
 
