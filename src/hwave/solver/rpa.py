@@ -1305,6 +1305,12 @@ class RPA:
             logger.error("read_trans_mod failed: {}".format(e))
             sys.exit(1)
 
+        expected = (self.lattice.cellvol, self.ns * self.norb_orig, self.ns * self.norb_orig)
+        if tab_r.shape != expected:
+            raise ValueError(
+                "trans_mod array shape {} does not match expected {} "
+                "(cellvol, ns*norb_orig, ns*norb_orig)".format(tab_r.shape, expected))
+
         if self.ham_info.enable_spin_orbital:
             # UHFk writes the SO trans_mod with the orbital axis in INTERLEAVED
             # order (index = 2*orb + spin), matching the SO Transfer file, but

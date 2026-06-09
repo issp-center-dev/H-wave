@@ -179,5 +179,59 @@ class TestTransModSOMultiOrbitalSupported(unittest.TestCase):
         self.assertEqual(tab_k.shape, (solver.lattice.nvol, solver.nd, solver.nd))
 
 
+class TestTransModShapeValidation(unittest.TestCase):
+    """B3: _read_trans_mod must reject arrays whose shape does not match
+    (cellvol, ns*norb_orig, ns*norb_orig), even if the total element count
+    happens to be the same.
+
+    Uses SubShape=[2,1,1] (same fixture as TestTransModSublatticeSupported) to
+    avoid the transfer.dat y-offset incompatibility with SubShape=[1,1,1].
+    With CellShape=[8,1,1] and geom.dat norb=1 (non-SO):
+      cellvol=8, ns=2, norb_orig=1  ->  expected (8, 2, 2) = 32 elements.
+    """
+
+    def _solver(self, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        info_mode = {
+            "mode": "RPA",
+            "param": {"T": 2.0, "filling": 0.5,
+                      "CellShape": [8, 1, 1], "SubShape": list(subshape), "Nmat": 32},
+            "enable_spin_orbital": False,
+            "calc_scheme": "general",
+        }
+        info_file = {"input": {"path_to_input": "tests/rpa/input",
+                               "interaction": {"path_to_input": "tests/rpa/input",
+                                               "Geometry": "geom.dat",
+                                               "Transfer": "transfer.dat"}},
+                     "output": {"path_to_output": "tests/rpa/output"}}
+        read_io = read_input_k.QLMSkInput(info_file["input"])
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_wrong_shape_trans_mod_raises(self):
+        import tempfile
+        # Use SubShape=[2,1,1]: cellvol=8, nd0=2, expected (8,2,2)=32 elements.
+        # Provide (2,4,4)=32 elements: same total size, wrong axis layout.
+        solver = self._solver(subshape=(2, 1, 1))
+        bad = np.zeros((2, 4, 4))
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=bad)
+            with self.assertRaises(ValueError):
+                solver._read_trans_mod(fn)
+
+    def test_correct_shape_trans_mod_does_not_raise(self):
+        """Sanity-check: the valid shape (cellvol, nd0, nd0) must not raise."""
+        import tempfile
+        # Use SubShape=[2,1,1]: expected (8, 2, 2)
+        solver = self._solver(subshape=(2, 1, 1))
+        good = np.zeros((8, 2, 2))
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "trans_mod.npz")
+            np.savez(fn, trans_mod=good)
+            # must not raise
+            solver._read_trans_mod(fn)
+
+
 if __name__ == "__main__":
     unittest.main()
