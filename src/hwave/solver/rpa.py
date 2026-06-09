@@ -1347,6 +1347,33 @@ class RPA:
             logger.error("read_green failed: {}".format(e))
             sys.exit(1)
 
+        # green_init is produced by UHFk's _save_green (saves self.Green), the
+        # DEFLATED pre-fold green for sublattice -- the same (cellvol, nd0, nd0)
+        # layout and conventions as trans_mod. Mirror _read_trans_mod exactly:
+        # shape validation, SO interleaved->spin-block remap, then sublattice
+        # fold, so green_init is consumed in spin-block order.
+        expected = (self.lattice.cellvol, self.ns * self.norb_orig, self.ns * self.norb_orig)
+        if green.shape != expected:
+            raise ValueError(
+                "green array shape {} does not match expected {} "
+                "(cellvol, ns*norb_orig, ns*norb_orig)".format(green.shape, expected))
+
+        if self.ham_info.enable_spin_orbital:
+            # UHFk writes the SO green with the orbital axis in INTERLEAVED order
+            # (index = 2*orb + spin); _calc_trans_mod consumes green_init in
+            # SPIN-BLOCK order (index = spin*norb_phys + orb), using self.norb /
+            # self.nd. Reorder both orbital axes interleaved->spin-block, mirroring
+            # _read_trans_mod (and _make_ham_trans's remap of the Transfer file).
+            # For norb_phys=1 this is the identity.
+            norb_phys = self.norb_orig            # pre-fold physical orbital count
+            nd0 = green.shape[-1]                 # = 2 * norb_phys
+            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
+            green = green[:, inv, :][:, :, inv]   # interleaved -> spin-block
+
+        if self.lattice.has_sublattice:
+            # use reshape green to convert layout
+            green = self._reshape_green(green)
+
         nvol = self.lattice.nvol
         nd = self.nd
         return green.reshape(nvol,nd,nd)
