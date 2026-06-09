@@ -1606,7 +1606,7 @@ class UHFk(solver_base):
                 # cross term
                 #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
                 if self.iflag_fock:
-                    hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin)
+                    hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin, optimize=True)
 
                     #   fourier transform: sum_r (*) e^{ikr}
                     hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
@@ -1732,7 +1732,11 @@ class UHFk(solver_base):
             dist = group_dists[k]
 
             # G_ab(k) for this block
-            gg_blk = np.einsum('kal, kl, kbl -> kab', np.conjugate(v), dist, v)
+            #   G_ab(k) = sum_l conj(V_kal) dist_kl V_kbl
+            #   = Vconj @ diag(dist) @ V^T, batched over k. Explicit matmul lowers
+            #   to batched GEMM (numpy einsum does not); numerically equivalent to
+            #   the 'kal,kl,kbl->kab' einsum to ~1e-14 (reduction order).
+            gg_blk = np.matmul(np.conjugate(v) * dist[:, None, :], v.transpose(0, 2, 1))
 
             # Place into full matrix
             idx = np.array(blocks[k])
@@ -2030,11 +2034,11 @@ class UHFk(solver_base):
 
                 if type == "PairHop":
                     if self.iflag_fock:
-                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
-                        w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r)
+                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r, optimize=True)
+                        w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r, optimize=True)
                         ee = np.einsum('rab, rab ->', jab_r, w1-w2)
                     else:
-                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r)
+                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r, optimize=True)
                         ee = np.einsum('rab, rab ->', jab_r, w1)
                     energy[type] = -ee/2.0*nvol
 
@@ -2042,7 +2046,7 @@ class UHFk(solver_base):
                     if self.iflag_fock:
                         w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
                         w1b = np.broadcast_to(w1, (nvol,norb_inter,norb_inter))
-                        w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r)
+                        w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r, optimize=True)
                         ee = np.einsum('rab, rab->', jab_r, w1b-w2)
                     else:
                         w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
