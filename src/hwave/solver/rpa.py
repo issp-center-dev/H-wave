@@ -1409,11 +1409,15 @@ class RPA:
             return (_ix, _iy, _iz)
 
         # Build index mapping tables (vectorized)
-        # Supercell site indices
+        # Supercell site indices.
+        # Flat SITE indices are C-order (z fastest): isite = iz + Nz*(iy + Ny*ix),
+        # matching the data layout used everywhere else -- UHFk._deflate_green's
+        # _pack_site/_unpack_site and RPA's reshape(nx,ny,nz) lattice flattening.
+        # (1D folds coincide with Fortran order, which masked this for years.)
         isite_arr = np.arange(Nvol)
-        ixx = isite_arr % Nx
-        iyy = (isite_arr // Nx) % Ny
-        izz = (isite_arr // (Nx * Ny)) % Nz
+        izz = isite_arr % Nz
+        iyy = (isite_arr // Nz) % Ny
+        ixx = (isite_arr // (Nz * Ny)) % Nx
         ix0 = ixx * Bx  # (Nvol,)
         iy0 = iyy * By
         iz0 = izz * Bz
@@ -1436,7 +1440,9 @@ class RPA:
         jx = (ix0[:, np.newaxis, np.newaxis] + drx[np.newaxis, :, :]) % Lx  # (Nvol, norb, norb)
         jy = (iy0[:, np.newaxis, np.newaxis] + dry[np.newaxis, :, :]) % Ly
         jz = (iz0[:, np.newaxis, np.newaxis] + drz[np.newaxis, :, :]) % Lz
-        jsite_map = jx + Lx * (jy + Ly * jz)  # (Nvol, norb, norb)
+        # Pack target SITE in C-order (z fastest), consistent with the unpack
+        # above and UHFk._deflate_green's _pack_site.
+        jsite_map = jz + Lz * (jy + Ly * jx)  # (Nvol, norb, norb)
 
         # Source orbital indices: a_arr[aa], a_arr[bb]
         a_src = a_arr  # (norb,) - maps aa -> original orbital a
