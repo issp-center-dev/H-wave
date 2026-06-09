@@ -96,15 +96,19 @@ class FLEX(RPA):
                        "got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        if self.ham_info.has_interaction_exchange():
+        if (self.ham_info.has_interaction_exchange()
+                or self.ham_info.has_interaction_pairhop()):
             # FLEX reduces the vertex via the density-density diagonal
             # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
             # are dropped.  This is a deliberate (common) approximation, but
             # warn so it is not silent (cf. the inherited reduced+exchange
-            # guard, which does not cover the squashed scheme).
+            # guard, which does not cover the squashed scheme).  Exchange and
+            # PairLift set the exchange flag; PairHop sets a separate flag, so
+            # both are checked here to cover all off-diagonal interaction types.
             logger.warning(
-                "FLEX uses the density-density reduction; exchange-type "
-                "interactions are approximated by their density-density part "
+                "FLEX uses the density-density reduction; exchange- and "
+                "pair-hopping-type interactions (Exchange, PairLift, PairHop) "
+                "are approximated by their density-density part "
                 "(off-diagonal vertices are dropped).")
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))

@@ -1025,6 +1025,8 @@ class TestFLEXSchemeGuards(unittest.TestCase):
     # transfer-format body that registers as an Exchange interaction
     _EXCHANGE_BODY = ("Exchange\n1\n1\n 1\n"
                       "   0    0    0    1    1   0.500000000000   0.0\n")
+    _PAIRHOP_BODY = ("PairHop\n1\n1\n 1\n"
+                     "   0    0    0    1    1   0.500000000000   0.0\n")
 
     def test_general_scheme_rejected(self):
         """calc_scheme='general' would feed FLEX a 6/7-dim chi0q -> reject."""
@@ -1041,6 +1043,19 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         self.assertTrue(
             any('density-density' in msg for msg in cm.output),
             "expected a warning about the density-density approximation")
+        self.assertEqual(solver.calc_scheme, 'squashed')
+
+    def test_pairhop_interaction_warns(self):
+        """PairHop sets a separate flag from Exchange/PairLift, but its
+        off-diagonal vertices are also dropped by the density-density reduction,
+        so FLEX must warn for it too."""
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            solver = _make_flex_solver_with(
+                calc_scheme='squashed',
+                interactions={'PairHop': self._PAIRHOP_BODY})
+        self.assertTrue(
+            any('density-density' in msg for msg in cm.output),
+            "expected a density-density approximation warning for PairHop")
         self.assertEqual(solver.calc_scheme, 'squashed')
 
     def test_reduced_density_density_ok(self):

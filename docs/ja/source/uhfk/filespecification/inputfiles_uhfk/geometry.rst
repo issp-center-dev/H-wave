@@ -49,6 +49,7 @@
 
    **説明 :**
    ユニットセル内の軌道の数 :math:`N_\text{orbit}` を指定します。
+   スピン軌道モード（``enable_spin_orbital = true``）では、``Norbit`` はスピン軌道の数（= 2 × 物理軌道数 = Wannier90 の ``num_wann``）であり、偶数でなければなりません。
 
 
 -  ``[vx_i]``, ``[vy_i]``, ``[vz_i]``

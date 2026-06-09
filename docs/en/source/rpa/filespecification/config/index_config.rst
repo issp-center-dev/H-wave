@@ -36,8 +36,9 @@ Parameters
   String
 
   **Description :**
-  This parameter specifies the calculation mode. 
-  Set to ``"RPA"`` for calculations of the Random Phase Approximation.
+  This parameter specifies the calculation mode.
+  Set to ``"RPA"`` for calculations of the Random Phase Approximation,
+  or to ``"FLEX"`` for the Fluctuation Exchange Approximation.
 
 - ``enable_spin_orbital`` (default value is ``false``)
 

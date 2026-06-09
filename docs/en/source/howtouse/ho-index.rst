@@ -12,7 +12,7 @@ Basic usage
   - requests module
   - tomli module
 
-  Note that `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ is used for FFT calculations in H-wave UHFk and rpa modes.
+  Note that `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
 
 - Official Page
 
@@ -68,6 +68,8 @@ Basic usage
       |   |-- hwave/
       |       |-- __init__.py
       |       |-- qlms.py
+      |       |-- dos.py
+      |       |-- sc.py
       |       |-- qlmsio/
       |       |   |-- __init__.py
       |       |   |-- read_input.py
@@ -79,6 +81,7 @@ Basic usage
       |           |-- uhfr.py
       |           |-- uhfk.py
       |           |-- rpa.py
+      |           |-- flex.py
       |           |-- perf.py
       |-- tests/
        
@@ -107,3 +110,6 @@ Basic usage
 
      When the calculation is completed, the results will be written in the output directory.
      See File format sections for the details of the output files.
+
+     The package also provides the post-processing tools ``hwave_dos`` (density of states)
+     and ``hwave_sc`` (Eliashberg / superconducting analysis), which take the same input file.

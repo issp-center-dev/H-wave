@@ -458,6 +458,14 @@ The FLEX solver accepts the following parameters in the
 All other parameters (``T``, ``CellShape``, ``Nmat``, ``filling``, etc.)
 are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
+.. note::
+
+   The FLEX solver consumes the reduced-shape susceptibility and reduces
+   the interaction to its density-density part. It therefore requires
+   ``calc_scheme = "reduced"`` or ``calc_scheme = "squashed"`` and does
+   **not** support ``calc_type = "ring+ladder"`` (which forces the
+   ``"general"`` scheme). The solver raises a ``ValueError`` otherwise.
+
 
 Sample 3: Iron pnictide 2-orbital model
 -----------------------------------------
@@ -663,17 +671,20 @@ The FLEX solver supports the following interaction types:
      - Yes
      - Hund's coupling :math:`J`
    * - ``Exchange``
-     - Yes
-     - Exchange interaction :math:`J'`
+     - Partial
+     - Exchange interaction :math:`J'` (density-density part only;
+       off-diagonal spin-flip/pair vertices are dropped)
    * - ``Ising``
      - Yes
      - Ising-type interaction
    * - ``PairLift``
-     - Yes
-     - Pair lifting interaction
+     - Partial
+     - Pair lifting interaction (density-density part only;
+       off-diagonal vertices are dropped)
    * - ``PairHop``
-     - Yes
-     - Pair hopping interaction
+     - Partial
+     - Pair hopping interaction (density-density part only;
+       off-diagonal vertices are dropped)
    * - ``InterAll``
      - **No**
      - Arbitrary 4-body interaction (UHFr solver only)
@@ -740,8 +751,11 @@ where :math:`W_{\mathrm{same}}` is the same-spin interaction and
 This contraction is exact for **density-density type interactions**.
 ``CoulombIntra``, ``CoulombInter``, ``Hund``, and ``Ising``
 are all density-density type and are handled correctly.
-``Exchange`` and ``PairHop`` are also properly treated within the
-standard Kanamori parameterization.
+``Exchange``, ``PairLift``, and ``PairHop`` are **not** purely
+density-density: only their density-density part is retained, while
+their off-diagonal (spin-flip / pair-scattering) vertices are dropped
+in the reduction. The solver emits a warning when such interactions are
+present, so the user is aware of this approximation.
 
 
 Spin degrees of freedom (spin-free mode)

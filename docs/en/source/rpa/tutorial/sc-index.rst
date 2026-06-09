@@ -154,8 +154,12 @@ This section controls the Eliashberg solver. Key parameters:
   file; ``"calc"`` computes it internally.
 - ``pairing_type``: ``"singlet"`` or ``"triplet"``.
 - ``init_gap``: Initial gap symmetry for iteration.
-  Options include ``"cos"`` (:math:`\cos k_x + \cos k_y`),
-  ``"dx2y2"`` (:math:`\cos k_x - \cos k_y`), ``"random"``, etc.
+  Options include ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`),
+  ``"d_x2y2"`` (:math:`\cos k_x - \cos k_y`), ``"random"``, etc.
+  The full set of valid form factors is
+  ``"cos"``, ``"s"``, ``"s_ext"``, ``"s_ext_2d"``, ``"d_x2y2"``,
+  ``"d_xy"``, ``"d_xz"``, ``"d_yz"``, ``"d_z2"``,
+  ``"p_x"``, ``"p_y"``, ``"p_z"``, and ``"random"``.
 - ``max_iter``: Maximum number of self-consistent iterations.
 - ``alpha``: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).
 - ``convergence_tol``: Convergence criterion on the gap function.

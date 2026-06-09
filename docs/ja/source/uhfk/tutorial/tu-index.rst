@@ -132,3 +132,9 @@ Transferに指定するファイルは、電子系のTransferに相当するHami
 
     $ hwave_dos input.toml --plot dos.png
 
+``--subtract-mu`` オプションを指定すると、状態密度のエネルギー軸を :math:`E-\mu` にシフトし、フェルミ準位が0になるようにします。
+化学ポテンシャル :math:`\mu` は、出力ディレクトリにある ``energy.dat`` の ``ChemicalPotential`` の行（UHFkソルバーが出力します）から読み込まれます。
+``ChemicalPotential`` のエントリが見つからない場合は、警告を出力したうえで、シフトしない固有値のエネルギー軸が使用されます。 ::
+
+    $ hwave_dos input.toml --subtract-mu
+

@@ -56,6 +56,7 @@ Parameters
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.
   If it is set to true, the orbital indices in Transfer term are interpreted in the way that they include the orbital index :math:`\alpha` (from 0 to :math:`N_\text{orb}-1`) and the spin index :math:`s` (0 for up, 1 for down) by :math:`2\alpha + s`, i.e. the spin is the inner (interleaved) index.
+  Interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported in spin-orbital mode, handled via a virtual spin decomposition.
 
 ``mode.param`` section
 ================================
@@ -299,7 +300,7 @@ to the definition files.
   **Description :**
   This parameter specifies the filename for the geometry information.
 
-- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``
+- ``Transfer``, ``CoulombIntra``, ``CoulombInter``, ``Coulomb``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``
 
   **Type :**
   String
