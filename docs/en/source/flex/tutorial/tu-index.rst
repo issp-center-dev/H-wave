@@ -103,8 +103,30 @@ imaginary time:
 
 This element-wise (Hadamard) product is efficiently evaluated using FFT.
 
+Scope of the approximation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+FLEX is a conserving (Baym--Kadanoff) approximation that resums the RPA
+particle--hole bubble and ladder series for the self-energy. It does **not**
+include the Aslamazov--Larkin (AL) or Maki--Thompson (MT) vertex corrections,
+in which the electron couples to *two* fluctuation propagators through a
+triangular fermion loop (mode--mode coupling). These higher-order corrections
+are outside the FLEX class and are **not** evaluated here. They can matter when
+charge/orbital fluctuations driven by two spin fluctuations are important
+(e.g. the orbital-fluctuation mechanism of Onari and Kontani [2]_).
+
+In addition, the present implementation decomposes the interaction via its
+density--density part for the spin/charge vertices; off-diagonal
+(spin-flip Hund, pair-hopping) vertices are reduced to their density--density
+component (a warning is emitted when ``Exchange``/``PairHop`` interactions are
+supplied). Accordingly, "FLEX" here means *not exact*: it is the
+density--density, AL/MT-free fluctuation-exchange level of approximation.
+
 .. [1] N. E. Bickers and D. J. Scalapino,
    Ann. Phys. (N.Y.) **193**, 206 (1989).
+
+.. [2] H. Kontani and S. Onari,
+   Phys. Rev. Lett. **104**, 157001 (2010).
 
 
 Sample 1: Single-orbital Hubbard model

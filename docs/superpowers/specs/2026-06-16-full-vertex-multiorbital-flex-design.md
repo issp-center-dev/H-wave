@@ -72,22 +72,44 @@ Decisions locked in (from brainstorming):
   (`V^s = 3/2 S χ_s S − 1/2 C χ_c C + 1/2 (S + C)`), **not** a normal-state
   self-energy kernel. It validates the S/C matrices and χ construction, but it
   **cannot** independently fix the FLEX self-energy coefficients.
-- **Normal-state FLEX self-energy `V_eff` (PREREQUISITE GATE):** the exact
-  `V_eff` — longitudinal spin/charge coefficients, the transverse (`χ_+-`)
-  coefficient, and the double-counting subtraction — **must be transcribed into
-  this spec (§4.5) from one named multi-orbital FLEX reference and corroborated
-  by a second**, before `_calc_veff_general`/`_calc_self_energy_general` are
-  implemented. Candidate primary reference: **Takimoto, Hotta, Ueda,
-  PRB 69, 104504 (2004)**; corroborating: **Mochizuki, Yanase, Ogata,
-  multi-orbital FLEX, [cond-mat/0407094]** (and Kubo, PRB 75, 224509). This is
-  the **main correctness risk** and has no in-tree baseline. The exact formula
-  is NOT frozen in this design yet (see §9); the user (domain expert) will
-  confirm the reference. The brute-force check (§6) is written from the FLEX
-  *diagrammatic* definition, independently of the optimized `V_eff`.
+- **Normal-state FLEX self-energy `V_eff` — RESOLVED, dual-sourced.** The exact
+  `V_eff` is transcribed in §4.5 from **Mochizuki, Yanase, Ogata
+  [cond-mat/0407094]** (user-confirmed primary) and **corroborated** by
+  **Takimoto, Hotta, Ueda [cond-mat/0309575] = PRB 69, 104504 (2004)**. Both
+  give the **same coefficient structure**:
+  `(3/2) Ûˢ χˢ Ûˢ + (1/2) Ûᶜ χᶜ Ûᶜ − (1/4)(Ûˢ+Ûᶜ) χ⁰ (Ûˢ+Ûᶜ) + (3/2)Ûˢ − (1/2)Ûᶜ`
+  (THU writes the charge channel as an orbital channel `Û°/χ°` and the
+  subtraction with the cross-spin bare bubble `χ̄^(σσ̄)`, but the coefficients
+  `3/2, 1/2, −1/4` and the `+(3/2)Ûˢ−(1/2)Û°` constants match). The gate is
+  satisfied.
+- **Both canonical references are paramagnetic / SU(2)-symmetric.** Neither
+  carries a *separate spin transverse (`χ_+-`) channel*: the spin-flip physics
+  is bundled into the `3/2 χˢ` coefficient, and neither does spin-dependent
+  (`G↑≠G↓`) calculations. THU *does* split the **orbital** channel into
+  longitudinal/transverse (`χ°_C/L/T`), but that is orbital, not spin. This
+  **reframes the original "A vs B" choice** (§2, §4.6): standard multi-orbital
+  FLEX = the paramagnetic full-vertex form; a separate spin-flip self-energy
+  (the literal "B") is **not** part of these references and is treated as a
+  deferred future extension needing its own reference.
+- **S/C interaction matrices (full Kanamori):** Kuroki et al.
+  ([arXiv:0902.3691]) and THU use the **full Kanamori vertex** (`U, U', J, J'`)
+  in `(norb², norb²)` matrix form — **not** density-density. H-wave already
+  builds these S/C matrices in `sc.py:_build_sc_matrices_all_q` (`sc.py:422-523`)
+  for the SC pairing vertex. **Caveat:** `_compute_vertices_general` is a
+  *pairing* vertex, **not** a self-energy kernel — it validates the S/C matrices
+  and χ construction (cross-check against MYO/THU Eq.(10)) but does not by itself
+  fix the FLEX self-energy coefficients (those come from §4.5).
 
-Caveat recorded honestly: RPA/FLEX is itself an approximation (bubble+ladder
-summation, no vertex corrections beyond RPA). "Full vertex" here means *not
-density-density reduced*, not *exact*.
+Caveat recorded honestly: RPA/FLEX is itself an approximation. It resums the
+RPA particle-hole bubble+ladder series but **omits the Aslamazov-Larkin (AL)
+and Maki-Thompson (MT) vertex corrections** (two fluctuation propagators joined
+by a triangular fermion loop / mode-mode coupling). "Full vertex" here means
+*not density-density reduced*, **not** *exact* and **not** AL/MT-inclusive. This
+boundary is now documented in the FLEX manual (`docs/{en,ja}/source/flex/
+tutorial/tu-index.rst`, "Scope of the approximation"). **Future-work idea
+(user, 2026-06-20):** after FLEX converges, optionally evaluate AL and MT once
+(a non-self-consistent **1-shot diagnostic**) to gauge whether they are
+significant for a given system — recorded in §10.
 
 ## 4. Architecture
 
@@ -161,35 +183,53 @@ check (§6) confirms this map end-to-end. The FFT transport (Matsubara↔τ, k�
 `_calc_self_energy` is reused unchanged; only the per-`(r,τ)` product becomes a
 batched matmul over the flattened orbital indices.
 
-### 4.5 `V_eff` assembly (`_calc_veff_general`) — PHYSICS GATE
+### 4.5 `V_eff` assembly (`_calc_veff_general`) — formula pinned to MYO
 
-⚠️ **This subsection is a prerequisite gate (Codex A1.2/A1.3, critical).** The
-exact equation below is **NOT frozen**; it is the *shape* of what must be
-transcribed from the named reference (§3) and corroborated by a second, then
-verified by §6, before implementation:
+Reference (user-confirmed): **Mochizuki, Yanase, Ogata, [cond-mat/0407094]**,
+multi-orbital FLEX (paramagnetic / Sz-conserving). Transcribed verbatim
+(via ar5iv) — interaction matrices `Ûˢ` (spin) and `Ûᶜ` (charge) from Eq.(10)
+in the orbital-pair basis (intra `U`, inter `U'`, Hund `J_H`, pair-hopping
+`J' = J_H`):
 
 ```
-V_eff(q,iν) = c_s · S χ_s(q,iν) S        (longitudinal spin)
-            + c_c · C χ_c(q,iν) C        (longitudinal charge)
-            + c_t · (transverse χ_+- term with W_+-)
-            − (double-counting subtraction)
+χ⁰_{mn,μν}(q) = −(T/N) Σ_k G_{μm}(k+q) G_{nν}(k)            (Eq.5)
+
+χˢ(q) = [I − χ⁰(q) Ûˢ]⁻¹ χ⁰(q)                              (Eq.4)
+χᶜ(q) = [I + χ⁰(q) Ûᶜ]⁻¹ χ⁰(q)
+
+V(q) =  (3/2) Ûˢ χˢ(q) Ûˢ                                    (Eq.4)
+      + (1/2) Ûᶜ χᶜ(q) Ûᶜ
+      − (1/4)(Ûˢ+Ûᶜ) χ⁰(q) (Ûˢ+Ûᶜ)        ← double-counting subtraction
+      + (3/2) Ûˢ − (1/2) Ûᶜ                ← first-order (Hartree-Fock) constants
+
+Σ_{mn}(k) = (T/N) Σ_q Σ_{μν} V_{μm,νn}(q) G_{μν}(k−q)        (Eq.3)
 ```
 
-Open physics questions the reference must settle, recorded explicitly:
-1. The coefficients `c_s, c_c, c_t`. In SU(2) the reduced kernel uses
-   `3/2 χ_s + 1/2 χ_c − χ0` (`flex.py:491-532`), where the `3/2` already bundles
-   longitudinal+2×transverse. Once `χ_+-` is carried **explicitly** (needed when
-   Hund makes transverse ≠ longitudinal), the spin coefficient must be
-   re-split — the naive `3/2 S χ_s S + χ_+-` would **double-count** the
-   transverse part.
-2. **Where the single `χ0` subtraction belongs** after the transverse channel is
-   added. The reduced "subtract `χ0` once" argument is purely longitudinal and
-   tied to `V_eff = W χ0 W` at zeroth order; with `χ_+-` present this needs an
-   explicit second-order diagram count (which terms come from `χ_s`, `χ_c`,
-   `χ_+-`) to avoid overcounting the spin-flip ladder.
+**Key consequence — there is NO separately-computed transverse channel.** In
+this paramagnetic matrix FLEX the spin fluctuation enters as the single matrix
+`χˢ` with coefficient `3/2` (= 1 longitudinal Sz + 2 transverse S±, equal by
+SU(2)); the transverse (spin-flip) physics is **already bundled** in `3/2 Ûˢ χˢ
+Ûˢ`. A separate `χ_+-` ladder is only a distinct object when SU(2) is broken
+(spin-polarised / `spin-diag` with `G↑≠G↓`), which MYO does **not** cover. This
+**reframes the earlier "A vs B" decision** (see §2, §4.6): for the paramagnetic
+`spin-free` case the full-vertex self-energy IS the MYO formula and needs no
+ladder term. (Codex A1.2/A1.3 resolved: coefficients and the
+`−(1/4)(Ûˢ+Ûᶜ)χ⁰(Ûˢ+Ûᶜ)` subtraction are now explicit, not deferred.)
 
-Until §3's reference + equation are transcribed and §6's brute-force is written
-from the diagrammatic definition, `_calc_veff_general` is blocked.
+Implementation notes / cross-checks:
+- `Ûˢ, Ûᶜ` must equal H-wave's existing `sc.py:_build_sc_matrices_all_q` S/C
+  matrices (the shared helper, §4.3) — verify element-wise against MYO Eq.(10).
+- Sign mapping to `_solve_rpa` (`[1 + χ⁰·ham]⁻¹χ⁰`): `ham_s = −Ûˢ`, `ham_c = +Ûᶜ`
+  (same convention as the reduced `_build_spin_charge_vertices`).
+- The `+(3/2)Ûˢ − (1/2)Ûᶜ` constants are the first-order term; the reduced
+  `_calc_veff` omits them (`flex.py:491-532`). Reconcile how H-wave handles
+  first-order (Hartree) in FLEX — likely via the static term / `μ`, not in
+  `V_eff` — and keep `_calc_veff_general` consistent with the reduced treatment
+  to preserve the degenerate-reduction check (§6.1). Single-orbital identity:
+  MYO `= reduced + U` (the constant), confirming the fluctuation part matches.
+- Self-energy index ordering follows Eq.(3): `V_{μm,νn}` contracted with
+  `G_{μν}` — this fixes §4.4's flatten map (`μ,ν` are the contracted/"outer"
+  pair).
 
 ### 4.6 Spin-mode coverage (v1: `spin-free`, `spin-diag`)
 
@@ -311,3 +351,29 @@ existing FLEX test conventions.
 - Design `_build_transverse_channel_flex` (dressed-`G` argument) per spin mode.
 - Memory/flop budget for `(nfreq, nvol, nd², nd²)`; materialized vs streamed.
 - Decide the small-system parameters for the brute-force test (k-grid, Nmat).
+- **Reconcile §6/§7 with the confirmed scope.** §6/§7 still list `spin-diag` +
+  separate `χ_+-` targets from the earlier review round; if v1 is locked to
+  paramagnetic `spin-free` (per §3/§4.5 reframing), drop the separate-transverse
+  targets. **Pending user scope confirmation** (the separate spin-flip channel
+  is not in the MYO/THU references).
+
+## 10. Deferred / future work (recorded so it is not lost)
+
+- **Tier 2 — SU(2)-broken (magnetic, `G↑≠G↓`) FLEX** with a *separate* spin-flip
+  `χ_+-` self-energy channel. Not covered by MYO/THU (both paramagnetic); needs
+  its own reference.
+- **Tier 3 — generalized FLEX with spin-orbit coupling** ([arXiv:1503.02544],
+  Sr₂IrO₄): full `2m×2m` spin-orbital generalized susceptibility, Hugenholtz
+  antisymmetrized vertices, **both** particle-hole and particle-particle RPA
+  channels, `Σ = δΦ/δG` (Baym-Kadanoff). A *new solver*, not an extension of the
+  s/c-decomposition path; connects to H-wave `enable_spin_orbital`. Paramagnetic
+  limit should reduce to v1 (Tier 1) — v1 is its validation台. Single-reference
+  (weaker dual-source grounding); higher validation difficulty.
+- **AL/MT 1-shot diagnostic (user, 2026-06-20).** After FLEX converges,
+  optionally evaluate the Aslamazov-Larkin and Maki-Thompson vertex corrections
+  **once** (non-self-consistent) and report their magnitude relative to the FLEX
+  self-energy, as a *diagnostic* of whether AL/MT matter for the system — without
+  including them in the self-consistency. Cheap-ish (one extra pass), genuinely
+  useful (AL drives orbital/charge fluctuations à la Onari-Kontani). Needs the
+  AL/MT diagram expressions in the multi-orbital matrix form; a separate small
+  design of its own.
