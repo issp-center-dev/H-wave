@@ -377,3 +377,14 @@ existing FLEX test conventions.
   useful (AL drives orbital/charge fluctuations à la Onari-Kontani). Needs the
   AL/MT diagram expressions in the multi-orbital matrix form; a separate small
   design of its own.
+  - **I/O is already in place.** Everything the diagnostic needs — the converged
+    `G` (`green`), `χ_s`/`χ_c` (`chiq_s`/`chiq_c`), `χ_0` (`chi0q`), and `Σ`
+    (`sigma`) — is **already saved** by `FLEX.save_results` (`flex.py:705-760`)
+    as `.npz` with `freq_index`/wavevector metadata, **provided the matching
+    keys are set in `[file.output]`** (the bundled samples set them). So the
+    diagnostic can be a post-processing tool reading those `.npz` files (like
+    `hwave_sc`), needing **little/no new I/O**. Caveats: (a) saving is
+    key-gated — the tool must require the relevant output keys (or a small
+    change could save them by default); (b) the saved `sigma`/`χ` are in the
+    **reduced `(nd,nd)`** form today and would be **general rank-4** under
+    full-vertex FLEX — the diagnostic must detect which from metadata.
