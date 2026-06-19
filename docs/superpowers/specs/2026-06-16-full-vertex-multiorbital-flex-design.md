@@ -1,12 +1,13 @@
 # Full-vertex multi-orbital FLEX (`calc_scheme="general"`)
 
-**Date:** 2026-06-16 (rev. 2026-06-19 after Codex design review)
+**Date:** 2026-06-16 (rev. 2026-06-20)
 **Branch:** `feature/full-vertex-flex`
-**Status:** DESIGN — Codex review round 1 incorporated (2 critical + majors
-addressed: V_eff gate §4.5, dressed-`G` transverse §4.3, S/C builder location
-§4.3, index convention §4.4, spin-mode split §4.6, SOC guard §4.1, validation
-equalities §6, memory budget §8). **One open decision for the user: confirm the
-V_eff reference (§3/§9).** Awaiting user spec review before writing the plan.
+**Status:** DESIGN — **scope locked: v1 = paramagnetic (`spin-free`) only.**
+Codex review round 1 incorporated; V_eff formula pinned to Mochizuki–Yanase–Ogata
+and corroborated by Takimoto–Hotta–Ueda (§3). The separate transverse-channel
+machinery is **dropped from v1** (bundled into `3/2 χ_s` for paramagnetic
+systems), which retires the dressed-`G` transverse critical finding for v1.
+Awaiting final user spec review before writing the implementation plan.
 
 ## 1. Problem
 
@@ -16,117 +17,95 @@ self-energy pipeline (`_inflate_chi0q_and_ham` → `_build_spin_charge_vertices`
 `(nvol, nd, nd)` interaction obtained by the diagonal contraction `kaabb->kab`
 (`flex.py:384,401,409`). This **drops the orbital off-diagonal vertices** of
 Exchange, Hund, PairLift and PairHop. `_init_flex_param` (`flex.py:84-115`)
-therefore (a) rejects `calc_scheme="general"`/`ring+ladder` outright and (b)
-warns whenever Exchange/PairHop are present that they are reduced to their
-density-density part.
+therefore (a) rejects `calc_scheme="general"` outright and (b) warns whenever
+Exchange/PairHop are present that they are reduced to their density-density part.
 
 The density-density treatment is a recognised simplification but is **not** what
-full multi-orbital FLEX requires: the transverse (spin-flip) Hund term and
-pair-hopping affect spin fluctuations, the spin/charge vertex, and ultimately
-Tc. We want full-vertex FLEX available as an option.
+full multi-orbital FLEX requires: the inter-orbital Hund and pair-hopping vertices
+enter the spin/charge fluctuations and affect the self-energy. We want full-vertex
+FLEX available as an option.
 
 ## 2. Goal / scope
 
-Implement **full-vertex multi-orbital FLEX** including both the longitudinal
-(spin/charge) channel with full rank-4 `(nd², nd²)` vertices **and** the
-transverse (spin-flip, ladder-equivalent) channel, selected via
-`calc_scheme="general"` (consistent with RPA, where `general` already drives the
-`ring+ladder` full-tensor path).
+Implement **paramagnetic full-vertex multi-orbital FLEX**: the spin/charge
+self-energy with full rank-4 `(nd², nd²)` Kanamori vertices (`U, U', J, J'`),
+selected via `calc_scheme="general"` (consistent with RPA, where `general`
+already means the full-tensor path).
 
 Decisions locked in (from brainstorming):
 
-- **Physics scope:** B — longitudinal **and** transverse full vertex.
+- **Physics scope (v1):** paramagnetic (SU(2)-symmetric, `G↑=G↓`), `spin-free`
+  only. The spin fluctuation enters as the single matrix `χ_s` with coefficient
+  `3/2` (= 1 longitudinal Sz + 2 transverse S±, equal by SU(2)); **no separate
+  transverse channel is computed** — it is bundled in `3/2 χ_s`. This is exactly
+  the standard multi-orbital FLEX of the references in §3.
 - **Selection:** reuse `calc_scheme="general"`; no new FLEX-specific flag.
 - **Definition of done (validation):** primary = a brute-force, no-approximation
-  reference that matches the optimized self-energy functional in a single shot;
-  secondary = degenerate-reduction + symmetry/analytic checks. See §6.
+  reference that matches the optimized self-energy functional `Σ[G]` in a single
+  shot; secondary = degenerate-reduction + single-orbital + RPA-consistency
+  equalities. See §6.
+- **Follow-up (separate design):** the SOC-capable **generalized FLEX** (Tier 3,
+  §10) is the agreed next phase and subsumes magnetic (`G↑≠G↓`) and the explicit
+  transverse channel; v1 is its paramagnetic-limit validation台.
 
-### Out of scope (explicit)
+### Out of scope (explicit, v1)
 
-- **SOC / `enable_spin_orbital` with general-FLEX.** The transverse channel
-  extraction assumes Sz conservation (`rpa.py:1982-1990` warns for genuine spin
-  mixing). General-FLEX + SOC is rejected by a fail-fast guard in
-  `_init_flex_param` (§4.1) until the transverse extractor is generalized.
-- **`spinful` spin mode in general-FLEX (v1).** v1 supports **`spin-free` and
-  `spin-diag`** only (§4.6). `spinful` (and SOC, above) are deferred: their
-  transverse-bubble construction differs materially (`rpa.py:1974-2002`) and
-  needs its own validation.
-- **External numerical reference data.** None available now; the brute-force
-  reference (§6) is the implementation-correctness anchor. External
-  cross-checks are a later, separate task.
-- **Reduced/squashed (density-density) FLEX numerics.** The reduced path's
-  numerics and outputs stay unchanged and are pinned by a regression test (§7);
-  the shared control flow (`_init_flex_param`, `solve()` dispatch) is edited, so
-  the path is regression-guarded rather than literally untouched.
+- **Magnetic / SU(2)-broken (`G↑≠G↓`) FLEX and any separate transverse `χ_+-`
+  self-energy.** Deferred to the generalized phase (§10). In v1 a fail-fast
+  guard (§4.1) rejects `spin-diag` and `spinful` under `calc_scheme="general"`.
+- **SOC / `enable_spin_orbital` with general-FLEX.** Deferred to §10; rejected by
+  the same guard.
+- **AL / MT vertex corrections.** Outside the FLEX class entirely (documented in
+  the manual; a 1-shot diagnostic is a future idea, §10). "Full vertex" = *not
+  density-density reduced*, **not** *exact*.
+- **External numerical reference data.** None available; the brute-force
+  reference (§6) is the implementation-correctness anchor.
+- **Reduced/squashed (density-density) FLEX numerics.** Unchanged and pinned by a
+  regression test (§7); only the shared control flow (`_init_flex_param`,
+  `solve()` dispatch) is edited, so the path is regression-guarded rather than
+  literally untouched.
 
-## 3. Reference formulation (what we cross-check the formulas against)
+## 3. Reference formulation
 
-- **S/C interaction matrices (full Kanamori):** the multi-orbital matrix RPA of
-  Kuroki et al. (5-band RPA + Eliashberg, [arXiv:0902.3691]) and Takimoto et al.
-  (PRB 69, 104504) use the **full Kanamori vertex** (`U, U', J, J'`) in
-  `(norb², norb²)` matrix form — **not** density-density. H-wave already builds
-  exactly these S (spin) / C (charge) matrices in `sc.py`
-  `_build_sc_matrices_all_q` (`sc.py:422-523`), reused by the SC pairing vertex
-  `_compute_vertices_general`. **Caveat (per Codex review):**
-  `_compute_vertices_general` is a *pairing* vertex
-  (`V^s = 3/2 S χ_s S − 1/2 C χ_c C + 1/2 (S + C)`), **not** a normal-state
-  self-energy kernel. It validates the S/C matrices and χ construction, but it
-  **cannot** independently fix the FLEX self-energy coefficients.
-- **Normal-state FLEX self-energy `V_eff` — RESOLVED, dual-sourced.** The exact
-  `V_eff` is transcribed in §4.5 from **Mochizuki, Yanase, Ogata
-  [cond-mat/0407094]** (user-confirmed primary) and **corroborated** by
-  **Takimoto, Hotta, Ueda [cond-mat/0309575] = PRB 69, 104504 (2004)**. Both
-  give the **same coefficient structure**:
-  `(3/2) Ûˢ χˢ Ûˢ + (1/2) Ûᶜ χᶜ Ûᶜ − (1/4)(Ûˢ+Ûᶜ) χ⁰ (Ûˢ+Ûᶜ) + (3/2)Ûˢ − (1/2)Ûᶜ`
-  (THU writes the charge channel as an orbital channel `Û°/χ°` and the
-  subtraction with the cross-spin bare bubble `χ̄^(σσ̄)`, but the coefficients
-  `3/2, 1/2, −1/4` and the `+(3/2)Ûˢ−(1/2)Û°` constants match). The gate is
-  satisfied.
-- **Both canonical references are paramagnetic / SU(2)-symmetric.** Neither
-  carries a *separate spin transverse (`χ_+-`) channel*: the spin-flip physics
-  is bundled into the `3/2 χˢ` coefficient, and neither does spin-dependent
-  (`G↑≠G↓`) calculations. THU *does* split the **orbital** channel into
-  longitudinal/transverse (`χ°_C/L/T`), but that is orbital, not spin. This
-  **reframes the original "A vs B" choice** (§2, §4.6): standard multi-orbital
-  FLEX = the paramagnetic full-vertex form; a separate spin-flip self-energy
-  (the literal "B") is **not** part of these references and is treated as a
-  deferred future extension needing its own reference.
-- **S/C interaction matrices (full Kanamori):** Kuroki et al.
-  ([arXiv:0902.3691]) and THU use the **full Kanamori vertex** (`U, U', J, J'`)
-  in `(norb², norb²)` matrix form — **not** density-density. H-wave already
-  builds these S/C matrices in `sc.py:_build_sc_matrices_all_q` (`sc.py:422-523`)
-  for the SC pairing vertex. **Caveat:** `_compute_vertices_general` is a
-  *pairing* vertex, **not** a self-energy kernel — it validates the S/C matrices
-  and χ construction (cross-check against MYO/THU Eq.(10)) but does not by itself
-  fix the FLEX self-energy coefficients (those come from §4.5).
+- **V_eff — pinned, dual-sourced.** Primary (user-confirmed): **Mochizuki,
+  Yanase, Ogata [cond-mat/0407094]** (multi-orbital FLEX, paramagnetic).
+  Corroborating: **Takimoto, Hotta, Ueda [cond-mat/0309575] = PRB 69, 104504
+  (2004)**. Both give the **same coefficient structure** (§4.5). THU writes the
+  charge channel as an orbital channel and the subtraction with the cross-spin
+  bare bubble `χ̄^(σσ̄)`, but the coefficients `3/2, 1/2, −1/4` and the
+  `+(3/2)Ûˢ−(1/2)Ûᶜ` constants match. Both are paramagnetic / SU(2)-symmetric
+  and carry **no separate spin transverse channel** — confirming the v1 design.
+- **S/C interaction matrices (full Kanamori).** Kuroki et al. [arXiv:0902.3691]
+  and THU use the full Kanamori vertex in `(norb², norb²)` matrix form. H-wave
+  already builds these S (spin) / C (charge) matrices in
+  `sc.py:_build_sc_matrices_all_q` (`sc.py:422-523`) for the SC pairing vertex.
+  **Caveat:** `_compute_vertices_general` is a *pairing* vertex, **not** a
+  self-energy kernel — it validates the S/C matrices and χ construction but does
+  not fix the FLEX self-energy coefficients (those are §4.5).
 
-Caveat recorded honestly: RPA/FLEX is itself an approximation. It resums the
-RPA particle-hole bubble+ladder series but **omits the Aslamazov-Larkin (AL)
-and Maki-Thompson (MT) vertex corrections** (two fluctuation propagators joined
-by a triangular fermion loop / mode-mode coupling). "Full vertex" here means
-*not density-density reduced*, **not** *exact* and **not** AL/MT-inclusive. This
-boundary is now documented in the FLEX manual (`docs/{en,ja}/source/flex/
-tutorial/tu-index.rst`, "Scope of the approximation"). **Future-work idea
-(user, 2026-06-20):** after FLEX converges, optionally evaluate AL and MT once
-(a non-self-consistent **1-shot diagnostic**) to gauge whether they are
-significant for a given system — recorded in §10.
+Honest caveat: RPA/FLEX resums the bubble+ladder series but omits AL/MT vertex
+corrections; "full vertex" means *not density-density reduced*, not *exact*.
+Documented in `docs/{en,ja}/source/flex/tutorial/tu-index.rst`.
 
 ## 4. Architecture
 
-Keep the existing reduced path untouched; add a **parallel general path**
-dispatched from `solve()` on `self.calc_scheme == "general"`.
+Keep the reduced path; add a **parallel general path** dispatched from `solve()`
+on `self.calc_scheme == "general"`. Because v1 is paramagnetic, the path is the
+straightforward rank-4 generalisation of the existing reduced methods — **no new
+transverse machinery**.
 
-### 4.1 Dispatch / guard change (`_init_flex_param`)
+### 4.1 Dispatch / guards (`_init_flex_param`)
 
-- Replace the `general`-rejection branch: `general` → enable full-vertex FLEX;
+- Replace the `general`-rejection branch: `general` → full-vertex path;
   `reduced`/`squashed` → existing density-density path (unchanged default).
-- Move the "exchange/pairhop reduced to density-density" warning so it fires
+- Move the "Exchange/PairHop reduced to density-density" warning so it fires
   **only** for `reduced`/`squashed` (under `general` nothing is dropped).
-- Require the general-scheme rank-4 `chi0q` (already produced by RPA in
-  `general`); fail loudly if a reduced `chi0q` is supplied in general-FLEX.
-- **Fail-fast guard:** reject `calc_scheme="general"` when
-  `ham_info.enable_spin_orbital` is true, and when `spin_mode == "spinful"`
-  (both deferred from v1, §2). Clear error pointing to the supported modes.
+- Require the general-scheme rank-4 `chi0q`; fail loudly if a reduced `chi0q` is
+  supplied in general-FLEX.
+- **Fail-fast guard (v1):** reject `calc_scheme="general"` unless
+  `spin_mode == "spin-free"` — i.e. reject `spin-diag`, `spinful`, and
+  `enable_spin_orbital` with a clear message pointing to the (future) generalized
+  solver (§10).
 
 ### 4.2 New general methods (mirroring the reduced ones)
 
@@ -136,60 +115,54 @@ dispatched from `solve()` on `self.calc_scheme == "general"`.
 | `_build_spin_charge_vertices` | `_build_spin_charge_vertices_general` |
 | `_calc_veff` | `_calc_veff_general` |
 | `_calc_self_energy` | `_calc_self_energy_general` |
-| (n/a) | `_build_transverse_channel_flex` → χ_+- via `_solve_rpa` (see §4.3) |
 
-Each unit has one clear purpose, a shape-typed interface, and a degenerate
-limit that reproduces the reduced method (testable in isolation — see §7).
+Each unit has one clear purpose, a shape-typed interface, and a degenerate limit
+that reproduces the reduced method (testable in isolation — §7). **No transverse
+builder** is needed in v1.
 
-### 4.3 Reuse from RPA / SC — with the corrections from the Codex review
+### 4.3 Reuse from SC / RPA (corrected per Codex review)
 
-- **S/C interaction matrices.** There is **no** named S/C builder in `rpa.py`;
-  the general-scheme inflation there is **inline inside `solve()`**
-  (`rpa.py:875-999`). The actual reusable full `(norb², norb²)` S/C builder is
-  **`_build_sc_matrices_all_q` in `sc.py` (`sc.py:422-523`)**. Plan: **extract a
-  shared helper** (e.g. to a common module) and call it from FLEX, RPA-general,
-  and SC, rather than claiming a non-existent `rpa.py` reuse.
+- **S/C interaction matrices.** There is **no** named S/C builder in `rpa.py`
+  (its general inflation is inline in `solve()`, `rpa.py:875-999`). The reusable
+  full `(norb², norb²)` S/C builder is **`sc.py:_build_sc_matrices_all_q`
+  (`sc.py:422-523`)**. Plan: **extract a shared helper** (common module) used by
+  FLEX-general, RPA-general, and SC — rather than a non-existent `rpa.py` reuse.
+  Verify the matrices equal MYO/THU Eq.(10) element-wise.
 - `_solve_rpa` already inverts general-scheme matrices (flattens rank-4 to
-  `(ndx, ndx)`, `rpa.py:2068-2138`); verify on rank-4 χ for both channels.
-- **Transverse channel — must NOT reuse `_build_transverse_channel` as-is**
-  (Codex critical). In `spin-diag` mode it builds `chi0_+-` from the **bare**
-  `self.green0`/`green0_tail` (`rpa.py:1938-1956`), but FLEX needs the
-  **dressed** `green_kw` recomputed each SCF iteration. Plan: add
-  `_build_transverse_channel_flex` that mirrors the RPA algebra
-  (`W_+-` from the per-interaction sign table `rpa.py:2011-2018` is reused — it
-  depends only on the interaction, not on `G`) but takes the **current dressed
-  `G`** as an explicit argument. The `spin-free` branch (paramagnetic,
-  `chi0_+- = chi0_orb`, `rpa.py:1921-1935`) needs no `G` but must still consume
-  the iteration's `chi0`.
+  `(ndx, ndx)`, `rpa.py:2068-2138`); verify on the rank-4 `χ_s`, `χ_c`.
+- Reuse the existing general-scheme `chi0q` from `_calc_chi0q` (RPA) and the
+  spin inflation; for `spin-free` paramagnetic this is straightforward and needs
+  no Green's-function-resolved transverse bubble.
 
 ### 4.4 Core change: the self-energy contraction
 
 The reduced self-energy is an **element-wise (Hadamard)** product
 `Σ_{ab}(r,τ) = V_eff,{ab}(r,τ) · G_{ab}(r,τ)` (`flex.py:642-645`). The general
-self-energy is the **rank-4 contraction**
+self-energy is the **rank-4 contraction**, per MYO Eq.(3):
 
 ```
-Σ_{l1 l2}(r,τ) = Σ_{l3 l4} V_{l1 l3 l2 l4}(r,τ) · G_{l3 l4}(r,τ)
+Σ_{mn}(r,τ) = Σ_{μν} V_{μm,νn}(r,τ) · G_{μν}(r,τ)
 ```
 
-i.e. `V_eff` is `(nd², nd²)` and contracts the internal orbital pair `(l3,l4)`
-of `G` at each `(r,τ)`. **Index convention (fixed now):** orbital pairs are
-flattened as `row = (l1,l2)`, `col = (l3,l4)` with `flat = l_outer*nd + l_inner`
-(C/row-major), matching the `(ndx,ndx)` flattening `_solve_rpa` already uses for
-χ and the S/C matrices (`rpa.py:2068-2138`). Worked example (norb=2, nd=2):
-`V` is 4×4 with rows/cols ordered `(00,01,10,11)`; the density-density limit is
-`V` nonzero only on entries `(ab),(ab)` (Codex finding A1.1). The brute-force
-check (§6) confirms this map end-to-end. The FFT transport (Matsubara↔τ, k↔r) of
-`_calc_self_energy` is reused unchanged; only the per-`(r,τ)` product becomes a
-batched matmul over the flattened orbital indices.
+**Index convention — pin during implementation, do not assume.** Two conventions
+are in play and they differ: (a) the susceptibility / S/C matrices `_solve_rpa`
+uses flatten pairs as `(m,n)`-row, `(μ,ν)`-col (e.g. `χ⁰_{mn,μν}`); (b) MYO's
+self-energy wiring is `V_{μm,νn} G_{μν}` (Eq.3) — the contracted indices `μ, ν`
+are the **first** index of each `V` pair, not a whole row/col pair. So the matmul
+`V (ndx×ndx) · G (vector)` requires a deliberate transpose/relabel between the
+`V`-from-`χ` matrix (built in the `(mn),(μν)` convention) and the Eq.3 wiring.
+This map is **fixed in code and verified element-by-element by the brute-force
+check (§6)**, which is written straight from MYO Eq.(3) with explicit loops — the
+safest way to lock the wiring. (Worked example to be recorded in the plan once
+the map is chosen: norb=2 ⇒ 4×4 `V`, density-density limit nonzero only on the
+diagonal-pair entries.) The FFT transport (Matsubara↔τ, k↔r) of
+`_calc_self_energy` is reused unchanged; only the per-`(r,τ)` product becomes the
+batched orbital matmul with this fixed wiring.
 
-### 4.5 `V_eff` assembly (`_calc_veff_general`) — formula pinned to MYO
+### 4.5 `V_eff` assembly (`_calc_veff_general`) — formula (MYO, dual-sourced)
 
-Reference (user-confirmed): **Mochizuki, Yanase, Ogata, [cond-mat/0407094]**,
-multi-orbital FLEX (paramagnetic / Sz-conserving). Transcribed verbatim
-(via ar5iv) — interaction matrices `Ûˢ` (spin) and `Ûᶜ` (charge) from Eq.(10)
-in the orbital-pair basis (intra `U`, inter `U'`, Hund `J_H`, pair-hopping
-`J' = J_H`):
+Interaction matrices `Ûˢ` (spin), `Ûᶜ` (charge) from MYO Eq.(10) in the
+orbital-pair basis (intra `U`, inter `U'`, Hund `J_H`, pair-hopping `J'=J_H`):
 
 ```
 χ⁰_{mn,μν}(q) = −(T/N) Σ_k G_{μm}(k+q) G_{nν}(k)            (Eq.5)
@@ -197,7 +170,7 @@ in the orbital-pair basis (intra `U`, inter `U'`, Hund `J_H`, pair-hopping
 χˢ(q) = [I − χ⁰(q) Ûˢ]⁻¹ χ⁰(q)                              (Eq.4)
 χᶜ(q) = [I + χ⁰(q) Ûᶜ]⁻¹ χ⁰(q)
 
-V(q) =  (3/2) Ûˢ χˢ(q) Ûˢ                                    (Eq.4)
+V(q) =  (3/2) Ûˢ χˢ(q) Ûˢ
       + (1/2) Ûᶜ χᶜ(q) Ûᶜ
       − (1/4)(Ûˢ+Ûᶜ) χ⁰(q) (Ûˢ+Ûᶜ)        ← double-counting subtraction
       + (3/2) Ûˢ − (1/2) Ûᶜ                ← first-order (Hartree-Fock) constants
@@ -205,123 +178,76 @@ V(q) =  (3/2) Ûˢ χˢ(q) Ûˢ                                    (Eq.4)
 Σ_{mn}(k) = (T/N) Σ_q Σ_{μν} V_{μm,νn}(q) G_{μν}(k−q)        (Eq.3)
 ```
 
-**Key consequence — there is NO separately-computed transverse channel.** In
-this paramagnetic matrix FLEX the spin fluctuation enters as the single matrix
-`χˢ` with coefficient `3/2` (= 1 longitudinal Sz + 2 transverse S±, equal by
-SU(2)); the transverse (spin-flip) physics is **already bundled** in `3/2 Ûˢ χˢ
-Ûˢ`. A separate `χ_+-` ladder is only a distinct object when SU(2) is broken
-(spin-polarised / `spin-diag` with `G↑≠G↓`), which MYO does **not** cover. This
-**reframes the earlier "A vs B" decision** (see §2, §4.6): for the paramagnetic
-`spin-free` case the full-vertex self-energy IS the MYO formula and needs no
-ladder term. (Codex A1.2/A1.3 resolved: coefficients and the
-`−(1/4)(Ûˢ+Ûᶜ)χ⁰(Ûˢ+Ûᶜ)` subtraction are now explicit, not deferred.)
-
-Implementation notes / cross-checks:
-- `Ûˢ, Ûᶜ` must equal H-wave's existing `sc.py:_build_sc_matrices_all_q` S/C
-  matrices (the shared helper, §4.3) — verify element-wise against MYO Eq.(10).
-- Sign mapping to `_solve_rpa` (`[1 + χ⁰·ham]⁻¹χ⁰`): `ham_s = −Ûˢ`, `ham_c = +Ûᶜ`
+Notes / cross-checks:
+- The `3/2 χˢ` term already includes the transverse (spin-flip) contribution by
+  SU(2) — no separate `χ_+-` is computed (the reason v1 is clean).
+- `Ûˢ, Ûᶜ` must equal `sc.py:_build_sc_matrices_all_q` (the shared helper, §4.3) —
+  verify element-wise vs MYO Eq.(10).
+- `_solve_rpa` sign mapping (`[1 + χ⁰·ham]⁻¹χ⁰`): `ham_s = −Ûˢ`, `ham_c = +Ûᶜ`
   (same convention as the reduced `_build_spin_charge_vertices`).
 - The `+(3/2)Ûˢ − (1/2)Ûᶜ` constants are the first-order term; the reduced
-  `_calc_veff` omits them (`flex.py:491-532`). Reconcile how H-wave handles
-  first-order (Hartree) in FLEX — likely via the static term / `μ`, not in
-  `V_eff` — and keep `_calc_veff_general` consistent with the reduced treatment
-  to preserve the degenerate-reduction check (§6.1). Single-orbital identity:
-  MYO `= reduced + U` (the constant), confirming the fluctuation part matches.
-- Self-energy index ordering follows Eq.(3): `V_{μm,νn}` contracted with
-  `G_{μν}` — this fixes §4.4's flatten map (`μ,ν` are the contracted/"outer"
-  pair).
-
-### 4.6 Spin-mode coverage (v1: `spin-free`, `spin-diag`)
-
-The general path is **not** one uniform branch — χ0 inflation and the transverse
-bubble differ by spin mode (`flex.py:369-411`, `rpa.py:1919-2002`):
-
-- **`spin-free`** (paramagnetic): `chi0_+- = chi0_orb` (no `G` needed);
-  self-energy expands orbital→spin-orbital like the reduced `nd_block != nd_v`
-  case (`flex.py:618-665`).
-- **`spin-diag`**: `chi0_+-` is built from the **dressed** spin-resolved `G`
-  each iteration (§4.3); self-energy tensor is full `(nd, nd)` per spin block.
-- **`spinful` / SOC**: deferred (§2), guarded (§4.1).
-
-Each supported mode states its `chi0_+-` source and self-energy tensor shape and
-gets its own validation target (§7).
+  `_calc_veff` omits them (`flex.py:491-532`). Reconcile how H-wave treats
+  first-order (Hartree) in FLEX (likely via the static term / `μ`, not in
+  `V_eff`) and keep `_calc_veff_general` consistent with the reduced treatment so
+  the degenerate-reduction check (§6.1) holds. Single-orbital identity:
+  MYO `= reduced + U` (constant), confirming the fluctuation part matches.
 
 ## 5. Data flow (general path, one SCF iteration)
 
 ```
 H0, Σ_in ─▶ dressed G(k,iω)              [_calc_dressed_green, reused]
-        ─▶ χ0(q,iν) rank-4              [_calc_chi0q general, RPA]
-        ─▶ inflate χ0, build S,C        [_inflate_*_general, _build_*_general]
-        ─▶ χ_s, χ_c (longitudinal)      [_solve_rpa, general]
-        ─▶ χ0_+-(dressed G), W_+- ─▶ χ_+-  [_build_transverse_channel_flex + _solve_rpa]
-        ─▶ V_eff(q,iν) rank-4           [_calc_veff_general]
-        ─▶ Σ_out(k,iω) = ΣV·G           [_calc_self_energy_general, rank-4 contraction]
+        ─▶ χ⁰(q,iν) rank-4              [_calc_chi0q general, RPA]
+        ─▶ inflate χ⁰, build Ûˢ,Ûᶜ      [_inflate_*_general, _build_*_general]
+        ─▶ χ_s, χ_c                     [_solve_rpa, general]
+        ─▶ V(q,iν) rank-4              [_calc_veff_general, MYO Eq.4]
+        ─▶ Σ_out(k,iω) = Σ V·G          [_calc_self_energy_general, rank-4 contraction]
         ─▶ mix, check convergence       [reused]
 ```
 
 ## 6. Validation = definition of done
 
 **Primary — no-approximation 1-shot match.** A standalone brute-force reference
-computes one evaluation of the self-energy functional `Σ[G]` by **direct
-summation**, with no FFT convolution and no density-density reduction:
+computes one evaluation of `Σ[G]` by **direct summation** (no FFT convolution, no
+density-density reduction): `χ⁰` by explicit k-sum (MYO Eq.5), `χ_s, χ_c` by
+matrix RPA, and `Σ` by the explicit `q, iν` double sum (MYO Eq.3). The optimized
+general path must match this to ~1e-10 on a small system (e.g. 2 orbitals, 4×4
+k-grid, few Matsubara). One shot suffices (self-consistency only iterates
+`Σ[G]`). "Slow is OK" — test-only. The brute-force is written from MYO Eqs.(3-5)
+**independently** of the optimized `V_eff` code path.
 
-- `χ0_{l1l2l3l4}(q,iν) = −T/N Σ_k G_{l3l1}(k,iω) G_{l2l4}(k+q, iω+iν)` (explicit
-  k-sum),
-- `χ_s, χ_c, χ_+-` by matrix RPA,
-- `Σ_{l1l2}(k,iω) = T/N Σ_{q,iν} Σ_{l3l4} V_{l1l3l2l4}(q,iν) G_{l3l4}(k−q, iω−iν)`
-  (explicit q,iν double sum).
+Honest scope (Codex A2.1): the 1-shot match proves **algorithmic equivalence**
+(optimized path computes the same functional as the direct sum), not by itself
+the physical correctness of the formula. With the formula now dual-sourced (§3)
+and the brute-force written straight from MYO's equations, plus the secondary
+checks below, the correctness case is complete for v1.
 
-The optimized general path (rank-4 FFT convolution) must match this reference to
-~1e-10 on a small system (e.g. 2 orbitals, 4×4 k-grid, few Matsubara
-frequencies). One shot suffices: self-consistency only iterates `Σ[G]`, so a
-correct functional is the core guarantee. "Slow is OK" — the reference is
-test-only. The brute-force is written from the FLEX **diagrammatic** definition,
-independently of the optimized `V_eff`, so a shared formula error is not masked.
-
-**Scope of the primary check (Codex A2.1, stated honestly):** the 1-shot match
-proves **algorithmic equivalence** — the optimized path computes the *same*
-functional as the direct-sum reference. It does **not** by itself prove the
-chosen FLEX *formula* is physically correct, because both encode the same
-diagrammatic content. It is conclusive only **after** §3's reference formula is
-transcribed and the brute-force is written from the diagrammatic definition. The
-secondary checks below guard the formula choice.
-
-**Secondary — limits & symmetry (guards the formula choice), as precise
-equalities (Codex A2.2):**
+**Secondary — limits (precise equalities):**
 
 1. **Degenerate reduction:** general-FLEX with only `U, U'` (no Hund/PairHop/
-   Exchange) reproduces reduced-FLEX to ~1e-10 for each of
-   `χ0, χ_s, χ_c, Σ, energy` (reduced path keeps `CoulombInter`, `flex.py:384-401`).
-2. **Single-orbital SU(2) limit:** `χ_+-(q,iν) == χ_s(q,iν)` to ~1e-10, and
-   general-FLEX `Σ`/`energy` == reduced-FLEX (no off-diagonal exists). (Replaces
-   the vague "transverse == longitudinal" wording.)
-3. **RPA consistency:** first-iteration `χ_s`, `χ_c` from general-FLEX ==
-   RPA general-scheme `χ` for the same `χ0`/interaction (~1e-10).
-4. **SU(2) vertex identity:** for full Kanamori, `W_+- == W_zz` element-wise
-   (`rpa.py:2011-2018`); `χ_s`, `χ_c`, `χ_+-` Hermitian; physical-sign checks.
-5. **Dressed-G transverse (Codex A2.3):** a 2-iteration run must show `χ_+-`
-   recomputed from the **dressed** `G` (changes between iterations), proving the
-   FLEX transverse builder does **not** reuse the stored bare `green0`.
+   Exchange) reproduces reduced-FLEX to ~1e-10 for `χ⁰, χ_s, χ_c, Σ, energy`
+   (reduced path keeps `CoulombInter`, `flex.py:384-401`).
+2. **Single orbital:** general-FLEX `Σ`/`energy` == reduced-FLEX (no off-diagonal
+   exists).
+3. **RPA consistency:** first-iteration `χ_s`, `χ_c` from general-FLEX == RPA
+   general-scheme `χ` for the same `χ⁰`/interaction (~1e-10).
+4. **S/C matrix identity:** `Ûˢ, Ûᶜ` == MYO/THU Eq.(10) element-wise; `χ_s, χ_c`
+   Hermitian.
 
 ## 7. Testing
 
-- **Unit:** each new general method — output shape; degenerate input ⇒ equals
-  the corresponding reduced method.
-- **Brute-force equivalence (primary):** small-system `Σ[G]` from optimized path
-  == direct-sum reference (~1e-10). New test module, marked slow. Run for
-  **both `spin-free` and `spin-diag`** (Codex A2.3/A4.3).
-- **Per-spin-mode (Codex A4.3):** the reduction, SU(2), and RPA-consistency
-  checks (§6.1-§6.4) each run for `spin-free` **and** `spin-diag`.
-- **Dressed-G regression (Codex A2.3):** 2-iteration run asserts `χ_+-` differs
-  between iterations (uses dressed `G`, not `green0`).
-- **Reduced-path regression (Codex A4.4):** existing reduced/squashed FLEX
-  `energy.dat` outputs unchanged after the dispatch/guard edits.
+- **Unit:** each new general method — output shape; degenerate input ⇒ equals the
+  reduced method.
+- **Brute-force equivalence (primary):** small-system `Σ[G]`, optimized ==
+  direct-sum (MYO Eqs.) to ~1e-10. New test module, marked slow.
 - **Integration — reduction:** 2-orbital, `U, U'` only ⇒ general-FLEX
   `energy.dat` == reduced-FLEX reference.
 - **Integration — new physics:** 2-orbital with Hund `J` ⇒ general differs from
-  reduced, density-density warning is absent, symmetry checks pass.
-- **Guard tests:** `enable_spin_orbital`+general and `spinful`+general fail fast
-  with a clear message.
+  reduced; density-density warning absent; S/C-matrix and RPA-consistency checks
+  pass.
+- **Reduced-path regression:** existing reduced/squashed FLEX `energy.dat`
+  outputs unchanged after the dispatch/guard edits.
+- **Guard tests:** `spin-diag`+general, `spinful`+general, and
+  `enable_spin_orbital`+general each fail fast with a clear message.
 - **Tutorial:** add a `calc_scheme="general"` variant of `iron_2orb`.
 
 Tests run from repo root, `atol≈1e-8`/`1e-10` as appropriate, matching the
@@ -331,60 +257,49 @@ existing FLEX test conventions.
 
 | Risk | Mitigation |
 |---|---|
-| **V_eff coefficient / double-counting wrong** (no in-tree baseline; **critical**) | §4.5 is a GATE: transcribe the equation from a named reference (§3) + corroborate with a second, **before** coding; brute-force from the diagrammatic definition (§6 primary, equivalence only); SU(2)/single-orbital/RPA-consistency equalities (§6 secondary) guard the formula |
-| Transverse bubble uses bare `green0` mid-iteration (**critical**) | Do **not** reuse `_build_transverse_channel`; add `_build_transverse_channel_flex` taking dressed `G`; 2-iteration regression (§6.5/§7) |
-| Optimized rank-4 FFT contraction bug | 1-shot match to direct-sum reference (§6 primary) |
+| V_eff formula correctness | Dual-sourced (MYO + THU, §3); brute-force from MYO Eqs. (§6 primary); degenerate/single-orbital/RPA-consistency equalities (§6 secondary) |
+| Optimized rank-4 FFT contraction bug | 1-shot match to direct-sum reference |
 | Regression of the reduced path | Reduced numerics unchanged; explicit reduced-path regression test (§7) |
-| Performance / memory of `(nfreq, nvol, nd², nd²)` tensors | `O(nd⁴)` memory before matmul; add explicit memory/flop estimate per `norb` in the plan; decide materialized vs streamed `V_eff` (§9) |
-| SOC / `spinful` interplay | Out of scope (v1); fail-fast guards + guard tests (§4.1, §7) |
-| S/C reuse claim was wrong (helper is in `sc.py`, not `rpa.py`) | Extract shared `_build_sc_matrices_all_q`-based helper (§4.3) |
+| First-order (Hartree) handling differs from reduced | Reconcile per §4.5; degenerate-reduction test catches mismatch |
+| Performance / memory of `(nfreq, nvol, nd², nd²)` tensors | `O(nd⁴)` memory before matmul; add explicit memory/flop estimate per `norb` in the plan; decide materialized vs streamed `V_eff` |
+| S/C reuse claim was wrong (helper is in `sc.py`) | Extract shared `_build_sc_matrices_all_q`-based helper (§4.3) |
+| Misuse on magnetic/SOC systems | Fail-fast guards + guard tests (§4.1, §7) |
 
 ## 9. Open items for the implementation plan
 
-- **Name the specific multi-orbital FLEX reference** for the `V_eff`
-  longitudinal/transverse coefficients + subtraction, and **transcribe the exact
-  equation into §4.5** (gate; candidates: Takimoto–Hotta–Ueda PRB 69 104504;
-  Mochizuki–Yanase–Ogata cond-mat/0407094; Kubo PRB 75 224509). **User to
-  confirm the reference.**
-- Extract the shared full S/C builder from `sc.py:_build_sc_matrices_all_q`
-  (NOT a non-existent `rpa.py` helper) for FLEX/RPA/SC reuse.
-- Design `_build_transverse_channel_flex` (dressed-`G` argument) per spin mode.
+- Extract the shared full S/C builder from `sc.py:_build_sc_matrices_all_q` for
+  FLEX/RPA/SC reuse; verify against MYO/THU Eq.(10).
+- Reconcile first-order (Hartree) treatment between `_calc_veff_general` and the
+  reduced `_calc_veff` so the degenerate-reduction check holds.
+- **Pin the orbital index wiring (§4.4)** between the `(mn),(μν)` χ/S/C matrix
+  convention and MYO Eq.(3) `V_{μm,νn} G_{μν}`; record the worked map and lock it
+  with the brute-force check.
 - Memory/flop budget for `(nfreq, nvol, nd², nd²)`; materialized vs streamed.
-- Decide the small-system parameters for the brute-force test (k-grid, Nmat).
-- **Reconcile §6/§7 with the confirmed scope.** §6/§7 still list `spin-diag` +
-  separate `χ_+-` targets from the earlier review round; if v1 is locked to
-  paramagnetic `spin-free` (per §3/§4.5 reframing), drop the separate-transverse
-  targets. **Pending user scope confirmation** (the separate spin-flip channel
-  is not in the MYO/THU references).
+- Small-system parameters for the brute-force test (k-grid, Nmat).
 
 ## 10. Deferred / future work (recorded so it is not lost)
 
-- **Tier 2 — SU(2)-broken (magnetic, `G↑≠G↓`) FLEX** with a *separate* spin-flip
-  `χ_+-` self-energy channel. Not covered by MYO/THU (both paramagnetic); needs
-  its own reference.
-- **Tier 3 — generalized FLEX with spin-orbit coupling** ([arXiv:1503.02544],
-  Sr₂IrO₄): full `2m×2m` spin-orbital generalized susceptibility, Hugenholtz
-  antisymmetrized vertices, **both** particle-hole and particle-particle RPA
-  channels, `Σ = δΦ/δG` (Baym-Kadanoff). A *new solver*, not an extension of the
-  s/c-decomposition path; connects to H-wave `enable_spin_orbital`. Paramagnetic
-  limit should reduce to v1 (Tier 1) — v1 is its validation台. Single-reference
-  (weaker dual-source grounding); higher validation difficulty.
+- **Generalized FLEX with spin-orbit coupling (agreed next phase)**
+  ([arXiv:1503.02544], Sr₂IrO₄): full `2m×2m` spin-orbital generalized
+  susceptibility, Hugenholtz antisymmetrized vertices, **both** particle-hole and
+  particle-particle RPA channels, `Σ = δΦ/δG` (Baym-Kadanoff). A *new solver*,
+  not an extension of the s/c-decomposition path; connects to H-wave
+  `enable_spin_orbital`. **Subsumes** magnetic (`G↑≠G↓`) and the explicit
+  transverse channel (so a standalone "SU(2)-broken transverse" tier is not
+  pursued separately). Paramagnetic, SOC-free limit must reduce to v1 — **v1 is
+  its validation台**. Single-reference (weaker dual-source); higher validation
+  difficulty; its own design + spec.
 - **AL/MT 1-shot diagnostic (user, 2026-06-20).** After FLEX converges,
   optionally evaluate the Aslamazov-Larkin and Maki-Thompson vertex corrections
   **once** (non-self-consistent) and report their magnitude relative to the FLEX
-  self-energy, as a *diagnostic* of whether AL/MT matter for the system — without
-  including them in the self-consistency. Cheap-ish (one extra pass), genuinely
-  useful (AL drives orbital/charge fluctuations à la Onari-Kontani). Needs the
-  AL/MT diagram expressions in the multi-orbital matrix form; a separate small
-  design of its own.
-  - **I/O is already in place.** Everything the diagnostic needs — the converged
-    `G` (`green`), `χ_s`/`χ_c` (`chiq_s`/`chiq_c`), `χ_0` (`chi0q`), and `Σ`
-    (`sigma`) — is **already saved** by `FLEX.save_results` (`flex.py:705-760`)
-    as `.npz` with `freq_index`/wavevector metadata, **provided the matching
-    keys are set in `[file.output]`** (the bundled samples set them). So the
-    diagnostic can be a post-processing tool reading those `.npz` files (like
-    `hwave_sc`), needing **little/no new I/O**. Caveats: (a) saving is
-    key-gated — the tool must require the relevant output keys (or a small
-    change could save them by default); (b) the saved `sigma`/`χ` are in the
-    **reduced `(nd,nd)`** form today and would be **general rank-4** under
-    full-vertex FLEX — the diagnostic must detect which from metadata.
+  self-energy, as a *diagnostic* of whether AL/MT matter for the system. Cheap-ish
+  (one pass); needs the AL/MT diagram expressions in multi-orbital matrix form;
+  its own small design.
+  - **I/O already in place.** The diagnostic's inputs — converged `G` (`green`),
+    `χ_s`/`χ_c` (`chiq_s`/`chiq_c`), `χ⁰` (`chi0q`), `Σ` (`sigma`) — are already
+    saved by `FLEX.save_results` (`flex.py:705-760`) as `.npz` with
+    `freq_index`/wavevector metadata, **when the matching `[file.output]` keys are
+    set** (the bundled samples set them). So it can be a post-processing tool (like
+    `hwave_sc`) needing little/no new I/O. Caveats: (a) saving is key-gated;
+    (b) saved `sigma`/`χ` are reduced `(nd,nd)` today and general rank-4 under
+    full-vertex FLEX — detect which from metadata.
