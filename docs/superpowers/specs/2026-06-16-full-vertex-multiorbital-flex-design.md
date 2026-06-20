@@ -10,9 +10,10 @@ formula pinned to Mochizuki–Yanase–Ogata, corroborated by Takimoto–Hotta�
 (multi-orbital is a diagnostic difference, `Ûˢ≠Ûᶜ`); §4.4 — self-energy **physics
 wiring frozen in physical indices** (flatten implementation is a plan task), with
 the brute-force as independent ground truth; §4.5 — first-order constants
-**excluded** to match the reduced convention. Implementation-ready once the user
-approves; the plan's first task re-confirms the MYO Eq.(3)–(5) index placement
-from the paper PDF.
+**excluded** to match the reduced convention. **MYO Eqs.(3)–(6) confirmed from
+the PDF (2026-06-20)** — §4.4/§4.5 match the paper, no discrepancy. Plan at
+`docs/superpowers/plans/2026-06-20-full-vertex-flex-paramagnetic.md`;
+implementation-ready.
 
 ## 1. Problem
 
@@ -174,15 +175,22 @@ here* and the brute-force enforces it. The FFT transport (Matsubara↔τ, k↔r)
 `_calc_self_energy` is reused unchanged; only the per-`(r,τ)` product becomes the
 batched orbital contraction with this wiring.
 
-**Caveat on the source:** these index placements are transcribed from an ar5iv
-rendering of MYO; the plan's first task is to **re-derive Eq.(3)–(5) index
-placement from the paper PDF** and confirm before coding, since a mis-transcribed
-slot would propagate into both the formula and the brute-force.
+**Source — CONFIRMED FROM PDF (2026-06-20).** Eqs.(3)–(6) were read directly from
+the MYO PDF (`pdftotext`). The wiring above matches the paper: Eq.(4) defines the
+matrix as `V_{mn,μν}` (row pair `(m,n)`, col pair `(μ,ν)`); Eq.(3) contracts
+`V_{μm,νn} G_{μν}` — i.e. pick matrix elements at row `(μ,m)`, col `(ν,n)`. No
+transcription discrepancy found. Task 0 of the plan is satisfied.
 
-### 4.5 `V_eff` assembly (`_calc_veff_general`) — formula (MYO, dual-sourced)
+### 4.5 `V_eff` assembly (`_calc_veff_general`) — formula (MYO, confirmed from PDF)
 
-Interaction matrices `Ûˢ` (spin), `Ûᶜ` (charge) from MYO Eq.(10) in the
-orbital-pair basis (intra `U`, inter `U'`, Hund `J_H`, pair-hopping `J'=J_H`):
+Interaction matrices `Ûˢ` (spin), `Ûᶜ` (charge) from MYO **Eq.(6)** (block-diagonal
+`Ûˢ = diag(Û₁ˢ, Û₂ˢ)`, `Ûᶜ = diag(Û₁ᶜ, Û₂ᶜ)`), intra `U`, inter `U'`, Hund `J_H`,
+pair-hopping `J'`:
+- `[U₁ˢ]_{aa,bb}` = `U` (a=b) / `J_H` (a≠b);  `[U₁ᶜ]_{aa,bb}` = `U` (a=b) / `2U'−J_H` (a≠b)
+- `[U₂ˢ]_{ab,cd}` (a≠b, c≠d) = `U'` if (a,b)=(c,d), `J'` if (a,b)=(d,c), else 0
+- `[U₂ᶜ]_{ab,cd}` (a≠b, c≠d) = `−U'+2J_H` if (a,b)=(c,d), `J'` if (a,b)=(d,c), else 0
+
+(Task 2 verifies `sc.py:_build_sc_matrices_all_q` reproduces these element-wise.)
 
 ```
 χ⁰_{mn,μν}(q) = −(T/N) Σ_k G_{μm}(k+q) G_{nν}(k)            (Eq.5)
@@ -309,9 +317,9 @@ existing FLEX test conventions.
 
 ## 9. Open items for the implementation plan
 
-- **First task — confirm MYO Eq.(3)–(5) index placement from the paper PDF**
-  (not just the ar5iv summary), since a mis-transcribed index slot would corrupt
-  both the formula and the brute-force (§4.4 caveat).
+- ~~First task — confirm MYO Eq.(3)–(5) index placement from the paper PDF~~
+  **DONE (2026-06-20):** read from the MYO PDF via `pdftotext`; Eqs.(3)–(6)
+  transcribed in §4.4/§4.5, no discrepancy.
 - Extract the shared full S/C builder from `sc.py:_build_sc_matrices_all_q` for
   FLEX/RPA/SC reuse; verify against MYO/THU Eq.(10).
 - **Implement the flatten map for the §4.4 wiring.** The *physics* wiring

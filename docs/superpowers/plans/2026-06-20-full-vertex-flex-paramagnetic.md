@@ -28,23 +28,26 @@ V(q) = 3/2 Ûˢ χˢ Ûˢ + 1/2 Ûᶜ χᶜ Ûᶜ − 1/4 (Ûˢ+Ûᶜ) χ⁰ (Û
 
 ---
 
-## Task 0: Confirm the MYO index placement from the paper PDF (BLOCKING)
+## Task 0: Confirm the MYO index placement from the paper PDF — ✅ DONE (2026-06-20)
 
-The formula above is transcribed from an ar5iv rendering. A mis-transcribed index slot would corrupt both the formula and the brute-force, so confirm before coding the physics.
+Read `cond-mat/0407094` directly from the PDF (`pdftotext`). The transcription in
+this plan's reference block and spec §4.4/§4.5 **matches the paper** — no
+discrepancy. Confirmed:
 
-**Files:** none (research; record findings in the spec).
+- [x] **Eq.(5):** `χ⁰_{mn,μν}(q) = −(T/N) Σ_k G_{μm}(k+q) G_{nν}(k)`.
+- [x] **Eq.(4):** `V_{mn,μν}(q) = [ 3/2 Ûˢχ̂ˢÛˢ + 1/2 Ûᶜχ̂ᶜÛᶜ − 1/4 (Ûˢ+Ûᶜ)χ̂⁰(Ûˢ+Ûᶜ) + 3/2 Ûˢ − 1/2 Ûᶜ ]_{mn,μν}`; `χ̂ˢ=[Î−χ̂⁰Ûˢ]⁻¹χ̂⁰`, `χ̂ᶜ=[Î+χ̂⁰Ûᶜ]⁻¹χ̂⁰`.
+- [x] **Eq.(3):** `Σ_{mn}(k) = (T/N) Σ_q Σ_{μν} V_{μm,νn}(q) G_{μν}(k−q)` — V matrix is in `(mn),(μν)` convention (Eq.4); Eq.3 reads element `[row=(μ,m), col=(ν,n)]`.
+- [x] **Eq.(6) interaction matrices** (`Ûˢ=diag(Û₁ˢ,Û₂ˢ)`, `Ûᶜ=diag(Û₁ᶜ,Û₂ᶜ)`):
+  `[U₁ˢ]_{aa,bb}`=U(a=b)/J_H(a≠b); `[U₁ᶜ]_{aa,bb}`=U/(2U'−J_H);
+  `[U₂ˢ]_{ab,cd}`(a≠b,c≠d)=U' if (a,b)=(c,d), J' if (a,b)=(d,c), else 0;
+  `[U₂ᶜ]_{ab,cd}`=−U'+2J_H if (a,b)=(c,d), J' if (a,b)=(d,c), else 0.
 
-- [ ] **Step 1: Obtain MYO Eqs.(3)–(5) and (10) from the paper.** Read `cond-mat/0407094` (PDF or published version). Confirm, in the paper's own notation: the index slots of `χ⁰_{mn,μν}` (which `G` index is `k+q` vs `k`), the `V_{μm,νn} G_{μν}` contraction in the self-energy (which indices are summed), and the `Ûˢ`/`Ûᶜ` matrix elements in Eq.(10).
-
-- [ ] **Step 2: Record the confirmed equations** verbatim in the spec §4.5 (replace the "ar5iv caveat" note with "confirmed from PDF, <date>"). If any slot differs from the transcription above, update the plan's reference block and Task 7/8/9 code accordingly.
-
-- [ ] **Step 3: Commit.**
-```bash
-git add docs/superpowers/specs/2026-06-16-full-vertex-multiorbital-flex-design.md
-git commit -m "docs(flex): confirm MYO Eq.(3)-(5),(10) index placement from PDF"
-```
-
-> Note for the executor: if the PDF is unavailable, STOP and surface this — do not guess. The brute-force (Task 7) and optimized path (Tasks 8–9) both depend on this being right.
+> Reminder for downstream tasks: the brute-force (Task 3) and optimized path
+> (Tasks 6–7) use exactly these slots. Task 2 must verify
+> `sc.py:_build_sc_matrices_all_q` reproduces Eq.(6) element-wise (Codex's earlier
+> read of `sc.py` suggested the charge off-diagonal may be `2U'` vs MYO's
+> `2U'−J_H` / `−U'+2J_H` — RESOLVE this in Task 2, it is a real discrepancy to
+> check, not a transcription error here).
 
 ---
 
