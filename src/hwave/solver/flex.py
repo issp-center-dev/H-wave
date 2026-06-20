@@ -87,6 +87,17 @@ class FLEX(RPA):
         # guard is enforced in solve(), where spin_mode is determined).
         scheme = self.calc_scheme.lower()
         if scheme == "general":
+            # FLEX general is the paramagnetic full-vertex path: it sums the
+            # RPA *ring* (bubble) series with the full rank-4 vertex. The
+            # transverse *ladder* channel (calc_type='ring+ladder') is not part
+            # of this path, so reject it even though it forces scheme='general'.
+            if getattr(self, "calc_type", "ring") == "ring+ladder":
+                msg = ("FLEX does not support calc_type='ring+ladder' (the "
+                       "transverse ladder channel); FLEX general is ring-only. "
+                       "Use the default calc_type='ring' with "
+                       "calc_scheme='general'.")
+                logger.error(msg)
+                raise ValueError(msg)
             if getattr(self.ham_info, "enable_spin_orbital", False):
                 raise ValueError(
                     "calc_scheme='general' FLEX (v1) does not support "
@@ -97,7 +108,9 @@ class FLEX(RPA):
             self._flex_general = False
         else:
             if getattr(self, "calc_type", "ring") == "ring+ladder":
-                msg = "FLEX does not support calc_type='ring+ladder'."
+                msg = ("FLEX does not support calc_type='ring+ladder' (the "
+                       "transverse ladder channel); use the default 'ring' "
+                       "with calc_scheme='reduced'/'squashed'/'general'.")
             else:
                 msg = ("FLEX requires calc_scheme='reduced', 'squashed', or "
                        "'general', got '{}'.".format(self.calc_scheme))

@@ -115,6 +115,72 @@ class TestFLEXGeneralGuards(unittest.TestCase):
         self.assertIsNotNone(solver)
         self.assertFalse(solver._flex_general)
 
+    def test_general_rejected_for_ring_ladder(self):
+        """calc_type='ring+ladder' forces scheme='general' in RPA, but FLEX
+        general is ring-only — it must still be rejected (not silently accepted
+        as a plain general run)."""
+        with self.assertRaises(ValueError):
+            _make_solver("FLEX", calc_scheme="general",
+                         extra_mode={'calc_type': 'ring+ladder'})
+
+    def test_general_rejected_for_spinful_at_solve(self):
+        """The solve()-time guard must also reject spin_mode='spinful'."""
+        solver, green_info, info_file = _make_solver(
+            "FLEX", calc_scheme="general")
+
+        def fake_epsilon_k(gi):
+            solver.spin_mode = "spinful"
+
+        solver._calc_epsilon_k = fake_epsilon_k
+        with self.assertRaises(ValueError):
+            solver.solve(green_info, info_file['output']['path_to_output'])
+
+
+class TestFLEXGeneralWarningGating(unittest.TestCase):
+    """The density-density reduction warning must fire for reduced/squashed but
+    be suppressed for general (where the off-diagonal vertices are kept)."""
+
+    def _construct(self, scheme):
+        """Construct a 2-orbital FLEX while pretending an Exchange interaction is
+        present. ``self.ham_info`` is a fresh ``Interaction`` built inside
+        ``RPA.__init__`` (not the passed object), so patch the class method
+        ``Interaction.has_interaction_exchange`` rather than an instance — this
+        also avoids wiring an extra interaction file."""
+        from unittest.mock import patch
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+        import hwave.solver.rpa as solver_rpa
+        info_input = {
+            'path_to_input': 'tests/rpa/input_2orb',
+            'interaction': {
+                'path_to_input': 'tests/rpa/input_2orb',
+                'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+                'CoulombInter': 'coulombinter.dat',
+            },
+        }
+        ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+        info_mode = {
+            'mode': 'FLEX',
+            'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                      'SubShape': [1, 1, 1], 'Nmat': 32},
+            'calc_scheme': scheme,
+        }
+        with patch.object(solver_rpa.Interaction, 'has_interaction_exchange',
+                          return_value=True):
+            return solver_flex.FLEX(ham, {}, info_mode)
+
+    def test_warning_retained_for_squashed(self):
+        # 'squashed' (not 'reduced': RPA errors on reduced+exchange, rpa.py:643).
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            self._construct('squashed')
+        self.assertTrue(any('density-density' in m for m in cm.output))
+
+    def test_warning_suppressed_for_general(self):
+        with self.assertNoLogs('hwave.solver.flex', level='WARNING'):
+            self._construct('general')
+
 
 if __name__ == '__main__':
     unittest.main()
