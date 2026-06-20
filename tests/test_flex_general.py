@@ -73,6 +73,83 @@ def _make_solver(mode_cls, Lx=8, Ly=8, Nmat=64, T=2.0, mu=0.0,
     return solver, green_info, info_file
 
 
+def _make_general_flex():
+    """Build a spin-free 2-orbital general FLEX solver.
+
+    Uses the ``tests/rpa/input_2orb`` fixture (norb=2, CoulombIntra +
+    CoulombInter) so the MYO S/C matrices are nontrivial 4x4 blocks.  The
+    constructor sets ``self.norb``, ``self.lattice`` and ``self.ham_info``
+    (with ``self.ham_info.param_ham``), which is all the inflation method
+    needs.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    info_input = {
+        'path_to_input': 'tests/rpa/input_2orb',
+        'interaction': {
+            'path_to_input': 'tests/rpa/input_2orb',
+            'Geometry': 'geom.dat',
+            'Transfer': 'transfer.dat',
+            'CoulombIntra': 'coulombintra.dat',
+            'CoulombInter': 'coulombinter.dat',
+        },
+    }
+    ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+    info_mode = {
+        'mode': 'FLEX',
+        'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                  'SubShape': [1, 1, 1], 'Nmat': 8},
+        'calc_scheme': 'general',
+    }
+    solver = solver_flex.FLEX(ham, {}, info_mode)
+    solver.spin_mode = "spin-free"
+    return solver
+
+
+def _fake_general_chi0q(flex):
+    """Build a random complex rank-4 chi0q matching the general-path layout.
+
+    Shape ``(nmat, nvol, norb, norb, norb, norb)`` -- this is what
+    ``RPA._calc_chi0q`` returns for the spin-free general scheme after the
+    block dimension has been stripped in ``FLEX.solve``.
+    """
+    rng = np.random.default_rng(0)
+    no = flex.norb
+    shape = (flex.nmat, flex.lattice.nvol, no, no, no, no)
+    return (rng.standard_normal(shape)
+            + 1j * rng.standard_normal(shape)).astype(np.complex128)
+
+
+class TestInflateGeneral(unittest.TestCase):
+    """Task 4: rank-4 chi0q pass-through + full MYO S/C inflation."""
+
+    def test_inflate_returns_rank4_chi0q_and_sc_matrices(self):
+        flex = _make_general_flex()
+        self.assertTrue(flex._flex_general)
+        no = flex.norb
+        self.assertEqual(no, 2)
+
+        chi0q_raw = _fake_general_chi0q(flex)
+        chi0q, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0q_raw, None)
+
+        # chi0q passes through unchanged: rank-4 in orbital space.
+        nvol = flex.lattice.nvol
+        self.assertEqual(chi0q.ndim, 6)
+        self.assertEqual(chi0q.shape,
+                         (flex.nmat, nvol, no, no, no, no))
+        np.testing.assert_array_equal(chi0q, chi0q_raw)
+
+        # S/C matrices reshaped to (nvol, norb^2, norb^2).
+        self.assertEqual(Us.shape, (nvol, no * no, no * no))
+        self.assertEqual(Uc.shape, (nvol, no * no, no * no))
+        self.assertEqual(Us.shape[-2:], (4, 4))
+        self.assertEqual(Uc.shape[-2:], (4, 4))
+
+        # CoulombIntra + CoulombInter present -> nonzero S/C.
+        self.assertTrue(np.any(Us != 0.0))
+        self.assertTrue(np.any(Uc != 0.0))
+
+
 class TestFLEXGeneralGuards(unittest.TestCase):
     """Guards for calc_scheme='general' FLEX (v1, paramagnetic only)."""
 

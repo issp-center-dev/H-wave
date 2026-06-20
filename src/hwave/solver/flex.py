@@ -444,6 +444,81 @@ class FLEX(RPA):
         return chi0q, ham
 
     @do_profile
+    def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
+        """Pass rank-4 chi0q through; build full MYO S/C interaction matrices.
+
+        This is the paramagnetic (spin-free) full-vertex general-path analogue
+        of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced/squashed path,
+        which collapses the vertex onto the density-density diagonal and works
+        in the spin-orbital ``nd = norb * ns`` space, the MYO paramagnetic
+        formalism (cond-mat/0407094 Eqs. 5/6) is purely in ORBITAL space and
+        keeps the full rank-4 vertex.  Hence the working dimension here is
+        ``no = self.norb`` (NOT ``self.nd``): chi0q stays rank-4 and the S/C
+        matrices are ``norb^2 x norb^2`` MYO Kanamori blocks.
+
+        Parameters
+        ----------
+        chi0q_raw : ndarray
+            Rank-4 bare susceptibility ``(nmat, nvol, norb, norb, norb, norb)``
+            from ``RPA._calc_chi0q`` for the spin-free general scheme, after the
+            (size-1) spin-block dimension has been stripped in ``solve()``.
+        ham_orig : ignored
+            Present for signature parity with ``_inflate_chi0q_and_ham``; the
+            general path rebuilds the interaction from the real-space
+            ``self.ham_info.param_ham`` rather than the pre-inflated
+            ``ham_inter_q``.
+
+        Returns
+        -------
+        chi0q : ndarray
+            ``chi0q_raw`` passed through unchanged (rank-4, ndim 6).
+        Us : ndarray
+            MYO spin (S) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
+        Uc : ndarray
+            MYO charge (C) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
+
+        Notes
+        -----
+        The S/C matrices are built via ``build_sc_matrices_myo`` from an
+        ``inter_k`` dict assembled with ``hwave.sc._build_interaction_k``.  For
+        on-site Kanamori interactions the S/C matrices are CONSTANT over q, so
+        the k-array ordering used to build ``inter_k`` (a plain linspace grid)
+        need not match the FFT q-grid for this v1 path; this is reshaped to
+        ``(nvol, norb^2, norb^2)`` purely as ``Nx*Ny*Nz`` independent copies.
+        The reshape yields the matrix-per-q form that the downstream
+        channel-solver (``_solve_rpa``) consumes as ``ham``.
+        """
+        logger.debug(">>> FLEX._inflate_chi0q_and_ham_general")
+
+        from hwave.sc import _build_interaction_k
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+        # chi0q passes through unchanged: rank-4 orbital-space susceptibility.
+        chi0q = chi0q_raw
+        assert chi0q.ndim == 6
+
+        no = self.norb
+        nx, ny, nz = self.lattice.shape
+
+        # Build k-space interactions from the raw real-space param_ham. The
+        # k-array ordering is irrelevant for on-site Kanamori terms (constant
+        # over q), so a simple uniform grid suffices for v1.
+        kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
+        ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
+        kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
+        inter_k = _build_interaction_k(kx, ky, kz, self.ham_info.param_ham, no)
+
+        # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
+        Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
+
+        # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
+        nvol = self.lattice.nvol
+        Us = Us.reshape(nvol, no * no, no * no)
+        Uc = Uc.reshape(nvol, no * no, no * no)
+
+        return chi0q, Us, Uc
+
+    @do_profile
     def _build_spin_charge_vertices(self, ham_inflated):
         """Build spin and charge interaction vertices from inflated ham.
 
