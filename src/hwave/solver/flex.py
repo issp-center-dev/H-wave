@@ -890,6 +890,126 @@ class FLEX(RPA):
 
         return sigma_kw
 
+    @do_profile
+    def _sigma_orbital_contract(self, v_rt, green_rt):
+        r"""Per-(r,tau) rank-4 orbital contraction.
+
+        Implements the orbital part of MYO (cond-mat/0407094) Eq. 3::
+
+            Sigma_{mn} = sum_{mu,nu} V_{(mu m),(nu n)} G_{mu nu}
+
+        Parameters
+        ----------
+        v_rt : ndarray, shape (nfreq, nvol, norb^2, norb^2)
+            MYO vertex in (r, tau).  The last two axes flatten the orbital
+            pairs (mu, m) [row] and (nu, n) [col], i.e.
+            ``v_rt.reshape(..., norb, norb, norb, norb)`` has axes
+            (freq, vol, mu, m, nu, n).
+        green_rt : ndarray, shape (nblock, nfreq, nvol, norb, norb)
+            Green's function in (r, tau), last two axes (mu, nu).
+
+        Returns
+        -------
+        ndarray, shape (nblock, nfreq, nvol, norb, norb)
+            Self-energy in (r, tau), last two axes (m, n).
+        """
+        nfreq, nvol = v_rt.shape[0], v_rt.shape[1]
+        no = green_rt.shape[-1]
+        v6 = v_rt.reshape(nfreq, nvol, no, no, no, no)   # (f, r, mu, m, nu, n)
+        # Sigma[g,f,r,m,n] = sum_{mu,nu} v6[f,r,mu,m,nu,n] * green_rt[g,f,r,mu,nu]
+        return np.einsum('frumvn,gfruv->gfrmn', v6, green_rt)
+
+    @do_profile
+    def _calc_self_energy_general(self, green_kw, v_eff, beta):
+        r"""Compute Sigma(k, iwn) for the general (full-vertex) FLEX path.
+
+        Implements MYO (cond-mat/0407094) Eq. 3::
+
+            Sigma_{mn}(k, iwn)
+              = T/Nk * sum_{q,iv} sum_{mu,nu}
+                       V_{(mu m),(nu n)}(q, iv) G_{mu nu}(k-q, iwn-iv)
+
+        The frequency/momentum FFT transport (G -> (r,tau), V -> (r,tau),
+        per-(r,tau) combine, then back to (k, iwn)) is IDENTICAL to the reduced
+        :meth:`_calc_self_energy`; see that method for the derivation.  The ONLY
+        difference is the per-(r,tau) combine step: the reduced path uses an
+        element-wise Hadamard ``V * G``, whereas here it is the rank-4 orbital
+        contraction :meth:`_sigma_orbital_contract`.
+
+        Because the general path is pure-orbital (``nd_block == nd_v == norb``),
+        the spin-inflation branch of the reduced method is not needed and is
+        dropped.
+
+        Parameters
+        ----------
+        green_kw : ndarray, shape (nblock, nmat, nvol, norb, norb)
+            Dressed Green's function (orbital axes (mu, nu)).
+        v_eff : ndarray, shape (nfreq, nvol, norb^2, norb^2)
+            MYO effective interaction; last two axes flatten the orbital pairs
+            (mu, m) [row] and (nu, n) [col].
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray, shape (nblock, nmat, nvol, norb, norb)
+            Self-energy (orbital axes (m, n)).
+        """
+        logger.debug(">>> FLEX._calc_self_energy_general")
+
+        nx, ny, nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nmat = self.nmat
+        nblock = green_kw.shape[0]
+        norb = green_kw.shape[-1]
+        ndx = v_eff.shape[-1]   # = norb^2
+        nfreq = v_eff.shape[0]
+
+        # Shared with _calc_self_energy: V_eff and G must share the imaginary-
+        # time grid (bosonic freq count == fermionic), else tau slices would be
+        # silently left at zero.  Fail loudly.
+        if nfreq != nmat:
+            raise ValueError(
+                "FLEX self-energy requires a full bosonic frequency grid: "
+                "V_eff has nfreq={} but Nmat={}".format(nfreq, nmat))
+
+        # --- Transform Green's function to (r, tau) space ---
+        # (transport identical to _calc_self_energy)
+        omg_f = np.exp(-1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
+        green_flat = green_kw.reshape(nblock, nmat, nvol * norb * norb)
+        green_kt = (FFT.fft(green_flat, axis=1)
+                    * omg_f[np.newaxis, :, np.newaxis]
+                    ).reshape(nblock, nmat, nx, ny, nz, norb * norb)
+        green_rt = FFT.ifftn(green_kt, axes=(2, 3, 4)
+                             ).reshape(nblock, nmat, nvol, norb, norb)
+
+        # --- Transform V_eff to (r, tau) space ---
+        # (transport identical to _calc_self_energy)
+        omg_b = np.exp(-1j * np.pi * np.arange(nfreq))
+        v_flat = v_eff.reshape(nfreq, nvol * ndx * ndx)
+        v_qt = (FFT.fft(v_flat, axis=0)
+                * omg_b[:, np.newaxis]
+                ).reshape(nfreq, nx, ny, nz, ndx * ndx)
+        v_rt = FFT.ifftn(v_qt, axes=(1, 2, 3)).reshape(nfreq, nvol, ndx, ndx)
+
+        # --- Compute Sigma(r, tau): rank-4 orbital contraction (the only new
+        # bug-prone step; the rest is reused transport). ---
+        sigma_rt = self._sigma_orbital_contract(v_rt, green_rt)
+
+        # --- Transform Sigma back to (k, iwn) space ---
+        # (transport identical to _calc_self_energy)
+        sigma_kt = FFT.fftn(
+            sigma_rt.reshape(nblock, nmat, nx, ny, nz, norb * norb),
+            axes=(2, 3, 4)
+        ).reshape(nblock, nmat, nvol * norb * norb)
+
+        omg_f_inv = np.exp(1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
+        sigma_kw = (FFT.ifft(sigma_kt * omg_f_inv[np.newaxis, :, np.newaxis],
+                             axis=1)
+                    .reshape(nblock, nmat, nvol, norb, norb) * (1.0 / beta))
+
+        return sigma_kw
+
     def _calc_convergence(self, sigma_old, sigma_new):
         """Calculate convergence criterion for self-energy.
 

@@ -546,5 +546,70 @@ class TestBruteForceRef(unittest.TestCase):
         np.testing.assert_allclose(chi0_ref, chi0_ein, atol=1.0e-12)
 
 
+class TestSelfEnergyGeneral(unittest.TestCase):
+    """Task 7: rank-4 orbital self-energy contraction.
+
+    Validates the ONLY new, bug-prone code (the rank-4 orbital contraction
+    Sigma_{mn} = sum_{mu,nu} V_{mu m, nu n} G_{mu nu}) in isolation against an
+    independent physical-index ground truth.  The frequency/momentum FFT
+    transport is reused unchanged from the already-tested reduced path, so it
+    is NOT compared here (the brute-force Matsubara wrap is a toy that does not
+    match the real fermionic/bosonic FFT phases).
+    """
+
+    def test_orbital_contraction_matches_physical(self):
+        rng = np.random.default_rng(11)
+        norb = 2
+        flex = _make_general_flex(norb=2)   # only needed so the method is bound
+        # Physical vertex and Green function at a single (r,tau) slice:
+        Vphys = (rng.standard_normal((norb, norb, norb, norb))
+                 + 1j * rng.standard_normal((norb, norb, norb, norb)))  # (mu,m,nu,n)
+        G = rng.standard_normal((norb, norb)) + 1j * rng.standard_normal((norb, norb))  # (mu,nu)
+        # Production input: flatten physical V to (1,1,norb^2,norb^2).
+        v_rt = Vphys.reshape(1, 1, norb * norb, norb * norb)
+        green_rt = G.reshape(1, 1, 1, norb, norb)
+        sig = flex._sigma_orbital_contract(v_rt, green_rt)   # (1,1,1,norb,norb)
+        # Independent reference: explicit physical loop, indexing Vphys directly.
+        sig_ref = np.zeros((norb, norb), dtype=complex)
+        for m in range(norb):
+            for n in range(norb):
+                s = 0j
+                for mu in range(norb):
+                    for nu in range(norb):
+                        s += Vphys[mu, m, nu, n] * G[mu, nu]
+                sig_ref[m, n] = s
+        np.testing.assert_allclose(sig[0, 0, 0], sig_ref, atol=1e-12)
+
+    def test_orbital_contraction_matches_bruteforce_single_point(self):
+        # Cross-check against the committed physical ground truth at Nk=1,nmat=1
+        # (pure orbital contraction; T=1 so the (T/Nk) prefactor is 1).
+        from tests.flex_bruteforce_ref import sigma_bruteforce
+        rng = np.random.default_rng(12)
+        norb = 2
+        flex = _make_general_flex(norb=2)
+        Vphys = (rng.standard_normal((norb, norb, norb, norb))
+                 + 1j * rng.standard_normal((norb, norb, norb, norb)))
+        G = rng.standard_normal((norb, norb)) + 1j * rng.standard_normal((norb, norb))
+        v_rt = Vphys.reshape(1, 1, norb * norb, norb * norb)
+        green_rt = G.reshape(1, 1, 1, norb, norb)
+        sig = flex._sigma_orbital_contract(v_rt, green_rt)[0, 0, 0]
+        # brute-force at one k, one freq:
+        Vbf = Vphys.reshape(norb, norb, norb, norb, 1, 1)   # (mu,m,nu,n,q=1,iv=1)
+        Gbf = G.reshape(norb, norb, 1, 1)                   # (mu,nu,Nk=1,nmat=1)
+        sig_bf = sigma_bruteforce(Gbf, Vbf, T=1.0, Nk=1)[:, :, 0, 0]   # (m,n)
+        np.testing.assert_allclose(sig, sig_bf, atol=1e-12)
+
+    def test_full_method_shape(self):
+        flex = _make_general_flex(norb=2)
+        nblock, nmat, nvol, no = 1, flex.nmat, flex.lattice.nvol, flex.norb
+        rng = np.random.default_rng(13)
+        green_kw = (rng.standard_normal((nblock, nmat, nvol, no, no))
+                    + 1j * rng.standard_normal((nblock, nmat, nvol, no, no)))
+        v_eff = (rng.standard_normal((nmat, nvol, no * no, no * no))
+                 + 1j * rng.standard_normal((nmat, nvol, no * no, no * no)))
+        sig = flex._calc_self_energy_general(green_kw, v_eff, beta=1.0 / flex.T)
+        self.assertEqual(sig.shape, (nblock, nmat, nvol, no, no))
+
+
 if __name__ == '__main__':
     unittest.main()
