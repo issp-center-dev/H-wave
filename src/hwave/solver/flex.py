@@ -697,6 +697,75 @@ class FLEX(RPA):
         return v_eff
 
     @do_profile
+    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc):
+        r"""Compute the MYO full-vertex effective interaction V_eff(q, ivn).
+
+        Implements the fluctuation part of the paramagnetic full-vertex
+        interaction (Takimoto-Hotta-Ueda / MYO convention, cond-mat/0407094
+        Eq. 4)::
+
+            V(q) = 3/2 Us.chi_s.Us + 1/2 Uc.chi_c.Uc
+                   - 1/4 (Us+Uc).chi0.(Us+Uc)
+
+        The first-order constant terms (``+3/2 Us - 1/2 Uc``) are intentionally
+        EXCLUDED so that, like the reduced path :meth:`_calc_veff`, the
+        second-order (SOPT) limit is reproduced: at zeroth order
+        ``chi_s = chi_c = chi0`` and (with ``Us = Uc = U``) the kernel reduces
+        to ``U.chi0.U``, the leading second-order bubble.
+
+        All three susceptibilities are six-dimensional orbital-space arrays of
+        shape ``(nmat, nvol, norb, norb, norb, norb)`` (four orbital legs).
+        They are flattened to ``(nmat, nvol, ndx, ndx)`` matrices with
+        ``ndx = norb^2`` BEFORE the matrix products, using the same flatten
+        convention as the MYO S/C builder: the row index is
+        ``(l1 * norb + l2)`` (``idx12``) and the column index is
+        ``(l3 * norb + l4)`` (``idx34``), matching ``Us`` / ``Uc`` / ``chi0q``.
+        ``Us`` / ``Uc`` are ``(nvol, ndx, ndx)`` and are broadcast over the
+        frequency axis.
+
+        Parameters
+        ----------
+        chi0q : ndarray
+            Bare susceptibility, shape ``(nmat, nvol, norb, norb, norb, norb)``.
+        chi_s : ndarray
+            Spin-channel RPA susceptibility, same shape as ``chi0q``.
+        chi_c : ndarray
+            Charge-channel RPA susceptibility, same shape as ``chi0q``.
+        Us : ndarray
+            MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
+        Uc : ndarray
+            MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+
+        Returns
+        -------
+        ndarray
+            Effective interaction V_eff, shape
+            ``(nmat, nvol, norb^2, norb^2)``.
+        """
+        logger.debug(">>> FLEX._calc_veff_general")
+
+        nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+        no = chi0q.shape[2]
+        ndx = no * no
+
+        # Flatten the four orbital legs to (row, col) matrices BEFORE matmul.
+        chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+        chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+        chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+
+        # Broadcast the (nvol, ndx, ndx) interaction matrices over frequency.
+        UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
+        UcB = Uc[np.newaxis]
+        Uspc = (Us + Uc)[np.newaxis]
+
+        term_s = 1.5 * (UsB @ chis_2d @ UsB)
+        term_c = 0.5 * (UcB @ chic_2d @ UcB)
+        term_0 = 0.25 * (Uspc @ chi0_2d @ Uspc)
+
+        v_eff = term_s + term_c - term_0    # (nmat, nvol, ndx, ndx)
+        return v_eff
+
+    @do_profile
     def _calc_self_energy(self, green_kw, v_eff, beta):
         """Compute self-energy Sigma(k, iwn) via FFT convolution.
 

@@ -73,27 +73,40 @@ def _make_solver(mode_cls, Lx=8, Ly=8, Nmat=64, T=2.0, mu=0.0,
     return solver, green_info, info_file
 
 
-def _make_general_flex():
-    """Build a spin-free 2-orbital general FLEX solver.
+def _make_general_flex(norb=2):
+    """Build a spin-free general FLEX solver.
 
-    Uses the ``tests/rpa/input_2orb`` fixture (norb=2, CoulombIntra +
-    CoulombInter) so the MYO S/C matrices are nontrivial 4x4 blocks.  The
-    constructor sets ``self.norb``, ``self.lattice`` and ``self.ham_info``
-    (with ``self.ham_info.param_ham``), which is all the inflation method
-    needs.
+    For ``norb=2`` (default) uses the ``tests/rpa/input_2orb`` fixture
+    (CoulombIntra + CoulombInter) so the MYO S/C matrices are nontrivial 4x4
+    blocks.  For ``norb=1`` uses the 1-orbital ``tests/rpa/input`` fixture
+    (CoulombIntra only).  The constructor sets ``self.norb``, ``self.lattice``
+    and ``self.ham_info`` (with ``self.ham_info.param_ham``), which is all the
+    downstream general-path methods need.
     """
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
-    info_input = {
-        'path_to_input': 'tests/rpa/input_2orb',
-        'interaction': {
+
+    if norb == 1:
+        info_input = {
+            'path_to_input': 'tests/rpa/input',
+            'interaction': {
+                'path_to_input': 'tests/rpa/input',
+                'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+            },
+        }
+    else:
+        info_input = {
             'path_to_input': 'tests/rpa/input_2orb',
-            'Geometry': 'geom.dat',
-            'Transfer': 'transfer.dat',
-            'CoulombIntra': 'coulombintra.dat',
-            'CoulombInter': 'coulombinter.dat',
-        },
-    }
+            'interaction': {
+                'path_to_input': 'tests/rpa/input_2orb',
+                'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+                'CoulombInter': 'coulombinter.dat',
+            },
+        }
     ham = read_input_k.QLMSkInput(info_input).get_param("ham")
     info_mode = {
         'mode': 'FLEX',
@@ -180,6 +193,55 @@ class TestChiGeneralConsistency(unittest.TestCase):
         chi_c_ref = _rpa_general_chi(chi0, Uc, sign=+1)   # [I + chi0 Uc]^-1 chi0
         np.testing.assert_allclose(chi_s, chi_s_ref, atol=1e-10)
         np.testing.assert_allclose(chi_c, chi_c_ref, atol=1e-10)
+
+
+class TestVeffGeneral(unittest.TestCase):
+    """Task 6: MYO fluctuation effective interaction V_eff."""
+
+    def test_single_orbital_matches_reduced_kernel(self):
+        U = 3.0
+        flex = _make_general_flex(norb=1)
+        chi0 = _fake_general_chi0q(flex)        # (nmat, nvol, 1,1,1,1)
+        nvol = flex.lattice.nvol
+        Us = U * np.ones((nvol, 1, 1), dtype=complex)
+        Uc = U * np.ones((nvol, 1, 1), dtype=complex)
+        chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
+        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        # reduced fluctuation kernel sandwiched by U: U*(1.5 chi_s + 0.5 chi_c - chi0)*U
+        kernel = 1.5 * chi_s + 0.5 * chi_c - chi0          # (nmat,nvol,1,1,1,1)
+        Vref = (U * U) * kernel.reshape(V.shape)
+        np.testing.assert_allclose(V, Vref, atol=1e-10)
+
+    def test_shape_two_orbital(self):
+        flex = _make_general_flex(norb=2)
+        chi0, Us, Uc = flex._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(flex), None)
+        chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
+        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        self.assertEqual(V.shape, (flex.nmat, flex.lattice.nvol, 4, 4))
+
+    def test_values_two_orbital_vs_elementwise(self):
+        rng = np.random.default_rng(99)
+        flex = _make_general_flex(norb=2)
+        chi0 = _fake_general_chi0q(flex)
+        nvol, no = flex.lattice.nvol, flex.norb
+        ndx = no * no
+        Us = (rng.standard_normal((nvol, ndx, ndx))
+              + 1j * rng.standard_normal((nvol, ndx, ndx)))
+        Uc = (rng.standard_normal((nvol, ndx, ndx))
+              + 1j * rng.standard_normal((nvol, ndx, ndx)))
+        chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
+        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        chi0_2d = chi0.reshape(flex.nmat, nvol, ndx, ndx)
+        chis_2d = chi_s.reshape(flex.nmat, nvol, ndx, ndx)
+        chic_2d = chi_c.reshape(flex.nmat, nvol, ndx, ndx)
+        Vref = np.zeros_like(V)
+        for f in range(flex.nmat):
+            for r in range(nvol):
+                Vref[f, r] = (1.5 * Us[r] @ chis_2d[f, r] @ Us[r]
+                              + 0.5 * Uc[r] @ chic_2d[f, r] @ Uc[r]
+                              - 0.25 * (Us[r] + Uc[r]) @ chi0_2d[f, r] @ (Us[r] + Uc[r]))
+        np.testing.assert_allclose(V, Vref, atol=1e-10)
 
 
 class TestFLEXGeneralGuards(unittest.TestCase):
