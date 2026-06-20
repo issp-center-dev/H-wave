@@ -182,5 +182,92 @@ class TestFLEXGeneralWarningGating(unittest.TestCase):
             self._construct('general')
 
 
+def _kanamori_inter_k(norb=2, U=4.0, Up=2.0, J=0.5, Jp=0.5,
+                      Nx=2, Ny=2, Nz=1, with_pairhop=False):
+    """Build a constant Kanamori ``inter_k`` dict for the S/C matrix builders.
+
+    Each entry is an ndarray of shape ``(norb, norb, Nx, Ny, Nz)`` matching the
+    layout consumed by ``sc._build_sc_matrices_all_q`` / ``_get(itype)``.
+    """
+    shape = (norb, norb, Nx, Ny, Nz)
+    CoulombIntra = np.zeros(shape, dtype=complex)
+    CoulombInter = np.zeros(shape, dtype=complex)
+    Hund = np.zeros(shape, dtype=complex)
+    Exchange = np.zeros(shape, dtype=complex)
+    for a in range(norb):
+        CoulombIntra[a, a, :] = U
+        for b in range(norb):
+            if a != b:
+                CoulombInter[a, b, :] = Up
+                Hund[a, b, :] = J
+                Exchange[a, b, :] = Jp
+    inter_k = {
+        "CoulombIntra": CoulombIntra,
+        "CoulombInter": CoulombInter,
+        "Hund": Hund,
+        "Exchange": Exchange,
+    }
+    if with_pairhop:
+        PairHop = np.zeros(shape, dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                if a != b:
+                    PairHop[a, b, :] = Jp
+        inter_k["PairHop"] = PairHop
+    return inter_k
+
+
+class TestMYOSCMatrices(unittest.TestCase):
+    """MYO-convention S/C interaction matrix builder (cond-mat/0407094 Eq.(6))."""
+
+    def test_myo_elements(self):
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.5
+        ik = _kanamori_inter_k(norb=2, U=U, Up=Up, J=J, Jp=Jp,
+                               Nx=2, Ny=2, Nz=1)
+        S, C = build_sc_matrices_myo(ik, 2, 2, 2, 1)
+
+        def el(M, l1, l2, l3, l4):
+            return M[0, 0, 0, l1 * 2 + l2, l3 * 2 + l4]
+
+        # Case 2 (ab,ab): the MYO-specific charge element
+        self.assertAlmostEqual(el(S, 0, 1, 0, 1), Up)
+        self.assertAlmostEqual(el(C, 0, 1, 0, 1), -Up + 2 * J)
+        # Case 3 (aa,bb)
+        self.assertAlmostEqual(el(S, 0, 0, 1, 1), J)
+        self.assertAlmostEqual(el(C, 0, 0, 1, 1), 2 * Up - J)
+        # Case 4 (ab,ba)
+        self.assertAlmostEqual(el(S, 0, 1, 1, 0), Jp)
+        self.assertAlmostEqual(el(C, 0, 1, 1, 0), Jp)
+        # Case 1 (aaaa)
+        self.assertAlmostEqual(el(S, 0, 0, 0, 0), U)
+        self.assertAlmostEqual(el(C, 0, 0, 0, 0), U)
+
+    def test_diverges_from_kuroki_only_at_charge_abab(self):
+        from hwave.sc import _build_sc_matrices_all_q
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.5
+        ik = _kanamori_inter_k(norb=2, U=U, Up=Up, J=J, Jp=Jp,
+                               Nx=2, Ny=2, Nz=1)
+        Sm, Cm = build_sc_matrices_myo(ik, 2, 2, 2, 1)
+        Sk, Ck = _build_sc_matrices_all_q(ik, 2, 2, 2, 1)
+
+        # Spin matrices identical.
+        np.testing.assert_allclose(Sm, Sk)
+
+        # Charge differs ONLY at the (ab,ab) entries, by exactly +J there.
+        diff = Cm - Ck
+        # (ab,ab): idx12 == idx34 with l1!=l2; for norb=2 these are
+        # (0,1)&(0,1) -> flat (1,1) and (1,0)&(1,0) -> flat (2,2).
+        nonzero = [(1, 1), (2, 2)]
+        mask = np.zeros((4, 4), dtype=bool)
+        for (i, j) in nonzero:
+            mask[i, j] = True
+        nz = diff[..., mask]
+        np.testing.assert_allclose(nz, J)
+        zero = diff[..., ~mask]
+        np.testing.assert_allclose(zero, 0.0, atol=1.0e-12)
+
+
 if __name__ == '__main__':
     unittest.main()
