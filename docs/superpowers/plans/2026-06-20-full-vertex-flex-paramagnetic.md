@@ -100,34 +100,58 @@ class TestGeneralFlexGuards(unittest.TestCase):
 Run: `PYTHONPATH=src python -m pytest tests/test_flex_general.py::TestGeneralFlexGuards -v`
 Expected: FAIL (general currently raises for *all* schemes, so `test_general_accepted_for_spin_free` fails; the reject tests may pass for the wrong reason).
 
-- [ ] **Step 3: Update `_init_flex_param`.** Replace the scheme guard so `general` is accepted only for `spin-free`:
+> **IMPORTANT (verified against the code):** `self.spin_mode` is **NOT set at
+> `__init__` time** — it is assigned later in `RPA._read_chi0q` (via `read_init`,
+> `rpa.py:1220+`) and in `RPA.solve` (`rpa.py:1544+`). So the `spin_mode` guard
+> **cannot** live in `_init_flex_param` (it would raise `AttributeError`). Split
+> the guards: the scheme acceptance + `enable_spin_orbital` rejection + the
+> `_flex_general` flag go in `_init_flex_param` (available at init); the
+> `spin_mode != "spin-free"` rejection goes at the **start of `solve()`** (after
+> `spin_mode` is determined). The guard tests therefore split accordingly (see
+> Step 1 update below).
+
+- [ ] **Step 3a: Update `_init_flex_param`** — accept `general`, reject
+`enable_spin_orbital`, set the flag (NO `spin_mode` here):
 ```python
 scheme = self.calc_scheme.lower()
 if scheme == "general":
-    # Paramagnetic full-vertex FLEX (v1). Reject modes deferred to the
-    # generalized-FLEX phase.
+    # Paramagnetic full-vertex FLEX (v1). spin_mode is checked in solve()
+    # (not yet set here). enable_spin_orbital IS available now.
     if getattr(self.ham_info, "enable_spin_orbital", False):
         raise ValueError(
-            "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
-            "only; enable_spin_orbital is deferred to the generalized FLEX "
-            "solver.")
-    if self.spin_mode != "spin-free":
-        raise ValueError(
-            "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
-            "only, got '{}'. spin-diag/spinful are deferred to the "
-            "generalized FLEX solver.".format(self.spin_mode))
+            "calc_scheme='general' FLEX (v1) does not support "
+            "enable_spin_orbital; deferred to the generalized FLEX solver.")
     self._flex_general = True
 elif scheme in ("reduced", "squashed"):
     self._flex_general = False
 else:
     if getattr(self, "calc_type", "ring") == "ring+ladder":
-        msg = ("FLEX does not support calc_type='ring+ladder'.")
+        msg = "FLEX does not support calc_type='ring+ladder'."
     else:
         msg = ("FLEX requires calc_scheme='reduced', 'squashed', or "
                "'general', got '{}'.".format(self.calc_scheme))
     logger.error(msg)
     raise ValueError(msg)
 ```
+
+- [ ] **Step 3b: Add the `spin_mode` guard at the start of `FLEX.solve()`** (after
+`super()`/chi0q has set `self.spin_mode`; place it right after `spin_mode` is
+known, before building vertices):
+```python
+if self._flex_general and self.spin_mode != "spin-free":
+    raise ValueError(
+        "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
+        "only, got '{}'. spin-diag/spinful are deferred to the generalized "
+        "FLEX solver.".format(self.spin_mode))
+```
+> Update Step 1's tests: `test_general_rejected_for_enable_spin_orbital` and
+> `test_general_accepted_for_spin_free` (no raise) stay at construction time;
+> move the `spin-diag`/`spinful` rejection tests to call `solve()` (use the
+> `_make_solver` fixture with a spin-split input, or assert the guard via a small
+> `solve()` invocation). If constructing a spin-diag input is heavy, assert the
+> guard logic directly by setting `solver._flex_general=True; solver.spin_mode=
+> "spin-diag"` and calling the extracted guard helper.
+
 Then guard the density-density warning so it only fires on the reduced/squashed path:
 ```python
 if not self._flex_general and (
