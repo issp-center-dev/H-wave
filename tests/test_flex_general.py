@@ -347,6 +347,33 @@ class TestBruteForceRef(unittest.TestCase):
 
         np.testing.assert_allclose(Sig_ref, Sig_ein, atol=1.0e-12)
 
+    def test_chi0_matches_naive_einsum(self):
+        """Cross-check chi0_bruteforce against an independent einsum/roll
+        implementation of the SAME MYO Eq.(5) -- guards against a loop typo
+        (closes the coverage gap flagged in the Codex review; sigma already
+        had such a cross-check, chi0 did not)."""
+        from tests.flex_bruteforce_ref import chi0_bruteforce
+        rng = np.random.default_rng(7)
+        norb, Nk, nmat = 2, 4, 4
+        T = 1.7
+        G = rng.standard_normal((norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, Nk, nmat))
+
+        chi0_ref = chi0_bruteforce(G, T=T, Nk=Nk)
+
+        # Independent einsum/roll path. For each (q, iv) shift, build
+        # Gs[mu,m,k,iw] = G[mu,m,(k+q)%Nk,(iw+iv)%nmat] via np.roll
+        # (roll by -q on the k axis and -iv on the iw axis), then contract
+        # over (k, iw) with G[n,nu,k,iw]:  chi0[m,n,mu,nu] = -(T/Nk) sum Gs*G.
+        chi0_ein = np.zeros((norb, norb, norb, norb, Nk, nmat), dtype=complex)
+        for q in range(Nk):
+            for iv in range(nmat):
+                Gs = np.roll(np.roll(G, -q, axis=2), -iv, axis=3)
+                chi0_ein[:, :, :, :, q, iv] = np.einsum('amki,nbki->mnab', Gs, G)
+        chi0_ein *= -(T / Nk)
+
+        np.testing.assert_allclose(chi0_ref, chi0_ein, atol=1.0e-12)
+
 
 if __name__ == '__main__':
     unittest.main()

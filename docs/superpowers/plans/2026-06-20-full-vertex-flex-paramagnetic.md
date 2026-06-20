@@ -472,7 +472,30 @@ git commit -m "feat(flex): MYO fluctuation V_eff for general path"
 - Modify: `src/hwave/solver/flex.py`
 - Test: `tests/test_flex_general.py`
 
-- [ ] **Step 1: Write the failing test** — the optimized self-energy equals the brute-force reference (Task 3) for the SAME small `G`, `V`, to ~1e-10. This is the PRIMARY correctness check and it locks the index wiring:
+> **⚠️ Matsubara-convention caveat (Codex review of Task 3).** The brute-force
+> `sigma_bruteforce` uses a **toy periodic wrap** on the Matsubara index
+> (`(iw−iv)%nmat`), NOT the real fermionic/bosonic frequency structure that the
+> optimized `_calc_self_energy` FFT transport uses (`flex.py` `omg_f`/`omg_b`
+> phases). So a naive `sig_fast` vs `sigma_bruteforce` comparison would NOT match
+> on the frequency axis. The brute-force is the ground truth for the **orbital +
+> momentum** wiring, which is the bug-prone part; the Matsubara/FFT transport is
+> reused unchanged from the already-tested reduced `_calc_self_energy`. Two valid
+> ways to make the equivalence test sound — pick one:
+> (a) **Single-frequency / r-space contraction test:** validate the rank-4
+> orbital contraction `Σ_{mn}=Σ_{μν}V_{μm,νn}G_{μν}` directly at the per-`(r,τ)`
+> (or per-frequency) level against an explicit physical-index contraction,
+> bypassing the frequency sum; OR
+> (b) **Toy-convention end-to-end:** build a small `sigma_bruteforce_matsubara`
+> variant that mirrors the optimized path's EXACT frequency handling, and compare
+> full `Σ`. Option (a) is simpler and targets the actual new code (the
+> contraction); the FFT transport needs no re-validation. Prefer (a) unless the
+> reviewer wants full end-to-end.
+
+- [ ] **Step 1: Write the failing test** — the optimized self-energy's rank-4
+orbital contraction matches an explicit physical-index contraction (per the
+caveat above; do NOT compare the toy-Matsubara `sigma_bruteforce` to the real-FFT
+`sig_fast` directly on the frequency axis). The momentum+orbital wiring is locked
+by this check:
 ```python
 from tests.flex_bruteforce_ref import sigma_bruteforce, chi0_bruteforce
 
