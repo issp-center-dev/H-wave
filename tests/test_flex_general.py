@@ -269,5 +269,84 @@ class TestMYOSCMatrices(unittest.TestCase):
         np.testing.assert_allclose(zero, 0.0, atol=1.0e-12)
 
 
+class TestBruteForceRef(unittest.TestCase):
+    """Structural sanity checks for the physical-index brute-force reference
+    (``tests/flex_bruteforce_ref.py``), which is the independent ground truth
+    for the optimized general-mode FLEX path."""
+
+    def test_chi0_shape(self):
+        from tests.flex_bruteforce_ref import chi0_bruteforce
+        rng = np.random.default_rng(0)
+        norb, Nk, nmat = 2, 4, 4
+        G = rng.standard_normal((norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, Nk, nmat))
+        chi0 = chi0_bruteforce(G, T=1.5, Nk=Nk)
+        self.assertEqual(chi0.shape, (2, 2, 2, 2, 4, 4))
+
+    def test_sigma_shape(self):
+        from tests.flex_bruteforce_ref import sigma_bruteforce
+        rng = np.random.default_rng(1)
+        norb, Nk, nmat = 2, 4, 4
+        G = rng.standard_normal((norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, Nk, nmat))
+        V = rng.standard_normal((norb, norb, norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, norb, norb, Nk, nmat))
+        Sig = sigma_bruteforce(G, V, T=1.5, Nk=Nk)
+        self.assertEqual(Sig.shape, (2, 2, 4, 4))
+
+    def test_chi0_linearity(self):
+        """chi0 is bilinear in G: chi0(2 G) == 4 chi0(G)."""
+        from tests.flex_bruteforce_ref import chi0_bruteforce
+        rng = np.random.default_rng(2)
+        norb, Nk, nmat = 2, 3, 4
+        G = rng.standard_normal((norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, Nk, nmat))
+        c1 = chi0_bruteforce(G, T=2.0, Nk=Nk)
+        c2 = chi0_bruteforce(2 * G, T=2.0, Nk=Nk)
+        np.testing.assert_allclose(c2, 4 * c1, atol=1.0e-12)
+
+    def test_sigma_linear_in_V(self):
+        """Sigma is linear in V: Sigma(G, 2 V) == 2 Sigma(G, V)."""
+        from tests.flex_bruteforce_ref import sigma_bruteforce
+        rng = np.random.default_rng(3)
+        norb, Nk, nmat = 2, 3, 4
+        G = rng.standard_normal((norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, Nk, nmat))
+        V = rng.standard_normal((norb, norb, norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, norb, norb, Nk, nmat))
+        s1 = sigma_bruteforce(G, V, T=2.0, Nk=Nk)
+        s2 = sigma_bruteforce(G, 2 * V, T=2.0, Nk=Nk)
+        np.testing.assert_allclose(s2, 2 * s1, atol=1.0e-12)
+
+    def test_sigma_matches_naive_einsum(self):
+        """Cross-check sigma_bruteforce against an independent einsum/roll
+        implementation of the SAME MYO Eq.(3) -- guards against a loop typo."""
+        from tests.flex_bruteforce_ref import sigma_bruteforce
+        rng = np.random.default_rng(4)
+        norb, Nk, nmat = 2, 4, 4
+        T = 1.3
+        G = rng.standard_normal((norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, Nk, nmat))
+        V = rng.standard_normal((norb, norb, norb, norb, Nk, nmat)) \
+            + 1j * rng.standard_normal((norb, norb, norb, norb, Nk, nmat))
+
+        Sig_ref = sigma_bruteforce(G, V, T=T, Nk=Nk)
+
+        # Independent einsum/roll path. For each (q, iv) shift, build
+        # Gs[mu,nu,k,iw] = G[mu,nu,(k-q)%Nk,(iw-iv)%nmat] via np.roll
+        # (roll by +q on the k axis and +iv on the iw axis), then contract
+        # over (mu, nu) with V[:,m,:,n,q,iv] and accumulate.
+        Sig_ein = np.zeros((norb, norb, Nk, nmat), dtype=complex)
+        for q in range(Nk):
+            for iv in range(nmat):
+                Gs = np.roll(np.roll(G, q, axis=2), iv, axis=3)
+                # V[mu,m,nu,n] for this (q,iv) ; contract mu,nu with Gs[mu,nu,k,iw]
+                Sig_ein += np.einsum('ambn,abki->mnki',
+                                     V[:, :, :, :, q, iv], Gs)
+        Sig_ein *= (T / Nk)
+
+        np.testing.assert_allclose(Sig_ref, Sig_ein, atol=1.0e-12)
+
+
 if __name__ == '__main__':
     unittest.main()
