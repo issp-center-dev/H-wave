@@ -4,7 +4,7 @@
 
 **Goal:** Add a paramagnetic (`spin-free`) full-vertex multi-orbital FLEX path to H-wave, selected by `calc_scheme="general"`, that keeps the orbital off-diagonal (Hund, pair-hopping) vertices instead of reducing them to density-density.
 
-**Architecture:** Add a parallel "general" code path to `FLEX` (subclass of `RPA`) dispatched from `solve()` on `calc_scheme=="general"`; the existing reduced/squashed density-density path is untouched. The general path builds the full Kanamori `Ûˢ`/`Ûᶜ` matrices (reusing `sc.py:_build_sc_matrices_all_q`), solves the matrix RPA for `χ_s`/`χ_c`, assembles the Mochizuki–Yanase–Ogata (MYO) fluctuation interaction, and computes the self-energy by a rank-4 orbital contraction. Correctness is anchored by a brute-force, physical-index, direct-summation reference that must match the optimized path in one shot.
+**Architecture:** Add a parallel "general" code path to `FLEX` (subclass of `RPA`) dispatched from `solve()` on `calc_scheme=="general"`; the existing reduced/squashed density-density path is untouched. The general path builds the full Kanamori `Ûˢ`/`Ûᶜ` matrices (a NEW MYO-convention builder — `sc.py` follows Kuroki and differs at charge `(ab,ab)`; left untouched, see spec §3), solves the matrix RPA for `χ_s`/`χ_c`, assembles the Mochizuki–Yanase–Ogata (MYO) fluctuation interaction, and computes the self-energy by a rank-4 orbital contraction. Correctness is anchored by a brute-force, physical-index, direct-summation reference that must match the optimized path in one shot.
 
 **Tech Stack:** Python, NumPy (FFT via `numpy.fft`), pytest/unittest. Design spec: `docs/superpowers/specs/2026-06-16-full-vertex-multiorbital-flex-design.md`.
 
@@ -21,7 +21,7 @@ V(q) = 3/2 Ûˢ χˢ Ûˢ + 1/2 Ûᶜ χᶜ Ûᶜ − 1/4 (Ûˢ+Ûᶜ) χ⁰ (Û
 ## File Structure
 
 - `src/hwave/solver/flex.py` — add general-path methods + dispatch + guards (existing reduced methods untouched).
-- `src/hwave/solver/_sc_matrices.py` *(new)* — shared full `(nd², nd²)` S/C builder, extracted from `sc.py:_build_sc_matrices_all_q`; re-exported by `sc.py` and imported by `flex.py`.
+- `src/hwave/solver/_sc_matrices_myo.py` *(new)* — full `(norb², norb²)` S/C builder in the **MYO Eq.(6) convention** (charge `(ab,ab) = −U'+2J`), used by FLEX-general. NOT a reuse of `sc.py` (which is Kuroki, `−U'+J`); `sc.py` is left untouched. See §3/§4.3 of the spec.
 - `tests/test_flex_general.py` *(new)* — unit + integration tests for the general path, guards, and the limit checks.
 - `tests/flex_bruteforce_ref.py` *(new)* — standalone physical-index direct-summation reference for `Σ[G]` (imported by the equivalence test).
 - `docs/en/source/flex/sample/iron_2orb_general/` and `docs/tutorial/Hubbard/FLEX/iron_2orb_general/` *(new)* — `calc_scheme="general"` tutorial variant.
@@ -43,11 +43,10 @@ discrepancy. Confirmed:
   `[U₂ᶜ]_{ab,cd}`=−U'+2J_H if (a,b)=(c,d), J' if (a,b)=(d,c), else 0.
 
 > Reminder for downstream tasks: the brute-force (Task 3) and optimized path
-> (Tasks 6–7) use exactly these slots. Task 2 must verify
-> `sc.py:_build_sc_matrices_all_q` reproduces Eq.(6) element-wise (Codex's earlier
-> read of `sc.py` suggested the charge off-diagonal may be `2U'` vs MYO's
-> `2U'−J_H` / `−U'+2J_H` — RESOLVE this in Task 2, it is a real discrepancy to
-> check, not a transcription error here).
+> (Tasks 6–7) use exactly these slots. **RESOLVED (2026-06-20):** both PDFs read —
+> `sc.py` follows **Kuroki** (charge `(ab,ab) = −U'+J`); **MYO = −U'+2J** (the only
+> differing element). FLEX uses **MYO** (its own builder, Task 2); `sc.py` is left
+> untouched. See spec §3/§4.3.
 
 ---
 
@@ -179,49 +178,96 @@ git commit -m "feat(flex): accept calc_scheme=general for spin-free, guard other
 
 ---
 
-## Task 2: Extract a shared full S/C matrix builder
+## Task 2: New MYO-convention S/C matrix builder for FLEX
+
+**Why not reuse `sc.py`:** `sc.py:_build_sc_matrices_all_q` follows **Kuroki**
+(charge `(ab,ab) = −U'+J`). FLEX is pinned to **MYO** (charge `(ab,ab) = −U'+2J`;
+the only differing element — all others agree). MYO's V_eff (§4.5) is only
+self-consistent with MYO's S/C, so FLEX needs its own MYO-convention builder.
+`sc.py` is left UNTOUCHED. Both PDFs were read to confirm this (spec §3).
+
+MYO Eq.(6) elements (orbitals `a`, `b`, `a≠b`; `U`=intra, `U'`=inter, `J`=Hund,
+`J'`=pair-hopping):
+
+| case (row pair, col pair) | `Ûˢ` | `Ûᶜ` |
+|---|---|---|
+| `(aa,aa)` | `U` | `U` |
+| `(ab,ab)` (`l1=l3, l2=l4`) | `U'` | `−U'+2J` |
+| `(aa,bb)` (`l1=l2, l3=l4`) | `J` | `2U'−J` |
+| `(ab,ba)` (`l1=l4, l2=l3`) | `J'` | `J'` |
+
+(Kuroki differs ONLY at `Ûᶜ_{(ab,ab)}`: `−U'+J`.)
 
 **Files:**
-- Create: `src/hwave/solver/_sc_matrices.py`
-- Modify: `src/hwave/sc.py` (`_build_sc_matrices_all_q` → thin wrapper importing the shared helper)
+- Create: `src/hwave/solver/_sc_matrices_myo.py`
 - Test: `tests/test_flex_general.py`
 
-- [ ] **Step 1: Write the failing test** (shared helper exists and equals the current `sc.py` output, and matches MYO Eq.(10) for a 2-orbital Kanamori set):
+- [ ] **Step 1: Write the failing tests** — the MYO builder produces the table
+above, and intentionally diverges from `sc.py` (Kuroki) only at charge `(ab,ab)`:
 ```python
-from hwave.solver._sc_matrices import build_sc_matrices_all_q
+import numpy as np
+from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
 
-class TestSharedSCMatrices(unittest.TestCase):
-    def test_matches_sc_module(self):
-        from hwave import sc as scmod
-        inter_k = _kanamori_inter_k(norb=2, U=4.0, Up=2.0, J=0.5)  # build from a small fixture
-        a = build_sc_matrices_all_q(inter_k, norb=2, Nx=2, Ny=2, Nz=1)
-        b = scmod._build_sc_matrices_all_q(inter_k, norb=2, Nx=2, Ny=2, Nz=1)
-        np.testing.assert_allclose(a[0], b[0]); np.testing.assert_allclose(a[1], b[1])
+def _kanamori_inter_k(norb=2, U=4.0, Up=2.0, J=0.5, Jp=0.5, Nx=2, Ny=2, Nz=1):
+    """Build the inter_k dict the builder consumes (same shape sc.py expects:
+    each (norb,norb,Nx,Ny,Nz)). Mirror how sc.py:_build_interaction_k /
+    _build_sc_matrices_all_q read CoulombIntra/CoulombInter/Hund/Exchange/PairHop
+    — inspect sc.py to match the exact keys and (norb,norb,Nx,Ny,Nz) layout."""
+    ...
 
-    def test_kanamori_elements(self):
-        # MYO Eq.(10): same-orbital U^s=U^c=U; (l1=l3,l2=l4,l1!=l2) U^s=U', U^c=-U';
-        # (l1=l2,l3=l4,l1!=l3) U^s=0, U^c=2U'-J ... (use the values CONFIRMED in Task 0)
-        ...
+class TestMYOSCMatrices(unittest.TestCase):
+    def test_myo_elements(self):
+        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.5
+        S, C = build_sc_matrices_myo(_kanamori_inter_k(2, U, Up, J, Jp),
+                                     norb=2, Nx=2, Ny=2, Nz=1)
+        # flatten idx = l1*norb+l2 (row), l3*norb+l4 (col)
+        def el(M, l1, l2, l3, l4):
+            return M[0, 0, 0, l1*2+l2, l3*2+l4]
+        # (ab,ab): a=0,b=1
+        self.assertAlmostEqual(el(S, 0,1,0,1), Up)        # U^s = U'
+        self.assertAlmostEqual(el(C, 0,1,0,1), -Up + 2*J) # U^c = -U'+2J  (MYO)
+        # (aa,bb)
+        self.assertAlmostEqual(el(S, 0,0,1,1), J)
+        self.assertAlmostEqual(el(C, 0,0,1,1), 2*Up - J)
+        # (ab,ba)
+        self.assertAlmostEqual(el(S, 0,1,1,0), Jp)
+        self.assertAlmostEqual(el(C, 0,1,1,0), Jp)
+        # (aaaa)
+        self.assertAlmostEqual(el(S, 0,0,0,0), U)
+        self.assertAlmostEqual(el(C, 0,0,0,0), U)
+
+    def test_diverges_from_kuroki_only_at_charge_abab(self):
+        import hwave.sc as scmod
+        ik = _kanamori_inter_k(2, 4.0, 2.0, 0.5, 0.5)
+        Sm, Cm = build_sc_matrices_myo(ik, 2, 2, 2, 1)
+        Sk, Ck = scmod._build_sc_matrices_all_q(ik, 2, 2, 2, 1)
+        np.testing.assert_allclose(Sm, Sk)                # spin identical
+        # charge differs ONLY at (ab,ab) = (0,1,0,1) and (1,0,1,0), by +J each
+        diff = Cm - Ck
+        # zero everywhere except the two (ab,ab) diagonal-of-offdiag entries
+        nonzero = np.abs(diff) > 1e-12
+        self.assertEqual(int(nonzero.sum()), 2 * 2 * 1)   # 2 entries x (Nx*Ny*Nz=4)? adjust to your grid
 ```
+> Adjust the exact nonzero-count assertion to your chosen tiny grid; the point is: charge differs ONLY at the `(ab,ab)` entries, by `+J`.
 
 - [ ] **Step 2: Run to verify it fails.**
-Run: `PYTHONPATH=src python -m pytest tests/test_flex_general.py::TestSharedSCMatrices -v`
-Expected: FAIL (`hwave.solver._sc_matrices` does not exist).
+Run: `PYTHONPATH=src python -m pytest tests/test_flex_general.py::TestMYOSCMatrices -v`
+Expected: FAIL (`_sc_matrices_myo` does not exist).
 
-- [ ] **Step 3: Move the implementation.** Cut the body of `sc.py:_build_sc_matrices_all_q` (`sc.py:422-523`) into `src/hwave/solver/_sc_matrices.py` as `build_sc_matrices_all_q(...)` with the identical signature/behavior. In `sc.py`, replace the body with:
-```python
-from hwave.solver._sc_matrices import build_sc_matrices_all_q as _build_sc_matrices_all_q  # noqa: F401
-```
-(keep the old name importable so `sc.py` and its tests are unchanged).
+- [ ] **Step 3: Implement `build_sc_matrices_myo`.** Use `sc.py:_build_sc_matrices_all_q` (`sc.py:444-523`) as a STRUCTURAL template (same `inter_k` reading, same index-case masks, same `(Nx,Ny,Nz,nd,nd)` output), but set the MYO values. The ONLY change vs the Kuroki code is Case 2 (`l1==l3, l2==l4, l1!=l2`) charge: MYO adds `+2*J_mat` (not `+1*J_mat`). Concretely, in the Case-2 block use `c_q += 2.0 * J_mat[_l1,_l2]` instead of Kuroki's `c_q += J_mat[...]`. Keep the Ising handling identical to sc.py (H-wave separates Hund/Ising; MYO has no Ising so it only affects models that set Ising). Document the one-line difference with a comment citing MYO Eq.(6).
 
-- [ ] **Step 4: Run to verify it passes (and SC tests still pass).**
-Run: `PYTHONPATH=src python -m pytest tests/test_flex_general.py::TestSharedSCMatrices tests/test_sc.py -q`
+- [ ] **Step 4: Run to verify it passes.**
+Run: `PYTHONPATH=src python -m pytest tests/test_flex_general.py::TestMYOSCMatrices -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 5: Confirm `sc.py` untouched.**
+Run: `PYTHONPATH=src python -m pytest tests/test_sc.py -q` and `git status` (only the new file + test changed).
+Expected: PASS; `sc.py` unmodified.
+
+- [ ] **Step 6: Commit.**
 ```bash
-git add src/hwave/solver/_sc_matrices.py src/hwave/sc.py tests/test_flex_general.py
-git commit -m "refactor: extract shared build_sc_matrices_all_q helper"
+git add src/hwave/solver/_sc_matrices_myo.py tests/test_flex_general.py
+git commit -m "feat(flex): MYO-convention S/C matrix builder (charge ab,ab = -U'+2J)"
 ```
 
 ---
@@ -314,11 +360,11 @@ Expected: FAIL (method missing).
 ```python
 def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
     """Paramagnetic general path: rank-4 chi0q + full Kanamori S/C matrices."""
-    from hwave.solver._sc_matrices import build_sc_matrices_all_q
+    from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
     nx, ny, nz = self.lattice.shape
     # chi0q_raw is the RPA general-scheme tensor for spin-free.
     chi0q = chi0q_raw  # already (nfreq, nvol, nd, nd, nd, nd) for general/spin-free
-    Us, Uc = build_sc_matrices_all_q(self.inter_k, self.norb, nx, ny, nz)
+    Us, Uc = build_sc_matrices_myo(self.inter_k, self.norb, nx, ny, nz)
     return chi0q, Us, Uc
 ```
 > Confirm the exact RPA general-scheme `chi0q` shape/axis order against `rpa.py` `_calc_chi0q` for `spin-free` and adapt the comment/return to match; add an `assert chi0q.ndim == 6`.
@@ -598,4 +644,4 @@ git commit -m "docs(flex): document calc_scheme=general (paramagnetic full-verte
 
 - **Spec coverage:** §4.1 guards → Task 1; §4.3 shared S/C → Task 2; §4.4 self-energy wiring + brute-force → Tasks 3,7; §4.5 V_eff (constants excluded) → Task 6; §5 data flow → Task 8; §6 primary 1-shot + secondary limits → Tasks 3,7,9; §7 tests → Tasks 1,9; manual/tutorial → Tasks 10,11; MYO PDF confirm → Task 0. SOC/spinful guards → Task 1. Performance budget (§9) is deferred (optimize-after-correct, Task 7 step 3) — acceptable for v1, no separate task.
 - **Placeholder scan:** test fixtures reference `tests/test_flex.py` patterns deliberately (the executor copies the established fixture) rather than inventing shapes; the only intentional "fill from Task 0" points are index slots gated on the PDF confirmation, which is the correct sequencing.
-- **Type consistency:** method names used consistently — `_flex_general` (flag), `_inflate_chi0q_and_ham_general`, `_solve_channels_general`, `_calc_veff_general`, `_calc_self_energy_general`, `build_sc_matrices_all_q` (shared helper). Tasks 3/7 share `sigma_bruteforce`/`chi0_bruteforce` signatures.
+- **Type consistency:** method names used consistently — `_flex_general` (flag), `_inflate_chi0q_and_ham_general`, `_solve_channels_general`, `_calc_veff_general`, `_calc_self_energy_general`, `build_sc_matrices_myo` (new MYO-convention builder). Tasks 3/7 share `sigma_bruteforce`/`chi0_bruteforce` signatures.

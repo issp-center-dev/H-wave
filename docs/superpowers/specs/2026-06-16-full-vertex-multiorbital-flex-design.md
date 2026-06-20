@@ -81,13 +81,13 @@ Decisions locked in (from brainstorming):
   bare bubble `χ̄^(σσ̄)`, but the coefficients `3/2, 1/2, −1/4` and the
   `+(3/2)Ûˢ−(1/2)Ûᶜ` constants match. Both are paramagnetic / SU(2)-symmetric
   and carry **no separate spin transverse channel** — confirming the v1 design.
-- **S/C interaction matrices (full Kanamori).** Kuroki et al. [arXiv:0902.3691]
-  and THU use the full Kanamori vertex in `(norb², norb²)` matrix form. H-wave
-  already builds these S (spin) / C (charge) matrices in
-  `sc.py:_build_sc_matrices_all_q` (`sc.py:422-523`) for the SC pairing vertex.
-  **Caveat:** `_compute_vertices_general` is a *pairing* vertex, **not** a
-  self-energy kernel — it validates the S/C matrices and χ construction but does
-  not fix the FLEX self-energy coefficients (those are §4.5).
+- **S/C interaction matrices — FLEX uses MYO Eq.(6), NOT sc.py (Kuroki).**
+  Both PDFs were read directly. The charge `(ab,ab)` element (orbitals `a≠b`,
+  `l1=l3, l2=l4`) **genuinely differs** between the two papers:
+  - **Kuroki [arXiv:0902.3691] Eq.(5):** `Cˢ_{(ab,ab)} = −U' + J`. `sc.py:_build_sc_matrices_all_q` (`sc.py:478-493`) implements this faithfully (it is a correct Kuroki implementation, used by the SC pairing module).
+  - **MYO [cond-mat/0407094] Eq.(6):** `Ûᶜ_{(ab,ab)} = −U' + 2J`. This matches the modern-standard convention (Graser NJP 2009, Kemper NJP 2010, THU). All other elements agree between the two papers.
+  - The difference is **not** a transpose/index artifact (the χ⁰ conventions differ by a row↔col-pair transpose, but `(ab,ab)` is transpose-invariant), nor a global `J` rescale (only this one element differs). Likely a Hund-decomposition convention (Kuroki writes `S·S`) or a paper typo.
+  - **Decision (user, 2026-06-20):** the FLEX self-energy is pinned to MYO (V_eff coefficients in §4.5), and MYO's V_eff is only self-consistent with MYO's S/C. So **FLEX builds its own MYO-convention S/C** (`§4.3`); it does **NOT** reuse `sc.py`'s Kuroki builder. `sc.py` is left untouched (it is internally consistent as a Kuroki implementation; a separate review of Kuroki-vs-standard for the SC module is out of scope here, §10).
 
 Honest caveat: RPA/FLEX resums the bubble+ladder series but omits AL/MT vertex
 corrections; "full vertex" means *not density-density reduced*, not *exact*.
@@ -128,12 +128,17 @@ builder** is needed in v1.
 
 ### 4.3 Reuse from SC / RPA (corrected per Codex review)
 
-- **S/C interaction matrices.** There is **no** named S/C builder in `rpa.py`
-  (its general inflation is inline in `solve()`, `rpa.py:875-999`). The reusable
-  full `(norb², norb²)` S/C builder is **`sc.py:_build_sc_matrices_all_q`
-  (`sc.py:422-523`)**. Plan: **extract a shared helper** (common module) used by
-  FLEX-general, RPA-general, and SC — rather than a non-existent `rpa.py` reuse.
-  Verify the matrices equal MYO/THU Eq.(10) element-wise.
+- **S/C interaction matrices — build a NEW MYO-convention builder for FLEX.**
+  Do **not** reuse `sc.py:_build_sc_matrices_all_q`: it follows Kuroki and its
+  charge `(ab,ab)` element (`−U'+J`) differs from MYO (`−U'+2J`) (see §3). FLEX
+  is pinned to MYO, so it needs MYO's S/C. Add a new builder (e.g.
+  `flex.py:_build_sc_matrices_myo` or a small new module) that returns the full
+  `(norb², norb²)` `Ûˢ, Ûᶜ` per MYO Eq.(6) (elements in §4.5). Reuse `sc.py`'s
+  *structure* (the index-case masks) as a template, but with MYO's values.
+  Verify element-wise against MYO Eq.(6) **and** add a test asserting it differs
+  from `sc.py`'s Kuroki builder exactly in the charge `(ab,ab)` element (so the
+  divergence is intentional and pinned, not accidental). `rpa.py` has no reusable
+  S/C builder (general inflation is inline in `solve()`, `rpa.py:875-999`).
 - `_solve_rpa` already inverts general-scheme matrices (flattens rank-4 to
   `(ndx, ndx)`, `rpa.py:2068-2138`); verify on the rank-4 `χ_s`, `χ_c`.
 - Reuse the existing general-scheme `chi0q` from `_calc_chi0q` (RPA) and the
@@ -190,7 +195,9 @@ pair-hopping `J'`:
 - `[U₂ˢ]_{ab,cd}` (a≠b, c≠d) = `U'` if (a,b)=(c,d), `J'` if (a,b)=(d,c), else 0
 - `[U₂ᶜ]_{ab,cd}` (a≠b, c≠d) = `−U'+2J_H` if (a,b)=(c,d), `J'` if (a,b)=(d,c), else 0
 
-(Task 2 verifies `sc.py:_build_sc_matrices_all_q` reproduces these element-wise.)
+(Task 2 builds a new MYO-convention builder and verifies these element-wise; it
+also asserts the **intended** divergence from `sc.py`'s Kuroki builder at the
+charge `(ab,ab)` element: MYO `−U'+2J` vs Kuroki `−U'+J`, see §3/§4.3.)
 
 ```
 χ⁰_{mn,μν}(q) = −(T/N) Σ_k G_{μm}(k+q) G_{nν}(k)            (Eq.5)
@@ -209,8 +216,9 @@ V(q) =  (3/2) Ûˢ χˢ(q) Ûˢ
 Notes / cross-checks:
 - The `3/2 χˢ` term already includes the transverse (spin-flip) contribution by
   SU(2) — no separate `χ_+-` is computed (the reason v1 is clean).
-- `Ûˢ, Ûᶜ` must equal `sc.py:_build_sc_matrices_all_q` (the shared helper, §4.3) —
-  verify element-wise vs MYO Eq.(10).
+- `Ûˢ, Ûᶜ` are built by the **new MYO-convention builder** (§4.3), verified
+  element-wise vs MYO Eq.(6); they intentionally **differ** from `sc.py`'s
+  Kuroki builder at the charge `(ab,ab)` element (§3).
 - `_solve_rpa` sign mapping (`[1 + χ⁰·ham]⁻¹χ⁰`): `ham_s = −Ûˢ`, `ham_c = +Ûᶜ`
   (same convention as the reduced `_build_spin_charge_vertices`).
 - **First-order constants `+(3/2)Ûˢ − (1/2)Ûᶜ` — DECISION (Codex re-review):
@@ -275,8 +283,9 @@ single-orbital limit, not for multi-orbital density-density.**
    reduced path; out of scope to fix here, but it is *why* reduced ≠ general.)
 3. **RPA consistency:** first-iteration `χ_s`, `χ_c` from general-FLEX == RPA
    general-scheme `χ` for the same `χ⁰`/interaction (~1e-10).
-4. **S/C matrix identity:** `Ûˢ, Ûᶜ` == MYO/THU Eq.(10) element-wise (compare to
-   `sc.py:_build_sc_matrices_all_q`); `χ_s, χ_c` Hermitian.
+4. **S/C matrix identity:** `Ûˢ, Ûᶜ` == MYO Eq.(6) element-wise; assert the
+   intended divergence from `sc.py`'s Kuroki builder at charge `(ab,ab)`
+   (`−U'+2J` vs `−U'+J`); `χ_s, χ_c` Hermitian.
 
 ## 7. Testing
 
@@ -312,7 +321,7 @@ existing FLEX test conventions.
 | Regression of the reduced path | Reduced numerics unchanged; explicit reduced-path regression test (§7) |
 | First-order (Hartree) constants excluded (§4.5 decision) | Matches reduced convention; single-orbital==reduced check holds; plan verifies multi-orbital Hartree is captured elsewhere |
 | Performance / memory of `(nfreq, nvol, nd², nd²)` tensors | `O(nd⁴)` memory before matmul; add explicit memory/flop estimate per `norb` in the plan; decide materialized vs streamed `V_eff` |
-| S/C reuse claim was wrong (helper is in `sc.py`) | Extract shared `_build_sc_matrices_all_q`-based helper (§4.3) |
+| Kuroki vs MYO S/C charge `(ab,ab)` differ (`−U'+J` vs `−U'+2J`) | FLEX builds its own MYO-convention S/C (§4.3); test pins MYO values AND the intended divergence from `sc.py` (Kuroki); `sc.py` untouched |
 | Misuse on magnetic/SOC systems | Fail-fast guards + guard tests (§4.1, §7) |
 
 ## 9. Open items for the implementation plan
@@ -320,8 +329,10 @@ existing FLEX test conventions.
 - ~~First task — confirm MYO Eq.(3)–(5) index placement from the paper PDF~~
   **DONE (2026-06-20):** read from the MYO PDF via `pdftotext`; Eqs.(3)–(6)
   transcribed in §4.4/§4.5, no discrepancy.
-- Extract the shared full S/C builder from `sc.py:_build_sc_matrices_all_q` for
-  FLEX/RPA/SC reuse; verify against MYO/THU Eq.(10).
+- Build a new MYO-convention S/C builder for FLEX (do NOT reuse `sc.py`/Kuroki);
+  verify vs MYO Eq.(6) and pin the intended charge-`(ab,ab)` divergence from
+  `sc.py`. (`sc.py` left untouched; Kuroki-vs-standard review of the SC module is
+  a separate future item, §10.)
 - **Implement the flatten map for the §4.4 wiring.** The *physics* wiring
   (`Σ_mn = Σ_μν V_{μm,νn} G_{μν}`) is frozen in §4.4; what remains is the
   *implementation* choice — how to lay `V`/`G` out as arrays and which
@@ -335,6 +346,12 @@ existing FLEX test conventions.
 
 ## 10. Deferred / future work (recorded so it is not lost)
 
+- **Kuroki-vs-standard charge vertex in the SC module.** `sc.py`'s
+  `_build_sc_matrices_all_q` follows Kuroki (charge `(ab,ab) = −U'+J`), which
+  differs from the modern-standard / MYO value (`−U'+2J`). `sc.py` is internally
+  self-consistent (Kuroki S/C + Kuroki pairing vertex), so it is not "wrong", but
+  a review of whether the SC (Eliashberg) module should adopt the standard
+  convention is worth a separate look. Out of scope for this FLEX work.
 - **Generalized FLEX with spin-orbit coupling (agreed next phase)**
   ([arXiv:1503.02544], Sr₂IrO₄): full `2m×2m` spin-orbital generalized
   susceptibility, Hugenholtz antisymmetrized vertices, **both** particle-hole and
