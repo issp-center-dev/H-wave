@@ -81,22 +81,30 @@ class FLEX(RPA):
         logger.debug(">>> FLEX._init_flex_param")
 
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
-        # interaction via the density-density diagonal ('kaabb->kab'), so it
-        # only supports reduced/squashed schemes with density-density vertices.
+        # interaction via the density-density diagonal ('kaabb->kab') on the
+        # reduced/squashed path.  The 'general' scheme selects the paramagnetic
+        # full-vertex multi-orbital path (v1: spin-free only; the spin_mode
+        # guard is enforced in solve(), where spin_mode is determined).
         scheme = self.calc_scheme.lower()
-        if scheme not in ("reduced", "squashed"):
+        if scheme == "general":
+            if getattr(self.ham_info, "enable_spin_orbital", False):
+                raise ValueError(
+                    "calc_scheme='general' FLEX (v1) does not support "
+                    "enable_spin_orbital; deferred to the generalized FLEX "
+                    "solver.")
+            self._flex_general = True
+        elif scheme in ("reduced", "squashed"):
+            self._flex_general = False
+        else:
             if getattr(self, "calc_type", "ring") == "ring+ladder":
-                # ring+ladder forces calc_scheme='general' (full rank-4 tensor),
-                # which FLEX cannot consume.
-                msg = ("FLEX does not support calc_type='ring+ladder' "
-                       "(it requires the 'general' scheme); use the default "
-                       "'ring' with calc_scheme='reduced' or 'squashed'.")
+                msg = "FLEX does not support calc_type='ring+ladder'."
             else:
-                msg = ("FLEX requires calc_scheme='reduced' or 'squashed', "
-                       "got '{}'.".format(self.calc_scheme))
+                msg = ("FLEX requires calc_scheme='reduced', 'squashed', or "
+                       "'general', got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        if (self.ham_info.has_interaction_exchange()
+        if not self._flex_general and (
+                self.ham_info.has_interaction_exchange()
                 or self.ham_info.has_interaction_pairhop()):
             # FLEX reduces the vertex via the density-density diagonal
             # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
@@ -109,7 +117,8 @@ class FLEX(RPA):
                 "FLEX uses the density-density reduction; exchange- and "
                 "pair-hopping-type interactions (Exchange, PairLift, PairHop) "
                 "are approximated by their density-density part "
-                "(off-diagonal vertices are dropped).")
+                "(off-diagonal vertices are dropped). "
+                "Use calc_scheme='general' to keep them.")
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
@@ -154,8 +163,17 @@ class FLEX(RPA):
         ns = self.ns
         nd = self.nd
 
-        # Step 1: Compute band structure and chemical potential
+        # Step 1: Compute band structure and chemical potential.
+        # _calc_epsilon_k determines self.spin_mode from H0(k); the general
+        # full-vertex path (v1) is paramagnetic only, so guard here once
+        # spin_mode is known.
         self._calc_epsilon_k(green_info)
+
+        if self._flex_general and self.spin_mode != "spin-free":
+            raise ValueError(
+                "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
+                "only, got '{}'. spin-diag/spinful are deferred to the "
+                "generalized FLEX solver.".format(self.spin_mode))
 
         if self.calc_mu:
             if self.spin_mode == "spin-free":
