@@ -3,14 +3,16 @@
 **Date:** 2026-06-16 (rev. 2026-06-20)
 **Branch:** `feature/full-vertex-flex`
 **Status:** DESIGN — **scope locked: v1 = paramagnetic (`spin-free`) only.**
-Codex review rounds 1–2 incorporated. V_eff formula pinned to Mochizuki–Yanase–
-Ogata, corroborated by Takimoto–Hotta–Ueda (§3). Round-2 fixes: §6.1 corrected
-(general == reduced only for **single orbital**; multi-orbital is a diagnostic
-difference, not equality — `Ûˢ≠Ûᶜ`); §4.4 index wiring **frozen in physical
-indices** with the brute-force as independent ground truth; §4.5 first-order
-constants **excluded** to match the reduced convention. Implementation-ready once
-the user approves; the plan's first task re-confirms the MYO index placement from
-the PDF.
+Codex review rounds 1–3 incorporated (round 3 = GO_WITH_CONDITIONS; the
+conditions were stale cross-references from round-2 edits, now reconciled). V_eff
+formula pinned to Mochizuki–Yanase–Ogata, corroborated by Takimoto–Hotta–Ueda
+(§3). Key points: §6.1/§7 — general == reduced only for **single orbital**
+(multi-orbital is a diagnostic difference, `Ûˢ≠Ûᶜ`); §4.4 — self-energy **physics
+wiring frozen in physical indices** (flatten implementation is a plan task), with
+the brute-force as independent ground truth; §4.5 — first-order constants
+**excluded** to match the reduced convention. Implementation-ready once the user
+approves; the plan's first task re-confirms the MYO Eq.(3)–(5) index placement
+from the paper PDF.
 
 ## 1. Problem
 
@@ -205,14 +207,16 @@ Notes / cross-checks:
   (same convention as the reduced `_build_spin_charge_vertices`).
 - **First-order constants `+(3/2)Ûˢ − (1/2)Ûᶜ` — DECISION (Codex re-review):
   EXCLUDE them from `_calc_veff_general`**, matching the reduced `_calc_veff`
-  which omits them (`flex.py:491-532`). H-wave handles the first-order (Hartree-
-  Fock) shift outside `V_eff` (static term / `μ`); `V_eff` carries only the
-  *fluctuation* part. `_calc_veff_general` therefore implements only the three
-  fluctuation terms (`3/2 ÛˢχˢÛˢ + 1/2 ÛᶜχᶜÛᶜ − 1/4(Ûˢ+Ûᶜ)χ⁰(Ûˢ+Ûᶜ)`). This is
-  recorded as an **acceptance criterion**: the brute-force reference (§6) also
-  omits the constants, so both compare the fluctuation self-energy. (If a later
-  check shows H-wave does *not* otherwise capture the multi-orbital first-order
-  term, revisit — but v1 matches the established reduced convention.)
+  which omits them (`flex.py:491-532`): `V_eff` carries only the *fluctuation*
+  part. `_calc_veff_general` therefore implements only the three fluctuation
+  terms (`3/2 ÛˢχˢÛˢ + 1/2 ÛᶜχᶜÛᶜ − 1/4(Ûˢ+Ûᶜ)χ⁰(Ûˢ+Ûᶜ)`). This is recorded as an
+  **acceptance criterion**: the brute-force reference (§6) also omits the
+  constants, so both compare the fluctuation self-energy.
+  **Open verification (plan):** confirm how/whether H-wave captures the
+  first-order (Hartree-Fock) shift for the multi-orbital case (the SCF loop
+  `flex.py:157-244` shows no explicit multi-orbital Hartree assembly). If it is
+  *not* captured elsewhere, revisit this exclusion; for v1 we match the
+  established reduced convention.
 
 ## 5. Data flow (general path, one SCF iteration)
 
@@ -268,8 +272,9 @@ single-orbital limit, not for multi-orbital density-density.**
 
 ## 7. Testing
 
-- **Unit:** each new general method — output shape; degenerate input ⇒ equals the
-  reduced method.
+- **Unit:** each new general method — output shape; **single-orbital** degenerate
+  input ⇒ equals the corresponding reduced method (multi-orbital is a diagnostic
+  difference, not equality, §6.1).
 - **Brute-force equivalence (primary):** small-system `Σ[G]`, optimized ==
   direct-sum (MYO Eqs.) to ~1e-10. New test module, marked slow.
 - **Integration — single-orbital reduction:** 1-orbital ⇒ general-FLEX
@@ -294,10 +299,10 @@ existing FLEX test conventions.
 
 | Risk | Mitigation |
 |---|---|
-| V_eff formula correctness | Dual-sourced (MYO + THU, §3); brute-force from MYO Eqs. (§6 primary); degenerate/single-orbital/RPA-consistency equalities (§6 secondary) |
+| V_eff formula correctness | Dual-sourced (MYO + THU, §3); brute-force from MYO Eqs. (§6 primary); single-orbital==reduced + RPA-consistency + S/C-matrix-identity (§6 secondary) |
 | Optimized rank-4 FFT contraction bug | 1-shot match to direct-sum reference |
 | Regression of the reduced path | Reduced numerics unchanged; explicit reduced-path regression test (§7) |
-| First-order (Hartree) handling differs from reduced | Reconcile per §4.5; degenerate-reduction test catches mismatch |
+| First-order (Hartree) constants excluded (§4.5 decision) | Matches reduced convention; single-orbital==reduced check holds; plan verifies multi-orbital Hartree is captured elsewhere |
 | Performance / memory of `(nfreq, nvol, nd², nd²)` tensors | `O(nd⁴)` memory before matmul; add explicit memory/flop estimate per `norb` in the plan; decide materialized vs streamed `V_eff` |
 | S/C reuse claim was wrong (helper is in `sc.py`) | Extract shared `_build_sc_matrices_all_q`-based helper (§4.3) |
 | Misuse on magnetic/SOC systems | Fail-fast guards + guard tests (§4.1, §7) |
@@ -309,11 +314,14 @@ existing FLEX test conventions.
   both the formula and the brute-force (§4.4 caveat).
 - Extract the shared full S/C builder from `sc.py:_build_sc_matrices_all_q` for
   FLEX/RPA/SC reuse; verify against MYO/THU Eq.(10).
-- Reconcile first-order (Hartree) treatment between `_calc_veff_general` and the
-  reduced `_calc_veff` so the degenerate-reduction check holds.
-- **Pin the orbital index wiring (§4.4)** between the `(mn),(μν)` χ/S/C matrix
-  convention and MYO Eq.(3) `V_{μm,νn} G_{μν}`; record the worked map and lock it
-  with the brute-force check.
+- **Implement the flatten map for the §4.4 wiring.** The *physics* wiring
+  (`Σ_mn = Σ_μν V_{μm,νn} G_{μν}`) is frozen in §4.4; what remains is the
+  *implementation* choice — how to lay `V`/`G` out as arrays and which
+  transpose realises that contraction efficiently — plus a worked `norb=2`
+  example, validated by the physical-index brute-force (§6).
+- Verify how/whether the multi-orbital first-order (Hartree) shift is captured
+  outside `V_eff` (§4.5 excludes the constants by decision; this only confirms
+  the surrounding bookkeeping, it does not reopen the decision).
 - Memory/flop budget for `(nfreq, nvol, nd², nd²)`; materialized vs streamed.
 - Small-system parameters for the brute-force test (k-grid, Nmat).
 
