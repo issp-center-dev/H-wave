@@ -611,5 +611,60 @@ class TestSelfEnergyGeneral(unittest.TestCase):
         self.assertEqual(sig.shape, (nblock, nmat, nvol, no, no))
 
 
+class TestGeneralSolveEndToEnd(unittest.TestCase):
+    """Task 8: the general FLEX path runs end-to-end through solve().
+
+    Builds a tiny 2-orbital general FLEX (small grid, small Nmat, small
+    IterationMax) and runs solve().  Asserts the output arrays are written and
+    that sigma is finite (no NaN/Inf) -- a basic sanity that the general path
+    actually ran.  Without the solve() dispatch the reduced helper would receive
+    the rank-6 general chi0q and either crash on the reduced reshape or produce a
+    wrong-shaped sigma; the sigma-shape assertion makes the test depend on the
+    dispatch even if no exception is raised.
+    """
+
+    def test_runs_and_saves(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+        info_input = {
+            'path_to_input': 'tests/rpa/input_2orb',
+            'interaction': {
+                'path_to_input': 'tests/rpa/input_2orb',
+                'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+                'CoulombInter': 'coulombinter.dat',
+            },
+        }
+        ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+        green = read_input_k.QLMSkInput(info_input).get_param('green')
+        info_mode = {
+            'mode': 'FLEX',
+            'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                      'SubShape': [1, 1, 1], 'Nmat': 8,
+                      'IterationMax': 3, 'Mix': 0.5},
+            'calc_scheme': 'general',
+        }
+        solver = solver_flex.FLEX(ham, {}, info_mode)
+        self.assertTrue(solver._flex_general)
+
+        green_info = green
+        os.makedirs('tests/flex/output', exist_ok=True)
+        solver.solve(green_info, 'tests/flex/output')
+
+        for key in ('sigma', 'green', 'chiq_s', 'chiq_c', 'chi0q'):
+            self.assertIn(key, green_info)
+
+        # sigma must be finite (no NaN/Inf) -- a basic sanity the path ran.
+        self.assertTrue(np.all(np.isfinite(green_info['sigma'])))
+
+        # sigma shape must be the spin-free general shape
+        # (nblock=1, Nmat, nvol, norb, norb): this depends on the general
+        # dispatch (the reduced path would not produce this for general chi0q).
+        nvol = solver.lattice.nvol
+        norb = solver.norb
+        self.assertEqual(green_info['sigma'].shape,
+                         (1, solver.nmat, nvol, norb, norb))
+
+
 if __name__ == '__main__':
     unittest.main()

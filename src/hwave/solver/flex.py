@@ -234,13 +234,19 @@ class FLEX(RPA):
             else:
                 assert chi0q_raw.shape[0] == 2
 
-            # Step 5: Inflate chi0q and ham to common reduced space,
-            # then compute spin/charge susceptibilities and V_eff
-            chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
-                chi0q_raw, ham_orig)
-
-            # Step 6: Compute self-energy Sigma(k, iwn)
-            sigma_new = self._calc_self_energy(green_kw, v_eff, beta)
+            # Step 5: Inflate chi0q and ham, then compute spin/charge
+            # susceptibilities and V_eff.  The general (paramagnetic full-vertex)
+            # path keeps the full rank-4 orbital vertex; the reduced/squashed
+            # path uses the density-density reduction.
+            # Step 6: Compute self-energy Sigma(k, iwn).
+            if self._flex_general:
+                chi0q_out, v_eff, chi_s, chi_c = \
+                    self._flex_compute_veff_general(chi0q_raw, ham_orig)
+                sigma_new = self._calc_self_energy_general(green_kw, v_eff, beta)
+            else:
+                chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
+                    chi0q_raw, ham_orig)
+                sigma_new = self._calc_self_energy(green_kw, v_eff, beta)
 
             # Step 7: Mix and check convergence
             diff = self._calc_convergence(sigma, sigma_new)
@@ -368,6 +374,39 @@ class FLEX(RPA):
         # Compute V_eff
         v_eff = self._calc_veff(chi0q, chi_s, chi_c, ham)
 
+        return chi0q, v_eff, chi_s, chi_c
+
+    @do_profile
+    def _flex_compute_veff_general(self, chi0q_raw, ham_orig):
+        """General (paramagnetic full-vertex) counterpart of _flex_compute_veff.
+
+        Mirrors the return signature ``(chi0q_out, v_eff, chi_s, chi_c)`` of
+        :meth:`_flex_compute_veff`, but uses the general-path methods that keep
+        the full rank-4 orbital vertex (MYO-convention S/C matrices) instead of
+        the density-density reduction.
+
+        Parameters
+        ----------
+        chi0q_raw : ndarray
+            Raw rank-6 chi0q ``(nmat, nvol, norb, norb, norb, norb)`` from
+            :meth:`_calc_chi0q` after the spin block dimension has been stripped.
+        ham_orig : ndarray
+            Original interaction Hamiltonian in full spin-orbital space.
+
+        Returns
+        -------
+        chi0q_out : ndarray
+            chi0q passed through unchanged (rank-6 orbital layout, for output).
+        v_eff : ndarray
+            Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
+        chi_s : ndarray
+            Spin susceptibility (rank-6 orbital layout).
+        chi_c : ndarray
+            Charge susceptibility (rank-6 orbital layout).
+        """
+        chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
+        chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
+        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
         return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
