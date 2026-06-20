@@ -150,6 +150,38 @@ class TestInflateGeneral(unittest.TestCase):
         self.assertTrue(np.any(Uc != 0.0))
 
 
+def _rpa_general_chi(chi0q, ham, sign):
+    """Reference matrix-RPA susceptibility, computed by direct reshape+solve.
+
+    Computes ``chi = [I + sign * chi0q.ham]^{-1} . chi0q`` independently of
+    ``_solve_channels_general`` / ``_solve_rpa`` (no block detection, no
+    threading) so it is a genuine cross-check.
+    """
+    nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+    no = chi0q.shape[2]
+    ndx = no * no
+    chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+    ham_2d = ham.reshape(nvol, ndx, ndx)
+    eye = np.eye(ndx, dtype=complex)
+    mat = eye + sign * (chi0_2d @ ham_2d[np.newaxis])
+    sol = np.linalg.solve(mat, chi0_2d)
+    return sol.reshape(chi0q.shape)
+
+
+class TestChiGeneralConsistency(unittest.TestCase):
+    """Task 5: general-path chi_s/chi_c equal direct matrix-RPA results."""
+
+    def test_matches_rpa_general(self):
+        flex = _make_general_flex()
+        chi0, Us, Uc = flex._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(flex), None)
+        chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
+        chi_s_ref = _rpa_general_chi(chi0, Us, sign=-1)   # [I - chi0 Us]^-1 chi0
+        chi_c_ref = _rpa_general_chi(chi0, Uc, sign=+1)   # [I + chi0 Uc]^-1 chi0
+        np.testing.assert_allclose(chi_s, chi_s_ref, atol=1e-10)
+        np.testing.assert_allclose(chi_c, chi_c_ref, atol=1e-10)
+
+
 class TestFLEXGeneralGuards(unittest.TestCase):
     """Guards for calc_scheme='general' FLEX (v1, paramagnetic only)."""
 

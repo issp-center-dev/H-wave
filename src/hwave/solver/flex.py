@@ -519,6 +519,56 @@ class FLEX(RPA):
         return chi0q, Us, Uc
 
     @do_profile
+    def _solve_channels_general(self, chi0q, Us, Uc):
+        """Solve the spin and charge RPA channels for the general MYO path.
+
+        In the MYO / Takimoto-Hotta-Ueda paramagnetic full-vertex convention
+        (cond-mat/0407094 Eq. 4) the channel susceptibilities are
+
+            chi_s = [I - chi0 . Us]^{-1} . chi0      (spin   channel)
+            chi_c = [I + chi0 . Uc]^{-1} . chi0      (charge channel)
+
+        i.e. the spin channel enters with a MINUS sign (it is the Stoner /
+        magnetic-instability channel that diverges as chi0.Us -> I) and the
+        charge channel with a PLUS sign.  This mirrors the sign discussion in
+        :meth:`_build_spin_charge_vertices` for the reduced path.
+
+        The inherited matrix solver :meth:`RPA._solve_rpa` computes
+        ``[I + chi0 . ham]^{-1} . chi0``.  To realize the MYO signs we therefore
+        pass ``ham_s = -Us`` (so ``+chi0.(-Us) = -chi0.Us``) and
+        ``ham_c = +Uc``.  ``_solve_rpa`` accepts the orbital-space ``chi0q`` --
+        a 6-dimensional array of shape ``(nmat, nvol, norb, norb, norb, norb)``
+        (four orbital legs ``m,n,mu,nu``) -- and the ``(nvol, norb^2, norb^2)``
+        interaction matrices directly (it reshapes chi0q to
+        ``(nmat, nvol, norb^2, norb^2)`` internally), so ``Us``/``Uc`` from
+        :meth:`_inflate_chi0q_and_ham_general` are used as-is.
+
+        Parameters
+        ----------
+        chi0q : ndarray
+            Bare susceptibility, shape ``(nmat, nvol, norb, norb, norb, norb)``
+            (six dimensions: frequency, volume, and four orbital legs).
+        Us : ndarray
+            MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
+        Uc : ndarray
+            MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+
+        Returns
+        -------
+        chi_s : ndarray
+            Spin-channel RPA susceptibility, same shape as ``chi0q``.
+        chi_c : ndarray
+            Charge-channel RPA susceptibility, same shape as ``chi0q``.
+        """
+        logger.debug(">>> FLEX._solve_channels_general")
+
+        # _solve_rpa computes [I + chi0 ham]^-1 chi0; pass -Us / +Uc to obtain
+        # chi_s = [I - chi0 Us]^-1 chi0 and chi_c = [I + chi0 Uc]^-1 chi0.
+        chi_s = self._solve_rpa(chi0q, -Us)
+        chi_c = self._solve_rpa(chi0q, +Uc)
+        return chi_s, chi_c
+
+    @do_profile
     def _build_spin_charge_vertices(self, ham_inflated):
         """Build spin and charge interaction vertices from inflated ham.
 
