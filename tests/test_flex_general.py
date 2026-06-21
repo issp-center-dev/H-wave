@@ -145,12 +145,14 @@ class TestInflateGeneral(unittest.TestCase):
         chi0q_raw = _fake_general_chi0q(flex)
         chi0q, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0q_raw, None)
 
-        # chi0q passes through unchanged: rank-4 in orbital space.
+        # chi0q is converted RPA->MYO via an orbital-pair transpose; the shape
+        # is unchanged (all four orbital legs are norb).
         nvol = flex.lattice.nvol
         self.assertEqual(chi0q.ndim, 6)
         self.assertEqual(chi0q.shape,
                          (flex.nmat, nvol, no, no, no, no))
-        np.testing.assert_array_equal(chi0q, chi0q_raw)
+        np.testing.assert_array_equal(
+            chi0q, chi0q_raw.transpose(0, 1, 4, 5, 2, 3))
 
         # S/C matrices reshaped to (nvol, norb^2, norb^2).
         self.assertEqual(Us.shape, (nvol, no * no, no * no))
@@ -664,6 +666,220 @@ class TestGeneralSolveEndToEnd(unittest.TestCase):
         norb = solver.norb
         self.assertEqual(green_info['sigma'].shape,
                          (1, solver.nmat, nvol, norb, norb))
+
+
+def _write_1d_2orb_fixture(dirpath):
+    """Materialize a 1D-compatible (x-only hoppings) 2-orbital input fixture.
+
+    The committed ``tests/rpa/input_2orb`` fixture hops in the y direction
+    (irvec ``0 +-1 0``), so it is incompatible with CellShape ``[4,1,1]``.  Here
+    we write a self-contained fixture with only x-direction hoppings so a 1D
+    ``[4,1,1]`` grid (Nk=4) is valid -- giving the small, brute-force-friendly
+    problem the convention/pipeline cross-checks need.
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    geom = ("  1.000000000000   0.000000000000   0.000000000000\n"
+            "  0.000000000000   1.000000000000   0.000000000000\n"
+            "  0.000000000000   0.000000000000   1.000000000000\n"
+            "2\n"
+            "    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n"
+            "    0.500000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n")
+    # x-only transfer: intra-orbital +-x hops + inter-orbital +-x hops.
+    transfer = ("Transfer (x-only) in wannier90-like format for uhfk\n"
+                "2\n"
+                "8\n"
+                " 1 1 1 1 1 1 1 1\n"
+                "   1    0    0    1    1  1.0 0.0\n"
+                "  -1    0    0    1    1  1.0 0.0\n"
+                "   1    0    0    2    2  1.0 0.0\n"
+                "  -1    0    0    2    2  1.0 0.0\n"
+                "   0    0    0    1    2  0.5 0.0\n"
+                "  -1    0    0    1    2  0.5 0.0\n"
+                "   0    0    0    2    1  0.5 0.0\n"
+                "   1    0    0    2    1  0.5 0.0\n")
+    coulombintra = ("CoulombIntra in wannier90-like format for uhfk\n"
+                    "2\n"
+                    "1\n"
+                    " 1\n"
+                    "   0    0    0    1    1   4.000000000000   0.000000000000\n"
+                    "   0    0    0    2    2   4.000000000000   0.000000000000\n")
+    # on-site (irvec 0,0,0) inter-orbital density-density coupling.
+    coulombinter = ("CoulombInter in wannier90-like format for uhfk\n"
+                    "2\n"
+                    "1\n"
+                    " 1\n"
+                    "   0    0    0    1    2   2.000000000000   0.000000000000\n"
+                    "   0    0    0    2    1   2.000000000000   0.000000000000\n")
+    with open(os.path.join(dirpath, "geom.dat"), "w") as f:
+        f.write(geom)
+    with open(os.path.join(dirpath, "transfer.dat"), "w") as f:
+        f.write(transfer)
+    with open(os.path.join(dirpath, "coulombintra.dat"), "w") as f:
+        f.write(coulombintra)
+    with open(os.path.join(dirpath, "coulombinter.dat"), "w") as f:
+        f.write(coulombinter)
+
+
+def _make_chi0_general_flex():
+    """Build a spin-free 2-orbital general FLEX with CellShape [4,1,1], Nmat=1.
+
+    Used by the chi0-convention and full-pipeline physical cross-checks below.
+    Uses a self-contained x-only 2-orbital fixture (see
+    ``_write_1d_2orb_fixture``) so the 1D ``[4,1,1]`` (Nk=4) grid is valid.
+    """
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    dirpath = os.path.join(tempfile.gettempdir(), "hwave_flex_1d_2orb")
+    _write_1d_2orb_fixture(dirpath)
+    info_input = {
+        'path_to_input': dirpath,
+        'interaction': {
+            'path_to_input': dirpath,
+            'Geometry': 'geom.dat',
+            'Transfer': 'transfer.dat',
+            'CoulombIntra': 'coulombintra.dat',
+            'CoulombInter': 'coulombinter.dat',
+        },
+    }
+    ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+    # Nmat must be even at construction (validator rejects odd / zero); we drop
+    # to a single Matsubara point AFTER construction for the nmat=1 cross-check
+    # (the brute-force reference works at one frequency point).
+    info_mode = {
+        'mode': 'FLEX',
+        'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 1, 1],
+                  'SubShape': [1, 1, 1], 'Nmat': 2},
+        'calc_scheme': 'general',
+    }
+    solver = solver_flex.FLEX(ham, {}, info_mode)
+    solver.spin_mode = "spin-free"
+    solver.nmat = 1
+    return solver
+
+
+class TestChi0ConventionMatchesMYO(unittest.TestCase):
+    """Lock the RPA-vs-MYO orbital-pair transpose as an intentional fact.
+
+    ``RPA._calc_chi0q`` returns the bare bubble in the RPA convention
+    ``chi0_opt[..., a, c, b, d]``.  The MYO brute-force reference returns
+    ``chi0_bf[m, n, mu, nu, q, iv]``.  The relation found (and locked by the
+    fix) is ``chi0_opt[q, a, c, b, d] == chi0_bf[b, d, a, c, q, 0]`` (MYO
+    ``(m,n,mu,nu) = (b,d,a,c)``), i.e. the RPA row pair ``(a,c)`` is MYO's
+    column ``(mu,nu)`` and the RPA column pair ``(b,d)`` is MYO's row ``(m,n)``.
+    """
+
+    def test_calc_chi0q_matches_bruteforce_transposed(self):
+        from tests.flex_bruteforce_ref import chi0_bruteforce
+        solver = _make_chi0_general_flex()
+        nk = solver.lattice.nvol
+        self.assertEqual(nk, 4)
+        no = solver.norb
+        self.assertEqual(no, 2)
+
+        rng = np.random.default_rng(2024)
+        shape = (1, 1, nk, no, no)   # (nblock, nmat, k, a, b)
+        green_kw = (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape)).astype(np.complex128)
+
+        beta = 1.0 / solver.T
+        chi0_opt = solver._calc_chi0q(green_kw, np.zeros_like(green_kw), beta)
+        # strip the (size-1) spin-block dimension -> (1, nk, no, no, no, no)
+        chi0_opt = chi0_opt[0]
+        self.assertEqual(chi0_opt.shape, (1, nk, no, no, no, no))
+
+        # Brute-force reference. G_bf[a,b,k,0] = green_kw[0,0,k,a,b].
+        G_bf = np.zeros((no, no, nk, 1), dtype=np.complex128)
+        for k in range(nk):
+            G_bf[:, :, k, 0] = green_kw[0, 0, k]
+        chi0_bf = chi0_bruteforce(G_bf, T=solver.T, Nk=nk)
+
+        # chi0_opt[0, q, a, c, b, d] == chi0_bf[b, d, a, c, q, 0]
+        for q in range(nk):
+            for a in range(no):
+                for c in range(no):
+                    for b in range(no):
+                        for d in range(no):
+                            np.testing.assert_allclose(
+                                chi0_opt[0, q, a, c, b, d],
+                                chi0_bf[b, d, a, c, q, 0],
+                                atol=1e-10)
+
+
+class TestGeneralPipelinePhysical(unittest.TestCase):
+    """The FULL optimized general FLEX pipeline must match the physical
+    brute-force pipeline at nmat=1 (this is the end-to-end lock for the fix)."""
+
+    def test_pipeline_matches_physical(self):
+        from tests.flex_bruteforce_ref import chi0_bruteforce, sigma_bruteforce
+        solver = _make_chi0_general_flex()
+        nk = solver.lattice.nvol
+        no = solver.norb
+        self.assertEqual((nk, no), (4, 2))
+        beta = 1.0 / solver.T
+
+        rng = np.random.default_rng(7777)
+        shape = (1, 1, nk, no, no)
+        green_kw = (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape)).astype(np.complex128)
+
+        # --- OPTIMIZED general pipeline ---
+        chi0_raw = solver._calc_chi0q(
+            green_kw, np.zeros_like(green_kw), beta)[0]   # (1,nk,no,no,no,no)
+        chi0, Us, Uc = solver._inflate_chi0q_and_ham_general(chi0_raw, None)
+        chi_s, chi_c = solver._solve_channels_general(chi0, Us, Uc)
+        v_eff = solver._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        sigma_opt = solver._calc_self_energy_general(green_kw, v_eff, beta)
+        self.assertEqual(sigma_opt.shape, (1, 1, nk, no, no))
+
+        # --- PHYSICAL (paper convention) brute-force pipeline ---
+        G_bf = np.zeros((no, no, nk, 1), dtype=np.complex128)
+        for k in range(nk):
+            G_bf[:, :, k, 0] = green_kw[0, 0, k]
+        # chi0_phys axes (m, n, mu, nu, q, iv)
+        chi0_phys = chi0_bruteforce(G_bf, solver.T, nk)
+
+        ndx = no * no
+        V_phys = np.zeros((no, no, no, no, nk, 1), dtype=np.complex128)
+        eye = np.eye(ndx, dtype=np.complex128)
+        # The physical reference reuses the production Us/Uc; this is intentional.
+        # This test locks the RPA->MYO chi0 transpose + the channel/veff/contraction
+        # wiring, NOT the S/C matrix *values* (those are independently pinned by
+        # TestMYOSCMatrices.test_myo_elements). The transpose fix is what makes
+        # sigma_opt match sigma_phys here regardless of the (shared) S/C values.
+        for q in range(nk):
+            M0 = chi0_phys[:, :, :, :, q, 0].reshape(ndx, ndx)  # row=(m,n),col=(mu,nu)
+            Us_q = Us[q]
+            Uc_q = Uc[q]
+            chi_s_q = np.linalg.inv(eye - M0 @ Us_q) @ M0
+            chi_c_q = np.linalg.inv(eye + M0 @ Uc_q) @ M0
+            V_q = (1.5 * Us_q @ chi_s_q @ Us_q
+                   + 0.5 * Uc_q @ chi_c_q @ Uc_q
+                   - 0.25 * (Us_q + Uc_q) @ M0 @ (Us_q + Uc_q))
+            # V_q is the production V_eff at this q: its MYO flatten has
+            # row=(mu,m), col=(nu,n) (the same flatten that
+            # _sigma_orbital_contract reshapes back to axes (mu,m,nu,n)). That
+            # is exactly the V_phys[mu,m,nu,n] layout the brute-force sigma
+            # expects, so reshape directly with NO axis permutation.
+            V_phys[:, :, :, :, q, 0] = V_q.reshape(no, no, no, no)  # (mu,m,nu,n)
+
+        sigma_phys = sigma_bruteforce(G_bf, V_phys, solver.T, nk)  # (m,n,k,iw)
+
+        max_diff = 0.0
+        for k in range(nk):
+            for m in range(no):
+                for n in range(no):
+                    d = abs(sigma_opt[0, 0, k, m, n] - sigma_phys[m, n, k, 0])
+                    max_diff = max(max_diff, d)
+        print("\nTestGeneralPipelinePhysical max abs diff = {:.3e}".format(
+            max_diff))
+        for k in range(nk):
+            for m in range(no):
+                for n in range(no):
+                    np.testing.assert_allclose(
+                        sigma_opt[0, 0, k, m, n],
+                        sigma_phys[m, n, k, 0],
+                        atol=1e-8)
 
 
 if __name__ == '__main__':

@@ -142,6 +142,11 @@ class FLEX(RPA):
         else:
             self.eps = 10.0 ** (-int(eps_exp))
 
+        # Lazy cache for the q-independent MYO S/C matrices (general path only);
+        # built once on first use in _inflate_chi0q_and_ham_general and reused
+        # across SCF iterations. None until then.
+        self._myo_sc_cache = None
+
         logger.info("FLEX parameters:")
         logger.info("    max_iter        = {}".format(self.max_iter))
         logger.info("    mix             = {}".format(self.mix))
@@ -396,7 +401,7 @@ class FLEX(RPA):
         Returns
         -------
         chi0q_out : ndarray
-            chi0q passed through unchanged (rank-6 orbital layout, for output).
+            chi0q in MYO orbital convention (rank-6 orbital layout, for output).
         v_eff : ndarray
             Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
         chi_s : ndarray
@@ -484,7 +489,7 @@ class FLEX(RPA):
 
     @do_profile
     def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
-        """Pass rank-4 chi0q through; build full MYO S/C interaction matrices.
+        """Convert chi0q to MYO convention; build full MYO S/C interaction matrices.
 
         This is the paramagnetic (spin-free) full-vertex general-path analogue
         of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced/squashed path,
@@ -492,15 +497,31 @@ class FLEX(RPA):
         in the spin-orbital ``nd = norb * ns`` space, the MYO paramagnetic
         formalism (cond-mat/0407094 Eqs. 5/6) is purely in ORBITAL space and
         keeps the full rank-4 vertex.  Hence the working dimension here is
-        ``no = self.norb`` (NOT ``self.nd``): chi0q stays rank-4 and the S/C
-        matrices are ``norb^2 x norb^2`` MYO Kanamori blocks.
+        ``no = self.norb`` (NOT ``self.nd``): chi0q stays orbital-only and the
+        S/C matrices are ``norb^2 x norb^2`` MYO Kanamori blocks.
+
+        This method ALSO converts chi0q from the RPA orbital-pair convention to
+        the MYO convention via an orbital-pair transpose.  ``RPA._calc_chi0q``
+        labels the rank-6 bare bubble as ``chi0[..., a, c, b, d]`` (rpa.py:
+        ``chi0[a,c,b,d] = G[a,b] . G_rev[d,c]``); viewed as a
+        ``(norb^2, norb^2)`` matrix with row ``(a,c)`` and column ``(b,d)`` this
+        is the MYO susceptibility ``chi0_{mn,mu nu}`` TRANSPOSED (RPA's row pair
+        ``(a,c)`` is MYO's COLUMN ``(mu,nu)``; RPA's column pair ``(b,d)`` is
+        MYO's ROW ``(m,n)``).  The whole downstream general-path machinery -- the
+        MYO S/C matrices, :meth:`_solve_channels_general`,
+        :meth:`_calc_veff_general`, and :meth:`_sigma_orbital_contract` -- is
+        written in the MYO convention, so we transpose the orbital-pair axes here
+        to convert RPA -> MYO.  Verified against the physical brute-force
+        pipeline (``tests/flex_bruteforce_ref``) to ~1e-13.
 
         Parameters
         ----------
         chi0q_raw : ndarray
-            Rank-4 bare susceptibility ``(nmat, nvol, norb, norb, norb, norb)``
-            from ``RPA._calc_chi0q`` for the spin-free general scheme, after the
-            (size-1) spin-block dimension has been stripped in ``solve()``.
+            Bare susceptibility, shape (nmat,nvol,norb,norb,norb,norb)
+            (6-dim: freq, vol, 4 orbital legs) from ``RPA._calc_chi0q`` for the
+            spin-free general scheme, in RPA orbital-pair convention
+            ``[a,c,b,d]``, after the (size-1) spin-block dimension has been
+            stripped in ``solve()``.
         ham_orig : ignored
             Present for signature parity with ``_inflate_chi0q_and_ham``; the
             general path rebuilds the interaction from the real-space
@@ -510,7 +531,8 @@ class FLEX(RPA):
         Returns
         -------
         chi0q : ndarray
-            ``chi0q_raw`` passed through unchanged (rank-4, ndim 6).
+            ``chi0q_raw`` with its orbital-pair axes transposed into MYO
+            convention (shape unchanged: 6-dim ``(nmat,nvol,m,n,mu,nu)``).
         Us : ndarray
             MYO spin (S) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
@@ -525,35 +547,55 @@ class FLEX(RPA):
         need not match the FFT q-grid for this v1 path; this is reshaped to
         ``(nvol, norb^2, norb^2)`` purely as ``Nx*Ny*Nz`` independent copies.
         The reshape yields the matrix-per-q form that the downstream
-        channel-solver (``_solve_rpa``) consumes as ``ham``.
+        channel-solver (``_solve_rpa``) consumes as ``ham``.  Because the S/C
+        matrices are q-independent constants for on-site Kanamori, they are
+        cached across SCF iterations; only the (per-iteration) chi0 transpose is
+        recomputed each call.
         """
         logger.debug(">>> FLEX._inflate_chi0q_and_ham_general")
 
-        from hwave.sc import _build_interaction_k
-        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
-
-        # chi0q passes through unchanged: rank-4 orbital-space susceptibility.
-        chi0q = chi0q_raw
+        # RPA's _calc_chi0q labels the rank-6 bare bubble as chi0[..., a, c, b, d]
+        # (rpa.py: chi0[a,c,b,d] = G[a,b]·G_rev[d,c]); as a (norb^2, norb^2) matrix
+        # (row=(a,c), col=(b,d)) this is the MYO susceptibility χ⁰_{mn,μν} TRANSPOSED
+        # (RPA's (a,c) pair is MYO's column (μ,ν); (b,d) is MYO's row (m,n)). The whole
+        # downstream general-path machinery (MYO S/C matrices, _solve_channels_general,
+        # _calc_veff_general, _sigma_orbital_contract) is written in the MYO convention,
+        # so transpose the orbital-pair axes here to convert RPA→MYO. Verified against
+        # the physical brute-force pipeline (tests/flex_bruteforce_ref) to ~1e-13.
+        chi0q = chi0q_raw.transpose(0, 1, 4, 5, 2, 3)   # (nmat,nvol,a,c,b,d) -> (nmat,nvol,m,n,μ,ν)
         assert chi0q.ndim == 6
 
-        no = self.norb
-        nx, ny, nz = self.lattice.shape
+        # MYO S/C matrices are q-independent constants for on-site Kanamori, so
+        # build them once and cache across SCF iterations. The chi0 transpose
+        # above stays OUTSIDE the cache (chi0 changes every iteration).
+        cache = getattr(self, "_myo_sc_cache", None)
+        if cache is None:
+            from hwave.sc import _build_interaction_k
+            from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
 
-        # Build k-space interactions from the raw real-space param_ham. The
-        # k-array ordering is irrelevant for on-site Kanamori terms (constant
-        # over q), so a simple uniform grid suffices for v1.
-        kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
-        ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
-        kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
-        inter_k = _build_interaction_k(kx, ky, kz, self.ham_info.param_ham, no)
+            no = self.norb
+            nx, ny, nz = self.lattice.shape
 
-        # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
-        Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
+            # Build k-space interactions from the raw real-space param_ham. The
+            # k-array ordering is irrelevant for on-site Kanamori terms (constant
+            # over q), so a simple uniform grid suffices for v1.
+            kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
+            ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
+            kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
+            inter_k = _build_interaction_k(kx, ky, kz,
+                                           self.ham_info.param_ham, no)
 
-        # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
-        nvol = self.lattice.nvol
-        Us = Us.reshape(nvol, no * no, no * no)
-        Uc = Uc.reshape(nvol, no * no, no * no)
+            # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
+            Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
+
+            # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
+            nvol = self.lattice.nvol
+            Us = Us.reshape(nvol, no * no, no * no)
+            Uc = Uc.reshape(nvol, no * no, no * no)
+
+            self._myo_sc_cache = (Us, Uc)
+        else:
+            Us, Uc = cache
 
         return chi0q, Us, Uc
 
