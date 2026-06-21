@@ -882,5 +882,102 @@ class TestGeneralPipelinePhysical(unittest.TestCase):
                         atol=1e-8)
 
 
+def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
+                    Nmat=16, Lx=8, IterationMax=100, Mix=0.3, T=2.0, EPS=8):
+    """Build a FLEX solver, run ``solve()`` to convergence, return ``sigma``.
+
+    Deterministic small-but-converged FLEX run used by the limit/regression
+    tests.  ``norb1=True`` uses the 1-orbital ``tests/rpa/input`` fixture (via
+    ``_make_solver``); ``norb1=False`` uses the 2-orbital
+    ``tests/rpa/input_2orb`` fixture (CoulombIntra + CoulombInter, J=0).
+
+    The interaction strength U is fixed by the fixture data files
+    (CoulombIntra = 4.0); the ``U`` keyword is accepted for API symmetry but the
+    fixtures do not parameterize it, so it is intentionally not applied here.
+    Returns the converged ``green_info["sigma"]`` of shape
+    ``(1, Nmat, Lx*Lx, norb, norb)``.
+    """
+    param = {
+        'T': T, 'mu': 0.0,
+        'CellShape': [Lx, Lx, 1], 'SubShape': [1, 1, 1],
+        'Nmat': Nmat, 'IterationMax': IterationMax, 'Mix': Mix, 'EPS': EPS,
+    }
+    if norb1:
+        solver, green_info, info_file = _make_solver(
+            "FLEX", Lx=Lx, Ly=Lx, Nmat=Nmat, T=T, calc_scheme=scheme,
+            extra_mode={'param': param}, extra_interactions=extra_interactions)
+        out = info_file['output']['path_to_output']
+        solver.solve(green_info, out)
+        return green_info["sigma"]
+
+    # 2-orbital: build directly from the input_2orb fixture (mirrors the
+    # _construct / TestGeneralSolveEndToEnd path, but WITHOUT patching exchange).
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    info_input = {
+        'path_to_input': 'tests/rpa/input_2orb',
+        'interaction': {
+            'path_to_input': 'tests/rpa/input_2orb',
+            'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+            'CoulombIntra': 'coulombintra.dat',
+            'CoulombInter': 'coulombinter.dat',
+        },
+    }
+    if extra_interactions:
+        info_input['interaction'].update(extra_interactions)
+    ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+    green_info = read_input_k.QLMSkInput(info_input).get_param('green')
+    info_mode = {'mode': 'FLEX', 'param': param, 'calc_scheme': scheme}
+    solver = solver_flex.FLEX(ham, {}, info_mode)
+    os.makedirs('tests/flex/output_2orb', exist_ok=True)
+    solver.solve(green_info, 'tests/flex/output_2orb')
+    return green_info["sigma"]
+
+
+class TestGeneralLimits(unittest.TestCase):
+    """Task 9: limit & regression tests for the general FLEX path.
+
+    Step 1 (single-orbital general == reduced) is the key physics lock: for one
+    orbital the MYO matrices are 1x1 with Us=Uc=U, and the general fluctuation
+    kernel V = 1.5 U chi_s U + 0.5 U chi_c U - 0.25 (2U) chi0 (2U)
+    = U^2 (1.5 chi_s + 0.5 chi_c - chi0) is exactly the reduced density-density
+    kernel.  The converged self-energies must therefore coincide.  (Verified:
+    max abs diff == 0.0, ratio == 1 exactly.)
+    """
+
+    def test_single_orbital_equals_reduced(self):
+        sig_gen = _run_flex_sigma("general", norb1=True)
+        sig_red = _run_flex_sigma("reduced", norb1=True)
+        # Exact in the paramagnetic single-orbital Hubbard limit.
+        np.testing.assert_allclose(sig_gen, sig_red, atol=1e-8, rtol=1e-6)
+
+    def test_multiorbital_general_differs_from_reduced(self):
+        # 2-orbital, CoulombIntra + CoulombInter (U, U'); J=0.  The general path
+        # keeps the inter-orbital U' vertices that the reduced/squashed
+        # density-density reduction drops, so the converged sigmas must differ.
+        sig_gen = _run_flex_sigma("general", norb1=False)
+        sig_red = _run_flex_sigma("squashed", norb1=False)
+        self.assertGreater(np.linalg.norm(sig_gen - sig_red), 1e-8)
+        self.assertTrue(np.all(np.isfinite(sig_gen))
+                        and np.all(np.isfinite(sig_red)))
+        # Bounded / sane (not a runaway divergence).
+        self.assertLess(np.linalg.norm(sig_gen - sig_red), 1e3)
+
+    def test_general_no_density_density_warning(self):
+        """General-path construction with an exchange-type interaction present
+        must NOT emit the density-density reduction warning.
+
+        This is the focused Hund-suppression counterpart to
+        TestFLEXGeneralWarningGating.test_warning_suppressed_for_general: it
+        reuses the exact same construction (which patches
+        ``Interaction.has_interaction_exchange`` to True so an exchange/Hund-type
+        interaction is seen as present), and asserts the warning stays silent on
+        the new-physics general path.
+        """
+        gating = TestFLEXGeneralWarningGating()
+        with self.assertNoLogs('hwave.solver.flex', level='WARNING'):
+            gating._construct('general')
+
+
 if __name__ == '__main__':
     unittest.main()
