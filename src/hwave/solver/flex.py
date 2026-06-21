@@ -222,6 +222,7 @@ class FLEX(RPA):
         ham_orig = self.ham_info.ham_inter_q
 
         # Main SCF loop
+        diff = float("inf")
         converged = False
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
@@ -269,6 +270,13 @@ class FLEX(RPA):
             logger.warning("FLEX did not converge after {} iterations "
                            "(diff={:.3e}, eps={:.3e})".format(
                                self.max_iter, diff, self.eps))
+
+        if self.max_iter == 0:
+            # No SCF iteration ran: green_kw / chi_s / chi_c / chi0q_out were
+            # never computed.  Warn-and-return instead of dereferencing them.
+            logger.warning("FLEX IterationMax=0: no SCF step performed; "
+                           "no results stored.")
+            return
 
         # Store results
         self.sigma = sigma
@@ -572,6 +580,26 @@ class FLEX(RPA):
         if cache is None:
             from hwave.sc import _build_interaction_k
             from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+            # Fail-fast: the general (full-vertex) path builds the MYO S/C
+            # matrices on a uniform k-grid that is NOT the FFT q-grid used by
+            # _calc_chi0q.  For ON-SITE Kanamori interactions the S/C matrices
+            # are q-independent constants so this is exact; but an OFF-SITE
+            # interaction entry (irvec != (0,0,0)) makes them genuinely
+            # q-dependent on the wrong grid -> silently wrong physics.  v1 of
+            # the general path is on-site-only, so reject off-site entries.
+            for itype in ("CoulombIntra", "CoulombInter", "Hund",
+                          "Exchange", "PairHop", "Ising"):
+                if itype in self.ham_info.param_ham:
+                    for (irvec, orbvec) in self.ham_info.param_ham[itype]:
+                        if tuple(irvec) != (0, 0, 0):
+                            raise ValueError(
+                                "FLEX calc_scheme='general' (v1) supports "
+                                "on-site interactions only; interaction '{}' "
+                                "has an off-site entry irvec={}. Off-site "
+                                "two-body interactions are not yet supported "
+                                "by the general full-vertex path.".format(
+                                    itype, tuple(irvec)))
 
             no = self.norb
             nx, ny, nz = self.lattice.shape

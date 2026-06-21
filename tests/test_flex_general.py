@@ -73,16 +73,71 @@ def _make_solver(mode_cls, Lx=8, Ly=8, Nmat=64, T=2.0, mu=0.0,
     return solver, green_info, info_file
 
 
+def _write_2d_2orb_onsite_fixture(dirpath):
+    """Materialize a [4,4,1]-compatible 2-orbital fixture with ON-SITE U'.
+
+    Mirrors ``tests/rpa/input_2orb`` (same 2D geom + transfer) but writes an
+    ON-SITE (irvec ``0 0 0``) inter-orbital CoulombInter, unlike the committed
+    fixture whose CoulombInter is off-site.  The general (full-vertex) path now
+    fail-fasts on off-site two-body terms (see ``_inflate_chi0q_and_ham_general``),
+    so general-path tests must use on-site interactions.  On-site inter-orbital
+    U' still gives nontrivial 4x4 MYO S/C blocks.
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    geom = ("  1.000000000000   0.000000000000   0.000000000000\n"
+            "  0.000000000000   1.000000000000   0.000000000000\n"
+            "  0.000000000000   0.000000000000   1.000000000000\n"
+            "2\n"
+            "    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n"
+            "    0.500000000000000e+00     0.500000000000000e+00     0.000000000000000e+00\n")
+    transfer = ("Transfer in wannier90-like format for uhfk\n"
+                "2\n"
+                "9\n"
+                " 1 1 1 1 1 1 1 1 1\n"
+                "   0    1    0    1    1  1.0 0.0\n"
+                "   0   -1    0    1    1  1.0 0.0\n"
+                "   0    1    0    2    2  1.0 0.0\n"
+                "   0   -1    0    2    2  1.0 0.0\n"
+                "   0    0    0    1    2  0.5 0.0\n"
+                "  -1    0    0    1    2  0.5 0.0\n"
+                "   0    0    0    2    1  0.5 0.0\n"
+                "   1    0    0    2    1  0.5 0.0\n")
+    coulombintra = ("CoulombIntra in wannier90-like format for uhfk\n"
+                    "2\n"
+                    "1\n"
+                    " 1\n"
+                    "   0    0    0    1    1   4.000000000000   0.000000000000\n"
+                    "   0    0    0    2    2   4.000000000000   0.000000000000\n")
+    coulombinter = ("CoulombInter in wannier90-like format for uhfk\n"
+                    "2\n"
+                    "1\n"
+                    " 1\n"
+                    "   0    0    0    1    2   1.000000000000   0.000000000000\n"
+                    "   0    0    0    2    1   1.000000000000   0.000000000000\n")
+    with open(os.path.join(dirpath, "geom.dat"), "w") as f:
+        f.write(geom)
+    with open(os.path.join(dirpath, "transfer.dat"), "w") as f:
+        f.write(transfer)
+    with open(os.path.join(dirpath, "coulombintra.dat"), "w") as f:
+        f.write(coulombintra)
+    with open(os.path.join(dirpath, "coulombinter.dat"), "w") as f:
+        f.write(coulombinter)
+
+
 def _make_general_flex(norb=2):
     """Build a spin-free general FLEX solver.
 
-    For ``norb=2`` (default) uses the ``tests/rpa/input_2orb`` fixture
-    (CoulombIntra + CoulombInter) so the MYO S/C matrices are nontrivial 4x4
-    blocks.  For ``norb=1`` uses the 1-orbital ``tests/rpa/input`` fixture
-    (CoulombIntra only).  The constructor sets ``self.norb``, ``self.lattice``
-    and ``self.ham_info`` (with ``self.ham_info.param_ham``), which is all the
-    downstream general-path methods need.
+    For ``norb=2`` (default) uses a self-contained 2-orbital fixture with
+    CoulombIntra + ON-SITE CoulombInter (see ``_write_2d_2orb_onsite_fixture``)
+    so the MYO S/C matrices are nontrivial 4x4 blocks.  (The committed
+    ``tests/rpa/input_2orb`` fixture has OFF-SITE CoulombInter, which the general
+    full-vertex path now rejects.)  For ``norb=1`` uses the 1-orbital
+    ``tests/rpa/input`` fixture (CoulombIntra only).  The constructor sets
+    ``self.norb``, ``self.lattice`` and ``self.ham_info`` (with
+    ``self.ham_info.param_ham``), which is all the downstream general-path
+    methods need.
     """
+    import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
 
@@ -97,10 +152,13 @@ def _make_general_flex(norb=2):
             },
         }
     else:
+        dirpath = os.path.join(tempfile.gettempdir(),
+                               "hwave_flex_2d_2orb_onsite")
+        _write_2d_2orb_onsite_fixture(dirpath)
         info_input = {
-            'path_to_input': 'tests/rpa/input_2orb',
+            'path_to_input': dirpath,
             'interaction': {
-                'path_to_input': 'tests/rpa/input_2orb',
+                'path_to_input': dirpath,
                 'Geometry': 'geom.dat',
                 'Transfer': 'transfer.dat',
                 'CoulombIntra': 'coulombintra.dat',
@@ -307,6 +365,36 @@ class TestFLEXGeneralGuards(unittest.TestCase):
         solver._calc_epsilon_k = fake_epsilon_k
         with self.assertRaises(ValueError):
             solver.solve(green_info, info_file['output']['path_to_output'])
+
+    def test_general_rejects_offsite_interaction(self):
+        """The general (v1) path supports on-site interactions only; an off-site
+        interaction entry (irvec != (0,0,0)) must fail-fast with a ValueError
+        when the MYO S/C matrices are built in _inflate_chi0q_and_ham_general."""
+        flex = _make_general_flex(norb=2)
+        pham = flex.ham_info.param_ham
+        # param_ham[itype] is a dict {(irvec, orbvec): value}; inject an off-site
+        # CoulombInter entry mirroring that real key structure.  irvec=(1,0,0) is
+        # off-site; orbvec=(0,1) is a valid orbital pair.
+        key = ((1, 0, 0), (0, 1))
+        pham.setdefault("CoulombInter", {})[key] = 1.0
+        # ensure a clean cache so the guard (cache-MISS branch) actually runs:
+        flex._myo_sc_cache = None
+        chi0_raw = _fake_general_chi0q(flex)
+        with self.assertRaises(ValueError) as cm:
+            flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+        # confirm we hit the off-site guard specifically (not some other error)
+        self.assertIn("off-site", str(cm.exception).lower())
+
+    def test_general_iterationmax_zero_no_nameerror(self):
+        """IterationMax=0 must not raise NameError in solve(): the SCF loop body
+        (which assigns ``diff``) never runs, and the 'did not converge' warning
+        branch references ``diff`` — it must be initialized before the loop."""
+        flex = _make_general_flex(norb=1)
+        flex.max_iter = 0
+        green_info = {}
+        os.makedirs('tests/flex/output', exist_ok=True)
+        # Should warn-and-return (no convergence) without NameError on ``diff``.
+        flex.solve(green_info, 'tests/flex/output')
 
 
 class TestFLEXGeneralWarningGating(unittest.TestCase):
@@ -626,12 +714,16 @@ class TestGeneralSolveEndToEnd(unittest.TestCase):
     """
 
     def test_runs_and_saves(self):
+        import tempfile
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.flex as solver_flex
+        dirpath = os.path.join(tempfile.gettempdir(),
+                               "hwave_flex_2d_2orb_onsite")
+        _write_2d_2orb_onsite_fixture(dirpath)
         info_input = {
-            'path_to_input': 'tests/rpa/input_2orb',
+            'path_to_input': dirpath,
             'interaction': {
-                'path_to_input': 'tests/rpa/input_2orb',
+                'path_to_input': dirpath,
                 'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
                 'CoulombIntra': 'coulombintra.dat',
                 'CoulombInter': 'coulombinter.dat',
@@ -910,14 +1002,19 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
         solver.solve(green_info, out)
         return green_info["sigma"]
 
-    # 2-orbital: build directly from the input_2orb fixture (mirrors the
-    # _construct / TestGeneralSolveEndToEnd path, but WITHOUT patching exchange).
+    # 2-orbital: build directly from a self-contained ON-SITE 2-orbital fixture
+    # (mirrors the _construct / TestGeneralSolveEndToEnd path, but WITHOUT
+    # patching exchange).  The general path rejects off-site two-body terms, so
+    # both the general and squashed runs here use on-site U' for a fair compare.
+    import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
+    dirpath = os.path.join(tempfile.gettempdir(), "hwave_flex_2d_2orb_onsite")
+    _write_2d_2orb_onsite_fixture(dirpath)
     info_input = {
-        'path_to_input': 'tests/rpa/input_2orb',
+        'path_to_input': dirpath,
         'interaction': {
-            'path_to_input': 'tests/rpa/input_2orb',
+            'path_to_input': dirpath,
             'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
             'CoulombIntra': 'coulombintra.dat',
             'CoulombInter': 'coulombinter.dat',
