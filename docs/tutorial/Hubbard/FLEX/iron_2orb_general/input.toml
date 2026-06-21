@@ -1,0 +1,36 @@
+[log]
+  print_level = 1
+
+[mode]
+  mode = "FLEX"
+  calc_scheme = "general"
+
+[mode.param]
+  T = 0.1
+  CellShape = [16, 16, 1]
+  SubShape = [1, 1, 1]
+  Nmat = 128
+  filling = 0.5
+  IterationMax = 200
+  Mix = 0.2
+  EPS = 6
+
+[file]
+[file.input]
+  path_to_input = "."
+
+[file.input.interaction]
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
+  Exchange = "exchange.dat"
+
+[file.output]
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
