@@ -1017,9 +1017,11 @@ def _make_flex_solver_with(calc_scheme='reduced', interactions=None,
 class TestFLEXSchemeGuards(unittest.TestCase):
     """FLEX-specific compatibility guards.
 
-    FLEX consumes the reduced-shape (4-dim) chi0q and reduces the interaction
-    via the density-density diagonal 'kaabb->kab', so it requires a
-    reduced/squashed scheme and density-density interactions only.
+    The default reduced/squashed FLEX path consumes the reduced-shape (4-dim)
+    chi0q and reduces the interaction via the density-density diagonal
+    'kaabb->kab' (off-diagonal vertices dropped with a warning). The
+    calc_scheme='general' path keeps the full Kanamori vertices (paramagnetic
+    full-vertex MYO formulation, spin-free only).
     """
 
     # transfer-format body that registers as an Exchange interaction
@@ -1028,10 +1030,13 @@ class TestFLEXSchemeGuards(unittest.TestCase):
     _PAIRHOP_BODY = ("PairHop\n1\n1\n 1\n"
                      "   0    0    0    1    1   0.500000000000   0.0\n")
 
-    def test_general_scheme_rejected(self):
-        """calc_scheme='general' would feed FLEX a 6/7-dim chi0q -> reject."""
-        with self.assertRaises((ValueError, SystemExit)):
-            _make_flex_solver_with(calc_scheme='general')
+    def test_general_scheme_accepted_for_spin_free(self):
+        """calc_scheme='general' selects the paramagnetic full-vertex path and
+        is accepted at construction for a (spin-free) single-orbital model. The
+        spin_mode='spin-free' restriction is enforced later, in solve()."""
+        solver = _make_flex_solver_with(calc_scheme='general')
+        self.assertTrue(solver._flex_general)
+        self.assertEqual(solver.calc_scheme, 'general')
 
     def test_exchange_interaction_warns(self):
         """Exchange under 'squashed' is approximated by its density-density
