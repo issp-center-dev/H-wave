@@ -1156,6 +1156,52 @@ class TestFlexVertexWarnings(unittest.TestCase):
         self.assertTrue(any("PairLift" in m for m in cm.output))
 
 
+class TestFlexVertexMYOConvention(unittest.TestCase):
+    """FLEX susceptibilities from the general path are in MYO convention; the
+    pairing vertex built from them must use MYO S/C matrices, not the default
+    Kuroki ones (they differ in C(ab,ab) = -U'+2J vs -U'+J when Hund J != 0)."""
+
+    def _setup(self):
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        nd = norb * norb
+        rng = np.random.default_rng(0)
+        chis = rng.standard_normal((Nx, Ny, Nz, nd, nd)) + 0j
+        chic = rng.standard_normal((Nx, Ny, Nz, nd, nd)) + 0j
+        U = np.zeros((norb, norb, Nx, Ny, Nz), complex); U[0, 0] = 2.0; U[1, 1] = 2.0
+        Up = np.zeros((norb, norb, Nx, Ny, Nz), complex); Up[0, 1] = 1.0; Up[1, 0] = 1.0
+        J = np.zeros((norb, norb, Nx, Ny, Nz), complex); J[0, 1] = 0.4; J[1, 0] = 0.4
+        inter_k = {"CoulombIntra": U, "CoulombInter": Up, "Hund": J}
+        return chis, chic, inter_k, norb, Nx, Ny, Nz
+
+    def test_myo_differs_from_kuroki_with_hund(self):
+        chis, chic, inter_k, norb, Nx, Ny, Nz = self._setup()
+        v_kuroki = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki")
+        v_myo = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                       convention="myo")
+        self.assertGreater(
+            np.linalg.norm(v_myo - v_kuroki), 1e-8,
+            "MYO and Kuroki pairing vertices must differ when Hund J != 0")
+
+    def test_myo_matches_myo_sc_formula(self):
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        chis, chic, inter_k, norb, Nx, Ny, Nz = self._setup()
+        v_myo = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                       convention="myo", pairing_type="singlet")
+        S, C = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+        Vs_all = 1.5 * (S @ chis @ S) - 0.5 * (C @ chic @ C) + 0.5 * (S + C)
+        Vs_q = Vs_all.reshape(Nx, Ny, Nz, norb, norb, norb, norb).transpose(
+            3, 4, 5, 6, 0, 1, 2)
+        np.testing.assert_allclose(v_myo, Vs_q, atol=1e-12)
+
+    def test_default_is_kuroki(self):
+        chis, chic, inter_k, norb, Nx, Ny, Nz = self._setup()
+        v_default = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz)
+        v_kuroki = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki")
+        np.testing.assert_allclose(v_default, v_kuroki, atol=1e-12)
+
+
 class TestResolveInitGap(unittest.TestCase):
     """The default initial gap must match the pairing channel's parity.
 

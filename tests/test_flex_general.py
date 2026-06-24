@@ -255,6 +255,114 @@ class TestChiGeneralConsistency(unittest.TestCase):
         np.testing.assert_allclose(chi_c, chi_c_ref, atol=1e-10)
 
 
+class TestGeneralOutputConvention(unittest.TestCase):
+    """The general path computes internally in MYO convention but must expose
+    the public chi0q output in the same RPA [a,c,b,d] orbital convention as the
+    reduced path, so the saved chi0q key has one consistent meaning."""
+
+    def test_output_chi0q_is_rpa_convention(self):
+        flex = _make_general_flex(norb=2)
+        flex._myo_sc_cache = None
+        chi0_raw = _fake_general_chi0q(flex)
+        chi0q_out, v_eff, chi_s, chi_c = \
+            flex._flex_compute_veff_general(chi0_raw, None)
+        # output chi0q must equal the [a,c,b,d] input (not the MYO transpose)
+        np.testing.assert_allclose(
+            chi0q_out, chi0_raw, atol=1e-12,
+            err_msg="general output chi0q must stay in RPA [a,c,b,d] convention")
+        # internal MYO chi0q (the transpose) must differ for a non-symmetric
+        # tensor -- confirms the output is genuinely back-converted, not MYO.
+        myo = chi0_raw.transpose(0, 1, 4, 5, 2, 3)
+        self.assertGreater(np.linalg.norm(chi0q_out - myo), 1e-6)
+
+
+class TestGeneralChiConventionRoundTrip(unittest.TestCase):
+    """General FLEX tags saved chiq_s/chiq_c as MYO; the Eliashberg loader reads
+    that tag back so the pairing vertex uses MYO (not Kuroki) S/C matrices."""
+
+    def _save_and_reload_convention(self, flex):
+        import tempfile
+        import hwave.sc as sc
+        d = tempfile.mkdtemp()
+        nd = flex.norb * flex.norb
+        shape = (flex.nmat, flex.lattice.nvol, nd, nd)
+        green_info = {
+            "chiq_s": np.zeros(shape, dtype=complex),
+            "chiq_c": np.zeros(shape, dtype=complex),
+        }
+        info_out = {"path_to_output": d, "chiq_s": "chiq_s", "chiq_c": "chiq_c"}
+        flex.save_results(info_out, green_info)
+        input_dict = {"file": {"output": {"path_to_output": d}},
+                      "eliashberg": {}}
+        nx, ny, nz = flex.lattice.shape
+        _, _, _, conv = sc._load_flex_susceptibilities(
+            input_dict, flex.norb, nx, ny, nz)
+        return conv
+
+    def test_general_tags_and_reloads_myo(self):
+        flex = _make_general_flex(norb=2)
+        self.assertEqual(self._save_and_reload_convention(flex), "myo")
+
+    def test_legacy_file_without_tag_defaults_kuroki(self):
+        import tempfile
+        import hwave.sc as sc
+        d = tempfile.mkdtemp()
+        # write a legacy chiq file with NO chi_convention field
+        nd = 4
+        arr = np.zeros((4, 4, nd, nd), dtype=complex)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr)
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr)
+        input_dict = {"file": {"output": {"path_to_output": d}},
+                      "eliashberg": {}}
+        _, _, _, conv = sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
+        self.assertEqual(conv, "kuroki")
+
+    def test_mismatched_s_c_conventions_raise(self):
+        import tempfile
+        import hwave.sc as sc
+        d = tempfile.mkdtemp()
+        nd = 4
+        arr = np.zeros((4, 4, nd, nd), dtype=complex)
+        # spin says myo, charge says kuroki -> must not silently combine
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, chi_convention="myo")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr,
+                 chi_convention="kuroki")
+        input_dict = {"file": {"output": {"path_to_output": d}},
+                      "eliashberg": {}}
+        with self.assertRaises(ValueError):
+            sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
+
+    def test_real_rank6_chi_roundtrips_to_myo_flattening(self):
+        """Save REAL general-path (rank-6 MYO) chi_s/chi_c, reload through the
+        Eliashberg loader, and confirm the static slice flattens to (nd,nd) in
+        the MYO row=(m,n)/col=(mu,nu) order that build_sc_matrices_myo expects."""
+        import tempfile
+        import hwave.sc as sc
+        flex = _make_general_flex(norb=2)
+        flex._myo_sc_cache = None
+        chi0 = _fake_general_chi0q(flex)
+        _, _, chi_s, chi_c = flex._flex_compute_veff_general(chi0, None)
+        # real general chi is rank-6 (nmat, nvol, m, n, mu, nu)
+        self.assertEqual(chi_s.ndim, 6)
+        nx, ny, nz = flex.lattice.shape
+        nd = flex.norb * flex.norb
+
+        d = tempfile.mkdtemp()
+        flex.save_results(
+            {"path_to_output": d, "chiq_s": "chiq_s", "chiq_c": "chiq_c"},
+            {"chiq_s": chi_s, "chiq_c": chi_c})
+        input_dict = {"file": {"output": {"path_to_output": d}},
+                      "eliashberg": {}}
+        chis, chic, _, conv = sc._load_flex_susceptibilities(
+            input_dict, flex.norb, nx, ny, nz)
+        self.assertEqual(conv, "myo")
+        self.assertEqual(chis.shape, (nx, ny, nz, nd, nd))
+        # expected static slice flattened with row=(m,n), col=(mu,nu)
+        center = flex.nmat // 2
+        expected = chi_s[center].reshape(nx, ny, nz, nd, nd)
+        np.testing.assert_allclose(chis, expected, atol=1e-12)
+
+
 class TestVeffGeneral(unittest.TestCase):
     """Task 6: MYO fluctuation effective interaction V_eff."""
 
@@ -384,6 +492,32 @@ class TestFLEXGeneralGuards(unittest.TestCase):
             flex._inflate_chi0q_and_ham_general(chi0_raw, None)
         # confirm we hit the off-site guard specifically (not some other error)
         self.assertIn("off-site", str(cm.exception).lower())
+
+    def test_general_pairlift_is_inert_and_warns(self):
+        """PairLift contributes S=C=0 to the particle-hole spin/charge vertex
+        (cf. hwave.sc), so the general path correctly omits it. It must WARN
+        (not silently drop, and not error) and the result must be numerically
+        identical to the no-PairLift case."""
+        # baseline (no PairLift)
+        flex0 = _make_general_flex(norb=2)
+        flex0._myo_sc_cache = None
+        chi0_raw = _fake_general_chi0q(flex0)
+        _, base_v, base_s, base_c = \
+            flex0._flex_compute_veff_general(chi0_raw, None)
+
+        # with on-site PairLift injected
+        flex1 = _make_general_flex(norb=2)
+        pham = flex1.ham_info.param_ham
+        for (a, b) in ((0, 1), (1, 0)):
+            pham.setdefault("PairLift", {})[((0, 0, 0), (a, b))] = 0.3
+        flex1._myo_sc_cache = None
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            _, p_v, p_s, p_c = flex1._flex_compute_veff_general(chi0_raw, None)
+        self.assertTrue(any("pairlift" in m.lower() for m in cm.output))
+        # inert: identical S/C/V_eff with and without PairLift
+        np.testing.assert_allclose(p_v, base_v, atol=1e-12)
+        np.testing.assert_allclose(p_s, base_s, atol=1e-12)
+        np.testing.assert_allclose(p_c, base_c, atol=1e-12)
 
     def test_general_iterationmax_zero_no_nameerror(self):
         """IterationMax=0 must not raise NameError in solve(): the SCF loop body
@@ -758,6 +892,65 @@ class TestGeneralSolveEndToEnd(unittest.TestCase):
         norb = solver.norb
         self.assertEqual(green_info['sigma'].shape,
                          (1, solver.nmat, nvol, norb, norb))
+
+    def test_runs_with_hund_and_exchange(self):
+        """End-to-end general solve() with on-site Hund and Exchange present:
+        the full-vertex path must build the MYO S/C matrices from these terms
+        and converge to a finite sigma (the off-diagonal vertices the reduced
+        path would drop are exactly what calc_scheme='general' keeps)."""
+        import tempfile
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+        dirpath = os.path.join(tempfile.gettempdir(),
+                               "hwave_flex_2d_2orb_onsite")
+        _write_2d_2orb_onsite_fixture(dirpath)
+        info_input = {
+            'path_to_input': dirpath,
+            'interaction': {
+                'path_to_input': dirpath,
+                'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+                'CoulombInter': 'coulombinter.dat',
+            },
+        }
+        info_mode = {
+            'mode': 'FLEX',
+            'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                      'SubShape': [1, 1, 1], 'Nmat': 8,
+                      'IterationMax': 3, 'Mix': 0.5},
+            'calc_scheme': 'general',
+        }
+
+        def _solve(with_J):
+            # read a FRESH ham/green per solve so injecting J into param_ham does
+            # not leak into the other (baseline) run via a shared ham object.
+            ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+            green = read_input_k.QLMSkInput(info_input).get_param('green')
+            s = solver_flex.FLEX(ham, {}, info_mode)
+            if with_J:
+                # inject on-site Hund and Exchange (orbital off-diagonal) so the
+                # general S/C builder uses J / J' -- the terms the reduced path
+                # would drop.
+                pham = s.ham_info.param_ham
+                for (a, b) in ((0, 1), (1, 0)):
+                    pham.setdefault("Hund", {})[((0, 0, 0), (a, b))] = 0.2
+                    pham.setdefault("Exchange", {})[((0, 0, 0), (a, b))] = 0.1
+            s._myo_sc_cache = None
+            os.makedirs('tests/flex/output', exist_ok=True)
+            s.solve(green, 'tests/flex/output')
+            return s, green['sigma']
+
+        solver, sigma_J = _solve(with_J=True)
+        _, sigma_noJ = _solve(with_J=False)
+
+        self.assertTrue(np.all(np.isfinite(sigma_J)))
+        self.assertEqual(sigma_J.shape,
+                         (1, solver.nmat, solver.lattice.nvol,
+                          solver.norb, solver.norb))
+        # Hund/Exchange must actually enter the MYO S/C vertex: a bug that drops
+        # them would give sigma identical to the no-J baseline.
+        self.assertGreater(np.linalg.norm(sigma_J - sigma_noJ), 1e-8,
+                           "Hund/Exchange must change the general-path self-energy")
 
 
 def _write_1d_2orb_fixture(dirpath):

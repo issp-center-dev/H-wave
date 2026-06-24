@@ -806,12 +806,21 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
 
 
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                           pairing_type="singlet"):
+                           pairing_type="singlet", convention="kuroki"):
     """Compute pairing vertex from pre-computed FLEX susceptibilities.
 
     Uses the same formula as _compute_vertices_general but takes
     chi_s and chi_c directly instead of computing them from chi0q via RPA.
     This allows using dressed susceptibilities from the FLEX solver.
+
+    ``convention`` selects the S/C interaction matrices applied to the
+    susceptibilities: "kuroki" (default, arXiv:0902.3691, used by the reduced
+    FLEX path and the rest of the Eliashberg solver) or "myo"
+    (cond-mat/0407094). The two differ in the charge ``C(ab,ab) = -U'+2J`` vs
+    ``-U'+J`` element. Susceptibilities produced by the general (full-vertex)
+    FLEX path are in MYO convention and MUST be paired with ``convention='myo'``
+    so the vertex stays self-consistent (mixing them with Kuroki S/C silently
+    changes the physics in the C(ab,ab) channel).
 
     Parameters
     ----------
@@ -841,7 +850,15 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
             "PairLift is configured but does not contribute to the S/C pairing "
             "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
 
-    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    conv = convention.lower()
+    if conv == "myo":
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+    elif conv == "kuroki":
+        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    else:
+        raise ValueError(
+            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -879,6 +896,10 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
         Charge susceptibility at static limit, shape (Nx, Ny, Nz, nd, nd).
     green_dressed : ndarray or None
         Dressed Green's function if available, shape (norb, norb, Nx, Ny, Nz, nmat).
+    chi_convention : str
+        Orbital convention of chis/chic: "myo" (general full-vertex FLEX) or
+        "kuroki" (reduced FLEX / legacy files). Pass this to
+        _compute_vertices_flex so the matching S/C matrices are used.
     """
     nd = norb * norb
     file_input = input_dict.get("file", {}).get("input", {})
@@ -896,12 +917,29 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
     data_s = np.load(chi_s_path)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+    # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
+    # The tag and the general-path MYO consumption ship together, so any
+    # untagged file from a released build is necessarily a reduced/Kuroki
+    # output -> default to "kuroki". (A pre-tag general output could only exist
+    # as a transient artifact of an unreleased dev build; the s/c-agreement
+    # check below still guards against accidentally mixing conventions.)
+    chi_convention = (str(data_s["chi_convention"])
+                      if "chi_convention" in data_s else "kuroki")
 
     # Load charge susceptibility
     chi_c_path = os.path.join(flex_dir, chi_c_file)
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    # The spin and charge files must share one convention; combining e.g. an MYO
+    # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
+    chi_convention_c = (str(data_c["chi_convention"])
+                        if "chi_convention" in data_c else "kuroki")
+    if chi_convention_c != chi_convention:
+        raise ValueError(
+            "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
+            "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
+                chi_convention, chi_convention_c))
 
     # Convert from H-wave format (nmat, nvol, nd, nd) to
     # reference format (Nx, Ny, Nz, nd, nd) at static limit
@@ -950,7 +988,7 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
             nmat_g, Nx, Ny, Nz, norb, norb
         ).transpose(4, 5, 1, 2, 3, 0).copy()
 
-    return chis, chic, green_dressed
+    return chis, chic, green_dressed, chi_convention
 
 
 # ---------------------------------------------------------------------------
@@ -2281,8 +2319,9 @@ def calc_eliashberg(input_dict):
         # --- FLEX mode: use pre-computed dressed susceptibilities ---
         logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
-        chis, chic, green_dressed = _load_flex_susceptibilities(
+        chis, chic, green_dressed, chi_convention = _load_flex_susceptibilities(
             input_dict, norb, Nx, Ny, Nz)
+        logger.info("FLEX susceptibility convention: {}".format(chi_convention))
 
         # Use dressed Green's function if available, otherwise use bare
         if green_dressed is not None:
@@ -2295,7 +2334,8 @@ def calc_eliashberg(input_dict):
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                                      pairing_type=pairing_type)
+                                      pairing_type=pairing_type,
+                                      convention=chi_convention)
         logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
 
     else:

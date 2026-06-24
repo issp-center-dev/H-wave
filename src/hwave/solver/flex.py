@@ -409,18 +409,28 @@ class FLEX(RPA):
         Returns
         -------
         chi0q_out : ndarray
-            chi0q in MYO orbital convention (rank-6 orbital layout, for output).
+            chi0q for public output, in the RPA ``[a,c,b,d]`` orbital convention
+            (rank-6), consistent with the reduced path -- NOT the internal MYO
+            layout used for the S/C math.
         v_eff : ndarray
             Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
         chi_s : ndarray
-            Spin susceptibility (rank-6 orbital layout).
+            Spin susceptibility in the general-path **MYO** orbital convention
+            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
         chi_c : ndarray
-            Charge susceptibility (rank-6 orbital layout).
+            Charge susceptibility in the general-path **MYO** orbital convention
+            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
         v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
-        return chi0q, v_eff, chi_s, chi_c
+        # Expose chi0q in the RPA [a,c,b,d] convention (consistent with the
+        # reduced path) for the public output. The MYO transpose is an internal
+        # detail of the S/C math; transposing back (the transpose is an
+        # involution) recovers the input convention. chi_s/chi_c remain in the
+        # general-path MYO convention (see _solve_channels_general).
+        chi0q_out = chi0q.transpose(0, 1, 4, 5, 2, 3)
+        return chi0q_out, v_eff, chi_s, chi_c
 
     @do_profile
     def _inflate_chi0q_and_ham(self, chi0q_raw, ham_orig):
@@ -580,6 +590,18 @@ class FLEX(RPA):
         if cache is None:
             from hwave.sc import _build_interaction_k
             from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+            # PairLift does not contribute to the particle-hole spin/charge
+            # (S/C) vertex: its contribution is S=C=0 (verified against the full
+            # 4-index RPA; cf. the same treatment in hwave.sc), so the MYO S/C
+            # builder correctly omits it. It is therefore physically inert here,
+            # but warn so a configured PairLift term is not silently ignored --
+            # matching the Eliashberg-path wording.
+            if "PairLift" in self.ham_info.param_ham:
+                logger.warning(
+                    "PairLift is configured but does not contribute to the S/C "
+                    "pairing vertex (S=C=0); it is ignored in the general FLEX "
+                    "calculation.")
 
             # Fail-fast: the general (full-vertex) path builds the MYO S/C
             # matrices on a uniform k-grid that is NOT the FFT q-grid used by
@@ -1166,10 +1188,16 @@ class FLEX(RPA):
                      wavevector_index=self.wavenum_table)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
-        # Save susceptibilities (spin and charge channels separately for Eliashberg)
+        # Save susceptibilities (spin and charge channels separately for
+        # Eliashberg). Tag the orbital convention so the downstream Eliashberg
+        # consumer (_load_flex_susceptibilities / _compute_vertices_flex) pairs
+        # them with the matching S/C matrices: the general (full-vertex) path
+        # produces MYO-convention susceptibilities, the reduced path Kuroki.
         common_meta = dict(freq_index=self.freq_index,
                            wavevector_unit=self.kvec,
-                           wavevector_index=self.wavenum_table)
+                           wavevector_index=self.wavenum_table,
+                           chi_convention=("myo" if self._flex_general
+                                           else "kuroki"))
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
