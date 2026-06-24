@@ -42,6 +42,7 @@ from hwave.sc import (
     _reorder_eigenpairs_by_parity,
     _resolve_init_gap,
     _reverse_k_and_orbital,
+    _save_results,
     _shift_from_eigenvalues,
     _solve_eigenvalue,
     _solve_iteration,
@@ -998,6 +999,128 @@ class TestProjectGapParityValidation(unittest.TestCase):
         # must not raise
         _project_gap_parity(g, "singlet")
         _project_gap_parity(g, "triplet")
+
+
+class TestEigenvalueParityColumn(unittest.TestCase):
+    """The eigenvalue output may carry a per-eigenvalue parity-match flag so
+    downstream tools can tell physical (channel-parity) modes from spurious
+    opposite-parity ones. The flag is an appended column; the existing
+    index/Re/Im/|ev| columns are unchanged (backward compatible)."""
+
+    def _read_analysis_rows(self, path):
+        rows = []
+        with open(path) as f:
+            in_section = False
+            for line in f:
+                if line.startswith("# Eigenvalue analysis"):
+                    in_section = True
+                    continue
+                if line.startswith("# index"):
+                    continue
+                if in_section and line.strip():
+                    rows.append(line.split())
+        return rows
+
+    def test_backward_compatible_without_match(self):
+        import tempfile
+        evs = np.array([1.5 + 0j, 0.97 + 0j])
+        with tempfile.TemporaryDirectory() as d:
+            _save_results(d, None, None, evs, None, None, None,
+                          eigenvalue_file="eigenvalue.dat")
+            rows = self._read_analysis_rows(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(len(rows), 2)
+        # index Re Im |ev| -> 4 columns, Re at index 1
+        self.assertEqual(len(rows[0]), 4)
+        npt.assert_allclose(float(rows[0][1]), 1.5)
+
+    def test_writes_match_column_when_provided(self):
+        import tempfile
+        evs = np.array([1.5 + 0j, 0.97 + 0j])
+        match = np.array([False, True])   # 1.5 spurious (wrong parity), 0.97 physical
+        with tempfile.TemporaryDirectory() as d:
+            _save_results(d, None, None, evs, None, None, None,
+                          eigenvalue_file="eigenvalue.dat",
+                          eigenvalue_match=match)
+            rows = self._read_analysis_rows(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(len(rows[0]), 5)          # appended column
+        npt.assert_allclose(float(rows[0][1]), 1.5)  # Re still at index 1
+        self.assertEqual(rows[0][4], "0")          # spurious
+        self.assertEqual(rows[1][4], "1")          # physical
+
+    def test_match_column_reflects_is_gap_parity(self):
+        """End-to-end: the written match flag must equal _is_gap_parity for the
+        actual eigenvectors, the same classification calc_eliashberg applies."""
+        import tempfile
+        N = 8
+        k = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+        even = _initialize_gap("cos", 1, k, k, kz)   # singlet-parity (even)
+        odd = _initialize_gap("p_x", 1, k, k, kz)    # triplet-parity (odd)
+        gaps = [even, odd]
+        # classify against the singlet channel, exactly as calc_eliashberg does
+        match = np.array([_is_gap_parity(g, "singlet") for g in gaps])
+        self.assertTrue(match[0])     # even matches singlet
+        self.assertFalse(match[1])    # odd does not
+        # the triplet channel must classify the two gaps the opposite way
+        match_t = np.array([_is_gap_parity(g, "triplet") for g in gaps])
+        self.assertFalse(match_t[0])  # even does not match triplet
+        self.assertTrue(match_t[1])   # odd matches triplet
+        evs = np.array([0.9 + 0j, 0.8 + 0j])
+        with tempfile.TemporaryDirectory() as d:
+            _save_results(d, None, None, evs, None, None, None,
+                          eigenvalue_file="eigenvalue.dat",
+                          eigenvalue_match=match)
+            rows = self._read_analysis_rows(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(rows[0][4], "1")
+        self.assertEqual(rows[1][4], "0")
+
+
+class TestTutorialPlotLoadEigenvalues(unittest.TestCase):
+    """The tutorial plot_results.py must read the new match column when present
+    and fall back to 'unknown sector' (None) for legacy/partial files so it
+    never infers a parity sector it does not actually have."""
+
+    def _load_plot_module(self):
+        import importlib.util
+        path = os.path.join(
+            os.path.dirname(__file__), "..",
+            "docs", "en", "source", "rpa", "sample_sc", "plot_results.py")
+        spec = importlib.util.spec_from_file_location("_tut_plot", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _write(self, rows):
+        import tempfile
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "eigenvalue.dat")
+        with open(p, "w") as f:
+            f.write("# Iteration eigenvalue\n9.6e-01\n# Eigenvalue analysis\n")
+            f.write("# index ...\n")
+            f.writelines(rows)
+        return p
+
+    def test_legacy_four_column_yields_none(self):
+        pr = self._load_plot_module()
+        p = self._write(["   0  1.58e+00 0 1.58e+00\n",
+                         "   1  0.97e+00 0 0.97e+00\n"])
+        _, ev, match = pr.load_eigenvalues(p)
+        self.assertEqual(len(ev), 2)
+        self.assertIsNone(match, "legacy 4-column file must yield match=None")
+
+    def test_new_five_column_yields_flags(self):
+        pr = self._load_plot_module()
+        p = self._write(["   0  1.58e+00 0 1.58e+00 0\n",
+                         "   1  0.97e+00 0 0.97e+00 1\n"])
+        _, _, match = pr.load_eigenvalues(p)
+        self.assertEqual(match, [False, True])
+
+    def test_partial_match_column_treated_as_legacy(self):
+        pr = self._load_plot_module()
+        p = self._write(["   0  1.58e+00 0 1.58e+00 0\n",
+                         "   1  0.97e+00 0 0.97e+00\n"])   # second row lacks flag
+        _, _, match = pr.load_eigenvalues(p)
+        self.assertIsNone(match, "mixed/partial files must be treated as legacy")
 
 
 class TestShiftEstimate(unittest.TestCase):

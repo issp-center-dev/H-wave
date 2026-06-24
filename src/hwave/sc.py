@@ -2038,7 +2038,8 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
 # ---------------------------------------------------------------------------
 
 def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_array, kz_array,
-                  gap_file="gap.dat", eigenvalue_file="eigenvalue.dat"):
+                  gap_file="gap.dat", eigenvalue_file="eigenvalue.dat",
+                  eigenvalue_match=None):
     """Save gap function and eigenvalue results to files.
 
     Parameters
@@ -2106,10 +2107,24 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                 fw.write("{:.8e}\n".format(eigenvalue))
             if eigenvalues_eig is not None:
                 fw.write("# Eigenvalue analysis\n")
-                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|\n")
+                # The optional trailing `match` column is 1 when the eigenvector
+                # lies (dominantly) in the channel's parity sector (even for
+                # singlet, odd for triplet) and 0 when it lies in the opposite
+                # sector. The leading index/Re/Im/|ev| columns are unchanged, so
+                # position-based parsers (e.g. reading column 1 as Re) are
+                # unaffected; only the column count grows from 4 to 5.
+                if eigenvalue_match is not None:
+                    fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                             "|eigenvalue|  match(1=channel-parity)\n")
+                else:
+                    fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                             "|eigenvalue|\n")
                 for i, ev in enumerate(eigenvalues_eig):
-                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
-                        i, ev.real, ev.imag, abs(ev)))
+                    row = "{:4d} {:15.8e} {:15.8e} {:15.8e}".format(
+                        i, ev.real, ev.imag, abs(ev))
+                    if eigenvalue_match is not None:
+                        row += " {:d}".format(int(bool(eigenvalue_match[i])))
+                    fw.write(row + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -2328,6 +2343,7 @@ def calc_eliashberg(input_dict):
     sigma_result = None
     eigenvalue_iter = None
     eigenvalues_eig = None
+    eigenvalue_match = None
 
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
@@ -2350,9 +2366,19 @@ def calc_eliashberg(input_dict):
         # leading eigenpair is the physical solution for this channel.
         eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
             eigenvalues_eig, eigenvectors_eig, pairing_type)
+        # Flag whether each eigenvector lies (dominantly) in the channel's
+        # parity sector (even for singlet, odd for triplet). _is_gap_parity is a
+        # threshold test, so this is "dominantly the channel parity" rather than
+        # an exact label; for a centrosymmetric model parity is an exact kernel
+        # symmetry and the opposite-parity modes are unphysical for the channel
+        # (e.g. an even mode in the triplet kernel is Pauli-forbidden).
+        eigenvalue_match = np.array(
+            [_is_gap_parity(g, pairing_type) for g in eigenvectors_eig])
         logger.info("Leading eigenvalues:")
         for i, ev in enumerate(eigenvalues_eig):
-            logger.info("  {:3d}: {:.6f} (|ev| = {:.6f})".format(i, ev.real, abs(ev)))
+            tag = "" if eigenvalue_match[i] else "  [opposite-parity sector]"
+            logger.info("  {:3d}: {:.6f} (|ev| = {:.6f}){}".format(
+                i, ev.real, abs(ev), tag))
 
         # Use leading eigenvector as gap if no iteration result
         if sigma_result is None:
@@ -2363,7 +2389,8 @@ def calc_eliashberg(input_dict):
     _save_results(
         output_dir, sigma_result, eigenvalue_iter, eigenvalues_eig,
         kx_array, ky_array, kz_array,
-        gap_file=gap_file, eigenvalue_file=eigenvalue_file
+        gap_file=gap_file, eigenvalue_file=eigenvalue_file,
+        eigenvalue_match=eigenvalue_match
     )
 
     logger.info("=== Done ===")
