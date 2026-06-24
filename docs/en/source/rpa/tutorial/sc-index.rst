@@ -390,6 +390,12 @@ Singlet vs. triplet comparison
 
 By changing ``pairing_type`` to ``"triplet"`` in the input file,
 one can compare singlet and triplet instabilities.
+When switching to the triplet channel, ``init_gap`` must also be set to an
+odd-parity (triplet) seed such as ``"p_x"`` (the ready-made
+``input_triplet.toml`` does this); the default ``init_gap = "cos"`` is an even
+(singlet) seed, and the solver now rejects a seed of the wrong parity with an
+error rather than converging to an unphysical sector. Equivalently, omit
+``init_gap`` entirely to let the solver pick the channel's parity automatically.
 At :math:`T = 0.1` with the same parameters,
 the triplet channel yields a leading eigenvalue
 :math:`\lambda_T \approx 1.58`, which is larger than the singlet value
