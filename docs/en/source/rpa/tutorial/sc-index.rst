@@ -248,15 +248,28 @@ followed by the eigenvalue analysis:
 
     hwave_sc: === Eigenvalue analysis ===
     hwave_sc: Leading eigenvalues:
-    hwave_sc:     0: -1.345390 (|ev| = 1.345390)
-    hwave_sc:     1: -1.121834 (|ev| = 1.121834)
-    hwave_sc:     2: -1.100188 (|ev| = 1.100188)
+    hwave_sc:     0: 0.959725 (|ev| = 0.959725)
+    hwave_sc:     1: 0.836778 (|ev| = 0.836778)
+    hwave_sc:     2: 0.810959 (|ev| = 0.810959)
+    hwave_sc:     3: -0.887954 (|ev| = 0.887954)
+    hwave_sc:     4: -1.071303 (|ev| = 1.071303)
+    hwave_sc:     5: -1.349775 (|ev| = 1.349775)
+    hwave_sc:     6: 0.976353 (|ev| = 0.976353)  [opposite-parity sector]
+    hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
     ...
-    hwave_sc:     4: 0.922684 (|ev| = 0.922684)
 
 An eigenvalue :math:`\lambda > 1` (positive) indicates a superconducting instability
 at the given temperature. Negative eigenvalues correspond to sign-changing gap symmetries
 but do not indicate SC instability.
+
+The eigenpairs are ordered so that those with the **channel parity** come first
+(even for singlet, odd for triplet): the leading one (index 0) is the physical
+solution and matches the self-consistent iteration result. Eigenvalues tagged
+``[opposite-parity sector]`` belong to the other parity sector; for a given
+spin channel they are forbidden by the Pauli principle and do **not** represent
+a physical instability (see the note on parity below). The last column of
+``eigenvalue.dat`` records this as ``match`` (``1`` = channel parity, ``0`` =
+spurious).
 
 
 Results
@@ -280,7 +293,7 @@ in momentum space obtained from the self-consistent iteration.
    The inter-orbital component is about 5 times larger than the intra-orbital one,
    indicating that inter-orbital pairing is dominant.
 
-**Triplet channel** (:math:`\lambda \approx 1.58`):
+**Triplet channel** (:math:`\lambda \approx 0.97`):
 
 .. figure:: ../sample_sc/gap_triplet.png
    :width: 90%
@@ -289,7 +302,9 @@ in momentum space obtained from the self-consistent iteration.
    Triplet gap function in k-space. Left: intra-orbital component
    :math:`\mathrm{Re}\,\Sigma_{00}(\mathbf{k})`.
    Right: inter-orbital component :math:`\mathrm{Re}\,\Sigma_{01}(\mathbf{k})`.
-   Unlike the singlet case, the intra-orbital component dominates.
+   The gap is **odd** under :math:`\mathbf{k} \to -\mathbf{k}` (with the orbital
+   transpose), as required for spin-triplet pairing; the inter-orbital component
+   is again the larger one.
 
 Eigenvalue spectrum
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -303,18 +318,26 @@ for both singlet and triplet channels.
 
    Positive eigenvalue spectrum :math:`\lambda` of the linearized Eliashberg equation.
    The dashed red line indicates :math:`\lambda = 1` (SC instability criterion).
-   All singlet eigenvalues are below 1, while two triplet eigenvalues exceed 1.
+   Filled markers are the **physical** eigenvalues (the gap has the channel
+   parity: even for singlet, odd for triplet); open markers are **spurious**
+   opposite-parity modes. All physical eigenvalues lie below 1. The two open
+   markers above 1 are even-parity solutions of the *triplet* kernel, which the
+   Pauli principle forbids for spin-triplet pairing (see the parity note below).
 
 The Arnoldi eigenvalue analysis finds multiple eigenvalues.
 The figure shows only positive eigenvalues, which are relevant for the
 SC instability criterion :math:`\lambda = 1`.
-For the singlet channel, the largest positive eigenvalue is
-:math:`\lambda \approx 0.92 < 1`, consistent with the
-self-consistent iteration result (:math:`\lambda \approx 0.96`),
-meaning no singlet SC instability at this temperature.
+For the singlet channel, the leading **physical** (even-parity) eigenvalue is
+:math:`\lambda_S \approx 0.96 < 1`, matching the self-consistent iteration
+result, so there is no singlet SC instability at this temperature.
 
-In the triplet channel, the leading positive eigenvalue is
-:math:`\lambda \approx 1.58 > 1`, indicating a triplet SC instability.
+For the triplet channel, the leading **physical** (odd-parity) eigenvalue is
+:math:`\lambda_T \approx 0.97 < 1`. The larger values near :math:`1.58` and
+:math:`1.09` that appear in the triplet calculation are even-parity (spurious)
+modes and are **not** triplet instabilities. The two physical channels are thus
+very close (:math:`\lambda_T \gtrsim \lambda_S`), placing this temperature near
+the singlet--triplet crossover; the actual SC transition (:math:`\lambda = 1`)
+is reached at lower temperature.
 
 Plotting script
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -354,10 +377,15 @@ The eigenvalues of the linearized Eliashberg equation:
     # Iteration eigenvalue
     9.59724792e-01
     # Eigenvalue analysis
-    # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|
-       0 -1.34539047e+00  0.00000000e+00  1.34539047e+00
-       1 -1.12183387e+00  0.00000000e+00  1.12183387e+00
+    # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
+       0  9.59725061e-01 -3.63739178e-12  9.59725061e-01 1
+       1  8.36778019e-01 -3.64670431e-12  8.36778019e-01 1
        ...
+
+The trailing ``match`` column is ``1`` when the eigenvector has the channel's
+parity (a physical singlet/triplet gap) and ``0`` for a spurious opposite-parity
+mode (see the parity note above). Older output files without this column are
+read unchanged.
 
 
 Physical interpretation
@@ -381,30 +409,50 @@ By varying the temperature and finding the point where the largest
 positive eigenvalue reaches :math:`\lambda = 1`, one can determine
 the superconducting transition temperature :math:`T_c`.
 
-In this example, the singlet channel has :math:`\lambda_S \approx 0.96 < 1`
-(no SC instability), while the triplet channel has
-:math:`\lambda_T \approx 1.58 > 1` (SC instability) at :math:`T = 0.1`.
+In this example, at :math:`T = 0.1` both physical channels are just below the
+instability threshold, with :math:`\lambda_S \approx 0.96` (singlet, even) and
+:math:`\lambda_T \approx 0.97` (triplet, odd). They are nearly degenerate, with
+the triplet marginally leading.
+
+.. note::
+
+   **Parity and the Pauli principle.**
+   A Cooper pair must be antisymmetric under exchange of the two electrons,
+   i.e. under the combined operation of spin exchange, orbital exchange, and
+   :math:`\mathbf{k} \to -\mathbf{k}`. For an (even-frequency) gap
+   :math:`\Sigma_{\alpha\beta}(\mathbf{k})` this fixes the spatial parity
+   :math:`P:\ \Sigma_{\alpha\beta}(\mathbf{k}) \to \Sigma_{\beta\alpha}(-\mathbf{k})`:
+   spin-singlet gaps are **even** (:math:`P = +1`) and spin-triplet gaps are
+   **odd** (:math:`P = -1`). The Eliashberg kernel acts on the full gap space and
+   is not restricted to one parity, so each channel's kernel also has
+   opposite-parity eigenvectors. These are mathematical solutions with no
+   physical meaning for that spin channel (e.g. an even-parity eigenvalue of the
+   triplet kernel would be a totally symmetric pair state, forbidden by Pauli).
+   ``hwave_sc`` therefore projects each self-consistent iterate onto the
+   channel's parity sector, and the eigenvalue analysis labels each mode as
+   physical (``match = 1``) or spurious (``match = 0``). The large values
+   :math:`\lambda \approx 1.58,\ 1.09` seen in the triplet calculation are such
+   spurious even-parity modes, **not** triplet instabilities.
 
 Singlet vs. triplet comparison
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 By changing ``pairing_type`` to ``"triplet"`` in the input file,
-one can compare singlet and triplet instabilities.
+one can compare the singlet and triplet channels.
 When switching to the triplet channel, ``init_gap`` must also be set to an
 odd-parity (triplet) seed such as ``"p_x"`` (the ready-made
 ``input_triplet.toml`` does this); the default ``init_gap = "cos"`` is an even
 (singlet) seed, and the solver now rejects a seed of the wrong parity with an
 error rather than converging to an unphysical sector. Equivalently, omit
 ``init_gap`` entirely to let the solver pick the channel's parity automatically.
-At :math:`T = 0.1` with the same parameters,
-the triplet channel yields a leading eigenvalue
-:math:`\lambda_T \approx 1.58`, which is larger than the singlet value
-(:math:`\lambda_S \approx 0.96`).
-This indicates that the triplet SC state is dominant at this temperature,
-consistent with the results of Ref. [1]_ where the triplet
-SC state competes with the singlet SC state for :math:`T > 0.05`,
-while the singlet SC transition dominates at lower temperatures
-(:math:`T < 0.05`) due to the enhancement of spin fluctuations.
+At :math:`T = 0.1` with the same parameters, the leading physical eigenvalues are
+:math:`\lambda_T \approx 0.97` (triplet) and :math:`\lambda_S \approx 0.96`
+(singlet): both are below 1, and the triplet marginally leads. This places the
+sample near the singlet--triplet crossover of Ref. [1]_, where the triplet SC
+state competes with the singlet for :math:`T > 0.05`, while the singlet SC
+transition dominates at lower temperatures (:math:`T < 0.05`) due to the
+enhancement of spin fluctuations. The actual transition
+(:math:`\lambda = 1`) is reached on lowering the temperature.
 
 
 Supported interactions
