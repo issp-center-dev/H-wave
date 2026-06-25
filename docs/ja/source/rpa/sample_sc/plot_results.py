@@ -9,9 +9,16 @@ calculations:
 """
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+
+# matplotlib is imported lazily inside the plotting functions so the data-loading
+# helpers (e.g. load_eigenvalues) can be imported without a matplotlib install.
+
+
+def _get_plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
 
 
 def load_gap(filename):
@@ -87,6 +94,7 @@ def plot_gap_kspace(kx, ky, sigma, title, filename, N=32):
     KX = kx.reshape(N, N)
     KY = ky.reshape(N, N)
 
+    plt = _get_plt()
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
     # Intra-orbital: sigma_00
@@ -130,6 +138,7 @@ def plot_eigenvalue_spectrum(ev_singlet, match_singlet, ev_triplet, match_triple
     triplet kernel that exceed 1) are unphysical for that spin channel by the
     Pauli principle.
     """
+    plt = _get_plt()
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     # Sector resolution is only possible when the output carries the `match`

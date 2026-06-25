@@ -11,9 +11,28 @@ Tests must be run from the repository root (they use relative paths like
 ``tests/rpa/input``).
 """
 
+import contextlib
+import logging
 import os
 import unittest
 import numpy as np
+
+
+@contextlib.contextmanager
+def _assert_no_warning(testcase, logger_name):
+    """Python 3.9-compatible replacement for assertNoLogs (added in 3.10):
+    capture records on ``logger_name`` and assert none are WARNING or above."""
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    lg = logging.getLogger(logger_name)
+    lg.addHandler(handler)
+    try:
+        yield
+    finally:
+        lg.removeHandler(handler)
+    warns = [r.getMessage() for r in records if r.levelno >= logging.WARNING]
+    testcase.assertEqual(warns, [], "unexpected warnings: {}".format(warns))
 
 
 def _make_solver(mode_cls, Lx=8, Ly=8, Nmat=64, T=2.0, mu=0.0,
@@ -573,7 +592,7 @@ class TestFLEXGeneralWarningGating(unittest.TestCase):
         self.assertTrue(any('density-density' in m for m in cm.output))
 
     def test_warning_suppressed_for_general(self):
-        with self.assertNoLogs('hwave.solver.flex', level='WARNING'):
+        with _assert_no_warning(self, 'hwave.solver.flex'):
             self._construct('general')
 
 
@@ -1265,7 +1284,7 @@ class TestGeneralLimits(unittest.TestCase):
         the new-physics general path.
         """
         gating = TestFLEXGeneralWarningGating()
-        with self.assertNoLogs('hwave.solver.flex', level='WARNING'):
+        with _assert_no_warning(self, 'hwave.solver.flex'):
             gating._construct('general')
 
 
