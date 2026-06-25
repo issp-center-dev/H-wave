@@ -514,8 +514,17 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    :ref:`above <flex_scope>`) and suppresses the density-density reduction
    warning, but it is **spin-free only** — it raises a ``ValueError`` for
    ``spin_mode = "spin-diag"`` or ``"spinful"`` and rejects
-   ``enable_spin_orbital``. In all schemes ``calc_type = "ring+ladder"`` is
-   **not** supported (the solver raises a ``ValueError``).
+   ``enable_spin_orbital``. It is also **on-site only**: every two-body term
+   (``CoulombIntra``/``CoulombInter``/``Hund``/``Exchange``/``PairHop``/``Ising``)
+   must have ``irvec = (0,0,0)``; an off-site entry raises a ``ValueError``
+   (the MYO S/C matrices are built as q-independent constants). ``Exchange`` and
+   ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme), but
+   ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
+   **inert** (ignored with a warning). The general path writes ``chiq_s``/
+   ``chiq_c`` in the MYO convention (tagged ``chi_convention="myo"``), which
+   ``hwave_sc`` reads back automatically. In all schemes
+   ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
+   ``ValueError``).
 
 
 Sample 3: Iron pnictide 2-orbital model

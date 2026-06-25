@@ -493,7 +493,16 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
    完全なKanamori頂点（MYOの式。:ref:`上記 <flex_scope>` を参照）を保持し、
    密度-密度縮約の警告を抑制します。ただし **spin-freeモード専用** であり、
    ``spin_mode = "spin-diag"`` や ``"spinful"`` に対しては ``ValueError`` を
-   送出し、``enable_spin_orbital`` にも対応していません。いずれのスキームでも
+   送出し、``enable_spin_orbital`` にも対応していません。さらに **オンサイト
+   相互作用専用** であり、すべての2体項
+   （``CoulombIntra``/``CoulombInter``/``Hund``/``Exchange``/``PairHop``/``Ising``）
+   は ``irvec = (0,0,0)`` でなければならず、オフサイト項があると ``ValueError``
+   を送出します（MYOのS/C行列をq非依存の定数として構築するため）。``Exchange``
+   と ``PairHop`` の非対角頂点は **保持されます**（本スキームの目的）が、
+   ``PairLift`` は粒子-正孔頂点に ``S=C=0`` で寄与せず **無効（inert）** で、
+   警告とともに無視されます。general パスは ``chiq_s``/``chiq_c`` をMYO規約で
+   保存し（``chi_convention="myo"`` タグ付き）、``hwave_sc`` が自動的に読み取り
+   ます。いずれのスキームでも
    ``calc_type = "ring+ladder"`` には対応していません（ソルバーは
    ``ValueError`` を送出します）。
 
