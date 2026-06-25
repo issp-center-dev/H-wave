@@ -513,7 +513,7 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
 モデル
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-3番目のサンプルは、Raghu et al. [2]_ が提案した
+3番目のサンプルは、Raghu et al. [5]_ が提案した
 **鉄系超伝導体の2軌道最小モデル** です。
 Fe-As面を正方格子（1-Fe単位胞）上の :math:`d_{xz}` と
 :math:`d_{yz}` 軌道で記述します。
@@ -555,7 +555,7 @@ Fe-As面を正方格子（1-Fe単位胞）上の :math:`d_{xz}` と
 :math:`\mathbf{Q} = (\pi, 0)` における強いスピンゆらぎを駆動します。
 これが鉄系超伝導体の特徴的な物理です。
 
-.. [2] S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
+.. [5] S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
    Phys. Rev. B **77**, 220503(R) (2008).
 
 入力ファイルの準備

@@ -534,7 +534,7 @@ Model
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The third sample is a **two-orbital minimal model for iron-based
-superconductors** proposed by Raghu et al. [2]_
+superconductors** proposed by Raghu et al. [5]_
 The model describes the Fe-As plane using :math:`d_{xz}` and
 :math:`d_{yz}` orbitals on a square lattice (1-Fe unit cell).
 
@@ -573,7 +573,7 @@ electron pockets at :math:`M = (\pi, 0)` / :math:`(0, \pi)`.
 The nesting between these pockets drives strong spin fluctuations
 at :math:`\mathbf{Q} = (\pi, 0)`, which is the hallmark of iron pnictides.
 
-.. [2] S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
+.. [5] S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
    Phys. Rev. B **77**, 220503(R) (2008).
 
 Prepare input files
