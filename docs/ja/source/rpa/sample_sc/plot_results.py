@@ -9,9 +9,16 @@ calculations:
 """
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+
+# matplotlib is imported lazily inside the plotting functions so the data-loading
+# helpers (e.g. load_eigenvalues) can be imported without a matplotlib install.
+
+
+def _get_plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
 
 
 def load_gap(filename):
@@ -29,9 +36,19 @@ def load_gap(filename):
 
 
 def load_eigenvalues(filename):
-    """Load eigenvalues from output file."""
+    """Load eigenvalues from output file.
+
+    Returns (ev_iter, ev_list, match_list). ``match_list[i]`` is True when the
+    eigenvector lies (dominantly) in the channel's parity sector (even for
+    singlet, odd for triplet) and False when it lies in the opposite-parity
+    sector. For older output files without the ``match`` column, ``match_list``
+    is ``None`` (the sector is unknown and must not be inferred).
+    """
     ev_iter = None
     ev_list = []
+    match_list = []
+    n_rows = 0
+    n_with_match = 0
     with open(filename) as f:
         in_eigenvalue_section = False
         for line in f:
@@ -46,9 +63,19 @@ def load_eigenvalues(filename):
             elif in_eigenvalue_section and line:
                 parts = line.split()
                 ev_list.append(float(parts[1]))
+                n_rows += 1
+                if len(parts) > 4:
+                    n_with_match += 1
+                    match_list.append(parts[4] == "1")
+                else:
+                    match_list.append(None)
             elif not in_eigenvalue_section and line and not line.startswith("#"):
                 ev_iter = float(line.strip())
-    return ev_iter, ev_list
+    # Trust the match column only if EVERY eigenvalue row carries it; a missing
+    # or partially annotated (e.g. hand-edited) column is treated as legacy so
+    # unknown-sector rows are never misclassified as opposite-parity.
+    has_match = n_rows > 0 and n_with_match == n_rows
+    return ev_iter, ev_list, (match_list if has_match else None)
 
 
 def plot_gap_kspace(kx, ky, sigma, title, filename, N=32):
@@ -67,6 +94,7 @@ def plot_gap_kspace(kx, ky, sigma, title, filename, N=32):
     KX = kx.reshape(N, N)
     KY = ky.reshape(N, N)
 
+    plt = _get_plt()
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
     # Intra-orbital: sigma_00
@@ -96,24 +124,52 @@ def plot_gap_kspace(kx, ky, sigma, title, filename, N=32):
     print(f"Saved {filename}")
 
 
-def plot_eigenvalue_spectrum(ev_singlet, ev_triplet,
+def plot_eigenvalue_spectrum(ev_singlet, match_singlet, ev_triplet, match_triplet,
                              ev_iter_singlet, ev_iter_triplet, filename):
-    """Plot positive eigenvalue spectrum comparison.
+    """Plot the positive eigenvalue spectrum, separating the channel-parity
+    sector from the opposite-parity sector.
 
-    Only positive eigenvalues are plotted, since negative eigenvalues
-    do not indicate SC instability. The SC instability criterion is
-    lambda = 1.
+    Only positive eigenvalues are plotted, since negative eigenvalues do not
+    indicate an SC instability. The SC criterion is lambda = 1. For each channel
+    the filled markers are eigenvalues whose gap lies in the channel's parity
+    sector (even for singlet, odd for triplet); open markers are opposite-parity
+    eigenvalues. For this centrosymmetric model parity is an exact kernel
+    symmetry, so the opposite-parity modes (e.g. the even-parity modes of the
+    triplet kernel that exceed 1) are unphysical for that spin channel by the
+    Pauli principle.
     """
+    plt = _get_plt()
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
-    # Filter positive eigenvalues only
-    ev_s_pos = sorted([e for e in ev_singlet if e > 0], reverse=True)
-    ev_t_pos = sorted([e for e in ev_triplet if e > 0], reverse=True)
+    # Sector resolution is only possible when the output carries the `match`
+    # column. For legacy files (match is None) fall back to the previous
+    # unsplit plot so we never infer a parity sector we do not actually know.
+    have_sectors = match_singlet is not None and match_triplet is not None
 
-    ax.scatter(range(len(ev_s_pos)), ev_s_pos,
-               marker="o", s=80, color="C0", label="Singlet", zorder=3)
-    ax.scatter(range(len(ev_t_pos)), ev_t_pos,
-               marker="s", s=80, color="C1", label="Triplet", zorder=3)
+    def split_pos(evs, matches):
+        if matches is None:
+            return sorted([e for e in evs if e > 0], reverse=True), []
+        phys = sorted([e for e, m in zip(evs, matches) if e > 0 and m], reverse=True)
+        spur = sorted([e for e, m in zip(evs, matches) if e > 0 and not m], reverse=True)
+        return phys, spur
+
+    s_phys, s_spur = split_pos(ev_singlet, match_singlet)
+    t_phys, t_spur = split_pos(ev_triplet, match_triplet)
+
+    s_label = "Singlet (even sector)" if have_sectors else "Singlet"
+    t_label = "Triplet (odd sector)" if have_sectors else "Triplet"
+    ax.scatter(range(len(s_phys)), s_phys, marker="o", s=80, color="C0",
+               label=s_label, zorder=3)
+    ax.scatter(range(len(t_phys)), t_phys, marker="s", s=80, color="C1",
+               label=t_label, zorder=3)
+    # Opposite-parity sector: open markers (only when sectors are known).
+    if s_spur:
+        ax.scatter(range(len(s_spur)), s_spur, marker="o", s=80,
+                   facecolors="none", edgecolors="C0", alpha=0.6, zorder=2)
+    if t_spur:
+        ax.scatter(range(len(t_spur)), t_spur, marker="s", s=80,
+                   facecolors="none", edgecolors="C1", alpha=0.6, zorder=2,
+                   label="Opposite-parity sector")
 
     ax.axhline(y=1.0, color="red", linestyle="--", alpha=0.7,
                label=r"$\lambda = 1$ (SC instability)")
@@ -121,7 +177,7 @@ def plot_eigenvalue_spectrum(ev_singlet, ev_triplet,
     ax.set_xlabel("Eigenvalue index")
     ax.set_ylabel(r"$\lambda$")
     ax.set_title("Eigenvalue spectrum of Eliashberg equation")
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(filename, dpi=150, bbox_inches="tight")
@@ -132,11 +188,11 @@ def plot_eigenvalue_spectrum(ev_singlet, ev_triplet,
 def main():
     # Load singlet results
     kx_s, ky_s, sigma_s = load_gap("output/gap.dat")
-    ev_iter_s, ev_list_s = load_eigenvalues("output/eigenvalue.dat")
+    ev_iter_s, ev_list_s, match_s = load_eigenvalues("output/eigenvalue.dat")
 
     # Load triplet results
     kx_t, ky_t, sigma_t = load_gap("output/gap_triplet.dat")
-    ev_iter_t, ev_list_t = load_eigenvalues("output/eigenvalue_triplet.dat")
+    ev_iter_t, ev_list_t, match_t = load_eigenvalues("output/eigenvalue_triplet.dat")
 
     N = 32
 
@@ -151,7 +207,7 @@ def main():
                     "gap_triplet.png", N)
 
     # Fig 3: Eigenvalue spectrum comparison
-    plot_eigenvalue_spectrum(ev_list_s, ev_list_t,
+    plot_eigenvalue_spectrum(ev_list_s, match_s, ev_list_t, match_t,
                              ev_iter_s, ev_iter_t,
                              "eigenvalue_spectrum.png")
 

@@ -81,22 +81,43 @@ class FLEX(RPA):
         logger.debug(">>> FLEX._init_flex_param")
 
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
-        # interaction via the density-density diagonal ('kaabb->kab'), so it
-        # only supports reduced/squashed schemes with density-density vertices.
+        # interaction via the density-density diagonal ('kaabb->kab') on the
+        # reduced/squashed path.  The 'general' scheme selects the paramagnetic
+        # full-vertex multi-orbital path (v1: spin-free only; the spin_mode
+        # guard is enforced in solve(), where spin_mode is determined).
         scheme = self.calc_scheme.lower()
-        if scheme not in ("reduced", "squashed"):
+        if scheme == "general":
+            # FLEX general is the paramagnetic full-vertex path: it sums the
+            # RPA *ring* (bubble) series with the full rank-4 vertex. The
+            # transverse *ladder* channel (calc_type='ring+ladder') is not part
+            # of this path, so reject it even though it forces scheme='general'.
             if getattr(self, "calc_type", "ring") == "ring+ladder":
-                # ring+ladder forces calc_scheme='general' (full rank-4 tensor),
-                # which FLEX cannot consume.
-                msg = ("FLEX does not support calc_type='ring+ladder' "
-                       "(it requires the 'general' scheme); use the default "
-                       "'ring' with calc_scheme='reduced' or 'squashed'.")
+                msg = ("FLEX does not support calc_type='ring+ladder' (the "
+                       "transverse ladder channel); FLEX general is ring-only. "
+                       "Use the default calc_type='ring' with "
+                       "calc_scheme='general'.")
+                logger.error(msg)
+                raise ValueError(msg)
+            if getattr(self.ham_info, "enable_spin_orbital", False):
+                raise ValueError(
+                    "calc_scheme='general' FLEX (v1) does not support "
+                    "enable_spin_orbital; deferred to the generalized FLEX "
+                    "solver.")
+            self._flex_general = True
+        elif scheme in ("reduced", "squashed"):
+            self._flex_general = False
+        else:
+            if getattr(self, "calc_type", "ring") == "ring+ladder":
+                msg = ("FLEX does not support calc_type='ring+ladder' (the "
+                       "transverse ladder channel); use the default 'ring' "
+                       "with calc_scheme='reduced'/'squashed'/'general'.")
             else:
-                msg = ("FLEX requires calc_scheme='reduced' or 'squashed', "
-                       "got '{}'.".format(self.calc_scheme))
+                msg = ("FLEX requires calc_scheme='reduced', 'squashed', or "
+                       "'general', got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        if (self.ham_info.has_interaction_exchange()
+        if not self._flex_general and (
+                self.ham_info.has_interaction_exchange()
                 or self.ham_info.has_interaction_pairhop()):
             # FLEX reduces the vertex via the density-density diagonal
             # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
@@ -109,7 +130,8 @@ class FLEX(RPA):
                 "FLEX uses the density-density reduction; exchange- and "
                 "pair-hopping-type interactions (Exchange, PairLift, PairHop) "
                 "are approximated by their density-density part "
-                "(off-diagonal vertices are dropped).")
+                "(off-diagonal vertices are dropped). "
+                "Use calc_scheme='general' to keep them.")
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
@@ -119,6 +141,11 @@ class FLEX(RPA):
             self.eps = eps_exp
         else:
             self.eps = 10.0 ** (-int(eps_exp))
+
+        # Lazy cache for the q-independent MYO S/C matrices (general path only);
+        # built once on first use in _inflate_chi0q_and_ham_general and reused
+        # across SCF iterations. None until then.
+        self._myo_sc_cache = None
 
         logger.info("FLEX parameters:")
         logger.info("    max_iter        = {}".format(self.max_iter))
@@ -154,8 +181,17 @@ class FLEX(RPA):
         ns = self.ns
         nd = self.nd
 
-        # Step 1: Compute band structure and chemical potential
+        # Step 1: Compute band structure and chemical potential.
+        # _calc_epsilon_k determines self.spin_mode from H0(k); the general
+        # full-vertex path (v1) is paramagnetic only, so guard here once
+        # spin_mode is known.
         self._calc_epsilon_k(green_info)
+
+        if self._flex_general and self.spin_mode != "spin-free":
+            raise ValueError(
+                "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
+                "only, got '{}'. spin-diag/spinful are deferred to the "
+                "generalized FLEX solver.".format(self.spin_mode))
 
         if self.calc_mu:
             if self.spin_mode == "spin-free":
@@ -186,6 +222,7 @@ class FLEX(RPA):
         ham_orig = self.ham_info.ham_inter_q
 
         # Main SCF loop
+        diff = float("inf")
         converged = False
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
@@ -203,13 +240,19 @@ class FLEX(RPA):
             else:
                 assert chi0q_raw.shape[0] == 2
 
-            # Step 5: Inflate chi0q and ham to common reduced space,
-            # then compute spin/charge susceptibilities and V_eff
-            chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
-                chi0q_raw, ham_orig)
-
-            # Step 6: Compute self-energy Sigma(k, iwn)
-            sigma_new = self._calc_self_energy(green_kw, v_eff, beta)
+            # Step 5: Inflate chi0q and ham, then compute spin/charge
+            # susceptibilities and V_eff.  The general (paramagnetic full-vertex)
+            # path keeps the full rank-4 orbital vertex; the reduced/squashed
+            # path uses the density-density reduction.
+            # Step 6: Compute self-energy Sigma(k, iwn).
+            if self._flex_general:
+                chi0q_out, v_eff, chi_s, chi_c = \
+                    self._flex_compute_veff_general(chi0q_raw, ham_orig)
+                sigma_new = self._calc_self_energy_general(green_kw, v_eff, beta)
+            else:
+                chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
+                    chi0q_raw, ham_orig)
+                sigma_new = self._calc_self_energy(green_kw, v_eff, beta)
 
             # Step 7: Mix and check convergence
             diff = self._calc_convergence(sigma, sigma_new)
@@ -227,6 +270,13 @@ class FLEX(RPA):
             logger.warning("FLEX did not converge after {} iterations "
                            "(diff={:.3e}, eps={:.3e})".format(
                                self.max_iter, diff, self.eps))
+
+        if self.max_iter == 0:
+            # No SCF iteration ran: green_kw / chi_s / chi_c / chi0q_out were
+            # never computed.  Warn-and-return instead of dereferencing them.
+            logger.warning("FLEX IterationMax=0: no SCF step performed; "
+                           "no results stored.")
+            return
 
         # Store results
         self.sigma = sigma
@@ -340,6 +390,49 @@ class FLEX(RPA):
         return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
+    def _flex_compute_veff_general(self, chi0q_raw, ham_orig):
+        """General (paramagnetic full-vertex) counterpart of _flex_compute_veff.
+
+        Mirrors the return signature ``(chi0q_out, v_eff, chi_s, chi_c)`` of
+        :meth:`_flex_compute_veff`, but uses the general-path methods that keep
+        the full rank-4 orbital vertex (MYO-convention S/C matrices) instead of
+        the density-density reduction.
+
+        Parameters
+        ----------
+        chi0q_raw : ndarray
+            Raw rank-6 chi0q ``(nmat, nvol, norb, norb, norb, norb)`` from
+            :meth:`_calc_chi0q` after the spin block dimension has been stripped.
+        ham_orig : ndarray
+            Original interaction Hamiltonian in full spin-orbital space.
+
+        Returns
+        -------
+        chi0q_out : ndarray
+            chi0q for public output, in the RPA ``[a,c,b,d]`` orbital convention
+            (rank-6), consistent with the reduced path -- NOT the internal MYO
+            layout used for the S/C math.
+        v_eff : ndarray
+            Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
+        chi_s : ndarray
+            Spin susceptibility in the general-path **MYO** orbital convention
+            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
+        chi_c : ndarray
+            Charge susceptibility in the general-path **MYO** orbital convention
+            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
+        """
+        chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
+        chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
+        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
+        # Expose chi0q in the RPA [a,c,b,d] convention (consistent with the
+        # reduced path) for the public output. The MYO transpose is an internal
+        # detail of the S/C math; transposing back (the transpose is an
+        # involution) recovers the input convention. chi_s/chi_c remain in the
+        # general-path MYO convention (see _solve_channels_general).
+        chi0q_out = chi0q.transpose(0, 1, 4, 5, 2, 3)
+        return chi0q_out, v_eff, chi_s, chi_c
+
+    @do_profile
     def _inflate_chi0q_and_ham(self, chi0q_raw, ham_orig):
         """Apply spin inflation to chi0q and ham, matching RPA.solve() logic.
 
@@ -411,6 +504,200 @@ class FLEX(RPA):
                             ).reshape(nvol, nd, nd)
 
         return chi0q, ham
+
+    @do_profile
+    def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
+        """Convert chi0q to MYO convention; build full MYO S/C interaction matrices.
+
+        This is the paramagnetic (spin-free) full-vertex general-path analogue
+        of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced/squashed path,
+        which collapses the vertex onto the density-density diagonal and works
+        in the spin-orbital ``nd = norb * ns`` space, the MYO paramagnetic
+        formalism (cond-mat/0407094 Eqs. 5/6) is purely in ORBITAL space and
+        keeps the full rank-4 vertex.  Hence the working dimension here is
+        ``no = self.norb`` (NOT ``self.nd``): chi0q stays orbital-only and the
+        S/C matrices are ``norb^2 x norb^2`` MYO Kanamori blocks.
+
+        This method ALSO converts chi0q from the RPA orbital-pair convention to
+        the MYO convention via an orbital-pair transpose.  ``RPA._calc_chi0q``
+        labels the rank-6 bare bubble as ``chi0[..., a, c, b, d]`` (rpa.py:
+        ``chi0[a,c,b,d] = G[a,b] . G_rev[d,c]``); viewed as a
+        ``(norb^2, norb^2)`` matrix with row ``(a,c)`` and column ``(b,d)`` this
+        is the MYO susceptibility ``chi0_{mn,mu nu}`` TRANSPOSED (RPA's row pair
+        ``(a,c)`` is MYO's COLUMN ``(mu,nu)``; RPA's column pair ``(b,d)`` is
+        MYO's ROW ``(m,n)``).  The whole downstream general-path machinery -- the
+        MYO S/C matrices, :meth:`_solve_channels_general`,
+        :meth:`_calc_veff_general`, and :meth:`_sigma_orbital_contract` -- is
+        written in the MYO convention, so we transpose the orbital-pair axes here
+        to convert RPA -> MYO.  Verified against the physical brute-force
+        pipeline (``tests/flex_bruteforce_ref``) to ~1e-13.
+
+        Parameters
+        ----------
+        chi0q_raw : ndarray
+            Bare susceptibility, shape (nmat,nvol,norb,norb,norb,norb)
+            (6-dim: freq, vol, 4 orbital legs) from ``RPA._calc_chi0q`` for the
+            spin-free general scheme, in RPA orbital-pair convention
+            ``[a,c,b,d]``, after the (size-1) spin-block dimension has been
+            stripped in ``solve()``.
+        ham_orig : ignored
+            Present for signature parity with ``_inflate_chi0q_and_ham``; the
+            general path rebuilds the interaction from the real-space
+            ``self.ham_info.param_ham`` rather than the pre-inflated
+            ``ham_inter_q``.
+
+        Returns
+        -------
+        chi0q : ndarray
+            ``chi0q_raw`` with its orbital-pair axes transposed into MYO
+            convention (shape unchanged: 6-dim ``(nmat,nvol,m,n,mu,nu)``).
+        Us : ndarray
+            MYO spin (S) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
+        Uc : ndarray
+            MYO charge (C) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
+
+        Notes
+        -----
+        The S/C matrices are built via ``build_sc_matrices_myo`` from an
+        ``inter_k`` dict assembled with ``hwave.sc._build_interaction_k``.  For
+        on-site Kanamori interactions the S/C matrices are CONSTANT over q, so
+        the k-array ordering used to build ``inter_k`` (a plain linspace grid)
+        need not match the FFT q-grid for this v1 path; this is reshaped to
+        ``(nvol, norb^2, norb^2)`` purely as ``Nx*Ny*Nz`` independent copies.
+        The reshape yields the matrix-per-q form that the downstream
+        channel-solver (``_solve_rpa``) consumes as ``ham``.  Because the S/C
+        matrices are q-independent constants for on-site Kanamori, they are
+        cached across SCF iterations; only the (per-iteration) chi0 transpose is
+        recomputed each call.
+        """
+        logger.debug(">>> FLEX._inflate_chi0q_and_ham_general")
+
+        # RPA's _calc_chi0q labels the rank-6 bare bubble as chi0[..., a, c, b, d]
+        # (rpa.py: chi0[a,c,b,d] = G[a,b]·G_rev[d,c]); as a (norb^2, norb^2) matrix
+        # (row=(a,c), col=(b,d)) this is the MYO susceptibility χ⁰_{mn,μν} TRANSPOSED
+        # (RPA's (a,c) pair is MYO's column (μ,ν); (b,d) is MYO's row (m,n)). The whole
+        # downstream general-path machinery (MYO S/C matrices, _solve_channels_general,
+        # _calc_veff_general, _sigma_orbital_contract) is written in the MYO convention,
+        # so transpose the orbital-pair axes here to convert RPA→MYO. Verified against
+        # the physical brute-force pipeline (tests/flex_bruteforce_ref) to ~1e-13.
+        chi0q = chi0q_raw.transpose(0, 1, 4, 5, 2, 3)   # (nmat,nvol,a,c,b,d) -> (nmat,nvol,m,n,μ,ν)
+        assert chi0q.ndim == 6
+
+        # MYO S/C matrices are q-independent constants for on-site Kanamori, so
+        # build them once and cache across SCF iterations. The chi0 transpose
+        # above stays OUTSIDE the cache (chi0 changes every iteration).
+        cache = getattr(self, "_myo_sc_cache", None)
+        if cache is None:
+            from hwave.sc import _build_interaction_k
+            from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+            # PairLift does not contribute to the particle-hole spin/charge
+            # (S/C) vertex: its contribution is S=C=0 (verified against the full
+            # 4-index RPA; cf. the same treatment in hwave.sc), so the MYO S/C
+            # builder correctly omits it. It is therefore physically inert here,
+            # but warn so a configured PairLift term is not silently ignored --
+            # matching the Eliashberg-path wording.
+            if "PairLift" in self.ham_info.param_ham:
+                logger.warning(
+                    "PairLift is configured but does not contribute to the S/C "
+                    "pairing vertex (S=C=0); it is ignored in the general FLEX "
+                    "calculation.")
+
+            # Fail-fast: the general (full-vertex) path builds the MYO S/C
+            # matrices on a uniform k-grid that is NOT the FFT q-grid used by
+            # _calc_chi0q.  For ON-SITE Kanamori interactions the S/C matrices
+            # are q-independent constants so this is exact; but an OFF-SITE
+            # interaction entry (irvec != (0,0,0)) makes them genuinely
+            # q-dependent on the wrong grid -> silently wrong physics.  v1 of
+            # the general path is on-site-only, so reject off-site entries.
+            for itype in ("CoulombIntra", "CoulombInter", "Hund",
+                          "Exchange", "PairHop", "Ising"):
+                if itype in self.ham_info.param_ham:
+                    for (irvec, orbvec) in self.ham_info.param_ham[itype]:
+                        if tuple(irvec) != (0, 0, 0):
+                            raise ValueError(
+                                "FLEX calc_scheme='general' (v1) supports "
+                                "on-site interactions only; interaction '{}' "
+                                "has an off-site entry irvec={}. Off-site "
+                                "two-body interactions are not yet supported "
+                                "by the general full-vertex path.".format(
+                                    itype, tuple(irvec)))
+
+            no = self.norb
+            nx, ny, nz = self.lattice.shape
+
+            # Build k-space interactions from the raw real-space param_ham. The
+            # k-array ordering is irrelevant for on-site Kanamori terms (constant
+            # over q), so a simple uniform grid suffices for v1.
+            kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
+            ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
+            kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
+            inter_k = _build_interaction_k(kx, ky, kz,
+                                           self.ham_info.param_ham, no)
+
+            # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
+            Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
+
+            # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
+            nvol = self.lattice.nvol
+            Us = Us.reshape(nvol, no * no, no * no)
+            Uc = Uc.reshape(nvol, no * no, no * no)
+
+            self._myo_sc_cache = (Us, Uc)
+        else:
+            Us, Uc = cache
+
+        return chi0q, Us, Uc
+
+    @do_profile
+    def _solve_channels_general(self, chi0q, Us, Uc):
+        """Solve the spin and charge RPA channels for the general MYO path.
+
+        In the MYO / Takimoto-Hotta-Ueda paramagnetic full-vertex convention
+        (cond-mat/0407094 Eq. 4) the channel susceptibilities are
+
+            chi_s = [I - chi0 . Us]^{-1} . chi0      (spin   channel)
+            chi_c = [I + chi0 . Uc]^{-1} . chi0      (charge channel)
+
+        i.e. the spin channel enters with a MINUS sign (it is the Stoner /
+        magnetic-instability channel that diverges as chi0.Us -> I) and the
+        charge channel with a PLUS sign.  This mirrors the sign discussion in
+        :meth:`_build_spin_charge_vertices` for the reduced path.
+
+        The inherited matrix solver :meth:`RPA._solve_rpa` computes
+        ``[I + chi0 . ham]^{-1} . chi0``.  To realize the MYO signs we therefore
+        pass ``ham_s = -Us`` (so ``+chi0.(-Us) = -chi0.Us``) and
+        ``ham_c = +Uc``.  ``_solve_rpa`` accepts the orbital-space ``chi0q`` --
+        a 6-dimensional array of shape ``(nmat, nvol, norb, norb, norb, norb)``
+        (four orbital legs ``m,n,mu,nu``) -- and the ``(nvol, norb^2, norb^2)``
+        interaction matrices directly (it reshapes chi0q to
+        ``(nmat, nvol, norb^2, norb^2)`` internally), so ``Us``/``Uc`` from
+        :meth:`_inflate_chi0q_and_ham_general` are used as-is.
+
+        Parameters
+        ----------
+        chi0q : ndarray
+            Bare susceptibility, shape ``(nmat, nvol, norb, norb, norb, norb)``
+            (six dimensions: frequency, volume, and four orbital legs).
+        Us : ndarray
+            MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
+        Uc : ndarray
+            MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+
+        Returns
+        -------
+        chi_s : ndarray
+            Spin-channel RPA susceptibility, same shape as ``chi0q``.
+        chi_c : ndarray
+            Charge-channel RPA susceptibility, same shape as ``chi0q``.
+        """
+        logger.debug(">>> FLEX._solve_channels_general")
+
+        # _solve_rpa computes [I + chi0 ham]^-1 chi0; pass -Us / +Uc to obtain
+        # chi_s = [I - chi0 Us]^-1 chi0 and chi_c = [I + chi0 Uc]^-1 chi0.
+        chi_s = self._solve_rpa(chi0q, -Us)
+        chi_c = self._solve_rpa(chi0q, +Uc)
+        return chi_s, chi_c
 
     @do_profile
     def _build_spin_charge_vertices(self, ham_inflated):
@@ -541,6 +828,75 @@ class FLEX(RPA):
         return v_eff
 
     @do_profile
+    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc):
+        r"""Compute the MYO full-vertex effective interaction V_eff(q, ivn).
+
+        Implements the fluctuation part of the paramagnetic full-vertex
+        interaction (Takimoto-Hotta-Ueda / MYO convention, cond-mat/0407094
+        Eq. 4)::
+
+            V(q) = 3/2 Us.chi_s.Us + 1/2 Uc.chi_c.Uc
+                   - 1/4 (Us+Uc).chi0.(Us+Uc)
+
+        The first-order constant terms (``+3/2 Us - 1/2 Uc``) are intentionally
+        EXCLUDED so that, like the reduced path :meth:`_calc_veff`, the
+        second-order (SOPT) limit is reproduced: at zeroth order
+        ``chi_s = chi_c = chi0`` and (with ``Us = Uc = U``) the kernel reduces
+        to ``U.chi0.U``, the leading second-order bubble.
+
+        All three susceptibilities are six-dimensional orbital-space arrays of
+        shape ``(nmat, nvol, norb, norb, norb, norb)`` (four orbital legs).
+        They are flattened to ``(nmat, nvol, ndx, ndx)`` matrices with
+        ``ndx = norb^2`` BEFORE the matrix products, using the same flatten
+        convention as the MYO S/C builder: the row index is
+        ``(l1 * norb + l2)`` (``idx12``) and the column index is
+        ``(l3 * norb + l4)`` (``idx34``), matching ``Us`` / ``Uc`` / ``chi0q``.
+        ``Us`` / ``Uc`` are ``(nvol, ndx, ndx)`` and are broadcast over the
+        frequency axis.
+
+        Parameters
+        ----------
+        chi0q : ndarray
+            Bare susceptibility, shape ``(nmat, nvol, norb, norb, norb, norb)``.
+        chi_s : ndarray
+            Spin-channel RPA susceptibility, same shape as ``chi0q``.
+        chi_c : ndarray
+            Charge-channel RPA susceptibility, same shape as ``chi0q``.
+        Us : ndarray
+            MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
+        Uc : ndarray
+            MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+
+        Returns
+        -------
+        ndarray
+            Effective interaction V_eff, shape
+            ``(nmat, nvol, norb^2, norb^2)``.
+        """
+        logger.debug(">>> FLEX._calc_veff_general")
+
+        nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+        no = chi0q.shape[2]
+        ndx = no * no
+
+        # Flatten the four orbital legs to (row, col) matrices BEFORE matmul.
+        chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+        chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+        chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+
+        # Broadcast the (nvol, ndx, ndx) interaction matrices over frequency.
+        UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
+        UcB = Uc[np.newaxis]
+        Uspc = (Us + Uc)[np.newaxis]
+
+        term_s = 1.5 * (UsB @ chis_2d @ UsB)
+        term_c = 0.5 * (UcB @ chic_2d @ UcB)
+        term_0 = 0.25 * (Uspc @ chi0_2d @ Uspc)
+
+        v_eff = term_s + term_c - term_0    # (nmat, nvol, ndx, ndx)
+        return v_eff
+
+    @do_profile
     def _calc_self_energy(self, green_kw, v_eff, beta):
         """Compute self-energy Sigma(k, iwn) via FFT convolution.
 
@@ -665,6 +1021,126 @@ class FLEX(RPA):
 
         return sigma_kw
 
+    @do_profile
+    def _sigma_orbital_contract(self, v_rt, green_rt):
+        r"""Per-(r,tau) rank-4 orbital contraction.
+
+        Implements the orbital part of MYO (cond-mat/0407094) Eq. 3::
+
+            Sigma_{mn} = sum_{mu,nu} V_{(mu m),(nu n)} G_{mu nu}
+
+        Parameters
+        ----------
+        v_rt : ndarray, shape (nfreq, nvol, norb^2, norb^2)
+            MYO vertex in (r, tau).  The last two axes flatten the orbital
+            pairs (mu, m) [row] and (nu, n) [col], i.e.
+            ``v_rt.reshape(..., norb, norb, norb, norb)`` has axes
+            (freq, vol, mu, m, nu, n).
+        green_rt : ndarray, shape (nblock, nfreq, nvol, norb, norb)
+            Green's function in (r, tau), last two axes (mu, nu).
+
+        Returns
+        -------
+        ndarray, shape (nblock, nfreq, nvol, norb, norb)
+            Self-energy in (r, tau), last two axes (m, n).
+        """
+        nfreq, nvol = v_rt.shape[0], v_rt.shape[1]
+        no = green_rt.shape[-1]
+        v6 = v_rt.reshape(nfreq, nvol, no, no, no, no)   # (f, r, mu, m, nu, n)
+        # Sigma[g,f,r,m,n] = sum_{mu,nu} v6[f,r,mu,m,nu,n] * green_rt[g,f,r,mu,nu]
+        return np.einsum('frumvn,gfruv->gfrmn', v6, green_rt)
+
+    @do_profile
+    def _calc_self_energy_general(self, green_kw, v_eff, beta):
+        r"""Compute Sigma(k, iwn) for the general (full-vertex) FLEX path.
+
+        Implements MYO (cond-mat/0407094) Eq. 3::
+
+            Sigma_{mn}(k, iwn)
+              = T/Nk * sum_{q,iv} sum_{mu,nu}
+                       V_{(mu m),(nu n)}(q, iv) G_{mu nu}(k-q, iwn-iv)
+
+        The frequency/momentum FFT transport (G -> (r,tau), V -> (r,tau),
+        per-(r,tau) combine, then back to (k, iwn)) is IDENTICAL to the reduced
+        :meth:`_calc_self_energy`; see that method for the derivation.  The ONLY
+        difference is the per-(r,tau) combine step: the reduced path uses an
+        element-wise Hadamard ``V * G``, whereas here it is the rank-4 orbital
+        contraction :meth:`_sigma_orbital_contract`.
+
+        Because the general path is pure-orbital (``nd_block == nd_v == norb``),
+        the spin-inflation branch of the reduced method is not needed and is
+        dropped.
+
+        Parameters
+        ----------
+        green_kw : ndarray, shape (nblock, nmat, nvol, norb, norb)
+            Dressed Green's function (orbital axes (mu, nu)).
+        v_eff : ndarray, shape (nfreq, nvol, norb^2, norb^2)
+            MYO effective interaction; last two axes flatten the orbital pairs
+            (mu, m) [row] and (nu, n) [col].
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray, shape (nblock, nmat, nvol, norb, norb)
+            Self-energy (orbital axes (m, n)).
+        """
+        logger.debug(">>> FLEX._calc_self_energy_general")
+
+        nx, ny, nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nmat = self.nmat
+        nblock = green_kw.shape[0]
+        norb = green_kw.shape[-1]
+        ndx = v_eff.shape[-1]   # = norb^2
+        nfreq = v_eff.shape[0]
+
+        # Shared with _calc_self_energy: V_eff and G must share the imaginary-
+        # time grid (bosonic freq count == fermionic), else tau slices would be
+        # silently left at zero.  Fail loudly.
+        if nfreq != nmat:
+            raise ValueError(
+                "FLEX self-energy requires a full bosonic frequency grid: "
+                "V_eff has nfreq={} but Nmat={}".format(nfreq, nmat))
+
+        # --- Transform Green's function to (r, tau) space ---
+        # (transport identical to _calc_self_energy)
+        omg_f = np.exp(-1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
+        green_flat = green_kw.reshape(nblock, nmat, nvol * norb * norb)
+        green_kt = (FFT.fft(green_flat, axis=1)
+                    * omg_f[np.newaxis, :, np.newaxis]
+                    ).reshape(nblock, nmat, nx, ny, nz, norb * norb)
+        green_rt = FFT.ifftn(green_kt, axes=(2, 3, 4)
+                             ).reshape(nblock, nmat, nvol, norb, norb)
+
+        # --- Transform V_eff to (r, tau) space ---
+        # (transport identical to _calc_self_energy)
+        omg_b = np.exp(-1j * np.pi * np.arange(nfreq))
+        v_flat = v_eff.reshape(nfreq, nvol * ndx * ndx)
+        v_qt = (FFT.fft(v_flat, axis=0)
+                * omg_b[:, np.newaxis]
+                ).reshape(nfreq, nx, ny, nz, ndx * ndx)
+        v_rt = FFT.ifftn(v_qt, axes=(1, 2, 3)).reshape(nfreq, nvol, ndx, ndx)
+
+        # --- Compute Sigma(r, tau): rank-4 orbital contraction (the only new
+        # bug-prone step; the rest is reused transport). ---
+        sigma_rt = self._sigma_orbital_contract(v_rt, green_rt)
+
+        # --- Transform Sigma back to (k, iwn) space ---
+        # (transport identical to _calc_self_energy)
+        sigma_kt = FFT.fftn(
+            sigma_rt.reshape(nblock, nmat, nx, ny, nz, norb * norb),
+            axes=(2, 3, 4)
+        ).reshape(nblock, nmat, nvol * norb * norb)
+
+        omg_f_inv = np.exp(1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
+        sigma_kw = (FFT.ifft(sigma_kt * omg_f_inv[np.newaxis, :, np.newaxis],
+                             axis=1)
+                    .reshape(nblock, nmat, nvol, norb, norb) * (1.0 / beta))
+
+        return sigma_kw
+
     def _calc_convergence(self, sigma_old, sigma_new):
         """Calculate convergence criterion for self-energy.
 
@@ -712,10 +1188,16 @@ class FLEX(RPA):
                      wavevector_index=self.wavenum_table)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
-        # Save susceptibilities (spin and charge channels separately for Eliashberg)
+        # Save susceptibilities (spin and charge channels separately for
+        # Eliashberg). Tag the orbital convention so the downstream Eliashberg
+        # consumer (_load_flex_susceptibilities / _compute_vertices_flex) pairs
+        # them with the matching S/C matrices: the general (full-vertex) path
+        # produces MYO-convention susceptibilities, the reduced path Kuroki.
         common_meta = dict(freq_index=self.freq_index,
                            wavevector_unit=self.kvec,
-                           wavevector_index=self.wavenum_table)
+                           wavevector_index=self.wavenum_table,
+                           chi_convention=("myo" if self._flex_general
+                                           else "kuroki"))
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,

@@ -8,6 +8,7 @@ of the H-wave package.
 
 import unittest
 import numpy as np
+from scipy.integrate import trapezoid
 import sys
 import os
 from unittest.mock import patch, MagicMock
@@ -58,7 +59,7 @@ class TestDOSModule(unittest.TestCase):
         dos = normalized_dos(self.test_eigenvalues, self.test_energies, self.test_sigma)
         
         # Integration should be approximately equal to number of eigenvalues
-        integral = np.trapz(dos, self.test_energies)
+        integral = trapezoid(dos, self.test_energies)
         self.assertAlmostEqual(integral, len(self.test_eigenvalues), delta=0.1)
     
     def test_energy_range(self):

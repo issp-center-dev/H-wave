@@ -95,8 +95,51 @@ FLEX有効相互作用はスピンゆらぎと電荷ゆらぎを結合します 
 
 この要素ごとの（Hadamard）積はFFTを用いて効率的に評価されます。
 
+.. _flex_scope:
+
+近似の適用範囲
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+FLEXは保存近似（Baym--Kadanoff近似）であり、自己エネルギーに対してRPA的な
+粒子--空孔バブルおよびラダー級数を足し上げます。一方で、電子が三角形の
+フェルミオンループを介して *2本* のゆらぎ伝播子に結合する
+Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
+（モード間結合）は **含みません**。これらの高次補正はFLEXの枠組みの外であり、
+ここでは評価されません。2つのスピンゆらぎから生成される電荷・軌道ゆらぎが
+重要となる場合（例：Onari--Kontaniの軌道ゆらぎ機構 [2]_）には効くことがあります。
+
+またデフォルトの ``calc_scheme = "reduced"`` および ``"squashed"`` スキームでは、
+スピン/電荷バーテックスを相互作用の密度--密度成分で構成します。
+off-diagonal（スピンフリップのHund結合、ペアホッピング）の頂点は
+密度--密度成分に縮約されます（``Exchange``/``PairHop`` を与えると警告が出ます）。
+したがってこれらのスキームでの「FLEX」は *厳密ではなく*、密度--密度かつ
+AL/MTを含まないゆらぎ交換近似のレベルである点に注意してください。
+
+一方、 ``calc_scheme = "general"`` スキームでは、off-diagonalな完全な
+Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO) [3]_
+（およびTakimoto--Hotta--Ueda (THU) [4]_ により裏付けられた）に従う
+常磁性の完全頂点（full-vertex）の定式化です。MYO規約のもとで
+行列形式のスピン相互作用行列 :math:`\hat{U}^s` と
+電荷相互作用行列 :math:`\hat{U}^c` を構成し、行列形式のRPA方程式を解いて
+:math:`\chi_s`/:math:`\chi_c` を求め、ゆらぎ相互作用を
+:math:`V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
++ \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
+- \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`
+として組み立てます。したがって ``"general"`` ではoff-diagonalの頂点は
+**無視されず**、密度--密度縮約の警告も抑制されます。なお上記のAL/MT型の
+頂点補正は、``"general"`` スキームにおいてもFLEXの枠組みの外にあります。
+
 .. [1] N. E. Bickers and D. J. Scalapino,
    Ann. Phys. (N.Y.) **193**, 206 (1989).
+
+.. [2] H. Kontani and S. Onari,
+   Phys. Rev. Lett. **104**, 157001 (2010).
+
+.. [3] M. Mochizuki, Y. Yanase, and M. Ogata,
+   J. Phys. Soc. Jpn. (cond-mat/0407094).
+
+.. [4] T. Takimoto, T. Hotta, and K. Ueda,
+   Phys. Rev. B **69**, 104504 (2004); cond-mat/0309575.
 
 
 サンプル 1: 1軌道Hubbardモデル
@@ -443,12 +486,25 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
 
 .. note::
 
-   FLEXソルバーは縮約形の感受率を利用し、相互作用を密度-密度成分に
-   縮約します。そのため ``calc_scheme = "reduced"`` または
-   ``calc_scheme = "squashed"`` が必要であり、
-   ``calc_type = "ring+ladder"`` （ ``"general"`` スキームを強制します）
-   には対応していません。これらを満たさない場合、ソルバーは
-   ``ValueError`` を送出します。
+   FLEXソルバーは ``calc_scheme`` として ``"reduced"``, ``"squashed"``,
+   ``"general"`` を受け付けます。``"reduced"`` および ``"squashed"`` スキームは
+   縮約形の感受率を利用し、相互作用を密度-密度成分に縮約します。
+   ``"general"`` スキームは常磁性の完全頂点（full-vertex）パスであり、
+   完全なKanamori頂点（MYOの式。:ref:`上記 <flex_scope>` を参照）を保持し、
+   密度-密度縮約の警告を抑制します。ただし **spin-freeモード専用** であり、
+   ``spin_mode = "spin-diag"`` や ``"spinful"`` に対しては ``ValueError`` を
+   送出し、``enable_spin_orbital`` にも対応していません。さらに **オンサイト
+   相互作用専用** であり、すべての2体項
+   （``CoulombIntra``/``CoulombInter``/``Hund``/``Exchange``/``PairHop``/``Ising``）
+   は ``irvec = (0,0,0)`` でなければならず、オフサイト項があると ``ValueError``
+   を送出します（MYOのS/C行列をq非依存の定数として構築するため）。``Exchange``
+   と ``PairHop`` の非対角頂点は **保持されます**（本スキームの目的）が、
+   ``PairLift`` は粒子-正孔頂点に ``S=C=0`` で寄与せず **無効（inert）** で、
+   警告とともに無視されます。general パスは ``chiq_s``/``chiq_c`` をMYO規約で
+   保存し（``chi_convention="myo"`` タグ付き）、``hwave_sc`` が自動的に読み取り
+   ます。いずれのスキームでも
+   ``calc_type = "ring+ladder"`` には対応していません（ソルバーは
+   ``ValueError`` を送出します）。
 
 
 サンプル 3: 鉄系超伝導体2軌道モデル
@@ -599,6 +655,37 @@ Fe-As面を正方格子（1-Fe単位胞）上の :math:`d_{xz}` と
 .. code-block:: bash
 
     $ python plot_results.py
+
+
+サンプル 3b: 完全頂点（general）版
+-----------------------------------------
+
+上記の鉄系超伝導体モデルは、``calc_scheme = "general"`` を選択した
+完全頂点（full-vertex）版としても提供されています。**同一** のモデルと
+相互作用ファイル（``CoulombIntra``, ``CoulombInter``, ``Hund``,
+``Exchange``）を用いますが、off-diagonalな完全なKanamori頂点
+（スピンフリップのHund結合およびペアホッピング／交換項）を密度-密度成分に
+縮約せずに保持します。これは常磁性の完全頂点MYO定式化 [3]_
+（THU [4]_ により裏付けられる）であり、したがって密度-密度縮約の警告は
+抑制されます。
+
+この版は、Hund／交換／ペアホッピングのoff-diagonal頂点が重要となる
+多軌道モデル（ここでの鉄系超伝導体モデルなど）で、かつ常磁性のFLEXで
+十分な場合に適しています。なお ``"general"`` スキームは
+**spin-freeモード専用** であり（``spin_mode = "spin-diag"``/``"spinful"``
+に対しては ``ValueError`` を送出し、``enable_spin_orbital`` には対応しません）、
+``calc_type = "ring+ladder"`` にも対応していません。
+
+サンプルファイルは
+``docs/ja/source/flex/sample/iron_2orb_general/`` にあります。
+
+**パラメータファイル** (``input.toml``):
+
+.. literalinclude:: ../sample/iron_2orb_general/input.toml
+
+サンプル 3 からの本質的な変更点は ``[mode]`` セクションの
+``calc_scheme = "general"`` のみであり、格子情報・トランスファー・
+相互作用ファイルは同一です。
 
 
 Tips

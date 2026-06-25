@@ -27,6 +27,12 @@ from hwave.solver.rpa import validate_chi0q_index_convention
 
 logger = logging.getLogger("hwave_sc")
 
+# Number of independent random probes used by _solve_iteration to test whether
+# the Eliashberg kernel commutes with parity before enabling gap-parity
+# projection. More than one guards against a single probe accidentally lying
+# near the nullspace of the commutator and missing a non-centrosymmetric kernel.
+_PARITY_GUARD_PROBES = 3
+
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -800,12 +806,21 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
 
 
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                           pairing_type="singlet"):
+                           pairing_type="singlet", convention="kuroki"):
     """Compute pairing vertex from pre-computed FLEX susceptibilities.
 
     Uses the same formula as _compute_vertices_general but takes
     chi_s and chi_c directly instead of computing them from chi0q via RPA.
     This allows using dressed susceptibilities from the FLEX solver.
+
+    ``convention`` selects the S/C interaction matrices applied to the
+    susceptibilities: "kuroki" (default, arXiv:0902.3691, used by the reduced
+    FLEX path and the rest of the Eliashberg solver) or "myo"
+    (cond-mat/0407094). The two differ in the charge ``C(ab,ab) = -U'+2J`` vs
+    ``-U'+J`` element. Susceptibilities produced by the general (full-vertex)
+    FLEX path are in MYO convention and MUST be paired with ``convention='myo'``
+    so the vertex stays self-consistent (mixing them with Kuroki S/C silently
+    changes the physics in the C(ab,ab) channel).
 
     Parameters
     ----------
@@ -835,7 +850,15 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
             "PairLift is configured but does not contribute to the S/C pairing "
             "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
 
-    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    conv = convention.lower()
+    if conv == "myo":
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+    elif conv == "kuroki":
+        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    else:
+        raise ValueError(
+            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -873,6 +896,10 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
         Charge susceptibility at static limit, shape (Nx, Ny, Nz, nd, nd).
     green_dressed : ndarray or None
         Dressed Green's function if available, shape (norb, norb, Nx, Ny, Nz, nmat).
+    chi_convention : str
+        Orbital convention of chis/chic: "myo" (general full-vertex FLEX) or
+        "kuroki" (reduced FLEX / legacy files). Pass this to
+        _compute_vertices_flex so the matching S/C matrices are used.
     """
     nd = norb * norb
     file_input = input_dict.get("file", {}).get("input", {})
@@ -890,12 +917,29 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
     data_s = np.load(chi_s_path)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+    # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
+    # The tag and the general-path MYO consumption ship together, so any
+    # untagged file from a released build is necessarily a reduced/Kuroki
+    # output -> default to "kuroki". (A pre-tag general output could only exist
+    # as a transient artifact of an unreleased dev build; the s/c-agreement
+    # check below still guards against accidentally mixing conventions.)
+    chi_convention = (str(data_s["chi_convention"])
+                      if "chi_convention" in data_s else "kuroki")
 
     # Load charge susceptibility
     chi_c_path = os.path.join(flex_dir, chi_c_file)
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    # The spin and charge files must share one convention; combining e.g. an MYO
+    # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
+    chi_convention_c = (str(data_c["chi_convention"])
+                        if "chi_convention" in data_c else "kuroki")
+    if chi_convention_c != chi_convention:
+        raise ValueError(
+            "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
+            "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
+                chi_convention, chi_convention_c))
 
     # Convert from H-wave format (nmat, nvol, nd, nd) to
     # reference format (Nx, Ny, Nz, nd, nd) at static limit
@@ -944,7 +988,7 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
             nmat_g, Nx, Ny, Nz, norb, norb
         ).transpose(4, 5, 1, 2, 3, 0).copy()
 
-    return chis, chic, green_dressed
+    return chis, chic, green_dressed, chi_convention
 
 
 # ---------------------------------------------------------------------------
@@ -1190,7 +1234,7 @@ def _resolve_init_gap(init_gap, pairing_type):
 # ---------------------------------------------------------------------------
 
 def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
-                     max_iter=1000, alpha=0.5, tol=1.0e-5):
+                     max_iter=1000, alpha=0.5, tol=1.0e-5, pairing_type=None):
     """Solve linearized Eliashberg equation by self-consistent iteration.
 
     Parameters
@@ -1212,6 +1256,20 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         Mixing parameter (0 < alpha < 1).
     tol : float
         Convergence tolerance.
+    pairing_type : str, optional
+        "singlet" or "triplet". When given, every iterate is projected onto the
+        channel's parity sector (even for singlet, odd for triplet). For a
+        centrosymmetric system the kernel commutes with parity, so in exact
+        arithmetic the iteration would stay in the seed's sector; the projection
+        removes the wrong-parity component that numerical noise (FFT/GEMM
+        round-off) reintroduces each step and that the power iteration would
+        otherwise amplify toward the dominant eigenpair of the *other* channel.
+        The projection is only legitimate when the kernel commutes with parity:
+        a cross-sector leakage test (several random probes) is run up front and,
+        for a non-centrosymmetric kernel (complex/SOC hopping, vertex odd in k,
+        chiral gaps), projection is automatically disabled with a warning and the
+        un-projected iteration is used. When None, no projection is applied (the
+        historical behavior).
 
     Returns
     -------
@@ -1224,8 +1282,6 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     n_iter : int
         Number of iterations performed.
     """
-    sigma_old = sigma_init.copy()
-
     # Precompute the Eliashberg kernel operator once. The vertex IFFT
     # (V_r = ifftn(Vs_q)) and the G2 reshape/transpose are invariant across
     # iterations (only sigma_old changes); _make_kernel_operator hoists them out
@@ -1233,14 +1289,84 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     # preprocessing) on every one of the up-to-max_iter iterations. The matvec
     # is numerically identical to _eliashberg_kernel_fft(Vs_q, G2, sigma, norb).
     Nx, Ny, Nz = sigma_init.shape[-3], sigma_init.shape[-2], sigma_init.shape[-1]
-    A, _ = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    A, vec_size = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
     shape = (norb, norb, Nx, Ny, Nz)
+
+    # Parity projection is only legitimate when the kernel commutes with the
+    # parity operator P (Delta_{ab}(k) -> Delta_{ba}(-k), i.e.
+    # _reverse_k_and_orbital), which holds for centrosymmetric systems. For a
+    # non-centrosymmetric kernel (complex/SOC hopping, a vertex odd in k, chiral
+    # gaps) [A, P] != 0; projecting each iterate would then discard physical
+    # components and steer the power iteration to the wrong eigenpair. We
+    # measure this directly as the cross-sector leakage of the kernel: apply A
+    # to even- and odd-projected random probes and ask how much of the result
+    # lands in the *opposite* parity sector. Zero leakage <=> [A, P] = 0 <=>
+    # projection is valid. Several independent probes are used (one probe could
+    # accidentally lie near the nullspace of [A, P] and miss a non-commuting
+    # kernel). If any probe leaks above threshold, warn and fall back to the
+    # historical un-projected iteration.
+    do_project = pairing_type is not None
+    if do_project and pairing_type not in ("singlet", "triplet"):
+        # Validate up front so an invalid channel always raises, even if the
+        # centrosymmetry guard below later disables projection (in which case
+        # _project_gap_parity -- which also validates -- is never reached).
+        raise ValueError(
+            "Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
+                pairing_type))
+    if do_project:
+        rng = np.random.default_rng(0)
+        leakage = 0.0
+        for _ in range(_PARITY_GUARD_PROBES):
+            x = (rng.standard_normal(vec_size)
+                 + 1j * rng.standard_normal(vec_size)).reshape(shape)
+            for sign in (1.0, -1.0):  # even (+) and odd (-) projected probes
+                xp = 0.5 * (x + sign * _reverse_k_and_orbital(x))
+                axp = A.matvec(xp.ravel()).reshape(shape)
+                # component of A xp in the OPPOSITE parity sector
+                opp = 0.5 * (axp - sign * _reverse_k_and_orbital(axp))
+                denom = np.linalg.norm(axp) + 1.0e-300
+                leakage = max(leakage, np.linalg.norm(opp) / denom)
+        if leakage > 1.0e-8:
+            logger.warning(
+                "Eliashberg kernel does not commute with parity (cross-sector "
+                "leakage = {:.2e}); the system appears non-centrosymmetric, so "
+                "parity projection for the '{}' channel is disabled and the "
+                "un-projected iteration is used.".format(leakage, pairing_type))
+            do_project = False
+
+    def _project(sigma):
+        return (_project_gap_parity(sigma, pairing_type)
+                if do_project else sigma)
+
+    sigma_old = _project(sigma_init.copy())
+    if do_project and np.linalg.norm(sigma_old) < 1.0e-12 * (
+            np.linalg.norm(sigma_init) + 1.0e-300):
+        raise ValueError(
+            "Initial gap has no component in the '{}' parity sector; "
+            "choose an init_gap of the matching parity (even for singlet, "
+            "odd for triplet).".format(pairing_type))
 
     eigenvalue = 0.0
     for iteration in range(max_iter):
-        sigma_new = A.matvec(sigma_old.ravel()).reshape(shape)
+        sigma_new = _project(A.matvec(sigma_old.ravel()).reshape(shape))
         norm = np.linalg.norm(sigma_new)
         eigenvalue = norm
+
+        # A (possibly projected) iterate can collapse to the zero vector when
+        # the kernel annihilates the requested parity sector (e.g. a channel
+        # with no pairing weight); normalizing by `norm` would then produce
+        # NaN. `np.linalg.norm` squares its inputs, so it returns *exactly* 0.0
+        # once the iterate underflows (there is no representable nonzero value
+        # between 0 and the underflow floor to misclassify); guard precisely on
+        # that, plus any non-finite norm, and report non-convergence with the
+        # last finite iterate instead.
+        if norm == 0.0 or not np.isfinite(norm):
+            logger.warning(
+                "Eliashberg iterate collapsed to zero norm at iteration {}; "
+                "the kernel annihilates the '{}' sector, so the eigenvalue "
+                "cannot be normalized. Returning the previous iterate as "
+                "non-converged.".format(iteration, pairing_type or "requested"))
+            return sigma_old, 0.0, False, iteration + 1
 
         diff = np.linalg.norm(sigma_new / norm - sigma_old)
         logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
@@ -1439,6 +1565,40 @@ def _reverse_k_and_orbital(gap):
     return rev
 
 
+def _project_gap_parity(gap, pairing_type):
+    """Project a gap onto the parity sector of the pairing channel.
+
+    Singlet gaps are even (Delta_{ab}(k) = +Delta_{ba}(-k)); triplet gaps are
+    odd (Delta_{ab}(k) = -Delta_{ba}(-k)). With P the parity operator
+    (P: Delta_{ab}(k) -> Delta_{ba}(-k), built by _reverse_k_and_orbital), the
+    even/odd projectors are (1 +/- P)/2. The Eliashberg kernel commutes with P,
+    so these projectors commute with it and the power iteration can be confined
+    to the physical sector -- removing wrong-parity components that numerical
+    noise would otherwise let the iteration amplify (see _solve_iteration).
+
+    Parameters
+    ----------
+    gap : ndarray
+        Gap function, shape (norb, norb, Nx, Ny, Nz).
+    pairing_type : str
+        "singlet" (even projector) or "triplet" (odd projector).
+
+    Returns
+    -------
+    ndarray
+        The component of ``gap`` in the channel's parity sector, same shape.
+    """
+    if pairing_type == "singlet":
+        sign = 1.0
+    elif pairing_type == "triplet":
+        sign = -1.0
+    else:
+        raise ValueError(
+            "Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
+                pairing_type))
+    return 0.5 * (gap + sign * _reverse_k_and_orbital(gap))
+
+
 def _is_gap_parity(gap, pairing_type, tol=0.9):
     """Test whether a gap has the parity of the pairing channel.
 
@@ -1460,9 +1620,7 @@ def _is_gap_parity(gap, pairing_type, tol=0.9):
     -------
     bool
     """
-    sign = 1.0 if pairing_type == "singlet" else -1.0
-    g_rev = _reverse_k_and_orbital(gap)
-    proj = 0.5 * (gap + sign * g_rev)
+    proj = _project_gap_parity(gap, pairing_type)
     n = np.linalg.norm(gap)
     if n == 0:
         return False
@@ -1918,7 +2076,8 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
 # ---------------------------------------------------------------------------
 
 def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_array, kz_array,
-                  gap_file="gap.dat", eigenvalue_file="eigenvalue.dat"):
+                  gap_file="gap.dat", eigenvalue_file="eigenvalue.dat",
+                  eigenvalue_match=None):
     """Save gap function and eigenvalue results to files.
 
     Parameters
@@ -1986,10 +2145,24 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                 fw.write("{:.8e}\n".format(eigenvalue))
             if eigenvalues_eig is not None:
                 fw.write("# Eigenvalue analysis\n")
-                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|\n")
+                # The optional trailing `match` column is 1 when the eigenvector
+                # lies (dominantly) in the channel's parity sector (even for
+                # singlet, odd for triplet) and 0 when it lies in the opposite
+                # sector. The leading index/Re/Im/|ev| columns are unchanged, so
+                # position-based parsers (e.g. reading column 1 as Re) are
+                # unaffected; only the column count grows from 4 to 5.
+                if eigenvalue_match is not None:
+                    fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                             "|eigenvalue|  match(1=channel-parity)\n")
+                else:
+                    fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                             "|eigenvalue|\n")
                 for i, ev in enumerate(eigenvalues_eig):
-                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
-                        i, ev.real, ev.imag, abs(ev)))
+                    row = "{:4d} {:15.8e} {:15.8e} {:15.8e}".format(
+                        i, ev.real, ev.imag, abs(ev))
+                    if eigenvalue_match is not None:
+                        row += " {:d}".format(int(bool(eigenvalue_match[i])))
+                    fw.write(row + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -2096,8 +2269,12 @@ def calc_eliashberg(input_dict):
     eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
     pairing_type = eli_param.get("pairing_type", "singlet")
     # Default the initial gap to the channel's parity (even for singlet, odd
-    # for triplet) when the user did not specify one; the kernel preserves
-    # parity so a wrong-parity seed cannot reach the physical solution.
+    # for triplet) when the user did not specify one. For a centrosymmetric
+    # system the kernel preserves parity in exact arithmetic, but numerical
+    # noise leaks the wrong parity; _solve_iteration projects every iterate back
+    # onto the channel's sector (pairing_type below), so the seed stays in -- and
+    # converges within -- the physical sector. (For a non-centrosymmetric kernel
+    # _solve_iteration detects [A,P] != 0 and disables the projection.)
     init_gap_mode = _resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     chi0q_mode = eli_param.get("chi0q_mode", "load")
     chi0q_tensor = eli_param.get("chi0q_tensor", "auto")
@@ -2142,8 +2319,9 @@ def calc_eliashberg(input_dict):
         # --- FLEX mode: use pre-computed dressed susceptibilities ---
         logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
-        chis, chic, green_dressed = _load_flex_susceptibilities(
+        chis, chic, green_dressed, chi_convention = _load_flex_susceptibilities(
             input_dict, norb, Nx, Ny, Nz)
+        logger.info("FLEX susceptibility convention: {}".format(chi_convention))
 
         # Use dressed Green's function if available, otherwise use bare
         if green_dressed is not None:
@@ -2156,7 +2334,8 @@ def calc_eliashberg(input_dict):
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                                      pairing_type=pairing_type)
+                                      pairing_type=pairing_type,
+                                      convention=chi_convention)
         logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
 
     else:
@@ -2204,12 +2383,13 @@ def calc_eliashberg(input_dict):
     sigma_result = None
     eigenvalue_iter = None
     eigenvalues_eig = None
+    eigenvalue_match = None
 
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
         sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
             green_kw, Vs_q, G2, sigma_init, norb,
-            max_iter=max_iter, alpha=alpha, tol=tol
+            max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type
         )
         logger.info("Iteration result: eigenvalue = {:.6f}, converged = {}, n_iter = {}".format(
             eigenvalue_iter, converged, n_iter))
@@ -2226,9 +2406,19 @@ def calc_eliashberg(input_dict):
         # leading eigenpair is the physical solution for this channel.
         eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
             eigenvalues_eig, eigenvectors_eig, pairing_type)
+        # Flag whether each eigenvector lies (dominantly) in the channel's
+        # parity sector (even for singlet, odd for triplet). _is_gap_parity is a
+        # threshold test, so this is "dominantly the channel parity" rather than
+        # an exact label; for a centrosymmetric model parity is an exact kernel
+        # symmetry and the opposite-parity modes are unphysical for the channel
+        # (e.g. an even mode in the triplet kernel is Pauli-forbidden).
+        eigenvalue_match = np.array(
+            [_is_gap_parity(g, pairing_type) for g in eigenvectors_eig])
         logger.info("Leading eigenvalues:")
         for i, ev in enumerate(eigenvalues_eig):
-            logger.info("  {:3d}: {:.6f} (|ev| = {:.6f})".format(i, ev.real, abs(ev)))
+            tag = "" if eigenvalue_match[i] else "  [opposite-parity sector]"
+            logger.info("  {:3d}: {:.6f} (|ev| = {:.6f}){}".format(
+                i, ev.real, abs(ev), tag))
 
         # Use leading eigenvector as gap if no iteration result
         if sigma_result is None:
@@ -2239,7 +2429,8 @@ def calc_eliashberg(input_dict):
     _save_results(
         output_dir, sigma_result, eigenvalue_iter, eigenvalues_eig,
         kx_array, ky_array, kz_array,
-        gap_file=gap_file, eigenvalue_file=eigenvalue_file
+        gap_file=gap_file, eigenvalue_file=eigenvalue_file,
+        eigenvalue_match=eigenvalue_match
     )
 
     logger.info("=== Done ===")

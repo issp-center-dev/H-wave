@@ -10,6 +10,7 @@ Test strategy:
 5. Eigenvalue: Eigenvalue analysis agrees with iteration result.
 """
 
+import logging
 import os
 import unittest
 
@@ -37,8 +38,11 @@ from hwave.sc import (
     _is_gap_parity,
     _make_kernel_operator,
     _order_eigenpairs,
+    _project_gap_parity,
     _reorder_eigenpairs_by_parity,
     _resolve_init_gap,
+    _reverse_k_and_orbital,
+    _save_results,
     _shift_from_eigenvalues,
     _solve_eigenvalue,
     _solve_iteration,
@@ -701,6 +705,424 @@ class TestParitySelection(unittest.TestCase):
         self.assertTrue(any("parity" in m.lower() for m in cm.output))
 
 
+class TestProjectGapParity(unittest.TestCase):
+    """The parity projectors (1 +/- P)/2 (P: Delta_{ab}(k) -> Delta_{ba}(-k))
+    must split a gap into its even (singlet) and odd (triplet) sectors."""
+
+    def _k(self, N=8):
+        k = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+        return k, k, kz
+
+    def test_projection_keeps_matching_parity(self):
+        kx, ky, kz = self._k()
+        even = _initialize_gap("cos", 1, kx, ky, kz)
+        odd = _initialize_gap("p_x", 1, kx, ky, kz)
+        npt.assert_allclose(_project_gap_parity(even, "singlet"), even, atol=1e-12)
+        npt.assert_allclose(_project_gap_parity(odd, "triplet"), odd, atol=1e-12)
+
+    def test_projection_removes_opposite_parity(self):
+        kx, ky, kz = self._k()
+        even = _initialize_gap("cos", 1, kx, ky, kz)
+        odd = _initialize_gap("p_x", 1, kx, ky, kz)
+        npt.assert_allclose(_project_gap_parity(even, "triplet"), 0.0, atol=1e-12)
+        npt.assert_allclose(_project_gap_parity(odd, "singlet"), 0.0, atol=1e-12)
+
+    def test_projectors_are_idempotent_and_complete(self):
+        kx, ky, kz = self._k()
+        rng = np.random.default_rng(0)
+        g = (rng.standard_normal((1, 1, 8, 8, 1))
+             + 1j * rng.standard_normal((1, 1, 8, 8, 1)))
+        pe = _project_gap_parity(g, "singlet")
+        po = _project_gap_parity(g, "triplet")
+        # idempotent
+        npt.assert_allclose(_project_gap_parity(pe, "singlet"), pe, atol=1e-12)
+        npt.assert_allclose(_project_gap_parity(po, "triplet"), po, atol=1e-12)
+        # complete: even + odd = identity
+        npt.assert_allclose(pe + po, g, atol=1e-12)
+
+
+class TestIterationParityProjection(unittest.TestCase):
+    """The self-consistent power iteration must stay in the channel's parity
+    sector. The Eliashberg kernel commutes with parity, so an odd (triplet)
+    seed should converge to the leading ODD eigenpair -- but numerical leakage
+    lets the larger-magnitude even (singlet) eigenvector take over unless each
+    iterate is projected back onto the requested sector."""
+
+    def _symmetric_kernel(self):
+        """A parity-symmetric norb=1 kernel whose leading eigenpair is even but
+        which also has a (smaller) odd eigenpair. Returns Vs_q, G2 plus the
+        leading even/odd eigenvalues and eigenvectors of the kernel matrix."""
+        norb, Nx, Ny, Nz = 1, 8, 1, 1
+        k = 2 * np.pi * np.arange(Nx) / Nx
+        G2 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
+        G2[0, 0, 0, 0, :, 0, 0] = 2.0 + np.cos(k)            # even in k
+        Vs_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        Vs_q[0, 0, :, 0, 0] = -(1.0 + 0.7 * np.cos(k) + 0.3 * np.cos(2 * k))
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        M = A.matmat(np.eye(n))
+        w, v = np.linalg.eig(M)
+
+        def is_even(vec):
+            g = vec.reshape(norb, norb, Nx, Ny, Nz)
+            gr = _reverse_k_and_orbital(g)
+            return np.linalg.norm(g + gr) > np.linalg.norm(g - gr)
+
+        order = np.argsort(-np.abs(w))
+        even = [(w[i].real, v[:, i]) for i in order
+                if is_even(v[:, i]) and abs(w[i]) > 1e-6]
+        odd = [(w[i].real, v[:, i]) for i in order
+               if not is_even(v[:, i]) and abs(w[i]) > 1e-6]
+        return Vs_q, G2, norb, (Nx, Ny, Nz), even[0], odd[0]
+
+    def test_seed_leaks_to_wrong_parity_without_projection(self):
+        """Document the failure mode: without projection an odd+even seed
+        converges to the larger even eigenpair."""
+        Vs_q, G2, norb, (Nx, Ny, Nz), (le, ve), (lo, vo) = self._symmetric_kernel()
+        self.assertGreater(abs(le), abs(lo))   # even dominates
+        ve = (ve / np.linalg.norm(ve)).reshape(norb, norb, Nx, Ny, Nz)
+        vo = (vo / np.linalg.norm(vo)).reshape(norb, norb, Nx, Ny, Nz)
+        seed = vo + 0.1 * ve
+        gap, ev, conv, _ = _solve_iteration(
+            None, Vs_q, G2, seed.copy(), norb,
+            max_iter=300, alpha=0.0, tol=1e-9)
+        self.assertTrue(conv)
+        self.assertAlmostEqual(ev, abs(le), places=4)
+        self.assertFalse(_is_gap_parity(gap, "triplet"))
+
+    def test_projection_keeps_iteration_in_triplet_sector(self):
+        """With pairing_type='triplet' the same seed converges to the ODD
+        eigenpair instead of leaking to the dominant even one."""
+        Vs_q, G2, norb, (Nx, Ny, Nz), (le, ve), (lo, vo) = self._symmetric_kernel()
+        ve = (ve / np.linalg.norm(ve)).reshape(norb, norb, Nx, Ny, Nz)
+        vo = (vo / np.linalg.norm(vo)).reshape(norb, norb, Nx, Ny, Nz)
+        seed = vo + 0.1 * ve
+        gap, ev, conv, _ = _solve_iteration(
+            None, Vs_q, G2, seed.copy(), norb,
+            max_iter=300, alpha=0.0, tol=1e-9, pairing_type="triplet")
+        self.assertTrue(conv)
+        self.assertAlmostEqual(ev, abs(lo), places=4)
+        self.assertTrue(_is_gap_parity(gap, "triplet"))
+
+    def test_singlet_projection_is_noop_for_even_seed(self):
+        """Projection must not change a correctly-seeded singlet run."""
+        Vs_q, G2, norb, (Nx, Ny, Nz), (le, ve), (lo, vo) = self._symmetric_kernel()
+        ve = (ve / np.linalg.norm(ve)).reshape(norb, norb, Nx, Ny, Nz)
+        gap_p, ev_p, _, _ = _solve_iteration(
+            None, Vs_q, G2, ve.copy(), norb,
+            max_iter=300, alpha=0.0, tol=1e-12, pairing_type="singlet")
+        gap_n, ev_n, _, _ = _solve_iteration(
+            None, Vs_q, G2, ve.copy(), norb,
+            max_iter=300, alpha=0.0, tol=1e-12)
+        self.assertAlmostEqual(ev_p, ev_n, places=8)
+        self.assertTrue(_is_gap_parity(gap_p, "singlet"))
+
+
+class TestProjectionCentrosymmetryGuard(unittest.TestCase):
+    """Parity projection is only valid when the Eliashberg kernel commutes with
+    the parity operator P (Delta_{ab}(k) -> Delta_{ba}(-k)), i.e. for
+    centrosymmetric systems. For a non-centrosymmetric kernel (e.g. complex/SOC
+    hopping, vertex odd in k) the projection would discard physical components
+    and steer the power iteration to the wrong eigenpair. The solver must detect
+    [A, P] != 0, WARN, and fall back to the un-projected iteration.
+    """
+
+    def _asymmetric_kernel(self):
+        """A norb=1 kernel that does NOT commute with parity: an odd-in-k part
+        in G2 breaks the k -> -k symmetry. Returns Vs_q, G2 and the kernel size.
+        """
+        norb, Nx, Ny, Nz = 1, 8, 1, 1
+        k = 2 * np.pi * np.arange(Nx) / Nx
+        G2 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
+        # even base + odd (sin) component -> G2(k) != G2(-k) -> [A, P] != 0
+        G2[0, 0, 0, 0, :, 0, 0] = 2.0 + np.cos(k) + 0.6 * np.sin(k)
+        Vs_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        Vs_q[0, 0, :, 0, 0] = -(1.0 + 0.7 * np.cos(k) + 0.3 * np.cos(2 * k))
+        return Vs_q, G2, norb, (Nx, Ny, Nz)
+
+    def test_kernel_is_genuinely_non_centrosymmetric(self):
+        """Sanity: the constructed kernel really does not commute with P."""
+        Vs_q, G2, norb, (Nx, Ny, Nz) = self._asymmetric_kernel()
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        rng = np.random.default_rng(0)
+        x = (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+        xg = x.reshape(norb, norb, Nx, Ny, Nz)
+        # A(P x) vs P(A x)
+        apx = A.matvec(_reverse_k_and_orbital(xg).ravel())
+        pax = _reverse_k_and_orbital(
+            A.matvec(x).reshape(norb, norb, Nx, Ny, Nz)).ravel()
+        self.assertGreater(
+            np.linalg.norm(apx - pax) / np.linalg.norm(pax), 1e-6,
+            "test kernel must be non-centrosymmetric for this guard test")
+
+    def test_projection_disabled_and_warns_for_non_centrosymmetric_kernel(self):
+        """With a non-centrosymmetric kernel, requesting singlet projection must
+        WARN and fall back to the un-projected result (same leading eigenpair).
+        """
+        Vs_q, G2, norb, (Nx, Ny, Nz) = self._asymmetric_kernel()
+        rng = np.random.default_rng(1)
+        seed = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            gap_p, ev_p, conv_p, _ = _solve_iteration(
+                None, Vs_q, G2, seed.copy(), norb,
+                max_iter=400, alpha=0.0, tol=1e-10, pairing_type="singlet")
+        self.assertTrue(any("parity" in m.lower() for m in cm.output))
+
+        gap_n, ev_n, conv_n, _ = _solve_iteration(
+            None, Vs_q, G2, seed.copy(), norb,
+            max_iter=400, alpha=0.0, tol=1e-10)
+        self.assertTrue(conv_p)
+        self.assertTrue(conv_n)
+        # projection was disabled -> identical leading eigenvalue to no-projection
+        self.assertAlmostEqual(ev_p, ev_n, places=6)
+
+    def test_projection_still_applied_for_centrosymmetric_kernel(self):
+        """A centrosymmetric kernel must NOT trip the guard: no warning, and the
+        triplet projection still steers to the odd eigenpair."""
+        norb, Nx, Ny, Nz = 1, 8, 1, 1
+        k = 2 * np.pi * np.arange(Nx) / Nx
+        G2 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
+        G2[0, 0, 0, 0, :, 0, 0] = 2.0 + np.cos(k)            # even in k
+        Vs_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        Vs_q[0, 0, :, 0, 0] = -(1.0 + 0.7 * np.cos(k) + 0.3 * np.cos(2 * k))
+        rng = np.random.default_rng(2)
+        seed = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+        # Capture all warnings; a symmetric kernel must not emit a parity one.
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        logger = logging.getLogger("hwave_sc")
+        logger.addHandler(handler)
+        try:
+            gap, ev, conv, _ = _solve_iteration(
+                None, Vs_q, G2, seed.copy(), norb,
+                max_iter=400, alpha=0.0, tol=1e-10, pairing_type="triplet")
+        finally:
+            logger.removeHandler(handler)
+        self.assertFalse(
+            any("parity" in r.getMessage().lower() for r in records),
+            "centrosymmetric kernel must not trip the parity guard")
+        self.assertTrue(conv)
+        self.assertTrue(_is_gap_parity(gap, "triplet"))
+
+    def test_guard_detects_non_centrosymmetric_two_orbital_kernel(self):
+        """The guard must also fire for a multi-orbital non-centrosymmetric
+        kernel, where parity P = (Delta_ab(k) -> Delta_ba(-k)) involves the
+        orbital transposition as well as k -> -k."""
+        norb, Nx, Ny, Nz = 2, 8, 1, 1
+        k = 2 * np.pi * np.arange(Nx) / Nx
+        G2 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
+        # odd (sin) component on the orbital-0 diagonal breaks k -> -k symmetry
+        G2[0, 0, 0, 0, :, 0, 0] = 2.0 + np.cos(k) + 0.6 * np.sin(k)
+        G2[1, 1, 1, 1, :, 0, 0] = 2.0 + np.cos(k)
+        Vs_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        for a in range(norb):
+            Vs_q[a, a, :, 0, 0] = -(1.0 + 0.5 * np.cos(k))
+        rng = np.random.default_rng(4)
+        seed = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _solve_iteration(
+                None, Vs_q, G2, seed.copy(), norb,
+                max_iter=200, alpha=0.0, tol=1e-9, pairing_type="singlet")
+        self.assertTrue(any("parity" in m.lower() for m in cm.output))
+
+    def test_small_representable_eigenvalue_converges(self):
+        """A small but representable leading eigenvalue must still converge --
+        the zero-norm guard must trip only on genuine underflow to 0, never on
+        a physically small (but nonzero, non-underflowing) eigenvalue."""
+        norb, Nx, Ny, Nz = 1, 8, 1, 1
+        k = 2 * np.pi * np.arange(Nx) / Nx
+        G2 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
+        G2[0, 0, 0, 0, :, 0, 0] = 2.0 + np.cos(k)
+        Vs_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        # small overall scale: leading eigenvalue ~1e-6, well within the range
+        # where np.linalg.norm does not underflow (norm**2 stays representable).
+        Vs_q[0, 0, :, 0, 0] = -(1.0 + 0.7 * np.cos(k)) * 1.0e-6
+        rng = np.random.default_rng(7)
+        seed = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+        gap, ev, conv, _ = _solve_iteration(
+            None, Vs_q, G2, seed.copy(), norb,
+            max_iter=300, alpha=0.0, tol=1e-9)
+        self.assertTrue(conv)
+        self.assertGreater(ev, 0.0)
+        self.assertTrue(np.isfinite(ev))
+
+    def test_solve_iteration_rejects_unknown_pairing_type(self):
+        """An invalid pairing_type must raise even when the centrosymmetry
+        guard would disable projection (so _project_gap_parity is never hit)."""
+        Vs_q, G2, norb, (Nx, Ny, Nz) = self._asymmetric_kernel()
+        rng = np.random.default_rng(8)
+        seed = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+        with self.assertRaises(ValueError):
+            _solve_iteration(
+                None, Vs_q, G2, seed.copy(), norb,
+                max_iter=10, alpha=0.0, tol=1e-9, pairing_type="bogus")
+
+    def test_zero_norm_iterate_does_not_nan(self):
+        """If the kernel annihilates the requested parity sector the iterate
+        norm collapses to zero; normalizing must not return NaN. The solver
+        must report non-convergence with a finite gap instead."""
+        norb, Nx, Ny, Nz = 1, 8, 1, 1
+        k = 2 * np.pi * np.arange(Nx) / Nx
+        # Zero vertex -> kernel A == 0 -> every iterate maps to the zero vector.
+        Vs_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        G2 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz), dtype=complex)
+        G2[0, 0, 0, 0, :, 0, 0] = 2.0 + np.cos(k)
+        rng = np.random.default_rng(3)
+        seed = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+        gap, ev, conv, _ = _solve_iteration(
+            None, Vs_q, G2, seed.copy(), norb,
+            max_iter=50, alpha=0.0, tol=1e-10, pairing_type="triplet")
+        self.assertFalse(conv)
+        self.assertTrue(np.all(np.isfinite(gap)),
+                        "collapsed iterate must not produce NaN/inf")
+
+
+class TestProjectGapParityValidation(unittest.TestCase):
+    """_project_gap_parity is now reused by the solver guard; an unknown
+    pairing_type must raise rather than silently selecting the odd projector."""
+
+    def test_rejects_unknown_pairing_type(self):
+        g = np.zeros((1, 1, 4, 1, 1), dtype=complex)
+        with self.assertRaises(ValueError):
+            _project_gap_parity(g, "bogus")
+
+    def test_accepts_known_pairing_types(self):
+        g = np.zeros((1, 1, 4, 1, 1), dtype=complex)
+        # must not raise
+        _project_gap_parity(g, "singlet")
+        _project_gap_parity(g, "triplet")
+
+
+class TestEigenvalueParityColumn(unittest.TestCase):
+    """The eigenvalue output may carry a per-eigenvalue parity-match flag so
+    downstream tools can tell physical (channel-parity) modes from spurious
+    opposite-parity ones. The flag is an appended column; the existing
+    index/Re/Im/|ev| columns are unchanged (backward compatible)."""
+
+    def _read_analysis_rows(self, path):
+        rows = []
+        with open(path) as f:
+            in_section = False
+            for line in f:
+                if line.startswith("# Eigenvalue analysis"):
+                    in_section = True
+                    continue
+                if line.startswith("# index"):
+                    continue
+                if in_section and line.strip():
+                    rows.append(line.split())
+        return rows
+
+    def test_backward_compatible_without_match(self):
+        import tempfile
+        evs = np.array([1.5 + 0j, 0.97 + 0j])
+        with tempfile.TemporaryDirectory() as d:
+            _save_results(d, None, None, evs, None, None, None,
+                          eigenvalue_file="eigenvalue.dat")
+            rows = self._read_analysis_rows(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(len(rows), 2)
+        # index Re Im |ev| -> 4 columns, Re at index 1
+        self.assertEqual(len(rows[0]), 4)
+        npt.assert_allclose(float(rows[0][1]), 1.5)
+
+    def test_writes_match_column_when_provided(self):
+        import tempfile
+        evs = np.array([1.5 + 0j, 0.97 + 0j])
+        match = np.array([False, True])   # 1.5 spurious (wrong parity), 0.97 physical
+        with tempfile.TemporaryDirectory() as d:
+            _save_results(d, None, None, evs, None, None, None,
+                          eigenvalue_file="eigenvalue.dat",
+                          eigenvalue_match=match)
+            rows = self._read_analysis_rows(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(len(rows[0]), 5)          # appended column
+        npt.assert_allclose(float(rows[0][1]), 1.5)  # Re still at index 1
+        self.assertEqual(rows[0][4], "0")          # spurious
+        self.assertEqual(rows[1][4], "1")          # physical
+
+    def test_match_column_reflects_is_gap_parity(self):
+        """End-to-end: the written match flag must equal _is_gap_parity for the
+        actual eigenvectors, the same classification calc_eliashberg applies."""
+        import tempfile
+        N = 8
+        k = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+        even = _initialize_gap("cos", 1, k, k, kz)   # singlet-parity (even)
+        odd = _initialize_gap("p_x", 1, k, k, kz)    # triplet-parity (odd)
+        gaps = [even, odd]
+        # classify against the singlet channel, exactly as calc_eliashberg does
+        match = np.array([_is_gap_parity(g, "singlet") for g in gaps])
+        self.assertTrue(match[0])     # even matches singlet
+        self.assertFalse(match[1])    # odd does not
+        # the triplet channel must classify the two gaps the opposite way
+        match_t = np.array([_is_gap_parity(g, "triplet") for g in gaps])
+        self.assertFalse(match_t[0])  # even does not match triplet
+        self.assertTrue(match_t[1])   # odd matches triplet
+        evs = np.array([0.9 + 0j, 0.8 + 0j])
+        with tempfile.TemporaryDirectory() as d:
+            _save_results(d, None, None, evs, None, None, None,
+                          eigenvalue_file="eigenvalue.dat",
+                          eigenvalue_match=match)
+            rows = self._read_analysis_rows(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(rows[0][4], "1")
+        self.assertEqual(rows[1][4], "0")
+
+
+class TestTutorialPlotLoadEigenvalues(unittest.TestCase):
+    """The tutorial plot_results.py must read the new match column when present
+    and fall back to 'unknown sector' (None) for legacy/partial files so it
+    never infers a parity sector it does not actually have."""
+
+    def _load_plot_module(self):
+        import importlib.util
+        path = os.path.join(
+            os.path.dirname(__file__), "..",
+            "docs", "en", "source", "rpa", "sample_sc", "plot_results.py")
+        spec = importlib.util.spec_from_file_location("_tut_plot", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _write(self, rows):
+        import tempfile
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "eigenvalue.dat")
+        with open(p, "w") as f:
+            f.write("# Iteration eigenvalue\n9.6e-01\n# Eigenvalue analysis\n")
+            f.write("# index ...\n")
+            f.writelines(rows)
+        return p
+
+    def test_legacy_four_column_yields_none(self):
+        pr = self._load_plot_module()
+        p = self._write(["   0  1.58e+00 0 1.58e+00\n",
+                         "   1  0.97e+00 0 0.97e+00\n"])
+        _, ev, match = pr.load_eigenvalues(p)
+        self.assertEqual(len(ev), 2)
+        self.assertIsNone(match, "legacy 4-column file must yield match=None")
+
+    def test_new_five_column_yields_flags(self):
+        pr = self._load_plot_module()
+        p = self._write(["   0  1.58e+00 0 1.58e+00 0\n",
+                         "   1  0.97e+00 0 0.97e+00 1\n"])
+        _, _, match = pr.load_eigenvalues(p)
+        self.assertEqual(match, [False, True])
+
+    def test_partial_match_column_treated_as_legacy(self):
+        pr = self._load_plot_module()
+        p = self._write(["   0  1.58e+00 0 1.58e+00 0\n",
+                         "   1  0.97e+00 0 0.97e+00\n"])   # second row lacks flag
+        _, _, match = pr.load_eigenvalues(p)
+        self.assertIsNone(match, "mixed/partial files must be treated as legacy")
+
+
 class TestShiftEstimate(unittest.TestCase):
     """Shift-invert target must aim at the largest real eigenvalue (the SC
     instability), not the largest magnitude (which can be a large negative)."""
@@ -732,6 +1154,52 @@ class TestFlexVertexWarnings(unittest.TestCase):
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
             _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz)
         self.assertTrue(any("PairLift" in m for m in cm.output))
+
+
+class TestFlexVertexMYOConvention(unittest.TestCase):
+    """FLEX susceptibilities from the general path are in MYO convention; the
+    pairing vertex built from them must use MYO S/C matrices, not the default
+    Kuroki ones (they differ in C(ab,ab) = -U'+2J vs -U'+J when Hund J != 0)."""
+
+    def _setup(self):
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        nd = norb * norb
+        rng = np.random.default_rng(0)
+        chis = rng.standard_normal((Nx, Ny, Nz, nd, nd)) + 0j
+        chic = rng.standard_normal((Nx, Ny, Nz, nd, nd)) + 0j
+        U = np.zeros((norb, norb, Nx, Ny, Nz), complex); U[0, 0] = 2.0; U[1, 1] = 2.0
+        Up = np.zeros((norb, norb, Nx, Ny, Nz), complex); Up[0, 1] = 1.0; Up[1, 0] = 1.0
+        J = np.zeros((norb, norb, Nx, Ny, Nz), complex); J[0, 1] = 0.4; J[1, 0] = 0.4
+        inter_k = {"CoulombIntra": U, "CoulombInter": Up, "Hund": J}
+        return chis, chic, inter_k, norb, Nx, Ny, Nz
+
+    def test_myo_differs_from_kuroki_with_hund(self):
+        chis, chic, inter_k, norb, Nx, Ny, Nz = self._setup()
+        v_kuroki = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki")
+        v_myo = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                       convention="myo")
+        self.assertGreater(
+            np.linalg.norm(v_myo - v_kuroki), 1e-8,
+            "MYO and Kuroki pairing vertices must differ when Hund J != 0")
+
+    def test_myo_matches_myo_sc_formula(self):
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        chis, chic, inter_k, norb, Nx, Ny, Nz = self._setup()
+        v_myo = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                       convention="myo", pairing_type="singlet")
+        S, C = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+        Vs_all = 1.5 * (S @ chis @ S) - 0.5 * (C @ chic @ C) + 0.5 * (S + C)
+        Vs_q = Vs_all.reshape(Nx, Ny, Nz, norb, norb, norb, norb).transpose(
+            3, 4, 5, 6, 0, 1, 2)
+        np.testing.assert_allclose(v_myo, Vs_q, atol=1e-12)
+
+    def test_default_is_kuroki(self):
+        chis, chic, inter_k, norb, Nx, Ny, Nz = self._setup()
+        v_default = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz)
+        v_kuroki = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki")
+        np.testing.assert_allclose(v_default, v_kuroki, atol=1e-12)
 
 
 class TestResolveInitGap(unittest.TestCase):
