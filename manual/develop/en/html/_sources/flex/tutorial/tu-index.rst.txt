@@ -103,8 +103,54 @@ imaginary time:
 
 This element-wise (Hadamard) product is efficiently evaluated using FFT.
 
+.. _flex_scope:
+
+Scope of the approximation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+FLEX is a conserving (Baym--Kadanoff) approximation that resums the RPA
+particle--hole bubble and ladder series for the self-energy. It does **not**
+include the Aslamazov--Larkin (AL) or Maki--Thompson (MT) vertex corrections,
+in which the electron couples to *two* fluctuation propagators through a
+triangular fermion loop (mode--mode coupling). These higher-order corrections
+are outside the FLEX class and are **not** evaluated here. They can matter when
+charge/orbital fluctuations driven by two spin fluctuations are important
+(e.g. the orbital-fluctuation mechanism of Onari and Kontani [2]_).
+
+In addition, the default ``calc_scheme = "reduced"`` and ``"squashed"``
+schemes decompose the interaction via its density--density part for the
+spin/charge vertices; off-diagonal (spin-flip Hund, pair-hopping) vertices
+are reduced to their density--density component (a warning is emitted when
+``Exchange``/``PairHop`` interactions are supplied). Accordingly, in these
+schemes "FLEX" means *not exact*: it is the density--density, AL/MT-free
+fluctuation-exchange level of approximation.
+
+The alternative ``calc_scheme = "general"`` instead **retains** the full
+off-diagonal Kanamori vertices. It is a paramagnetic full-vertex
+formulation following Mochizuki, Yanase, and Ogata (MYO) [3]_ (and
+corroborated by Takimoto, Hotta, and Ueda (THU) [4]_): the full matrix-form
+spin (:math:`\hat{U}^s`) and charge (:math:`\hat{U}^c`) interaction matrices
+are built in the MYO convention, the matrix RPA is solved for
+:math:`\chi_s`/:math:`\chi_c`, and the fluctuation interaction is assembled
+as :math:`V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
++ \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
+- \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`.
+Under ``"general"`` the off-diagonal vertices are therefore **not** dropped
+and the density--density reduction warning is suppressed. The AL/MT vertex
+corrections noted above remain outside the FLEX class even in the
+``"general"`` scheme.
+
 .. [1] N. E. Bickers and D. J. Scalapino,
    Ann. Phys. (N.Y.) **193**, 206 (1989).
+
+.. [2] H. Kontani and S. Onari,
+   Phys. Rev. Lett. **104**, 157001 (2010).
+
+.. [3] M. Mochizuki, Y. Yanase, and M. Ogata,
+   J. Phys. Soc. Jpn. (cond-mat/0407094).
+
+.. [4] T. Takimoto, T. Hotta, and K. Ueda,
+   Phys. Rev. B **69**, 104504 (2004); cond-mat/0309575.
 
 
 Sample 1: Single-orbital Hubbard model
@@ -460,11 +506,25 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
 .. note::
 
-   The FLEX solver consumes the reduced-shape susceptibility and reduces
-   the interaction to its density-density part. It therefore requires
-   ``calc_scheme = "reduced"`` or ``calc_scheme = "squashed"`` and does
-   **not** support ``calc_type = "ring+ladder"`` (which forces the
-   ``"general"`` scheme). The solver raises a ``ValueError`` otherwise.
+   The FLEX solver accepts ``calc_scheme`` in ``"reduced"``, ``"squashed"``,
+   or ``"general"``. The ``"reduced"`` and ``"squashed"`` schemes consume the
+   reduced-shape susceptibility and reduce the interaction to its
+   density-density part. The ``"general"`` scheme is the paramagnetic
+   full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
+   :ref:`above <flex_scope>`) and suppresses the density-density reduction
+   warning, but it is **spin-free only** — it raises a ``ValueError`` for
+   ``spin_mode = "spin-diag"`` or ``"spinful"`` and rejects
+   ``enable_spin_orbital``. It is also **on-site only**: every two-body term
+   (``CoulombIntra``/``CoulombInter``/``Hund``/``Exchange``/``PairHop``/``Ising``)
+   must have ``irvec = (0,0,0)``; an off-site entry raises a ``ValueError``
+   (the MYO S/C matrices are built as q-independent constants). ``Exchange`` and
+   ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme), but
+   ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
+   **inert** (ignored with a warning). The general path writes ``chiq_s``/
+   ``chiq_c`` in the MYO convention (tagged ``chi_convention="myo"``), which
+   ``hwave_sc`` reads back automatically. In all schemes
+   ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
+   ``ValueError``).
 
 
 Sample 3: Iron pnictide 2-orbital model
@@ -614,6 +674,37 @@ Results
 .. code-block:: bash
 
     $ python plot_results.py
+
+
+Sample 3b: Full-vertex (general) variant
+-----------------------------------------
+
+The iron pnictide model above is also provided as a full-vertex variant
+that selects ``calc_scheme = "general"``. It uses the **same** model and
+interaction files (``CoulombIntra``, ``CoulombInter``, ``Hund``,
+``Exchange``), but retains the full off-diagonal Kanamori vertices (the
+spin-flip Hund and pair-hopping / exchange terms) instead of reducing them
+to their density--density part. This is the paramagnetic full-vertex MYO
+formulation [3]_ (corroborated by THU [4]_), and the density--density
+reduction warning is therefore suppressed.
+
+This variant is appropriate for multi-orbital models in which the
+Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
+pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
+``"general"`` scheme is **spin-free only** (it raises a ``ValueError`` for
+``spin_mode = "spin-diag"``/``"spinful"`` and does not support
+``enable_spin_orbital``) and does not support ``calc_type = "ring+ladder"``.
+
+The sample files are in
+``docs/en/source/flex/sample/iron_2orb_general/``.
+
+**Parameter file** (``input.toml``):
+
+.. literalinclude:: ../sample/iron_2orb_general/input.toml
+
+The only essential change from Sample 3 is ``calc_scheme = "general"`` in
+the ``[mode]`` section; the geometry, transfer, and interaction files are
+identical.
 
 
 Tips
