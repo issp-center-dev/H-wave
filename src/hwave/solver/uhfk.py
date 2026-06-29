@@ -482,9 +482,15 @@ class UHFk(solver_base):
                 rix, riy, riz = _unpack_index(ri, (Bx,By,Bz))
                 rjx, rjy, rjz = _unpack_index(rj, (Bx,By,Bz))
 
-                ix = (ix0 + rjx - rix) % Lx
-                iy = (iy0 + rjy - riy) % Ly
-                iz = (iz0 + rjz - riz) % Lz
+                # Green convention: the within-cell offset sits on the first
+                # orbital slot (aa), matching _deflate_green's default. Folding
+                # uses dr = ri - rj, the inverse of that deflate, so folding an
+                # unfolded green and deflating it round-trips. (Hamiltonian/
+                # transfer folding uses dr = rj - ri and lives in
+                # _reshape_interaction.)
+                ix = (ix0 + rix - rjx) % Lx
+                iy = (iy0 + riy - rjy) % Ly
+                iz = (iz0 + riz - rjz) % Lz
 
                 jsite = _pack_site((ix,iy,iz), (Lx,Ly,Lz))
 
@@ -494,14 +500,27 @@ class UHFk(solver_base):
         return green_sub
 
     @do_profile
-    def _deflate_green(self, green_sub):
+    def _deflate_green(self, green_sub, hamiltonian=False):
         """Convert Green function back to original basis.
-        
+
         Parameters
         ----------
         green_sub : ndarray
             Green function in sublattice basis
-        
+        hamiltonian : bool, optional
+            Select the cross-sublattice slot convention. With
+            ``green[jsite,s,a,t,b] = green_sub[isite,s,aa,t,bb]``, where the
+            original site ``jsite`` decomposes per axis into a supercell site
+            ``isite`` and the within-cell offset ``ir``, the default (Green)
+            carries ``ir`` on the FIRST orbital slot
+            (``aa = a + norb_orig*ir``, ``bb = b``); ``hamiltonian=True`` carries
+            it on the SECOND slot (``aa = a``, ``bb = b + norb_orig*ir``). The
+            two differ because the folded Green ``self.Green`` from ``_green()``
+            is the orbital transpose of the Hamiltonian-convention object (it
+            stores ``G_ab(k) = sum_l conj(V_al) f_l V_bl``). Use the default for
+            a Green function and ``hamiltonian=True`` for Hamiltonian / transfer
+            quantities (e.g. ``trans_mod``).
+
         Returns
         -------
         ndarray
@@ -556,8 +575,12 @@ class UHFk(solver_base):
             ir = _pack_index((irx,iry,irz), (Bx,By,Bz))
 
             for a, b in itertools.product(range(norb_orig), range(norb_orig)):
-                aa = a
-                bb = b + norb_orig * ir
+                if hamiltonian:
+                    aa = a
+                    bb = b + norb_orig * ir
+                else:
+                    aa = a + norb_orig * ir
+                    bb = b
                 for s, t in itertools.product(range(ns), range(ns)):
                     green[jsite, s, a, t, b] = green_sub[isite, s, aa, t, bb]
 
@@ -2300,7 +2323,7 @@ class UHFk(solver_base):
             norb = self.norb
             ns = self.ns
 
-            tab_r_defl = self._deflate_green(tab_r.reshape(nvol,ns,norb,ns,norb))
+            tab_r_defl = self._deflate_green(tab_r.reshape(nvol,ns,norb,ns,norb), hamiltonian=True)
 
             lvol = self.cellvol
             norb_orig = self.norb_orig

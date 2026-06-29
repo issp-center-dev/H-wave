@@ -1325,8 +1325,8 @@ class RPA:
             tab_r = tab_r[:, inv, :][:, :, inv]   # interleaved -> spin-block
 
         if self.lattice.has_sublattice:
-            # use reshape green to convert layout
-            tab_r = self._reshape_green(tab_r)
+            # use reshape green to convert layout (Hamiltonian/transfer convention)
+            tab_r = self._reshape_green(tab_r, hamiltonian=True)
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
@@ -1356,9 +1356,10 @@ class RPA:
 
         # green_init is produced by UHFk's _save_green (saves self.Green), the
         # DEFLATED pre-fold green for sublattice -- the same (cellvol, nd0, nd0)
-        # layout and conventions as trans_mod. Mirror _read_trans_mod exactly:
-        # shape validation, SO interleaved->spin-block remap, then sublattice
-        # fold, so green_init is consumed in spin-block order.
+        # layout as trans_mod, and consumed in spin-block order. It does NOT
+        # share trans_mod's fold sign: a Green function carries the within-cell
+        # offset on the first orbital slot, so the sublattice fold below uses
+        # the Green convention (default), the inverse of UHFk._deflate_green.
         expected = (self.lattice.cellvol, self.ns * self.norb_orig, self.ns * self.norb_orig)
         if green.shape != expected:
             raise ValueError(
@@ -1385,8 +1386,15 @@ class RPA:
         nd = self.nd
         return green.reshape(nvol,nd,nd)
 
-    def _reshape_green(self, green_):
+    def _reshape_green(self, green_, hamiltonian=False):
         # convert green function into sublattice
+        #
+        # ``hamiltonian`` selects the cross-sublattice slot convention, mirroring
+        # UHFk._deflate_green. A Green function saved by UHFk._save_green carries
+        # the within-cell offset on the FIRST orbital slot, so folding it back
+        # uses dr = ri - rj (the default), the inverse of that deflate.
+        # Hamiltonian/transfer quantities (trans_mod) carry the offset on the
+        # SECOND slot and fold with dr = rj - ri; pass hamiltonian=True for those.
 
         Lx,Ly,Lz = self.lattice.cellshape
         Lvol = Lx * Ly * Lz
@@ -1437,11 +1445,19 @@ class RPA:
         riy = (ri_arr // Bx) % By
         riz = (ri_arr // (Bx * By)) % Bz
 
-        # Compute jsite for all (isite, aa, bb) combinations
-        # drx[aa,bb] = rjx[bb] - rix[aa], etc.
-        drx = rix[np.newaxis, :] - rix[:, np.newaxis]  # (norb, norb)
-        dry = riy[np.newaxis, :] - riy[:, np.newaxis]
-        drz = riz[np.newaxis, :] - riz[:, np.newaxis]
+        # Compute jsite for all (isite, aa, bb) combinations (rix indexes the
+        # within-cell coordinate of each orbital slot).
+        # Hamiltonian/transfer convention: drx[aa,bb] = rix[bb] - rix[aa].
+        # Green convention (default): drx[aa,bb] = rix[aa] - rix[bb], i.e. the
+        # offset sits on the first slot -- the inverse of UHFk._deflate_green.
+        if hamiltonian:
+            drx = rix[np.newaxis, :] - rix[:, np.newaxis]  # (norb, norb)
+            dry = riy[np.newaxis, :] - riy[:, np.newaxis]
+            drz = riz[np.newaxis, :] - riz[:, np.newaxis]
+        else:
+            drx = rix[:, np.newaxis] - rix[np.newaxis, :]  # (norb, norb)
+            dry = riy[:, np.newaxis] - riy[np.newaxis, :]
+            drz = riz[:, np.newaxis] - riz[np.newaxis, :]
 
         # ix[isite, aa, bb] = (ix0[isite] + drx[aa, bb]) % Lx
         jx = (ix0[:, np.newaxis, np.newaxis] + drx[np.newaxis, :, :]) % Lx  # (Nvol, norb, norb)
