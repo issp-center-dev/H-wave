@@ -74,6 +74,51 @@ def _build_solver(case_dir, subshape):
     return solver
 
 
+# Spin-orbital fixtures: same physical Peierls chain, one physical orbital, with
+# spin folded into the orbital index (interleaved 1=up, 2=down). The hopping is
+# spin-diagonal, so the physics matches the non-SO chain.
+GEOM_SO = ("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n2\n"
+           "  0.0 0.0 0.0\n  0.0 0.0 0.0\n")
+
+
+def _transfer_text_so():
+    tp = -np.exp(1j * 0.4)
+    tm = -np.exp(-1j * 0.4)
+
+    def row(r, o, v):
+        return " {:2d}    0    0    {}    {}  {:.12f}  {:.12f}\n".format(r, o, o, v.real, v.imag)
+
+    return ("Transfer SO Peierls\n2\n2\n 1 1\n"
+            + row(1, 1, tp) + row(1, 2, tp) + row(-1, 1, tm) + row(-1, 2, tm))
+
+
+def _build_solver_so(case_dir, subshape):
+    info_inputfile = {
+        "path_to_input": "",
+        "interaction": {
+            "path_to_input": case_dir,
+            "Geometry": "geom_so.dat",
+            "Transfer": "transfer_so.dat",
+        },
+    }
+    read_io = read_input_k.QLMSkInput(info_inputfile)
+    ham_info = read_io.get_param("ham")
+    info_log = {"print_level": 0, "print_step": 1}
+    info_mode = {
+        "mode": "UHFk",
+        "enable_spin_orbital": True,
+        "param": {
+            "Ncond": 4, "IterationMax": 2000, "EPS": 12,
+            "Mix": 0.5, "RndSeed": 123456789, "T": 0.0,
+            "CellShape": [4, 1, 1], "SubShape": list(subshape),
+        },
+    }
+    solver = UHFk(ham_info, info_log, info_mode)
+    green_info = read_io.get_param("green")
+    solver.solve(green_info, os.path.join(case_dir, "output"))
+    return solver
+
+
 class TestGreenDeflateSubShape(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -85,6 +130,10 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         with open(os.path.join(cls.tmp, "coulombintra.dat"), "w") as f:
             f.write("CoulombIntra Peierls\n1\n1\n 1\n"
                     "   0    0    0    1    1   2.000000000000   0.000000000000\n")
+        with open(os.path.join(cls.tmp, "geom_so.dat"), "w") as f:
+            f.write(GEOM_SO)
+        with open(os.path.join(cls.tmp, "transfer_so.dat"), "w") as f:
+            f.write(_transfer_text_so())
         cls.s111 = _build_solver(cls.tmp, (1, 1, 1))
         cls.s211 = _build_solver(cls.tmp, (2, 1, 1))
 
@@ -125,6 +174,17 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         # full (spin, orbital, spin, orbital) tensor must match the reference
         self.assertEqual(tr_def.shape, tr_ref.shape)
         self.assertLess(np.max(np.abs(tr_def - tr_ref)), 1.0e-9)
+
+    def test_green_subshape_invariance_spin_orbital(self):
+        # The deflate/reshape path is shared by spin-orbital mode (ns=1, spin
+        # folded into the orbital index). The same fix must keep the SO green
+        # SubShape-invariant for complex cross-sublattice hopping.
+        so111 = _build_solver_so(self.tmp, (1, 1, 1))
+        so211 = _build_solver_so(self.tmp, (2, 1, 1))
+        g_ref = so111.Green                            # no sublattice -> unfolded
+        g_def = so211._deflate_green(so211.Green)
+        self.assertEqual(g_def.shape, g_ref.shape)
+        self.assertLess(np.max(np.abs(g_def - g_ref)), 1.0e-9)
 
     def test_rpa_green_init_fold_matches_uhfk(self):
         # RPA folds UHFk's saved (unfolded) green via RPA._reshape_green. It must
