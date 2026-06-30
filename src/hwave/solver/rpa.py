@@ -1341,6 +1341,71 @@ class RPA:
         try:
             logger.info("read green from {}".format(file_name))
             data = np.load(file_name)
+        except Exception as e:
+            logger.error("read_green failed: {}".format(e))
+            sys.exit(1)
+
+        nvol = self.lattice.nvol
+        nd = self.nd
+
+        # Sublattice green_init needs folding from the original (deflated) basis
+        # into the supercell basis. The "green" key carries a fold-sign
+        # convention: since PR #35 UHFk writes it with the Green convention
+        # (within-cell offset on the FIRST orbital slot) and tags the file with
+        # green_convention="green_slot_first". Files written before #35 stored
+        # "green" with the opposite (Hamiltonian) convention and carry no tag,
+        # so folding their "green" key here would be SILENTLY WRONG (issue #36).
+        #
+        # The "green_sublattice" array, when present, is the already-folded
+        # internal Green and is correct regardless of the deflate convention, so
+        # prefer it. Fall back to folding "green" only when the convention is
+        # unambiguous (new-style tag present); otherwise fail loudly.
+        #
+        # NOTE: green_sublattice is UHFk's self.Green, stored with the orbital
+        # axis in INTERLEAVED order in spin-orbital mode, whereas RPA works in
+        # SPIN-BLOCK order. For norb_phys>1 the two differ by a permutation that
+        # the "green" path applies (interleaved->spin-block) but a direct read of
+        # green_sublattice would not. So the green_sublattice shortcut is taken
+        # only in non-SO mode; SO files go through the tag-gated "green" path,
+        # which performs the remap.
+        if self.lattice.has_sublattice:
+            if (not self.ham_info.enable_spin_orbital
+                    and "green_sublattice" in data.files):
+                logger.debug("read_green: use green_sublattice (fold-convention independent)")
+                gsub = data["green_sublattice"]
+                if gsub.ndim == 5:
+                    lvol, s1, o1, s2, o2 = gsub.shape
+                    gsub = gsub.reshape(lvol, s1 * o1, s2 * o2)
+                expected = (nvol, nd, nd)
+                if gsub.shape != expected:
+                    raise ValueError(
+                        "green_sublattice array shape {} does not match expected "
+                        "{} (nvol, nd, nd)".format(gsub.shape, expected))
+                return gsub.reshape(nvol, nd, nd)
+
+            tag = str(data["green_convention"]) if "green_convention" in data.files else None
+            if tag != "green_slot_first":
+                if "green_sublattice" in data.files:
+                    # SO mode reached here: green_sublattice exists but is stored
+                    # interleaved (RPA is spin-block) and folded in UHFk's
+                    # orbital order, so it cannot be consumed directly. The "green"
+                    # key needs the tag to be folded with the correct sign.
+                    reason = ("green_sublattice is present but cannot be used "
+                              "directly in spin-orbital mode (it is interleaved "
+                              "and folded in UHFk order), and the 'green' key "
+                              "carries no green_convention tag")
+                else:
+                    reason = ("no green_convention tag and no green_sublattice "
+                              "array")
+                logger.error(
+                    "read_green: {} is a sublattice green file with an "
+                    "ambiguous/old fold convention (green_convention={}; {}). "
+                    "Folding its 'green' key could be silently wrong (see issue "
+                    "#36). Regenerate green_init with the current UHFk.".format(
+                        file_name, tag, reason))
+                sys.exit(1)
+
+        try:
             green = data["green"]
             logger.debug("read_green: shape={}".format(green.shape))
         except Exception as e:

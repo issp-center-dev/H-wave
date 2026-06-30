@@ -247,6 +247,140 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         self.assertLess(
             np.max(np.abs(g - self.s211.Green.reshape(nvol, nd, nd))), 1.0e-9)
 
+    def _rpa_for_read(self):
+        info_mode = {
+            "mode": "RPA",
+            "param": {
+                "T": 2.0, "filling": 0.5,
+                "CellShape": [4, 1, 1], "SubShape": [2, 1, 1], "Nmat": 16,
+            },
+            "enable_spin_orbital": False,
+            "calc_scheme": "general",
+        }
+        inter = {
+            "path_to_input": self.tmp,
+            "Geometry": "geom.dat",
+            "Transfer": "transfer.dat",
+            "CoulombIntra": "coulombintra.dat",
+        }
+        read_io = read_input_k.QLMSkInput({"path_to_input": self.tmp, "interaction": inter})
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_rpa_read_old_sublattice_green_uses_green_sublattice(self):
+        # Issue #36: a pre-#35 UHFk sublattice green.npz stored the "green" key
+        # deflated with the OLD Hamiltonian/transfer convention, while
+        # "green_sublattice" held the already-folded (still correct) Green.
+        # RPA must NOT fold the ambiguous old "green" key (which would be
+        # silently wrong); it must recover the correct Green from
+        # "green_sublattice".
+        rpa = self._rpa_for_read()
+        nvol, nd = rpa.lattice.nvol, rpa.nd
+
+        npz_path = os.path.join(self.tmp, "green_old.npz")
+        old_green = self.s211._deflate_green(self.s211.Green, hamiltonian=True)
+        np.savez(npz_path, green=old_green, green_sublattice=self.s211.Green)
+
+        g = rpa._read_green(npz_path)
+        self.assertEqual(g.shape, (nvol, nd, nd))
+        self.assertLess(
+            np.max(np.abs(g - self.s211.Green.reshape(nvol, nd, nd))), 1.0e-9)
+
+    def test_rpa_read_ambiguous_sublattice_green_raises(self):
+        # A sublattice green.npz with neither the new convention metadata nor a
+        # "green_sublattice" array is ambiguous: the "green" key could be folded
+        # with either convention. RPA must fail loudly rather than silently
+        # produce a wrong result.
+        rpa = self._rpa_for_read()
+
+        npz_path = os.path.join(self.tmp, "green_ambiguous.npz")
+        old_green = self.s211._deflate_green(self.s211.Green, hamiltonian=True)
+        np.savez(npz_path, green=old_green)
+
+        with self.assertRaises(SystemExit):
+            rpa._read_green(npz_path)
+
+    def test_uhfk_save_green_writes_convention_metadata(self):
+        # New UHFk sublattice green.npz must be self-describing so RPA can fold
+        # the "green" key with the correct convention.
+        npz_path = os.path.join(self.tmp, "green_meta.npz")
+        self.s211._save_green(npz_path)
+        data = np.load(npz_path, allow_pickle=False)
+        self.assertIn("green_convention", data.files)
+        self.assertEqual(str(data["green_convention"]), "green_slot_first")
+
+    def _rpa_so_for_read(self):
+        info_mode = {
+            "mode": "RPA",
+            "param": {
+                "T": 2.0, "filling": 0.5,
+                "CellShape": [4, 1, 1], "SubShape": [2, 1, 1], "Nmat": 16,
+            },
+            "enable_spin_orbital": True,
+            "calc_scheme": "general",
+        }
+        inter = {
+            "path_to_input": self.tmp,
+            "Geometry": "geom_so.dat",
+            "Transfer": "transfer_so.dat",
+        }
+        read_io = read_input_k.QLMSkInput({"path_to_input": self.tmp, "interaction": inter})
+        ham = read_io.get_param("ham")
+        return solver_rpa.RPA(ham, {}, info_mode)
+
+    def test_rpa_so_sublattice_green_sublattice_without_tag_raises(self):
+        # In spin-orbital mode green_sublattice is stored INTERLEAVED while RPA
+        # works in spin-block order, so the green_sublattice shortcut is not safe
+        # in general. An SO sublattice file carrying green_sublattice but no
+        # convention tag must fail-fast (not be silently misread) -- issue #36.
+        so211 = _build_solver_so(self.tmp, (2, 1, 1))
+        rpa = self._rpa_so_for_read()
+
+        npz_path = os.path.join(self.tmp, "green_so_notag.npz")
+        old_green = so211._deflate_green(so211.Green, hamiltonian=True)
+        np.savez(npz_path, green=old_green, green_sublattice=so211.Green)
+
+        with self.assertRaises(SystemExit):
+            rpa._read_green(npz_path)
+
+    def test_rpa_so_sublattice_green_with_tag_reads(self):
+        # With the convention tag present, an SO sublattice green file is folded
+        # through the tag-gated "green" path (which applies the interleaved->
+        # spin-block remap). The SO Peierls chain (norb_phys=1, spin-diagonal)
+        # is physically identical to the non-SO chain, so the loaded green_init
+        # must reproduce the non-SO reference self.s211.Green to machine
+        # precision -- a numerical check, not just a shape check.
+        so211 = _build_solver_so(self.tmp, (2, 1, 1))
+        rpa = self._rpa_so_for_read()
+        nvol, nd = rpa.lattice.nvol, rpa.nd
+
+        npz_path = os.path.join(self.tmp, "green_so_tag.npz")
+        new_green = so211._deflate_green(so211.Green)
+        np.savez(npz_path, green=new_green,
+                 green_convention=np.array("green_slot_first"))
+
+        g = rpa._read_green(npz_path)
+        self.assertEqual(g.shape, (nvol, nd, nd))
+        self.assertLess(
+            np.max(np.abs(g - self.s211.Green.reshape(nvol, nd, nd))), 1.0e-9)
+
+    def test_rpa_read_new_sublattice_green_with_metadata(self):
+        # With the new-convention metadata present, folding the "green" key is
+        # unambiguous and must reproduce the correct internal folded Green even
+        # when "green_sublattice" is absent.
+        rpa = self._rpa_for_read()
+        nvol, nd = rpa.lattice.nvol, rpa.nd
+
+        npz_path = os.path.join(self.tmp, "green_new_nogsub.npz")
+        new_green = self.s211._deflate_green(self.s211.Green)
+        np.savez(npz_path, green=new_green,
+                 green_convention=np.array("green_slot_first"))
+
+        g = rpa._read_green(npz_path)
+        self.assertEqual(g.shape, (nvol, nd, nd))
+        self.assertLess(
+            np.max(np.abs(g - self.s211.Green.reshape(nvol, nd, nd))), 1.0e-9)
+
 
 if __name__ == "__main__":
     unittest.main()
