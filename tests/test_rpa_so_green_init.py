@@ -282,7 +282,10 @@ class TestRPASOGreenInitSublatticeFold(unittest.TestCase):
     def _write_fixture(self):
         tab_sb = _spin_block_green(CELLVOL, NORB_PHYS)
         tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)
-        np.savez(os.path.join(INPUT_DIR, self.IL_NAME), green=tab_il)
+        # Synthetic new-convention green file: tag it so the sublattice fold
+        # path is not rejected as ambiguous (issue #36).
+        np.savez(os.path.join(INPUT_DIR, self.IL_NAME), green=tab_il,
+                 green_convention=np.array("green_slot_first"))
 
     @staticmethod
     def _uniform_q0_per_site(chiq, n_sites):
@@ -354,7 +357,10 @@ class TestRPAGreenInit5DSublattice(unittest.TestCase):
         green3d = np.tile(blk, (CELLVOL, 1, 1))   # (cellvol, 4, 4)
         # Reshape to 5D: (cellvol, ns, norb_orig, ns, norb_orig)
         green5d = green3d.reshape(CELLVOL, ns, norb_orig, ns, norb_orig)
-        np.savez(os.path.join(INPUT_DIR, self.NONSO5D_FOLD_NAME), green=green5d)
+        # Synthetic new-convention green file: tag it so the sublattice fold
+        # path is not rejected as ambiguous (issue #36).
+        np.savez(os.path.join(INPUT_DIR, self.NONSO5D_FOLD_NAME), green=green5d,
+                 green_convention=np.array("green_slot_first"))
         return green5d
 
     @staticmethod

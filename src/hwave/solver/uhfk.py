@@ -2251,7 +2251,15 @@ class UHFk(solver_base):
     def _save_green(self, file_name):
         if self.has_sublattice:
             green_orig = self._deflate_green(self.Green)
-            np.savez(file_name, green = green_orig, green_sublattice = self.Green)
+            # Tag the deflated "green" key with the fold convention used since
+            # PR #35: the within-cell offset sits on the FIRST orbital slot (the
+            # inverse of the Hamiltonian/transfer deflate). Older files lacked
+            # this marker and stored "green" with the Hamiltonian convention, so
+            # a reader (e.g. RPA green_init) needs the marker to fold "green"
+            # back without silently using the wrong sign. See issue #36.
+            np.savez(file_name, green = green_orig,
+                     green_sublattice = self.Green,
+                     green_convention = np.array("green_slot_first"))
         else:
             np.savez(file_name, green = self.Green)
         logger.info("save_results: save green function to file {}".format(file_name))
