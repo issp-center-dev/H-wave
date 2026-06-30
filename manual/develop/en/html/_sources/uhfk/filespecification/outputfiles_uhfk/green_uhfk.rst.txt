@@ -26,6 +26,9 @@ specified by the keyword ``initial`` in ``file.input`` section.
 When the sublattice is considerd,
 the Green's function in unit of the sublattice is also stored with the key ``green_sublattice``.
 The indices of the data are regarded as those of the sublattice.
+In this case the file also carries the key ``green_convention`` with the value
+``green_slot_first``, which records the fold-sign convention of the ``green`` key
+so that it can be folded back unambiguously (e.g. when reused as RPA ``green_init``).
 
 The following code is an example for reading the data from the output file.
 

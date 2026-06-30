@@ -54,7 +54,10 @@ where the indices are packed into <code class="docutils literal notranslate"><sp
 specified by the keyword <code class="docutils literal notranslate"><span class="pre">initial</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> section.</p>
 <p>When the sublattice is considerd,
 the Green’s function in unit of the sublattice is also stored with the key <code class="docutils literal notranslate"><span class="pre">green_sublattice</span></code>.
-The indices of the data are regarded as those of the sublattice.</p>
+The indices of the data are regarded as those of the sublattice.
+In this case the file also carries the key <code class="docutils literal notranslate"><span class="pre">green_convention</span></code> with the value
+<code class="docutils literal notranslate"><span class="pre">green_slot_first</span></code>, which records the fold-sign convention of the <code class="docutils literal notranslate"><span class="pre">green</span></code> key
+so that it can be folded back unambiguously (e.g. when reused as RPA <code class="docutils literal notranslate"><span class="pre">green_init</span></code>).</p>
 <p>The following code is an example for reading the data from the output file.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;green.dat.npz&quot;</span><span class="p">)</span>
