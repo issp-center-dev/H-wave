@@ -971,28 +971,24 @@ class FLEX(RPA):
         # --- Compute Sigma(r, tau) ---
         n_common = min(nfreq, nmat)
 
-        # If nd_block != nd_v, we need to expand G to match V_eff space
-        # spin-free: nd_block = norb, nd_v = norb*ns = nd
+        # If nd_block != nd_v, each Green block only sees its own spin slot
+        # of V_eff (spin-free: nd_block = norb, nd_v = norb*ns = nd)
         if nd_block != nd_v:
-            # Expand Green's function to spin-orbital space using np.kron
-            # For spin-free: G_{sa,tb} = G_{ab} * delta_{st}
+            # The inflated V_eff carries the (raw) chi0q block g on its spin
+            # diagonal slot (g, g) (see _inflate_chi0q_and_ham), so:
+            #   spin-diag (nblock == ns): Green block g pairs with slot g
+            #   spin-free (nblock == 1):  both slots are identical, use slot 0
+            # Sigma stays in block space (nd_block x nd_block); the spin
+            # off-diagonal slots of the inflated form are exactly zero.
             norb = self.norb
-            ns = self.ns
-            # Vectorized spin inflation: use Kronecker product with identity
-            # green_rt[:, :n_common] has shape (nblock, n_common, nvol, norb, norb)
-            # We need kron(eye(ns), G) for each (nblock, time, vol)
-            spin_eye = np.eye(ns, dtype=np.complex128)
-            # sigma_rt[g, t, r] = v_rt[t, r] * kron(I_s, G[g, t, r])
-            # Compute directly without full expansion:
-            # kron(I_s, G) is block-diagonal with G repeated ns times on diagonal
-            # Hadamard with v_rt: only diagonal blocks of v_rt contribute
-            sigma_rt = np.zeros((nblock, nmat, nvol, nd_v, nd_v),
+            sigma_rt = np.zeros((nblock, nmat, nvol, nd_block, nd_block),
                                 dtype=np.complex128)
-            for s in range(ns):
+            for g in range(nblock):
+                s = g if nblock == self.ns else 0
                 sl = slice(s * norb, (s + 1) * norb)
-                sigma_rt[:, :n_common, :, sl, sl] = (
+                sigma_rt[g, :n_common] = (
                     v_rt[:n_common, :, sl, sl]
-                    * green_rt[:, :n_common]
+                    * green_rt[g, :n_common]
                 )
         else:
             # Sigma(r,tau) = V_eff(r,tau) * G(r,tau)  (element-wise product)
@@ -1001,23 +997,20 @@ class FLEX(RPA):
             sigma_rt[:, :n_common] = v_rt[:n_common] * green_rt[:, :n_common]
 
         # --- Transform Sigma back to (k, iwn) space ---
+        nd_sig = sigma_rt.shape[-1]
 
         # Real-space -> k-space
         sigma_kt = FFT.fftn(
-            sigma_rt.reshape(nblock, nmat, nx, ny, nz, nd_v * nd_v),
+            sigma_rt.reshape(nblock, nmat, nx, ny, nz, nd_sig * nd_sig),
             axes=(2, 3, 4)
-        ).reshape(nblock, nmat, nvol * nd_v * nd_v)
+        ).reshape(nblock, nmat, nvol * nd_sig * nd_sig)
 
         # Imaginary time -> Matsubara freq (fermionic)
         # Use broadcasting instead of einsum for phase multiplication
         omg_f_inv = np.exp(1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
         sigma_kw = (FFT.ifft(sigma_kt * omg_f_inv[np.newaxis, :, np.newaxis],
                              axis=1)
-                    .reshape(nblock, nmat, nvol, nd_v, nd_v) * (1.0 / beta))
-
-        # If we expanded to spin-orbital space, contract back to block space
-        if nd_block != nd_v:
-            return sigma_kw[:, :, :, :nd_block, :nd_block]
+                    .reshape(nblock, nmat, nvol, nd_sig, nd_sig) * (1.0 / beta))
 
         return sigma_kw
 
@@ -1178,14 +1171,32 @@ class FLEX(RPA):
 
         self._init_wavevec()
 
+        # FLEX never applies the matsubara_frequency filter to its outputs
+        # (unlike RPA.solve): every stored frequency axis is the full nmat
+        # grid, so the metadata must describe that grid -- writing the
+        # restricted user option (self.freq_index) would make the strict
+        # hwave_sc loader reject a valid file.
+        full_freq_index = np.arange(self.nmat)
+        if len(self.freq_index) < self.nmat:
+            logger.warning(
+                "matsubara_frequency is restricted but FLEX outputs always "
+                "hold the full frequency grid; the option is ignored.")
+
         # Save chi0q
         if "chi0q" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
-                     freq_index=self.freq_index,
+                     freq_index=full_freq_index,
+                     # full grid size: lets consumers locate the zero bosonic
+                     # frequency (index nmat//2) unambiguously
+                     nmat=self.nmat,
                      wavevector_unit=self.kvec,
-                     wavevector_index=self.wavenum_table)
+                     wavevector_index=self.wavenum_table,
+                     # FLEX chi0q comes from the same spin-block-ordered RPA
+                     # internals; tag it so the chi0q consumers (RPA read_chi0q,
+                     # hwave_sc _load_chi0q) accept the file in SO mode.
+                     index_convention="spin_block")
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -1193,7 +1204,8 @@ class FLEX(RPA):
         # consumer (_load_flex_susceptibilities / _compute_vertices_flex) pairs
         # them with the matching S/C matrices: the general (full-vertex) path
         # produces MYO-convention susceptibilities, the reduced path Kuroki.
-        common_meta = dict(freq_index=self.freq_index,
+        common_meta = dict(freq_index=full_freq_index,
+                           nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
@@ -1226,7 +1238,7 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
-                     freq_index=self.freq_index,
+                     freq_index=full_freq_index,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table)
             logger.info("save_results: save sigma in file {}".format(file_name))
@@ -1236,7 +1248,7 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_output, info_outputfile["green"])
             np.savez(file_name,
                      green=green_info.get("green"),
-                     freq_index=self.freq_index,
+                     freq_index=full_freq_index,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table)
             logger.info("save_results: save green in file {}".format(file_name))

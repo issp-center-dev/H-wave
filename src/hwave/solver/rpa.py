@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
+import hwave.qlmsio.wan90 as wan90
+from . import fold
 
 
 def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
@@ -274,87 +276,23 @@ class Interaction:
 
     def _reshape_geometry(self, geom):
         logger.debug(">>> Interaction._reshape_geometry")
-
-        Bx,By,Bz = self.lattice.subshape
-        bvol = self.lattice.subvol
-
-        norb = geom['norb']
-
-        geom_new = {}
-        geom_new['norb'] = geom['norb'] * bvol
-        geom_new['rvec'] = np.matmul(np.diag([Bx, By, Bz]), geom['rvec'])
-
-        sc = np.array([1.0/Bx, 1.0/By, 1.0/Bz])
-        cw = [ sc * geom['center'][k] for k in range(norb) ]
-
-        centerv = np.zeros((norb * bvol, 3), dtype=np.float64)
-        k = 0
-        for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
-            for i in range(norb):
-                centerv[k] = cw[i] + np.array([bx, by, bz]) * sc
-                k += 1
-        geom_new['center'] = centerv
-
-        return geom_new
+        return fold.reshape_geometry(geom, self.lattice.subshape)
 
     def _reshape_interaction(self, ham, enable_spin_orbital):
         logger.debug(">>> Interaction._reshape_interaction")
 
-        Bx,By,Bz = self.lattice.subshape
-        nx,ny,nz = self.lattice.shape
-
-        # In SO mode, geom norb is the spin-orbital count; interactions use
-        # physical orbital indices, so the stride for non-SO folding is norb_phys.
+        # In SO mode, geom norb is the spin-orbital count; two-body
+        # interactions use physical orbital indices, so the stride for the
+        # non-SO fold is the physical count (see fold.reshape_interaction,
+        # the single definition shared with UHFk).
         geom_norb_orig = self.param_ham_orig["Geometry"]["norb"]
-        norb_orig = geom_norb_orig  # SO count (used by _reshape_orbit_spin)
-        # physical count (stride for non-SO / physical-orbital-indexed terms)
         norb_phys_orig = _so_physical_norb(geom_norb_orig, self.enable_spin_orbital)
 
-        def _reshape_orbit_(a, x):
-            return a + norb_phys_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
-
-        def _reshape_orbit_spin(a, x):
-            a_, s_ = a%norb_orig, a//norb_orig
-            return a_ + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2] + Bz * s_)))
-
-        if enable_spin_orbital:
-            _reshape_orbit = _reshape_orbit_spin
-        else:
-            _reshape_orbit = _reshape_orbit_
-
-        def _round(x, n):
-            return x % n if x >= 0 else x % -n
-
-        ham_new = {}
-        for (irvec,orbvec), v in ham.items():
-            rx,ry,rz = irvec
-            alpha,beta = orbvec
-
-            for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
-
-                # original cell index of both endes
-                #   x0 -> x1=x0+r
-                x0,y0,z0 = bx, by, bz
-                x1,y1,z1 = x0 + rx, y0 + ry, z0 + rz
-
-                # decompose into supercell-index and cell-index within supercell
-                #   x0 = 0 + x0
-                #   x1 = X + xr
-                xx1,xr1 = x1 // Bx, x1 % Bx
-                yy1,yr1 = y1 // By, y1 % By
-                zz1,zr1 = z1 // Bz, z1 % Bz
-
-                # find orbital index within supercell
-                aa = _reshape_orbit(alpha,(x0,y0,z0))
-                bb = _reshape_orbit(beta, (xr1,yr1,zr1))
-
-                # check wrap-around: maybe overwritten by duplicate entries
-                ir = (_round(xx1, nx), _round(yy1, ny), _round(zz1, nz))
-                ov = (aa, bb)
-
-                ham_new[(ir, ov)] = v
-
-        return ham_new
+        return fold.reshape_interaction(
+            ham, self.lattice.subshape, self.lattice.shape,
+            norb_so_orig=geom_norb_orig,
+            norb_phys_orig=norb_phys_orig,
+            enable_spin_orbital=enable_spin_orbital)
 
     def _export_interaction(self, type, file_name):
         logger.debug(">>> Interaction._export_interaction")
@@ -427,7 +365,10 @@ class Interaction:
                         .format(orbvec, nd))
                 a = _so_interleaved_to_spinblock(orbvec[0])
                 b = _so_interleaved_to_spinblock(orbvec[1])
-                tab_r[(*irvec, a, b)] = v
+                # accumulate: R and R+-L are distinct bonds that wrap onto
+                # the same array slot when the hopping range reaches the
+                # lattice size (numpy negative indexing)
+                tab_r[(*irvec, a, b)] += v
 
             # Fourier transform
             tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
@@ -440,7 +381,8 @@ class Interaction:
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
-                    tab_r[(*irvec,*orbvec)] = v
+                    # accumulate: wrap-around R vectors share the array slot
+                    tab_r[(*irvec,*orbvec)] += v
                 else:
                     pass  # skip spin dependence
 
@@ -469,7 +411,8 @@ class Interaction:
 
             for (irvec,orbvec), v in self.param_ham["Extern"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
-                    hab_r[(*irvec,*orbvec)] = v
+                    # accumulate: wrap-around R vectors share the array slot
+                    hab_r[(*irvec,*orbvec)] += v
                 else:
                     pass  # skip spin dependence
 
@@ -511,10 +454,12 @@ class Interaction:
         }
 
         # coulomb-type interactions
-        def _append_inter(type):
+        def _append_inter(type, tbl=None):
             logger.debug("_append_inter {}".format(type))
             spins = spin_table[type]
-            for (irvec,orbvec), v in self.param_ham[type].items():
+            if tbl is None:
+                tbl = self.param_ham[type]
+            for (irvec,orbvec), v in tbl.items():
                 a, b = orbvec
                 for spinvec, w in spins.items():
                     s1,s2,s3,s4 = spinvec
@@ -538,6 +483,26 @@ class Interaction:
                         # beta beta' alpha alpha'
                         orb = (s4, b, s3, a, s1, a, s2, b)
                         ham_r[(*irvec, *orb)] += v * w
+
+        if 'Coulomb' in self.param_ham.keys():
+            # The aggregate 'Coulomb' input provides both the intra and inter
+            # parts (shared decomposition, see wan90.split_coulomb).
+            # Combining it with explicit CoulombIntra/CoulombInter is
+            # ambiguous.
+            if ('CoulombIntra' in self.param_ham.keys()
+                    or 'CoulombInter' in self.param_ham.keys()):
+                logger.error(
+                    "Coulomb cannot be specified together with "
+                    "CoulombIntra or CoulombInter")
+                sys.exit(1)
+
+            coulomb_intra, coulomb_inter = wan90.split_coulomb(
+                self.param_ham['Coulomb'])
+
+            _append_inter('CoulombIntra', coulomb_intra)
+            _append_inter('CoulombInter', coulomb_inter)
+            self._has_interaction = True
+            self._has_interaction_coulomb = True
 
         if 'CoulombIntra' in self.param_ham.keys():
             _append_inter('CoulombIntra')
@@ -1037,18 +1002,43 @@ class RPA:
 
         self._init_wavevec()
 
+        # Frequency metadata (freq_index + nmat, the full grid size of the
+        # producing run) lets consumers locate the zero bosonic frequency
+        # (original index nmat//2).  A chi0q loaded via chi0q_init passes
+        # through solve() untouched AND chiq is computed from it, so both
+        # outputs inherit the input file's frequency axis: re-save them with
+        # the metadata of the file that produced the chi0q -- stamping the
+        # CURRENT run's values would mislabel the axis.
+        def _freq_meta_kwargs(arr):
+            init_meta = getattr(self, "_chi0q_init_meta", None)
+            if init_meta is None:
+                return {"freq_index": self.freq_index, "nmat": self.nmat}
+            kwargs = {}
+            if init_meta["freq_index"] is not None:
+                kwargs["freq_index"] = init_meta["freq_index"]
+            else:
+                # The documented format guarantees a freq_index key.  For a
+                # legacy chi0q_init file without one, describe the stored
+                # axis (0..n-1) without fabricating an nmat claim; a
+                # downstream loader then treats the file explicitly as
+                # ambiguous unless its config Nmat matches.
+                kwargs["freq_index"] = np.arange(arr.shape[0])
+            if init_meta["nmat"] is not None:
+                kwargs["nmat"] = init_meta["nmat"]
+            return kwargs
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
                 save_kwargs = dict(
                     chiq = green_info["chiq"],
-                    freq_index = self.freq_index,
                     wavevector_unit = self.kvec,
                     wavevector_index = self.wavenum_table,
                     # RPA orders spin-orbital axes as spin-block (spin*norb+orb),
                     # unlike UHFk's interleaved (2*orb+spin) output; record it so
                     # consumers do not silently mix the two conventions.
                     index_convention = "spin_block",
+                    **_freq_meta_kwargs(green_info["chiq"]),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -1060,14 +1050,15 @@ class RPA:
 
         if "chi0q" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
-            np.savez(file_name,
-                     chi0q = green_info["chi0q"],
-                     freq_index = self.freq_index,
-                     wavevector_unit = self.kvec,
-                     wavevector_index = self.wavenum_table,
-                     # spin-orbital axes are spin-block ordered (spin*norb+orb)
-                     index_convention = "spin_block",
-                     )
+            save_kwargs = dict(
+                chi0q = green_info["chi0q"],
+                wavevector_unit = self.kvec,
+                wavevector_index = self.wavenum_table,
+                # spin-orbital axes are spin-block ordered (spin*norb+orb)
+                index_convention = "spin_block",
+                **_freq_meta_kwargs(green_info["chi0q"]),
+            )
+            np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         pass
@@ -1202,6 +1193,14 @@ class RPA:
 
         validate_chi0q_index_convention(
             data, self.ham_info.enable_spin_orbital, file_name)
+
+        # Keep the frequency metadata of the file that PRODUCED this chi0q:
+        # solve() passes an input chi0q through untouched, so save_results
+        # must not relabel its axis with the current run's freq_index/nmat.
+        self._chi0q_init_meta = {
+            "freq_index": data["freq_index"] if "freq_index" in data else None,
+            "nmat": int(data["nmat"]) if "nmat" in data else None,
+        }
 
         # check size
         if self.calc_scheme == "general":
@@ -1538,9 +1537,6 @@ class RPA:
 
         # Gather using advanced indexing
         # green[jsite, s, a, t, b] -> green_sub[isite, s, aa, t, bb]
-        green_sub = green[jsite_map][:, :, :, :, a_src, :, :][:, :, :, :, :, :, b_src]
-        # Shape: (Nvol, norb, norb, ns, norb, ns, norb) - need to select diagonal
-        # Use explicit indexing for clarity
         green_sub = green[
             jsite_map[:, :, :, np.newaxis, np.newaxis],   # (Nvol, norb, norb, 1, 1)
             np.arange(ns)[np.newaxis, np.newaxis, np.newaxis, :, np.newaxis],  # s
