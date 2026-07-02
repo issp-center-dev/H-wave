@@ -20,6 +20,7 @@ class TestReshapeInteractionAccumulation(unittest.TestCase):
         solver.subshape = (1, 1, 1)
         solver.shape = (1, 1, 1)
         solver.norb_orig = 1
+        solver.norb_phys_orig = 1
         solver.param_ham_orig = {"Geometry": {"norb": 1}}
         return solver
 

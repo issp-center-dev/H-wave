@@ -82,13 +82,13 @@ class TestLoadChi0qSC(unittest.TestCase):
     def test_so_spin_block_accepted(self):
         tmp = tempfile.mkdtemp()
         _write_npz(os.path.join(tmp, "chi0q.npz"), with_convention=True)
-        chi0q = _load_chi0q(self._input_dict(tmp, enable_spin_orbital=True))
+        chi0q, _ = _load_chi0q(self._input_dict(tmp, enable_spin_orbital=True))
         self.assertEqual(chi0q.shape, (1, 1, 2, 2))
 
     def test_non_so_missing_convention_accepted(self):
         tmp = tempfile.mkdtemp()
         _write_npz(os.path.join(tmp, "chi0q.npz"), with_convention=False)
-        chi0q = _load_chi0q(self._input_dict(tmp, enable_spin_orbital=False))
+        chi0q, _ = _load_chi0q(self._input_dict(tmp, enable_spin_orbital=False))
         self.assertEqual(chi0q.shape, (1, 1, 2, 2))
 
 

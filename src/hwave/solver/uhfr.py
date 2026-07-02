@@ -16,43 +16,6 @@ from .perf import do_profile
 logger = logging.getLogger("qlms").getChild("uhfr")
 
 
-def _split_occupation(occupied, sizes):
-    """Distribute ``occupied`` electrons across sub-blocks of the given sizes.
-
-    Returns non-negative integer occupations that sum exactly to ``occupied``
-    and never exceed the block size, using the largest-remainder method.
-    (The previous proportional rounding ``round(occupied*size/total)`` could
-    over-allocate and leave a negative remainder for the last block.)
-
-    Parameters
-    ----------
-    occupied : int
-        Total electron count to distribute (0 <= occupied <= sum(sizes)).
-    sizes : list of int
-        Sizes of the sub-blocks.
-
-    Returns
-    -------
-    list of int
-        Per-block occupations.
-    """
-    total = sum(sizes)
-    if not (0 <= occupied <= total):
-        raise ValueError(
-            "occupied={} must be in [0, sum(sizes)={}]".format(occupied, total))
-    if total == 0:
-        return [0 for _ in sizes]
-    exact = [occupied * sz / total for sz in sizes]
-    alloc = [int(np.floor(e)) for e in exact]
-    remainder = int(round(occupied - sum(alloc)))
-    # hand out the remaining electrons to the largest fractional parts
-    order = sorted(range(len(sizes)),
-                   key=lambda i: exact[i] - alloc[i], reverse=True)
-    for i in order[:remainder]:
-        alloc[i] += 1
-    return alloc
-
-
 class Interact_UHFr_base:
     """Base class for interaction terms in UHF calculations.
     
@@ -753,17 +716,22 @@ class UHFr(solver_base):
         unique_labels = np.unique(labels)
         if len(unique_labels) <= 1:
             logger.info("Block detection (UHFr): single block (nd={})".format(nd))
+            self._block_mask = self._build_block_mask()
             return
 
         # Build block list
         all_blocks = [np.where(labels == lbl)[0] for lbl in unique_labels]
         all_blocks.sort(key=lambda b: b[0])
 
-        # Refine green_list: split existing blocks into sub-blocks
-        new_green_list = {}
+        # Attach sub-block structure to each green_list block.  The block
+        # keys, labels and per-block electron counts are kept unchanged:
+        # every green_list block remains one electron reservoir with a single
+        # Fermi level, and _diag() merely exploits the sub-block structure to
+        # diagonalize smaller matrices.  (Splitting the electron count across
+        # sub-blocks -- e.g. proportionally to size -- is wrong: it can pin
+        # electrons in high-energy sub-blocks.)
         for k, block_g_info in self.green_list.items():
             g_label = set(block_g_info["label"])
-            occupied = block_g_info["occupied"]
 
             # Find sub-blocks within this green_list block
             sub_blocks = []
@@ -772,31 +740,16 @@ class UHFr(solver_base):
                 if overlap:
                     sub_blocks.append(overlap)
 
-            if len(sub_blocks) <= 1:
-                # No further splitting
-                new_green_list[k] = block_g_info
-            else:
-                # Split this block, keeping per-block occupations non-negative
-                # and summing to the original occupancy.
-                sub_occs = _split_occupation(occupied, [len(s) for s in sub_blocks])
-                for i, sub in enumerate(sub_blocks):
-                    sub_key = "{}_blk{}".format(k, i)
-                    sub_info = {"label": sub, "occupied": sub_occs[i]}
-                    if "value" in block_g_info:
-                        sub_info["value"] = block_g_info["value"]
-                    new_green_list[sub_key] = sub_info
-
+            if len(sub_blocks) > 1:
+                block_g_info["sub_blocks"] = sub_blocks
                 block_desc = ", ".join(
                     ["{}".format(len(s)) for s in sub_blocks])
-                logger.info("Block detection (UHFr): block '{}' split into "
-                            "{} sub-blocks of sizes [{}]".format(
-                                k, len(sub_blocks), block_desc))
+                logger.info("Block detection (UHFr): block '{}' has "
+                            "{} sub-blocks of sizes [{}] (shared Fermi "
+                            "level)".format(k, len(sub_blocks), block_desc))
 
-        self.green_list = new_green_list
-
-        block_desc = ", ".join(
-            ["{}:{}".format(k, len(v["label"])) for k, v in self.green_list.items()])
-        logger.info("Block detection (UHFr): final blocks: {}".format(block_desc))
+        # cache the block mask for the SCF loop (structure is now fixed)
+        self._block_mask = self._build_block_mask()
 
     @do_profile
     def _makeham_const(self):
@@ -806,6 +759,31 @@ class UHFr(solver_base):
         trans = Transfer_UHFr(self.param_ham["Transfer"], self.Nsize)
         trans.check_hermite(self.strict_hermite, self.hermite_tolerance)
         self.Ham_trans = trans.get_data()
+
+        # One-body spin-flip terms genuinely break Sz conservation, so a
+        # fixed 2Sz is ill-defined: reject them (same as UHFk) instead of
+        # silently zeroing them through the spin-block structure.
+        if self.param_mod["2Sz"] is not None:
+            self._check_spin_flip_with_fixed_sz(np.abs(self.Ham_trans),
+                                                self.Nsize)
+
+    def _build_block_mask(self):
+        """Boolean mask of the in-block Hamiltonian entries (None if trivial).
+
+        Fixed once the green_list block/sub-block structure is set, so it is
+        built once and reused by every SCF iteration.
+        """
+        nd = 2 * self.Nsize
+        has_sub_blocks = any("sub_blocks" in info
+                             for info in self.green_list.values())
+        if len(self.green_list) <= 1 and not has_sub_blocks:
+            return None
+        mask = np.zeros((nd, nd), dtype=bool)
+        for info in self.green_list.values():
+            for sub in info.get("sub_blocks", [info["label"]]):
+                idx = np.array(sub)
+                mask[np.ix_(idx, idx)] = True
+        return mask
 
     @do_profile
     def _makeham(self):
@@ -817,11 +795,13 @@ class UHFr(solver_base):
         self.Ham += ham_dot_green.reshape(nd, nd)
 
         # Enforce block structure: zero out cross-block entries
-        if len(self.green_list) > 1:
-            mask = np.zeros((nd, nd), dtype=bool)
-            for info in self.green_list.values():
-                idx = np.array(info["label"])
-                mask[np.ix_(idx, idx)] = True
+        # (mask cached across SCF iterations; the structure is fixed after
+        # _detect_blocks)
+        try:
+            mask = self._block_mask
+        except AttributeError:
+            mask = self._block_mask = self._build_block_mask()
+        if mask is not None:
             self.Ham[~mask] = 0.0
 
     @do_profile
@@ -865,12 +845,38 @@ class UHFr(solver_base):
 
     @do_profile
     def _diag(self):
-        """Diagonalize Hamiltonian."""
+        """Diagonalize Hamiltonian.
+
+        When a green_list block consists of several disconnected sub-blocks,
+        each sub-block is diagonalized independently and the eigenpairs are
+        reassembled (sorted ascending) in the block-local basis, so that the
+        downstream occupation logic (lowest ``occupied`` states, one Fermi
+        level per block) is unaffected by the decomposition.
+        """
         _green_list = self.green_list
         for k, block_g_info in _green_list.items():
             g_label = np.array(block_g_info["label"])
-            mat = self.Ham[np.ix_(g_label, g_label)]
-            w, v = np.linalg.eigh(mat)
+            sub_blocks = block_g_info.get("sub_blocks")
+            if sub_blocks is None:
+                mat = self.Ham[np.ix_(g_label, g_label)]
+                w, v = np.linalg.eigh(mat)
+            else:
+                n = len(g_label)
+                pos = {lab: i for i, lab in enumerate(g_label)}
+                w = np.empty(n, dtype=float)
+                v = np.zeros((n, n), dtype=complex)
+                col = 0
+                for sub in sub_blocks:
+                    idx = np.array(sub)
+                    w_sub, v_sub = np.linalg.eigh(self.Ham[np.ix_(idx, idx)])
+                    rows = np.array([pos[lab] for lab in sub])
+                    m = len(sub)
+                    w[col:col + m] = w_sub
+                    v[np.ix_(rows, np.arange(col, col + m))] = v_sub
+                    col += m
+                order = np.argsort(w, kind="stable")
+                w = w[order]
+                v = v[:, order]
             self.green_list[k]["eigenvalue"] = w
             self.green_list[k]["eigenvector"] = v
 

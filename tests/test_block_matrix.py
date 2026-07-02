@@ -9,42 +9,6 @@ import unittest
 import numpy as np
 
 
-class TestUHFrOccupationSplit(unittest.TestCase):
-    """Splitting a block's electron count across detected sub-blocks must give
-    non-negative integer occupations that sum to the original (the previous
-    proportional-rounding split could produce negative occupations)."""
-
-    def test_no_negative_occupation(self):
-        from hwave.solver.uhfr import _split_occupation
-        # 6 electrons over 8 size-1 sub-blocks: the buggy round() split gave -1
-        occ = _split_occupation(6, [1] * 8)
-        self.assertEqual(sum(occ), 6)
-        self.assertTrue(all(o >= 0 for o in occ), "occupations must be >= 0")
-        self.assertTrue(all(o <= 1 for o in occ), "occupation cannot exceed block size")
-
-    def test_sum_preserved_various(self):
-        from hwave.solver.uhfr import _split_occupation
-        for occupied, sizes in [(3, [2, 2]), (5, [3, 1, 4]), (0, [2, 3]),
-                                (7, [7]), (4, [1, 1, 1, 1])]:
-            occ = _split_occupation(occupied, sizes)
-            self.assertEqual(sum(occ), occupied)
-            self.assertTrue(all(0 <= o <= s for o, s in zip(occ, sizes)))
-
-    def test_proportional_allocation(self):
-        from hwave.solver.uhfr import _split_occupation
-        # equal sizes, divisible -> equal split
-        self.assertEqual(_split_occupation(4, [2, 2]), [2, 2])
-
-    def test_invalid_occupied_raises(self):
-        from hwave.solver.uhfr import _split_occupation
-        with self.assertRaises(ValueError):
-            _split_occupation(5, [2, 2])     # occupied > total
-        with self.assertRaises(ValueError):
-            _split_occupation(-1, [2, 2])    # negative occupied
-        with self.assertRaises(ValueError):
-            _split_occupation(1, [])         # empty sizes, nonzero occupied
-
-
 class TestRPABlockSolveDenseChi0q(unittest.TestCase):
     """Block-solving the RPA equation is only valid when neither chi0q nor ham
     couples indices across blocks. If ham is block-diagonal but chi0q has
@@ -1434,9 +1398,11 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         self.assertTrue(hasattr(stub, "group_nconds"))
         self.assertEqual(sum(stub.group_nconds), 2)
 
-    def test_2sz_fixed_single_mixed_block_ok(self):
-        """A single mixed block spanning the whole system is allowed: it takes
-        the total ncond and does not over-count."""
+    def test_2sz_fixed_single_mixed_block_rejected(self):
+        """Spin-flip one-body terms break Sz conservation, so 2Sz-fixed mode
+        must reject them even when they merge the whole system into a single
+        mixed block (accepting it with the total ncond would silently ignore
+        the requested 2Sz)."""
         norb, ns, nvol = 2, 2, 1
         nd = norb * ns
         ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
@@ -1448,12 +1414,13 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         ham_trans[:, norb, norb + 1] = 0.5; ham_trans[:, norb + 1, norb] = 0.5  # dn0-dn1
         stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
                                     sz_free=False, Nconds=[2, 1])
-        stub._detect_blocks()  # must not raise
-        self.assertEqual(len(stub.block_info), 1)
-        self.assertEqual(sum(stub.group_nconds), 3)  # ncond_up + ncond_down
+        with self.assertRaises(ValueError):
+            stub._detect_blocks()
 
-    def test_2sz_fixed_multiple_mixed_blocks_ok(self):
-        """Several mixed blocks (no pure block) are allowed (no over-count)."""
+    def test_2sz_fixed_multiple_mixed_blocks_rejected(self):
+        """Several spin-mixed blocks are rejected in 2Sz-fixed mode for the
+        same reason: the one-body spin-flip terms make a fixed 2Sz
+        ill-defined."""
         norb, ns, nvol = 2, 2, 1
         nd = norb * ns
         ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
@@ -1464,11 +1431,67 @@ class TestUHFkDetectBlocks(unittest.TestCase):
         ham_trans[:, 1, norb + 1] = 0.5; ham_trans[:, norb + 1, 1] = 0.5
         stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
                                     sz_free=False, Nconds=[1, 1])
+        with self.assertRaises(ValueError):
+            stub._detect_blocks()
+
+    def test_2sz_fixed_tolerates_noise_level_spin_flip(self):
+        """Wannier-derived transfers carry ~1e-14 cross-spin residues from
+        numerical noise; summing |ham_trans| over many k-points amplifies
+        them above any absolute threshold.  The 2Sz-fixed spin-flip guard
+        must compare against the transfer SCALE, not an absolute epsilon,
+        so noise-level entries are masked (not fatal)."""
+        norb, ns, nvol = 2, 2, 4096
+        nd = norb * ns
+        rng = np.random.RandomState(7)
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = 1.0
+        # noise-level cross-spin residues on every k-point
+        noise = 1.0e-14 * rng.rand(nvol)
+        ham_trans[:, 0, norb] = noise
+        ham_trans[:, norb, 0] = noise
+        stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
+                                    sz_free=False, Nconds=[2, 2])
+        stub._detect_blocks()  # must NOT raise
+        for blk in stub.block_info:
+            all_up = all(idx < norb for idx in blk)
+            all_dn = all(idx >= norb for idx in blk)
+            self.assertTrue(all_up or all_dn,
+                            "noise must be masked, sectors kept pure")
+
+    def test_2sz_fixed_spin_connecting_interaction_keeps_sectors(self):
+        """Interaction patterns that could couple the spin sectors through
+        the Fock term (e.g. CoulombIntra) must NOT merge the sectors in
+        2Sz-fixed mode: the constrained state is spin-diagonal, so those
+        Fock entries vanish identically and each sector keeps its own
+        electron count."""
+        norb, ns, nvol = 2, 2, 1
+        nd = norb * ns
+        ham_trans = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        for i in range(nd):
+            ham_trans[:, i, i] = 1.0
+
+        # CoulombIntra: Hartree/Fock spin pattern couples up<->down
+        uab = np.zeros((nvol, norb, norb), dtype=np.complex128)
+        uab[:, 0, 0] = 2.0
+        uab[:, 1, 1] = 2.0
+        ci_spin = np.zeros((2, 2, 2, 2), dtype=int)
+        ci_spin[0, 1, 1, 0] = 1
+        ci_spin[1, 0, 0, 1] = 1
+
+        stub = self._make_uhfk_stub(norb, ns, nvol, ham_trans,
+                                    inter_table={"CoulombIntra": uab},
+                                    spin_table={"CoulombIntra": ci_spin},
+                                    iflag_fock=True,
+                                    sz_free=False, Nconds=[2, 1])
         stub._detect_blocks()  # must not raise
-        self.assertEqual(len(stub.block_info), 2)
-        # both blocks are mixed -> a single mu-group holding the total ncond
-        self.assertEqual(list(stub.block_to_group), [0, 0])
-        self.assertEqual(sum(stub.group_nconds), 2)
+        # every block is pure spin, and the two mu-groups carry [2, 1]
+        for blk in stub.block_info:
+            all_up = all(idx < norb for idx in blk)
+            all_dn = all(idx >= norb for idx in blk)
+            self.assertTrue(all_up or all_dn,
+                            "2Sz-fixed must keep spin sectors separate")
+        self.assertEqual(sorted(stub.group_nconds), [1, 2])
 
     # ----------------------------------------------------------------
     # Pattern 16: Partial orbital mixing via interaction only
@@ -1816,10 +1839,11 @@ class TestUHFrDetectBlocks(unittest.TestCase):
         self.assertEqual(len(stub.green_list), 2)
 
     def test_diagonal_transfer_orbital_split(self):
-        """Diagonal transfer splits into individual site blocks.
+        """Diagonal transfer splits into individual site sub-blocks.
 
         Nsize=3, nd=6, sz-free mode. Diagonal transfer only.
-        No interactions -> 6 independent blocks.
+        No interactions -> 6 independent sub-blocks within the single
+        'sz-free' reservoir (keys and electron counts stay unchanged).
         """
         Nsize = 3
         nd = 2 * Nsize
@@ -1831,8 +1855,13 @@ class TestUHFrDetectBlocks(unittest.TestCase):
                                     TwoSz=None, Ncond=3)
         stub._detect_blocks()
 
-        self.assertEqual(len(stub.green_list), nd,
-                         "Diagonal transfer -> {} blocks".format(nd))
+        self.assertEqual(list(stub.green_list.keys()), ["sz-free"],
+                         "block keys must stay unchanged")
+        info = stub.green_list["sz-free"]
+        self.assertEqual(info["occupied"], 3,
+                         "the reservoir electron count must stay unchanged")
+        self.assertEqual(len(info["sub_blocks"]), nd,
+                         "Diagonal transfer -> {} sub-blocks".format(nd))
 
     def test_interaction_connects_spins(self):
         """Interaction term connects spin-up and spin-down sites.
@@ -1858,10 +1887,13 @@ class TestUHFrDetectBlocks(unittest.TestCase):
                                     TwoSz=None, Ncond=2)
         stub._detect_blocks()
 
-        self.assertEqual(len(stub.green_list), 2,
-                         "Interaction connects spin pairs -> 2 blocks")
-        for k, info in stub.green_list.items():
-            self.assertEqual(len(info["label"]), 2)
+        self.assertEqual(list(stub.green_list.keys()), ["sz-free"],
+                         "block keys must stay unchanged")
+        info = stub.green_list["sz-free"]
+        self.assertEqual(len(info["sub_blocks"]), 2,
+                         "Interaction connects spin pairs -> 2 sub-blocks")
+        for sub in info["sub_blocks"]:
+            self.assertEqual(len(sub), 2)
 
     def test_partial_transfer_coupling(self):
         """Transfer couples sites 0-1 within spin-up, 2-3 within spin-down.
@@ -1893,9 +1925,12 @@ class TestUHFrDetectBlocks(unittest.TestCase):
                                     TwoSz=1, Ncond=3)
         stub._detect_blocks()
 
-        self.assertEqual(len(stub.green_list), 4,
-                         "Partial coupling -> 4 sub-blocks")
-        sizes = sorted([len(v["label"]) for v in stub.green_list.values()])
+        self.assertEqual(sorted(stub.green_list.keys()),
+                         ["spin-down", "spin-up"],
+                         "block keys must stay unchanged")
+        sizes = sorted(len(sub)
+                       for v in stub.green_list.values()
+                       for sub in v["sub_blocks"])
         self.assertEqual(sizes, [1, 1, 2, 2])
 
     def test_full_coupling_single_block(self):
@@ -1920,10 +1955,10 @@ class TestUHFrDetectBlocks(unittest.TestCase):
                          "Fully coupled -> single block")
 
     def test_ncond_preserved_after_split(self):
-        """Total occupied count is preserved after block splitting.
+        """Total occupied count is preserved after sub-block detection.
 
         Nsize=4, nd=8. sz-free mode with Ncond=6.
-        Diagonal transfer -> 8 blocks with Ncond summing to 6.
+        Diagonal transfer -> 8 sub-blocks; the reservoir keeps Ncond=6.
         """
         Nsize = 4
         nd = 2 * Nsize

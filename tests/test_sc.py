@@ -1244,7 +1244,7 @@ class TestChi0qConversion(unittest.TestCase):
         chi0q_hwave = np.random.randn(nmat, nvol, norb, norb) + \
                       1j * np.random.randn(nmat, nvol, norb, norb)
 
-        chi0q_ref = _convert_chi0q_to_ref_format(chi0q_hwave, norb, Nx, Ny, Nz, nmat)
+        chi0q_ref = _convert_chi0q_to_ref_format(chi0q_hwave, norb, Nx, Ny, Nz)
         self.assertEqual(chi0q_ref.shape, (norb, norb, Nx, Ny, Nz, nmat))
 
         # Verify mapping: chi0q_hwave[w, vol_idx, a, b] == chi0q_ref[a, b, ix, iy, iz, w]
@@ -2314,7 +2314,10 @@ class TestChi0qInternal(unittest.TestCase):
 
             # Load it back
             from hwave.sc import _load_chi0q
-            chi0q_loaded = _load_chi0q(input_dict)
+            chi0q_loaded, static_index = _load_chi0q(input_dict)
+            self.assertIsNone(static_index,
+                              "metadata-less file: the caller slices the "
+                              "center of its actual frequency axis")
 
             npt.assert_allclose(chi0q_calc, chi0q_loaded, atol=1e-15,
                                 err_msg="Loaded chi0q should exactly match computed chi0q")
@@ -2449,7 +2452,7 @@ class TestChi0q4Index(unittest.TestCase):
         rng = np.random.default_rng(42)
         chi0q_hw = rng.standard_normal((nmat, nvol, norb, norb, norb, norb))
 
-        chi0q_ref = _convert_chi0q_to_ref_format(chi0q_hw, norb, Nx, Ny, Nz, nmat)
+        chi0q_ref = _convert_chi0q_to_ref_format(chi0q_hw, norb, Nx, Ny, Nz)
 
         # Should be (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
         self.assertEqual(chi0q_ref.shape,
@@ -2496,8 +2499,8 @@ class TestChi0q4Index(unittest.TestCase):
             nmat = 32
 
             # Convert to ref format
-            chi0q_gen_ref = _convert_chi0q_to_ref_format(chi0q_gen, norb, Nx, Ny, Nz, nmat)
-            chi0q_red_ref = _convert_chi0q_to_ref_format(chi0q_red, norb, Nx, Ny, Nz, nmat)
+            chi0q_gen_ref = _convert_chi0q_to_ref_format(chi0q_gen, norb, Nx, Ny, Nz)
+            chi0q_red_ref = _convert_chi0q_to_ref_format(chi0q_red, norb, Nx, Ny, Nz)
 
             U_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
             U_k[0, 0] = 3.0
@@ -3071,7 +3074,7 @@ class TestKanamoriInteraction(unittest.TestCase):
 
             # Compute chi0q in sc.py ref format
             chi0q_ref = _convert_chi0q_to_ref_format(
-                chi0q_rpa, norb, Nx, Ny, Nz, nmat)
+                chi0q_rpa, norb, Nx, Ny, Nz)
 
             # Build interaction in k-space for sc.py
             inter_k = self._make_inter_k(norb, Nx, Ny, Nz,
