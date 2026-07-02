@@ -277,6 +277,51 @@ class solver_base():
             sys.exit(1)
         return ret
 
+    def _check_spin_flip_with_fixed_sz(self, trans_abs, norb):
+        """Reject one-body spin-flip terms in 2Sz-fixed mode.
+
+        Such terms genuinely break Sz conservation, so a fixed 2Sz is
+        ill-defined.  Numerical noise must not abort the run: cross-spin
+        entries are compared against the overall transfer scale (Wannier
+        transfers carry ~1e-14 cross-spin residues, and a k-sum amplifies
+        them past any absolute epsilon), so entries below 1e-8 of the scale
+        are treated as zero (and masked by the block structure downstream).
+
+        Parameters
+        ----------
+        trans_abs : ndarray, shape (2*norb, 2*norb)
+            Non-negative magnitudes of the one-body terms in spin-block
+            order (possibly summed over k).
+        norb : int
+            Number of orbitals per spin sector.
+
+        Raises
+        ------
+        ValueError
+            If a cross-spin entry exceeds 1e-8 of the largest entry.
+        """
+        scale = trans_abs.max() if trans_abs.size > 0 else 0.0
+        if scale <= 0.0:
+            return
+        cross = max(trans_abs[:norb, norb:].max(initial=0.0),
+                    trans_abs[norb:, :norb].max(initial=0.0))
+        if cross > 1.0e-8 * scale:
+            msg = ("2Sz-fixed mode is incompatible with spin-flip one-body "
+                   "terms: Sz is not conserved, so a fixed 2Sz is "
+                   "ill-defined. Use the Sz-free mode (omit 2Sz) for such "
+                   "systems.")
+            logger.error(msg)
+            raise ValueError(msg)
+        if cross > 0.0:
+            # nonzero but below the noise threshold: masked, not fatal --
+            # say so, in case it is a deliberately weak physical term
+            logger.warning(
+                "2Sz-fixed mode: cross-spin one-body entries up to {:.3e} "
+                "({:.1e} relative to the transfer scale) are below the "
+                "noise threshold (1e-8) and are ignored. If they are "
+                "physical (e.g. weak spin-orbit coupling), use the Sz-free "
+                "mode.".format(cross, cross / scale))
+
     def solve(self, path_to_output):
         """Solve the Hartree-Fock equations.
         

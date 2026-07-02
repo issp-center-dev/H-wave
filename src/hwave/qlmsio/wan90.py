@@ -258,6 +258,33 @@ def read_w90(name_in):
 
     return data
 
+def split_coulomb(data):
+    """Split a combined 'Coulomb' table into intra and inter parts.
+
+    The aggregate Coulomb input (zvo_ur.dat) provides both parts at once:
+    the r=0 orbital-diagonal entries are the on-site CoulombIntra terms,
+    everything else is CoulombInter.  This decomposition is the single
+    definition shared by all solvers (UHFk and RPA/FLEX).
+
+    Parameters
+    ----------
+    data : dict
+        {((rx,ry,rz), (alpha,beta)): value} as returned by read_w90.
+
+    Returns
+    -------
+    (dict, dict)
+        (CoulombIntra part, CoulombInter part), same key format.
+    """
+    intra = {}
+    inter = {}
+    for (irvec, orbvec), v in data.items():
+        if irvec == (0, 0, 0) and orbvec[0] == orbvec[1]:
+            intra[(irvec, orbvec)] = v
+        else:
+            inter[(irvec, orbvec)] = v
+    return intra, inter
+
 def write_w90(name_in, info_int, info_geometry, interact_shape):
     """Write Wannier90 Hamiltonian data to file.
     

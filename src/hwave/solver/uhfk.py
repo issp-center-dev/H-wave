@@ -4,6 +4,8 @@ import numpy as np
 import os
 from .base import solver_base
 from .perf import do_profile
+from . import fold
+from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
 
@@ -178,6 +180,17 @@ class UHFk(solver_base):
             self.sz_free = True
             self.Nconds = [ ncond ]
         else:
+            if self.enable_spin_orbital:
+                # Sz is not a good quantum number when spin is folded into
+                # the orbital index; block detection would silently assign
+                # the total Ncond to the spin-mixed blocks and ignore the
+                # constraint. Fail fast instead.
+                logger.error(
+                    "2Sz-fixed mode is not supported with "
+                    "enable_spin_orbital; omit 2Sz (Sz-free mode).")
+                raise ValueError(
+                    "2Sz-fixed mode is not supported with "
+                    "enable_spin_orbital; use Sz-free mode.")
             self.sz_free = False
             twosz = self.param_mod["2Sz"]
             self.Nconds = [ (ncond + twosz)//2, (ncond - twosz)//2 ]
@@ -312,108 +325,40 @@ class UHFk(solver_base):
     @do_profile
     def _reshape_geometry(self, geom):
         """Reshape geometry for sublattice structure.
-        
+
         Parameters
         ----------
         geom : dict
             Original geometry definition
-        
+
         Returns
         -------
         dict
-            Reshaped geometry for sublattice
+            Reshaped geometry (see fold.reshape_geometry)
         """
-        Bx,By,Bz = self.subshape
-        bvol = Bx * By * Bz
-
-        norb = geom['norb']
-
-        geom_new = {}
-        geom_new['norb'] = geom['norb'] * bvol
-        geom_new['rvec'] = np.matmul(np.diag([Bx, By, Bz]), geom['rvec'])
-
-        sc = np.array([1.0/Bx, 1.0/By, 1.0/Bz])
-        cw = [ sc * geom['center'][k] for k in range(norb) ]
-
-        centerv = np.zeros((norb * bvol, 3), dtype=np.double)
-        k = 0
-        for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
-            for i in range(norb):
-                centerv[k] = cw[i] + np.array([bx, by, bz]) * sc
-                k += 1
-        geom_new['center'] = centerv
-
-        return geom_new
+        return fold.reshape_geometry(geom, self.subshape)
 
     @do_profile
     def _reshape_interaction(self, ham, enable_spin_orbital):
         """Reshape interaction terms for sublattice.
-        
+
         Parameters
         ----------
         ham : dict
             Original interaction terms
         enable_spin_orbital : bool
-            Whether spin-orbital coupling is enabled
-        
+            Whether THIS table uses spin-orbital indices (Transfer in SO mode)
+
         Returns
         -------
         dict
-            Reshaped interaction terms
+            Reshaped interaction terms (see fold.reshape_interaction)
         """
-        Bx,By,Bz = self.subshape
-        nx,ny,nz = self.shape
-
-        norb_orig = self.param_ham_orig["Geometry"]["norb"]
-
-        def _reshape_orbit_(a, x):
-            return a + self.norb_orig * ( x[0] + Bx * (x[1] + By * (x[2])))
-
-        def _reshape_orbit_spin(a, x):
-            a_, s_ = a%norb_orig, a//norb_orig
-            return a_ + norb_orig * ( x[0] + Bx * (x[1] + By * (x[2] + Bz * s_)))
-
-        if enable_spin_orbital:
-            _reshape_orbit = _reshape_orbit_spin
-        else:
-            _reshape_orbit = _reshape_orbit_
-
-        def _round(x, n):
-            return x % n
-
-        ham_new = {}
-        for (irvec,orbvec), v in ham.items():
-            rx,ry,rz = irvec
-            alpha,beta = orbvec
-
-            for bz,by,bx in itertools.product(range(Bz),range(By),range(Bx)):
-
-                # original cell index of both endes
-                #   x0 -> x1=x0+r
-                x0,y0,z0 = bx, by, bz
-                x1,y1,z1 = x0 + rx, y0 + ry, z0 + rz
-
-                # decompose into supercell-index and cell-index within supercell
-                #   x0 = 0 + x0
-                #   x1 = X + xr
-                xx1,xr1 = x1 // Bx, x1 % Bx
-                yy1,yr1 = y1 // By, y1 % By
-                zz1,zr1 = z1 // Bz, z1 % Bz
-
-                # find orbital index within supercell
-                aa = _reshape_orbit(alpha,(x0,y0,z0))
-                bb = _reshape_orbit(beta, (xr1,yr1,zr1))
-
-                # Wrap-around can map distinct original R-vectors onto the same
-                # folded (ir, ov) key (e.g. when the hopping range reaches the
-                # cell size, allowed under relax_checks); accumulate so such
-                # contributions are summed rather than overwritten.
-                ir = (_round(xx1, nx), _round(yy1, ny), _round(zz1, nz))
-                ov = (aa, bb)
-
-                ham_new[(ir, ov)] = ham_new.get((ir, ov), 0.0) + v
-
-        return ham_new
+        return fold.reshape_interaction(
+            ham, self.subshape, self.shape,
+            norb_so_orig=self.param_ham_orig["Geometry"]["norb"],
+            norb_phys_orig=self.norb_phys_orig,
+            enable_spin_orbital=enable_spin_orbital)
 
     @do_profile
     def _reshape_green(self, green):
@@ -805,7 +750,7 @@ class UHFk(solver_base):
 
             tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec, *orbvec)] = v
+                tab_r[(*irvec, *orbvec)] += v
 
             t = np.conjugate(
                     np.transpose(
@@ -1045,7 +990,7 @@ class UHFk(solver_base):
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec, *orbvec)] = v
+                tab_r[(*irvec, *orbvec)] += v
 
             # fourier transform
             tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -1060,7 +1005,7 @@ class UHFk(solver_base):
             has_spin_dep = False
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
-                    tab_r[(*irvec, *orbvec)] = v
+                    tab_r[(*irvec, *orbvec)] += v
                 else:
                     has_spin_dep = True
             if has_spin_dep:
@@ -1116,6 +1061,9 @@ class UHFk(solver_base):
 
             # assume zvo_ur.dat
             # divide into r=0 (coulomb intra) and r!=0 (coulomb inter)
+            # via the decomposition shared with RPA/FLEX
+            coulomb_intra, coulomb_inter = wan90.split_coulomb(
+                self.param_ham["Coulomb"])
 
             # coulomb intra: diagonal part of r=0 cell
             uab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
@@ -1123,12 +1071,10 @@ class UHFk(solver_base):
             # coulomb inter: off-diagonal part
             vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
-            for (irvec,orbvec), v in self.param_ham["Coulomb"].items():
-                alpha, beta = orbvec
-                if irvec == (0,0,0) and alpha == beta:
-                    uab_r[(*irvec,alpha,beta)] = v
-                else:
-                    vab_r[(*irvec,alpha,beta)] = v
+            for (irvec,orbvec), v in coulomb_intra.items():
+                uab_r[(*irvec,*orbvec)] += v
+            for (irvec,orbvec), v in coulomb_inter.items():
+                vab_r[(*irvec,*orbvec)] += v
 
             # coulomb intra
             # interaction coeffs
@@ -1171,7 +1117,7 @@ class UHFk(solver_base):
                 for (irvec,orbvec), v in self.param_ham["CoulombIntra"].items():
                     alpha, beta = orbvec
                     if irvec == (0,0,0) and alpha == beta:
-                        uab_r[(*irvec, *orbvec)] = v
+                        uab_r[(*irvec, *orbvec)] += v
 
                 # interaction coeffs
                 self.inter_table["CoulombIntra"] = uab_r
@@ -1185,7 +1131,7 @@ class UHFk(solver_base):
 
                 for (irvec,orbvec), v in self.param_ham["CoulombInter"].items():
 #                    if irvec != (0,0,0):
-                        vab_r[(*irvec, *orbvec)] = v
+                        vab_r[(*irvec, *orbvec)] += v
 
                 vba = np.conjugate(
                     np.transpose(
@@ -1210,7 +1156,7 @@ class UHFk(solver_base):
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Hund"].items():
-                jab_r[(*irvec, *orbvec)] = v
+                jab_r[(*irvec, *orbvec)] += v
 
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
@@ -1236,7 +1182,7 @@ class UHFk(solver_base):
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Ising"].items():
-                jab_r[(*irvec, *orbvec)] = v
+                jab_r[(*irvec, *orbvec)] += v
 
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
@@ -1264,7 +1210,7 @@ class UHFk(solver_base):
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["PairLift"].items():
-                jab_r[(*irvec, *orbvec)] = v
+                jab_r[(*irvec, *orbvec)] += v
 
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
@@ -1290,7 +1236,7 @@ class UHFk(solver_base):
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Exchange"].items():
-                jab_r[(*irvec, *orbvec)] = v
+                jab_r[(*irvec, *orbvec)] += v
 
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
@@ -1316,7 +1262,7 @@ class UHFk(solver_base):
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["PairHop"].items():
-                jab_r[(*irvec, *orbvec)] = v
+                jab_r[(*irvec, *orbvec)] += v
 
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
@@ -1361,7 +1307,9 @@ class UHFk(solver_base):
         connectivity = np.zeros((nd, nd), dtype=np.float64)
 
         # 1. Transfer Hamiltonian: sum |ham_trans(k)| over k
-        connectivity += np.sum(np.abs(self.ham_trans), axis=0)
+        # (kept as a local: the 2Sz-fixed spin-flip check below reuses it)
+        trans_conn = np.sum(np.abs(self.ham_trans), axis=0)
+        connectivity += trans_conn
 
         # 2. Interaction terms: expand (norb_inter, norb_inter) x spin(2,2,2,2) -> (nd, nd)
         norb_inter = self.norb_phys if self.enable_spin_orbital else norb
@@ -1414,6 +1362,26 @@ class UHFk(solver_base):
                                 if spin_fock[s, t] > 0:
                                     connectivity[s * norb:(s + 1) * norb,
                                                  t * norb:(t + 1) * norb] += jab_sum
+
+        # 2Sz-fixed mode: each spin sector carries its own electron count
+        # (Ncond +- 2Sz)/2, so the up and down sectors are diagonalized
+        # independently and spin off-diagonal (Fock) entries are not used,
+        # exactly as in the pre-block full-matrix implementation
+        # (einsum 'ksasb->skab' kept only the spin-diagonal blocks).
+        # Interaction terms only produce spin off-diagonal Fock entries via
+        # the spin off-diagonal Green components, which vanish identically in
+        # the spin-diagonal state enforced by the constraint -- so their
+        # potential cross-spin connectivity is masked out here.  Without the
+        # mask, such interaction patterns would merge the two sectors into
+        # one mu-group and the 2Sz constraint would be silently lost.
+        # One-body spin-flip terms, in contrast, genuinely break Sz
+        # conservation, so a fixed 2Sz is ill-defined: reject them.
+        if not self.sz_free and not self.enable_spin_orbital and ns == 2:
+            self._check_spin_flip_with_fixed_sz(trans_conn, norb)
+            spin_diag = np.zeros((nd, nd), dtype=bool)
+            spin_diag[:norb, :norb] = True
+            spin_diag[norb:, norb:] = True
+            connectivity[~spin_diag] = 0.0
 
         # Symmetrize
         connectivity = connectivity + connectivity.T
