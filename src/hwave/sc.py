@@ -33,10 +33,138 @@ logger = logging.getLogger("hwave_sc")
 # near the nullspace of the commutator and missing a non-centrosymmetric kernel.
 _PARITY_GUARD_PROBES = 3
 
+# Default Matsubara grid size (mode.param.Nmat). Single definition so the
+# legacy-file fallback in _static_freq_position and the main solver loop can
+# never silently disagree on the grid.
+_DEFAULT_NMAT = 1024
+
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
+def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
+                          file_nmat=None):
+    """Locate the zero bosonic frequency along the chi0q frequency axis.
+
+    RPA writes ``freq_index`` (the ORIGINAL Matsubara indices, zero frequency
+    at original index Nmat//2) into chi0q.npz; the matsubara_frequency option
+    can restrict the stored axis, so the static slice is generally NOT at
+    nfreq//2 of the stored array.  Newer files also record ``nmat`` (the full
+    grid size of the producing run), which resolves the position without any
+    assumption about the hwave_sc configuration.
+
+    Parameters
+    ----------
+    freq_index : array-like or None
+        The freq_index metadata from the npz file (None for legacy files).
+    nfreq : int
+        Length of the stored frequency axis.
+    config_nmat : int
+        Nmat from mode.param of the hwave_sc run (fallback only).
+    file_name : str
+        For error messages.
+    file_nmat : int or None
+        The nmat metadata from the npz file, if present.
+
+    Returns
+    -------
+    int or None
+        Position of the zero bosonic frequency along the stored axis, or
+        None when the file carries no usable metadata -- the caller must
+        then slice the CENTER of the frequency axis it actually uses (only
+        the caller can identify that axis reliably, e.g. for the 6D
+        reference format).
+    """
+    if freq_index is None:
+        logger.warning(
+            "chi0q file '{}' has no freq_index metadata; using the center "
+            "of the stored frequency axis as the static slice.".format(
+                file_name))
+        return None
+
+    freq_index = np.asarray(freq_index).ravel()
+    if freq_index.size == 0:
+        raise ValueError(
+            "chi0q file '{}' records no frequencies (matsubara_frequency="
+            "\"none\"?); it cannot provide the static susceptibility."
+            .format(file_name))
+    if freq_index.size != nfreq:
+        # Legacy FLEX files store the FULL grid but a restricted freq_index
+        # (FLEX never applied the matsubara_frequency filter): the DATA axis
+        # is authoritative, so fall back to the pre-metadata behavior.
+        logger.warning(
+            "chi0q file '{}': freq_index length {} does not match the "
+            "frequency axis length {}; ignoring the metadata and using the "
+            "center of the stored frequency axis as the static slice."
+            .format(file_name, freq_index.size, nfreq))
+        return None
+
+    def _find(nmat_orig):
+        # the zero bosonic frequency has ORIGINAL index nmat_orig//2
+        pos = np.where(freq_index == nmat_orig // 2)[0]
+        if pos.size == 0:
+            raise ValueError(
+                "chi0q file '{}' does not contain the zero bosonic frequency "
+                "(original index Nmat//2 = {}; stored freq_index = {}..{}). "
+                "Regenerate chi0q with a matsubara_frequency range covering "
+                "Nmat//2.".format(file_name, nmat_orig // 2,
+                                  freq_index[0], freq_index[-1]))
+        return int(pos[0])
+
+    if file_nmat is not None:
+        # authoritative: the producing run recorded its own grid size
+        return _find(int(file_nmat))
+
+    if np.array_equal(freq_index, np.arange(nfreq)):
+        # Legacy file (no nmat metadata) with a contiguous 0-based
+        # freq_index: EITHER a full grid of its own (zero at nfreq//2) OR a
+        # matsubara_frequency=[0,K] restriction of SOME run's grid (config
+        # or larger).  Resolve only when the readings coincide; silently
+        # picking either would return a finite frequency whenever the other
+        # reading is the true one.
+        if nfreq == config_nmat:
+            return nfreq // 2
+        raise ValueError(
+            "chi0q file '{}' is ambiguous: freq_index = 0..{} with "
+            "mode.param.Nmat = {} could be either a full {}-point grid "
+            "(zero frequency at {}) or a [0,{}] restriction of a run with "
+            "a different Nmat (zero frequency elsewhere or absent). If the "
+            "file holds a full grid, set mode.param.Nmat = {}; otherwise "
+            "regenerate it with a newer version (which records nmat in "
+            "the file)."
+            .format(file_name, nfreq - 1, config_nmat, nfreq, nfreq // 2,
+                    nfreq - 1, nfreq))
+
+    # Legacy restricted range: fall back to the configured Nmat, which must
+    # be the producing run's grid size (the standard workflow shares one
+    # TOML).  Indices reaching past the config grid disprove that reading,
+    # so refuse to guess (looking up config_nmat//2 could land on a finite
+    # frequency of the true, larger grid).
+    if int(freq_index.max()) >= config_nmat:
+        raise ValueError(
+            "chi0q file '{}': freq_index reaches {} >= mode.param.Nmat = "
+            "{}, so the file was produced by a run with a different Nmat "
+            "and the zero-frequency position cannot be determined. Set "
+            "mode.param.Nmat to the producing run's value, or regenerate "
+            "the file with a newer version (which records nmat)."
+            .format(file_name, int(freq_index.max()), config_nmat))
+    return _find(config_nmat)
+
+
+def _read_freq_meta(data):
+    """Decode the frequency metadata of a chi0q/chiq npz file.
+
+    Returns
+    -------
+    (freq_index or None, nmat or None)
+        Single definition shared by all loaders so chi0q and chiq_s/chiq_c
+        can never interpret the same file's frequency axis differently.
+    """
+    freq_index = data["freq_index"] if "freq_index" in data else None
+    file_nmat = int(data["nmat"]) if "nmat" in data else None
+    return freq_index, file_nmat
+
 
 def _load_chi0q(input_dict):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
@@ -50,6 +178,9 @@ def _load_chi0q(input_dict):
     -------
     chi0q : ndarray
         Bare susceptibility array.
+    static_index : int
+        Position of the zero bosonic frequency along the frequency axis
+        (determined from the freq_index metadata).
     """
     output_info = input_dict["file"]["output"]
     path_to_output = output_info["path_to_output"]
@@ -63,7 +194,46 @@ def _load_chi0q(input_dict):
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
-    return chi0q
+
+    freq_index, file_nmat = _read_freq_meta(data)
+    # Identify the frequency axis from the array LAYOUT, never from the
+    # freq_index length (a restricted freq_index can coincidentally match
+    # an orbital axis).  4D raw: axis 0.  8D ref: last axis.  6D is either
+    # raw (nmat, nvol, norb^4; the last four axes are equal) or ref
+    # (norb, norb, Nx, Ny, Nz, nmat; the first two axes are equal) --
+    # disambiguate structurally, with the freq_index length only as the
+    # tiebreaker for degenerate shapes.  Without metadata
+    # _static_freq_position returns None and the caller slices the center
+    # of the axis it actually uses.
+    if freq_index is not None:
+        nfi = np.asarray(freq_index).size
+        if chi0q.ndim == 4:
+            nfreq = chi0q.shape[0]
+        elif chi0q.ndim == 8:
+            nfreq = chi0q.shape[-1]
+        elif chi0q.ndim == 6:
+            raw_like = len(set(chi0q.shape[2:])) == 1
+            ref_like = chi0q.shape[0] == chi0q.shape[1]
+            if raw_like and not ref_like:
+                nfreq = chi0q.shape[0]
+            elif ref_like and not raw_like:
+                nfreq = chi0q.shape[-1]
+            elif nfi == chi0q.shape[0]:
+                nfreq = chi0q.shape[0]
+            else:
+                nfreq = chi0q.shape[-1]
+        else:
+            nfreq = chi0q.shape[-1]
+    else:
+        nfreq = 0  # unused: no metadata -> _static_freq_position gives None
+    config_nmat = input_dict.get("mode", {}).get("param", {}).get("Nmat",
+                                                                _DEFAULT_NMAT)
+    static_index = _static_freq_position(freq_index, nfreq, config_nmat,
+                                         file_name, file_nmat=file_nmat)
+    if static_index is not None and static_index != nfreq // 2:
+        logger.info("static (zero bosonic frequency) slice at index {} "
+                    "of {}".format(static_index, nfreq))
+    return chi0q, static_index
 
 
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
@@ -217,6 +387,21 @@ def _read_interaction_files(input_dict):
             f = os.path.join(path_to_input, files[itype])
             logger.info("Reading {} from {}".format(itype, f))
             interactions[itype] = wan90.read_w90(f)
+
+    # combined 'Coulomb' input: same decomposition as UHFk/RPA
+    # (wan90.split_coulomb; r=0 diagonal -> CoulombIntra, rest -> CoulombInter)
+    if "Coulomb" in files:
+        if "CoulombIntra" in interactions or "CoulombInter" in interactions:
+            raise ValueError(
+                "Coulomb cannot be specified together with "
+                "CoulombIntra or CoulombInter")
+        f = os.path.join(path_to_input, files["Coulomb"])
+        logger.info("Reading Coulomb from {}".format(f))
+        coulomb_intra, coulomb_inter = wan90.split_coulomb(wan90.read_w90(f))
+        if coulomb_intra:
+            interactions["CoulombIntra"] = coulomb_intra
+        if coulomb_inter:
+            interactions["CoulombInter"] = coulomb_inter
 
     return geom_info, hr, interactions
 
@@ -606,7 +791,7 @@ def _build_sc_matrices(inter_k, norb, ix, iy, iz):
 
 
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                      pairing_type="singlet"):
+                      pairing_type="singlet", static_index=None):
     """Compute effective pairing interaction V(q).
 
     Supports two modes:
@@ -657,7 +842,8 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         # General mode: 4-index S,C matrices
         # Required when 4-index chi0q is available or Hund/Exchange present
         return _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                                         pairing_type=pairing_type)
+                                         pairing_type=pairing_type,
+                                         static_index=static_index)
     else:
         # Simple mode: backward compatible with original implementation
         # Only used for 2-index chi0q without Hund/Exchange
@@ -668,11 +854,12 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                 "cross-channel contributions are dropped. Provide a 4-index "
                 "chi0q (general mode) for the full Kuroki S/C treatment.")
         return _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                                        pairing_type=pairing_type)
+                                        pairing_type=pairing_type,
+                                        static_index=static_index)
 
 
 def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                             pairing_type="singlet"):
+                             pairing_type="singlet", static_index=None):
     """Compute vertices using simple Wc=U+2V, Ws=-U formulation.
 
     For singlet:
@@ -699,7 +886,9 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     Ws = (-U_k).transpose(2, 3, 4, 0, 1).copy()
 
     # chi0 at static limit: (Nx, Ny, Nz, norb, norb)
-    chi0_static = chi0q[:, :, :, :, :, nmat // 2].transpose(2, 3, 4, 0, 1).copy()
+    # (zero bosonic frequency; nmat//2 only for a full frequency grid)
+    si = nmat // 2 if static_index is None else static_index
+    chi0_static = chi0q[:, :, :, :, :, si].transpose(2, 3, 4, 0, 1).copy()
 
     I_mat = np.broadcast_to(np.eye(norb, dtype=complex), (Nx, Ny, Nz, norb, norb)).copy()
 
@@ -731,7 +920,7 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
 
 
 def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                              pairing_type="singlet"):
+                              pairing_type="singlet", static_index=None):
     """Compute effective pairing interaction using general S,C matrices.
 
     For singlet (Kuroki et al., arXiv:0902.3691, Eq.(6)):
@@ -759,13 +948,15 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
 
     # Extract chi0 at static limit for all q-points
+    # (zero bosonic frequency; nmat//2 only for a full frequency grid)
+    si = nmat // 2 if static_index is None else static_index
     if chi0q_is_4index:
         # (norb, norb, norb, norb, Nx, Ny, Nz, nmat) -> (Nx, Ny, Nz, nd, nd)
-        chi0_static = chi0q[:, :, :, :, :, :, :, nmat // 2].reshape(
+        chi0_static = chi0q[:, :, :, :, :, :, :, si].reshape(
             nd, nd, Nx, Ny, Nz).transpose(2, 3, 4, 0, 1).copy()
     else:
         # (norb, norb, Nx, Ny, Nz, nmat) -> expand to (Nx, Ny, Nz, nd, nd)
-        chi0_2d = chi0q[:, :, :, :, :, nmat // 2].transpose(2, 3, 4, 0, 1).copy()
+        chi0_2d = chi0q[:, :, :, :, :, si].transpose(2, 3, 4, 0, 1).copy()
         # chi0_2d shape: (Nx, Ny, Nz, norb, norb)
         if norb == 1:
             chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
@@ -942,13 +1133,27 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
                 chi_convention, chi_convention_c))
 
     # Convert from H-wave format (nmat, nvol, nd, nd) to
-    # reference format (Nx, Ny, Nz, nd, nd) at static limit
-    nmat_s = chi_s_raw.shape[0]
-    center = nmat_s // 2
+    # reference format (Nx, Ny, Nz, nd, nd) at static limit.
+    # The zero bosonic frequency is located via the freq_index/nmat metadata
+    # (RPA chiq files can carry a restricted matsubara_frequency axis whose
+    # center is NOT the static limit); FLEX files always hold the full grid.
+    config_nmat = input_dict.get("mode", {}).get("param", {}).get(
+        "Nmat", _DEFAULT_NMAT)
 
-    # Extract static limit (center Matsubara frequency)
-    chi_s_static = chi_s_raw[center].reshape(Nx, Ny, Nz, -1)
-    chi_c_static = chi_c_raw[center].reshape(Nx, Ny, Nz, -1)
+    def _static_center(data, raw, path):
+        fi, fn = _read_freq_meta(data)
+        pos = _static_freq_position(fi, raw.shape[0], config_nmat, path,
+                                    file_nmat=fn)
+        # no usable metadata: center of the actual data axis (axis 0 in the
+        # H-wave chiq layout)
+        return raw.shape[0] // 2 if pos is None else pos
+
+    center_s = _static_center(data_s, chi_s_raw, chi_s_path)
+    center_c = _static_center(data_c, chi_c_raw, chi_c_path)
+
+    # Extract static limit (zero bosonic frequency)
+    chi_s_static = chi_s_raw[center_s].reshape(Nx, Ny, Nz, -1)
+    chi_c_static = chi_c_raw[center_c].reshape(Nx, Ny, Nz, -1)
 
     # Determine dimensionality
     nd_chi = int(np.sqrt(chi_s_static.shape[-1]))
@@ -2169,7 +2374,7 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
 # chi0q format conversion
 # ---------------------------------------------------------------------------
 
-def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz, nmat):
+def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
     """Convert chi0q from H-wave format to reference code format.
 
     Supports both 2-index (reduced) and 4-index (general) chi0q:
@@ -2184,7 +2389,7 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz, nmat):
     ----------
     chi0q : ndarray
         chi0q in H-wave format.
-    norb, Nx, Ny, Nz, nmat : int
+    norb, Nx, Ny, Nz : int
         System parameters.
 
     Returns
@@ -2237,7 +2442,7 @@ def calc_eliashberg(input_dict):
     beta = 1.0 / T
     cell_shape = mode_param["CellShape"]
     sub_shape = mode_param.get("SubShape", cell_shape)
-    nmat = mode_param.get("Nmat", 1024)
+    nmat = mode_param.get("Nmat", _DEFAULT_NMAT)
 
     # Filling
     if "filling" in mode_param:
@@ -2349,21 +2554,23 @@ def calc_eliashberg(input_dict):
         if chi0q_mode == "calc":
             chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor=chi0q_tensor,
                                                 precomputed_mu=mu)
+            # internally computed chi0q always carries the full frequency grid
+            static_index = None
         else:
-            chi0q_raw = _load_chi0q(input_dict)
+            chi0q_raw, static_index = _load_chi0q(input_dict)
 
-        # Step 8: Convert chi0q format
-        if chi0q_raw.ndim in (4, 6):
-            nmat_chi0q = chi0q_raw.shape[0]
-        else:
-            nmat_chi0q = chi0q_raw.shape[-1]
-        chi0q = _convert_chi0q_to_ref_format(chi0q_raw, norb, Nx, Ny, Nz, nmat_chi0q)
+        # Step 8: Convert chi0q format; the frequency axis is last in the
+        # reference format, so read its length after the conversion (a 6D
+        # input can be either raw H-wave (nmat first) or ref (nmat last))
+        chi0q = _convert_chi0q_to_ref_format(chi0q_raw, norb, Nx, Ny, Nz)
+        nmat_chi0q = chi0q.shape[-1]
         logger.info("chi0q converted to shape: {}".format(chi0q.shape))
 
         # Step 9: Compute RPA vertices
         logger.info("Computing RPA vertices (pairing_type={})...".format(pairing_type))
         vertex_result = _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
-                                          pairing_type=pairing_type)
+                                          pairing_type=pairing_type,
+                                          static_index=static_index)
         if isinstance(vertex_result, tuple):
             Pc_q, Ps_q = vertex_result
             Vs_q = Pc_q + Ps_q
