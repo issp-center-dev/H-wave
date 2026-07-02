@@ -7,7 +7,7 @@ therefore never merge the up and down sectors into one mu-group in 2Sz-fixed
 mode; doing so silently replaces the constrained solution by the Sz-free one.
 
 Reference values are from the pre-block-detection implementation (main,
-c0b0a3c) on tests/uhfk/coulombintra with 2Sz = 4 and no initial green.
+c0b0a3c) on tests/uhfk/CoulombIntra with 2Sz = 4 and no initial green.
 """
 import os
 import tempfile
@@ -26,7 +26,7 @@ class TestUHFk2SzFixedBlocks(unittest.TestCase):
         if cls._solver_cache is not None:
             return cls._solver_cache
         cur = os.getcwd()
-        os.chdir("tests/uhfk/coulombintra")
+        os.chdir("tests/uhfk/CoulombIntra")
         try:
             with open("input.toml", "rb") as f:
                 params = tomli.load(f)
