@@ -187,7 +187,7 @@ TOML形式
 
   **形式 :** bool型 (デフォルトは false)
 
-  **説明 :** ``true`` にすると、計算の主要部（Green関数、感受率 :math:`\chi_0(q)` のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。
+  **説明 :** ``true`` にすると、計算の主要部（Green関数、感受率 :math:`\chi_0(q)` のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。CuPy は CUDA バージョンに合ったビルド済み wheel（CUDA 12.x なら ``pip install cupy-cuda12x``）でのインストールを推奨します（`CuPyインストールガイド <https://docs.cupy.dev/en/stable/install.html>`_ 参照）。
 
 - ``fft_workers``
 

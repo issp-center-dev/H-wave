@@ -244,7 +244,9 @@ Parameters
   FFT pair bubble, the spin inflation, and the batched RPA solve; for FLEX
   the whole SCF loop) runs on a GPU via CuPy. When CuPy or a CUDA device is
   unavailable, the solver warns and falls back to the CPU (numpy) path with
-  an identical result.
+  an identical result. Install CuPy as the precompiled binary wheel matching
+  your CUDA version (e.g. ``pip install cupy-cuda12x`` for CUDA 12.x); see
+  the `CuPy installation guide <https://docs.cupy.dev/en/stable/install.html>`_.
 
 - ``fft_workers``
 

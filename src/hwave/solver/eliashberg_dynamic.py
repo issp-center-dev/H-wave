@@ -699,6 +699,10 @@ def solve_dynamic(input_dict):
     if gpu_active:
         logger.info("GPU backend active (CuPy): moving G2 and the pairing "
                     "vertex to the device (%.2f GB each).", G2_w.nbytes / 1e9)
+        # Two resident tensors plus roughly one same-sized transform
+        # workspace per matvec (the gap-sized arrays are norb^2 smaller).
+        backend.warn_if_device_memory_short(
+            3 * G2_w.nbytes, logger, label="the dynamic Eliashberg kernel")
         G2_w = xp.asarray(G2_w)
         Vs_q_w = xp.asarray(Vs_q_w)
 
