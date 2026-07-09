@@ -40,6 +40,63 @@ _DEFAULT_NMAT = 1024
 
 
 # ---------------------------------------------------------------------------
+# Eliashberg frequency mode dispatch
+# ---------------------------------------------------------------------------
+
+def _eliashberg_frequency(input_dict):
+    """Validate and return the eliashberg frequency mode.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Parsed TOML configuration dictionary.
+
+    Returns
+    -------
+    str
+        Either "static" (default) or "dynamic".
+
+    Raises
+    ------
+    ValueError
+        If the frequency mode is not in the allowed set.
+    """
+    freq = input_dict.get("eliashberg", {}).get("frequency", "static")
+    if freq not in ("static", "dynamic"):
+        raise ValueError(
+            "eliashberg.frequency must be 'static' or 'dynamic', got '{}'"
+            .format(freq))
+    return freq
+
+
+def _validate_dynamic_prereqs(input_dict):
+    """Validate prerequisites for dynamic Eliashberg calculation.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Parsed TOML configuration dictionary.
+
+    Raises
+    ------
+    ValueError
+        If chi0q_mode is not "flex" or if Nmat is odd.
+    """
+    eli = input_dict.get("eliashberg", {})
+    if eli.get("chi0q_mode") != "flex":
+        raise ValueError(
+            "eliashberg.frequency='dynamic' requires chi0q_mode='flex' "
+            "(full-frequency chiq_s/chiq_c and a dressed green are only "
+            "produced by the FLEX path); got chi0q_mode='{}'"
+            .format(eli.get("chi0q_mode")))
+    nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
+    if nmat % 2 != 0:
+        raise ValueError(
+            "eliashberg.frequency='dynamic' requires an even Nmat "
+            "(centered Matsubara grid); got Nmat={}".format(nmat))
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -1067,8 +1124,155 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
     return Vs_q
 
 
+def _resolve_flex_paths(input_dict):
+    """Resolve the FLEX output directory and chi_s/chi_c/green file paths.
+
+    Shared by `_load_flex_susceptibilities_full` (which reads the files) and
+    `_load_flex_susceptibilities` (which re-derives the static frequency
+    index from the same files' metadata), so the two never disagree about
+    which files are in play.
+    """
+    file_input = input_dict.get("file", {}).get("input", {})
+    flex_dir = file_input.get("path_to_flex_output",
+                              input_dict.get("file", {}).get("output", {}).get(
+                                  "path_to_output", "output"))
+
+    eli_param = input_dict.get("eliashberg", {})
+    chi_s_file = eli_param.get("flex_chi_s", "chiq_s.npz")
+    chi_c_file = eli_param.get("flex_chi_c", "chiq_c.npz")
+    green_file = eli_param.get("flex_green", "green.npz")
+
+    chi_s_path = os.path.join(flex_dir, chi_s_file)
+    chi_c_path = os.path.join(flex_dir, chi_c_file)
+    green_path = os.path.join(flex_dir, green_file)
+    return chi_s_path, chi_c_path, green_path
+
+
+def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
+    """Load FLEX-computed susceptibilities from NPZ files (full frequency axis).
+
+    Parameters
+    ----------
+    input_dict : dict
+        Parsed TOML configuration.
+    norb : int
+        Number of orbitals.
+    Nx, Ny, Nz : int
+        Grid dimensions.
+
+    Returns
+    -------
+    chis_w : ndarray
+        Spin susceptibility, shape (Nx, Ny, Nz, nd, nd, nmat) with nd = norb^2
+        (after the spin-orbital block-extraction/expansion, if needed) and
+        the full bosonic Matsubara axis as the last dimension.
+    chic_w : ndarray
+        Charge susceptibility, same shape/convention as `chis_w`.
+    green_w : ndarray or None
+        Dressed Green's function if available, shape
+        (norb, norb, Nx, Ny, Nz, nmat) with the full fermionic axis.
+    chi_convention : str
+        Orbital convention of chis_w/chic_w: "myo" (general full-vertex FLEX)
+        or "kuroki" (reduced FLEX / legacy files). Pass this to
+        _compute_vertices_flex so the matching S/C matrices are used.
+    """
+    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+
+    # Expand the FULL frequency axis (the static slice is selected by the
+    # caller). The frequency axis is moved from leading to trailing position.
+    chis_w = np.moveaxis(_expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz), 0, -1)
+    chic_w = np.moveaxis(_expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz), 0, -1)
+
+    green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    return chis_w, chic_w, green_w, chi_convention
+
+
+def _read_flex_chi_raw(input_dict):
+    """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
+
+    Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
+    ``(nmat, nvol, nd, nd)`` -- no reshape/expansion, so callers that only need
+    one static frequency can slice before expanding.
+    """
+    chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
+
+    logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
+    data_s = np.load(chi_s_path)
+    chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+    # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
+    # The tag and the general-path MYO consumption ship together, so any
+    # untagged file from a released build is necessarily a reduced/Kuroki
+    # output -> default to "kuroki". (A pre-tag general output could only exist
+    # as a transient artifact of an unreleased dev build; the s/c-agreement
+    # check below still guards against accidentally mixing conventions.)
+    chi_convention = (str(data_s["chi_convention"])
+                      if "chi_convention" in data_s else "kuroki")
+
+    logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
+    data_c = np.load(chi_c_path)
+    chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    # The spin and charge files must share one convention; combining e.g. an MYO
+    # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
+    chi_convention_c = (str(data_c["chi_convention"])
+                        if "chi_convention" in data_c else "kuroki")
+    if chi_convention_c != chi_convention:
+        raise ValueError(
+            "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
+            "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
+                chi_convention, chi_convention_c))
+    return chi_s_raw, chi_c_raw, chi_convention
+
+
+def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz):
+    """Reshape H-wave chi ``(nfreq, nvol, nd, nd)`` to
+    ``(nfreq, Nx, Ny, Nz, nd, nd)`` in the ``nd = norb^2`` Eliashberg space,
+    expanding the spin-orbital block if the file is in spin-orbital space.
+
+    The mapping is elementwise in frequency (no mixing across the Matsubara
+    axis), so it may be applied to a single static slice or to the full axis
+    identically -- the static loader slices FIRST to avoid allocating the full
+    spin-orbital-expanded array.
+    """
+    nd = norb * norb
+    nfreq = chi_raw.shape[0]
+    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, -1)
+    nd_chi = int(np.sqrt(chi_full.shape[-1]))
+    chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
+
+    if nd_chi == nd:
+        return chi_full
+
+    # Spin-orbital reduced space (nd_chi = norb*ns): extract the spin-up block
+    # (diagonal in spin) and expand to norb^2 x norb^2 (diagonal in l2).
+    chi_orb = chi_full[:, :, :, :, :norb, :norb]
+    out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
+    for l2 in range(norb):
+        out[:, :, :, :, l2::norb, l2::norb] = chi_orb
+    return out
+
+
+def _load_flex_green(input_dict, norb, Nx, Ny, Nz):
+    """Load the FLEX dressed Green's function, or ``None`` if absent.
+
+    Returns shape ``(norb, norb, Nx, Ny, Nz, nmat)`` (full fermionic axis).
+    """
+    _, _, green_path = _resolve_flex_paths(input_dict)
+    if not os.path.exists(green_path):
+        return None
+    logger.info("Loading FLEX dressed Green from: {}".format(green_path))
+    data_g = np.load(green_path)
+    green_raw = data_g["green"]
+    # H-wave format: (nblock, nmat, nvol, norb, norb)
+    nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nmat)
+    return green_raw[0].reshape(
+        nmat_g, Nx, Ny, Nz, norb, norb
+    ).transpose(4, 5, 1, 2, 3, 0).copy()
+
+
 def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
-    """Load FLEX-computed susceptibilities from NPZ files.
+    """Load FLEX-computed susceptibilities at the static (zero bosonic
+    frequency) limit from NPZ files.
 
     Parameters
     ----------
@@ -1092,107 +1296,40 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
         "kuroki" (reduced FLEX / legacy files). Pass this to
         _compute_vertices_flex so the matching S/C matrices are used.
     """
-    nd = norb * norb
-    file_input = input_dict.get("file", {}).get("input", {})
-    flex_dir = file_input.get("path_to_flex_output",
-                              input_dict.get("file", {}).get("output", {}).get(
-                                  "path_to_output", "output"))
+    # Read the raw chi (H-wave layout, frequency = axis 0) WITHOUT expanding,
+    # so the static slice is taken before the spin-orbital expansion -- the full
+    # loader would otherwise allocate the whole Nmat-long expanded array only to
+    # keep one frequency (a memory regression proportional to Nmat).
+    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
 
-    eli_param = input_dict.get("eliashberg", {})
-    chi_s_file = eli_param.get("flex_chi_s", "chiq_s.npz")
-    chi_c_file = eli_param.get("flex_chi_c", "chiq_c.npz")
-    green_file = eli_param.get("flex_green", "green.npz")
-
-    # Load spin susceptibility
-    chi_s_path = os.path.join(flex_dir, chi_s_file)
-    logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
-    data_s = np.load(chi_s_path)
-    chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
-    # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
-    # The tag and the general-path MYO consumption ship together, so any
-    # untagged file from a released build is necessarily a reduced/Kuroki
-    # output -> default to "kuroki". (A pre-tag general output could only exist
-    # as a transient artifact of an unreleased dev build; the s/c-agreement
-    # check below still guards against accidentally mixing conventions.)
-    chi_convention = (str(data_s["chi_convention"])
-                      if "chi_convention" in data_s else "kuroki")
-
-    # Load charge susceptibility
-    chi_c_path = os.path.join(flex_dir, chi_c_file)
-    logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
-    data_c = np.load(chi_c_path)
-    chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
-    # The spin and charge files must share one convention; combining e.g. an MYO
-    # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
-    chi_convention_c = (str(data_c["chi_convention"])
-                        if "chi_convention" in data_c else "kuroki")
-    if chi_convention_c != chi_convention:
-        raise ValueError(
-            "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
-            "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
-                chi_convention, chi_convention_c))
-
-    # Convert from H-wave format (nmat, nvol, nd, nd) to
-    # reference format (Nx, Ny, Nz, nd, nd) at static limit.
     # The zero bosonic frequency is located via the freq_index/nmat metadata
     # (RPA chiq files can carry a restricted matsubara_frequency axis whose
     # center is NOT the static limit); FLEX files always hold the full grid.
+    # Re-derive the same paths the raw reader used so the metadata read here
+    # is guaranteed to describe the same files.
+    chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
     config_nmat = input_dict.get("mode", {}).get("param", {}).get(
         "Nmat", _DEFAULT_NMAT)
 
-    def _static_center(data, raw, path):
+    def _static_center(path, nfreq):
+        data = np.load(path)
         fi, fn = _read_freq_meta(data)
-        pos = _static_freq_position(fi, raw.shape[0], config_nmat, path,
+        pos = _static_freq_position(fi, nfreq, config_nmat, path,
                                     file_nmat=fn)
         # no usable metadata: center of the actual data axis (axis 0 in the
         # H-wave chiq layout)
-        return raw.shape[0] // 2 if pos is None else pos
+        return nfreq // 2 if pos is None else pos
 
-    center_s = _static_center(data_s, chi_s_raw, chi_s_path)
-    center_c = _static_center(data_c, chi_c_raw, chi_c_path)
+    center_s = _static_center(chi_s_path, chi_s_raw.shape[0])
+    center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
-    # Extract static limit (zero bosonic frequency)
-    chi_s_static = chi_s_raw[center_s].reshape(Nx, Ny, Nz, -1)
-    chi_c_static = chi_c_raw[center_c].reshape(Nx, Ny, Nz, -1)
+    # Slice the static frequency FIRST, then expand only that single slice.
+    chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
+                            norb, Nx, Ny, Nz)[0]
+    chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
+                            norb, Nx, Ny, Nz)[0]
 
-    # Determine dimensionality
-    nd_chi = int(np.sqrt(chi_s_static.shape[-1]))
-    chi_s_static = chi_s_static.reshape(Nx, Ny, Nz, nd_chi, nd_chi)
-    chi_c_static = chi_c_static.reshape(Nx, Ny, Nz, nd_chi, nd_chi)
-
-    # If chi is in spin-orbital space (nd_chi = norb*ns), extract orbital block
-    # and convert to norb^2 x norb^2 Eliashberg space
-    if nd_chi != nd:
-        # Spin-orbital reduced space: nd_chi = norb*ns
-        ns = nd_chi // norb
-        # Extract the spin-up block (diagonal in spin)
-        chis_orb = chi_s_static[:, :, :, :norb, :norb]
-        chic_orb = chi_c_static[:, :, :, :norb, :norb]
-
-        # Expand to norb^2 x norb^2 (diagonal in l2 index)
-        chis = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-        chic = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-        for l2 in range(norb):
-            chis[:, :, :, l2::norb, l2::norb] = chis_orb
-            chic[:, :, :, l2::norb, l2::norb] = chic_orb
-    else:
-        chis = chi_s_static
-        chic = chi_c_static
-
-    # Load dressed Green's function if available
-    green_dressed = None
-    green_path = os.path.join(flex_dir, green_file)
-    if os.path.exists(green_path):
-        logger.info("Loading FLEX dressed Green from: {}".format(green_path))
-        data_g = np.load(green_path)
-        green_raw = data_g["green"]
-        # H-wave format: (nblock, nmat, nvol, norb, norb)
-        nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
-        # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nmat)
-        green_dressed = green_raw[0].reshape(
-            nmat_g, Nx, Ny, Nz, norb, norb
-        ).transpose(4, 5, 1, 2, 3, 0).copy()
-
+    green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     return chis, chic, green_dressed, chi_convention
 
 
@@ -1551,40 +1688,26 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
             "choose an init_gap of the matching parity (even for singlet, "
             "odd for triplet).".format(pairing_type))
 
-    eigenvalue = 0.0
-    for iteration in range(max_iter):
-        sigma_new = _project(A.matvec(sigma_old.ravel()).reshape(shape))
-        norm = np.linalg.norm(sigma_new)
-        eigenvalue = norm
+    # The power-iteration loop itself (matvec, projection, normalize,
+    # convergence check, mixing) is factored into _solve_leading so a future
+    # dynamic-frequency kernel can reuse the identical driver. `A` was already
+    # built above (for the leakage probe), so `make_operator` just hands back
+    # that same operator rather than rebuilding it. The gap-parity projector
+    # operates on the (norb, norb, Nx, Ny, Nz) tensor, so it is wrapped as a
+    # flat-vector -> flat-vector `project_fn` for the generic driver; when no
+    # projection applies (`do_project` False) `project_fn` is None, matching
+    # the historical (unprojected) iteration exactly.
+    make_operator = lambda: (A, vec_size)
+    project_fn = ((lambda flat: _project(flat.reshape(shape)).ravel())
+                 if do_project else None)
 
-        # A (possibly projected) iterate can collapse to the zero vector when
-        # the kernel annihilates the requested parity sector (e.g. a channel
-        # with no pairing weight); normalizing by `norm` would then produce
-        # NaN. `np.linalg.norm` squares its inputs, so it returns *exactly* 0.0
-        # once the iterate underflows (there is no representable nonzero value
-        # between 0 and the underflow floor to misclassify); guard precisely on
-        # that, plus any non-finite norm, and report non-convergence with the
-        # last finite iterate instead.
-        if norm == 0.0 or not np.isfinite(norm):
-            logger.warning(
-                "Eliashberg iterate collapsed to zero norm at iteration {}; "
-                "the kernel annihilates the '{}' sector, so the eigenvalue "
-                "cannot be normalized. Returning the previous iterate as "
-                "non-converged.".format(iteration, pairing_type or "requested"))
-            return sigma_old, 0.0, False, iteration + 1
+    eigenvalue, sigma_flat, info = _solve_leading(
+        make_operator, vec_size, "iteration",
+        max_iter=max_iter, convergence_tol=tol, init_vec=sigma_old.ravel(),
+        alpha=alpha, project_fn=project_fn,
+    )
 
-        diff = np.linalg.norm(sigma_new / norm - sigma_old)
-        logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
-            iteration, norm, diff))
-
-        if diff < tol:
-            logger.info("Converged at iteration {}".format(iteration + 1))
-            return sigma_new / norm, eigenvalue, True, iteration + 1
-
-        sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
-
-    logger.warning("Failed to converge after {} iterations".format(max_iter))
-    return sigma_old, eigenvalue, False, max_iter
+    return sigma_flat.reshape(shape), eigenvalue, info["converged"], info["n_iter"]
 
 
 def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
@@ -1898,6 +2021,174 @@ def _shift_from_eigenvalues(vals, factor=0.9):
     return float(vals[np.argmax(np.abs(vals))].real) * factor
 
 
+def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
+                   max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
+                   sigma_shift=None, alpha=0.5, project_fn=None):
+    """Shared leading-eigenpair driver behind the static Eliashberg solvers.
+
+    This holds the ARPACK/shift-invert eigen-selection-and-ordering body of
+    ``_solve_eigenvalue`` and the power-iteration loop of ``_solve_iteration``,
+    generalized to act on any ``make_operator``/``vec_size`` pair (not just the
+    static ``_make_kernel_operator`` result) so a future dynamic-frequency
+    kernel can reuse the exact same driver.
+
+    Parameters
+    ----------
+    make_operator : callable
+        Zero-argument callable returning ``(A, op_vec_size)``, i.e. the same
+        convention as ``_make_kernel_operator`` (a
+        ``scipy.sparse.linalg.LinearOperator`` acting on flat vectors of
+        length ``vec_size``, plus that size). Called exactly once.
+    vec_size : int
+        Size of the flattened vector space that ``A`` acts on.
+    solver_mode : str
+        "arnoldi", "shift-invert-bicgstab", "shift-invert-gmres", or
+        "shift-invert-lgmres" select the ARPACK/shift-invert eigenanalysis
+        (the former body of ``_solve_eigenvalue``, excluding its "subspace"
+        branch which stays in that wrapper). "iteration" selects the power
+        loop (the former body of ``_solve_iteration``).
+    num_eigenvalues : int
+        Number of eigenvalues to request from ARPACK. Only used by the
+        eigenvalue-family modes.
+    max_iter : int
+        Maximum number of power-iteration steps. Only used by "iteration".
+    convergence_tol : float
+        Power-iteration convergence tolerance on the normalized-iterate
+        difference. Only used by "iteration".
+    init_vec : ndarray, optional
+        Flat initial vector, shape ``(vec_size,)``, for "iteration" mode
+        (already projected onto the desired sector by the caller, if
+        applicable). Required for "iteration" mode.
+    sigma_shift : float, optional
+        Shift-invert target for the "shift-invert-*" modes. If None, it is
+        estimated from a preliminary Arnoldi pass, exactly as
+        ``_solve_eigenvalue`` does.
+    alpha : float
+        Power-iteration mixing parameter. Only used by "iteration".
+    project_fn : callable, optional
+        Flat-vector -> flat-vector projector applied to every power-iteration
+        iterate (e.g. the gap-parity projector in ``_solve_iteration``). Only
+        used by "iteration"; when None, no projection is applied.
+
+    Returns
+    -------
+    leading_eigenvalue : complex or float
+        The dominant eigenvalue (eigenvalue-family: largest real part, per
+        ``_order_eigenpairs``; iteration: the converged/last iterate norm).
+    leading_eigenvector : ndarray
+        Flat, shape ``(vec_size,)``.
+    eig_analysis : dict
+        Eigenvalue-family modes: ``{"eigenvalues": vals, "eigenvectors": vecs,
+        "sigma_shift": sigma_shift}`` with ``vals`` ordered by descending real
+        part (``_order_eigenpairs``) and ``vecs`` the matching eigenvectors as
+        columns. "iteration" mode: ``{"converged": bool, "n_iter": int}``.
+    """
+    if solver_mode == "iteration":
+        if init_vec is None:
+            raise ValueError("init_vec is required for solver_mode='iteration'")
+        A, _ = make_operator()
+        sigma_old = init_vec
+        eigenvalue = 0.0
+
+        for iteration in range(max_iter):
+            sigma_new = A.matvec(sigma_old)
+            if project_fn is not None:
+                sigma_new = project_fn(sigma_new)
+            norm = np.linalg.norm(sigma_new)
+            eigenvalue = norm
+
+            # A (possibly projected) iterate can collapse to the zero vector
+            # when the kernel annihilates the requested sector; normalizing by
+            # `norm` would then produce NaN. `np.linalg.norm` squares its
+            # inputs, so it returns *exactly* 0.0 once the iterate underflows;
+            # guard precisely on that, plus any non-finite norm, and report
+            # non-convergence with the last finite iterate instead.
+            if norm == 0.0 or not np.isfinite(norm):
+                logger.warning(
+                    "Eliashberg iterate collapsed to zero norm at iteration "
+                    "{}; the kernel annihilates the requested sector, so the "
+                    "eigenvalue cannot be normalized. Returning the previous "
+                    "iterate as non-converged.".format(iteration))
+                return 0.0, sigma_old, {"converged": False,
+                                        "n_iter": iteration + 1}
+
+            diff = np.linalg.norm(sigma_new / norm - sigma_old)
+            logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
+                iteration, norm, diff))
+
+            if diff < convergence_tol:
+                logger.info("Converged at iteration {}".format(iteration + 1))
+                return eigenvalue, sigma_new / norm, {"converged": True,
+                                                       "n_iter": iteration + 1}
+
+            sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
+
+        logger.warning("Failed to converge after {} iterations".format(max_iter))
+        return eigenvalue, sigma_old, {"converged": False, "n_iter": max_iter}
+
+    # Eigenvalue family: ARPACK Arnoldi or shift-invert.
+    A, _ = make_operator()
+
+    if not (solver_mode == "arnoldi" or solver_mode.startswith("shift-invert")):
+        raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
+
+    if vec_size < 1:
+        raise ValueError("Eliashberg operator has empty vector space")
+
+    if vec_size <= 2:
+        # scipy.sparse.linalg.eigs requires k < N - 1 for LinearOperator input,
+        # so the smallest valid dynamic grid (e.g. norb=1, Nk=1, Nmat=2) cannot
+        # go through ARPACK. Reconstruct the tiny dense operator directly.
+        dense = np.empty((vec_size, vec_size), dtype=complex)
+        basis = np.eye(vec_size, dtype=complex)
+        for j in range(vec_size):
+            dense[:, j] = A.matvec(basis[:, j])
+        vals, vecs = np.linalg.eig(dense)
+        vals, vecs = _order_eigenpairs(vals, vecs)
+        n_keep = min(max(1, num_eigenvalues), vec_size)
+        vals = vals[:n_keep]
+        vecs = vecs[:, :n_keep]
+        return vals[0], vecs[:, 0], {"eigenvalues": vals,
+                                     "eigenvectors": vecs,
+                                     "sigma_shift": sigma_shift}
+
+    max_ev = min(num_eigenvalues, vec_size - 2)
+    if max_ev < 1:
+        max_ev = 1
+
+    logger.info("Computing {} eigenvalues with method='{}'...".format(
+        max_ev, solver_mode))
+
+    if solver_mode == "arnoldi":
+        vals, vecs = eigs(A, k=max_ev, which='LM')
+
+    elif solver_mode.startswith("shift-invert"):
+        if sigma_shift is None:
+            # Estimate shift from a quick Arnoldi run. Sample a few
+            # largest-magnitude eigenvalues and aim at the largest *real* part
+            # (the physical SC eigenvalue), not the largest magnitude (which
+            # can be a large negative repulsive mode).
+            k_pre = min(6, vec_size - 2)
+            if k_pre < 1:
+                # Operator too small for a preliminary ARPACK pass (ARPACK
+                # needs k < N-1); fall back to a neutral shift.
+                sigma_shift = 0.0
+            else:
+                logger.info("Estimating shift with preliminary Arnoldi...")
+                vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                sigma_shift = _shift_from_eigenvalues(vals_pre)
+            logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
+        vals, vecs = _eigs_shift_invert(
+            A, vec_size, max_ev, solver_mode, sigma=sigma_shift
+        )
+
+    # Order by largest real part (the physical SC eigenvalue), not magnitude.
+    vals, vecs = _order_eigenpairs(vals, vecs)
+
+    return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
+                                 "sigma_shift": sigma_shift}
+
+
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
                       method="arnoldi", sigma_shift=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
@@ -1945,48 +2236,32 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     eigenvectors : ndarray
         Corresponding eigenvectors reshaped to (num_ev, norb, norb, Nx, Ny, Nz).
     """
-    A, vec_size = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    vec_size = norb * norb * Nx * Ny * Nz
 
-    max_ev = min(num_eigenvalues, vec_size - 2)
-    if max_ev < 1:
-        max_ev = 1
-
-    logger.info("Computing {} eigenvalues with method='{}'...".format(max_ev, method))
-
-    if method == "arnoldi":
-        vals, vecs = eigs(A, k=max_ev, which='LM')
-
-    elif method == "subspace":
+    if method == "subspace":
+        # Subspace (block power) iteration has its own dedicated driver
+        # (magnitude-based Ritz selection, not the ARPACK/shift-invert path),
+        # so it is not routed through _solve_leading; call it directly, exactly
+        # as before.
+        max_ev = min(num_eigenvalues, vec_size - 2)
+        if max_ev < 1:
+            max_ev = 1
+        logger.info("Computing {} eigenvalues with method='{}'...".format(
+            max_ev, method))
         return _solve_subspace_iteration(
             Vs_q, G2, norb, Nx, Ny, Nz,
             num_eigenvalues=max_ev
         )
 
-    elif method.startswith("shift-invert"):
-        if sigma_shift is None:
-            # Estimate shift from a quick Arnoldi run. Sample a few
-            # largest-magnitude eigenvalues and aim at the largest *real* part
-            # (the physical SC eigenvalue), not the largest magnitude (which
-            # can be a large negative repulsive mode).
-            k_pre = min(6, vec_size - 2)
-            if k_pre < 1:
-                # Operator too small for a preliminary ARPACK pass (ARPACK
-                # needs k < N-1); fall back to a neutral shift.
-                sigma_shift = 0.0
-            else:
-                logger.info("Estimating shift with preliminary Arnoldi...")
-                vals_pre, _ = eigs(A, k=k_pre, which='LM')
-                sigma_shift = _shift_from_eigenvalues(vals_pre)
-            logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
-        vals, vecs = _eigs_shift_invert(
-            A, vec_size, max_ev, method, sigma=sigma_shift
-        )
-
-    else:
-        raise ValueError("Unknown eigenvalue method: {}".format(method))
-
-    # Order by largest real part (the physical SC eigenvalue), not magnitude.
-    vals, vecs = _order_eigenpairs(vals, vecs)
+    # ARPACK Arnoldi / shift-invert: delegate the eigen-selection, shift
+    # estimation, and descending-real-part ordering to the shared driver.
+    make_operator = lambda: _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    _, _, eig_analysis = _solve_leading(
+        make_operator, vec_size, method,
+        num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+    )
+    vals = eig_analysis["eigenvalues"]
+    vecs = eig_analysis["eigenvectors"]
 
     eigenvectors = np.array([
         vecs[:, i].reshape(norb, norb, Nx, Ny, Nz)
@@ -2466,6 +2741,13 @@ def calc_eliashberg(input_dict):
 
     # Eliashberg parameters
     eli_param = input_dict.get("eliashberg", {})
+
+    # Dispatch to dynamic Eliashberg if requested
+    if _eliashberg_frequency(input_dict) == "dynamic":
+        _validate_dynamic_prereqs(input_dict)
+        from hwave.solver import eliashberg_dynamic
+        return eliashberg_dynamic.solve_dynamic(input_dict)
+
     solver_mode = eli_param.get("solver_mode", "iteration")
     max_iter = eli_param.get("max_iter", 1000)
     alpha = eli_param.get("alpha", 0.5)

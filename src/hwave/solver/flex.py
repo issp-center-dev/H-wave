@@ -34,6 +34,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import RPA, Lattice, Interaction
+from . import matsubara as _ms
 
 
 class FLEX(RPA):
@@ -1420,12 +1421,9 @@ class FLEX(RPA):
         # --- Transform Green's function to (r, tau) space ---
 
         # Matsubara freq -> imaginary time for G (fermionic)
-        # Use broadcasting instead of einsum for phase multiplication
-        omg_f = np.exp(-1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
         green_flat = green_kw.reshape(nblock, nmat, nvol * nd_block * nd_block)
-        green_kt = (FFT.fft(green_flat, axis=1)
-                     * omg_f[np.newaxis, :, np.newaxis]
-                     ).reshape(nblock, nmat, nx, ny, nz, nd_block * nd_block)
+        green_kt = _ms.fermion_to_tau(green_flat, axis=1).reshape(
+            nblock, nmat, nx, ny, nz, nd_block * nd_block)
 
         # k-space -> real-space for G
         green_rt = FFT.ifftn(green_kt, axes=(2, 3, 4)
@@ -1434,12 +1432,9 @@ class FLEX(RPA):
         # --- Transform V_eff to (r, tau) space ---
 
         # Bosonic Matsubara freq -> imaginary time
-        # Bosonic phase: (-1)^j = exp(-i*pi*j)
-        omg_b = np.exp(-1j * np.pi * np.arange(nfreq))
         v_flat = v_eff.reshape(nfreq, nvol * nd_v * nd_v)
-        v_qt = (FFT.fft(v_flat, axis=0)
-                * omg_b[:, np.newaxis]
-                ).reshape(nfreq, nx, ny, nz, nd_v * nd_v)
+        v_qt = _ms.boson_to_tau(v_flat, axis=0).reshape(
+            nfreq, nx, ny, nz, nd_v * nd_v)
 
         # q-space -> real-space for V_eff
         v_rt = FFT.ifftn(v_qt, axes=(1, 2, 3)).reshape(nfreq, nvol, nd_v, nd_v)
@@ -1482,10 +1477,7 @@ class FLEX(RPA):
         ).reshape(nblock, nmat, nvol * nd_sig * nd_sig)
 
         # Imaginary time -> Matsubara freq (fermionic)
-        # Use broadcasting instead of einsum for phase multiplication
-        omg_f_inv = np.exp(1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
-        sigma_kw = (FFT.ifft(sigma_kt * omg_f_inv[np.newaxis, :, np.newaxis],
-                             axis=1)
+        sigma_kw = (_ms.tau_to_fermion(sigma_kt, axis=1)
                     .reshape(nblock, nmat, nvol, nd_sig, nd_sig) * (1.0 / beta))
 
         return sigma_kw
@@ -1575,21 +1567,17 @@ class FLEX(RPA):
 
         # --- Transform Green's function to (r, tau) space ---
         # (transport identical to _calc_self_energy)
-        omg_f = np.exp(-1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
         green_flat = green_kw.reshape(nblock, nmat, nvol * norb * norb)
-        green_kt = (FFT.fft(green_flat, axis=1)
-                    * omg_f[np.newaxis, :, np.newaxis]
-                    ).reshape(nblock, nmat, nx, ny, nz, norb * norb)
+        green_kt = _ms.fermion_to_tau(green_flat, axis=1).reshape(
+            nblock, nmat, nx, ny, nz, norb * norb)
         green_rt = FFT.ifftn(green_kt, axes=(2, 3, 4)
                              ).reshape(nblock, nmat, nvol, norb, norb)
 
         # --- Transform V_eff to (r, tau) space ---
         # (transport identical to _calc_self_energy)
-        omg_b = np.exp(-1j * np.pi * np.arange(nfreq))
         v_flat = v_eff.reshape(nfreq, nvol * ndx * ndx)
-        v_qt = (FFT.fft(v_flat, axis=0)
-                * omg_b[:, np.newaxis]
-                ).reshape(nfreq, nx, ny, nz, ndx * ndx)
+        v_qt = _ms.boson_to_tau(v_flat, axis=0).reshape(
+            nfreq, nx, ny, nz, ndx * ndx)
         v_rt = FFT.ifftn(v_qt, axes=(1, 2, 3)).reshape(nfreq, nvol, ndx, ndx)
 
         # --- Compute Sigma(r, tau): rank-4 orbital contraction (the only new
@@ -1603,9 +1591,7 @@ class FLEX(RPA):
             axes=(2, 3, 4)
         ).reshape(nblock, nmat, nvol * norb * norb)
 
-        omg_f_inv = np.exp(1j * np.pi * (1.0 / nmat - 1.0) * np.arange(nmat))
-        sigma_kw = (FFT.ifft(sigma_kt * omg_f_inv[np.newaxis, :, np.newaxis],
-                             axis=1)
+        sigma_kw = (_ms.tau_to_fermion(sigma_kt, axis=1)
                     .reshape(nblock, nmat, nvol, norb, norb) * (1.0 / beta))
 
         return sigma_kw

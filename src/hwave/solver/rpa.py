@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
 from . import fold
+from . import matsubara as _ms
 
 
 def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
@@ -1828,12 +1829,8 @@ class RPA:
         assert nmat == self.nmat
 
         # Fourier transform from Matsubara freq to imaginary time
-        omg = np.exp(-1j * np.pi * (1.0/nmat - 1.0) * np.arange(nmat))
-
-        # In-place multiply to avoid extra copy
         green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
-        green_kt = FFT.fft(green_flat, axis=1)
-        green_kt *= omg[np.newaxis, :, np.newaxis]
+        green_kt = _ms.fermion_to_tau(green_flat, axis=1)
         green_kt = green_kt.reshape(nblock, nmat, nx, ny, nz, nd, nd)
         green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
 
@@ -1874,11 +1871,9 @@ class RPA:
         chi0_qt = FFT.fftn(chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds), axes=(2, 3, 4))
 
         # Fourier transform to matsubara freq
-        omg2 = np.exp(1j * np.pi * (-1) * np.arange(nmat))
-
         chi0_qt_flat = chi0_qt.reshape(nblock, nmat, nvol * nds)
-        chi0_qt_flat *= omg2[np.newaxis, :, np.newaxis]
-        chi0_qw = FFT.ifft(chi0_qt_flat, axis=1).reshape(nblock, nmat, nvol, *nd_shape) * (-1.0 / beta)
+        chi0_qw = _ms.tau_to_boson(chi0_qt_flat, axis=1).reshape(
+            nblock, nmat, nvol, *nd_shape) * (-1.0 / beta)
 
         return chi0_qw
 
