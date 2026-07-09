@@ -179,7 +179,8 @@ This section controls the Eliashberg solver. Key parameters:
   kernel applications on a GPU via CuPy (default ``false``; see the
   :ref:`GPU section <sc_dynamic_gpu_en>` below).
 - ``fft_workers``: Number of FFT worker threads for the dynamic-mode spatial
-  FFTs (default ``-1`` = all cores; ignored on the GPU).
+  FFTs (default ``1`` = the serial numpy path, unchanged from previous
+  releases; ``-1`` uses all cores; ignored on the GPU).
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -598,8 +599,9 @@ The eigenvalue solve is dominated by repeated applications of the kernel. Two
 optimizations keep this cheap: the vertex's imaginary-time transform (the
 kernel's most expensive step) is precomputed once instead of on every matvec,
 and the spatial FFTs are run in parallel via ``scipy.fft``. ``[eliashberg]
-fft_workers`` sets the number of FFT worker threads: ``-1`` (default) uses all
-cores; set a smaller number (e.g. matching ``OMP_NUM_THREADS``) when running
+fft_workers`` sets the number of FFT worker threads: ``1`` (default) keeps the
+serial numpy path unchanged from previous releases, ``-1`` uses all cores
+(opt-in); set a smaller number (e.g. matching ``OMP_NUM_THREADS``) when running
 several dynamic solves concurrently to avoid oversubscribing the CPU. Together
 these give roughly a 4x speedup at ``norb = 2``, ``N_k = 1024``,
 ``N_{mat} = 1024``. On the GPU (``gpu = true``) the FFTs already run on the

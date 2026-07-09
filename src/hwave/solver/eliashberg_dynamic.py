@@ -719,11 +719,12 @@ def solve_dynamic(input_dict):
         G2_w = xp.asarray(G2_w)
         Vs_q_w = xp.asarray(Vs_q_w)
 
-    # Spatial-FFT parallelism for the CPU kernel (scipy.fft workers): -1 = all
-    # cores (default), 1 = serial numpy. Cap it if running many dynamic solves
-    # concurrently to avoid oversubscribing against OMP/MKL threads. Ignored
+    # Spatial-FFT parallelism for the CPU kernel (scipy.fft workers): the
+    # default 1 keeps the serial numpy path (bit-compatible with previous
+    # releases); -1 uses all cores. Opt-in so existing runs are unchanged and
+    # concurrent solves do not oversubscribe against OMP/MKL threads. Ignored
     # on the GPU backend (cuFFT already runs on the device).
-    fft_workers = eli_param.get("fft_workers", -1)
+    fft_workers = eli_param.get("fft_workers", 1)
 
     # The vertex's (q, i nu) -> (r, tau) transform is phi-independent and
     # dominates the matvec cost, so do it once here; drop the (q, i nu) form
