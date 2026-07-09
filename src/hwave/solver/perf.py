@@ -6,6 +6,7 @@ collecting performance statistics.
 
 from functools import wraps
 import time
+import numpy.fft as FFT
 
 
 class PerfDB:
