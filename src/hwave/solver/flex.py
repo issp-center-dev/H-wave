@@ -339,6 +339,14 @@ class FLEX(RPA):
             self.mu = mu
         green_kw = self._calc_dressed_green(beta, mu, sigma)
 
+        # Physical observables from the final (consistent) dressed G: particle
+        # number N and spin Sz.  In fixed-mu mode this N is the mu-N single
+        # point; in calc_mu mode it equals the target Ncond.
+        physics = self._calc_physics_dressed(green_kw, mu, beta)
+        self.physics = physics
+        logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
+            physics["NCond"], physics["Sz"], physics["mu"]))
+
         # Store results
         self.sigma = sigma
         self.green_kw = green_kw
@@ -351,6 +359,7 @@ class FLEX(RPA):
         green_info["chiq_c"] = chi_c
         green_info["sigma"] = sigma
         green_info["green"] = green_kw
+        green_info["physics"] = physics
 
         logger.info("End FLEX calculations")
 
@@ -465,6 +474,107 @@ class FLEX(RPA):
         w1 = np.where(mask, w, 0.0)
         v1 = 1.0 / (1.0 + np.exp(w1))
         return np.where(mask, v1, 0.0)
+
+    @do_profile
+    def _calc_occupation_dressed(self, green_kw, mu, beta):
+        r"""k-summed occupation per (spin block, orbital) from the dressed G.
+
+        The per-orbital analogue of :meth:`_calc_number_dressed`: the same
+        tail-subtracted Matsubara sum, resolved on each orbital ``a`` instead of
+        traced.  The non-interacting reference is projected onto the orbital
+        basis with the H0 eigenvectors ``V``::
+
+            n_a(k) = sum_j |V_aj|^2 f(eps_j(k) - mu)
+                     + (1/beta) sum_n [ G_aa(k,iwn) - G0_aa(k,iwn) ]
+            G0_aa(k,iwn) = sum_j |V_aj|^2 / (iwn + mu - eps_j(k))
+
+        Summing the result over orbitals recovers ``_calc_number_dressed`` (by
+        unitarity ``sum_a |V_aj|^2 = 1``); it is split per orbital here so N and
+        Sz can be assembled from spin-resolved partial sums.
+
+        Parameters
+        ----------
+        green_kw : ndarray
+            Dressed Green's function, shape (nblock, nmat, nvol, nd_block, nd_block).
+        mu : float
+            Chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            Occupation summed over k, shape (nblock, nd_block).
+        """
+        nmat = self.nmat
+        ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
+        ev = self.H0_eigenvector                      # (nblock, nvol, a, j)
+        vsq = np.abs(ev) ** 2                          # |V_aj|^2
+
+        # bare per-orbital reference: n0_a = sum_j |V_aj|^2 f(eps_j - mu)
+        f = self._fermi_occupation(1.0 / beta, mu, ew)     # (nblock, nvol, j)
+        n0 = np.einsum('bkaj,bkj->bka', vsq, f)            # (nblock, nvol, a)
+
+        # dressed correction (1/beta) sum_n [G_aa - G0_aa]
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        g_aa = np.einsum('bnkaa->bnka', green_kw)          # (nblock, nmat, nvol, a)
+        denom = ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                 + (mu - ew)[:, np.newaxis, :, :])         # (nblock, nmat, nvol, j)
+        g0_aa = np.einsum('bkaj,bnkj->bnka', vsq, 1.0 / denom)
+        corr = (g_aa - g0_aa).sum(axis=1) / beta           # sum over n -> (nblock, nvol, a)
+
+        nocc = n0 + corr.real
+        return nocc.sum(axis=1)                            # sum over k -> (nblock, nd_block)
+
+    @do_profile
+    def _calc_physics_dressed(self, green_kw, mu, beta):
+        """Assemble the particle number N and spin Sz from the dressed G.
+
+        Uses :meth:`_calc_occupation_dressed` and the FLEX spin-block orbital
+        ordering (``s*norb + a``).  Conventions per spin mode:
+
+        - spin-free (one block computed): ``N = 2 * sum(nocc)``, ``Sz = 0``.
+        - spin-diag (block 0 = up, block 1 = down):
+          ``N = N_up + N_down``, ``Sz = (N_up - N_down)/2``.
+        - spinful (single block, ``nd = 2*norb``, up = orbitals ``[0, norb)``,
+          down = ``[norb, 2*norb)``): ``N = sum(nocc)``,
+          ``Sz = (N_up - N_down)/2``.
+
+        Parameters
+        ----------
+        green_kw : ndarray
+            Dressed Green's function (nblock, nmat, nvol, nd_block, nd_block).
+        mu : float
+            Chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        dict
+            ``{"NCond": N_total, "Sz": Sz, "mu": mu}`` (plain floats).
+        """
+        nocc = self._calc_occupation_dressed(green_kw, mu, beta)
+        norb = self.norb
+
+        if self.spin_mode == "spin-free":
+            n_total = 2.0 * nocc.sum()
+            sz = 0.0
+        elif self.spin_mode == "spin-diag":
+            n_up = nocc[0].sum()
+            n_down = nocc[1].sum()
+            n_total = n_up + n_down
+            sz = 0.5 * (n_up - n_down)
+        else:  # spinful: spin folded into the orbital index (spin-block order)
+            n_up = nocc[0, :norb].sum()
+            n_down = nocc[0, norb:].sum()
+            n_total = nocc.sum()
+            sz = 0.5 * (n_up - n_down)
+
+        return {"NCond": float(n_total.real if np.iscomplexobj(n_total)
+                               else n_total),
+                "Sz": float(sz.real if np.iscomplexobj(sz) else sz),
+                "mu": float(mu)}
 
     @do_profile
     def _matsubara_number_operator(self, sigma, beta):
@@ -1544,6 +1654,24 @@ class FLEX(RPA):
             logger.warning(
                 "matsubara_frequency is restricted but FLEX outputs always "
                 "hold the full frequency grid; the option is ignored.")
+
+        # Save physical observables (particle number, spin, chemical potential)
+        # as a plain-text energy file, mirroring UHFr/UHFk.  In fixed-mu mode
+        # the NCond line is the mu-N single point for the given mu.
+        if "energy" in info_outputfile:
+            physics = green_info.get("physics", getattr(self, "physics", None))
+            if physics is None:
+                logger.warning("save_results: no physics data to write to "
+                               "'{}'".format(info_outputfile["energy"]))
+            else:
+                file_name = os.path.join(path_to_output,
+                                         info_outputfile["energy"])
+                with open(file_name, "w") as fw:
+                    fw.write("NCond = {}\n".format(physics["NCond"]))
+                    fw.write("Sz = {}\n".format(physics["Sz"]))
+                    fw.write("ChemicalPotential = {}\n".format(physics["mu"]))
+                logger.info("save_results: save energy in file {}".format(
+                    file_name))
 
         # Save chi0q
         if "chi0q" in info_outputfile:

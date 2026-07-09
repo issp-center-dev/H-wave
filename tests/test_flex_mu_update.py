@@ -256,5 +256,110 @@ class TestFlexMuUpdate(unittest.TestCase):
         self.assertAlmostEqual(n_at_mu, Ncond_target, places=6)
 
 
+class TestFlexPhysicsOutput(unittest.TestCase):
+    """N (particle number) and Sz reporting from the dressed Green function."""
+
+    def test_occupation_sum_matches_number_dressed(self):
+        """Per-orbital occupation summed over orbitals must equal the traced
+        _calc_number_dressed to machine precision (nonzero sigma): the
+        occupation is just the trace resolved per orbital."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64)
+        beta = 1.0 / solver.T
+        solver._calc_epsilon_k(green_info)
+        nblock, nvol, nd_block = solver.H0_eigenvalue.shape
+
+        rng = np.random.default_rng(7)
+        sigma = 0.3 * (rng.standard_normal((nblock, solver.nmat, nvol,
+                                            nd_block, nd_block))
+                       + 1j * rng.standard_normal((nblock, solver.nmat, nvol,
+                                                   nd_block, nd_block)))
+        mu = 0.35
+        green_kw = solver._calc_dressed_green(beta, mu, sigma)
+
+        nocc = solver._calc_occupation_dressed(green_kw, mu, beta)
+        n_ref = solver._calc_number_dressed(sigma, mu, beta)
+
+        self.assertAlmostEqual(nocc.sum(), n_ref, places=10)
+
+    def test_physics_spin_free_N_and_zero_Sz(self):
+        """Spin-free run: NCond == 2 * one-spin count, Sz == 0 by construction."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, U=3.0,
+                                          iteration_max=5, mix=0.4)
+        os.makedirs('tests/flex/output', exist_ok=True)
+        solver.solve(green_info, 'tests/flex/output')
+
+        beta = 1.0 / solver.T
+        physics = green_info["physics"]
+        n_one_spin = solver._calc_number_dressed(green_info["sigma"],
+                                                 solver.mu, beta)
+
+        self.assertAlmostEqual(physics["NCond"], 2.0 * n_one_spin, places=8)
+        self.assertEqual(physics["Sz"], 0.0)
+        self.assertEqual(physics["mu"], solver.mu)
+
+    def test_physics_N_equals_Ncond_after_calc_mu(self):
+        """Converged calc_mu doped run: reported NCond equals the target Ncond."""
+        Ncond = 40.0
+        solver, green_info = _make_solver({'Ncond': Ncond}, U=3.0,
+                                          iteration_max=60, mix=0.4)
+        os.makedirs('tests/flex/output', exist_ok=True)
+        solver.solve(green_info, 'tests/flex/output')
+
+        self.assertAlmostEqual(green_info["physics"]["NCond"], Ncond, places=4)
+
+    def test_fixed_mu_outputs_N_to_energy_file(self):
+        """calc_mu=False (fixed mu) writes energy.dat with a finite NCond and
+        ChemicalPotential == the input mu -- one point of the mu-N curve."""
+        mu_in = 0.5
+        solver, green_info = _make_solver({'mu': mu_in}, U=3.0,
+                                          iteration_max=5, mix=0.5)
+        out_dir = 'tests/flex/output'
+        os.makedirs(out_dir, exist_ok=True)
+        solver.solve(green_info, out_dir)
+        solver.save_results({'path_to_output': out_dir, 'energy': 'energy.dat'},
+                            green_info)
+
+        with open(os.path.join(out_dir, 'energy.dat')) as fr:
+            lines = dict(line.split('=', 1) for line in fr
+                         if '=' in line)
+        ncond = float(lines['NCond '])
+        mu_out = float(lines['ChemicalPotential '])
+
+        self.assertTrue(np.isfinite(ncond))
+        self.assertGreater(ncond, 0.0)
+        self.assertAlmostEqual(mu_out, mu_in, places=12)
+
+    def test_physics_spin_diag_Sz(self):
+        """Spin-diag: Sz == (N_up - N_down)/2 with N_up/N_down the per-block
+        counts.  Built on a synthetic magnetized 2-block spectrum (up/down bands
+        split) so N_up != N_down, checked against the analytic Fermi counts."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64, T=0.5)
+        solver._calc_epsilon_k(green_info)
+        _, nvol, _ = solver.H0_eigenvalue.shape
+
+        # spin-diag: 2 blocks (up, down), one orbital, split bands -> magnetized
+        solver.spin_mode = "spin-diag"
+        solver.norb = 1
+        eps_up = np.linspace(-2.0, 2.0, nvol) - 0.5     # up band shifted down
+        eps_down = np.linspace(-2.0, 2.0, nvol) + 0.5   # down band shifted up
+        ew = np.stack([eps_up[:, None], eps_down[:, None]])   # (2, nvol, 1)
+        solver.H0_eigenvalue = ew
+        solver.H0_eigenvector = np.ones((2, nvol, 1, 1), dtype=np.complex128)
+
+        beta = 1.0 / solver.T
+        mu = 0.0
+        sigma = np.zeros((2, solver.nmat, nvol, 1, 1), dtype=np.complex128)
+        green_kw = solver._calc_dressed_green(beta, mu, sigma)
+
+        physics = solver._calc_physics_dressed(green_kw, mu, beta)
+
+        # analytic reference at Sigma=0: N_spin = sum_k f(eps_spin - mu)
+        n_up = _fermi(solver.T, mu, eps_up).sum()
+        n_down = _fermi(solver.T, mu, eps_down).sum()
+        self.assertAlmostEqual(physics["NCond"], n_up + n_down, places=8)
+        self.assertAlmostEqual(physics["Sz"], 0.5 * (n_up - n_down), places=8)
+        self.assertNotAlmostEqual(physics["Sz"], 0.0, places=3)  # truly magnetized
+
+
 if __name__ == '__main__':
     unittest.main()
