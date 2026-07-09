@@ -252,7 +252,8 @@ def _dense_operator(matvec, vec_size, dtype=complex):
     return K
 
 
-def test_static_limit_matvec_multi_k():
+@pytest.mark.parametrize("norb", [1, 2])
+def test_static_limit_matvec_multi_k(norb):
     """PRIMARY convention pin (independent of the dynamic kernel's own
     self-consistency): on a NON-symmetric mesh (Nx=4, Ny=2) the frequency-flat
     limit of ``eliashberg_kernel_dynamic`` must reproduce, component-by-
@@ -260,21 +261,32 @@ def test_static_limit_matvec_multi_k():
     ``G2_static = sum_n G2_w``. This pins the spatial fold and the -(1/N)
     normalization against the static reference, not against a self-extraction.
     Nk=1 would hide both the fold and the 1/N, so the mesh must be multi-k and
-    non-symmetric (q = k - k' is then not self-symmetric)."""
+    non-symmetric (q = k - k' is then not self-symmetric).
+
+    The ``norb=2`` case additionally pins the multi-orbital orbital einsums
+    (``'iljmxyzn,lmxyzn->ijxyzn'`` and ``'abcdxyzt,bcxyzt->adxyzt'``) against the
+    INDEPENDENT static 4-index kernel. Because ``V0``/``G2`` are drawn from
+    distinct random complex values per orbital-index combination (never
+    symmetrized), they are NOT invariant under the orbital-index swaps those
+    einsums perform, so an accidental orbital transposition would change the
+    result and fail this assertion."""
     import hwave.sc as sc
     from hwave.solver import eliashberg_dynamic as ed
-    norb, Nx, Ny, Nz, nmat = 1, 4, 2, 1, 4
+    Nx, Ny, Nz, nmat = 4, 2, 1, 4
     beta = 7.0  # unused by the kernel; G2 is passed raw to both paths
-    rng = np.random.default_rng(20)
+    rng = np.random.default_rng(20 + norb)
 
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
-    # frequency-flat vertex: build one bosonic slice, broadcast across nmat
+    # frequency-flat vertex: build one bosonic slice, broadcast across nmat.
+    # ORBITAL-NON-SYMMETRIC: each (l1,l2,l3,l4) combo gets an independent random
+    # value, so an accidental orbital transposition WOULD change the result.
     V0 = rc((norb, norb, norb, norb, Nx, Ny, Nz))            # (l1,l2,l3,l4,q)
     V_w = np.broadcast_to(V0[..., np.newaxis],
                           V0.shape + (nmat,)).copy()
-    # frequency-resolved pair bubble (varies with n on purpose)
+    # frequency-resolved pair bubble (varies with n on purpose), also
+    # orbital-non-symmetric
     G2_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
     # frequency-flat trial gap
     phi0 = rc((norb, norb, Nx, Ny, Nz))                      # (l1,l2,k)
@@ -284,14 +296,14 @@ def test_static_limit_matvec_multi_k():
     out = ed.eliashberg_kernel_dynamic(V_w, G2_w, phi_w, norb, beta)
 
     # (i) the output must be frequency-flat
-    assert np.allclose(out, out[..., :1], atol=1e-10), \
+    assert np.max(np.abs(out - out[..., :1])) < 1e-10, \
         "frequency-flat input did not give a frequency-flat output"
 
     # (ii) each frequency slice equals the static matvec with G2_static
     G2_static = G2_w.sum(axis=-1)                            # sum over n
     static_out = sc._eliashberg_kernel_fft(V0, G2_static, phi0, norb)
     for n in range(nmat):
-        assert np.allclose(out[..., n], static_out, atol=1e-10), \
+        assert np.max(np.abs(out[..., n] - static_out)) < 1e-10, \
             "dynamic kernel does not match the static kernel in the flat limit"
 
 
@@ -403,6 +415,22 @@ def test_gauge_deterministic():
     piv = flat[np.argmax(np.abs(flat))]
     assert piv.real > 0 and abs(piv.imag) < 1e-12
 
+    # explicit equal-magnitude tie-break: two components share the exact max
+    # magnitude (|1.0| == |1j| == 1); the argmax-first rule must pick the FIRST
+    # in C-order ravel and make IT real-positive (deterministically).
+    tie = np.zeros((2, 2, 1, 1, 1, 1), dtype=complex)
+    tie[0, 0, 0, 0, 0, 0] = 1.0    # C-order index 0 (first tied component)
+    tie[0, 1, 0, 0, 0, 0] = 1j     # C-order index 1 (second tied component)
+    g = ed._fix_gauge(tie)
+    # deterministic under a global phase rotation
+    g2 = ed._fix_gauge(np.exp(1j * 0.7) * tie)
+    assert np.allclose(g, g2, atol=1e-12)
+    gflat = g.ravel()
+    # the FIRST tied component was made real-positive
+    assert gflat[0].real > 0 and abs(gflat[0].imag) < 1e-12
+    # and it is (one of) the max-|magnitude| entries
+    assert np.isclose(abs(gflat[0]), np.max(np.abs(gflat)), atol=1e-12)
+
 
 def test_outputs_written(tmp_path):
     """solve_dynamic writes gap_dynamic.npz (with the required metadata keys)
@@ -432,9 +460,10 @@ def test_outputs_written(tmp_path):
     assert np.isfinite(lam)
 
     npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
-    for key in ("iomega", "T", "pairing_type", "frequency",
-                "eigenvalue", "axis_order", "normalization"):
-        assert key in npz.files, "missing gap_dynamic.npz key: {}".format(key)
+    assert set(npz.files) == {
+        "gap", "iomega", "T", "pairing_type", "frequency",
+        "eigenvalue", "axis_order", "normalization"}, \
+        "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
     assert str(npz["frequency"]) == "dynamic"
     assert npz["iomega"].shape == (m["nmat"],)
     assert npz["gap"].shape == (1, 1, 2, 2, 1, m["nmat"])
