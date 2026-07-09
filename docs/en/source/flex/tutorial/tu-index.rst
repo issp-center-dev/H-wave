@@ -453,6 +453,12 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 - ``chiq_s`` / ``chiq_c``: Spin / charge susceptibility,
   same shape as ``chi0q``.
+- ``chi_convention``: orbital-layout tag, ``"kuroki"`` for the
+  reduced/squashed schemes (spin-orbital reduced layout) or ``"myo"`` for the
+  general full-vertex scheme (orbital-pair layout). The Eliashberg loader
+  (``hwave_sc``) uses this tag to interpret the orbital indices; it is
+  essential for two-orbital systems, where the spin-orbital and orbital-pair
+  dimensions coincide (both ``4``) and shape alone is ambiguous.
 
 ``sigma.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

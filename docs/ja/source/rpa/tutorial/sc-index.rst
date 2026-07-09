@@ -494,6 +494,18 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 - ``green.npz`` -- **dressed** グリーン関数
   :math:`G(\mathbf{k}, i\omega_n)`\ （これからペアバブルを構成します）。
 
+.. note::
+
+   FLEX の感受率ファイルには ``chi_convention`` タグ（reduced/squashed スキームは
+   ``"kuroki"``、general full-vertex スキームは ``"myo"``）が付与されており、
+   Eliashberg ローダーはこれを用いて軌道レイアウトを解釈します。**2軌道系**
+   （``norb = 2``）では reduced のスピン軌道次元と orbital-pair 次元が一致（ともに
+   ``4``）するため、両者の区別はこのタグに依存します。本修正以前の H-wave は形状のみ
+   からレイアウトを推定し、``norb = 2`` の reduced (kuroki) chi を orbital-pair と
+   誤認して pairing vertex を壊していました。該当する計算の Eliashberg 固有値・ギャップ
+   関数は本バージョンで**修正され（したがって変化します）**。1軌道系および general
+   (myo) の結果は影響を受けません。
+
 ``Nmat`` は偶数で、かつ FLEX 出力と ``[mode.param]`` の値とで一致していなければ
 なりません。``chi0q_mode = "flex"`` なしで ``frequency = "dynamic"`` を指定した
 場合、``Nmat`` が奇数の場合、あるいは dressed ``green.npz`` が無い場合、ソルバーは

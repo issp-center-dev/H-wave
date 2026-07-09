@@ -435,6 +435,11 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz`` ファイルを生成�
 
 - ``chiq_s`` / ``chiq_c``: スピン / 電荷感受率、
   ``chi0q`` と同じ形状
+- ``chi_convention``: 軌道レイアウトのタグ。reduced/squashed スキームは
+  ``"kuroki"``（スピン軌道 reduced レイアウト）、general full-vertex スキームは
+  ``"myo"``（orbital-pair レイアウト）。Eliashberg ローダー（``hwave_sc``）はこの
+  タグで軌道インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair
+  次元が一致（ともに ``4``）し形状だけでは区別できないため、このタグが必須です。
 
 ``sigma.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
