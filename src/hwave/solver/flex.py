@@ -503,10 +503,11 @@ class FLEX(RPA):
         lam = np.linalg.eigvals(M)                            # (nb,nmat,nvol,nd)
         return lam, ew
 
-    def _number_from_eigs(self, lam, ew, mu, beta):
-        """Particle number N(mu) from precomputed ``M`` eigenvalues.
+    def _number_from_eigs(self, lam, ew, mu, beta, with_deriv=False):
+        """Particle number N(mu) (and optionally dN/dmu) from precomputed
+        ``M`` eigenvalues.
 
-        Cheap closure evaluated for every trial ``mu`` in the bisection:
+        Cheap closure evaluated for every trial ``mu`` in the mu search:
         identical formula and result as :meth:`_calc_number_dressed` (verified
         to machine precision in the tests), but reusing the eigenvalues from
         :meth:`_matsubara_number_operator` instead of re-inverting G::
@@ -514,6 +515,14 @@ class FLEX(RPA):
             N(mu) = sum_{block,k,a} f(eps_a - mu)
                     + (1/beta) sum_{k,n} [ sum_j 1/(lam_j + mu)
                                            - sum_a 1/(iwn + mu - eps_a) ]
+
+        Because ``sigma`` (hence ``lam``) is FIXED during the search, the
+        derivative is analytic and cheap to evaluate from the same
+        eigenvalues, which lets the search use Newton's method::
+
+            dN/dmu = sum_a (1/T) f_a (1 - f_a)
+                     + (1/beta) sum_{k,n} [ -sum_j 1/(lam_j + mu)^2
+                                            + sum_a 1/(iwn + mu - eps_a)^2 ]
 
         Parameters
         ----------
@@ -526,32 +535,57 @@ class FLEX(RPA):
             Trial chemical potential.
         beta : float
             Inverse temperature.
+        with_deriv : bool, optional
+            If True, return the tuple ``(N, dN/dmu)`` instead of ``N``.
 
         Returns
         -------
-        float
-            Particle number N(mu).
+        float or tuple of float
+            ``N(mu)``, or ``(N(mu), dN/dmu)`` when ``with_deriv`` is True.
         """
         nmat = self.nmat
-        n_ref = self._fermi_occupation(1.0 / beta, mu, ew).sum()
-
+        T = 1.0 / beta
         iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
-        trG = (1.0 / (lam + mu)).sum(axis=-1)                # (nb, nmat, nvol)
-        trG0 = (1.0 / ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
-                       + (mu - ew)[:, np.newaxis, :, :])).sum(axis=-1)
-        corr = (trG - trG0).sum() / beta
-        return n_ref + corr.real
+
+        f = self._fermi_occupation(T, mu, ew)
+        n_ref = f.sum()
+
+        denomG = lam + mu                                    # (nb, nmat, nvol, nd)
+        denomG0 = ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                   + (mu - ew)[:, np.newaxis, :, :])
+        trG = (1.0 / denomG).sum(axis=-1)                    # (nb, nmat, nvol)
+        trG0 = (1.0 / denomG0).sum(axis=-1)
+        n = n_ref + ((trG - trG0).sum() / beta).real
+
+        if not with_deriv:
+            return n
+
+        # dN/dmu: the Fermi part is +f(1-f)/T; each 1/(x+mu) term contributes
+        # -1/(x+mu)^2 (same trG - trG0 combination, both differentiated).
+        dref = ((1.0 / T) * f * (1.0 - f)).sum()
+        dtrG = (-1.0 / denomG ** 2).sum(axis=-1)
+        dtrG0 = (-1.0 / denomG0 ** 2).sum(axis=-1)
+        dn = dref + ((dtrG - dtrG0).sum() / beta).real
+        return n, dn
 
     @do_profile
     def _find_mu_dressed(self, sigma, beta, Ncond):
         """Re-solve mu so the dressed Green's function carries ``Ncond``.
 
         Holds ``sigma`` fixed and solves ``N(mu) = Ncond``.  The ``M``
-        eigenvalues are computed ONCE via :meth:`_matsubara_number_operator`
-        and every trial ``mu`` is then a cheap :meth:`_number_from_eigs` call
-        (no per-step matrix inversion).  Mirrors :meth:`RPA._find_mu`
-        (bisection, Newton fallback), but the bracket is widened by the
-        self-energy scale because Sigma can push spectral weight outside the
+        eigenvalues are computed ONCE via :meth:`_matsubara_number_operator``,
+        so both ``N(mu)`` and its analytic derivative ``dN/dmu`` are cheap sums
+        over those eigenvalues (:meth:`_number_from_eigs`) -- no per-step matrix
+        inversion.  ``N(mu)`` is smooth and monotonically increasing, so the
+        root is found with a **safeguarded Newton** iteration (Numerical
+        Recipes ``rtsafe``): a Newton step when it stays inside the current
+        bracket and makes progress, otherwise a bisection step.  This gets
+        Newton's quadratic convergence (a handful of evaluations from the
+        previous iteration's mu) while the maintained bracket guarantees
+        convergence even if a Newton step misbehaves.
+
+        The initial bracket is the bare eigenvalue range widened by the
+        self-energy scale, because Sigma can push spectral weight outside the
         bare band edges.
 
         Parameters
@@ -569,8 +603,6 @@ class FLEX(RPA):
         float
             Chemical potential mu such that N(mu) = Ncond.
         """
-        from scipy import optimize
-
         w = self.H0_eigenvalue
         # widen the bracket by the (static) self-energy scale: Sigma shifts the
         # band, so the bare eigenvalue range may not bracket the root.
@@ -582,21 +614,63 @@ class FLEX(RPA):
         # then a cheap sum over eigenvalues (see _matsubara_number_operator).
         lam, ew = self._matsubara_number_operator(sigma, beta)
 
-        def _delta_n(mu):
-            return self._number_from_eigs(lam, ew, mu, beta) - Ncond
+        def _delta_n(mu, with_deriv=False):
+            r = self._number_from_eigs(lam, ew, mu, beta, with_deriv=with_deriv)
+            if with_deriv:
+                return r[0] - Ncond, r[1]
+            return r - Ncond
 
-        is_converged = False
-        if _delta_n(lo) * _delta_n(hi) < 0.0:
-            mu, r = optimize.bisect(_delta_n, lo, hi,
-                                    full_output=True, disp=False)
-            is_converged = r.converged
-        if not is_converged:
-            mu, r = optimize.newton(_delta_n, 0.5 * (lo + hi),
-                                    full_output=True, disp=False)
-            is_converged = r.converged
-        if not is_converged:
-            logger.error("FLEX._find_mu_dressed: not converged. abort")
+        f_lo = _delta_n(lo)
+        f_hi = _delta_n(hi)
+        if f_lo == 0.0:
+            return lo
+        if f_hi == 0.0:
+            return hi
+        if f_lo * f_hi > 0.0:
+            # root not bracketed (should not happen: N spans [0, Nstate] over a
+            # wide enough mu window). Fail loudly rather than return garbage.
+            logger.error("FLEX._find_mu_dressed: root not bracketed on "
+                         "[{}, {}] (N-Ncond = {}, {}). abort".format(
+                             lo, hi, f_lo, f_hi))
             sys.exit(1)
+
+        # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
+        if f_lo > 0.0:
+            lo, hi = hi, lo
+
+        mu = 0.5 * (lo + hi)
+        dmu_old = abs(hi - lo)
+        dmu = dmu_old
+        f, df = _delta_n(mu, with_deriv=True)
+
+        xtol = 1.0e-12
+        for _ in range(100):
+            # take bisection when the Newton step leaves the bracket, is not
+            # shrinking the interval fast enough, or the derivative is flat;
+            # otherwise take Newton.  df -> 0 is the CHARGE-GAP regime: N(mu) is
+            # flat across the gap, so a Newton step is unreliable (and f/df ill
+            # defined).  The rtsafe product test below already routes tiny df to
+            # bisection, but guard df == 0 explicitly so f/df is never formed.
+            newton_out = ((mu - hi) * df - f) * ((mu - lo) * df - f) > 0.0
+            slow = abs(2.0 * f) > abs(dmu_old * df)
+            if newton_out or slow or df == 0.0:
+                dmu_old = dmu
+                dmu = 0.5 * (hi - lo)
+                mu = lo + dmu
+            else:
+                dmu_old = dmu
+                dmu = f / df
+                mu = mu - dmu
+
+            if abs(dmu) < xtol:
+                break
+
+            f, df = _delta_n(mu, with_deriv=True)
+            # keep the sign-change bracket [lo, hi] around the root
+            if f < 0.0:
+                lo = mu
+            else:
+                hi = mu
 
         logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
         return mu

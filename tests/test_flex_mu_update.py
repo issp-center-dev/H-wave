@@ -119,6 +119,33 @@ class TestFlexMuUpdate(unittest.TestCase):
 
         self.assertAlmostEqual(n_ref, n_eig, places=10)
 
+    def test_number_derivative_matches_finite_difference(self):
+        """dN/dmu returned by _number_from_eigs(with_deriv=True) must match a
+        central finite difference -- Sigma is fixed during the mu search, so
+        the derivative is analytic and drives a Newton solve."""
+        # T != 1 so a wrong 1/T coefficient in dN_ref/dmu cannot hide
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64, T=2.0)
+        beta = 1.0 / solver.T
+        solver._calc_epsilon_k(green_info)
+        nblock, nvol, nd_block = solver.H0_eigenvalue.shape
+
+        rng = np.random.default_rng(3)
+        sigma = 0.3 * (rng.standard_normal((nblock, solver.nmat, nvol,
+                                            nd_block, nd_block))
+                       + 1j * rng.standard_normal((nblock, solver.nmat, nvol,
+                                                   nd_block, nd_block)))
+        sigma = 0.5 * (sigma + sigma.conj().swapaxes(-1, -2))
+        lam, ew = solver._matsubara_number_operator(sigma, beta)
+
+        h = 1.0e-6
+        for mu in (-2.0, -0.5, 0.3, 1.5):
+            _, dN = solver._number_from_eigs(lam, ew, mu, beta,
+                                             with_deriv=True)
+            fd = (solver._number_from_eigs(lam, ew, mu + h, beta)
+                  - solver._number_from_eigs(lam, ew, mu - h, beta)) / (2 * h)
+            self.assertAlmostEqual(dN, fd, places=5,
+                                   msg="dN/dmu mismatch at mu={}".format(mu))
+
     def test_particle_number_conserved_after_scf_doped(self):
         """After a converging FLEX run at a doped filling with U>0, the stored
         dressed Green's function must carry exactly Ncond electrons -- the
@@ -145,6 +172,39 @@ class TestFlexMuUpdate(unittest.TestCase):
         solver.solve(green_info, 'tests/flex/output')
 
         self.assertEqual(solver.mu, mu_in)
+
+    def test_mu_search_in_charge_gap_is_flat_safe(self):
+        """When a charge gap makes N(mu) flat (dN/dmu -> 0) at the target
+        filling, the Newton-based mu search must not blow up (f/df with a
+        vanishing derivative): it must still return a finite mu inside the gap
+        with N(mu) == Ncond.  Built on a synthetic gapped spectrum (half the
+        k-points at -1, half at +1 -> spectral gap (-1, +1)) filled to the gap
+        edge, at low T so the plateau is sharp."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64, T=0.02)
+        solver._calc_epsilon_k(green_info)
+        nb, nv, nd = solver.H0_eigenvalue.shape
+
+        ew = np.zeros((nb, nv, nd))
+        ew[0, :nv // 2, 0] = -1.0
+        ew[0, nv // 2:, 0] = +1.0
+        solver.H0_eigenvalue = ew
+        solver.H0_eigenvector = np.ones((nb, nv, nd, nd), dtype=np.complex128)
+
+        beta = 1.0 / solver.T
+        sigma = np.zeros((nb, solver.nmat, nv, nd, nd), dtype=np.complex128)
+        Ncond_target = float(nv // 2)   # fill the lower group -> mu in the gap
+
+        lam, ewr = solver._matsubara_number_operator(sigma, beta)
+        _, slope = solver._number_from_eigs(lam, ewr, 0.0, beta,
+                                            with_deriv=True)
+        self.assertLess(abs(slope), 1.0e-6)   # confirm the gap is actually flat
+
+        mu = solver._find_mu_dressed(sigma, beta, Ncond_target)
+        n_at_mu = solver._number_from_eigs(lam, ewr, mu, beta)
+
+        self.assertTrue(np.isfinite(mu))
+        self.assertTrue(-1.0 < mu < 1.0, "mu={} not inside the gap".format(mu))
+        self.assertAlmostEqual(n_at_mu, Ncond_target, places=6)
 
 
 if __name__ == '__main__':
