@@ -2756,6 +2756,17 @@ def calc_eliashberg(input_dict):
     input_dict : dict
         Parsed TOML configuration dictionary.
     """
+    # --- Config guards (fail fast before any file I/O) ---
+    # GPU acceleration is only wired into the dynamic solver; on the static
+    # (CPU-only) path refuse gpu=true rather than silently ignoring the flag.
+    from hwave.solver import eliashberg_dynamic as _ed
+    if (_eliashberg_frequency(input_dict) != "dynamic"
+            and _ed._gpu_requested(input_dict.get("eliashberg", {}))):
+        raise ValueError(
+            "[eliashberg] gpu=true is only supported for frequency='dynamic'; "
+            "the static Eliashberg solver is CPU-only. Set frequency='dynamic' "
+            "or remove gpu.")
+
     # --- Parse parameters ---
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]

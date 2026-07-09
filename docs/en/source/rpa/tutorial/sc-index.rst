@@ -175,6 +175,9 @@ This section controls the Eliashberg solver. Key parameters:
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
+  kernel applications on a GPU via CuPy (default ``false``; see the
+  :ref:`GPU section <sc_dynamic_gpu_en>` below).
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -586,6 +589,32 @@ Before allocating, ``hwave_sc`` estimates the peak requirement and aborts if it
 would exceed the limit; set ``[eliashberg] mem_limit_gb`` to cap it explicitly
 (``0`` disables the guard), otherwise a fraction of the available RAM is used.
 
+.. _sc_dynamic_gpu_en:
+
+GPU execution (CuPy)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Setting ``gpu = true`` in the ``[eliashberg]`` section runs the dynamic-mode
+kernel applications (the eigensolver's matvec) on a GPU. The two large
+invariant tensors (the pair bubble :math:`[GG]` and the pairing vertex) are
+moved to the device once before the iteration starts; each iteration then only
+transfers the gap vector. The result is numerically identical to the CPU run
+(within double-precision round-off).
+
+- Applies to ``frequency = "dynamic"`` only. The static solver is CPU-only, so
+  setting ``gpu = true`` with ``frequency = "static"`` (or omitted, which
+  defaults to static) fails fast with a ``ValueError`` rather than silently
+  ignoring the flag.
+- Requires `CuPy <https://cupy.dev/>`_ and a usable CUDA device. When CuPy is
+  missing or no device is found, the solver warns and falls back to the CPU
+  (numpy) path automatically -- same result, only slower.
+- The GPU memory requirement is roughly the two resident tensors,
+  :math:`2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}` bytes,
+  plus workspace; if it does not fit, CuPy aborts with an explicit
+  out-of-memory error.
+- Reference point: :math:`N_{\mathrm{orb}}=2`, a :math:`64\times 64` k-mesh,
+  and :math:`N_{\mathrm{mat}}=2048` give roughly a 16x per-matvec speedup over
+  the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).
 
 Supported interactions
 ----------------------------
