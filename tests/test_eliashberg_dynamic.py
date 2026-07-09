@@ -355,6 +355,31 @@ def test_kernel_precomputed_vertex_rt_matches():
     np.testing.assert_allclose(out, ref, rtol=1e-12, atol=1e-12)
 
 
+def test_kernel_fft_workers_matches_serial():
+    """The scipy-parallel spatial FFT path (workers=-1) matches the serial
+    numpy path to machine precision. (scipy's FFT backend may differ from
+    numpy's in the last bits, hence allclose rather than bit equality.)"""
+    from hwave.solver import eliashberg_dynamic as ed
+    if ed._SFFT is None:
+        pytest.skip("scipy.fft unavailable")
+    norb, Nx, Ny, Nz, nmat = 2, 1, 8, 8, 8
+    rng = np.random.default_rng(31)
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    V = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    G2 = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    phi = rc((norb, norb, Nx, Ny, Nz, nmat))
+    serial = ed.eliashberg_kernel_dynamic(
+        None, G2, phi, norb, 5.0,
+        Vs_rt=ed.vertex_qw_to_rt(V, workers=1), workers=1)
+    par = ed.eliashberg_kernel_dynamic(
+        None, G2, phi, norb, 5.0,
+        Vs_rt=ed.vertex_qw_to_rt(V, workers=-1), workers=-1)
+    assert np.max(np.abs(serial - par)) < 1e-11
+
+
 def test_frequency_inner_is_full_vdot():
     from hwave.solver import eliashberg_dynamic as ed
     rng = np.random.default_rng(11)
