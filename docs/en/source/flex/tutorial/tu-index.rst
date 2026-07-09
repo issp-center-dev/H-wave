@@ -197,6 +197,17 @@ Key parameters:
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`).
 - ``EPS = 6``: Convergence criterion :math:`10^{-6}`.
 
+.. note::
+
+   When the electron number is fixed through ``filling`` / ``Ncond`` (rather than
+   a fixed ``mu``), FLEX re-solves the chemical potential :math:`\mu` from the
+   *dressed* Green function at every SCF iteration so that the target filling is
+   maintained self-consistently as the self-energy grows.  Consequently the
+   converged :math:`\mu` (and the exact iteration count) differ from a
+   calculation that keeps :math:`\mu` fixed at its non-interacting value.  The
+   iteration counts and convergence values shown below are illustrative and may
+   vary slightly with the version and platform.
+
 **Geometry** (``geom.dat``):
 
 .. literalinclude:: ../sample/1orb/geom.dat
@@ -230,15 +241,16 @@ The output log shows the SCF convergence:
 .. code-block:: text
 
     FLEX iteration 1/100
+    FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/100
-      convergence: |dSigma|/|Sigma| = 9.827e-01
+    FLEX._find_mu_dressed: mu = -0.291966
+      convergence: |dSigma|/|Sigma| = 9.876e-01
     ...
-    FLEX iteration 72/100
-      convergence: |dSigma|/|Sigma| = 1.008e-06
-    FLEX iteration 73/100
-      convergence: |dSigma|/|Sigma| = 8.292e-07
-    FLEX converged after 73 iterations
+    FLEX iteration 64/100
+    FLEX._find_mu_dressed: mu = -0.249146
+      convergence: |dSigma|/|Sigma| = 9.241e-07
+    FLEX converged after 64 iterations
 
 
 Results

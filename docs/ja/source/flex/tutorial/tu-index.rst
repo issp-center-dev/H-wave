@@ -186,6 +186,15 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`)
 - ``EPS = 6``: 収束判定基準 :math:`10^{-6}`
 
+.. note::
+
+   電子数を ``filling`` / ``Ncond`` で固定する場合（``mu`` を固定しない場合）、FLEX
+   は各SCF反復で化学ポテンシャル :math:`\mu` を*ドレスされた*Green関数から解き直し、
+   自己エネルギーが成長しても目標フィリングが自己無撞着に保たれるようにします。この
+   ため、収束した :math:`\mu`（および正確な反復回数）は、:math:`\mu` を非相互作用値に
+   固定した計算とは異なります。以下に示す反復回数・収束値は例示であり、バージョンや
+   環境によって多少変わり得ます。
+
 **格子情報** (``geom.dat``):
 
 .. literalinclude:: ../sample/1orb/geom.dat
@@ -218,15 +227,16 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 .. code-block:: text
 
     FLEX iteration 1/100
+    FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/100
-      convergence: |dSigma|/|Sigma| = 9.827e-01
+    FLEX._find_mu_dressed: mu = -0.291966
+      convergence: |dSigma|/|Sigma| = 9.876e-01
     ...
-    FLEX iteration 72/100
-      convergence: |dSigma|/|Sigma| = 1.008e-06
-    FLEX iteration 73/100
-      convergence: |dSigma|/|Sigma| = 8.292e-07
-    FLEX converged after 73 iterations
+    FLEX iteration 64/100
+    FLEX._find_mu_dressed: mu = -0.249146
+      convergence: |dSigma|/|Sigma| = 9.241e-07
+    FLEX converged after 64 iterations
 
 
 計算結果
