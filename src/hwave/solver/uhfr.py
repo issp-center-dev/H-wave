@@ -525,6 +525,15 @@ class UHFr(solver_base):
             logger.error("parameter range check failed.")
             exit(1)
 
+        # GPU execution is implemented only for RPA/FLEX and the dynamic
+        # Eliashberg solver; warn instead of silently ignoring the request.
+        from hwave.solver.backend import as_bool as _as_bool
+        if _as_bool(self.param_mod.get("gpu", False)):
+            logger.warning(
+                "gpu=true is not supported by the UHF solvers and is "
+                "ignored; GPU execution is available for RPA, FLEX, and "
+                "the dynamic Eliashberg solver.")
+
         self.iflag_fock = info_mode.get("flag_fock", True)
         self.ene_cutoff = self.param_mod.get("ene_cutoff", 1e+2)
         self.T = self.param_mod.get("T", 0)

@@ -18,6 +18,15 @@ except ImportError:                       # pragma: no cover - scipy is a dep
     _SFFT = None
 
 
+def as_bool(value):
+    """Coerce a config value to bool. TOML booleans arrive as real bools;
+    programmatic inputs sometimes carry strings, where plain truthiness
+    would read "false"/"off"/"0" as True."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    return bool(value)
+
+
 def _import_cupy():
     """Import and return cupy (separated out so tests can monkeypatch a
     missing installation)."""
@@ -50,7 +59,10 @@ def get_backend(use_gpu, logger=None):
         if logger is not None:
             logger.warning(
                 "gpu=true requested but CuPy is not installed; "
-                "falling back to the numpy (CPU) backend.")
+                "falling back to the numpy (CPU) backend. Install the "
+                "precompiled wheel matching your CUDA version (e.g. "
+                "'pip install cupy-cuda12x' for CUDA 12.x); see "
+                "https://docs.cupy.dev/en/stable/install.html")
         return np, False
     try:
         ndev = cupy.cuda.runtime.getDeviceCount()
@@ -70,6 +82,25 @@ def array_module_of(arr):
     if type(arr).__module__.split(".")[0] == "cupy":
         return _import_cupy()
     return np
+
+
+def warn_if_device_memory_short(required_bytes, logger, label=""):
+    """Warn when ``required_bytes`` exceeds the free memory of the current
+    CUDA device. Advisory only (CuPy itself raises a clear OutOfMemoryError
+    on allocation failure); a pre-warning lets long pipelines flag doomed
+    configurations before spending time on the transfer."""
+    try:
+        cupy = _import_cupy()
+        free_b, total_b = cupy.cuda.runtime.memGetInfo()
+    except Exception:
+        return
+    if required_bytes > free_b and logger is not None:
+        logger.warning(
+            "%s requires an estimated %.2f GB of GPU memory but only "
+            "%.2f GB of %.2f GB is free; expect a CuPy OutOfMemoryError. "
+            "Reduce Nmat / the k-mesh, or run with gpu=false.",
+            label or "the GPU transfer", required_bytes / 1e9,
+            free_b / 1e9, total_b / 1e9)
 
 
 def to_host(arr):

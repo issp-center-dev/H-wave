@@ -26,12 +26,10 @@ def _gpu_requested(eli_param):
 
     Accepts a real TOML boolean, and (for programmatic dict configs) a truthy
     string such as ``"true"``/``"1"``/``"yes"`` so a stray ``"false"`` string is
-    not treated as True by ``bool("false")``.
+    not treated as True by ``bool("false")``. Delegates to the shared
+    ``backend.as_bool`` (also used by the RPA/FLEX/UHF gpu-flag reads).
     """
-    val = eli_param.get("gpu", False)
-    if isinstance(val, str):
-        return val.strip().lower() in ("true", "1", "yes", "on")
-    return bool(val)
+    return backend.as_bool(eli_param.get("gpu", False))
 
 
 # ---------------------------------------------------------------------------
@@ -699,6 +697,10 @@ def solve_dynamic(input_dict):
     if gpu_active:
         logger.info("GPU backend active (CuPy): moving G2 and the pairing "
                     "vertex to the device (%.2f GB each).", G2_w.nbytes / 1e9)
+        # Two resident tensors plus roughly one same-sized transform
+        # workspace per matvec (the gap-sized arrays are norb^2 smaller).
+        backend.warn_if_device_memory_short(
+            3 * G2_w.nbytes, logger, label="the dynamic Eliashberg kernel")
         G2_w = xp.asarray(G2_w)
         Vs_q_w = xp.asarray(Vs_q_w)
 

@@ -67,6 +67,31 @@ def test_array_module_and_to_host_cupy():
     np.testing.assert_array_equal(back, np.arange(4.0))
 
 
+def test_as_bool_handles_string_values():
+    from hwave.solver import backend
+    assert backend.as_bool(True) is True
+    assert backend.as_bool(False) is False
+    assert backend.as_bool("true") is True
+    assert backend.as_bool("False") is False
+    assert backend.as_bool("0") is False
+    assert backend.as_bool("off") is False
+    assert backend.as_bool(1) is True
+    assert backend.as_bool(0) is False
+
+
+def test_warn_if_device_memory_short_silent_without_cupy(monkeypatch):
+    """The advisory VRAM check must never raise: with CuPy missing (or
+    memGetInfo failing) it returns silently."""
+    from hwave.solver import backend
+
+    def _no_cupy():
+        raise ImportError("No module named 'cupy'")
+
+    monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
+    backend.warn_if_device_memory_short(10**15, logging.getLogger("t"),
+                                        label="test")  # must not raise
+
+
 def test_matsubara_transforms_cupy_match_numpy():
     """The matsubara transforms must give identical results (up to fp64
     round-off) on cupy arrays, since the dynamic Eliashberg GPU kernel calls

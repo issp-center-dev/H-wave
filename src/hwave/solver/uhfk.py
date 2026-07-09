@@ -149,6 +149,15 @@ class UHFk(solver_base):
         """
         # check and store parameters
 
+        # - GPU execution is implemented only for RPA/FLEX and the dynamic
+        #   Eliashberg solver; warn instead of silently ignoring the request.
+        from hwave.solver.backend import as_bool as _as_bool
+        if _as_bool(self.param_mod.get("gpu", False)):
+            logger.warning(
+                "gpu=true is not supported by the UHF solvers and is "
+                "ignored; GPU execution is available for RPA, FLEX, and "
+                "the dynamic Eliashberg solver.")
+
         # - cell shape
         if not "CellShape" in self.param_mod:
             logger.error("CellShape is missing. abort")
