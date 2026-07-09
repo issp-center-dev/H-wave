@@ -11,10 +11,12 @@ import numpy as np
 from hwave.solver import backend
 from hwave.solver import matsubara as ms
 
-try:
-    import scipy.fft as _SFFT
-except ImportError:                       # pragma: no cover - scipy is a dep
-    _SFFT = None
+# Shared spatial-FFT helpers (scipy-parallel on CPU, cuFFT on GPU) live in
+# backend.py so RPA/FLEX use the same implementations; keep the module-local
+# names used throughout this file and by the tests.
+from hwave.solver.backend import (_SFFT,                       # noqa: F401
+                                  spatial_fftn as _spatial_fftn,
+                                  spatial_ifftn as _spatial_ifftn)
 
 logger = logging.getLogger("qlms").getChild("eliashberg_dynamic")
 
@@ -30,25 +32,6 @@ def _gpu_requested(eli_param):
     if isinstance(val, str):
         return val.strip().lower() in ("true", "1", "yes", "on")
     return bool(val)
-
-
-def _spatial_ifftn(a, axes, workers):
-    """Spatial inverse FFT. On the numpy backend this is parallelized via
-    scipy.fft when ``workers`` asks for it (``!= 1``) and scipy is available
-    (scipy's result matches numpy to machine precision); on the cupy backend
-    the FFT already runs on the GPU and ``workers`` is ignored."""
-    xp = backend.array_module_of(a)
-    if xp is np and _SFFT is not None and workers not in (None, 0, 1):
-        return _SFFT.ifftn(a, axes=axes, workers=workers)
-    return xp.fft.ifftn(a, axes=axes)
-
-
-def _spatial_fftn(a, axes, workers):
-    """Spatial forward FFT; see :func:`_spatial_ifftn`."""
-    xp = backend.array_module_of(a)
-    if xp is np and _SFFT is not None and workers not in (None, 0, 1):
-        return _SFFT.fftn(a, axes=axes, workers=workers)
-    return xp.fft.fftn(a, axes=axes)
 
 
 # ---------------------------------------------------------------------------

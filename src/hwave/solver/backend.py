@@ -12,6 +12,11 @@ warning -- the result is identical, only slower.
 """
 import numpy as np
 
+try:
+    import scipy.fft as _SFFT
+except ImportError:                       # pragma: no cover - scipy is a dep
+    _SFFT = None
+
 
 def _import_cupy():
     """Import and return cupy (separated out so tests can monkeypatch a
@@ -74,3 +79,23 @@ def to_host(arr):
     if xp is np:
         return arr
     return xp.asnumpy(arr)
+
+
+def spatial_ifftn(a, axes, workers=1):
+    """Spatial inverse FFT shared by the k-space solvers (RPA/FLEX/dynamic
+    Eliashberg). On the numpy backend this is parallelized via scipy.fft when
+    ``workers`` asks for it (``!= 1``) and scipy is available (scipy's result
+    matches numpy to machine precision); on the cupy backend the FFT already
+    runs on the GPU and ``workers`` is ignored."""
+    xp = array_module_of(a)
+    if xp is np and _SFFT is not None and workers not in (None, 0, 1):
+        return _SFFT.ifftn(a, axes=axes, workers=workers)
+    return xp.fft.ifftn(a, axes=axes)
+
+
+def spatial_fftn(a, axes, workers=1):
+    """Spatial forward FFT; see :func:`spatial_ifftn`."""
+    xp = array_module_of(a)
+    if xp is np and _SFFT is not None and workers not in (None, 0, 1):
+        return _SFFT.fftn(a, axes=axes, workers=workers)
+    return xp.fft.fftn(a, axes=axes)

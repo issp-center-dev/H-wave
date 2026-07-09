@@ -17,7 +17,6 @@ from typing import Optional
 
 import os
 import numpy as np
-import numpy.fft as FFT
 from requests.structures import CaseInsensitiveDict
 
 try:
@@ -34,6 +33,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import RPA, Lattice, Interaction
+from . import backend as _bk
 from . import matsubara as _ms
 
 
@@ -209,12 +209,28 @@ class FLEX(RPA):
 
         self.mu = mu
 
+        # GPU (CuPy) execution: resolve the backend once, then move the SCF
+        # loop's working arrays to the device. The eigendecomposition of H0 and
+        # the initial mu search above stay on the host; from here on every
+        # array-producing method dispatches on its inputs' array module, so the
+        # loop below runs end-to-end on the GPU. The chemical-potential search
+        # (_find_mu_dressed) is the one exception: it needs a general
+        # (non-Hermitian) eigensolver, which CuPy does not provide, so it
+        # brings its operator to the host internally.
+        xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger)
+        if gpu_active:
+            logger.info("FLEX: GPU backend active (CuPy); moving H0 "
+                        "eigenpairs and interaction to the device.")
+            self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
+            self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
+
         # Step 2: Compute bare Green's function G0(k, iwn)
         green0, green0_tail = self._calc_green(beta, mu)
 
-        # Store for reference
-        self.green0 = green0
-        self.green0_tail = green0_tail
+        # Store for reference (as host arrays; the loop below keeps using the
+        # backend-local green0_tail)
+        self.green0 = _bk.to_host(green0)
+        self.green0_tail = _bk.to_host(green0_tail)
 
         # High-frequency tail contract (coeff_tail): RPA's tail acceleration
         # is a two-step pair -- _calc_green subtracts aa/(i w_n) in FREQUENCY
@@ -233,9 +249,9 @@ class FLEX(RPA):
         # does not improve the Nmat convergence of Sigma.
         aa = self.coeff_tail
         if aa != 0.0:
-            iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+            iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
             ev = self.H0_eigenvector
-            VVt = ev @ np.conj(ev).swapaxes(-2, -1)  # (nblock, nvol, nd, nd)
+            VVt = ev @ xp.conj(ev).swapaxes(-2, -1)  # (nblock, nvol, nd, nd)
             green_tail_w = ((aa / (1j * iomega))[np.newaxis, :, np.newaxis,
                                                  np.newaxis, np.newaxis]
                             * VVt[:, np.newaxis])
@@ -246,11 +262,15 @@ class FLEX(RPA):
         # Shape: (nblock, nmat, nvol, nd_block, nd_block)
         nblock = green0.shape[0]
         nd_block = green0.shape[-1]
-        sigma = np.zeros((nblock, nmat, nvol, nd_block, nd_block),
+        sigma = xp.zeros((nblock, nmat, nvol, nd_block, nd_block),
                          dtype=np.complex128)
 
-        # Prepare interaction Hamiltonian (full spin-orbital space)
+        # Prepare interaction Hamiltonian (full spin-orbital space) as a
+        # LOCAL backend copy: ham_info is shared state handed in by the
+        # caller, so it must not be mutated to a device array.
         ham_orig = self.ham_info.ham_inter_q
+        if gpu_active:
+            ham_orig = xp.asarray(ham_orig)
 
         # Main SCF loop
         diff = float("inf")
@@ -323,6 +343,9 @@ class FLEX(RPA):
         if self.max_iter == 0:
             # No SCF iteration ran: green_kw / chi_s / chi_c / chi0q_out were
             # never computed.  Warn-and-return instead of dereferencing them.
+            if gpu_active:
+                self.H0_eigenvalue = _bk.to_host(self.H0_eigenvalue)
+                self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
             logger.warning("FLEX IterationMax=0: no SCF step performed; "
                            "no results stored.")
             return
@@ -347,7 +370,19 @@ class FLEX(RPA):
         logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
             physics["NCond"], physics["Sz"], physics["mu"]))
 
-        # Store results
+        # Restore the solver's public attributes to host arrays so the
+        # post-solve object state is backend-independent.
+        if gpu_active:
+            self.H0_eigenvalue = _bk.to_host(self.H0_eigenvalue)
+            self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
+
+        # Store results (as host arrays: everything downstream -- writers,
+        # green_info consumers -- is numpy)
+        sigma = _bk.to_host(sigma)
+        green_kw = _bk.to_host(green_kw)
+        chi_s = _bk.to_host(chi_s)
+        chi_c = _bk.to_host(chi_c)
+        chi0q_out = _bk.to_host(chi0q_out)
         self.sigma = sigma
         self.green_kw = green_kw
         self.chi_s = chi_s
@@ -385,19 +420,20 @@ class FLEX(RPA):
 
         ew = self.H0_eigenvalue
         ev = self.H0_eigenvector
+        xp = _bk.array_module_of(sigma)
 
         nblock, nvol, nd = ew.shape
         nmat = self.nmat
 
         # Matsubara frequencies
-        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
         # Reconstruct H0 in orbital basis from eigendecomposition
         # H0 = ev @ diag(ew) @ ev†, using matmul for BLAS efficiency
-        H0_k = np.matmul(ev * ew[:, :, np.newaxis, :], np.conj(ev).swapaxes(-2, -1))
+        H0_k = xp.matmul(ev * ew[:, :, np.newaxis, :], xp.conj(ev).swapaxes(-2, -1))
 
         # G^{-1}(k, iwn) = (iwn + mu) * I - H0(k) - Sigma(k, iwn)
-        eye = np.eye(nd, dtype=np.complex128)
+        eye = xp.eye(nd, dtype=np.complex128)
 
         # Vectorized construction of G^{-1} for all frequencies
         # iomega shape: (nmat,) -> broadcast to (1, nmat, 1, 1, 1)
@@ -408,7 +444,7 @@ class FLEX(RPA):
         green_inv = (iw + mu) * eye - H0_exp - sigma
 
         # G(k, iwn) = [G^{-1}]^{-1}
-        green = np.linalg.inv(green_inv)
+        green = xp.linalg.inv(green_inv)
 
         return green
 
@@ -452,28 +488,30 @@ class FLEX(RPA):
         """
         nmat = self.nmat
         ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
+        xp = _bk.array_module_of(sigma)
 
         # analytic non-interacting reference (Fermi function)
         n_ref = self._fermi_occupation(1.0 / beta, mu, ew).sum()
 
         # dressed correction Tr[G - G0], summed over the finite Matsubara grid
         green = self._calc_dressed_green(beta, mu, sigma)
-        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
-        trG = np.einsum('bnkaa->bnk', green)          # (nblock, nmat, nvol)
+        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        trG = xp.einsum('bnkaa->bnk', green)          # (nblock, nmat, nvol)
         trG0 = (1.0 / ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
                        + (mu - ew)[:, np.newaxis, :, :])).sum(axis=-1)
         corr = (trG - trG0).sum() / beta
 
-        return n_ref + corr.real
+        return float(n_ref + corr.real)
 
     @staticmethod
     def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
         """Fermi function with the same overflow guard as RPA._find_mu."""
+        xp = _bk.array_module_of(ev)
         w = (ev - mu) / t
         mask = w < ene_cutoff
-        w1 = np.where(mask, w, 0.0)
-        v1 = 1.0 / (1.0 + np.exp(w1))
-        return np.where(mask, v1, 0.0)
+        w1 = xp.where(mask, w, 0.0)
+        v1 = 1.0 / (1.0 + xp.exp(w1))
+        return xp.where(mask, v1, 0.0)
 
     @do_profile
     def _calc_occupation_dressed(self, green_kw, mu, beta):
@@ -509,18 +547,19 @@ class FLEX(RPA):
         nmat = self.nmat
         ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
         ev = self.H0_eigenvector                      # (nblock, nvol, a, j)
-        vsq = np.abs(ev) ** 2                          # |V_aj|^2
+        xp = _bk.array_module_of(green_kw)
+        vsq = xp.abs(ev) ** 2                          # |V_aj|^2
 
         # bare per-orbital reference: n0_a = sum_j |V_aj|^2 f(eps_j - mu)
         f = self._fermi_occupation(1.0 / beta, mu, ew)     # (nblock, nvol, j)
-        n0 = np.einsum('bkaj,bkj->bka', vsq, f)            # (nblock, nvol, a)
+        n0 = xp.einsum('bkaj,bkj->bka', vsq, f)            # (nblock, nvol, a)
 
         # dressed correction (1/beta) sum_n [G_aa - G0_aa]
-        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
-        g_aa = np.einsum('bnkaa->bnka', green_kw)          # (nblock, nmat, nvol, a)
+        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        g_aa = xp.einsum('bnkaa->bnka', green_kw)          # (nblock, nmat, nvol, a)
         denom = ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
                  + (mu - ew)[:, np.newaxis, :, :])         # (nblock, nmat, nvol, j)
-        g0_aa = np.einsum('bkaj,bnkj->bnka', vsq, 1.0 / denom)
+        g0_aa = xp.einsum('bkaj,bnkj->bnka', vsq, 1.0 / denom)
         corr = (g_aa - g0_aa).sum(axis=1) / beta           # sum over n -> (nblock, nvol, a)
 
         nocc = n0 + corr.real
@@ -612,18 +651,22 @@ class FLEX(RPA):
         """
         ew = self.H0_eigenvalue
         ev = self.H0_eigenvector
+        xp = _bk.array_module_of(sigma)
         nblock, nvol, nd = ew.shape
         nmat = self.nmat
 
-        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
-        H0_k = np.matmul(ev * ew[:, :, np.newaxis, :],
-                         np.conj(ev).swapaxes(-2, -1))       # (nb, nvol, nd, nd)
-        eye = np.eye(nd, dtype=np.complex128)
+        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        H0_k = xp.matmul(ev * ew[:, :, np.newaxis, :],
+                         xp.conj(ev).swapaxes(-2, -1))       # (nb, nvol, nd, nd)
+        eye = xp.eye(nd, dtype=np.complex128)
         iw = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
         M = iw * eye - H0_k[:, np.newaxis, :, :, :] - sigma  # (nb,nmat,nvol,nd,nd)
 
-        lam = np.linalg.eigvals(M)                            # (nb,nmat,nvol,nd)
-        return lam, ew
+        # M is non-Hermitian; CuPy has no general (geev) eigensolver, so the
+        # decomposition runs on the host. Both outputs are returned as host
+        # arrays so the mu search (_number_from_eigs) is pure numpy.
+        lam = np.linalg.eigvals(_bk.to_host(M))               # (nb,nmat,nvol,nd)
+        return lam, _bk.to_host(ew)
 
     def _number_from_eigs(self, lam, ew, mu, beta, with_deriv=False):
         """Particle number N(mu) (and optionally dN/dmu) from precomputed
@@ -725,11 +768,12 @@ class FLEX(RPA):
         float
             Chemical potential mu such that N(mu) = Ncond.
         """
-        w = self.H0_eigenvalue
-
         # Diagonalize the mu-independent part of G^{-1} once; each trial mu is
         # then a cheap sum over eigenvalues (see _matsubara_number_operator).
+        # ew is returned as a HOST array, so the whole search below is pure
+        # numpy regardless of the solve backend.
         lam, ew = self._matsubara_number_operator(sigma, beta)
+        w = ew
 
         def _delta_n(mu, with_deriv=False):
             r = self._number_from_eigs(lam, ew, mu, beta, with_deriv=with_deriv)
@@ -744,7 +788,7 @@ class FLEX(RPA):
         # (doubling the pad) until N(mu) changes sign, instead of failing on the
         # first guess.  N(mu) -> 0 as mu -> -inf and -> Nstate as mu -> +inf, so
         # a finite root is always bracketed after enough expansion.
-        pad = float(np.abs(sigma.real).max()) + 1.0
+        pad = float(_bk.array_module_of(sigma).abs(sigma.real).max()) + 1.0
         lo = float(w.min()) - pad
         hi = float(w.max()) + pad
         f_lo = _delta_n(lo)
@@ -930,6 +974,7 @@ class FLEX(RPA):
         norb = self.norb
         ns = self.ns
         nd = self.nd
+        xp = _bk.array_module_of(chi0q_raw)
 
         if self.spin_mode == "spin-free":
             # chi0q_raw shape: (nmat, nvol, norb, norb) for reduced
@@ -941,12 +986,12 @@ class FLEX(RPA):
             # leaving off-diagonal spin blocks exactly zero. Bit-identical to
             # np.einsum('lkab,st->lksatb', chi0q, I_ns), but faster.
             chi0q_src = chi0q_raw.reshape(nfreq, nvol, norb, norb)
-            chi0q = np.zeros((nfreq, nvol, nd, nd), dtype=chi0q_src.dtype)
+            chi0q = xp.zeros((nfreq, nvol, nd, nd), dtype=chi0q_src.dtype)
             for s in range(ns):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_src
 
-            ham = np.einsum('ksasatbtb->ksatb',
+            ham = xp.einsum('ksasatbtb->ksatb',
                             ham_orig.reshape(nvol, *(ns, norb) * 4)
                             ).reshape(nvol, nd, nd)
 
@@ -958,12 +1003,12 @@ class FLEX(RPA):
             # Source block g goes to spin block (g, g) on the diagonal, with
             # off-diagonal spin blocks exactly zero. Bit-identical to
             # np.einsum('glkab,gh->lkgahb', chi0q, I_ns), but faster.
-            chi0q = np.zeros((nfreq, nvol, nd, nd), dtype=chi0q_raw.dtype)
+            chi0q = xp.zeros((nfreq, nvol, nd, nd), dtype=chi0q_raw.dtype)
             for s in range(ns):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_raw[s]
 
-            ham = np.einsum('ksasatbtb->ksatb',
+            ham = xp.einsum('ksasatbtb->ksatb',
                             ham_orig.reshape(nvol, *(ns, norb) * 4)
                             ).reshape(nvol, nd, nd)
 
@@ -971,7 +1016,7 @@ class FLEX(RPA):
             # chi0q_raw shape: (nmat, nvol, nd, nd) for reduced
             chi0q = chi0q_raw
 
-            ham = np.einsum('kaabb->kab',
+            ham = xp.einsum('kaabb->kab',
                             ham_orig.reshape(nvol, *(nd,) * 4)
                             ).reshape(nvol, nd, nd)
 
@@ -1119,6 +1164,13 @@ class FLEX(RPA):
         else:
             Us, Uc = cache
 
+        # The S/C matrices are built (and cached) on the host; mirror them to
+        # chi0q's backend so the downstream channel solve stays on one device.
+        xp = _bk.array_module_of(chi0q)
+        if xp is not np:
+            Us = xp.asarray(Us)
+            Uc = xp.asarray(Uc)
+
         return chi0q, Us, Uc
 
     @do_profile
@@ -1234,8 +1286,9 @@ class FLEX(RPA):
         # Inflate channel vertices to spin-orbital reduced space by scattering
         # onto the spin-block diagonal (Kronecker product with I_ns).
         # Bit-identical to np.einsum('kab,st->ksatb', u, I_ns), but faster.
-        ham_s = np.zeros((nvol, nd, nd), dtype=u_s.dtype)
-        ham_c = np.zeros((nvol, nd, nd), dtype=u_c.dtype)
+        xp = _bk.array_module_of(ham_inflated)
+        ham_s = xp.zeros((nvol, nd, nd), dtype=u_s.dtype)
+        ham_c = xp.zeros((nvol, nd, nd), dtype=u_c.dtype)
         for s in range(ns):
             sl = slice(s * norb, (s + 1) * norb)
             ham_s[..., sl, sl] = -u_s
@@ -1293,9 +1346,10 @@ class FLEX(RPA):
         # V_eff = W * fluct_chi * W
         # Use batched matmul instead of einsum for better BLAS utilization
         # W @ fluct_chi: broadcast (nvol, nd, nd) @ (nfreq, nvol, nd, nd)
-        tmp = np.matmul(ham_2d, fluct_chi)
+        xp = _bk.array_module_of(chi0q)
+        tmp = xp.matmul(ham_2d, fluct_chi)
         # tmp @ W: (nfreq, nvol, nd, nd) @ (nvol, nd, nd)
-        v_eff = np.matmul(tmp, ham_2d)
+        v_eff = xp.matmul(tmp, ham_2d)
 
         return v_eff
 
@@ -1418,6 +1472,9 @@ class FLEX(RPA):
                 "FLEX self-energy requires a full bosonic frequency grid: "
                 "V_eff has nfreq={} but Nmat={}".format(nfreq, nmat))
 
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+
         # --- Transform Green's function to (r, tau) space ---
 
         # Matsubara freq -> imaginary time for G (fermionic)
@@ -1426,8 +1483,8 @@ class FLEX(RPA):
             nblock, nmat, nx, ny, nz, nd_block * nd_block)
 
         # k-space -> real-space for G
-        green_rt = FFT.ifftn(green_kt, axes=(2, 3, 4)
-                             ).reshape(nblock, nmat, nvol, nd_block, nd_block)
+        green_rt = _bk.spatial_ifftn(green_kt, axes=(2, 3, 4), workers=workers
+                                     ).reshape(nblock, nmat, nvol, nd_block, nd_block)
 
         # --- Transform V_eff to (r, tau) space ---
 
@@ -1437,7 +1494,8 @@ class FLEX(RPA):
             nfreq, nx, ny, nz, nd_v * nd_v)
 
         # q-space -> real-space for V_eff
-        v_rt = FFT.ifftn(v_qt, axes=(1, 2, 3)).reshape(nfreq, nvol, nd_v, nd_v)
+        v_rt = _bk.spatial_ifftn(v_qt, axes=(1, 2, 3), workers=workers
+                                 ).reshape(nfreq, nvol, nd_v, nd_v)
 
         # --- Compute Sigma(r, tau) ---
         n_common = min(nfreq, nmat)
@@ -1452,7 +1510,7 @@ class FLEX(RPA):
             # Sigma stays in block space (nd_block x nd_block); the spin
             # off-diagonal slots of the inflated form are exactly zero.
             norb = self.norb
-            sigma_rt = np.zeros((nblock, nmat, nvol, nd_block, nd_block),
+            sigma_rt = xp.zeros((nblock, nmat, nvol, nd_block, nd_block),
                                 dtype=np.complex128)
             for g in range(nblock):
                 s = g if nblock == self.ns else 0
@@ -1463,7 +1521,7 @@ class FLEX(RPA):
                 )
         else:
             # Sigma(r,tau) = V_eff(r,tau) * G(r,tau)  (element-wise product)
-            sigma_rt = np.zeros((nblock, nmat, nvol, nd_v, nd_v),
+            sigma_rt = xp.zeros((nblock, nmat, nvol, nd_v, nd_v),
                                 dtype=np.complex128)
             sigma_rt[:, :n_common] = v_rt[:n_common] * green_rt[:, :n_common]
 
@@ -1471,9 +1529,9 @@ class FLEX(RPA):
         nd_sig = sigma_rt.shape[-1]
 
         # Real-space -> k-space
-        sigma_kt = FFT.fftn(
+        sigma_kt = _bk.spatial_fftn(
             sigma_rt.reshape(nblock, nmat, nx, ny, nz, nd_sig * nd_sig),
-            axes=(2, 3, 4)
+            axes=(2, 3, 4), workers=workers
         ).reshape(nblock, nmat, nvol * nd_sig * nd_sig)
 
         # Imaginary time -> Matsubara freq (fermionic)
@@ -1505,11 +1563,12 @@ class FLEX(RPA):
         ndarray, shape (nblock, nfreq, nvol, norb, norb)
             Self-energy in (r, tau), last two axes (m, n).
         """
+        xp = _bk.array_module_of(green_rt)
         nfreq, nvol = v_rt.shape[0], v_rt.shape[1]
         no = green_rt.shape[-1]
         v6 = v_rt.reshape(nfreq, nvol, no, no, no, no)   # (f, r, mu, m, nu, n)
         # Sigma[g,f,r,m,n] = sum_{mu,nu} v6[f,r,mu,m,nu,n] * green_rt[g,f,r,mu,nu]
-        return np.einsum('frumvn,gfruv->gfrmn', v6, green_rt)
+        return xp.einsum('frumvn,gfruv->gfrmn', v6, green_rt)
 
     @do_profile
     def _calc_self_energy_general(self, green_kw, v_eff, beta):
@@ -1565,20 +1624,23 @@ class FLEX(RPA):
                 "FLEX self-energy requires a full bosonic frequency grid: "
                 "V_eff has nfreq={} but Nmat={}".format(nfreq, nmat))
 
+        workers = getattr(self, "fft_workers", 1)
+
         # --- Transform Green's function to (r, tau) space ---
         # (transport identical to _calc_self_energy)
         green_flat = green_kw.reshape(nblock, nmat, nvol * norb * norb)
         green_kt = _ms.fermion_to_tau(green_flat, axis=1).reshape(
             nblock, nmat, nx, ny, nz, norb * norb)
-        green_rt = FFT.ifftn(green_kt, axes=(2, 3, 4)
-                             ).reshape(nblock, nmat, nvol, norb, norb)
+        green_rt = _bk.spatial_ifftn(green_kt, axes=(2, 3, 4), workers=workers
+                                     ).reshape(nblock, nmat, nvol, norb, norb)
 
         # --- Transform V_eff to (r, tau) space ---
         # (transport identical to _calc_self_energy)
         v_flat = v_eff.reshape(nfreq, nvol * ndx * ndx)
         v_qt = _ms.boson_to_tau(v_flat, axis=0).reshape(
             nfreq, nx, ny, nz, ndx * ndx)
-        v_rt = FFT.ifftn(v_qt, axes=(1, 2, 3)).reshape(nfreq, nvol, ndx, ndx)
+        v_rt = _bk.spatial_ifftn(v_qt, axes=(1, 2, 3), workers=workers
+                                 ).reshape(nfreq, nvol, ndx, ndx)
 
         # --- Compute Sigma(r, tau): rank-4 orbital contraction (the only new
         # bug-prone step; the rest is reused transport). ---
@@ -1586,9 +1648,9 @@ class FLEX(RPA):
 
         # --- Transform Sigma back to (k, iwn) space ---
         # (transport identical to _calc_self_energy)
-        sigma_kt = FFT.fftn(
+        sigma_kt = _bk.spatial_fftn(
             sigma_rt.reshape(nblock, nmat, nx, ny, nz, norb * norb),
-            axes=(2, 3, 4)
+            axes=(2, 3, 4), workers=workers
         ).reshape(nblock, nmat, nvol * norb * norb)
 
         sigma_kw = (_ms.tau_to_fermion(sigma_kt, axis=1)
@@ -1611,8 +1673,9 @@ class FLEX(RPA):
         float
             Relative difference |sigma_new - sigma_old| / |sigma_new|.
         """
-        diff = np.linalg.norm(sigma_new - sigma_old)
-        norm = np.linalg.norm(sigma_new)
+        xp = _bk.array_module_of(sigma_new)
+        diff = float(xp.linalg.norm(sigma_new - sigma_old))
+        norm = float(xp.linalg.norm(sigma_new))
         if norm < 1.0e-30:
             return diff
         return diff / norm

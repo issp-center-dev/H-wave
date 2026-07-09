@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
+from . import backend as _bk
 from . import fold
 from . import matsubara as _ms
 
@@ -636,6 +637,14 @@ class RPA:
 
         self.coeff_tail = self.param_mod.get("coeff_tail", 0.0)
         self.ext = self.param_mod.get("coeff_extern", 0.0)
+
+        # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
+        # user request; consumers resolve it via backend.get_backend (warn and
+        # fall back to numpy when CuPy / a CUDA device is unavailable).
+        # fft_workers defaults to 1 (the serial numpy path, bit-compatible
+        # with previous releases); scipy-parallel FFTs are opt-in.
+        self.use_gpu = bool(self.param_mod.get("gpu", False))
+        self.fft_workers = int(self.param_mod.get("fft_workers", 1))
 
         # exclusive options: mu and Ncond/filling
         have_mu = "mu" in self.param_mod.keys()
@@ -1743,6 +1752,7 @@ class RPA:
         # load eigenvalues and eigenvectors
         ew = self.H0_eigenvalue
         ev = self.H0_eigenvector
+        xp = _bk.array_module_of(ew)
 
         nx,ny,nz = self.lattice.shape
 
@@ -1751,7 +1761,7 @@ class RPA:
 
         nmat = self.nmat
 
-        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
         # 1 / (iw_{n} - (e_i(k) - mu)) -> g[g,l,k,i] via broadcasting
         # iomega: (nmat,), ew: (nblock, nvol, nd)
@@ -1775,7 +1785,7 @@ class RPA:
 
         # G_ab(k,iw_n) = sum_j V_{a,j} V*_{b,j} * g_j
         # = (V * g) @ V†  -- use matmul (BLAS) instead of einsum
-        ev_conj_t = np.conj(ev).swapaxes(-2, -1)  # (nblock,nvol,nd,nd): V†[g,k]
+        ev_conj_t = xp.conj(ev).swapaxes(-2, -1)  # (nblock,nvol,nd,nd): V†[g,k]
 
         # Vg = V * g: broadcast g into eigenvector columns
         Vg = ev[:, np.newaxis, :, :, :] * g[:, :, :, np.newaxis, :]  # (nblock,nmat,nvol,nd,nd)
@@ -1784,7 +1794,7 @@ class RPA:
         # Tail: G_tail = V @ V† * aa * 0.5 * beta = I * aa * 0.5 * beta (unitarity)
         # But original code retains V V† form for non-complete basis cases
         VVt = ev @ ev_conj_t  # (nblock,nvol,nd,nd)
-        green_tail = VVt[:, np.newaxis, :, :, :] * np.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta
+        green_tail = VVt[:, np.newaxis, :, :, :] * xp.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta
 
         return green, green_tail
 
@@ -1821,6 +1831,9 @@ class RPA:
         """
         logger.debug(">>> RPA._calc_chi0q")
 
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+
         nx,ny,nz = self.lattice.shape
         #nvol = self.lattice.nvol
 
@@ -1835,12 +1848,14 @@ class RPA:
         green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
 
         # Fourier transform from wave number space to coordinate space
-        green_rt = FFT.ifftn(green_kt.reshape(nblock, nmat, nx, ny, nz, nd * nd), axes=(2, 3, 4))
+        green_rt = _bk.spatial_ifftn(
+            green_kt.reshape(nblock, nmat, nx, ny, nz, nd * nd),
+            axes=(2, 3, 4), workers=workers)
 
         # calculate chi0 in real space and imaginary time
-        green_rev = np.flip(np.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+        green_rev = xp.flip(xp.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
-        sgn = np.full(nmat, -1)
+        sgn = xp.full(nmat, -1)
         sgn[0] = 1
 
         if self.enable_reduced:
@@ -1868,7 +1883,9 @@ class RPA:
             nds = nd ** 4
 
         # Fourier transform to wave number space
-        chi0_qt = FFT.fftn(chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds), axes=(2, 3, 4))
+        chi0_qt = _bk.spatial_fftn(
+            chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds),
+            axes=(2, 3, 4), workers=workers)
 
         # Fourier transform to matsubara freq
         chi0_qt_flat = chi0_qt.reshape(nblock, nmat, nvol * nds)
@@ -2137,10 +2154,12 @@ class RPA:
         """
         logger.debug(">>> RPA._solve_rpa")
 
+        xp = _bk.array_module_of(chi0q)
+
         nvol = self.lattice.nvol
         nmat = chi0q.shape[0]
         chi_shape = chi0q.shape  # [nmat,nvol,(spin_orbital structure)]
-        ndx = np.prod(chi_shape[2:2+(len(chi_shape)-2)//2])
+        ndx = int(np.prod(chi_shape[2:2+(len(chi_shape)-2)//2]))
 
         chi0q_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
         ham_2d = ham.reshape(nvol, ndx, ndx)
@@ -2156,10 +2175,12 @@ class RPA:
         #  O(nmat*nvol*ndx^3) solve. We reduce chi0q to its (ndx, ndx)
         #  connectivity first to avoid materializing a large concatenated
         #  array.)
-        conn_stack = np.stack([
-            np.sum(np.abs(ham_2d), axis=0),
-            np.sum(np.abs(chi0q_2d), axis=(0, 1)),
-        ])  # (2, ndx, ndx); _find_block_diagonal sums |.| over axis 0
+        # Block detection is pure-python graph analysis on a small (ndx, ndx)
+        # connectivity matrix, so bring the reduced connectivity to the host.
+        conn_stack = _bk.to_host(xp.stack([
+            xp.sum(xp.abs(ham_2d), axis=0),
+            xp.sum(xp.abs(chi0q_2d), axis=(0, 1)),
+        ]))  # (2, ndx, ndx); _find_block_diagonal sums |.| over axis 0
         blocks = self._find_block_diagonal(conn_stack)
 
         # Determine thread-parallel chunking for frequency axis
@@ -2177,35 +2198,37 @@ class RPA:
         # Heuristic: only parallelize for large multi-orbital problems
         # where ndx >= 16 (8+ orbitals spinful) and enough frequency points.
         # For small ndx, batched LAPACK is faster than thread pool overhead.
-        use_parallel = (n_workers > 1 and nmat >= 4 * n_workers
+        # cuSOLVER's batched solve already saturates the GPU, so the CPU
+        # thread-pool path is numpy-only.
+        use_parallel = (xp is np and n_workers > 1 and nmat >= 4 * n_workers
                         and ndx >= 16 and nmat * nvol * ndx * ndx >= 1000000)
 
         if blocks is not None and len(blocks) > 1:
             logger.info("_solve_rpa: block-diagonal structure detected, "
                         "ndx={} -> {} blocks of sizes {}".format(
                             ndx, len(blocks), [len(b) for b in blocks]))
-            sol = np.zeros_like(chi0q_2d)
+            sol = xp.zeros_like(chi0q_2d)
             for block_idx in blocks:
-                idx = np.array(block_idx)
-                ix = np.ix_(idx, idx)
+                idx = xp.array(block_idx)
+                ix = xp.ix_(idx, idx)
                 chi0q_blk = chi0q_2d[:, :, ix[0], ix[1]]
                 ham_blk = ham_2d[:, ix[0], ix[1]]
-                nb = len(idx)
+                nb = len(block_idx)
 
                 if use_parallel:
                     sol[:, :, ix[0], ix[1]] = self._solve_rpa_parallel(
                         chi0q_blk, ham_blk, nb, n_workers)
                 else:
-                    mat_blk = (np.eye(nb, dtype=np.complex128)
+                    mat_blk = (xp.eye(nb, dtype=np.complex128)
                                + (chi0q_blk @ ham_blk[np.newaxis, :, :, :]))
-                    sol[:, :, ix[0], ix[1]] = np.linalg.solve(mat_blk, chi0q_blk)
+                    sol[:, :, ix[0], ix[1]] = xp.linalg.solve(mat_blk, chi0q_blk)
         else:
             if use_parallel:
                 sol = self._solve_rpa_parallel(chi0q_2d, ham_2d, ndx, n_workers)
             else:
-                mat = (np.eye(ndx, dtype=np.complex128)
+                mat = (xp.eye(ndx, dtype=np.complex128)
                        + (chi0q_2d @ ham_2d[np.newaxis, :, :, :]))
-                sol = np.linalg.solve(mat, chi0q_2d)
+                sol = xp.linalg.solve(mat, chi0q_2d)
 
         return sol.reshape(chi_shape)
 
