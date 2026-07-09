@@ -11,18 +11,24 @@ import numpy as np
 import pytest
 
 
-def _run_flex(gpu=False, fft_workers=-1, Lx=4, Ly=4, Nmat=32, T=2.0, mu=0.0):
+def _run_flex(gpu=False, fft_workers=1, Lx=4, Ly=4, Nmat=32, T=2.0, mu=0.0,
+              filling=None, return_solver=False):
     """Run a small 1-orbital Hubbard FLEX solve; return green_info."""
     info_log = {}
+    param = {
+        'T': T,
+        'CellShape': [Lx, Ly, 1], 'SubShape': [1, 1, 1],
+        'Nmat': Nmat,
+        'gpu': gpu,
+        'fft_workers': fft_workers,
+    }
+    if filling is not None:
+        param['filling'] = filling
+    else:
+        param['mu'] = mu
     info_mode = {
         'mode': 'FLEX',
-        'param': {
-            'T': T, 'mu': mu,
-            'CellShape': [Lx, Ly, 1], 'SubShape': [1, 1, 1],
-            'Nmat': Nmat,
-            'gpu': gpu,
-            'fft_workers': fft_workers,
-        },
+        'param': param,
         'calc_scheme': 'reduced',
     }
     info_input = {
@@ -43,6 +49,8 @@ def _run_flex(gpu=False, fft_workers=-1, Lx=4, Ly=4, Nmat=32, T=2.0, mu=0.0):
     green_info = read_io.get_param("green")
     solver = solver_flex.FLEX(ham_info, info_log, info_mode)
     solver.solve(green_info, 'tests/flex/output')
+    if return_solver:
+        return green_info, solver
     return green_info
 
 
@@ -89,6 +97,30 @@ def test_flex_gpu_matches_cpu():
         assert isinstance(out[key], np.ndarray), \
             "green_info['{}'] must be a host numpy array".format(key)
     _assert_results_close(out, ref, atol=1e-10)
+
+
+def test_flex_gpu_calc_mu_matches_cpu():
+    """gpu=true with a filling target (calc_mu) must reproduce the CPU
+    results: this exercises the host/device boundary of the dressed
+    chemical-potential search (_matsubara_number_operator brings its
+    non-Hermitian operator to the host). Also checks that no CuPy arrays
+    leak into public solver attributes or ham_info after the solve."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+
+    ref, _ = _run_flex(gpu=False, filling=0.4, return_solver=True)
+    out, solver = _run_flex(gpu=True, filling=0.4, return_solver=True)
+    _assert_results_close(out, ref, atol=1e-9)
+    assert np.isclose(out["physics"]["Sz"], ref["physics"]["Sz"], atol=1e-9)
+    for name in ("H0_eigenvalue", "H0_eigenvector", "green0", "green0_tail",
+                 "sigma", "green_kw", "chi_s", "chi_c"):
+        assert isinstance(getattr(solver, name), np.ndarray), \
+            "solver.{} must be a host numpy array after solve".format(name)
+    assert isinstance(solver.ham_info.ham_inter_q, np.ndarray), \
+        "ham_info.ham_inter_q must not be mutated to a device array"
 
 
 def test_flex_fft_workers_matches_serial():

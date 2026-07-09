@@ -641,8 +641,10 @@ class RPA:
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
         # user request; consumers resolve it via backend.get_backend (warn and
         # fall back to numpy when CuPy / a CUDA device is unavailable).
+        # fft_workers defaults to 1 (the serial numpy path, bit-compatible
+        # with previous releases); scipy-parallel FFTs are opt-in.
         self.use_gpu = bool(self.param_mod.get("gpu", False))
-        self.fft_workers = int(self.param_mod.get("fft_workers", -1))
+        self.fft_workers = int(self.param_mod.get("fft_workers", 1))
 
         # exclusive options: mu and Ncond/filling
         have_mu = "mu" in self.param_mod.keys()

@@ -223,7 +223,6 @@ class FLEX(RPA):
                         "eigenpairs and interaction to the device.")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
             self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
-            self.ham_info.ham_inter_q = xp.asarray(self.ham_info.ham_inter_q)
 
         # Step 2: Compute bare Green's function G0(k, iwn)
         green0, green0_tail = self._calc_green(beta, mu)
@@ -266,8 +265,12 @@ class FLEX(RPA):
         sigma = xp.zeros((nblock, nmat, nvol, nd_block, nd_block),
                          dtype=np.complex128)
 
-        # Prepare interaction Hamiltonian (full spin-orbital space)
+        # Prepare interaction Hamiltonian (full spin-orbital space) as a
+        # LOCAL backend copy: ham_info is shared state handed in by the
+        # caller, so it must not be mutated to a device array.
         ham_orig = self.ham_info.ham_inter_q
+        if gpu_active:
+            ham_orig = xp.asarray(ham_orig)
 
         # Main SCF loop
         diff = float("inf")
@@ -340,6 +343,9 @@ class FLEX(RPA):
         if self.max_iter == 0:
             # No SCF iteration ran: green_kw / chi_s / chi_c / chi0q_out were
             # never computed.  Warn-and-return instead of dereferencing them.
+            if gpu_active:
+                self.H0_eigenvalue = _bk.to_host(self.H0_eigenvalue)
+                self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
             logger.warning("FLEX IterationMax=0: no SCF step performed; "
                            "no results stored.")
             return
@@ -363,6 +369,12 @@ class FLEX(RPA):
         self.physics = physics
         logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
             physics["NCond"], physics["Sz"], physics["mu"]))
+
+        # Restore the solver's public attributes to host arrays so the
+        # post-solve object state is backend-independent.
+        if gpu_active:
+            self.H0_eigenvalue = _bk.to_host(self.H0_eigenvalue)
+            self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
 
         # Store results (as host arrays: everything downstream -- writers,
         # green_info consumers -- is numpy)
@@ -756,11 +768,12 @@ class FLEX(RPA):
         float
             Chemical potential mu such that N(mu) = Ncond.
         """
-        w = self.H0_eigenvalue
-
         # Diagonalize the mu-independent part of G^{-1} once; each trial mu is
         # then a cheap sum over eigenvalues (see _matsubara_number_operator).
+        # ew is returned as a HOST array, so the whole search below is pure
+        # numpy regardless of the solve backend.
         lam, ew = self._matsubara_number_operator(sigma, beta)
+        w = ew
 
         def _delta_n(mu, with_deriv=False):
             r = self._number_from_eigs(lam, ew, mu, beta, with_deriv=with_deriv)
