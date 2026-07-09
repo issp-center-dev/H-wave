@@ -621,6 +621,22 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <td><p>収束判定基準。整数 <span class="math notranslate nohighlight">\(n\)</span> の場合、閾値は <span class="math notranslate nohighlight">\(10^{-n}\)</span>。
 1未満の浮動小数点数の場合、直接閾値として使用。</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>false</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code> で SCF ループ（dressed G、chi0q、chiq、V_eff、自己エネルギー）を
+GPU（CuPy）で実行します。CuPy または CUDA デバイスが無い場合は警告を出して
+CPU（numpy）実行へフォールバックします（結果は同一）。化学ポテンシャル探索の
+非エルミート固有値分解のみ CPU で実行されます。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<td><p>int</p></td>
+<td><p>1</p></td>
+<td><p>空間 FFT のワーカースレッド数（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> による並列化）。デフォルト
+<code class="docutils literal notranslate"><span class="pre">1</span></code> は従来どおりの直列 numpy（並列化はオプトイン）。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コアを
+使用。GPU 実行時は無視されます。複数の計算を同時に走らせる場合は
+小さめの値に設定してください。</p></td>
+</tr>
 </tbody>
 </table>
 <p>その他のパラメータ (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code> 等)

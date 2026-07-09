@@ -647,6 +647,24 @@ Smaller values give more stable convergence but slower progress.</p></td>
 <td><p>Convergence criterion. If integer <span class="math notranslate nohighlight">\(n\)</span>, the threshold is
 <span class="math notranslate nohighlight">\(10^{-n}\)</span>. If float &lt; 1, used directly as threshold.</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>false</p></td>
+<td><p>Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the SCF loop (dressed G, chi0q, chiq, V_eff, and
+the self-energy) on a GPU via CuPy. When CuPy or a CUDA device is
+unavailable the solver warns and falls back to the CPU (numpy) path
+(identical result). Only the chemical-potential search’s non-Hermitian
+eigendecomposition stays on the CPU.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<td><p>int</p></td>
+<td><p>1</p></td>
+<td><p>Number of worker threads for the spatial FFTs (parallelized via
+<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>). The default <code class="docutils literal notranslate"><span class="pre">1</span></code> keeps the serial numpy path,
+unchanged from previous releases (opt-in); <code class="docutils literal notranslate"><span class="pre">-1</span></code> uses all cores.
+Ignored on the GPU. Set a smaller number when running several
+calculations concurrently.</p></td>
+</tr>
 </tbody>
 </table>
 <p>All other parameters (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>, etc.)

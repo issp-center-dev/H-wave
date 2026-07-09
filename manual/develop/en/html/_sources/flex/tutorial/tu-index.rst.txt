@@ -544,6 +544,22 @@ The FLEX solver accepts the following parameters in the
      - 6
      - Convergence criterion. If integer :math:`n`, the threshold is
        :math:`10^{-n}`. If float < 1, used directly as threshold.
+   * - ``gpu``
+     - bool
+     - false
+     - Set ``true`` to run the SCF loop (dressed G, chi0q, chiq, V_eff, and
+       the self-energy) on a GPU via CuPy. When CuPy or a CUDA device is
+       unavailable the solver warns and falls back to the CPU (numpy) path
+       (identical result). Only the chemical-potential search's non-Hermitian
+       eigendecomposition stays on the CPU.
+   * - ``fft_workers``
+     - int
+     - 1
+     - Number of worker threads for the spatial FFTs (parallelized via
+       ``scipy.fft``). The default ``1`` keeps the serial numpy path,
+       unchanged from previous releases (opt-in); ``-1`` uses all cores.
+       Ignored on the GPU. Set a smaller number when running several
+       calculations concurrently.
 
 All other parameters (``T``, ``CellShape``, ``Nmat``, ``filling``, etc.)
 are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
