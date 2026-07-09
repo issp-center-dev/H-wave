@@ -227,6 +227,9 @@ The full set of valid form factors is
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the dynamic-mode (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>)
 kernel applications on a GPU via CuPy (default <code class="docutils literal notranslate"><span class="pre">false</span></code>; see the
 <a class="reference internal" href="#sc-dynamic-gpu-en"><span class="std std-ref">GPU section</span></a> below).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: Number of FFT worker threads for the dynamic-mode spatial
+FFTs (default <code class="docutils literal notranslate"><span class="pre">1</span></code> = the serial numpy path, unchanged from previous
+releases; <code class="docutils literal notranslate"><span class="pre">-1</span></code> uses all cores; ignored on the GPU).</p></li>
 </ul>
 </section>
 </section>
@@ -632,6 +635,20 @@ quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
 Before allocating, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> estimates the peak requirement and aborts if it
 would exceed the limit; set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code> to cap it explicitly
 (<code class="docutils literal notranslate"><span class="pre">0</span></code> disables the guard), otherwise a fraction of the available RAM is used.</p>
+</section>
+<section id="performance-note">
+<h3>Performance note<a class="headerlink" href="#performance-note" title="Link to this heading">¶</a></h3>
+<p>The eigenvalue solve is dominated by repeated applications of the kernel. Two
+optimizations keep this cheap: the vertex’s imaginary-time transform (the
+kernel’s most expensive step) is precomputed once instead of on every matvec,
+and the spatial FFTs are run in parallel via <code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>. <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">fft_workers</span></code> sets the number of FFT worker threads: <code class="docutils literal notranslate"><span class="pre">1</span></code> (default) keeps the
+serial numpy path unchanged from previous releases, <code class="docutils literal notranslate"><span class="pre">-1</span></code> uses all cores
+(opt-in); set a smaller number (e.g. matching <code class="docutils literal notranslate"><span class="pre">OMP_NUM_THREADS</span></code>) when running
+several dynamic solves concurrently to avoid oversubscribing the CPU. Together
+these give roughly a 4x speedup at <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>, <code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">=</span> <span class="pre">1024</span></code>,
+<code class="docutils literal notranslate"><span class="pre">N_{mat}</span> <span class="pre">=</span> <span class="pre">1024</span></code>. On the GPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>) the FFTs already run on the
+device and <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> is ignored.</p>
 </section>
 <section id="gpu-execution-cupy">
 <span id="sc-dynamic-gpu-en"></span><h3>GPU execution (CuPy)<a class="headerlink" href="#gpu-execution-cupy" title="Link to this heading">¶</a></h3>

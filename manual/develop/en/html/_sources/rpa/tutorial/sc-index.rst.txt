@@ -178,6 +178,9 @@ This section controls the Eliashberg solver. Key parameters:
 - ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
   kernel applications on a GPU via CuPy (default ``false``; see the
   :ref:`GPU section <sc_dynamic_gpu_en>` below).
+- ``fft_workers``: Number of FFT worker threads for the dynamic-mode spatial
+  FFTs (default ``1`` = the serial numpy path, unchanged from previous
+  releases; ``-1`` uses all cores; ignored on the GPU).
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -588,6 +591,21 @@ quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
 Before allocating, ``hwave_sc`` estimates the peak requirement and aborts if it
 would exceed the limit; set ``[eliashberg] mem_limit_gb`` to cap it explicitly
 (``0`` disables the guard), otherwise a fraction of the available RAM is used.
+
+Performance note
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The eigenvalue solve is dominated by repeated applications of the kernel. Two
+optimizations keep this cheap: the vertex's imaginary-time transform (the
+kernel's most expensive step) is precomputed once instead of on every matvec,
+and the spatial FFTs are run in parallel via ``scipy.fft``. ``[eliashberg]
+fft_workers`` sets the number of FFT worker threads: ``1`` (default) keeps the
+serial numpy path unchanged from previous releases, ``-1`` uses all cores
+(opt-in); set a smaller number (e.g. matching ``OMP_NUM_THREADS``) when running
+several dynamic solves concurrently to avoid oversubscribing the CPU. Together
+these give roughly a 4x speedup at ``norb = 2``, ``N_k = 1024``,
+``N_{mat} = 1024``. On the GPU (``gpu = true``) the FFTs already run on the
+device and ``fft_workers`` is ignored.
 
 .. _sc_dynamic_gpu_en:
 

@@ -226,6 +226,9 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> で動的モード（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）のカーネル適用を
 GPU（CuPy）で実行します（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>。下記の
 <a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a> を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: 動的モードの空間 FFT のワーカースレッド数
+（デフォルト <code class="docutils literal notranslate"><span class="pre">1</span></code> = 従来どおりの直列 numpy。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コア。
+GPU 実行時は無視されます）。</p></li>
 </ul>
 </section>
 </section>
@@ -363,7 +366,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ギャップ関数 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id28">
+<figure class="align-center" id="id29">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -371,11 +374,11 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id28" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id29" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id29">
+<figure class="align-center" id="id30">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -384,14 +387,14 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span> （および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id29" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id30" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="id15">
 <h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id30">
+<figure class="align-center" id="id31">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -401,7 +404,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満。1を超える2つの白抜きマーカーは
 <em>三重項</em> カーネルの偶パリティ解で、スピン三重項ペアリングにはパウリ原理により
-禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id30" title="Link to this image">¶</a></p>
+禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id31" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -618,6 +621,18 @@ k メッシュ・松原振動数の数に対して急速に大きくなります
 で上限を明示的に指定でき（<code class="docutils literal notranslate"><span class="pre">0</span></code> でガードを無効化）、指定しない場合は利用可能な
 RAM の一部が上限に使われます。</p>
 </section>
+<section id="id27">
+<h3>性能に関する注意<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
+<p>固有値ソルブはカーネルの繰り返し適用が支配的です。2つの最適化でこれを軽く
+保ちます：頂点の虚時間変換（カーネルで最も重いステップ）を matvec ごとではなく
+一度だけ事前計算し、空間 FFT を <code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> で並列化します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">fft_workers</span></code> は FFT のワーカースレッド数を指定します：<code class="docutils literal notranslate"><span class="pre">1``（デフォルト）は</span>
+<span class="pre">従来どおりの直列</span> <span class="pre">numpy、</span></code>-1`` は全コアを使用します。既存の計算を変えないよう
+オプトインです。複数の動的計算を同時に走らせる場合は、CPU の過剰割当てを避ける
+ため小さめの値（例：<code class="docutils literal notranslate"><span class="pre">OMP_NUM_THREADS</span></code> に合わせる）に設定してください。両者を合わせ
+て <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>、<code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">=</span> <span class="pre">1024</span></code>、<code class="docutils literal notranslate"><span class="pre">N_{mat}</span> <span class="pre">=</span> <span class="pre">1024</span></code> でおよそ 4 倍の高速化になります。
+GPU 実行（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>）では FFT は GPU 上で走るため <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> は無視されます。</p>
+</section>
 <section id="gpu-cupy">
 <span id="sc-dynamic-gpu"></span><h3>GPU実行（CuPy）<a class="headerlink" href="#gpu-cupy" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> と設定すると、動的モードの
@@ -642,8 +657,8 @@ CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です�
 </ul>
 </section>
 </section>
-<section id="id27">
-<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
+<section id="id28">
+<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h2>
 <p>Eliashberg方程式ソルバーは、H-waveで利用可能な
 全ての相互作用型に対応しています:</p>
 <ul class="simple">
@@ -717,7 +732,7 @@ CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です�
 <li class="toctree-l3"><a class="reference internal" href="#id17">5.2.8. 出力ファイル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id18">5.2.9. 物理的解釈</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#sc-dynamic-frequency">5.2.10. 動的（振動数依存）Eliashberg方程式</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id27">5.2.11. 対応する相互作用</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id28">5.2.11. 対応する相互作用</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tips">5.2.12. Tips</a></li>
 </ul>
 </li>
