@@ -11,7 +11,31 @@ import numpy as np
 from hwave.solver import backend
 from hwave.solver import matsubara as ms
 
+try:
+    import scipy.fft as _SFFT
+except ImportError:                       # pragma: no cover - scipy is a dep
+    _SFFT = None
+
 logger = logging.getLogger("qlms").getChild("eliashberg_dynamic")
+
+
+def _spatial_ifftn(a, axes, workers):
+    """Spatial inverse FFT. On the numpy backend this is parallelized via
+    scipy.fft when ``workers`` asks for it (``!= 1``) and scipy is available
+    (scipy's result matches numpy to machine precision); on the cupy backend
+    the FFT already runs on the GPU and ``workers`` is ignored."""
+    xp = backend.array_module_of(a)
+    if xp is np and _SFFT is not None and workers not in (None, 0, 1):
+        return _SFFT.ifftn(a, axes=axes, workers=workers)
+    return xp.fft.ifftn(a, axes=axes)
+
+
+def _spatial_fftn(a, axes, workers):
+    """Spatial forward FFT; see :func:`_spatial_ifftn`."""
+    xp = backend.array_module_of(a)
+    if xp is np and _SFFT is not None and workers not in (None, 0, 1):
+        return _SFFT.fftn(a, axes=axes, workers=workers)
+    return xp.fft.fftn(a, axes=axes)
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +347,7 @@ def calc_g2_dynamic(green_kw, beta):
     return G2 / beta
 
 
-def vertex_qw_to_rt(Vs_q_w):
+def vertex_qw_to_rt(Vs_q_w, workers=1):
     r"""Transform the pairing vertex from (q, i nu_l) to (r, tau).
 
     This is the vertex leg of ``eliashberg_kernel_dynamic``: spatial q->r via
@@ -338,17 +362,21 @@ def vertex_qw_to_rt(Vs_q_w):
         Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
         on the bosonic Matsubara axis. A cupy array is transformed on the
         device.
+    workers : int, optional
+        FFT worker threads for the spatial transform on the numpy backend
+        (see :func:`_spatial_ifftn`); ignored on the cupy backend.
 
     Returns
     -------
     V_rt : ndarray
         Same shape, in (r, tau), on the same backend as the input.
     """
-    xp = backend.array_module_of(Vs_q_w)
-    return xp.fft.ifftn(ms.boson_to_tau(Vs_q_w, axis=-1), axes=(4, 5, 6))
+    return _spatial_ifftn(ms.boson_to_tau(Vs_q_w, axis=-1),
+                          axes=(4, 5, 6), workers=workers)
 
 
-def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None):
+def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None,
+                              workers=1):
     r"""Apply the frequency-resolved (tau-product) Eliashberg kernel.
 
     Implements one action of the linearized Eliashberg operator on a trial
@@ -385,6 +413,9 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None):
         Precomputed ``vertex_qw_to_rt(Vs_q_w)``. The vertex transform does not
         depend on ``phi_w``, so iterative solvers pass it once instead of
         paying the (norb^4 x Nvol x nmat)-sized transform on every matvec.
+    workers : int, optional
+        FFT worker threads for the spatial transforms on the numpy backend
+        (see :func:`_spatial_ifftn`); ignored on the cupy backend.
 
     Returns
     -------
@@ -403,15 +434,17 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None):
     # F_{l2,l3}(k, m) = sum_{l5,l6} G2_{l2,l5,l3,l6}(k,m) phi_{l5,l6}(k,m)
     F = xp.einsum('iljmxyzn,lmxyzn->ijxyzn', G2_w, phi_w)
     # spatial k->r on F (per orbital pair, per fermionic freq); freq fermion->tau
-    F_rt = xp.fft.ifftn(ms.fermion_to_tau(F, axis=-1), axes=(2, 3, 4))
+    F_rt = _spatial_ifftn(ms.fermion_to_tau(F, axis=-1),
+                          axes=(2, 3, 4), workers=workers)
     # V(q, iv_l) -> (r, tau): spatial q->r, freq boson->tau
-    V_rt = vertex_qw_to_rt(Vs_q_w) if Vs_rt is None else Vs_rt
+    V_rt = vertex_qw_to_rt(Vs_q_w, workers=workers) if Vs_rt is None else Vs_rt
     # phi_out_{l1,l4}(r,tau) = - sum_{l2,l3} V_{l1,l2,l3,l4}(r,tau) F_{l2,l3}(r,tau)
     prod = -xp.einsum('abcdxyzt,bcxyzt->adxyzt', V_rt, F_rt)
     # back: spatial r->k (fftn), freq tau->fermion. The single spatial fold's
     # -(1/N) is already carried by the ifftn above (numpy divides by N on the
     # inverse transform; the r->k fftn does not re-multiply the pair bubble).
-    phi_out = ms.tau_to_fermion(xp.fft.fftn(prod, axes=(2, 3, 4)), axis=-1)
+    phi_out = ms.tau_to_fermion(_spatial_fftn(prod, axes=(2, 3, 4),
+                                              workers=workers), axis=-1)
     return phi_out
 
 
@@ -670,15 +703,22 @@ def solve_dynamic(input_dict):
         G2_w = xp.asarray(G2_w)
         Vs_q_w = xp.asarray(Vs_q_w)
 
+    # Spatial-FFT parallelism for the CPU kernel (scipy.fft workers): -1 = all
+    # cores (default), 1 = serial numpy. Cap it if running many dynamic solves
+    # concurrently to avoid oversubscribing against OMP/MKL threads. Ignored
+    # on the GPU backend (cuFFT already runs on the device).
+    fft_workers = eli_param.get("fft_workers", -1)
+
     # The vertex's (q, i nu) -> (r, tau) transform is phi-independent and
     # dominates the matvec cost, so do it once here; drop the (q, i nu) form
     # to keep the resident vertex memory unchanged.
-    Vs_rt = vertex_qw_to_rt(Vs_q_w)
+    Vs_rt = vertex_qw_to_rt(Vs_q_w, workers=fft_workers)
     del Vs_q_w
 
     def _matvec(x):
         out = eliashberg_kernel_dynamic(
-            None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt)
+            None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt,
+            workers=fft_workers)
         return backend.to_host(out).ravel()
 
     def make_operator():
