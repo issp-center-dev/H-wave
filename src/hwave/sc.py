@@ -1616,40 +1616,26 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
             "choose an init_gap of the matching parity (even for singlet, "
             "odd for triplet).".format(pairing_type))
 
-    eigenvalue = 0.0
-    for iteration in range(max_iter):
-        sigma_new = _project(A.matvec(sigma_old.ravel()).reshape(shape))
-        norm = np.linalg.norm(sigma_new)
-        eigenvalue = norm
+    # The power-iteration loop itself (matvec, projection, normalize,
+    # convergence check, mixing) is factored into _solve_leading so a future
+    # dynamic-frequency kernel can reuse the identical driver. `A` was already
+    # built above (for the leakage probe), so `make_operator` just hands back
+    # that same operator rather than rebuilding it. The gap-parity projector
+    # operates on the (norb, norb, Nx, Ny, Nz) tensor, so it is wrapped as a
+    # flat-vector -> flat-vector `project_fn` for the generic driver; when no
+    # projection applies (`do_project` False) `project_fn` is None, matching
+    # the historical (unprojected) iteration exactly.
+    make_operator = lambda: (A, vec_size)
+    project_fn = ((lambda flat: _project(flat.reshape(shape)).ravel())
+                 if do_project else None)
 
-        # A (possibly projected) iterate can collapse to the zero vector when
-        # the kernel annihilates the requested parity sector (e.g. a channel
-        # with no pairing weight); normalizing by `norm` would then produce
-        # NaN. `np.linalg.norm` squares its inputs, so it returns *exactly* 0.0
-        # once the iterate underflows (there is no representable nonzero value
-        # between 0 and the underflow floor to misclassify); guard precisely on
-        # that, plus any non-finite norm, and report non-convergence with the
-        # last finite iterate instead.
-        if norm == 0.0 or not np.isfinite(norm):
-            logger.warning(
-                "Eliashberg iterate collapsed to zero norm at iteration {}; "
-                "the kernel annihilates the '{}' sector, so the eigenvalue "
-                "cannot be normalized. Returning the previous iterate as "
-                "non-converged.".format(iteration, pairing_type or "requested"))
-            return sigma_old, 0.0, False, iteration + 1
+    eigenvalue, sigma_flat, info = _solve_leading(
+        make_operator, vec_size, "iteration",
+        max_iter=max_iter, convergence_tol=tol, init_vec=sigma_old.ravel(),
+        alpha=alpha, project_fn=project_fn,
+    )
 
-        diff = np.linalg.norm(sigma_new / norm - sigma_old)
-        logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
-            iteration, norm, diff))
-
-        if diff < tol:
-            logger.info("Converged at iteration {}".format(iteration + 1))
-            return sigma_new / norm, eigenvalue, True, iteration + 1
-
-        sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
-
-    logger.warning("Failed to converge after {} iterations".format(max_iter))
-    return sigma_old, eigenvalue, False, max_iter
+    return sigma_flat.reshape(shape), eigenvalue, info["converged"], info["n_iter"]
 
 
 def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
@@ -1963,6 +1949,154 @@ def _shift_from_eigenvalues(vals, factor=0.9):
     return float(vals[np.argmax(np.abs(vals))].real) * factor
 
 
+def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
+                   max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
+                   sigma_shift=None, alpha=0.5, project_fn=None):
+    """Shared leading-eigenpair driver behind the static Eliashberg solvers.
+
+    This holds the ARPACK/shift-invert eigen-selection-and-ordering body of
+    ``_solve_eigenvalue`` and the power-iteration loop of ``_solve_iteration``,
+    generalized to act on any ``make_operator``/``vec_size`` pair (not just the
+    static ``_make_kernel_operator`` result) so a future dynamic-frequency
+    kernel can reuse the exact same driver.
+
+    Parameters
+    ----------
+    make_operator : callable
+        Zero-argument callable returning ``(A, op_vec_size)``, i.e. the same
+        convention as ``_make_kernel_operator`` (a
+        ``scipy.sparse.linalg.LinearOperator`` acting on flat vectors of
+        length ``vec_size``, plus that size). Called exactly once.
+    vec_size : int
+        Size of the flattened vector space that ``A`` acts on.
+    solver_mode : str
+        "arnoldi", "shift-invert-bicgstab", "shift-invert-gmres", or
+        "shift-invert-lgmres" select the ARPACK/shift-invert eigenanalysis
+        (the former body of ``_solve_eigenvalue``, excluding its "subspace"
+        branch which stays in that wrapper). "iteration" selects the power
+        loop (the former body of ``_solve_iteration``).
+    num_eigenvalues : int
+        Number of eigenvalues to request from ARPACK. Only used by the
+        eigenvalue-family modes.
+    max_iter : int
+        Maximum number of power-iteration steps. Only used by "iteration".
+    convergence_tol : float
+        Power-iteration convergence tolerance on the normalized-iterate
+        difference. Only used by "iteration".
+    init_vec : ndarray, optional
+        Flat initial vector, shape ``(vec_size,)``, for "iteration" mode
+        (already projected onto the desired sector by the caller, if
+        applicable). Required for "iteration" mode.
+    sigma_shift : float, optional
+        Shift-invert target for the "shift-invert-*" modes. If None, it is
+        estimated from a preliminary Arnoldi pass, exactly as
+        ``_solve_eigenvalue`` does.
+    alpha : float
+        Power-iteration mixing parameter. Only used by "iteration".
+    project_fn : callable, optional
+        Flat-vector -> flat-vector projector applied to every power-iteration
+        iterate (e.g. the gap-parity projector in ``_solve_iteration``). Only
+        used by "iteration"; when None, no projection is applied.
+
+    Returns
+    -------
+    leading_eigenvalue : complex or float
+        The dominant eigenvalue (eigenvalue-family: largest real part, per
+        ``_order_eigenpairs``; iteration: the converged/last iterate norm).
+    leading_eigenvector : ndarray
+        Flat, shape ``(vec_size,)``.
+    eig_analysis : dict
+        Eigenvalue-family modes: ``{"eigenvalues": vals, "eigenvectors": vecs,
+        "sigma_shift": sigma_shift}`` with ``vals`` ordered by descending real
+        part (``_order_eigenpairs``) and ``vecs`` the matching eigenvectors as
+        columns. "iteration" mode: ``{"converged": bool, "n_iter": int}``.
+    """
+    if solver_mode == "iteration":
+        if init_vec is None:
+            raise ValueError("init_vec is required for solver_mode='iteration'")
+        A, _ = make_operator()
+        sigma_old = init_vec
+        eigenvalue = 0.0
+
+        for iteration in range(max_iter):
+            sigma_new = A.matvec(sigma_old)
+            if project_fn is not None:
+                sigma_new = project_fn(sigma_new)
+            norm = np.linalg.norm(sigma_new)
+            eigenvalue = norm
+
+            # A (possibly projected) iterate can collapse to the zero vector
+            # when the kernel annihilates the requested sector; normalizing by
+            # `norm` would then produce NaN. `np.linalg.norm` squares its
+            # inputs, so it returns *exactly* 0.0 once the iterate underflows;
+            # guard precisely on that, plus any non-finite norm, and report
+            # non-convergence with the last finite iterate instead.
+            if norm == 0.0 or not np.isfinite(norm):
+                logger.warning(
+                    "Eliashberg iterate collapsed to zero norm at iteration "
+                    "{}; the kernel annihilates the requested sector, so the "
+                    "eigenvalue cannot be normalized. Returning the previous "
+                    "iterate as non-converged.".format(iteration))
+                return 0.0, sigma_old, {"converged": False,
+                                        "n_iter": iteration + 1}
+
+            diff = np.linalg.norm(sigma_new / norm - sigma_old)
+            logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
+                iteration, norm, diff))
+
+            if diff < convergence_tol:
+                logger.info("Converged at iteration {}".format(iteration + 1))
+                return eigenvalue, sigma_new / norm, {"converged": True,
+                                                       "n_iter": iteration + 1}
+
+            sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
+
+        logger.warning("Failed to converge after {} iterations".format(max_iter))
+        return eigenvalue, sigma_old, {"converged": False, "n_iter": max_iter}
+
+    # Eigenvalue family: ARPACK Arnoldi or shift-invert.
+    A, _ = make_operator()
+
+    max_ev = min(num_eigenvalues, vec_size - 2)
+    if max_ev < 1:
+        max_ev = 1
+
+    logger.info("Computing {} eigenvalues with method='{}'...".format(
+        max_ev, solver_mode))
+
+    if solver_mode == "arnoldi":
+        vals, vecs = eigs(A, k=max_ev, which='LM')
+
+    elif solver_mode.startswith("shift-invert"):
+        if sigma_shift is None:
+            # Estimate shift from a quick Arnoldi run. Sample a few
+            # largest-magnitude eigenvalues and aim at the largest *real* part
+            # (the physical SC eigenvalue), not the largest magnitude (which
+            # can be a large negative repulsive mode).
+            k_pre = min(6, vec_size - 2)
+            if k_pre < 1:
+                # Operator too small for a preliminary ARPACK pass (ARPACK
+                # needs k < N-1); fall back to a neutral shift.
+                sigma_shift = 0.0
+            else:
+                logger.info("Estimating shift with preliminary Arnoldi...")
+                vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                sigma_shift = _shift_from_eigenvalues(vals_pre)
+            logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
+        vals, vecs = _eigs_shift_invert(
+            A, vec_size, max_ev, solver_mode, sigma=sigma_shift
+        )
+
+    else:
+        raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
+
+    # Order by largest real part (the physical SC eigenvalue), not magnitude.
+    vals, vecs = _order_eigenpairs(vals, vecs)
+
+    return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
+                                 "sigma_shift": sigma_shift}
+
+
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
                       method="arnoldi", sigma_shift=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
@@ -2010,48 +2144,32 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     eigenvectors : ndarray
         Corresponding eigenvectors reshaped to (num_ev, norb, norb, Nx, Ny, Nz).
     """
-    A, vec_size = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    vec_size = norb * norb * Nx * Ny * Nz
 
-    max_ev = min(num_eigenvalues, vec_size - 2)
-    if max_ev < 1:
-        max_ev = 1
-
-    logger.info("Computing {} eigenvalues with method='{}'...".format(max_ev, method))
-
-    if method == "arnoldi":
-        vals, vecs = eigs(A, k=max_ev, which='LM')
-
-    elif method == "subspace":
+    if method == "subspace":
+        # Subspace (block power) iteration has its own dedicated driver
+        # (magnitude-based Ritz selection, not the ARPACK/shift-invert path),
+        # so it is not routed through _solve_leading; call it directly, exactly
+        # as before.
+        max_ev = min(num_eigenvalues, vec_size - 2)
+        if max_ev < 1:
+            max_ev = 1
+        logger.info("Computing {} eigenvalues with method='{}'...".format(
+            max_ev, method))
         return _solve_subspace_iteration(
             Vs_q, G2, norb, Nx, Ny, Nz,
             num_eigenvalues=max_ev
         )
 
-    elif method.startswith("shift-invert"):
-        if sigma_shift is None:
-            # Estimate shift from a quick Arnoldi run. Sample a few
-            # largest-magnitude eigenvalues and aim at the largest *real* part
-            # (the physical SC eigenvalue), not the largest magnitude (which
-            # can be a large negative repulsive mode).
-            k_pre = min(6, vec_size - 2)
-            if k_pre < 1:
-                # Operator too small for a preliminary ARPACK pass (ARPACK
-                # needs k < N-1); fall back to a neutral shift.
-                sigma_shift = 0.0
-            else:
-                logger.info("Estimating shift with preliminary Arnoldi...")
-                vals_pre, _ = eigs(A, k=k_pre, which='LM')
-                sigma_shift = _shift_from_eigenvalues(vals_pre)
-            logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
-        vals, vecs = _eigs_shift_invert(
-            A, vec_size, max_ev, method, sigma=sigma_shift
-        )
-
-    else:
-        raise ValueError("Unknown eigenvalue method: {}".format(method))
-
-    # Order by largest real part (the physical SC eigenvalue), not magnitude.
-    vals, vecs = _order_eigenpairs(vals, vecs)
+    # ARPACK Arnoldi / shift-invert: delegate the eigen-selection, shift
+    # estimation, and descending-real-part ordering to the shared driver.
+    make_operator = lambda: _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    _, _, eig_analysis = _solve_leading(
+        make_operator, vec_size, method,
+        num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+    )
+    vals = eig_analysis["eigenvalues"]
+    vecs = eig_analysis["eigenvectors"]
 
     eigenvectors = np.array([
         vecs[:, i].reshape(norb, norb, Nx, Ny, Nz)
