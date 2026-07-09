@@ -18,6 +18,15 @@ except ImportError:                       # pragma: no cover - scipy is a dep
     _SFFT = None
 
 
+def as_bool(value):
+    """Coerce a config value to bool. TOML booleans arrive as real bools;
+    programmatic inputs sometimes carry strings, where plain truthiness
+    would read "false"/"off"/"0" as True."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    return bool(value)
+
+
 def _import_cupy():
     """Import and return cupy (separated out so tests can monkeypatch a
     missing installation)."""
