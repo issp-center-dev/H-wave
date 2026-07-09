@@ -117,6 +117,49 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     return out
 
 
+def calc_g2_dynamic(green_kw, beta):
+    """Frequency-resolved pair bubble: identical to sc._calc_g2 except the
+    fermionic Matsubara sum is NOT taken (the frequency axis is kept).
+
+    sc._calc_g2 computes G2[i,j,l,m,x,y,z] = (1/beta) * sum_n
+    green_kw[i,j,x,y,z,n] * green_kw_inv[l,m,x,y,z,n], where green_kw_inv is
+    G(-k,-wn) built via roll+flip. This function drops the sum over n and
+    returns the per-frequency summand, so calc_g2_dynamic(...).sum(axis=-1)
+    reproduces sc._calc_g2(...) to machine precision (see
+    tests/test_eliashberg_dynamic.py::test_g2_dynamic_sums_to_static).
+
+    Parameters
+    ----------
+    green_kw : ndarray
+        Green's function, shape (norb, norb, Nx, Ny, Nz, nmat).
+    beta : float
+        Inverse temperature.
+
+    Returns
+    -------
+    G2_w : ndarray
+        Shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat).
+    """
+    norb = green_kw.shape[0]
+    Nx, Ny, Nz, nmat = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4], green_kw.shape[5]
+    nvol = Nx * Ny * Nz
+
+    # G(-k, -wn) via roll+flip -- SAME construction as sc._calc_g2.
+    green_kw_inv = np.roll(
+        green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
+        (1, 1, 1), (2, 3, 4)
+    )
+    # Same reshape/index layout as sc._calc_g2's A/B (ij, site, n) and
+    # (lm, site, n), but keep the per-frequency product instead of summing
+    # (matmul-)contracting over n.
+    A = green_kw.reshape(norb * norb, nvol, nmat)      # (ij, site, n)
+    B = green_kw_inv.reshape(norb * norb, nvol, nmat)  # (lm, site, n)
+    # G2[ij, lm, site, n] = A[ij, site, n] * B[lm, site, n]  (no sum over n)
+    G2 = A[:, np.newaxis, :, :] * B[np.newaxis, :, :, :]
+    G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+    return G2 / beta
+
+
 def solve_dynamic(input_dict):
     """Solve the dynamic (frequency-resolved) Eliashberg equation.
 

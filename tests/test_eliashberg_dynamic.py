@@ -99,3 +99,28 @@ def test_dynamic_vertex_matches_static_per_frequency():
                                           norb, Nx, Ny, Nz, pairing_type="singlet",
                                           convention="kuroki")
         assert np.allclose(Vw[..., l], Vstat, atol=1e-12)
+
+
+@pytest.mark.parametrize("norb", [1, 2])
+def test_g2_dynamic_sums_to_static(norb):
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    Nx, Ny, Nz, nmat = 2, 2, 1, 8
+    rng = np.random.default_rng(6)
+    # uniquely-populated (non-symmetric in orbital) green so an l-axis
+    # transposition cannot pass the norb=2 case
+    green = (rng.standard_normal((norb, norb, Nx, Ny, Nz, nmat))
+             + 1j*rng.standard_normal((norb, norb, Nx, Ny, Nz, nmat)))
+    beta = 10.0
+    g2w = ed.calc_g2_dynamic(green, beta)
+    assert g2w.shape == (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+    g2_static = sc._calc_g2(green, beta)
+    assert np.allclose(g2w.sum(axis=-1), g2_static, atol=1e-12)
+    # component check (independent of the sum): reproduce a single element
+    green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
+    l2, l5, l3, l6, k, n = 0, min(1, norb-1), min(1, norb-1), 0, 3, 5
+    kx, ky, kz = 1, 0, 0
+    assert np.isclose(
+        g2w[l2, l5, l3, l6, kx, ky, kz, n],
+        green[l2, l5, kx, ky, kz, n] * green_inv[l3, l6, kx, ky, kz, n] / beta,
+        atol=1e-12)
