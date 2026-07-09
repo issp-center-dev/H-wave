@@ -40,6 +40,63 @@ _DEFAULT_NMAT = 1024
 
 
 # ---------------------------------------------------------------------------
+# Eliashberg frequency mode dispatch
+# ---------------------------------------------------------------------------
+
+def _eliashberg_frequency(input_dict):
+    """Validate and return the eliashberg frequency mode.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Parsed TOML configuration dictionary.
+
+    Returns
+    -------
+    str
+        Either "static" (default) or "dynamic".
+
+    Raises
+    ------
+    ValueError
+        If the frequency mode is not in the allowed set.
+    """
+    freq = input_dict.get("eliashberg", {}).get("frequency", "static")
+    if freq not in ("static", "dynamic"):
+        raise ValueError(
+            "eliashberg.frequency must be 'static' or 'dynamic', got '{}'"
+            .format(freq))
+    return freq
+
+
+def _validate_dynamic_prereqs(input_dict):
+    """Validate prerequisites for dynamic Eliashberg calculation.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Parsed TOML configuration dictionary.
+
+    Raises
+    ------
+    ValueError
+        If chi0q_mode is not "flex" or if Nmat is odd.
+    """
+    eli = input_dict.get("eliashberg", {})
+    if eli.get("chi0q_mode") != "flex":
+        raise ValueError(
+            "eliashberg.frequency='dynamic' requires chi0q_mode='flex' "
+            "(full-frequency chiq_s/chiq_c and a dressed green are only "
+            "produced by the FLEX path); got chi0q_mode='{}'"
+            .format(eli.get("chi0q_mode")))
+    nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
+    if nmat % 2 != 0:
+        raise ValueError(
+            "eliashberg.frequency='dynamic' requires an even Nmat "
+            "(centered Matsubara grid); got Nmat={}".format(nmat))
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -2649,6 +2706,13 @@ def calc_eliashberg(input_dict):
 
     # Eliashberg parameters
     eli_param = input_dict.get("eliashberg", {})
+
+    # Dispatch to dynamic Eliashberg if requested
+    if _eliashberg_frequency(input_dict) == "dynamic":
+        _validate_dynamic_prereqs(input_dict)
+        from hwave.solver import eliashberg_dynamic
+        return eliashberg_dynamic.solve_dynamic(input_dict)
+
     solver_mode = eli_param.get("solver_mode", "iteration")
     max_iter = eli_param.get("max_iter", 1000)
     alpha = eli_param.get("alpha", 0.5)
