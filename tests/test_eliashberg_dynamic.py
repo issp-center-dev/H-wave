@@ -134,6 +134,61 @@ def test_expand_flex_chi_myo_norb2_is_orbital_pair():
     np.testing.assert_allclose(out, chi_raw.reshape(nfreq, Nx, Ny, Nz, nd, nd))
 
 
+def test_expand_flex_chi_norb2_unknown_convention_raises():
+    """For the shape-ambiguous norb=2 case, an unknown/typo convention must
+    raise -- not silently fall through to the spin-orbital extraction (which
+    would corrupt the pairing vertex)."""
+    import hwave.sc as sc
+    norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
+    nvol, nd = Nx * Ny * Nz, norb * norb
+    chi_raw = np.zeros((nfreq, nvol, nd, nd), dtype=complex)
+    with pytest.raises(ValueError, match="chi_convention"):
+        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="bogus")
+
+
+def test_expand_flex_chi_dimension_matches_neither_raises():
+    """A chi dimension matching neither norb^2 nor norb*ns must raise clearly
+    (e.g. norb=3 with nd_chi=5)."""
+    import hwave.sc as sc
+    norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 2
+    nvol, nd_bad = Nx * Ny * Nz, 5
+    chi_raw = np.zeros((nfreq, nvol, nd_bad, nd_bad), dtype=complex)
+    with pytest.raises(ValueError, match="matches neither"):
+        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+
+
+def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
+    """A legacy untagged norb=2 chi (nd_chi=4) defaults to 'kuroki' and MUST be
+    spin-orbital-extracted at the loader level -- the regression the shape-only
+    heuristic missed."""
+    import hwave.sc as sc
+    norb, ns, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 1, 4
+    nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
+    rng = np.random.default_rng(21)
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    # no chi_convention tag -> _read_flex_chi_raw defaults to "kuroki"
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
+    inp = {"mode": {"param": {"Nmat": nmat}},
+           "file": {"output": {"path_to_output": str(tmp_path)}},
+           "eliashberg": {"chi0q_mode": "flex"}}
+
+    chis, chic, _, conv = sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+    assert conv == "kuroki"
+    assert chis.shape == (Nx, Ny, Nz, nd, nd)
+    # verify it is the spin-orbital extraction, not the raw 4x4 passthrough
+    raw_s = np.load(tmp_path / "chiq_s.npz")["chiq_s"]
+    chi6 = raw_s.reshape(nmat, Nx, Ny, Nz, nd_so, nd_so)[nmat // 2]
+    orb = chi6[:, :, :, :norb, :norb]
+    expected = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+    for l2 in range(norb):
+        expected[:, :, :, l2::norb, l2::norb] = orb
+    np.testing.assert_allclose(chis, expected)
+
+
 def _flex_input(tmp_path, nmat):
     return {"mode": {"param": {"Nmat": nmat}},
             "file": {"output": {"path_to_output": str(tmp_path)}},

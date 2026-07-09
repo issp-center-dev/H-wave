@@ -1261,8 +1261,19 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
 
     if nd_chi == nd and nd_chi == nd_so:
-        # ambiguous (norb == 2): the convention tag is the only disambiguator.
-        is_spin_orbital = (convention != "myo")
+        # ambiguous (norb == 2): the convention tag is the only disambiguator,
+        # and choosing the wrong branch silently corrupts the pairing vertex, so
+        # require an explicitly known tag rather than defaulting on mismatch.
+        if convention == "kuroki":
+            is_spin_orbital = True
+        elif convention == "myo":
+            is_spin_orbital = False
+        else:
+            raise ValueError(
+                "norb=2 FLEX chi has the shape-ambiguous dimension nd_chi={} "
+                "(norb^2 == norb*ns); a known chi_convention ('myo' or "
+                "'kuroki') is required to resolve the layout, got '{}'.".format(
+                    nd_chi, convention))
     elif nd_chi == nd_so and nd_chi != nd:
         is_spin_orbital = True
     elif nd_chi == nd and nd_chi != nd_so:
