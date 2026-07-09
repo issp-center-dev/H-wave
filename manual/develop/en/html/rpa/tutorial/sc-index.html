@@ -200,7 +200,16 @@ and <span class="math notranslate nohighlight">\(\chi(\mathbf{q})\)</span>.</p><
 <li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (self-consistent power iteration),
 <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi eigenvalue analysis), or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> reads <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> from the RPA output
-file; <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> computes it internally.</p></li>
+file; <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> computes it internally; <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> reads the dressed
+susceptibilities from a FLEX run (required for <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: pairing-vertex frequency treatment. <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> (default)
+evaluates the pairing vertex at zero bosonic frequency (the Nakano–Kuroki
+Eq. 9 static approximation) and gives a frequency-independent gap.
+<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> solves the full Matsubara-frequency-dependent Eliashberg
+equation with a frequency-dependent pairing vertex
+<span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span> and gap <span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>;
+it requires <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (see
+<a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section</span></a> below).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: Initial gap symmetry for iteration.
 Options include <code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>),
@@ -509,8 +518,108 @@ enhancement of spin fluctuations. The actual transition
 (<span class="math notranslate nohighlight">\(\lambda = 1\)</span>) is reached on lowering the temperature.</p>
 </section>
 </section>
+<section id="dynamic-frequency-dependent-eliashberg-equation">
+<span id="sc-dynamic-frequency"></span><h2><span class="section-number">5.2.10. </span>Dynamic (frequency-dependent) Eliashberg equation<a class="headerlink" href="#dynamic-frequency-dependent-eliashberg-equation" title="Link to this heading">¶</a></h2>
+<p>By default <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> solves the Eliashberg equation in the <strong>static
+approximation</strong>: the pairing vertex is evaluated at zero bosonic Matsubara
+frequency (the Nakano–Kuroki Eq. 9 static approximation) and the gap
+<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k})\)</span> carries no frequency dependence. Setting
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> in the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section instead solves the
+<strong>full frequency-dependent</strong> linearized Eliashberg equation,</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-6">
+<span class="eqno">(5.7)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-6" title="Link to this equation">¶</a></span>\[\lambda\, \phi_{\alpha\beta}(\mathbf{k}, i\omega_n)
+= -\frac{T}{N_L} \sum_{\mathbf{k}', n'}
+  V_{\alpha\beta}(\mathbf{k}-\mathbf{k}', i\omega_n - i\omega_{n'})\,
+  [G G](\mathbf{k}', i\omega_{n'})\,
+  \phi(\mathbf{k}', i\omega_{n'}),\]</div>
+<p>keeping the full fermionic Matsubara axis of the gap
+<span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span> together with a frequency-dependent pairing
+vertex <span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span>. The vertex is applied as an
+imaginary-time product (not as a static prefactor), so the kernel couples
+different Matsubara frequencies.</p>
+<section id="flex-prerequisite">
+<h3>FLEX prerequisite<a class="headerlink" href="#flex-prerequisite" title="Link to this heading">¶</a></h3>
+<p>The dynamic mode needs frequency-resolved input that only the FLEX solver
+produces, so it <strong>must</strong> be run with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>. Before calling
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> you must run a FLEX calculation (<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>) that writes,
+into the directory read by the Eliashberg step:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> – the spin and charge susceptibilities on
+the <strong>full</strong> bosonic Matsubara axis (all <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> frequencies), and</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code> – the <strong>dressed</strong> Green’s function
+<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>, from which the pair bubble is built.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even and must match between the FLEX output and the
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> value. If <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> is requested without
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>, with an odd <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, or without a dressed
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>, the solver aborts with an explanatory error rather than falling
+back silently. The FLEX output directory can be selected with
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code> (default: the <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>
+directory), and the individual filenames overridden with the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
+keys <code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_green</span></code>.</p>
+</section>
+<section id="outputs">
+<h3>Outputs<a class="headerlink" href="#outputs" title="Link to this heading">¶</a></h3>
+<p>In addition to <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> (the leading <span class="math notranslate nohighlight">\(\lambda\)</span>), the dynamic
+mode writes:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></dt><dd><p>The full frequency-resolved gap and its metadata. Keys:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">gap</span></code>: complex array of shape <code class="docutils literal notranslate"><span class="pre">(norb,</span> <span class="pre">norb,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz,</span> <span class="pre">Nmat)</span></code> –
+<span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n)\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">iomega</span></code>: the centered fermionic Matsubara frequencies
+<span class="math notranslate nohighlight">\(\omega_n = (2n + 1 - N_{\mathrm{mat}})\pi T\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span></code>: temperature.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>: the leading <span class="math notranslate nohighlight">\(\lambda\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">axis_order</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;(orb1,</span> <span class="pre">orb2,</span> <span class="pre">kx,</span> <span class="pre">ky,</span> <span class="pre">kz,</span> <span class="pre">iomega)&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">normalization</span></code>: the gauge convention – the gap is L2-normalized over
+all components and its largest-magnitude component is rotated
+real-positive, so the stored gap is reproducible across runs and
+linear-algebra backends.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>A single-frequency slice of the gap at the lowest positive Matsubara
+frequency (index <code class="docutils literal notranslate"><span class="pre">Nmat//2</span></code>), in the same column layout as the static
+<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> (<code class="docutils literal notranslate"><span class="pre">kx</span> <span class="pre">ky</span> <span class="pre">kz</span></code> then <code class="docutils literal notranslate"><span class="pre">Re</span></code>/<code class="docutils literal notranslate"><span class="pre">Im</span></code> per orbital pair). Its first
+line is a <code class="docutils literal notranslate"><span class="pre">#</span></code>-prefixed header carrying <code class="docutils literal notranslate"><span class="pre">frequency=dynamic</span></code> together with
+the slice index and its <span class="math notranslate nohighlight">\(\omega_n\)</span>.</p>
+</dd>
+</dl>
+</section>
+<section id="channel-parity-selection">
+<h3>Channel-parity selection<a class="headerlink" href="#channel-parity-selection" title="Link to this heading">¶</a></h3>
+<p>Like the static solver, the dynamic mode reports the leading eigenpair <strong>of the
+requested pairing channel</strong>, not merely the algebraically largest eigenvalue.
+Fermion antisymmetry fixes the combined parity of the gap under
+<span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)\)</span>: even for <code class="docutils literal notranslate"><span class="pre">singlet</span></code> (this admits
+both a conventional even-frequency and an odd-frequency singlet) and odd for
+<code class="docutils literal notranslate"><span class="pre">triplet</span></code>. The Arnoldi eigenpairs are reordered so that the channel-parity
+mode leads, and the per-eigenvalue table in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> carries the same
+trailing <code class="docutils literal notranslate"><span class="pre">match(1=channel-parity)</span></code> column as the static output (<code class="docutils literal notranslate"><span class="pre">1</span></code> in the
+requested sector, <code class="docutils literal notranslate"><span class="pre">0</span></code> in the opposite one). If none of the <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>
+computed eigenpairs lies in the requested sector, the solver warns and falls
+back to the raw leading pair; increase <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> or check
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> in that case. The power-iteration path (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;iteration&quot;</span></code>) likewise projects every iterate onto the channel sector when the
+kernel commutes with parity (a centrosymmetric model); if it does not, the
+projection is disabled with a warning and the un-projected iteration is used.</p>
+</section>
+<section id="memory-note">
+<h3>Memory note<a class="headerlink" href="#memory-note" title="Link to this heading">¶</a></h3>
+<p>The dynamic solver stores several full-frequency tensors (the pairing vertex,
+the pair bubble, and the gap), so its peak memory scales roughly as
+<span class="math notranslate nohighlight">\(\mathcal{O}(N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}})\)</span> and grows
+quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
+Before allocating, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> estimates the peak requirement and aborts if it
+would exceed the limit; set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code> to cap it explicitly
+(<code class="docutils literal notranslate"><span class="pre">0</span></code> disables the guard), otherwise a fraction of the available RAM is used.</p>
+</section>
+</section>
 <section id="supported-interactions">
-<h2><span class="section-number">5.2.10. </span>Supported interactions<a class="headerlink" href="#supported-interactions" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.11. </span>Supported interactions<a class="headerlink" href="#supported-interactions" title="Link to this heading">¶</a></h2>
 <p>The Eliashberg solver supports all interaction types available in H-wave:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (<span class="math notranslate nohighlight">\(U\)</span>): Intra-orbital Coulomb repulsion</p></li>
@@ -526,7 +635,7 @@ interactions, the solver automatically uses the generalized
 with four-index vertex structure.</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.11. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.12. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>For large systems, set <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> to compute
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> internally and avoid loading
@@ -582,8 +691,9 @@ pairing instabilities using the appropriate vertex.</p></li>
 <li class="toctree-l3"><a class="reference internal" href="#results">5.2.7. Results</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#output-files">5.2.8. Output files</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#physical-interpretation">5.2.9. Physical interpretation</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#supported-interactions">5.2.10. Supported interactions</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.11. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dynamic-frequency-dependent-eliashberg-equation">5.2.10. Dynamic (frequency-dependent) Eliashberg equation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#supported-interactions">5.2.11. Supported interactions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.12. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. File specifications</a></li>

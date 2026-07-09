@@ -197,7 +197,16 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi固有値解析)、または <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> はRPA出力ファイルから
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を読み込みます。
-<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は内部で計算します。</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は内部で計算します。
+<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> はFLEX計算の dressed 感受率を読み込みます
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> に必須）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: ペアリング頂点の振動数の扱い。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> （デフォルト）は
+ボゾン振動数ゼロでペアリング頂点を評価する静的近似（Nakano--Kuroki 式(9)）で、
+振動数依存性のないギャップを与えます。<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> は、振動数依存のペアリング
+頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span> とギャップ <span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>
+を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> が必要です
+（下記の <a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a> を参照）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: 反復法の初期ギャップ対称性。
 <code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>)、
@@ -351,7 +360,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ギャップ関数 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id22">
+<figure class="align-center" id="id28">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -359,11 +368,11 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id22" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id28" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id23">
+<figure class="align-center" id="id29">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -372,14 +381,14 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span> （および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id23" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id29" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="id15">
 <h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id24">
+<figure class="align-center" id="id30">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -389,7 +398,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満。1を超える2つの白抜きマーカーは
 <em>三重項</em> カーネルの偶パリティ解で、スピン三重項ペアリングにはパウリ原理により
-禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id24" title="Link to this image">¶</a></p>
+禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id30" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -503,8 +512,101 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 報告されています。実際の転移（ <span class="math notranslate nohighlight">\(\lambda = 1\)</span> ）は低温で到達します。</p>
 </section>
 </section>
-<section id="id21">
-<h2><span class="section-number">5.2.10. </span>対応する相互作用<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h2>
+<section id="sc-dynamic-frequency">
+<span id="id21"></span><h2><span class="section-number">5.2.10. </span>動的（振動数依存）Eliashberg方程式<a class="headerlink" href="#sc-dynamic-frequency" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は既定では <strong>静的近似</strong> で Eliashberg 方程式を解きます。すなわち
+ペアリング頂点をボゾン松原振動数ゼロで評価し（Nakano--Kuroki 式(9) の静的近似）、
+ギャップ <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k})\)</span> は振動数依存性を持ちません。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
+セクションで <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> と設定すると、代わりに <strong>振動数に完全に
+依存する</strong> 線形化 Eliashberg 方程式</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-6">
+<span class="eqno">(5.7)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-6" title="Link to this equation">¶</a></span>\[\lambda\, \phi_{\alpha\beta}(\mathbf{k}, i\omega_n)
+= -\frac{T}{N_L} \sum_{\mathbf{k}', n'}
+  V_{\alpha\beta}(\mathbf{k}-\mathbf{k}', i\omega_n - i\omega_{n'})\,
+  [G G](\mathbf{k}', i\omega_{n'})\,
+  \phi(\mathbf{k}', i\omega_{n'}),\]</div>
+<p>を解きます。ここではギャップ <span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span> のフェルミオン
+松原軸全体と、振動数依存のペアリング頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span> を保持
+します。頂点は（静的な係数ではなく）虚時間の積として作用するため、カーネルは
+異なる松原振動数どうしを結合します。</p>
+<section id="flex">
+<h3>FLEXの前提条件<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h3>
+<p>動的モードは FLEX ソルバーのみが生成する振動数分解された入力を必要とするため、
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> で実行する <strong>必要があります</strong>。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> を呼び出す前に、
+Eliashberg ステップが読み込むディレクトリへ以下を書き出す FLEX 計算
+（<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>）を実行してください:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> -- <strong>全</strong> ボゾン松原軸（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 個の全振動数）
+上のスピン・電荷感受率、および</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code> -- <strong>dressed</strong> グリーン関数
+<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>（これからペアバブルを構成します）。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は偶数で、かつ FLEX 出力と <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> の値とで一致していなければ
+なりません。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> なしで <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> を指定した
+場合、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> が奇数の場合、あるいは dressed <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> が無い場合、ソルバーは
+黙って別の処理へフォールバックせず、説明的なエラーで停止します。FLEX 出力
+ディレクトリは <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code> で指定でき（既定は
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> ディレクトリ）、個々のファイル名は <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> の
+<code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_green</span></code> で上書きできます。</p>
+</section>
+<section id="id22">
+<h3>出力<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h3>
+<p>動的モードは <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> （最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>）に加えて、
+以下を書き出します:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></dt><dd><p>振動数分解されたギャップ全体とそのメタデータ。キー:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">gap</span></code>: 形状 <code class="docutils literal notranslate"><span class="pre">(norb,</span> <span class="pre">norb,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz,</span> <span class="pre">Nmat)</span></code> の複素配列 --
+<span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n)\)</span>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">iomega</span></code>: 中心化されたフェルミオン松原振動数
+<span class="math notranslate nohighlight">\(\omega_n = (2n + 1 - N_{\mathrm{mat}})\pi T\)</span>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span></code>: 温度。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>: 最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">axis_order</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;(orb1,</span> <span class="pre">orb2,</span> <span class="pre">kx,</span> <span class="pre">ky,</span> <span class="pre">kz,</span> <span class="pre">iomega)&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">normalization</span></code>: ゲージ規約 -- ギャップは全成分について L2 規格化され、
+最大絶対値の成分が実正になるよう回転されます。これにより保存されるギャップは
+実行ごと・線形代数バックエンドごとに再現可能です。</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>最小の正の松原振動数（インデックス <code class="docutils literal notranslate"><span class="pre">Nmat//2</span></code>）におけるギャップの単一振動数
+スライス。列の並びは静的な <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> と同じ（<code class="docutils literal notranslate"><span class="pre">kx</span> <span class="pre">ky</span> <span class="pre">kz</span></code> の後に軌道対ごとの
+<code class="docutils literal notranslate"><span class="pre">Re</span></code>/<code class="docutils literal notranslate"><span class="pre">Im</span></code>）です。先頭行は <code class="docutils literal notranslate"><span class="pre">#</span></code> で始まるヘッダで、<code class="docutils literal notranslate"><span class="pre">frequency=dynamic</span></code> と
+スライスのインデックス・その <span class="math notranslate nohighlight">\(\omega_n\)</span> を記録します。</p>
+</dd>
+</dl>
+</section>
+<section id="id23">
+<h3>チャネルパリティによる選別<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h3>
+<p>静的ソルバーと同様に、動的モードも単に代数的に最大の固有値ではなく、<a href="#id24"><span class="problematic" id="id25">**</span></a>指定した
+ペアリングチャネルの**先頭固有対を報告します。フェルミオンの反対称性により、
+ギャップの結合パリティ <span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)\)</span> が決まります（<code class="docutils literal notranslate"><span class="pre">singlet</span></code> では偶
+――従来型の偶振動数解と奇振動数解の両方を許容――、<code class="docutils literal notranslate"><span class="pre">triplet</span></code> では奇）。Arnoldi
+の固有対はチャネルパリティのモードが先頭に来るよう並べ替えられ、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> の固有値表には静的出力と同じ末尾列
+<code class="docutils literal notranslate"><span class="pre">match(1=channel-parity)</span></code> が付きます（指定セクターで <code class="docutils literal notranslate"><span class="pre">1</span></code>、反対セクターで
+<code class="docutils literal notranslate"><span class="pre">0</span></code>）。計算した <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> 個の固有対のいずれも指定セクターに無い
+場合は、警告を出して生の先頭固有対にフォールバックします。その際は
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> を増やすか <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> を確認してください。べき乗反復
+（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>）でも、カーネルがパリティと可換な（中心対称な）
+系では各反復ベクトルをチャネルセクターへ射影します。可換でない場合は警告を出して
+射影を無効化し、射影なしの反復を用います。</p>
+</section>
+<section id="id26">
+<h3>メモリに関する注意<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
+<p>動的ソルバーは複数の全振動数テンソル（ペアリング頂点・ペアバブル・ギャップ）を
+保持するため、ピークメモリはおおよそ
+<span class="math notranslate nohighlight">\(\mathcal{O}(N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}})\)</span> で増加し、軌道数・
+k メッシュ・松原振動数の数に対して急速に大きくなります。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は確保前に
+ピーク必要量を見積もり、上限を超える場合は停止します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code>
+で上限を明示的に指定でき（<code class="docutils literal notranslate"><span class="pre">0</span></code> でガードを無効化）、指定しない場合は利用可能な
+RAM の一部が上限に使われます。</p>
+</section>
+</section>
+<section id="id27">
+<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
 <p>Eliashberg方程式ソルバーは、H-waveで利用可能な
 全ての相互作用型に対応しています:</p>
 <ul class="simple">
@@ -522,7 +624,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 4インデックスの頂点構造で計算します。</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.11. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.12. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>大規模系では <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> と設定すると、
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を内部計算し、
@@ -577,8 +679,9 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <li class="toctree-l3"><a class="reference internal" href="#id13">5.2.7. 計算結果</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id17">5.2.8. 出力ファイル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id18">5.2.9. 物理的解釈</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id21">5.2.10. 対応する相互作用</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.11. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#sc-dynamic-frequency">5.2.10. 動的（振動数依存）Eliashberg方程式</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id27">5.2.11. 対応する相互作用</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.12. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. ファイルフォーマット</a></li>
