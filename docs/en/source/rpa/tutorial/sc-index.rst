@@ -503,6 +503,19 @@ into the directory read by the Eliashberg step:
 - ``green.npz`` -- the **dressed** Green's function
   :math:`G(\mathbf{k}, i\omega_n)`, from which the pair bubble is built.
 
+.. note::
+
+   The FLEX susceptibility files carry a ``chi_convention`` tag (``"kuroki"``
+   for the reduced/squashed schemes, ``"myo"`` for the general full-vertex
+   scheme) that the Eliashberg loader uses to interpret their orbital layout.
+   For **two-orbital** systems (``norb = 2``) the reduced spin-orbital
+   dimension and the orbital-pair dimension coincide (both ``4``), so this tag
+   is what distinguishes them. H-wave versions before this fix inferred the
+   layout from shape alone and mislabeled a ``norb = 2`` reduced (kuroki) chi
+   as orbital-pair, corrupting the pairing vertex; Eliashberg eigenvalues and
+   gap functions for such runs are **corrected (and therefore change)** in this
+   version. Single-orbital and general (myo) results are unaffected.
+
 ``Nmat`` must be even and must match between the FLEX output and the
 ``[mode.param]`` value. If ``frequency = "dynamic"`` is requested without
 ``chi0q_mode = "flex"``, with an odd ``Nmat``, or without a dressed
