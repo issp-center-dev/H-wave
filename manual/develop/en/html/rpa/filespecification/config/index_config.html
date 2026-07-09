@@ -260,6 +260,28 @@ Float (default value is 100.0)</p>
 <p><strong>Description :</strong>
 This parameter specifies the upper cutoff of the exponent in the Fermi distribution function to avoid overflow during the calculation.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is false)</p>
+<p><strong>Description :</strong>
+When set to true, the main computation (the Green’s function, the chi0q
+FFT pair bubble, the spin inflation, and the batched RPA solve; for FLEX
+the whole SCF loop) runs on a GPU via CuPy. When CuPy or a CUDA device is
+unavailable, the solver warns and falls back to the CPU (numpy) path with
+an identical result. Install CuPy as the precompiled binary wheel matching
+your CUDA version (e.g. <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code> for CUDA 12.x); see
+the <a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPy installation guide</a>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p>
+<p><strong>Type :</strong>
+Integer (default value is 1)</p>
+<p><strong>Description :</strong>
+Number of worker threads for the spatial FFTs (parallelized via
+<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>). The default 1 keeps the serial numpy path, unchanged
+from previous releases (opt-in); -1 uses all cores. Ignored on the
+GPU. Set a smaller number when running several calculations
+concurrently.</p>
+</li>
 </ul>
 </section>
 <section id="log-section">

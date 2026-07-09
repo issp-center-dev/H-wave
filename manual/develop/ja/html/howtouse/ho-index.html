@@ -46,9 +46,18 @@
 <li><p>scipy モジュール</p></li>
 <li><p>requests モジュール</p></li>
 <li><p>tomli モジュール</p></li>
-<li><p>cupy モジュール（任意。動的 Eliashberg ソルバー <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> を <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> かつ <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> で GPU 実行する場合のみ）</p></li>
+<li><p>cupy モジュール（任意。<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> によるGPU実行にのみ必要です
+— RPA/FLEX は <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>、動的 Eliashberg ソルバーは
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> で指定。CUDAバージョンに合ったビルド済みwheel
+（CUDA 12.x なら <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code>）の利用を推奨します。詳細は
+<a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPyインストールガイド</a>
+を参照してください。CuPyが無い場合、<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> は警告を出して
+CPU実行にフォールバックします。）</p></li>
 </ul>
-<p>なお、H-waveのUHFk、RPA、FLEXモードでは <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> をFFT計算に利用しています。</p>
+<p>なお、H-waveのUHFk、RPA、FLEXモードでは <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> をFFT計算に利用しています。
+RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>
+パラメータで並列FFTワーカーを指定した場合は <a class="reference external" href="https://docs.scipy.org/doc/scipy/reference/fft.html">scipy.fft</a> に、
+GPU実行時は cuFFT に切り替わります。</p>
 </div></blockquote>
 </li>
 <li><p>Official Page</p>

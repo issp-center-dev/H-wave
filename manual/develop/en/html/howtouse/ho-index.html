@@ -44,9 +44,18 @@
 <li><p>scipy module</p></li>
 <li><p>requests module</p></li>
 <li><p>tomli module</p></li>
-<li><p>cupy module (optional; only for GPU acceleration of the dynamic Eliashberg solver, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>)</p></li>
+<li><p>cupy module (optional; only for GPU execution with <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> –
+RPA/FLEX via <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> and the dynamic Eliashberg solver via
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>. Install the precompiled wheel matching your CUDA
+version, e.g. <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code> for CUDA 12.x – see the
+<a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPy installation guide</a>.
+Without CuPy, <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> falls back to the CPU path with a warning.)</p></li>
 </ul>
-<p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.</p>
+<p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
+The spatial FFTs of the RPA/FLEX/dynamic-Eliashberg solvers switch to
+<a class="reference external" href="https://docs.scipy.org/doc/scipy/reference/fft.html">scipy.fft</a> when the
+opt-in <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> parameter requests parallel FFT worker threads, and to
+cuFFT on the GPU.</p>
 </li>
 <li><p>Official Page</p>
 <blockquote>

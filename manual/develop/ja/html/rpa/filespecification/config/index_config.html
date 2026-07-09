@@ -213,6 +213,14 @@ FLEXソルバーでは、裸の感受率 <span class="math notranslate nohighlig
 <p><strong>形式 :</strong> float型 (デフォルトは100.0)</p>
 <p><strong>説明 :</strong> Fermi分布関数を計算する際に overflow を避けるため、 <span class="math notranslate nohighlight">\(e\)</span> の冪指数に対する上限を指定します。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
+<p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">true</span></code> にすると、計算の主要部（Green関数、感受率 <span class="math notranslate nohighlight">\(\chi_0(q)\)</span> のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。CuPy は CUDA バージョンに合ったビルド済み wheel（CUDA 12.x なら <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code>）でのインストールを推奨します（<a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPyインストールガイド</a> 参照）。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは 1)</p>
+<p><strong>説明 :</strong> 空間FFTのワーカースレッド数を指定します（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> による並列化）。デフォルトの <code class="docutils literal notranslate"><span class="pre">1</span></code> は従来どおりの直列 numpy で、並列化はオプトインです。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コアを使用します。GPU 実行時は無視されます。複数の計算を同時に実行する場合は小さめの値を指定してください。</p>
+</li>
 </ul>
 </section>
 <section id="log">

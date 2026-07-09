@@ -11,9 +11,18 @@
     - scipy モジュール
     - requests モジュール
     - tomli モジュール
-    - cupy モジュール（任意。動的 Eliashberg ソルバー ``hwave_sc`` を ``frequency = "dynamic"`` かつ ``gpu = true`` で GPU 実行する場合のみ）
+    - cupy モジュール（任意。``gpu = true`` によるGPU実行にのみ必要です
+      — RPA/FLEX は ``[mode.param]``、動的 Eliashberg ソルバーは
+      ``[eliashberg]`` で指定。CUDAバージョンに合ったビルド済みwheel
+      （CUDA 12.x なら ``pip install cupy-cuda12x``）の利用を推奨します。詳細は
+      `CuPyインストールガイド <https://docs.cupy.dev/en/stable/install.html>`_
+      を参照してください。CuPyが無い場合、``gpu = true`` は警告を出して
+      CPU実行にフォールバックします。）
 
     なお、H-waveのUHFk、RPA、FLEXモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
+    RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの ``fft_workers``
+    パラメータで並列FFTワーカーを指定した場合は `scipy.fft <https://docs.scipy.org/doc/scipy/reference/fft.html>`_ に、
+    GPU実行時は cuFFT に切り替わります。
 
 - Official Page
 
