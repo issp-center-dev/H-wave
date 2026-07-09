@@ -32,6 +32,18 @@ until convergence:
    FFT convolution.
 7. Check convergence; if not converged, go to step 1.
 
+.. note::
+
+   When the electron number is fixed through ``filling`` / ``Ncond`` (rather
+   than a fixed ``mu``), FLEX re-solves the chemical potential :math:`\mu` from
+   the *dressed* Green function at every SCF iteration so that the target
+   filling is maintained self-consistently as the self-energy grows.  A
+   ``FLEX._find_mu_dressed: mu = ...`` line is therefore printed each iteration,
+   and the converged :math:`\mu` (and the exact iteration count) differ from a
+   calculation that keeps :math:`\mu` fixed at its non-interacting value.  All
+   iteration counts and convergence values shown in this tutorial are
+   illustrative and may vary slightly with the version and platform.
+
 
 Theory
 ----------------------------
@@ -191,7 +203,16 @@ Key parameters:
 - ``T = 0.5``: Temperature.
 - ``CellShape = [8, 8, 1]``: 8 x 8 k-point mesh for a 2D system.
 - ``Nmat = 64``: Number of Matsubara frequencies.
-- ``filling = 0.5``: Half filling.
+- ``filling = 0.5``: target electron number per site (half filling). Specifying
+  ``filling`` (or ``Ncond``) makes FLEX re-solve the chemical potential
+  :math:`\mu` from the dressed Green's function at every SCF iteration so the
+  filling is conserved as the self-energy grows; specifying ``mu`` instead holds
+  it fixed.
+- ``coeff_tail = 1.0`` (optional): high-frequency tail-acceleration coefficient
+  for the Matsubara sums. ``coeff_tail = 1`` matches the exact
+  :math:`1/(i\omega_n)` coefficient of :math:`G` (unitarity), so it accelerates
+  convergence in ``Nmat`` without biasing the result. Also supported by the RPA
+  solver.
 - ``IterationMax = 100``: Maximum number of SCF iterations.
 - ``Mix = 0.2``: Mixing parameter for self-energy update
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`).
@@ -230,15 +251,16 @@ The output log shows the SCF convergence:
 .. code-block:: text
 
     FLEX iteration 1/100
+    FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/100
-      convergence: |dSigma|/|Sigma| = 9.827e-01
+    FLEX._find_mu_dressed: mu = -0.291966
+      convergence: |dSigma|/|Sigma| = 9.876e-01
     ...
-    FLEX iteration 72/100
-      convergence: |dSigma|/|Sigma| = 1.008e-06
-    FLEX iteration 73/100
-      convergence: |dSigma|/|Sigma| = 8.292e-07
-    FLEX converged after 73 iterations
+    FLEX iteration 64/100
+    FLEX._find_mu_dressed: mu = -0.249146
+      convergence: |dSigma|/|Sigma| = 9.241e-07
+    FLEX converged after 64 iterations
 
 
 Results
@@ -253,6 +275,19 @@ in the ``output`` directory:
 - ``chiq.npz``: Combined susceptibility file
 - ``sigma.npz``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`
 - ``green.npz``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`
+- ``energy.dat``: Text file with the particle number ``NCond``, spin
+  ``Sz``, and the converged ``ChemicalPotential`` :math:`\mu`.
+
+.. note::
+
+   The ``energy.dat`` output (enabled by the ``energy`` key in
+   ``[file.output]``) is written from the final dressed Green function.  In
+   the fixed-:math:`\mu` mode (specify ``mu`` instead of ``filling`` /
+   ``Ncond``) its ``NCond`` line gives the particle number at that
+   :math:`\mu`, so running the solver at several fixed :math:`\mu` values
+   traces the :math:`\mu`-:math:`N` relation.  ``Sz`` is zero for a
+   paramagnetic (spin-free) calculation and non-zero only for
+   spin-dependent (spin-diagonal / spinful) runs.
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -370,15 +405,18 @@ Run the calculation
 .. code-block:: text
 
     FLEX iteration 1/200
+    FLEX._find_mu_dressed: mu = 0.000000
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/200
+    FLEX._find_mu_dressed: mu = 0.000000
       convergence: |dSigma|/|Sigma| = 3.587e-01
     ...
-    FLEX iteration 58/200
-      convergence: |dSigma|/|Sigma| = 1.188e-06
     FLEX iteration 59/200
-      convergence: |dSigma|/|Sigma| = 9.684e-07
+    FLEX._find_mu_dressed: mu = 0.000000
+      convergence: |dSigma|/|Sigma| = 8.870e-07
     FLEX converged after 59 iterations
+
+(This is a particle-hole symmetric half-filled model, so :math:`\mu = 0`.)
 
 
 Results
@@ -619,15 +657,16 @@ Run the calculation
 .. code-block:: text
 
     FLEX iteration 1/200
+    FLEX._find_mu_dressed: mu = 1.562757
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/200
+    FLEX._find_mu_dressed: mu = 1.551623
       convergence: |dSigma|/|Sigma| = 7.139e-01
     ...
     FLEX iteration 62/200
-      convergence: |dSigma|/|Sigma| = 1.055e-06
-    FLEX iteration 63/200
-      convergence: |dSigma|/|Sigma| = 8.419e-07
-    FLEX converged after 63 iterations
+    FLEX._find_mu_dressed: mu = 1.512917
+      convergence: |dSigma|/|Sigma| = 8.716e-07
+    FLEX converged after 62 iterations
 
 
 Results

@@ -26,6 +26,16 @@ FLEXは以下の自己無撞着ループを収束まで繰り返します:
 6. FFT畳み込みにより自己エネルギー :math:`\Sigma(\mathbf{k}, i\omega_n)` を計算
 7. 収束判定; 未収束なら1に戻る
 
+.. note::
+
+   電子数を ``filling`` / ``Ncond`` で固定する場合（``mu`` を固定しない場合）、FLEX
+   は各SCF反復で化学ポテンシャル :math:`\mu` を*ドレスされた*Green関数から解き直し、
+   自己エネルギーが成長しても目標フィリングが自己無撞着に保たれるようにします。この
+   ため各反復で ``FLEX._find_mu_dressed: mu = ...`` の行が出力され、収束した
+   :math:`\mu`（および正確な反復回数）は :math:`\mu` を非相互作用値に固定した計算とは
+   異なります。本チュートリアルに示す反復回数・収束値はすべて例示であり、バージョンや
+   環境によって多少変わり得ます。
+
 
 理論
 ----------------------------
@@ -180,7 +190,14 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``T = 0.5``: 温度
 - ``CellShape = [8, 8, 1]``: 2D系の 8 x 8 k点メッシュ
 - ``Nmat = 64``: 松原周波数の数
-- ``filling = 0.5``: ハーフフィリング
+- ``filling = 0.5``: 1サイトあたりの目標電子数（ハーフフィリング）。``filling``
+  （または ``Ncond``）を指定すると、FLEX は各SCF反復でドレスドGreen関数から化学
+  ポテンシャル :math:`\mu` を解き直し、自己エネルギーが成長してもフィリングを保存
+  します。代わりに ``mu`` を指定した場合は固定されます。
+- ``coeff_tail = 1.0``（省略可）: 松原和の高振動数テール加速係数。``coeff_tail = 1``
+  は :math:`G` の厳密な :math:`1/(i\omega_n)` 係数（ユニタリ性）に一致するため、
+  結果を歪めずに ``Nmat`` に対する収束を加速します。RPAソルバーでもサポートされて
+  います。
 - ``IterationMax = 100``: SCF反復の最大回数
 - ``Mix = 0.2``: 自己エネルギー更新の混合パラメータ
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`)
@@ -218,15 +235,16 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 .. code-block:: text
 
     FLEX iteration 1/100
+    FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/100
-      convergence: |dSigma|/|Sigma| = 9.827e-01
+    FLEX._find_mu_dressed: mu = -0.291966
+      convergence: |dSigma|/|Sigma| = 9.876e-01
     ...
-    FLEX iteration 72/100
-      convergence: |dSigma|/|Sigma| = 1.008e-06
-    FLEX iteration 73/100
-      convergence: |dSigma|/|Sigma| = 8.292e-07
-    FLEX converged after 73 iterations
+    FLEX iteration 64/100
+    FLEX._find_mu_dressed: mu = -0.249146
+      convergence: |dSigma|/|Sigma| = 9.241e-07
+    FLEX converged after 64 iterations
 
 
 計算結果
@@ -240,6 +258,17 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``chiq.npz``: 結合感受率ファイル
 - ``sigma.npz``: 自己エネルギー :math:`\Sigma(\mathbf{k}, i\omega_n)`
 - ``green.npz``: ドレスドグリーン関数 :math:`G(\mathbf{k}, i\omega_n)`
+- ``energy.dat``: 粒子数 ``NCond``、スピン ``Sz``、収束した化学ポテンシャル
+  ``ChemicalPotential`` :math:`\mu` を記載したテキストファイル。
+
+.. note::
+
+   ``energy.dat`` 出力（``[file.output]`` の ``energy`` キーで有効化）は最終的な
+   ドレスドグリーン関数から書き出されます。:math:`\mu` 固定モード（``filling`` /
+   ``Ncond`` の代わりに ``mu`` を指定）では ``NCond`` 行がその :math:`\mu` における
+   粒子数を与えるので、複数の固定 :math:`\mu` で計算を実行すれば
+   :math:`\mu`-:math:`N` 関係が得られます。``Sz`` は常磁性（spin-free）計算では 0
+   となり、スピン依存（spin-diagonal / spinful）計算でのみ非ゼロになります。
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -353,15 +382,18 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 .. code-block:: text
 
     FLEX iteration 1/200
+    FLEX._find_mu_dressed: mu = 0.000000
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/200
+    FLEX._find_mu_dressed: mu = 0.000000
       convergence: |dSigma|/|Sigma| = 3.587e-01
     ...
-    FLEX iteration 58/200
-      convergence: |dSigma|/|Sigma| = 1.188e-06
     FLEX iteration 59/200
-      convergence: |dSigma|/|Sigma| = 9.684e-07
+    FLEX._find_mu_dressed: mu = 0.000000
+      convergence: |dSigma|/|Sigma| = 8.870e-07
     FLEX converged after 59 iterations
+
+（粒子ホール対称なハーフフィリング模型のため :math:`\mu = 0` となります。）
 
 
 計算結果
@@ -601,15 +633,16 @@ Fe-As面を正方格子（1-Fe単位胞）上の :math:`d_{xz}` と
 .. code-block:: text
 
     FLEX iteration 1/200
+    FLEX._find_mu_dressed: mu = 1.562757
       convergence: |dSigma|/|Sigma| = 1.000e+00
     FLEX iteration 2/200
+    FLEX._find_mu_dressed: mu = 1.551623
       convergence: |dSigma|/|Sigma| = 7.139e-01
     ...
     FLEX iteration 62/200
-      convergence: |dSigma|/|Sigma| = 1.055e-06
-    FLEX iteration 63/200
-      convergence: |dSigma|/|Sigma| = 8.419e-07
-    FLEX converged after 63 iterations
+    FLEX._find_mu_dressed: mu = 1.512917
+      convergence: |dSigma|/|Sigma| = 8.716e-07
+    FLEX converged after 62 iterations
 
 
 計算結果

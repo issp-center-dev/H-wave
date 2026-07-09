@@ -15,6 +15,7 @@ Contents
    uhfr/uhfr-index
    uhfk/uhfk-index
    rpa/rpa-index
+   flex/flex-index
    algorithm/al-index
    acknowledgement
    appendix/app-index

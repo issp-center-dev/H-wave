@@ -5,7 +5,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>ゆらぎ交換近似 (FLEX) &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
+    <title>6. ゆらぎ交換近似 (FLEX) &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
     <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
     <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
@@ -15,6 +15,8 @@
     <script src="../_static/translations.js?v=4755f45a"></script>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="検索" href="../search.html" />
+    <link rel="next" title="6.1. チュートリアル: FLEXソルバー" href="tutorial/tu-index.html" />
+    <link rel="prev" title="chiq, chi0q" href="../rpa/filespecification/outputfiles/chiq_rpa.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
   
@@ -33,21 +35,21 @@
           <div class="body" role="main">
             
   <section id="flex">
-<h1>ゆらぎ交換近似 (FLEX)<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h1>
+<h1><span class="section-number">6. </span>ゆらぎ交換近似 (FLEX)<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h1>
 <div class="toctree-wrapper compound">
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/tu-index.html">チュートリアル: FLEXソルバー</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id1">概要</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id3">理論</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#hubbard">サンプル 1: 1軌道Hubbardモデル</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id21">サンプル 2: 2軌道Hubbardモデル</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id26">プロット</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id27">出力ファイル形式</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id28">FLEX固有のパラメータ</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id29">サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#b-general">サンプル 3b: 完全頂点（general）版</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#tips">Tips</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id38">実装の詳細と制限事項</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/tu-index.html">6.1. チュートリアル: FLEXソルバー</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id1">6.1.1. 概要</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id3">6.1.2. 理論</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#hubbard">6.1.3. サンプル 1: 1軌道Hubbardモデル</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id21">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id26">6.1.5. プロット</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id27">6.1.6. 出力ファイル形式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id28">6.1.7. FLEX固有のパラメータ</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id29">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#b-general">6.1.9. サンプル 3b: 完全頂点（general）版</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#tips">6.1.10. Tips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html#id38">6.1.11. 実装の詳細と制限事項</a></li>
 </ul>
 </li>
 </ul>
@@ -76,21 +78,27 @@
 
 
 <h3>ナビゲーション</h3>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. H-waveとは？</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">6. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">7. 謝辞</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">8. Appendix</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">6. ゆらぎ交換近似 (FLEX)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorial/tu-index.html">6.1. チュートリアル: FLEXソルバー</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">7. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">8. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">9. Appendix</a></li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="../rpa/filespecification/outputfiles/chiq_rpa.html" title="前の章へ">chiq, chi0q</a></li>
+      <li>Next: <a href="tutorial/tu-index.html" title="次の章へ"><span class="section-number">6.1. </span>チュートリアル: FLEXソルバー</a></li>
   </ul></li>
 </ul>
 </div>

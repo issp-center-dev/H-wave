@@ -184,7 +184,8 @@ UHFk と同じ規約です。</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code></p>
 <p><strong>形式 :</strong> float型 (デフォルトは0.0)</p>
 <p><strong>説明 :</strong> フーリエ変換の尾部の補正を行う際の、補正の大きさを指定します。
-対角化された一体Green関数に対して <span class="math notranslate nohighlight">\(\texttt{coeff\_tail}/(i \omega_n)\)</span> を引き虚時間表示にフーリエ変換した後、<span class="math notranslate nohighlight">\(-\beta/2\cdot\texttt{coeff\_tail}\)</span> を付加します。</p>
+対角化された一体Green関数に対して <span class="math notranslate nohighlight">\(\texttt{coeff\_tail}/(i \omega_n)\)</span> を引き虚時間表示にフーリエ変換した後、<span class="math notranslate nohighlight">\(-\beta/2\cdot\texttt{coeff\_tail}\)</span> を付加します。
+FLEXソルバーでは、裸の感受率 <span class="math notranslate nohighlight">\(\chi_0(q)\)</span> を計算する前に同じ尾部補正をドレスされたGreen関数に対して適用します。これにより <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は物理的な結果を変えずに振動数和の収束を加速します（FLEXの自己エネルギー畳み込みは完全なGreen関数を用いるため影響を受けません）。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>形式 :</strong> int型, list型, または str型 (デフォルトは <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
@@ -329,9 +330,10 @@ UHFk と同じ規約です。</p>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">6. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">7. 謝辞</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">8. Appendix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../flex/flex-index.html">6. ゆらぎ交換近似 (FLEX)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../algorithm/al-index.html">7. アルゴリズム</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../acknowledgement.html">8. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/app-index.html">9. Appendix</a></li>
 </ul>
 
 <div class="relations">
