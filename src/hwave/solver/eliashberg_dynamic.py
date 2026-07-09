@@ -323,7 +323,30 @@ def calc_g2_dynamic(green_kw, beta):
     return G2 / beta
 
 
-def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta):
+def vertex_qw_to_rt(Vs_q_w):
+    r"""Transform the pairing vertex from (q, i nu_l) to (r, tau).
+
+    This is the vertex leg of ``eliashberg_kernel_dynamic``: spatial q->r via
+    ifftn (which carries the single spatial fold's 1/N), frequency boson->tau.
+    It does not depend on the trial gap, so callers that apply the kernel
+    repeatedly (power iteration / Arnoldi) should compute it once and pass the
+    result via the kernel's ``Vs_rt`` argument.
+
+    Parameters
+    ----------
+    Vs_q_w : ndarray
+        Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+        on the bosonic Matsubara axis.
+
+    Returns
+    -------
+    V_rt : ndarray
+        Same shape, in (r, tau).
+    """
+    return FFT.ifftn(ms.boson_to_tau(Vs_q_w, axis=-1), axes=(4, 5, 6))
+
+
+def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None):
     r"""Apply the frequency-resolved (tau-product) Eliashberg kernel.
 
     Implements one action of the linearized Eliashberg operator on a trial
@@ -344,9 +367,9 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta):
 
     Parameters
     ----------
-    Vs_q_w : ndarray
+    Vs_q_w : ndarray or None
         Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-        on the bosonic Matsubara axis.
+        on the bosonic Matsubara axis. May be None when ``Vs_rt`` is given.
     G2_w : ndarray
         Pair bubble, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
         on the fermionic Matsubara axis (already divided by beta).
@@ -356,6 +379,10 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta):
         Number of orbitals (for signature symmetry; inferred from shapes).
     beta : float
         Inverse temperature (unused here; T is inside G2).
+    Vs_rt : ndarray, optional
+        Precomputed ``vertex_qw_to_rt(Vs_q_w)``. The vertex transform does not
+        depend on ``phi_w``, so iterative solvers pass it once instead of
+        paying the (norb^4 x Nvol x nmat)-sized transform on every matvec.
 
     Returns
     -------
@@ -367,7 +394,7 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta):
     # spatial k->r on F (per orbital pair, per fermionic freq); freq fermion->tau
     F_rt = FFT.ifftn(ms.fermion_to_tau(F, axis=-1), axes=(2, 3, 4))
     # V(q, iv_l) -> (r, tau): spatial q->r, freq boson->tau
-    V_rt = FFT.ifftn(ms.boson_to_tau(Vs_q_w, axis=-1), axes=(4, 5, 6))
+    V_rt = vertex_qw_to_rt(Vs_q_w) if Vs_rt is None else Vs_rt
     # phi_out_{l1,l4}(r,tau) = - sum_{l2,l3} V_{l1,l2,l3,l4}(r,tau) F_{l2,l3}(r,tau)
     prod = -np.einsum('abcdxyzt,bcxyzt->adxyzt', V_rt, F_rt)
     # back: spatial r->k (fftn), freq tau->fermion. The single spatial fold's
@@ -622,9 +649,16 @@ def solve_dynamic(input_dict):
     vec_size = norb * norb * Nk * nmat
     assert phi0.size == vec_size
 
+    # The vertex's (q, i nu) -> (r, tau) transform is phi-independent and
+    # dominates the matvec cost, so do it once here; drop the (q, i nu) form
+    # to keep the resident vertex memory unchanged.
+    Vs_rt = vertex_qw_to_rt(Vs_q_w)
+    del Vs_q_w
+
     def _matvec(x):
         return eliashberg_kernel_dynamic(
-            Vs_q_w, G2_w, x.reshape(gap_shape), norb, beta).ravel()
+            None, G2_w, x.reshape(gap_shape), norb, beta,
+            Vs_rt=Vs_rt).ravel()
 
     def make_operator():
         op = LinearOperator((vec_size, vec_size), matvec=_matvec,
