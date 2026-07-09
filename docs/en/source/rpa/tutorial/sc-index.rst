@@ -542,6 +542,26 @@ mode writes:
    line is a ``#``-prefixed header carrying ``frequency=dynamic`` together with
    the slice index and its :math:`\omega_n`.
 
+Channel-parity selection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Like the static solver, the dynamic mode reports the leading eigenpair **of the
+requested pairing channel**, not merely the algebraically largest eigenvalue.
+Fermion antisymmetry fixes the combined parity of the gap under
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)`: even for ``singlet`` (this admits
+both a conventional even-frequency and an odd-frequency singlet) and odd for
+``triplet``. The Arnoldi eigenpairs are reordered so that the channel-parity
+mode leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries the same
+trailing ``match(1=channel-parity)`` column as the static output (``1`` in the
+requested sector, ``0`` in the opposite one). If none of the ``num_eigenvalues``
+computed eigenpairs lies in the requested sector, the solver warns and falls
+back to the raw leading pair; increase ``num_eigenvalues`` or check
+``pairing_type`` in that case. The power-iteration path (``solver_mode =
+"iteration"``) likewise projects every iterate onto the channel sector when the
+kernel commutes with parity (a centrosymmetric model); if it does not, the
+projection is disabled with a warning and the un-projected iteration is used.
+
 Memory note
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

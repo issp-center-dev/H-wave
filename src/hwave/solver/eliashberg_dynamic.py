@@ -14,6 +14,159 @@ from hwave.solver.perf import FFT
 logger = logging.getLogger("qlms").getChild("eliashberg_dynamic")
 
 
+# ---------------------------------------------------------------------------
+# Channel-parity of the frequency-resolved gap
+#
+# The static path filters eigenpairs by the (k, orbital) parity operator P:
+# Delta_{ab}(k) -> Delta_{ba}(-k) (sc._reverse_k_and_orbital), so a singlet
+# request never reports an odd-parity (triplet-sector) mode. The dynamic gap
+# carries an extra fermionic Matsubara axis, and fermion antisymmetry makes the
+# physical channel-parity the COMBINED operator
+#     P: Delta_{ab}(k, iw_n) -> Delta_{ba}(-k, -iw_n),
+# even (+) for singlet, odd (-) for triplet. This admits both a conventional
+# (even-k, even-w) and an odd-frequency (odd-k, odd-w) singlet, and rejects the
+# mixed even-w/odd-k mode that ARPACK's raw largest-|lambda| can surface.
+# ---------------------------------------------------------------------------
+
+def _reverse_kw_and_orbital(gap_w):
+    """Return Delta_{ba}(-k, -iw_n) for a dynamic gap.
+
+    Parameters
+    ----------
+    gap_w : ndarray
+        Gap, shape ``(norb, norb, Nx, Ny, Nz, nmat)``.
+
+    Returns
+    -------
+    ndarray
+        ``Delta_{ba}(-k, -iw_n)``, same shape. Spatial ``k -> -k`` is the
+        FFT-grid index map ``i -> (N - i) % N`` (reverse + roll-by-1, matching
+        ``sc._reverse_k_and_orbital``); the centered fermionic Matsubara
+        partner of index ``n`` is ``nmat - 1 - n`` (a plain reversal, no roll);
+        the two orbital indices are swapped.
+    """
+    rev = gap_w[:, :, ::-1, ::-1, ::-1, :]
+    rev = np.roll(rev, 1, axis=(2, 3, 4))   # k -> -k on the FFT grid
+    rev = rev[..., ::-1]                     # iw_n -> -iw_n (centered fermionic)
+    rev = np.swapaxes(rev, 0, 1)             # orbital transpose a <-> b
+    return rev
+
+
+def _project_parity_dynamic(gap_w, pairing_type):
+    """Project a dynamic gap onto the channel's combined-parity sector.
+
+    ``(1 +/- P)/2`` with ``+`` for singlet (even) and ``-`` for triplet (odd).
+    """
+    if pairing_type == "singlet":
+        sign = 1.0
+    elif pairing_type == "triplet":
+        sign = -1.0
+    else:
+        raise ValueError(
+            "Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
+                pairing_type))
+    return 0.5 * (gap_w + sign * _reverse_kw_and_orbital(gap_w))
+
+
+def _is_parity_dynamic(gap_w, pairing_type, tol=0.9):
+    """True when ``gap_w`` retains at least ``tol`` of its norm under the
+    channel's combined-parity projection (mirrors ``sc._is_gap_parity``)."""
+    proj = _project_parity_dynamic(gap_w, pairing_type)
+    n = np.linalg.norm(gap_w)
+    if n == 0:
+        return False
+    return np.linalg.norm(proj) / n >= tol
+
+
+def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
+    """Max fraction of ``A x`` that lands in the OPPOSITE parity sector.
+
+    Zero (to numerical precision) iff the kernel commutes with the parity
+    operator, so parity projection of the power iteration is legitimate.
+    Mirrors ``sc._solve_iteration``'s centrosymmetry guard verbatim: for each
+    of ``n_probe`` random vectors and each parity sign, project the probe into
+    that sector, apply ``A``, and measure the norm fraction of the image that
+    lands in the opposite sector (denominator ``||A xp|| + 1e-300``). Uses the
+    same probe count as the static path (``sc._PARITY_GUARD_PROBES``).
+    """
+    # pairing_type is unused by design: the guard probes BOTH parity sectors
+    # (even and odd), exactly as sc._solve_iteration does, so the leakage
+    # measure is independent of the requested channel.
+    import hwave.sc as sc
+    if n_probe is None:
+        n_probe = sc._PARITY_GUARD_PROBES
+    rng = np.random.default_rng(seed)
+    leakage = 0.0
+    for _ in range(n_probe):
+        x = (rng.standard_normal(gap_shape)
+             + 1j * rng.standard_normal(gap_shape))
+        for sign, pt in ((1.0, "singlet"), (-1.0, "triplet")):
+            xp = _project_parity_dynamic(x, pt)          # even (+) / odd (-)
+            axp = A.matvec(xp.ravel()).reshape(gap_shape)
+            opp = "triplet" if pt == "singlet" else "singlet"
+            denom = np.linalg.norm(axp) + 1.0e-300
+            leakage = max(leakage,
+                          np.linalg.norm(_project_parity_dynamic(axp, opp))
+                          / denom)
+    return leakage
+
+
+def _project_seed_dynamic(phi0, pairing_type):
+    """Project the seed gap onto the channel sector (no renormalization).
+
+    Mirrors the static guard in ``sc._solve_iteration``: if the seed has no
+    component in the requested parity sector, raise instead of silently
+    iterating from a (near-)zero vector (which would return a bogus
+    ``lambda~0`` non-converged result). Like the static path, the projected
+    seed is returned as-is (the power iteration normalizes each iterate, so the
+    initial scale does not affect the converged eigenpair).
+    """
+    proj = _project_parity_dynamic(phi0, pairing_type)
+    if np.linalg.norm(proj) < 1.0e-12 * (np.linalg.norm(phi0) + 1.0e-300):
+        raise ValueError(
+            "Initial gap has no component in the '{}' parity sector; choose "
+            "an init_gap of the matching parity (even for singlet, odd for "
+            "triplet).".format(pairing_type))
+    return proj
+
+
+def _reorder_eigenpairs_by_parity_dynamic(vals, vecs, gap_shape, pairing_type):
+    """Promote eigenpairs whose gap has the channel's combined parity.
+
+    Mirrors ``sc._reorder_eigenpairs_by_parity`` for the frequency-resolved
+    gap so the reported leading dynamic eigenpair is the physical solution for
+    the requested channel, not ARPACK's raw largest-|lambda| (which can be an
+    opposite-parity mode).
+
+    Parameters
+    ----------
+    vals : ndarray
+        Eigenvalues, shape ``(k,)``, already ordered by descending real part.
+    vecs : ndarray
+        Eigenvectors as columns, shape ``(vec_size, k)``.
+    gap_shape : tuple
+        ``(norb, norb, Nx, Ny, Nz, nmat)`` to reshape each column.
+    pairing_type : str
+        "singlet" or "triplet".
+
+    Returns
+    -------
+    vals, vecs, match : ndarray
+        Reordered with channel-parity eigenpairs first (order preserved within
+        each group), plus the reordered boolean match array.
+    """
+    match = np.array([_is_parity_dynamic(vecs[:, i].reshape(gap_shape),
+                                         pairing_type)
+                      for i in range(vecs.shape[1])])
+    if not np.any(match):
+        logger.warning(
+            "No dynamic eigenpair matches the requested '%s' parity; the "
+            "reported leading gap belongs to the other channel. Increase "
+            "num_eigenvalues or check pairing_type.", pairing_type)
+    idx = np.concatenate([np.where(match)[0], np.where(~match)[0]])
+    return vals[idx], vecs[:, idx], match[idx]
+
+
 def estimate_memory_bytes(norb, Nk, nmat):
     v = 16 * norb**4 * Nk * nmat          # vertex
     g2 = v                                # G2, same shape
@@ -477,18 +630,34 @@ def solve_dynamic(input_dict):
 
     # Map [eliashberg] controls to the _solve_leading solver_mode string,
     # exactly as calc_eliashberg does for the static path.
+    eigenvalue_match = None
     if solver_mode == "iteration":
-        # Unlike the static _solve_iteration, the dynamic path does not enforce
-        # a singlet/triplet parity projection: the leading mode is selected only
-        # by the seed parity and the channel-specific vertex. Near a parity
-        # crossover this can converge to the opposite-parity dominant mode.
-        logger.warning(
-            "Dynamic iteration solver does not enforce parity projection; "
-            "use solver_mode='eigenvalue' if the parity is ambiguous.")
+        # Mirror the static _solve_iteration: project every iterate onto the
+        # channel's combined-parity sector so numerical noise cannot let the
+        # power iteration drift into the opposite-parity (e.g. triplet) mode.
+        # The projection is legitimate only when the kernel commutes with P;
+        # probe the cross-sector leakage first and fall back to the
+        # un-projected iteration (with a warning) if it does not.
+        A_probe, _ = make_operator()
+        leak = _parity_leakage(A_probe, gap_shape, pairing_type)
+        if leak <= 1.0e-8:
+            def project_fn(flat):
+                return _project_parity_dynamic(
+                    flat.reshape(gap_shape), pairing_type).ravel()
+            # Project + normalize the seed, raising if it has no in-sector
+            # component (matches sc._solve_iteration's guard).
+            phi0 = _project_seed_dynamic(phi0, pairing_type)
+        else:
+            logger.warning(
+                "Dynamic Eliashberg kernel does not commute with parity "
+                "(cross-sector leakage %.2e); parity projection for the '%s' "
+                "channel is disabled and the un-projected iteration is used.",
+                leak, pairing_type)
+            project_fn = None
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, "iteration",
             max_iter=max_iter, convergence_tol=tol, alpha=alpha,
-            init_vec=phi0.ravel())
+            init_vec=phi0.ravel(), project_fn=project_fn)
         eigenvalues_all = None
     else:
         # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
@@ -502,6 +671,17 @@ def solve_dynamic(input_dict):
             make_operator, vec_size, eigenvalue_method,
             num_eigenvalues=num_eigenvalues)
         eigenvalues_all = info.get("eigenvalues")
+        vecs_all = info.get("eigenvectors")
+        # Promote the eigenpair with the channel's combined (k, orbital,
+        # frequency) parity so the reported leading lambda is the physical
+        # singlet/triplet solution -- not ARPACK's raw largest-|lambda|, which
+        # on real FLEX data can be an opposite-parity (wrong-channel) mode.
+        if eigenvalues_all is not None and vecs_all is not None:
+            eigenvalues_all, vecs_all, eigenvalue_match = \
+                _reorder_eigenpairs_by_parity_dynamic(
+                    eigenvalues_all, vecs_all, gap_shape, pairing_type)
+            eigenvalue = eigenvalues_all[0]
+            sigma_flat = vecs_all[:, 0]
 
     lam = float(np.real(eigenvalue))
     logger.info("Dynamic Eliashberg leading eigenvalue lambda = %.6f", lam)
@@ -517,10 +697,19 @@ def solve_dynamic(input_dict):
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
         fw.write("{:.8e}\n".format(lam))
         if eigenvalues_all is not None:
-            fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|\n")
-            for i, ev in enumerate(eigenvalues_all):
-                fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
-                    i, ev.real, ev.imag, abs(ev)))
+            if eigenvalue_match is not None:
+                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                         "|eigenvalue|  match(1=channel-parity)\n")
+                for i, ev in enumerate(eigenvalues_all):
+                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e} {:d}\n".format(
+                        i, ev.real, ev.imag, abs(ev),
+                        int(bool(eigenvalue_match[i]))))
+            else:
+                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                         "|eigenvalue|\n")
+                for i, ev in enumerate(eigenvalues_all):
+                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
+                        i, ev.real, ev.imag, abs(ev)))
 
     gap_file = eli_param.get("output_gap", "gap.dat")
     write_dynamic_outputs(output_dir, gap_w, lam, T, pairing_type,

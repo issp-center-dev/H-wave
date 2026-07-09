@@ -695,3 +695,157 @@ def test_end_to_end_dynamic_matches_static_symmetry(tmp_path):
     b = gap_dyn[0, 0, :, :, 0, central[1]].ravel()
     assert (np.linalg.norm(a - np.conj(b)) / np.linalg.norm(a)) < 1e-8, \
         "phi(k,-w_n) != conj phi(k,w_n) across the two central slices"
+
+
+# ---------------------------------------------------------------------------
+# Channel-parity selection for the dynamic (frequency-resolved) gap.
+# Regression for: solve_dynamic's eigenvalue path returned ARPACK's raw
+# largest-|lambda| WITHOUT the static path's channel-parity filter, so on real
+# FLEX data (bp-ICl2 8.3 GPa UV) it reported an even-frequency, odd-(k,orbital)
+# mode -- combined parity -1, i.e. the TRIPLET sector -- for a singlet request.
+# ---------------------------------------------------------------------------
+
+def _rand_gap(norb=2, Nx=1, Ny=4, Nz=1, nmat=4, seed=0):
+    rng = np.random.default_rng(seed)
+    shape = (norb, norb, Nx, Ny, Nz, nmat)
+    return (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
+
+
+def test_reverse_kw_is_an_involution():
+    from hwave.solver import eliashberg_dynamic as ed
+    g = _rand_gap(seed=1)
+    g2 = ed._reverse_kw_and_orbital(ed._reverse_kw_and_orbital(g))
+    assert np.allclose(g2, g, atol=1e-12)
+
+
+def test_parity_projectors_split_even_odd():
+    from hwave.solver import eliashberg_dynamic as ed
+    g = _rand_gap(seed=2)
+    P = ed._reverse_kw_and_orbital
+    ge = 0.5 * (g + P(g))   # combined-even  (P ge = ge)   -> singlet sector
+    go = 0.5 * (g - P(g))   # combined-odd   (P go = -go)  -> triplet sector
+    # even gap is fixed by the singlet projector, annihilated by triplet
+    assert np.allclose(ed._project_parity_dynamic(ge, "singlet"), ge, atol=1e-12)
+    assert np.linalg.norm(ed._project_parity_dynamic(ge, "triplet")) < 1e-10
+    # odd gap is fixed by the triplet projector, annihilated by singlet
+    assert np.allclose(ed._project_parity_dynamic(go, "triplet"), go, atol=1e-12)
+    assert np.linalg.norm(ed._project_parity_dynamic(go, "singlet")) < 1e-10
+    # parity labels
+    assert ed._is_parity_dynamic(ge, "singlet")
+    assert not ed._is_parity_dynamic(ge, "triplet")
+    assert ed._is_parity_dynamic(go, "triplet")
+    assert not ed._is_parity_dynamic(go, "singlet")
+
+
+def test_reorder_promotes_channel_parity_eigenpair():
+    """The odd mode has the larger eigenvalue but the singlet request must
+    surface the even (combined-parity +1) eigenpair as leading."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (2, 2, 1, 4, 1, 4)
+    P = ed._reverse_kw_and_orbital
+    g = _rand_gap(seed=3)
+    ge = 0.5 * (g + P(g))              # even/singlet
+    go = 0.5 * (g - P(g))              # odd/triplet
+    vecs = np.column_stack([go.ravel(), ge.ravel()])   # odd first (col 0)
+    vals = np.array([2.0 + 0j, 1.0 + 0j])              # odd has larger lambda
+    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "singlet")
+    # even (lambda=1) promoted to leading; match flags reordered with it
+    assert np.isclose(rvals[0].real, 1.0)
+    assert bool(match[0]) is True
+    assert bool(match[1]) is False
+    assert np.allclose(rvecs[:, 0], ge.ravel(), atol=1e-12)
+
+
+def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
+    """solve_dynamic (eigenvalue path) tags eigenvalue.dat with the
+    channel-parity match column and returns an in-sector leading gap."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "pairing_type": "singlet",
+                       "solver_mode": "eigenvalue", "num_eigenvalues": 6},
+    }
+    lam = ed.solve_dynamic(inp)
+    assert np.isfinite(lam)
+    with open(os.path.join(output_dir, "eigenvalue.dat")) as fh:
+        lines = fh.read().splitlines()
+    # wiring: the channel-parity match column is written
+    assert any("match(1=channel-parity)" in ln for ln in lines)
+    # parse the per-eigenvalue table (index Re Im |ev| match)
+    rows = [ln.split() for ln in lines
+            if ln and not ln.startswith("#") and len(ln.split()) == 5]
+    assert rows, "expected a 5-column eigenvalue table with the match flag"
+    matches = [int(r[4]) for r in rows]
+    res = [float(r[1]) for r in rows]
+    # selection: the reported leading lambda is the FIRST channel-parity row
+    # if any exists (reordering surfaced it), else the raw leading row.
+    if any(matches):
+        first_match = matches.index(1)
+        assert np.isclose(lam, res[first_match]), \
+            "leading lambda is not the first channel-parity eigenvalue"
+        # and the reordering put a matching pair at index 0
+        assert matches[0] == 1
+    else:
+        # no in-sector mode on this (non-centrosymmetric) fixture: the driver
+        # warns and falls back to the raw leading pair.
+        assert np.isclose(lam, res[0])
+
+
+def test_project_seed_dynamic_guard():
+    """Seed projection raises when the seed has no component in the requested
+    sector (mirrors sc._solve_iteration's guard), else returns a normalized
+    in-sector seed."""
+    from hwave.solver import eliashberg_dynamic as ed
+    P = ed._reverse_kw_and_orbital
+    g = _rand_gap(seed=7)
+    ge = 0.5 * (g + P(g))   # even/singlet
+    go = 0.5 * (g - P(g))   # odd/triplet
+    # even seed survives the singlet projection, in-sector and non-zero, and is
+    # returned WITHOUT renormalization (mirrors static _solve_iteration).
+    s = ed._project_seed_dynamic(ge, "singlet")
+    assert np.linalg.norm(s) > 0
+    assert np.allclose(s, ge, atol=1e-12)   # ge is already even -> unchanged
+    assert ed._is_parity_dynamic(s, "singlet")
+    # a pure-odd seed has no singlet component -> raise
+    import pytest
+    with pytest.raises(ValueError, match="parity sector"):
+        ed._project_seed_dynamic(go, "singlet")
+
+
+def test_parity_leakage_zero_for_commuting_operator():
+    """_parity_leakage ~ 0 for an operator that commutes with parity (identity)
+    and O(1) for one that maps into the opposite sector."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (2, 2, 1, 4, 1, 4)
+
+    class _Op:
+        def __init__(self, fn): self.fn = fn
+        def matvec(self, x): return self.fn(x)
+
+    ident = _Op(lambda x: x)
+    assert ed._parity_leakage(ident, gap_shape, "singlet") < 1e-12
+
+    # elementwise multiply by a P-ODD field d (P d = -d): it maps an even probe
+    # to an odd image (and vice versa), i.e. the kernel does NOT commute with P,
+    # so every probe leaks fully into the opposite sector.
+    P = ed._reverse_kw_and_orbital
+    r = _rand_gap(seed=13)
+    d = 0.5 * (r - P(r))                 # odd projection -> P d = -d
+    def mult(x):
+        return (d * x.reshape(gap_shape)).ravel()
+    assert ed._parity_leakage(_Op(mult), gap_shape, "singlet") > 0.9
