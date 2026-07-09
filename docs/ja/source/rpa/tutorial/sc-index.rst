@@ -148,6 +148,15 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 - ``chi0q_mode``: ``"load"`` はRPA出力ファイルから
   :math:`\chi_0(\mathbf{q})` を読み込みます。
   ``"calc"`` は内部で計算します。
+  ``"flex"`` はFLEX計算の dressed 感受率を読み込みます
+  （``frequency = "dynamic"`` に必須）。
+- ``frequency``: ペアリング頂点の振動数の扱い。``"static"`` （デフォルト）は
+  ボゾン振動数ゼロでペアリング頂点を評価する静的近似（Nakano--Kuroki 式(9)）で、
+  振動数依存性のないギャップを与えます。``"dynamic"`` は、振動数依存のペアリング
+  頂点 :math:`V(\mathbf{q}, i\omega_l)` とギャップ :math:`\phi(\mathbf{k}, i\omega_n)`
+  を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
+  ``chi0q_mode = "flex"`` が必要です
+  （下記の :ref:`動的振動数の節 <sc_dynamic_frequency>` を参照）。
 - ``pairing_type``: ``"singlet"`` または ``"triplet"``。
 - ``init_gap``: 反復法の初期ギャップ対称性。
   ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`)、
@@ -446,6 +455,91 @@ Arnoldi固有値解析は複数の固有値を検出します。
 同文献では、:math:`T > 0.05` で三重項SC状態が一重項SC状態と競合し、低温
 (:math:`T < 0.05`) ではスピンゆらぎの増大により一重項SC転移が支配的になることが
 報告されています。実際の転移（ :math:`\lambda = 1` ）は低温で到達します。
+
+
+.. _sc_dynamic_frequency:
+
+動的（振動数依存）Eliashberg方程式
+--------------------------------------------------
+
+``hwave_sc`` は既定では **静的近似** で Eliashberg 方程式を解きます。すなわち
+ペアリング頂点をボゾン松原振動数ゼロで評価し（Nakano--Kuroki 式(9) の静的近似）、
+ギャップ :math:`\Sigma(\mathbf{k})` は振動数依存性を持ちません。``[eliashberg]``
+セクションで ``frequency = "dynamic"`` と設定すると、代わりに **振動数に完全に
+依存する** 線形化 Eliashberg 方程式
+
+.. math::
+
+   \lambda\, \phi_{\alpha\beta}(\mathbf{k}, i\omega_n)
+   = -\frac{T}{N_L} \sum_{\mathbf{k}', n'}
+     V_{\alpha\beta}(\mathbf{k}-\mathbf{k}', i\omega_n - i\omega_{n'})\,
+     [G G](\mathbf{k}', i\omega_{n'})\,
+     \phi(\mathbf{k}', i\omega_{n'}),
+
+を解きます。ここではギャップ :math:`\phi(\mathbf{k}, i\omega_n)` のフェルミオン
+松原軸全体と、振動数依存のペアリング頂点 :math:`V(\mathbf{q}, i\omega_l)` を保持
+します。頂点は（静的な係数ではなく）虚時間の積として作用するため、カーネルは
+異なる松原振動数どうしを結合します。
+
+FLEXの前提条件
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+動的モードは FLEX ソルバーのみが生成する振動数分解された入力を必要とするため、
+``chi0q_mode = "flex"`` で実行する **必要があります**。``hwave_sc`` を呼び出す前に、
+Eliashberg ステップが読み込むディレクトリへ以下を書き出す FLEX 計算
+（``mode = "FLEX"``）を実行してください:
+
+- ``chiq_s.npz`` と ``chiq_c.npz`` -- **全** ボゾン松原軸（``Nmat`` 個の全振動数）
+  上のスピン・電荷感受率、および
+- ``green.npz`` -- **dressed** グリーン関数
+  :math:`G(\mathbf{k}, i\omega_n)`\ （これからペアバブルを構成します）。
+
+``Nmat`` は偶数で、かつ FLEX 出力と ``[mode.param]`` の値とで一致していなければ
+なりません。``chi0q_mode = "flex"`` なしで ``frequency = "dynamic"`` を指定した
+場合、``Nmat`` が奇数の場合、あるいは dressed ``green.npz`` が無い場合、ソルバーは
+黙って別の処理へフォールバックせず、説明的なエラーで停止します。FLEX 出力
+ディレクトリは ``[file.input] path_to_flex_output`` で指定でき（既定は
+``[file.output]`` ディレクトリ）、個々のファイル名は ``[eliashberg]`` の
+``flex_chi_s`` / ``flex_chi_c`` / ``flex_green`` で上書きできます。
+
+出力
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+動的モードは ``eigenvalue.dat`` （最大固有値 :math:`\lambda`）に加えて、
+以下を書き出します:
+
+``gap_dynamic.npz``
+   振動数分解されたギャップ全体とそのメタデータ。キー:
+
+   - ``gap``: 形状 ``(norb, norb, Nx, Ny, Nz, Nmat)`` の複素配列 --
+     :math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n)`。
+   - ``iomega``: 中心化されたフェルミオン松原振動数
+     :math:`\omega_n = (2n + 1 - N_{\mathrm{mat}})\pi T`。
+   - ``T``: 温度。
+   - ``pairing_type``: ``"singlet"`` または ``"triplet"``。
+   - ``frequency``: ``"dynamic"``。
+   - ``eigenvalue``: 最大固有値 :math:`\lambda`。
+   - ``axis_order``: ``"(orb1, orb2, kx, ky, kz, iomega)"``。
+   - ``normalization``: ゲージ規約 -- ギャップは全成分について L2 規格化され、
+     最大絶対値の成分が実正になるよう回転されます。これにより保存されるギャップは
+     実行ごと・線形代数バックエンドごとに再現可能です。
+
+``gap.dat``
+   最小の正の松原振動数（インデックス ``Nmat//2``）におけるギャップの単一振動数
+   スライス。列の並びは静的な ``gap.dat`` と同じ（``kx ky kz`` の後に軌道対ごとの
+   ``Re``/``Im``）です。先頭行は ``#`` で始まるヘッダで、``frequency=dynamic`` と
+   スライスのインデックス・その :math:`\omega_n` を記録します。
+
+メモリに関する注意
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+動的ソルバーは複数の全振動数テンソル（ペアリング頂点・ペアバブル・ギャップ）を
+保持するため、ピークメモリはおおよそ
+:math:`\mathcal{O}(N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}})` で増加し、軌道数・
+k メッシュ・松原振動数の数に対して急速に大きくなります。``hwave_sc`` は確保前に
+ピーク必要量を見積もり、上限を超える場合は停止します。``[eliashberg] mem_limit_gb``
+で上限を明示的に指定でき（``0`` でガードを無効化）、指定しない場合は利用可能な
+RAM の一部が上限に使われます。
 
 
 対応する相互作用

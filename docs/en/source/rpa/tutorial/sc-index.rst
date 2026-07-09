@@ -151,7 +151,16 @@ This section controls the Eliashberg solver. Key parameters:
 - ``solver_mode``: ``"iteration"`` (self-consistent power iteration),
   ``"eigenvalue"`` (Arnoldi eigenvalue analysis), or ``"both"``.
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
-  file; ``"calc"`` computes it internally.
+  file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
+  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+- ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
+  evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki
+  Eq. 9 static approximation) and gives a frequency-independent gap.
+  ``"dynamic"`` solves the full Matsubara-frequency-dependent Eliashberg
+  equation with a frequency-dependent pairing vertex
+  :math:`V(\mathbf{q}, i\omega_l)` and gap :math:`\phi(\mathbf{k}, i\omega_n)`;
+  it requires ``chi0q_mode = "flex"`` (see
+  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below).
 - ``pairing_type``: ``"singlet"`` or ``"triplet"``.
 - ``init_gap``: Initial gap symmetry for iteration.
   Options include ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`),
@@ -453,6 +462,96 @@ state competes with the singlet for :math:`T > 0.05`, while the singlet SC
 transition dominates at lower temperatures (:math:`T < 0.05`) due to the
 enhancement of spin fluctuations. The actual transition
 (:math:`\lambda = 1`) is reached on lowering the temperature.
+
+
+.. _sc_dynamic_frequency:
+
+Dynamic (frequency-dependent) Eliashberg equation
+--------------------------------------------------
+
+By default ``hwave_sc`` solves the Eliashberg equation in the **static
+approximation**: the pairing vertex is evaluated at zero bosonic Matsubara
+frequency (the Nakano--Kuroki Eq. 9 static approximation) and the gap
+:math:`\Sigma(\mathbf{k})` carries no frequency dependence. Setting
+``frequency = "dynamic"`` in the ``[eliashberg]`` section instead solves the
+**full frequency-dependent** linearized Eliashberg equation,
+
+.. math::
+
+   \lambda\, \phi_{\alpha\beta}(\mathbf{k}, i\omega_n)
+   = -\frac{T}{N_L} \sum_{\mathbf{k}', n'}
+     V_{\alpha\beta}(\mathbf{k}-\mathbf{k}', i\omega_n - i\omega_{n'})\,
+     [G G](\mathbf{k}', i\omega_{n'})\,
+     \phi(\mathbf{k}', i\omega_{n'}),
+
+keeping the full fermionic Matsubara axis of the gap
+:math:`\phi(\mathbf{k}, i\omega_n)` together with a frequency-dependent pairing
+vertex :math:`V(\mathbf{q}, i\omega_l)`. The vertex is applied as an
+imaginary-time product (not as a static prefactor), so the kernel couples
+different Matsubara frequencies.
+
+FLEX prerequisite
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The dynamic mode needs frequency-resolved input that only the FLEX solver
+produces, so it **must** be run with ``chi0q_mode = "flex"``. Before calling
+``hwave_sc`` you must run a FLEX calculation (``mode = "FLEX"``) that writes,
+into the directory read by the Eliashberg step:
+
+- ``chiq_s.npz`` and ``chiq_c.npz`` -- the spin and charge susceptibilities on
+  the **full** bosonic Matsubara axis (all ``Nmat`` frequencies), and
+- ``green.npz`` -- the **dressed** Green's function
+  :math:`G(\mathbf{k}, i\omega_n)`, from which the pair bubble is built.
+
+``Nmat`` must be even and must match between the FLEX output and the
+``[mode.param]`` value. If ``frequency = "dynamic"`` is requested without
+``chi0q_mode = "flex"``, with an odd ``Nmat``, or without a dressed
+``green.npz``, the solver aborts with an explanatory error rather than falling
+back silently. The FLEX output directory can be selected with
+``[file.input] path_to_flex_output`` (default: the ``[file.output]``
+directory), and the individual filenames overridden with the ``[eliashberg]``
+keys ``flex_chi_s`` / ``flex_chi_c`` / ``flex_green``.
+
+Outputs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In addition to ``eigenvalue.dat`` (the leading :math:`\lambda`), the dynamic
+mode writes:
+
+``gap_dynamic.npz``
+   The full frequency-resolved gap and its metadata. Keys:
+
+   - ``gap``: complex array of shape ``(norb, norb, Nx, Ny, Nz, Nmat)`` --
+     :math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n)`.
+   - ``iomega``: the centered fermionic Matsubara frequencies
+     :math:`\omega_n = (2n + 1 - N_{\mathrm{mat}})\pi T`.
+   - ``T``: temperature.
+   - ``pairing_type``: ``"singlet"`` or ``"triplet"``.
+   - ``frequency``: ``"dynamic"``.
+   - ``eigenvalue``: the leading :math:`\lambda`.
+   - ``axis_order``: ``"(orb1, orb2, kx, ky, kz, iomega)"``.
+   - ``normalization``: the gauge convention -- the gap is L2-normalized over
+     all components and its largest-magnitude component is rotated
+     real-positive, so the stored gap is reproducible across runs and
+     linear-algebra backends.
+
+``gap.dat``
+   A single-frequency slice of the gap at the lowest positive Matsubara
+   frequency (index ``Nmat//2``), in the same column layout as the static
+   ``gap.dat`` (``kx ky kz`` then ``Re``/``Im`` per orbital pair). Its first
+   line is a ``#``-prefixed header carrying ``frequency=dynamic`` together with
+   the slice index and its :math:`\omega_n`.
+
+Memory note
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The dynamic solver stores several full-frequency tensors (the pairing vertex,
+the pair bubble, and the gap), so its peak memory scales roughly as
+:math:`\mathcal{O}(N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}})` and grows
+quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
+Before allocating, ``hwave_sc`` estimates the peak requirement and aborts if it
+would exceed the limit; set ``[eliashberg] mem_limit_gb`` to cap it explicitly
+(``0`` disables the guard), otherwise a fraction of the available RAM is used.
 
 
 Supported interactions

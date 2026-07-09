@@ -472,3 +472,206 @@ def test_outputs_written(tmp_path):
         first = fh.readline()
     assert first.startswith("#")
     assert "frequency=dynamic" in first
+
+
+# ---------------------------------------------------------------------------
+# Task 8: slow end-to-end through the REAL FLEX pipeline + gap symmetry
+# ---------------------------------------------------------------------------
+
+def _run_real_flex(input_dir, output_dir, T, Nmat, cell_shape):
+    """Drive a REAL FLEX solve through hwave.qlms.run so that genuine
+    full-frequency chiq_s.npz / chiq_c.npz and a dressed green.npz are written
+    to ``output_dir``. This is deliberately NOT the synthetic
+    ``_write_flex_fixture`` (hand-written random npz) used by the fast smoke
+    tests -- the e2e must exercise the actual FLEX self-consistency so the
+    dynamic Eliashberg reads physically consistent susceptibilities and Green.
+    ``green`` is named in [file.output] because FLEX only writes green.npz when
+    an output key for it is present.
+    """
+    import hwave.qlms as qlms
+    inp = {
+        "mode": {"mode": "FLEX", "calc_scheme": "reduced",
+                 "param": {"T": T, "mu": 0.0, "CellShape": cell_shape,
+                           "SubShape": [1, 1, 1], "Nmat": Nmat,
+                           "IterationMax": 300, "Mix": 0.2, "EPS": 6}},
+        "file": {"input": {"path_to_input": "",
+                           "interaction": {"path_to_input": input_dir,
+                                           "Geometry": "geom.dat",
+                                           "Transfer": "transfer.dat",
+                                           "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir,
+                            "chiq_s": "chiq_s", "chiq_c": "chiq_c",
+                            "green": "green"}},
+    }
+    qlms.run(input_dict=inp)
+
+
+def _eliashberg_input(input_dir, output_dir, T, Nmat, cell_shape, **eli):
+    inp = {
+        "mode": {"param": {"T": T, "CellShape": cell_shape,
+                           "SubShape": [1, 1, 1], "Nmat": Nmat,
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {"path_to_input": input_dir,
+                                           "Geometry": "geom.dat",
+                                           "Transfer": "transfer.dat",
+                                           "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "pairing_type": "singlet",
+                       "solver_mode": "iteration", "max_iter": 300},
+    }
+    inp["eliashberg"].update(eli)
+    return inp
+
+
+def _gauge_fix_k(vec):
+    """Gauge-fix a flat complex gap-over-k vector the same way
+    ``ed._fix_gauge`` does: L2-normalize, then rotate the largest-|amplitude|
+    component to be real-positive (argmax gives the deterministic C-order
+    tie-break). Both eigenvectors are only defined up to a complex scale, so
+    this is required before any component-wise comparison."""
+    v = np.asarray(vec).astype(complex, copy=True)
+    nrm = np.linalg.norm(v)
+    if nrm > 0:
+        v /= nrm
+    piv = v.ravel()[int(np.argmax(np.abs(v)))]
+    if piv != 0:
+        v /= (piv / abs(piv))
+    return v
+
+
+def _parse_static_gap(path, norb=1):
+    """Parse sc._save_results' gap.dat (norb=1: kx ky kz Re Im per row) into a
+    flat k-ordered complex vector, in the SAME (ix,iy,iz) C-order that both the
+    static writer and the dynamic gap array use."""
+    assert norb == 1
+    rows = []
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            p = line.split()
+            rows.append(complex(float(p[3]), float(p[4])))
+    return np.array(rows)
+
+
+@pytest.mark.slow
+def test_end_to_end_dynamic_matches_static_symmetry(tmp_path):
+    """Slow END-TO-END guarantee through the REAL FLEX pipeline.
+
+    Unlike the fast smoke tests above (which feed a hand-written synthetic
+    ``_write_flex_fixture``), this drives the ACTUAL FLEX solver:
+
+      1. generate a tiny 1-orbital square-lattice Hubbard model (U=2.0),
+      2. run a real FLEX solve via ``hwave.qlms.run`` -> genuine full-frequency
+         ``chiq_s.npz`` / ``chiq_c.npz`` + dressed ``green.npz`` (nmat=8),
+      3. run ``sc.calc_eliashberg`` STATIC (frequency omitted/"static") on that
+         output -> lambda_static + static gap,
+      4. run ``sc.calc_eliashberg`` DYNAMIC (frequency="dynamic") on the SAME
+         output -> lambda_dynamic + gap_dynamic.npz,
+      5. assert finite lambda, all output files exist, and the dynamic gap's
+         low-|w_n| slice reproduces the static gap's k-space sign/nodal pattern.
+
+    Grid/temperature: CellShape=[4,4,1] (Nk=16), Nmat=8, T=0.5, U=2.0. FLEX
+    converges in well under a second at these sizes; this is the smallest grid
+    that keeps a genuine k-structured gap (an anisotropic s-wave here, values
+    ~0.97..1.0 over k) rather than a perfectly flat one.
+
+    Gap-symmetry invariant (robustness vs. rigor):
+
+      * Both the static gap phi_stat(k) and each central-frequency slice of the
+        dynamic gap phi_dyn(k, iw_n) are eigenvectors defined only up to a
+        complex scale, so each is independently gauge-fixed (``_gauge_fix_k``,
+        same convention as ``ed._fix_gauge``) before comparison.
+      * PRIMARY (the brief's invariant): the SIGN of every k-component whose
+        |amplitude| exceeds 20% of the per-slice max must agree between static
+        and dynamic. Thresholding on |amp| is what makes it robust -- the sign
+        of a near-zero component is numerical noise, so a strict all-k
+        elementwise-sign match would be brittle; the threshold keeps only the
+        physically meaningful components. This still catches any k where the
+        dynamic low-frequency limit would flip the pairing sign vs. the static
+        solver (the classic s- vs d-wave nodal distinction).
+      * SECONDARY (extra teeth, so the sign test is not vacuous on a nodeless
+        gap): the gauge-fixed dynamic central slice must also lie within 5%
+        relative-L2 of the static gap. The genuine frequency renormalization of
+        the lowest-|w_n| slice is <1% at these parameters, so 5% is a wide
+        margin against linear-algebra backend jitter yet fails on any gross
+        k-structure corruption or a single-k sign flip (which would push the
+        relative-L2 to O(1)).
+      * The two central slices (n = Nmat//2-1 and Nmat//2) must be complex
+        conjugates: phi(k,-w_n) = conj phi(k,w_n) is an exact symmetry of the
+        linearized gap and holds here to ~1e-16.
+    """
+    import os
+    import hwave.sc as sc
+
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+
+    T = 0.5
+    Nmat = 8
+    cell_shape = [4, 4, 1]
+
+    # --- Step 2: REAL FLEX solve -> full-frequency chiq_s/chiq_c + green ---
+    _run_real_flex(input_dir, output_dir, T, Nmat, cell_shape)
+    for fn in ("chiq_s.npz", "chiq_c.npz", "green.npz"):
+        assert os.path.exists(os.path.join(output_dir, fn)), \
+            "FLEX did not write {}".format(fn)
+    # confirm the FLEX outputs carry the FULL frequency axis (nmat=8)
+    assert np.load(os.path.join(output_dir, "chiq_s.npz"))["chiq_s"].shape[0] == Nmat
+    assert np.load(os.path.join(output_dir, "green.npz"))["green"].shape[1] == Nmat
+
+    # --- Step 3: STATIC Eliashberg on the real FLEX output ---
+    # separate output filenames so the static run's own outputs survive the
+    # dynamic run (which writes gap.dat / eigenvalue.dat).
+    sc.calc_eliashberg(_eliashberg_input(
+        input_dir, output_dir, T, Nmat, cell_shape,
+        output_gap="gap_static.dat", output_eigenvalue="eigenvalue_static.dat"))
+    assert os.path.exists(os.path.join(output_dir, "gap_static.dat"))
+    assert os.path.exists(os.path.join(output_dir, "eigenvalue_static.dat"))
+    gap_static = _gauge_fix_k(_parse_static_gap(
+        os.path.join(output_dir, "gap_static.dat")))
+
+    # --- Step 4: DYNAMIC Eliashberg on the SAME real FLEX output ---
+    lam_dynamic = sc.calc_eliashberg(_eliashberg_input(
+        input_dir, output_dir, T, Nmat, cell_shape, frequency="dynamic"))
+    assert np.isfinite(lam_dynamic)
+    assert os.path.exists(os.path.join(output_dir, "gap.dat"))
+    assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
+
+    npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
+    gap_dyn = npz["gap"]                        # (1, 1, Nx, Ny, Nz, nmat)
+    assert gap_dyn.shape == (1, 1, 4, 4, 1, Nmat)
+    assert str(npz["frequency"]) == "dynamic"
+
+    # --- Step 5: gap-symmetry invariant on the two central Matsubara slices ---
+    central = (Nmat // 2 - 1, Nmat // 2)
+    slices = {}
+    for n0 in central:
+        gd = _gauge_fix_k(gap_dyn[0, 0, :, :, 0, n0].ravel())
+        slices[n0] = gd
+
+        # gauge-fixed slice is (numerically) real
+        assert np.max(np.abs(gd.imag)) < 1e-8, \
+            "dynamic central slice n0={} not real after gauge fix".format(n0)
+
+        # PRIMARY: sign pattern agrees on the physically meaningful components
+        thr = 0.2 * np.max(np.abs(gd))
+        mask = np.abs(gd) > thr
+        assert np.array_equal(np.sign(gd.real[mask]),
+                              np.sign(gap_static.real[mask])), \
+            ("dynamic (n0={}) and static gap sign patterns disagree on "
+             "|amp|>20%max components".format(n0))
+
+        # SECONDARY: normalized shapes agree within a wide margin
+        rel = np.linalg.norm(gd - gap_static) / np.linalg.norm(gap_static)
+        assert rel < 0.05, \
+            ("dynamic (n0={}) central slice deviates {:.3%} from the static "
+             "gap (>5%); k-structure not reproduced".format(n0, rel))
+
+    # exact linearized-gap conjugation symmetry between the two central slices
+    a = gap_dyn[0, 0, :, :, 0, central[0]].ravel()
+    b = gap_dyn[0, 0, :, :, 0, central[1]].ravel()
+    assert (np.linalg.norm(a - np.conj(b)) / np.linalg.norm(a)) < 1e-8, \
+        "phi(k,-w_n) != conj phi(k,w_n) across the two central slices"
