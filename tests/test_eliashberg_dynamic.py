@@ -73,11 +73,94 @@ def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
         ed.load_flex_chi_dynamic(inp, 1, 2, 2, 1)
 
 
+def _write_flex_so_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
+    """FLEX chi in spin-orbital space (nd_chi = norb*2) to exercise the
+    spin-orbital block-expansion path of the static loader."""
+    nvol = Nx * Ny * Nz
+    nd_so = norb * 2
+    rng = np.random.default_rng(5)
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
+    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)))
+    return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
+
+
+def _flex_input(tmp_path, nmat):
+    return {"mode": {"param": {"Nmat": nmat}},
+            "file": {"output": {"path_to_output": str(tmp_path)}},
+            "eliashberg": {"chi0q_mode": "flex"}}
+
+
+def test_static_flex_loader_matches_full_then_slice(tmp_path):
+    """The static FLEX loader must return exactly the static-frequency slice of
+    the full-frequency loader (correctness preserved by the slice-first path)."""
+    import hwave.sc as sc
+    m = _write_flex_so_fixture(tmp_path)
+    inp = _flex_input(tmp_path, m["nmat"])
+    chis, chic, _, conv = sc._load_flex_susceptibilities(
+        inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
+    chis_w, chic_w, _, conv_w = sc._load_flex_susceptibilities_full(
+        inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
+    center = m["nmat"] // 2
+    np.testing.assert_allclose(chis, chis_w[..., center])
+    np.testing.assert_allclose(chic, chic_w[..., center])
+    assert conv == conv_w
+
+
+def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
+    """The static loader must slice the static frequency BEFORE the spin-orbital
+    expansion -- expanding one frequency, not the full Nmat axis (the memory
+    regression). The full loader still expands the whole axis."""
+    import hwave.sc as sc
+    m = _write_flex_so_fixture(tmp_path, nmat=8)
+    inp = _flex_input(tmp_path, m["nmat"])
+
+    seen = []
+    real_expand = sc._expand_flex_chi
+
+    def _spy(chi_raw, *a, **k):
+        seen.append(chi_raw.shape[0])    # leading axis = frequency count
+        return real_expand(chi_raw, *a, **k)
+
+    monkeypatch.setattr(sc, "_expand_flex_chi", _spy)
+    sc._load_flex_susceptibilities(inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
+
+    assert seen and max(seen) == 1, \
+        "static loader expanded {} frequencies (want 1)".format(max(seen))
+
+
 def test_check_memory_aborts_over_limit():
     from hwave.solver import eliashberg_dynamic as ed
     with pytest.raises(MemoryError, match="mem_limit_gb"):
         ed.check_memory(norb=2, Nk=1024, nmat=512, mem_limit_gb=0.01)
     ed.check_memory(norb=1, Nk=4, nmat=8, mem_limit_gb=0)  # disabled: no raise
+
+
+def test_memory_guard_runs_before_loading(monkeypatch):
+    """The memory guard must abort BEFORE _load_flex_susceptibilities_full
+    allocates the full-frequency chi/green arrays (fail-before-allocating):
+    a too-tight mem_limit must raise MemoryError without the loader running."""
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+
+    called = {"loaded": False}
+
+    def _must_not_run(*args, **kwargs):
+        called["loaded"] = True
+        raise AssertionError("loader ran before the memory guard")
+
+    monkeypatch.setattr(sc, "_load_flex_susceptibilities_full", _must_not_run)
+
+    inp = {"mode": {"param": {"Nmat": 512}},
+           "file": {"output": {"path_to_output": "."}},
+           "eliashberg": {"chi0q_mode": "flex", "mem_limit_gb": 0.01}}
+    with pytest.raises(MemoryError, match="mem_limit_gb"):
+        ed.load_flex_chi_dynamic(inp, 2, 8, 8, 1)
+    assert called["loaded"] is False
 
 
 def test_dynamic_vertex_matches_static_per_frequency():

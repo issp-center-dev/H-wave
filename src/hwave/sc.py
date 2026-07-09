@@ -1176,10 +1176,26 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
         or "kuroki" (reduced FLEX / legacy files). Pass this to
         _compute_vertices_flex so the matching S/C matrices are used.
     """
-    nd = norb * norb
-    chi_s_path, chi_c_path, green_path = _resolve_flex_paths(input_dict)
+    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
 
-    # Load spin susceptibility
+    # Expand the FULL frequency axis (the static slice is selected by the
+    # caller). The frequency axis is moved from leading to trailing position.
+    chis_w = np.moveaxis(_expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz), 0, -1)
+    chic_w = np.moveaxis(_expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz), 0, -1)
+
+    green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    return chis_w, chic_w, green_w, chi_convention
+
+
+def _read_flex_chi_raw(input_dict):
+    """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
+
+    Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
+    ``(nmat, nvol, nd, nd)`` -- no reshape/expansion, so callers that only need
+    one static frequency can slice before expanding.
+    """
+    chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
+
     logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
     data_s = np.load(chi_s_path)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
@@ -1192,7 +1208,6 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
     chi_convention = (str(data_s["chi_convention"])
                       if "chi_convention" in data_s else "kuroki")
 
-    # Load charge susceptibility
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
@@ -1205,60 +1220,54 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
             "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
                 chi_convention, chi_convention_c))
+    return chi_s_raw, chi_c_raw, chi_convention
 
-    # Convert from H-wave format (nmat, nvol, nd, nd) to
-    # reference format (Nx, Ny, Nz, nd, nd, nmat), keeping the FULL bosonic
-    # frequency axis (the static slice is selected by the caller).
-    nmat_s = chi_s_raw.shape[0]
-    nmat_c = chi_c_raw.shape[0]
-    chi_s_full = chi_s_raw.reshape(nmat_s, Nx, Ny, Nz, -1)
-    chi_c_full = chi_c_raw.reshape(nmat_c, Nx, Ny, Nz, -1)
 
-    # Determine dimensionality
-    nd_chi = int(np.sqrt(chi_s_full.shape[-1]))
-    chi_s_full = chi_s_full.reshape(nmat_s, Nx, Ny, Nz, nd_chi, nd_chi)
-    chi_c_full = chi_c_full.reshape(nmat_c, Nx, Ny, Nz, nd_chi, nd_chi)
+def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz):
+    """Reshape H-wave chi ``(nfreq, nvol, nd, nd)`` to
+    ``(nfreq, Nx, Ny, Nz, nd, nd)`` in the ``nd = norb^2`` Eliashberg space,
+    expanding the spin-orbital block if the file is in spin-orbital space.
 
-    # If chi is in spin-orbital space (nd_chi = norb*ns), extract orbital block
-    # and convert to norb^2 x norb^2 Eliashberg space. This mapping is
-    # per-frequency-point elementwise (no mixing across the frequency axis),
-    # so applying it before selecting the static slice is equivalent to
-    # applying it after.
-    if nd_chi != nd:
-        # Spin-orbital reduced space: nd_chi = norb*ns
-        ns = nd_chi // norb
-        # Extract the spin-up block (diagonal in spin)
-        chis_orb = chi_s_full[:, :, :, :, :norb, :norb]
-        chic_orb = chi_c_full[:, :, :, :, :norb, :norb]
+    The mapping is elementwise in frequency (no mixing across the Matsubara
+    axis), so it may be applied to a single static slice or to the full axis
+    identically -- the static loader slices FIRST to avoid allocating the full
+    spin-orbital-expanded array.
+    """
+    nd = norb * norb
+    nfreq = chi_raw.shape[0]
+    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, -1)
+    nd_chi = int(np.sqrt(chi_full.shape[-1]))
+    chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
 
-        # Expand to norb^2 x norb^2 (diagonal in l2 index)
-        chis_full = np.zeros((nmat_s, Nx, Ny, Nz, nd, nd), dtype=complex)
-        chic_full = np.zeros((nmat_c, Nx, Ny, Nz, nd, nd), dtype=complex)
-        for l2 in range(norb):
-            chis_full[:, :, :, :, l2::norb, l2::norb] = chis_orb
-            chic_full[:, :, :, :, l2::norb, l2::norb] = chic_orb
-    else:
-        chis_full = chi_s_full
-        chic_full = chi_c_full
+    if nd_chi == nd:
+        return chi_full
 
-    # Move the frequency axis from leading to trailing position.
-    chis_w = np.moveaxis(chis_full, 0, -1)
-    chic_w = np.moveaxis(chic_full, 0, -1)
+    # Spin-orbital reduced space (nd_chi = norb*ns): extract the spin-up block
+    # (diagonal in spin) and expand to norb^2 x norb^2 (diagonal in l2).
+    chi_orb = chi_full[:, :, :, :, :norb, :norb]
+    out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
+    for l2 in range(norb):
+        out[:, :, :, :, l2::norb, l2::norb] = chi_orb
+    return out
 
-    # Load dressed Green's function if available
-    green_w = None
-    if os.path.exists(green_path):
-        logger.info("Loading FLEX dressed Green from: {}".format(green_path))
-        data_g = np.load(green_path)
-        green_raw = data_g["green"]
-        # H-wave format: (nblock, nmat, nvol, norb, norb)
-        nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
-        # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nmat)
-        green_w = green_raw[0].reshape(
-            nmat_g, Nx, Ny, Nz, norb, norb
-        ).transpose(4, 5, 1, 2, 3, 0).copy()
 
-    return chis_w, chic_w, green_w, chi_convention
+def _load_flex_green(input_dict, norb, Nx, Ny, Nz):
+    """Load the FLEX dressed Green's function, or ``None`` if absent.
+
+    Returns shape ``(norb, norb, Nx, Ny, Nz, nmat)`` (full fermionic axis).
+    """
+    _, _, green_path = _resolve_flex_paths(input_dict)
+    if not os.path.exists(green_path):
+        return None
+    logger.info("Loading FLEX dressed Green from: {}".format(green_path))
+    data_g = np.load(green_path)
+    green_raw = data_g["green"]
+    # H-wave format: (nblock, nmat, nvol, norb, norb)
+    nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nmat)
+    return green_raw[0].reshape(
+        nmat_g, Nx, Ny, Nz, norb, norb
+    ).transpose(4, 5, 1, 2, 3, 0).copy()
 
 
 def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
@@ -1287,13 +1296,16 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
         "kuroki" (reduced FLEX / legacy files). Pass this to
         _compute_vertices_flex so the matching S/C matrices are used.
     """
-    chis_w, chic_w, green_dressed, chi_convention = _load_flex_susceptibilities_full(
-        input_dict, norb, Nx, Ny, Nz)
+    # Read the raw chi (H-wave layout, frequency = axis 0) WITHOUT expanding,
+    # so the static slice is taken before the spin-orbital expansion -- the full
+    # loader would otherwise allocate the whole Nmat-long expanded array only to
+    # keep one frequency (a memory regression proportional to Nmat).
+    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
 
     # The zero bosonic frequency is located via the freq_index/nmat metadata
     # (RPA chiq files can carry a restricted matsubara_frequency axis whose
     # center is NOT the static limit); FLEX files always hold the full grid.
-    # Re-derive the same paths the full loader used so the metadata read here
+    # Re-derive the same paths the raw reader used so the metadata read here
     # is guaranteed to describe the same files.
     chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
     config_nmat = input_dict.get("mode", {}).get("param", {}).get(
@@ -1308,13 +1320,16 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
         # H-wave chiq layout)
         return nfreq // 2 if pos is None else pos
 
-    center_s = _static_center(chi_s_path, chis_w.shape[-1])
-    center_c = _static_center(chi_c_path, chic_w.shape[-1])
+    center_s = _static_center(chi_s_path, chi_s_raw.shape[0])
+    center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
-    # Extract static limit (zero bosonic frequency)
-    chis = chis_w[..., center_s]
-    chic = chic_w[..., center_c]
+    # Slice the static frequency FIRST, then expand only that single slice.
+    chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
+                            norb, Nx, Ny, Nz)[0]
+    chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
+                            norb, Nx, Ny, Nz)[0]
 
+    green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     return chis, chic, green_dressed, chi_convention
 
 

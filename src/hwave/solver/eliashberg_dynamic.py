@@ -217,6 +217,11 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
     cfg_nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
     if cfg_nmat % 2 != 0:
         raise ValueError("dynamic Eliashberg requires even Nmat; got {}".format(cfg_nmat))
+    # Fail BEFORE allocating: the full-frequency chi/green arrays are large, so
+    # run the memory guard on the requested (norb, Nk, Nmat) size before the
+    # loader allocates anything. All three are known here from the config.
+    check_memory(norb, Nx*Ny*Nz, cfg_nmat,
+                 input_dict["eliashberg"].get("mem_limit_gb"))
     # reuse the exact static path/name/convention/spin-orbital-expansion logic
     chis_w, chic_w, green_w, chi_convention = \
         sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
@@ -229,8 +234,6 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
             "dynamic Eliashberg grid mismatch: nmat differs — chis={}, chic={}, "
             "green={}, config Nmat={}".format(
                 chis_w.shape[-1], chic_w.shape[-1], green_nmat, cfg_nmat))
-    check_memory(norb, Nx*Ny*Nz, cfg_nmat,
-                 input_dict["eliashberg"].get("mem_limit_gb"))
     return chis_w, chic_w, green_w, chi_convention
 
 
