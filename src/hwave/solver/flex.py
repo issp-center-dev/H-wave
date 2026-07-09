@@ -327,6 +327,18 @@ class FLEX(RPA):
                            "no results stored.")
             return
 
+        # Final-output consistency: during the loop green_kw was built from the
+        # PRE-mix sigma, while `sigma` below is the POST-mix estimate, so the
+        # stored (mu, green, sigma) triple would not satisfy the Dyson equation
+        # green = [G0^{-1} - sigma]^{-1} (noticeable for non-converged or
+        # IterationMax=1 runs; negligible once converged).  Rebuild the dressed
+        # G from the final stored sigma -- and, for calc_mu, re-solve mu for it
+        # -- so the stored triple is mutually consistent and N(green) == Ncond.
+        if self.calc_mu:
+            mu = self._find_mu_dressed(sigma, beta, Ncond_target)
+            self.mu = mu
+        green_kw = self._calc_dressed_green(beta, mu, sigma)
+
         # Store results
         self.sigma = sigma
         self.green_kw = green_kw
@@ -604,11 +616,6 @@ class FLEX(RPA):
             Chemical potential mu such that N(mu) = Ncond.
         """
         w = self.H0_eigenvalue
-        # widen the bracket by the (static) self-energy scale: Sigma shifts the
-        # band, so the bare eigenvalue range may not bracket the root.
-        pad = float(np.abs(sigma.real).max()) + 1.0
-        lo = float(w.min()) - pad
-        hi = float(w.max()) + pad
 
         # Diagonalize the mu-independent part of G^{-1} once; each trial mu is
         # then a cheap sum over eigenvalues (see _matsubara_number_operator).
@@ -620,18 +627,36 @@ class FLEX(RPA):
                 return r[0] - Ncond, r[1]
             return r - Ncond
 
+        # Initial bracket: the bare band range widened by the self-energy scale.
+        # This is only a starting guess -- a general (multi-orbital, off-diagonal
+        # or non-Hermitian) Sigma can shift the dressed spectral weight, and
+        # hence the root, by more than max|Re Sigma|.  So EXPAND the bracket
+        # (doubling the pad) until N(mu) changes sign, instead of failing on the
+        # first guess.  N(mu) -> 0 as mu -> -inf and -> Nstate as mu -> +inf, so
+        # a finite root is always bracketed after enough expansion.
+        pad = float(np.abs(sigma.real).max()) + 1.0
+        lo = float(w.min()) - pad
+        hi = float(w.max()) + pad
         f_lo = _delta_n(lo)
         f_hi = _delta_n(hi)
-        if f_lo == 0.0:
-            return lo
-        if f_hi == 0.0:
-            return hi
-        if f_lo * f_hi > 0.0:
-            # root not bracketed (should not happen: N spans [0, Nstate] over a
-            # wide enough mu window). Fail loudly rather than return garbage.
-            logger.error("FLEX._find_mu_dressed: root not bracketed on "
-                         "[{}, {}] (N-Ncond = {}, {}). abort".format(
-                             lo, hi, f_lo, f_hi))
+        for _ in range(60):
+            if f_lo == 0.0:
+                return lo
+            if f_hi == 0.0:
+                return hi
+            if f_lo * f_hi < 0.0:
+                break
+            span = hi - lo
+            lo -= span
+            hi += span
+            f_lo = _delta_n(lo)
+            f_hi = _delta_n(hi)
+        else:
+            # 60 doublings span ~1e18 * initial width: a real root cannot be
+            # this far out. Fail loudly rather than return garbage.
+            logger.error("FLEX._find_mu_dressed: root not bracketed after "
+                         "expansion to [{}, {}] (N-Ncond = {}, {}). abort"
+                         .format(lo, hi, f_lo, f_hi))
             sys.exit(1)
 
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)

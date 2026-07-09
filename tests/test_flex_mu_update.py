@@ -52,6 +52,12 @@ def _make_solver(fixing, Lx=8, Ly=8, Nmat=128, T=1.0, U=3.0,
     read_io = read_input_k.QLMSkInput(info_file_input)
     ham_info = read_io.get_param("ham")
     green_info = read_io.get_param("green")
+    # The fixture's CoulombIntra file pins U=4; override every on-site entry so
+    # the requested U actually drives the interacting behavior under test
+    # (otherwise the U argument would be silently ignored).
+    if "CoulombIntra" in ham_info:
+        ham_info["CoulombIntra"] = {k: complex(U)
+                                    for k in ham_info["CoulombIntra"]}
     solver = solver_flex.FLEX(ham_info, info_log, info_mode)
     return solver, green_info
 
@@ -162,6 +168,49 @@ class TestFlexMuUpdate(unittest.TestCase):
         n_actual = _number_from_green(solver, green_kw, solver.mu, beta)
 
         self.assertAlmostEqual(n_actual, Ncond / 2.0, places=4)
+
+    def test_output_triple_is_consistent(self):
+        """The stored (mu, green, sigma) must satisfy the Dyson equation:
+        rebuilding G from green_info['sigma'] at solver.mu must reproduce the
+        stored green AND carry Ncond electrons -- even for a short (non-fully-
+        converged) run.  Guards the final-consistency rebuild."""
+        Ncond = 40.0
+        solver, green_info = _make_solver({'Ncond': Ncond}, U=3.0,
+                                          iteration_max=3, mix=0.4)
+        os.makedirs('tests/flex/output', exist_ok=True)
+        solver.solve(green_info, 'tests/flex/output')
+
+        beta = 1.0 / solver.T
+        green_from_sigma = solver._calc_dressed_green(beta, solver.mu,
+                                                      green_info["sigma"])
+        # stored green equals G rebuilt from the stored sigma at the stored mu
+        np.testing.assert_allclose(green_from_sigma, green_info["green"],
+                                   rtol=0.0, atol=1.0e-12)
+        # and that consistent triple carries the target particle number
+        n_from_sigma = _number_from_green(solver, green_from_sigma, solver.mu,
+                                          beta)
+        self.assertAlmostEqual(n_from_sigma, Ncond / 2.0, places=4)
+
+    def test_find_mu_brackets_root_beyond_initial_guess(self):
+        """A near-empty target pushes mu far below the initial bracket
+        [band_min - pad, ...]; _find_mu_dressed must EXPAND the bracket and
+        still return a finite mu with N(mu) == target, not sys.exit.  This
+        exercises the adaptive-bracket path that also covers multi-orbital /
+        off-diagonal self-energies whose root moves beyond max|Re Sigma|."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64, T=1.0)
+        solver._calc_epsilon_k(green_info)
+        beta = 1.0 / solver.T
+        nb, nv, nd = solver.H0_eigenvalue.shape
+        sigma = np.zeros((nb, solver.nmat, nv, nd, nd), dtype=np.complex128)
+
+        target = 1.0e-3   # nearly empty -> mu far below band_min - 1
+        mu = solver._find_mu_dressed(sigma, beta, target)
+        n_at_mu = solver._number_from_eigs(
+            *solver._matsubara_number_operator(sigma, beta), mu, beta)
+
+        self.assertTrue(np.isfinite(mu))
+        self.assertLess(mu, float(solver.H0_eigenvalue.min()) - 1.0)
+        self.assertAlmostEqual(n_at_mu, target, places=6)
 
     def test_fixed_mu_is_not_resolved(self):
         """calc_mu=False: mu stays at the user value through the whole run."""
