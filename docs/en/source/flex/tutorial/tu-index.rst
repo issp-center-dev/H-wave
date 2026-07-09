@@ -266,6 +266,19 @@ in the ``output`` directory:
 - ``chiq.npz``: Combined susceptibility file
 - ``sigma.npz``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`
 - ``green.npz``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`
+- ``energy.dat``: Text file with the particle number ``NCond``, spin
+  ``Sz``, and the converged ``ChemicalPotential`` :math:`\mu`.
+
+.. note::
+
+   The ``energy.dat`` output (enabled by the ``energy`` key in
+   ``[file.output]``) is written from the final dressed Green function.  In
+   the fixed-:math:`\mu` mode (specify ``mu`` instead of ``filling`` /
+   ``Ncond``) its ``NCond`` line gives the particle number at that
+   :math:`\mu`, so running the solver at several fixed :math:`\mu` values
+   traces the :math:`\mu`-:math:`N` relation.  ``Sz`` is zero for a
+   paramagnetic (spin-free) calculation and non-zero only for
+   spin-dependent (spin-diagonal / spinful) runs.
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 

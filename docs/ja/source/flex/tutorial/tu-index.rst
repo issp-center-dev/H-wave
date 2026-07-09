@@ -251,6 +251,17 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``chiq.npz``: 結合感受率ファイル
 - ``sigma.npz``: 自己エネルギー :math:`\Sigma(\mathbf{k}, i\omega_n)`
 - ``green.npz``: ドレスドグリーン関数 :math:`G(\mathbf{k}, i\omega_n)`
+- ``energy.dat``: 粒子数 ``NCond``、スピン ``Sz``、収束した化学ポテンシャル
+  ``ChemicalPotential`` :math:`\mu` を記載したテキストファイル。
+
+.. note::
+
+   ``energy.dat`` 出力（``[file.output]`` の ``energy`` キーで有効化）は最終的な
+   ドレスドグリーン関数から書き出されます。:math:`\mu` 固定モード（``filling`` /
+   ``Ncond`` の代わりに ``mu`` を指定）では ``NCond`` 行がその :math:`\mu` における
+   粒子数を与えるので、複数の固定 :math:`\mu` で計算を実行すれば
+   :math:`\mu`-:math:`N` 関係が得られます。``Sz`` は常磁性（spin-free）計算では 0
+   となり、スピン依存（spin-diagonal / spinful）計算でのみ非ゼロになります。
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
