@@ -234,3 +234,212 @@ def test_solve_dynamic_requires_green(tmp_path):
     }
     with pytest.raises(ValueError, match="green.npz"):
         ed.solve_dynamic(inp)
+
+
+# ---------------------------------------------------------------------------
+# Task 7: acceptance tests (convention pins), gauge, and outputs
+# ---------------------------------------------------------------------------
+
+def _dense_operator(matvec, vec_size, dtype=complex):
+    """Reconstruct the dense matrix of a linear ``matvec`` (flat->flat) by
+    applying it to each unit basis vector (one column per call)."""
+    K = np.empty((vec_size, vec_size), dtype=dtype)
+    e = np.zeros(vec_size, dtype=dtype)
+    for j in range(vec_size):
+        e[:] = 0.0
+        e[j] = 1.0
+        K[:, j] = matvec(e)
+    return K
+
+
+def test_static_limit_matvec_multi_k():
+    """PRIMARY convention pin (independent of the dynamic kernel's own
+    self-consistency): on a NON-symmetric mesh (Nx=4, Ny=2) the frequency-flat
+    limit of ``eliashberg_kernel_dynamic`` must reproduce, component-by-
+    component, the STATIC kernel ``sc._eliashberg_kernel_fft`` evaluated with
+    ``G2_static = sum_n G2_w``. This pins the spatial fold and the -(1/N)
+    normalization against the static reference, not against a self-extraction.
+    Nk=1 would hide both the fold and the 1/N, so the mesh must be multi-k and
+    non-symmetric (q = k - k' is then not self-symmetric)."""
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    norb, Nx, Ny, Nz, nmat = 1, 4, 2, 1, 4
+    beta = 7.0  # unused by the kernel; G2 is passed raw to both paths
+    rng = np.random.default_rng(20)
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    # frequency-flat vertex: build one bosonic slice, broadcast across nmat
+    V0 = rc((norb, norb, norb, norb, Nx, Ny, Nz))            # (l1,l2,l3,l4,q)
+    V_w = np.broadcast_to(V0[..., np.newaxis],
+                          V0.shape + (nmat,)).copy()
+    # frequency-resolved pair bubble (varies with n on purpose)
+    G2_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    # frequency-flat trial gap
+    phi0 = rc((norb, norb, Nx, Ny, Nz))                      # (l1,l2,k)
+    phi_w = np.broadcast_to(phi0[..., np.newaxis],
+                            phi0.shape + (nmat,)).copy()
+
+    out = ed.eliashberg_kernel_dynamic(V_w, G2_w, phi_w, norb, beta)
+
+    # (i) the output must be frequency-flat
+    assert np.allclose(out, out[..., :1], atol=1e-10), \
+        "frequency-flat input did not give a frequency-flat output"
+
+    # (ii) each frequency slice equals the static matvec with G2_static
+    G2_static = G2_w.sum(axis=-1)                            # sum over n
+    static_out = sc._eliashberg_kernel_fft(V0, G2_static, phi0, norb)
+    for n in range(nmat):
+        assert np.allclose(out[..., n], static_out, atol=1e-10), \
+            "dynamic kernel does not match the static kernel in the flat limit"
+
+
+@pytest.mark.parametrize("norb,Nx,Ny,Nz,nmat", [
+    (1, 2, 2, 1, 4),   # dense oracle, norb=1
+    (2, 2, 1, 1, 2),   # dense oracle, norb=2 (catches orbital transposition)
+])
+def test_dense_oracle(norb, Nx, Ny, Nz, nmat):
+    """Build the dense operator column-by-column by applying
+    ``eliashberg_kernel_dynamic`` to unit basis vectors, take its full spectrum
+    with ``scipy.linalg.eig``, and assert the leading eigenvalue (largest real
+    part, per ``sc._order_eigenpairs``) equals the shared driver's leading
+    eigenvalue. Uses a NONZERO-nu synthetic vertex so the tau-product frequency
+    structure is exercised. norb=2 catches an orbital-index transposition."""
+    import scipy.linalg
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    from scipy.sparse.linalg import LinearOperator
+    rng = np.random.default_rng(31 + norb)
+    beta = 5.0
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    V_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))   # nonzero-nu vertex
+    G2_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    Nk = Nx * Ny * Nz
+    gap_shape = (norb, norb, Nx, Ny, Nz, nmat)
+    vec_size = norb * norb * Nk * nmat
+
+    def _matvec(x):
+        return ed.eliashberg_kernel_dynamic(
+            V_w, G2_w, x.reshape(gap_shape), norb, beta).ravel()
+
+    # dense operator + full spectrum
+    K = _dense_operator(_matvec, vec_size)
+    dense_vals = scipy.linalg.eig(K, right=False)
+    dense_leading = dense_vals[np.argmax(dense_vals.real)]
+
+    # shared driver (same path solve_dynamic uses for the eigenvalue family)
+    op = LinearOperator((vec_size, vec_size), matvec=_matvec, dtype=complex)
+    lam, _, info = sc._solve_leading(
+        lambda: (op, vec_size), vec_size, "arnoldi",
+        num_eigenvalues=vec_size - 2)
+
+    assert np.isclose(lam, dense_leading, atol=1e-10), \
+        "driver leading eigenvalue {} != dense leading {}".format(
+            lam, dense_leading)
+
+
+def test_analytic_flat_diagonal():
+    """Closed-form pin: a frequency-flat, orbital-diagonal, k-uniform vertex V0
+    with a k-uniform (but frequency-resolved) diagonal pair bubble G2(n) makes
+    the k-space kernel rank-one; its single nonzero eigenvalue is the uniform
+    gap with lambda = -V0 * sum_n G2(n). (The 1/N spatial fold is cancelled by
+    the sum over the Nk-fold uniform mesh.) Assert the driver reproduces it."""
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    from scipy.sparse.linalg import LinearOperator
+    norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
+    beta = 3.0
+    Nk = Nx * Ny * Nz
+    rng = np.random.default_rng(42)
+
+    v0 = -1.3 + 0.0j                                    # real vertex value
+    g = rng.standard_normal(nmat) + 1j * rng.standard_normal(nmat)  # G2(n)
+    # V frequency-flat, k-uniform, orbital-diagonal (norb=1 => scalar)
+    V_w = np.full((norb, norb, norb, norb, Nx, Ny, Nz, nmat), v0, dtype=complex)
+    # G2 k-uniform, frequency-resolved
+    G2_w = np.empty((norb, norb, norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
+    for n in range(nmat):
+        G2_w[..., n] = g[n]
+
+    gap_shape = (norb, norb, Nx, Ny, Nz, nmat)
+    vec_size = norb * norb * Nk * nmat
+
+    def _matvec(x):
+        return ed.eliashberg_kernel_dynamic(
+            V_w, G2_w, x.reshape(gap_shape), norb, beta).ravel()
+
+    op = LinearOperator((vec_size, vec_size), matvec=_matvec, dtype=complex)
+    lam, _, _ = sc._solve_leading(
+        lambda: (op, vec_size), vec_size, "arnoldi",
+        num_eigenvalues=vec_size - 2)
+
+    lam_expected = -v0 * g.sum()
+    assert np.isclose(lam, lam_expected, atol=1e-9), \
+        "analytic lambda mismatch: {} vs {}".format(lam, lam_expected)
+
+
+def test_gauge_deterministic():
+    """_fix_gauge is invariant to a random global phase: L2-normalize over all
+    components, then rotate so the largest-|magnitude| component is real-
+    positive (lexicographic tie-break). Applying an arbitrary phase before
+    _fix_gauge must reproduce the same array."""
+    from hwave.solver import eliashberg_dynamic as ed
+    rng = np.random.default_rng(77)
+    phi = (rng.standard_normal((2, 2, 3, 2, 1, 4))
+           + 1j * rng.standard_normal((2, 2, 3, 2, 1, 4)))
+
+    a = ed._fix_gauge(phi)
+    theta = 1.2345
+    b = ed._fix_gauge(np.exp(1j * theta) * phi)
+    assert np.allclose(a, b, atol=1e-12)
+
+    # gauge property: unit norm, and the largest-|magnitude| entry is real>0
+    assert np.isclose(np.linalg.norm(a), 1.0, atol=1e-12)
+    flat = a.ravel()
+    piv = flat[np.argmax(np.abs(flat))]
+    assert piv.real > 0 and abs(piv.imag) < 1e-12
+
+
+def test_outputs_written(tmp_path):
+    """solve_dynamic writes gap_dynamic.npz (with the required metadata keys)
+    and a gap.dat whose first line starts with '#' and marks frequency=dynamic."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "pairing_type": "singlet",
+                       "solver_mode": "iteration", "max_iter": 50},
+    }
+    lam = ed.solve_dynamic(inp)
+    assert np.isfinite(lam)
+
+    npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
+    for key in ("iomega", "T", "pairing_type", "frequency",
+                "eigenvalue", "axis_order", "normalization"):
+        assert key in npz.files, "missing gap_dynamic.npz key: {}".format(key)
+    assert str(npz["frequency"]) == "dynamic"
+    assert npz["iomega"].shape == (m["nmat"],)
+    assert npz["gap"].shape == (1, 1, 2, 2, 1, m["nmat"])
+
+    with open(os.path.join(output_dir, "gap.dat")) as fh:
+        first = fh.readline()
+    assert first.startswith("#")
+    assert "frequency=dynamic" in first

@@ -226,6 +226,153 @@ def frequency_inner(a, b):
     return np.vdot(a, b)
 
 
+def _fix_gauge(phi_w):
+    r"""Fix the eigenvector gauge deterministically.
+
+    An eigenvector of the (complex, non-Hermitian) Eliashberg kernel is only
+    defined up to an overall complex scale. To make the reported gap
+    reproducible across runs / linear-algebra backends we pin two freedoms:
+
+    1. **Magnitude** — L2-normalize over *all* components (orbital, k, and the
+       full Matsubara axis) so ``||phi|| = 1``.
+    2. **Global phase** — multiply by the single phase that makes the
+       largest-``|magnitude|`` component real and positive. Ties in the
+       magnitude are broken by the first component in lexicographic
+       ``(orb1, orb2, kx, ky, kz, iomega)`` order, which is exactly C-order of
+       the ``(norb, norb, Nx, Ny, Nz, nmat)`` array (so ``np.argmax`` on the
+       raveled magnitudes -- which returns the first maximizing index -- gives
+       the tie-break for free).
+
+    The magnitudes are invariant under a global phase, so applying an arbitrary
+    phase before ``_fix_gauge`` reproduces the identical array (see
+    ``tests/test_eliashberg_dynamic.py::test_gauge_deterministic``).
+
+    Parameters
+    ----------
+    phi_w : ndarray
+        Gap / eigenvector, shape (norb, norb, Nx, Ny, Nz, nmat).
+
+    Returns
+    -------
+    ndarray
+        Same shape as ``phi_w``, L2-normalized and phase-fixed.
+    """
+    phi = np.asarray(phi_w).astype(complex, copy=True)
+    nrm = np.linalg.norm(phi)
+    if nrm > 0:
+        phi /= nrm
+    flat = phi.ravel()  # C-order == lexicographic (orb1,orb2,kx,ky,kz,iomega)
+    pivot = flat[int(np.argmax(np.abs(flat)))]
+    if pivot != 0:
+        phi /= (pivot / abs(pivot))  # rotate so the pivot becomes real-positive
+    return phi
+
+
+def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
+                          kx_array, ky_array, kz_array, beta,
+                          gap_file="gap.dat", npz_file="gap_dynamic.npz"):
+    r"""Write the dynamic-Eliashberg gap outputs.
+
+    Produces two files under ``output_dir``:
+
+    * ``gap_dynamic.npz`` -- the full frequency-resolved gap plus metadata.
+      Keys: ``gap`` (norb, norb, Nx, Ny, Nz, nmat), ``iomega`` (the centered
+      fermionic Matsubara frequencies :math:`\omega_n=(2n+1-N_{mat})\pi T`),
+      ``T``, ``pairing_type``, ``frequency`` (== "dynamic"), ``eigenvalue``,
+      ``axis_order``, and ``normalization`` (documenting the ``_fix_gauge``
+      convention).
+    * ``gap.dat`` -- a plain-text slice at a single Matsubara frequency (the
+      smallest positive :math:`\omega_n`, index ``nmat//2``), mirroring the
+      static ``sc._save_results`` column layout (kx ky kz then Re/Im per orbital
+      pair). Its FIRST line is a ``#``-prefixed header that carries
+      ``frequency=dynamic`` together with the slice index and its
+      :math:`\omega_n` value.
+
+    Parameters
+    ----------
+    output_dir : str
+        Destination directory (created if absent).
+    gap_w : ndarray
+        Gauge-fixed gap, shape (norb, norb, Nx, Ny, Nz, nmat).
+    eigenvalue : float
+        Leading eigenvalue lambda.
+    T : float
+        Temperature.
+    pairing_type : str
+        "singlet" or "triplet".
+    kx_array, ky_array, kz_array : ndarray
+        k-point arrays.
+    beta : float
+        Inverse temperature (accepted for signature symmetry; iomega uses T).
+    gap_file, npz_file : str
+        Output filenames.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    norb = gap_w.shape[0]
+    Nx, Ny, Nz, nmat = gap_w.shape[2:6]
+
+    # centered fermionic Matsubara frequencies: iw_n = (2n + 1 - Nmat) pi T
+    n_idx = np.arange(nmat)
+    iomega = (2.0 * n_idx + 1.0 - nmat) * np.pi * T
+
+    axis_order = "(orb1, orb2, kx, ky, kz, iomega)"
+    normalization = ("L2-normalized over all (orb,k,iomega) components; global "
+                     "phase fixes the largest-|magnitude| component real-"
+                     "positive (lexicographic (orb1,orb2,kx,ky,kz,iomega) "
+                     "tie-break)")
+
+    np.savez(
+        os.path.join(output_dir, npz_file),
+        gap=gap_w,
+        iomega=iomega,
+        T=T,
+        pairing_type=pairing_type,
+        frequency="dynamic",
+        eigenvalue=eigenvalue,
+        axis_order=axis_order,
+        normalization=normalization,
+    )
+
+    # gap.dat: the fermionic slice nearest omega = 0^+ (smallest positive w_n).
+    n0 = nmat // 2
+    logger.info("Saving dynamic gap slice (index %d, iw_n=%.6e) to %s",
+                n0, iomega[n0], os.path.join(output_dir, gap_file))
+    with open(os.path.join(output_dir, gap_file), "w") as fw:
+        header = ["# frequency=dynamic",
+                  "index={}".format(n0),
+                  "iomega_n={:.8e}".format(iomega[n0]),
+                  "pairing_type={}".format(pairing_type),
+                  "eigenvalue={:.8e}".format(eigenvalue),
+                  "T={:.8e}".format(T)]
+        fw.write("  ".join(header) + "\n")
+        cols = ["# kx", "ky", "kz"]
+        for i in range(norb):
+            for j in range(norb):
+                cols.append("Re(sigma_{}{})".format(i, j))
+                cols.append("Im(sigma_{}{})".format(i, j))
+        fw.write(" ".join(cols) + "\n")
+        for ix in range(Nx):
+            kx = kx_array[ix]
+            if kx > np.pi:
+                kx -= 2.0 * np.pi
+            for iy in range(Ny):
+                ky = ky_array[iy]
+                if ky > np.pi:
+                    ky -= 2.0 * np.pi
+                for iz in range(Nz):
+                    kz = kz_array[iz]
+                    if kz > np.pi:
+                        kz -= 2.0 * np.pi
+                    parts = ["{:.8f}".format(kx), "{:.8f}".format(ky),
+                             "{:.8f}".format(kz)]
+                    for i in range(norb):
+                        for j in range(norb):
+                            val = gap_w[i, j, ix, iy, iz, n0]
+                            parts.append("{:.8e}".format(val.real))
+                            parts.append("{:.8e}".format(val.imag))
+                    fw.write(" ".join(parts) + "\n")
+
+
 def solve_dynamic(input_dict):
     """Solve the dynamic (frequency-resolved) Eliashberg equation.
 
@@ -346,8 +493,10 @@ def solve_dynamic(input_dict):
     lam = float(np.real(eigenvalue))
     logger.info("Dynamic Eliashberg leading eigenvalue lambda = %.6f", lam)
 
-    # --- Outputs (full gap.dat/gap_dynamic.npz formatting is Task 7) ---
-    gap_w = np.asarray(sigma_flat).reshape(gap_shape)
+    # --- Outputs ---
+    # Gauge-fix the eigenvector (deterministic phase/normalization) so the
+    # written gap is reproducible across runs and linear-algebra backends.
+    gap_w = _fix_gauge(np.asarray(sigma_flat).reshape(gap_shape))
     output_dir = input_dict["file"]["output"]["path_to_output"]
     os.makedirs(output_dir, exist_ok=True)
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
@@ -359,7 +508,10 @@ def solve_dynamic(input_dict):
             for i, ev in enumerate(eigenvalues_all):
                 fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
                     i, ev.real, ev.imag, abs(ev)))
-    np.savez(os.path.join(output_dir, "gap_dynamic.npz"),
-             gap=gap_w, eigenvalue=lam)
+
+    gap_file = eli_param.get("output_gap", "gap.dat")
+    write_dynamic_outputs(output_dir, gap_w, lam, T, pairing_type,
+                          kx_array, ky_array, kz_array, beta,
+                          gap_file=gap_file)
 
     return lam
