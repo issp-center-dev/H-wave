@@ -224,6 +224,9 @@ The full set of valid form factors is
 <li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: Number of eigenvalues to compute in eigenvalue mode.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (default), <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the dynamic-mode (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>)
+kernel applications on a GPU via CuPy (default <code class="docutils literal notranslate"><span class="pre">false</span></code>; see the
+<a class="reference internal" href="#sc-dynamic-gpu-en"><span class="std std-ref">GPU section</span></a> below).</p></li>
 </ul>
 </section>
 </section>
@@ -629,6 +632,31 @@ quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
 Before allocating, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> estimates the peak requirement and aborts if it
 would exceed the limit; set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code> to cap it explicitly
 (<code class="docutils literal notranslate"><span class="pre">0</span></code> disables the guard), otherwise a fraction of the available RAM is used.</p>
+</section>
+<section id="gpu-execution-cupy">
+<span id="sc-dynamic-gpu-en"></span><h3>GPU execution (CuPy)<a class="headerlink" href="#gpu-execution-cupy" title="Link to this heading">¶</a></h3>
+<p>Setting <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> in the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section runs the dynamic-mode
+kernel applications (the eigensolver’s matvec) on a GPU. The two large
+invariant tensors (the pair bubble <span class="math notranslate nohighlight">\([GG]\)</span> and the pairing vertex) are
+moved to the device once before the iteration starts; each iteration then only
+transfers the gap vector. The result is numerically identical to the CPU run
+(within double-precision round-off).</p>
+<ul class="simple">
+<li><p>Applies to <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> only. The static solver is CPU-only, so
+setting <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (or omitted, which
+defaults to static) fails fast with a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> rather than silently
+ignoring the flag.</p></li>
+<li><p>Requires <a class="reference external" href="https://cupy.dev/">CuPy</a> and a usable CUDA device. When CuPy is
+missing or no device is found, the solver warns and falls back to the CPU
+(numpy) path automatically – same result, only slower.</p></li>
+<li><p>The GPU memory requirement is roughly the two resident tensors,
+<span class="math notranslate nohighlight">\(2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}\)</span> bytes,
+plus workspace; if it does not fit, CuPy aborts with an explicit
+out-of-memory error.</p></li>
+<li><p>Reference point: <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}=2\)</span>, a <span class="math notranslate nohighlight">\(64\times 64\)</span> k-mesh,
+and <span class="math notranslate nohighlight">\(N_{\mathrm{mat}}=2048\)</span> give roughly a 16x per-matvec speedup over
+the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).</p></li>
+</ul>
 </section>
 </section>
 <section id="supported-interactions">

@@ -223,6 +223,9 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> （デフォルト）、 <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code> 、
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> で動的モード（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）のカーネル適用を
+GPU（CuPy）で実行します（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>。下記の
+<a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a> を参照）。</p></li>
 </ul>
 </section>
 </section>
@@ -614,6 +617,29 @@ k メッシュ・松原振動数の数に対して急速に大きくなります
 ピーク必要量を見積もり、上限を超える場合は停止します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code>
 で上限を明示的に指定でき（<code class="docutils literal notranslate"><span class="pre">0</span></code> でガードを無効化）、指定しない場合は利用可能な
 RAM の一部が上限に使われます。</p>
+</section>
+<section id="gpu-cupy">
+<span id="sc-dynamic-gpu"></span><h3>GPU実行（CuPy）<a class="headerlink" href="#gpu-cupy" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> と設定すると、動的モードの
+カーネル適用（固有値ソルバーの matvec）を GPU 上で実行します。2つの大きな
+不変テンソル（ペアバブル <span class="math notranslate nohighlight">\([GG]\)</span> とペアリング頂点）を反復開始前に一度だけ
+GPU へ転送して常駐させ、各反復ではギャップベクトルのみを転送します。結果は
+CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> のみに適用されます。静的ソルバーは CPU 専用のため、
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（または省略時。既定は静的）で <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> を設定
+すると、フラグを黙って無視せず <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> で即時停止します。</p></li>
+<li><p><a class="reference external" href="https://cupy.dev/">CuPy</a> がインストールされ CUDA デバイスが利用可能で
+ある必要があります。CuPy が無い・デバイスが見つからない場合は、警告を出して
+自動的に CPU（numpy）実行へフォールバックします（結果は同一で、速度のみ
+低下します）。</p></li>
+<li><p>必要な GPU メモリはおおよそ常駐テンソル 2 本分
+<span class="math notranslate nohighlight">\(2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}\)</span> バイト＋
+作業領域です。不足する場合は CuPy が明示的な OutOfMemory エラーで停止します。</p></li>
+<li><p>参考値: <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}=2\)</span>, <span class="math notranslate nohighlight">\(64\times 64\)</span> k メッシュ,
+<span class="math notranslate nohighlight">\(N_{\mathrm{mat}}=2048\)</span> で matvec あたり CPU 比 16 倍程度
+（NVIDIA RTX 6000 Ada、GPU メモリ約 5 GB 使用）。</p></li>
+</ul>
 </section>
 </section>
 <section id="id27">

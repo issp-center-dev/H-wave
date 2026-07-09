@@ -11,6 +11,7 @@ Basic usage
   - scipy module
   - requests module
   - tomli module
+  - cupy module (optional; only for GPU acceleration of the dynamic Eliashberg solver, ``hwave_sc`` with ``frequency = "dynamic"`` and ``gpu = true``)
 
   Note that `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
 
