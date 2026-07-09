@@ -149,6 +149,7 @@ TOML形式
 
   **説明 :** フーリエ変換の尾部の補正を行う際の、補正の大きさを指定します。
   対角化された一体Green関数に対して :math:`\texttt{coeff\_tail}/(i \omega_n)` を引き虚時間表示にフーリエ変換した後、:math:`-\beta/2\cdot\texttt{coeff\_tail}` を付加します。
+  FLEXソルバーでは、裸の感受率 :math:`\chi_0(q)` を計算する前に同じ尾部補正をドレスされたGreen関数に対して適用します。これにより ``coeff_tail`` は物理的な結果を変えずに振動数和の収束を加速します（FLEXの自己エネルギー畳み込みは完全なGreen関数を用いるため影響を受けません）。
 
 - ``matsubara_frequency``
 

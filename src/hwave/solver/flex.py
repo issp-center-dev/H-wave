@@ -15,7 +15,6 @@ The solver inherits from the RPA class to reuse infrastructure for:
 from __future__ import annotations
 from typing import Optional
 
-import sys
 import os
 import numpy as np
 import numpy.fft as FFT
@@ -194,12 +193,17 @@ class FLEX(RPA):
                 "generalized FLEX solver.".format(self.spin_mode))
 
         if self.calc_mu:
+            # spin-free counts one spin, so the target is halved (as in
+            # RPA._find_mu / RPA.solve).  Ncond_target is reused every SCF
+            # iteration to re-solve mu from the DRESSED Green's function.
             if self.spin_mode == "spin-free":
-                Ncond = self.Ncond / 2
+                Ncond_target = self.Ncond / 2
             else:
-                Ncond = self.Ncond
-            dist, mu = self._find_mu(Ncond, self.T)
+                Ncond_target = self.Ncond
+            # initial mu from the non-interacting bands (Sigma = 0)
+            dist, mu = self._find_mu(Ncond_target, self.T)
         else:
+            Ncond_target = None
             mu = self.mu_value
 
         self.mu = mu
@@ -210,6 +214,32 @@ class FLEX(RPA):
         # Store for reference
         self.green0 = green0
         self.green0_tail = green0_tail
+
+        # High-frequency tail contract (coeff_tail): RPA's tail acceleration
+        # is a two-step pair -- _calc_green subtracts aa/(i w_n) in FREQUENCY
+        # space, and _calc_chi0q subtracts the analytic tau-space constant
+        # green0_tail (= VV† aa beta/2) after the Matsubara FFT.  The dressed
+        # Green's function below comes from _calc_dressed_green, which returns
+        # the FULL physical G, so the frequency-space term must be subtracted
+        # here before handing G to _calc_chi0q; otherwise G(tau) is uniformly
+        # shifted by -aa/2 and chi0q is O(1) wrong.
+        #
+        # The tail subtraction is applied ONLY to the chi0q transform (the one
+        # paired with green0_tail).  The self-energy convolution keeps the
+        # full physical G: its FFT pipeline is an exact cyclic frequency
+        # convolution and needs no tau-space tail reconstruction -- measured
+        # on the 8x8 Hubbard fixture, reconstructing the "true" G(tau) there
+        # does not improve the Nmat convergence of Sigma.
+        aa = self.coeff_tail
+        if aa != 0.0:
+            iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+            ev = self.H0_eigenvector
+            VVt = ev @ np.conj(ev).swapaxes(-2, -1)  # (nblock, nvol, nd, nd)
+            green_tail_w = ((aa / (1j * iomega))[np.newaxis, :, np.newaxis,
+                                                 np.newaxis, np.newaxis]
+                            * VVt[:, np.newaxis])
+        else:
+            green_tail_w = None
 
         # Initialize self-energy to zero
         # Shape: (nblock, nmat, nvol, nd_block, nd_block)
@@ -227,11 +257,29 @@ class FLEX(RPA):
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
 
+            # Re-solve mu so the DRESSED G reproduces the target particle
+            # number: as Sigma grows the frozen non-interacting mu no longer
+            # yields Ncond electrons, so the run would otherwise converge to a
+            # different filling than requested.  mu is solved for the current
+            # sigma BEFORE building green_kw so the stored (mu, green_kw) pair
+            # is self-consistent (N(green_kw) == Ncond).  A fixed mu
+            # (calc_mu=False) is left untouched.
+            if self.calc_mu:
+                mu = self._find_mu_dressed(sigma, beta, Ncond_target)
+                self.mu = mu
+
             # Step 3: Compute dressed Green's function G(k, iwn)
             green_kw = self._calc_dressed_green(beta, mu, sigma)
 
+            # Tail-subtracted G for the Matsubara-FFT transforms (see the
+            # coeff_tail contract above); identical to green_kw when aa == 0.
+            if green_tail_w is not None:
+                green_scf = green_kw - green_tail_w
+            else:
+                green_scf = green_kw
+
             # Step 4: Compute chi0(q, ivn) from dressed G
-            chi0q_raw = self._calc_chi0q(green_kw, green0_tail, beta)
+            chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
 
             # Remove spin block dimension
             if self.spin_mode in ["spin-free", "spinful"]:
@@ -278,6 +326,26 @@ class FLEX(RPA):
                            "no results stored.")
             return
 
+        # Final-output consistency: during the loop green_kw was built from the
+        # PRE-mix sigma, while `sigma` below is the POST-mix estimate, so the
+        # stored (mu, green, sigma) triple would not satisfy the Dyson equation
+        # green = [G0^{-1} - sigma]^{-1} (noticeable for non-converged or
+        # IterationMax=1 runs; negligible once converged).  Rebuild the dressed
+        # G from the final stored sigma -- and, for calc_mu, re-solve mu for it
+        # -- so the stored triple is mutually consistent and N(green) == Ncond.
+        if self.calc_mu:
+            mu = self._find_mu_dressed(sigma, beta, Ncond_target)
+            self.mu = mu
+        green_kw = self._calc_dressed_green(beta, mu, sigma)
+
+        # Physical observables from the final (consistent) dressed G: particle
+        # number N and spin Sz.  In fixed-mu mode this N is the mu-N single
+        # point; in calc_mu mode it equals the target Ncond.
+        physics = self._calc_physics_dressed(green_kw, mu, beta)
+        self.physics = physics
+        logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
+            physics["NCond"], physics["Sz"], physics["mu"]))
+
         # Store results
         self.sigma = sigma
         self.green_kw = green_kw
@@ -290,6 +358,7 @@ class FLEX(RPA):
         green_info["chiq_c"] = chi_c
         green_info["sigma"] = sigma
         green_info["green"] = green_kw
+        green_info["physics"] = physics
 
         logger.info("End FLEX calculations")
 
@@ -341,6 +410,408 @@ class FLEX(RPA):
         green = np.linalg.inv(green_inv)
 
         return green
+
+    @do_profile
+    def _calc_number_dressed(self, sigma, mu, beta):
+        """Particle number carried by the dressed Green's function at ``mu``.
+
+        The self-energy shifts and renormalizes the dressed G, so the actual
+        electron count differs from the non-interacting Fermi count.  The count
+        is evaluated with the standard tail-subtracted Matsubara sum: the
+        non-interacting reference is summed analytically (Fermi function) and
+        only the small, absolutely-convergent difference ``G - G0`` is summed
+        over the finite Matsubara grid::
+
+            N(mu) = sum_{block,k,a} f(eps_a(k) - mu)
+                    + (1/beta) sum_{k,n} Tr[ G(k,iwn) - G0(k,iwn) ]
+
+        Here ``G0(k,iwn) = [(iwn+mu)I - H0(k)]^{-1}`` (same mu), whose analytic
+        occupation is exactly the Fermi term, and ``G - G0 = G0 Sigma G`` decays
+        as ``1/(iwn)^2`` so the residual sum needs no e^{iwn 0+} convergence
+        factor and is real.  At ``Sigma = 0`` the residual vanishes and ``N``
+        reduces exactly to the ``_find_mu`` Fermi count.
+
+        The total is compared against the SAME target convention as
+        :meth:`RPA._find_mu`: the sum runs over all spin blocks, so for
+        spin-free (one block) it is the one-spin count (target ``Ncond/2``).
+
+        Parameters
+        ----------
+        sigma : ndarray
+            Self-energy, shape (nblock, nmat, nvol, nd_block, nd_block).
+        mu : float
+            Trial chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        float
+            Particle number N(mu).
+        """
+        nmat = self.nmat
+        ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
+
+        # analytic non-interacting reference (Fermi function)
+        n_ref = self._fermi_occupation(1.0 / beta, mu, ew).sum()
+
+        # dressed correction Tr[G - G0], summed over the finite Matsubara grid
+        green = self._calc_dressed_green(beta, mu, sigma)
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        trG = np.einsum('bnkaa->bnk', green)          # (nblock, nmat, nvol)
+        trG0 = (1.0 / ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                       + (mu - ew)[:, np.newaxis, :, :])).sum(axis=-1)
+        corr = (trG - trG0).sum() / beta
+
+        return n_ref + corr.real
+
+    @staticmethod
+    def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
+        """Fermi function with the same overflow guard as RPA._find_mu."""
+        w = (ev - mu) / t
+        mask = w < ene_cutoff
+        w1 = np.where(mask, w, 0.0)
+        v1 = 1.0 / (1.0 + np.exp(w1))
+        return np.where(mask, v1, 0.0)
+
+    @do_profile
+    def _calc_occupation_dressed(self, green_kw, mu, beta):
+        r"""k-summed occupation per (spin block, orbital) from the dressed G.
+
+        The per-orbital analogue of :meth:`_calc_number_dressed`: the same
+        tail-subtracted Matsubara sum, resolved on each orbital ``a`` instead of
+        traced.  The non-interacting reference is projected onto the orbital
+        basis with the H0 eigenvectors ``V``::
+
+            n_a(k) = sum_j |V_aj|^2 f(eps_j(k) - mu)
+                     + (1/beta) sum_n [ G_aa(k,iwn) - G0_aa(k,iwn) ]
+            G0_aa(k,iwn) = sum_j |V_aj|^2 / (iwn + mu - eps_j(k))
+
+        Summing the result over orbitals recovers ``_calc_number_dressed`` (by
+        unitarity ``sum_a |V_aj|^2 = 1``); it is split per orbital here so N and
+        Sz can be assembled from spin-resolved partial sums.
+
+        Parameters
+        ----------
+        green_kw : ndarray
+            Dressed Green's function, shape (nblock, nmat, nvol, nd_block, nd_block).
+        mu : float
+            Chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            Occupation summed over k, shape (nblock, nd_block).
+        """
+        nmat = self.nmat
+        ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
+        ev = self.H0_eigenvector                      # (nblock, nvol, a, j)
+        vsq = np.abs(ev) ** 2                          # |V_aj|^2
+
+        # bare per-orbital reference: n0_a = sum_j |V_aj|^2 f(eps_j - mu)
+        f = self._fermi_occupation(1.0 / beta, mu, ew)     # (nblock, nvol, j)
+        n0 = np.einsum('bkaj,bkj->bka', vsq, f)            # (nblock, nvol, a)
+
+        # dressed correction (1/beta) sum_n [G_aa - G0_aa]
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        g_aa = np.einsum('bnkaa->bnka', green_kw)          # (nblock, nmat, nvol, a)
+        denom = ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                 + (mu - ew)[:, np.newaxis, :, :])         # (nblock, nmat, nvol, j)
+        g0_aa = np.einsum('bkaj,bnkj->bnka', vsq, 1.0 / denom)
+        corr = (g_aa - g0_aa).sum(axis=1) / beta           # sum over n -> (nblock, nvol, a)
+
+        nocc = n0 + corr.real
+        return nocc.sum(axis=1)                            # sum over k -> (nblock, nd_block)
+
+    @do_profile
+    def _calc_physics_dressed(self, green_kw, mu, beta):
+        """Assemble the particle number N and spin Sz from the dressed G.
+
+        Uses :meth:`_calc_occupation_dressed` and the FLEX spin-block orbital
+        ordering (``s*norb + a``).  Conventions per spin mode:
+
+        - spin-free (one block computed): ``N = 2 * sum(nocc)``, ``Sz = 0``.
+        - spin-diag (block 0 = up, block 1 = down):
+          ``N = N_up + N_down``, ``Sz = (N_up - N_down)/2``.
+        - spinful (single block, ``nd = 2*norb``, up = orbitals ``[0, norb)``,
+          down = ``[norb, 2*norb)``): ``N = sum(nocc)``,
+          ``Sz = (N_up - N_down)/2``.
+
+        Parameters
+        ----------
+        green_kw : ndarray
+            Dressed Green's function (nblock, nmat, nvol, nd_block, nd_block).
+        mu : float
+            Chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        dict
+            ``{"NCond": N_total, "Sz": Sz, "mu": mu}`` (plain floats).
+        """
+        nocc = self._calc_occupation_dressed(green_kw, mu, beta)
+        norb = self.norb
+
+        if self.spin_mode == "spin-free":
+            n_total = 2.0 * nocc.sum()
+            sz = 0.0
+        elif self.spin_mode == "spin-diag":
+            n_up = nocc[0].sum()
+            n_down = nocc[1].sum()
+            n_total = n_up + n_down
+            sz = 0.5 * (n_up - n_down)
+        else:  # spinful: spin folded into the orbital index (spin-block order)
+            n_up = nocc[0, :norb].sum()
+            n_down = nocc[0, norb:].sum()
+            n_total = nocc.sum()
+            sz = 0.5 * (n_up - n_down)
+
+        return {"NCond": float(n_total.real if np.iscomplexobj(n_total)
+                               else n_total),
+                "Sz": float(sz.real if np.iscomplexobj(sz) else sz),
+                "mu": float(mu)}
+
+    @do_profile
+    def _matsubara_number_operator(self, sigma, beta):
+        r"""Eigenvalues of the mu-independent part of ``G^{-1}``, for the mu
+        search.
+
+        During the chemical-potential search ``sigma`` is held FIXED, so
+
+            G^{-1}(k, iwn; mu) = (iwn + mu) I - H0(k) - Sigma(k, iwn)
+                               = M(k, iwn) + mu I,
+            M(k, iwn) = iwn I - H0(k) - Sigma(k, iwn)   (mu-independent).
+
+        Diagonalizing ``M`` ONCE then gives ``Tr[G(mu)] = sum_j 1/(lam_j + mu)``
+        for ANY trial ``mu`` -- one eigenvalue decomposition per iteration
+        instead of one full matrix inversion per bisection step (the mu search
+        was ~50% of solve()).  ``M`` is non-Hermitian, but its eigenvalues sit
+        at ``lam_j ~ iwn - (real band+Sigma)``, i.e. ``|Im(lam_j)| ~ |wn| >=
+        pi/beta > 0``, so ``lam_j + mu`` (mu real) never touches zero: the
+        1/(lam+mu) sum is well conditioned.
+
+        Parameters
+        ----------
+        sigma : ndarray
+            Self-energy, shape (nblock, nmat, nvol, nd_block, nd_block).
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        lam : ndarray
+            Eigenvalues of ``M``, shape (nblock, nmat, nvol, nd_block).
+        ew : ndarray
+            H0 band energies ``self.H0_eigenvalue`` (returned for convenience,
+            used by :meth:`_number_from_eigs` for the analytic reference).
+        """
+        ew = self.H0_eigenvalue
+        ev = self.H0_eigenvector
+        nblock, nvol, nd = ew.shape
+        nmat = self.nmat
+
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        H0_k = np.matmul(ev * ew[:, :, np.newaxis, :],
+                         np.conj(ev).swapaxes(-2, -1))       # (nb, nvol, nd, nd)
+        eye = np.eye(nd, dtype=np.complex128)
+        iw = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
+        M = iw * eye - H0_k[:, np.newaxis, :, :, :] - sigma  # (nb,nmat,nvol,nd,nd)
+
+        lam = np.linalg.eigvals(M)                            # (nb,nmat,nvol,nd)
+        return lam, ew
+
+    def _number_from_eigs(self, lam, ew, mu, beta, with_deriv=False):
+        """Particle number N(mu) (and optionally dN/dmu) from precomputed
+        ``M`` eigenvalues.
+
+        Cheap closure evaluated for every trial ``mu`` in the mu search:
+        identical formula and result as :meth:`_calc_number_dressed` (verified
+        to machine precision in the tests), but reusing the eigenvalues from
+        :meth:`_matsubara_number_operator` instead of re-inverting G::
+
+            N(mu) = sum_{block,k,a} f(eps_a - mu)
+                    + (1/beta) sum_{k,n} [ sum_j 1/(lam_j + mu)
+                                           - sum_a 1/(iwn + mu - eps_a) ]
+
+        Because ``sigma`` (hence ``lam``) is FIXED during the search, the
+        derivative is analytic and cheap to evaluate from the same
+        eigenvalues, which lets the search use Newton's method::
+
+            dN/dmu = sum_a (1/T) f_a (1 - f_a)
+                     + (1/beta) sum_{k,n} [ -sum_j 1/(lam_j + mu)^2
+                                            + sum_a 1/(iwn + mu - eps_a)^2 ]
+
+        Parameters
+        ----------
+        lam : ndarray
+            ``M`` eigenvalues from :meth:`_matsubara_number_operator`,
+            shape (nblock, nmat, nvol, nd_block).
+        ew : ndarray
+            H0 band energies, shape (nblock, nvol, nd_block).
+        mu : float
+            Trial chemical potential.
+        beta : float
+            Inverse temperature.
+        with_deriv : bool, optional
+            If True, return the tuple ``(N, dN/dmu)`` instead of ``N``.
+
+        Returns
+        -------
+        float or tuple of float
+            ``N(mu)``, or ``(N(mu), dN/dmu)`` when ``with_deriv`` is True.
+        """
+        nmat = self.nmat
+        T = 1.0 / beta
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+
+        f = self._fermi_occupation(T, mu, ew)
+        n_ref = f.sum()
+
+        denomG = lam + mu                                    # (nb, nmat, nvol, nd)
+        denomG0 = ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                   + (mu - ew)[:, np.newaxis, :, :])
+        trG = (1.0 / denomG).sum(axis=-1)                    # (nb, nmat, nvol)
+        trG0 = (1.0 / denomG0).sum(axis=-1)
+        n = n_ref + ((trG - trG0).sum() / beta).real
+
+        if not with_deriv:
+            return n
+
+        # dN/dmu: the Fermi part is +f(1-f)/T; each 1/(x+mu) term contributes
+        # -1/(x+mu)^2 (same trG - trG0 combination, both differentiated).
+        dref = ((1.0 / T) * f * (1.0 - f)).sum()
+        dtrG = (-1.0 / denomG ** 2).sum(axis=-1)
+        dtrG0 = (-1.0 / denomG0 ** 2).sum(axis=-1)
+        dn = dref + ((dtrG - dtrG0).sum() / beta).real
+        return n, dn
+
+    @do_profile
+    def _find_mu_dressed(self, sigma, beta, Ncond):
+        """Re-solve mu so the dressed Green's function carries ``Ncond``.
+
+        Holds ``sigma`` fixed and solves ``N(mu) = Ncond``.  The ``M``
+        eigenvalues are computed ONCE via :meth:`_matsubara_number_operator``,
+        so both ``N(mu)`` and its analytic derivative ``dN/dmu`` are cheap sums
+        over those eigenvalues (:meth:`_number_from_eigs`) -- no per-step matrix
+        inversion.  ``N(mu)`` is smooth and monotonically increasing, so the
+        root is found with a **safeguarded Newton** iteration (Numerical
+        Recipes ``rtsafe``): a Newton step when it stays inside the current
+        bracket and makes progress, otherwise a bisection step.  This gets
+        Newton's quadratic convergence (a handful of evaluations from the
+        previous iteration's mu) while the maintained bracket guarantees
+        convergence even if a Newton step misbehaves.
+
+        The initial bracket is the bare eigenvalue range widened by the
+        self-energy scale, because Sigma can push spectral weight outside the
+        bare band edges.
+
+        Parameters
+        ----------
+        sigma : ndarray
+            Current self-energy (fixed during the mu search).
+        beta : float
+            Inverse temperature.
+        Ncond : float
+            Target particle number (already halved for spin-free, matching
+            :meth:`RPA._find_mu`).
+
+        Returns
+        -------
+        float
+            Chemical potential mu such that N(mu) = Ncond.
+        """
+        w = self.H0_eigenvalue
+
+        # Diagonalize the mu-independent part of G^{-1} once; each trial mu is
+        # then a cheap sum over eigenvalues (see _matsubara_number_operator).
+        lam, ew = self._matsubara_number_operator(sigma, beta)
+
+        def _delta_n(mu, with_deriv=False):
+            r = self._number_from_eigs(lam, ew, mu, beta, with_deriv=with_deriv)
+            if with_deriv:
+                return r[0] - Ncond, r[1]
+            return r - Ncond
+
+        # Initial bracket: the bare band range widened by the self-energy scale.
+        # This is only a starting guess -- a general (multi-orbital, off-diagonal
+        # or non-Hermitian) Sigma can shift the dressed spectral weight, and
+        # hence the root, by more than max|Re Sigma|.  So EXPAND the bracket
+        # (doubling the pad) until N(mu) changes sign, instead of failing on the
+        # first guess.  N(mu) -> 0 as mu -> -inf and -> Nstate as mu -> +inf, so
+        # a finite root is always bracketed after enough expansion.
+        pad = float(np.abs(sigma.real).max()) + 1.0
+        lo = float(w.min()) - pad
+        hi = float(w.max()) + pad
+        f_lo = _delta_n(lo)
+        f_hi = _delta_n(hi)
+        for _ in range(60):
+            if f_lo == 0.0:
+                return lo
+            if f_hi == 0.0:
+                return hi
+            if f_lo * f_hi < 0.0:
+                break
+            span = hi - lo
+            lo -= span
+            hi += span
+            f_lo = _delta_n(lo)
+            f_hi = _delta_n(hi)
+        else:
+            # 60 doublings span ~1e18 * initial width: a real root cannot be
+            # this far out. Fail loudly rather than return garbage. Raise a
+            # catchable exception (not sys.exit) so parameter sweeps, pipelines,
+            # and notebooks can handle/aggregate the failure instead of having
+            # the whole interpreter torn down.
+            raise RuntimeError(
+                "FLEX._find_mu_dressed: chemical-potential root not bracketed "
+                "after expansion to [{}, {}] (N-Ncond = {}, {}). Check the "
+                "target filling/Ncond and temperature.".format(
+                    lo, hi, f_lo, f_hi))
+
+        # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
+        if f_lo > 0.0:
+            lo, hi = hi, lo
+
+        mu = 0.5 * (lo + hi)
+        dmu_old = abs(hi - lo)
+        dmu = dmu_old
+        f, df = _delta_n(mu, with_deriv=True)
+
+        xtol = 1.0e-12
+        for _ in range(100):
+            # take bisection when the Newton step leaves the bracket, is not
+            # shrinking the interval fast enough, or the derivative is flat;
+            # otherwise take Newton.  df -> 0 is the CHARGE-GAP regime: N(mu) is
+            # flat across the gap, so a Newton step is unreliable (and f/df ill
+            # defined).  The rtsafe product test below already routes tiny df to
+            # bisection, but guard df == 0 explicitly so f/df is never formed.
+            newton_out = ((mu - hi) * df - f) * ((mu - lo) * df - f) > 0.0
+            slow = abs(2.0 * f) > abs(dmu_old * df)
+            if newton_out or slow or df == 0.0:
+                dmu_old = dmu
+                dmu = 0.5 * (hi - lo)
+                mu = lo + dmu
+            else:
+                dmu_old = dmu
+                dmu = f / df
+                mu = mu - dmu
+
+            if abs(dmu) < xtol:
+                break
+
+            f, df = _delta_n(mu, with_deriv=True)
+            # keep the sign-change bracket [lo, hi] around the root
+            if f < 0.0:
+                lo = mu
+            else:
+                hi = mu
+
+        logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
+        return mu
 
     @do_profile
     def _flex_compute_veff(self, chi0q_raw, ham_orig):
@@ -907,6 +1378,11 @@ class FLEX(RPA):
         2. Multiply in (r, tau) space: Sigma(r,tau) = V(r,tau) * G(r,tau)
         3. Transform back to (k, iwn) space
 
+        ``green_kw`` is the FULL physical Green's function (NOT the
+        tail-subtracted one used for chi0q): the self-energy convolution is an
+        exact cyclic frequency convolution and needs no tau-space tail
+        reconstruction.
+
         Parameters
         ----------
         green_kw : ndarray
@@ -1181,6 +1657,24 @@ class FLEX(RPA):
             logger.warning(
                 "matsubara_frequency is restricted but FLEX outputs always "
                 "hold the full frequency grid; the option is ignored.")
+
+        # Save physical observables (particle number, spin, chemical potential)
+        # as a plain-text energy file, mirroring UHFr/UHFk.  In fixed-mu mode
+        # the NCond line is the mu-N single point for the given mu.
+        if "energy" in info_outputfile:
+            physics = green_info.get("physics", getattr(self, "physics", None))
+            if physics is None:
+                logger.warning("save_results: no physics data to write to "
+                               "'{}'".format(info_outputfile["energy"]))
+            else:
+                file_name = os.path.join(path_to_output,
+                                         info_outputfile["energy"])
+                with open(file_name, "w") as fw:
+                    fw.write("NCond = {}\n".format(physics["NCond"]))
+                    fw.write("Sz = {}\n".format(physics["Sz"]))
+                    fw.write("ChemicalPotential = {}\n".format(physics["mu"]))
+                logger.info("save_results: save energy in file {}".format(
+                    file_name))
 
         # Save chi0q
         if "chi0q" in info_outputfile:

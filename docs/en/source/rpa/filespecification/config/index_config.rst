@@ -188,6 +188,7 @@ Parameters
   **Description :**
   This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
   After Fourier transforming the diagonalized one-body Green function to the imaginary time representation by subtracting :math:`\texttt{coeff\_tail}/(i \omega_n)`, the term :math:`-\beta/2\cdot\texttt{coeff\_tail}` is added to the one-body Green function.
+  In the FLEX solver the same tail treatment is applied to the *dressed* Green function before the bare susceptibility :math:`\chi_0(q)` is computed, so that ``coeff_tail`` accelerates the frequency summation without changing the physical result. (The FLEX self-energy convolution keeps the full Green function and is unaffected.)
 
 - ``matsubara_frequency``
 
