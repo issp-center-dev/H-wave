@@ -549,6 +549,19 @@ the <strong>full</strong> bosonic Matsubara axis (all <code class="docutils lite
 <li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code> – the <strong>dressed</strong> Green’s function
 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>, from which the pair bubble is built.</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The FLEX susceptibility files carry a <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> tag (<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>
+for the reduced/squashed schemes, <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex
+scheme) that the Eliashberg loader uses to interpret their orbital layout.
+For <strong>two-orbital</strong> systems (<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>) the reduced spin-orbital
+dimension and the orbital-pair dimension coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>), so this tag
+is what distinguishes them. H-wave versions before this fix inferred the
+layout from shape alone and mislabeled a <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code> reduced (kuroki) chi
+as orbital-pair, corrupting the pairing vertex; Eliashberg eigenvalues and
+gap functions for such runs are <strong>corrected (and therefore change)</strong> in this
+version. Single-orbital and general (myo) results are unaffected.</p>
+</div>
 <p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even and must match between the FLEX output and the
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> value. If <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> is requested without
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>, with an odd <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, or without a dressed

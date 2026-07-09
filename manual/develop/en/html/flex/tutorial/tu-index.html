@@ -584,6 +584,12 @@ shape <code class="docutils literal notranslate"><span class="pre">(nmat,</span>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: Spin / charge susceptibility,
 same shape as <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: orbital-layout tag, <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code> for the
+reduced/squashed schemes (spin-orbital reduced layout) or <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the
+general full-vertex scheme (orbital-pair layout). The Eliashberg loader
+(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) uses this tag to interpret the orbital indices; it is
+essential for two-orbital systems, where the spin-orbital and orbital-pair
+dimensions coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>) and shape alone is ambiguous.</p></li>
 </ul>
 </section>
 <section id="sigma-npz">

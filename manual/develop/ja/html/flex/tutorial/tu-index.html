@@ -561,6 +561,11 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: スピン / 電荷感受率、
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と同じ形状</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: 軌道レイアウトのタグ。reduced/squashed スキームは
+<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道 reduced レイアウト）、general full-vertex スキームは
+<code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair レイアウト）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は
+このタグで軌道インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair
+次元が一致（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）し形状だけでは区別できないため、このタグが必須です。</p></li>
 </ul>
 </section>
 <section id="sigma-npz">

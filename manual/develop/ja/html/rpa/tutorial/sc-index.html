@@ -541,6 +541,17 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 <li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code> -- <strong>dressed</strong> グリーン関数
 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>（これからペアバブルを構成します）。</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>FLEX の感受率ファイルには <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> タグ（reduced/squashed スキームは
+<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>）が付与されており、
+Eliashberg ローダーはこれを用いて軌道レイアウトを解釈します。<strong>2軌道系</strong>（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>）では reduced のスピン軌道次元と orbital-pair 次元が一致
+（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）するため、両者の区別はこのタグに依存します。本修正以前の H-wave
+は形状のみからレイアウトを推定し、<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code> の reduced (kuroki) chi を
+orbital-pair と誤認して pairing vertex を壊していました。該当する計算の Eliashberg
+固有値・ギャップ関数は本バージョンで<strong>修正されます（したがって変化します）</strong>。
+1軌道系および general (myo) の結果は影響を受けません。</p>
+</div>
 <p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は偶数で、かつ FLEX 出力と <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> の値とで一致していなければ
 なりません。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> なしで <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> を指定した
 場合、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> が奇数の場合、あるいは dressed <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> が無い場合、ソルバーは
