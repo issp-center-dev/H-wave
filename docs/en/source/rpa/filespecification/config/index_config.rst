@@ -234,6 +234,29 @@ Parameters
   **Description :**
   This parameter specifies the upper cutoff of the exponent in the Fermi distribution function to avoid overflow during the calculation.
 
+- ``gpu``
+
+  **Type :**
+  Boolean (default value is false)
+
+  **Description :**
+  When set to true, the main computation (the Green's function, the chi0q
+  FFT pair bubble, the spin inflation, and the batched RPA solve; for FLEX
+  the whole SCF loop) runs on a GPU via CuPy. When CuPy or a CUDA device is
+  unavailable, the solver warns and falls back to the CPU (numpy) path with
+  an identical result.
+
+- ``fft_workers``
+
+  **Type :**
+  Integer (default value is -1)
+
+  **Description :**
+  Number of worker threads for the spatial FFTs (parallelized via
+  ``scipy.fft``; -1 uses all cores, 1 selects the serial numpy path).
+  Ignored on the GPU. Set a smaller number when running several
+  calculations concurrently.
+
 
 ``log`` section
 ================================
