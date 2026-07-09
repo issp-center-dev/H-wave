@@ -101,6 +101,38 @@ def test_dynamic_vertex_matches_static_per_frequency():
         assert np.allclose(Vw[..., l], Vstat, atol=1e-12)
 
 
+def test_kernel_single_k_matches_dense_freq_operator():
+    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver import matsubara as ms
+    norb, Nx, Ny, Nz, nmat = 1, 1, 1, 1, 4
+    beta = 8.0
+    rng = np.random.default_rng(7)
+    V = (rng.standard_normal((1, 1, 1, 1, Nx, Ny, Nz, nmat))
+         + 1j*rng.standard_normal((1, 1, 1, 1, Nx, Ny, Nz, nmat)))
+    G2 = (rng.standard_normal((1, 1, 1, 1, Nx, Ny, Nz, nmat))
+          + 1j*rng.standard_normal((1, 1, 1, 1, Nx, Ny, Nz, nmat)))
+    phi = (rng.standard_normal((1, 1, Nx, Ny, Nz, nmat))
+           + 1j*rng.standard_normal((1, 1, Nx, Ny, Nz, nmat)))
+    out = ed.eliashberg_kernel_dynamic(V, G2, phi, norb, beta)
+    # dense freq operator at single k (q=0): -(1/1) Bfi diag(Vtau) Bf diag(G2) phi
+    I = np.eye(nmat, dtype=complex)
+    Bf = np.stack([ms.fermion_to_tau(I[i], axis=0) for i in range(nmat)], 1)
+    Bfi = np.stack([ms.tau_to_fermion(I[i], axis=0) for i in range(nmat)], 1)
+    Bb = np.stack([ms.boson_to_tau(I[i], axis=0) for i in range(nmat)], 1)
+    Vtau = Bb @ V.reshape(nmat)
+    op = -(Bfi @ (Vtau[:, None] * Bf) * G2.reshape(nmat)[None, :])
+    expected = (op @ phi.reshape(nmat)).reshape(1, 1, Nx, Ny, Nz, nmat)
+    assert np.allclose(out, expected, atol=1e-10)
+
+
+def test_frequency_inner_is_full_vdot():
+    from hwave.solver import eliashberg_dynamic as ed
+    rng = np.random.default_rng(11)
+    a = rng.standard_normal((2, 2, 2, 2, 1, 3)) + 1j*rng.standard_normal((2, 2, 2, 2, 1, 3))
+    b = rng.standard_normal(a.shape) + 1j*rng.standard_normal(a.shape)
+    assert np.isclose(ed.frequency_inner(a, b), np.vdot(a, b))
+
+
 @pytest.mark.parametrize("norb", [1, 2])
 def test_g2_dynamic_sums_to_static(norb):
     import hwave.sc as sc
@@ -124,3 +156,81 @@ def test_g2_dynamic_sums_to_static(norb):
         g2w[l2, l5, l3, l6, kx, ky, kz, n],
         green[l2, l5, kx, ky, kz, n] * green_inv[l3, l6, kx, ky, kz, n] / beta,
         atol=1e-12)
+
+
+def _write_geom_transfer_coulomb(input_dir, norb=1):
+    import os
+    os.makedirs(input_dir, exist_ok=True)
+    with open(os.path.join(input_dir, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n")
+        f.write("{}\n".format(norb))
+        for _ in range(norb):
+            f.write("0.0 0.0 0.0\n")
+    with open(os.path.join(input_dir, "transfer.dat"), "w") as f:
+        f.write("Transfer\n{}\n5\n 1 1 1 1 1\n".format(norb))
+        for orb in range(norb):
+            f.write("  1  0  0  {0}  {0}  1.0 0.0\n".format(orb + 1))
+            f.write(" -1  0  0  {0}  {0}  1.0 0.0\n".format(orb + 1))
+            f.write("  0  1  0  {0}  {0}  1.0 0.0\n".format(orb + 1))
+            f.write("  0 -1  0  {0}  {0}  1.0 0.0\n".format(orb + 1))
+    with open(os.path.join(input_dir, "coulombintra.dat"), "w") as f:
+        f.write("CoulombIntra\n{}\n1\n 1\n".format(norb))
+        for orb in range(norb):
+            f.write("  0  0  0  {0}  {0}  2.0 0.0\n".format(orb + 1))
+
+
+def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
+    """End-to-end smoke: solve_dynamic runs on a tiny generated FLEX fixture
+    and returns a finite leading eigenvalue. (Full static-limit / dense-oracle
+    acceptance is Task 7.)"""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "solver_mode": "iteration", "max_iter": 50},
+    }
+    lam = ed.solve_dynamic(inp)
+    assert np.isfinite(lam)
+    assert os.path.exists(os.path.join(output_dir, "eigenvalue.dat"))
+    assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
+
+
+def test_solve_dynamic_requires_green(tmp_path):
+    """green_w=None (missing green.npz) must fail-fast with a clear message,
+    not an AttributeError (Task 3 review gap / spec section 9)."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    os.remove(os.path.join(output_dir, "green.npz"))  # drop the dressed Green
+
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic"},
+    }
+    with pytest.raises(ValueError, match="green.npz"):
+        ed.solve_dynamic(inp)

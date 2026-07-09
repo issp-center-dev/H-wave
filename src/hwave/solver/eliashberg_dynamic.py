@@ -8,6 +8,9 @@ import os
 import logging
 import numpy as np
 
+from hwave.solver import matsubara as ms
+from hwave.solver.perf import FFT
+
 logger = logging.getLogger("qlms").getChild("eliashberg_dynamic")
 
 
@@ -64,11 +67,15 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
     # reuse the exact static path/name/convention/spin-orbital-expansion logic
     chis_w, chic_w, green_w, chi_convention = \
         sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
-    if not (chis_w.shape[-1] == chic_w.shape[-1] == green_w.shape[-1] == cfg_nmat):
+    # green_w may be None (missing green.npz); the caller (solve_dynamic) is the
+    # fail-fast site for that with a user-facing message. Only cross-check the
+    # green frequency axis when it was actually loaded.
+    green_nmat = green_w.shape[-1] if green_w is not None else cfg_nmat
+    if not (chis_w.shape[-1] == chic_w.shape[-1] == green_nmat == cfg_nmat):
         raise ValueError(
             "dynamic Eliashberg grid mismatch: nmat differs — chis={}, chic={}, "
             "green={}, config Nmat={}".format(
-                chis_w.shape[-1], chic_w.shape[-1], green_w.shape[-1], cfg_nmat))
+                chis_w.shape[-1], chic_w.shape[-1], green_nmat, cfg_nmat))
     check_memory(norb, Nx*Ny*Nz, cfg_nmat,
                  input_dict["eliashberg"].get("mem_limit_gb"))
     return chis_w, chic_w, green_w, chi_convention
@@ -160,17 +167,199 @@ def calc_g2_dynamic(green_kw, beta):
     return G2 / beta
 
 
+def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta):
+    r"""Apply the frequency-resolved (tau-product) Eliashberg kernel.
+
+    Implements one action of the linearized Eliashberg operator on a trial
+    gap ``phi``, keeping the full fermionic Matsubara axis. The structure
+    mirrors the static kernel (``sc._make_kernel_operator``) and the FLEX
+    self-energy (``flex._calc_self_energy``): an orbital contraction with the
+    pair bubble G2, then an imaginary-time PRODUCT with the pairing vertex
+    (NOT a circular frequency convolution) done via matsubara transforms.
+
+    Orbital contraction (matches the static kernel):
+        F_{l2,l3}(k,m)     = sum_{l5,l6} G2_{l2,l5,l3,l6}(k,m) phi_{l5,l6}(k,m)
+        phi_out_{l1,l4}    = - sum_{l2,l3} V_{l1,l2,l3,l4}(r,tau) F_{l2,l3}(r,tau)
+
+    The temperature factor 1/beta lives inside G2 (``calc_g2_dynamic``); the
+    kernel carries only the spatial -(1/N) via the ifftn (numpy) convention.
+    ``beta`` is accepted for signature symmetry with the static path but is
+    not applied here.
+
+    Parameters
+    ----------
+    Vs_q_w : ndarray
+        Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+        on the bosonic Matsubara axis.
+    G2_w : ndarray
+        Pair bubble, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+        on the fermionic Matsubara axis (already divided by beta).
+    phi_w : ndarray
+        Trial gap, shape (norb, norb, Nx, Ny, Nz, nmat).
+    norb : int
+        Number of orbitals (for signature symmetry; inferred from shapes).
+    beta : float
+        Inverse temperature (unused here; T is inside G2).
+
+    Returns
+    -------
+    phi_out_w : ndarray
+        Same shape as ``phi_w``.
+    """
+    # F_{l2,l3}(k, m) = sum_{l5,l6} G2_{l2,l5,l3,l6}(k,m) phi_{l5,l6}(k,m)
+    F = np.einsum('iljmxyzn,lmxyzn->ijxyzn', G2_w, phi_w)
+    # spatial k->r on F (per orbital pair, per fermionic freq); freq fermion->tau
+    F_rt = FFT.ifftn(ms.fermion_to_tau(F, axis=-1), axes=(2, 3, 4))
+    # V(q, iv_l) -> (r, tau): spatial q->r, freq boson->tau
+    V_rt = FFT.ifftn(ms.boson_to_tau(Vs_q_w, axis=-1), axes=(4, 5, 6))
+    # phi_out_{l1,l4}(r,tau) = - sum_{l2,l3} V_{l1,l2,l3,l4}(r,tau) F_{l2,l3}(r,tau)
+    prod = -np.einsum('abcdxyzt,bcxyzt->adxyzt', V_rt, F_rt)
+    # back: spatial r->k (fftn), freq tau->fermion. The single spatial fold's
+    # -(1/N) is already carried by the ifftn above (numpy divides by N on the
+    # inverse transform; the r->k fftn does not re-multiply the pair bubble).
+    phi_out = ms.tau_to_fermion(FFT.fftn(prod, axes=(2, 3, 4)), axis=-1)
+    return phi_out
+
+
+def frequency_inner(a, b):
+    """Inner product over ALL components (orbital, k, and frequency axes)."""
+    return np.vdot(a, b)
+
+
 def solve_dynamic(input_dict):
     """Solve the dynamic (frequency-resolved) Eliashberg equation.
+
+    Reads the FLEX outputs (full-frequency chi_s/chi_c and the dressed
+    Green's function), builds the frequency-resolved pairing vertex and pair
+    bubble, and finds the leading eigenpair of the tau-product Eliashberg
+    kernel via the shared driver ``sc._solve_leading`` (the same eigenvalue
+    ordering / shift-invert / iteration machinery as the static path).
 
     Parameters
     ----------
     input_dict : dict
         Parsed TOML configuration dictionary.
 
-    Raises
-    ------
-    NotImplementedError
-        This is a stub; implementation is in later tasks.
+    Returns
+    -------
+    float
+        The leading (largest real part) Eliashberg eigenvalue lambda.
     """
-    raise NotImplementedError("dynamic Eliashberg solver: implemented in later tasks")
+    import hwave.sc as sc
+    from scipy.sparse.linalg import LinearOperator
+
+    mode_param = input_dict["mode"]["param"]
+    T = mode_param["T"]
+    beta = 1.0 / T
+    cell_shape = mode_param["CellShape"]
+    sub_shape = mode_param.get("SubShape", cell_shape)
+    if isinstance(cell_shape, list):
+        cell_shape = list(cell_shape)
+        while len(cell_shape) < 3:
+            cell_shape.append(1)
+    Lx, Ly, Lz = cell_shape
+    if isinstance(sub_shape, list):
+        sub_shape = list(sub_shape)
+        while len(sub_shape) < 3:
+            sub_shape.append(1)
+    Bx, By, Bz = sub_shape
+    Nx, Ny, Nz = Lx // Bx, Ly // By, Lz // Bz
+    Nk = Nx * Ny * Nz
+
+    eli_param = input_dict.get("eliashberg", {})
+    pairing_type = eli_param.get("pairing_type", "singlet")
+    # Mirror calc_eliashberg's config -> _solve_leading string mapping.
+    solver_mode = eli_param.get("solver_mode", "iteration")
+    eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
+    num_eigenvalues = eli_param.get("num_eigenvalues", 10)
+    max_iter = eli_param.get("max_iter", 1000)
+    alpha = eli_param.get("alpha", 0.5)
+    tol = eli_param.get("convergence_tol", 1.0e-5)
+    init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
+
+    # --- Geometry / interactions (norb from the geometry file) ---
+    geom_info, hr, interactions = sc._read_interaction_files(input_dict)
+    norb = geom_info["norb"]
+
+    kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
+    ky_array = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
+    kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
+    inter_k = sc._build_interaction_k(kx_array, ky_array, kz_array,
+                                      interactions, norb)
+
+    # --- FLEX inputs (full frequency) ---
+    chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
+        input_dict, norb, Nx, Ny, Nz)
+    if green_w is None:
+        raise ValueError(
+            "dynamic Eliashberg requires the dressed green.npz from the FLEX "
+            "run (the pair bubble G2 is built from it); none was found. Check "
+            "[file.input] path_to_flex_output / [eliashberg] flex_green.")
+    nmat = chis_w.shape[-1]
+
+    # --- Vertex and pair bubble on the full frequency grid ---
+    logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
+                "convention=%s)...", pairing_type, chi_convention)
+    Vs_q_w = compute_vertices_flex_dynamic(
+        chis_w, chic_w, inter_k, norb, Nx, Ny, Nz,
+        pairing_type=pairing_type, convention=chi_convention)
+    logger.info("Computing frequency-resolved pair bubble G2...")
+    G2_w = calc_g2_dynamic(green_w, beta)
+
+    # --- Seed: static init_gap form factor, broadcast flat across omega ---
+    gap_shape = (norb, norb, Nx, Ny, Nz, nmat)
+    sigma_static = sc._initialize_gap(init_gap_mode, norb,
+                                      kx_array, ky_array, kz_array)
+    phi0 = np.broadcast_to(sigma_static[..., np.newaxis], gap_shape).copy()
+    phi0 = phi0.astype(complex)
+    n0 = np.linalg.norm(phi0)
+    if n0 > 0:
+        phi0 /= n0
+
+    vec_size = norb * norb * Nk * nmat
+    assert phi0.size == vec_size
+
+    def _matvec(x):
+        return eliashberg_kernel_dynamic(
+            Vs_q_w, G2_w, x.reshape(gap_shape), norb, beta).ravel()
+
+    def make_operator():
+        op = LinearOperator((vec_size, vec_size), matvec=_matvec,
+                            dtype=complex)
+        return op, vec_size
+
+    # Map [eliashberg] controls to the _solve_leading solver_mode string,
+    # exactly as calc_eliashberg does for the static path.
+    if solver_mode == "iteration":
+        eigenvalue, sigma_flat, info = sc._solve_leading(
+            make_operator, vec_size, "iteration",
+            max_iter=max_iter, convergence_tol=tol, alpha=alpha,
+            init_vec=phi0.ravel())
+        eigenvalues_all = None
+    else:
+        # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
+        eigenvalue, sigma_flat, info = sc._solve_leading(
+            make_operator, vec_size, eigenvalue_method,
+            num_eigenvalues=num_eigenvalues)
+        eigenvalues_all = info.get("eigenvalues")
+
+    lam = float(np.real(eigenvalue))
+    logger.info("Dynamic Eliashberg leading eigenvalue lambda = %.6f", lam)
+
+    # --- Outputs (full gap.dat/gap_dynamic.npz formatting is Task 7) ---
+    gap_w = np.asarray(sigma_flat).reshape(gap_shape)
+    output_dir = input_dict["file"]["output"]["path_to_output"]
+    os.makedirs(output_dir, exist_ok=True)
+    eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
+    with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
+        fw.write("# Dynamic Eliashberg leading eigenvalue\n")
+        fw.write("{:.8e}\n".format(lam))
+        if eigenvalues_all is not None:
+            fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|\n")
+            for i, ev in enumerate(eigenvalues_all):
+                fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
+                    i, ev.real, ev.imag, abs(ev)))
+    np.savez(os.path.join(output_dir, "gap_dynamic.npz"),
+             gap=gap_w, eigenvalue=lam)
+
+    return lam
