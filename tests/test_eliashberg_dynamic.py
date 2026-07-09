@@ -308,6 +308,30 @@ def test_kernel_single_k_matches_dense_freq_operator():
     assert np.allclose(out, expected, atol=1e-10)
 
 
+def test_kernel_precomputed_vertex_rt_matches():
+    """The pairing vertex's (q, i nu) -> (r, tau) transform is phi-independent,
+    so it can be hoisted out of the power-iteration/Arnoldi matvec: applying
+    the kernel with the precomputed real-space/tau vertex (``Vs_rt``) must be
+    bit-identical to the plain call that transforms ``Vs_q_w`` internally."""
+    from hwave.solver import eliashberg_dynamic as ed
+    norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 8
+    beta = 7.0
+    rng = np.random.default_rng(23)
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    V_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    G2_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    phi = rc((norb, norb, Nx, Ny, Nz, nmat))
+
+    ref = ed.eliashberg_kernel_dynamic(V_w, G2_w, phi, norb, beta)
+    V_rt = ed.vertex_qw_to_rt(V_w)
+    out = ed.eliashberg_kernel_dynamic(None, G2_w, phi, norb, beta,
+                                       Vs_rt=V_rt)
+    np.testing.assert_array_equal(out, ref)
+
+
 def test_frequency_inner_is_full_vdot():
     from hwave.solver import eliashberg_dynamic as ed
     rng = np.random.default_rng(11)
