@@ -478,6 +478,13 @@ def solve_dynamic(input_dict):
     # Map [eliashberg] controls to the _solve_leading solver_mode string,
     # exactly as calc_eliashberg does for the static path.
     if solver_mode == "iteration":
+        # Unlike the static _solve_iteration, the dynamic path does not enforce
+        # a singlet/triplet parity projection: the leading mode is selected only
+        # by the seed parity and the channel-specific vertex. Near a parity
+        # crossover this can converge to the opposite-parity dominant mode.
+        logger.warning(
+            "Dynamic iteration solver does not enforce parity projection; "
+            "use solver_mode='eigenvalue' if the parity is ambiguous.")
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, "iteration",
             max_iter=max_iter, convergence_tol=tol, alpha=alpha,
@@ -485,6 +492,12 @@ def solve_dynamic(input_dict):
         eigenvalues_all = None
     else:
         # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
+        # Note: "both" degrades to eigenvalue-only here (the static path also
+        # runs a power-iteration leg); the ARPACK leading pair is returned.
+        if solver_mode == "both":
+            logger.warning(
+                "Dynamic solver_mode='both' runs the eigenvalue leg only; "
+                "the power-iteration cross-check is skipped.")
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, eigenvalue_method,
             num_eigenvalues=num_eigenvalues)
