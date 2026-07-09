@@ -194,12 +194,17 @@ class FLEX(RPA):
                 "generalized FLEX solver.".format(self.spin_mode))
 
         if self.calc_mu:
+            # spin-free counts one spin, so the target is halved (as in
+            # RPA._find_mu / RPA.solve).  Ncond_target is reused every SCF
+            # iteration to re-solve mu from the DRESSED Green's function.
             if self.spin_mode == "spin-free":
-                Ncond = self.Ncond / 2
+                Ncond_target = self.Ncond / 2
             else:
-                Ncond = self.Ncond
-            dist, mu = self._find_mu(Ncond, self.T)
+                Ncond_target = self.Ncond
+            # initial mu from the non-interacting bands (Sigma = 0)
+            dist, mu = self._find_mu(Ncond_target, self.T)
         else:
+            Ncond_target = None
             mu = self.mu_value
 
         self.mu = mu
@@ -210,6 +215,32 @@ class FLEX(RPA):
         # Store for reference
         self.green0 = green0
         self.green0_tail = green0_tail
+
+        # High-frequency tail contract (coeff_tail): RPA's tail acceleration
+        # is a two-step pair -- _calc_green subtracts aa/(i w_n) in FREQUENCY
+        # space, and _calc_chi0q subtracts the analytic tau-space constant
+        # green0_tail (= VV† aa beta/2) after the Matsubara FFT.  The dressed
+        # Green's function below comes from _calc_dressed_green, which returns
+        # the FULL physical G, so the frequency-space term must be subtracted
+        # here before handing G to _calc_chi0q; otherwise G(tau) is uniformly
+        # shifted by -aa/2 and chi0q is O(1) wrong.
+        #
+        # The tail subtraction is applied ONLY to the chi0q transform (the one
+        # paired with green0_tail).  The self-energy convolution keeps the
+        # full physical G: its FFT pipeline is an exact cyclic frequency
+        # convolution and needs no tau-space tail reconstruction -- measured
+        # on the 8x8 Hubbard fixture, reconstructing the "true" G(tau) there
+        # does not improve the Nmat convergence of Sigma.
+        aa = self.coeff_tail
+        if aa != 0.0:
+            iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+            ev = self.H0_eigenvector
+            VVt = ev @ np.conj(ev).swapaxes(-2, -1)  # (nblock, nvol, nd, nd)
+            green_tail_w = ((aa / (1j * iomega))[np.newaxis, :, np.newaxis,
+                                                 np.newaxis, np.newaxis]
+                            * VVt[:, np.newaxis])
+        else:
+            green_tail_w = None
 
         # Initialize self-energy to zero
         # Shape: (nblock, nmat, nvol, nd_block, nd_block)
@@ -227,11 +258,29 @@ class FLEX(RPA):
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
 
+            # Re-solve mu so the DRESSED G reproduces the target particle
+            # number: as Sigma grows the frozen non-interacting mu no longer
+            # yields Ncond electrons, so the run would otherwise converge to a
+            # different filling than requested.  mu is solved for the current
+            # sigma BEFORE building green_kw so the stored (mu, green_kw) pair
+            # is self-consistent (N(green_kw) == Ncond).  A fixed mu
+            # (calc_mu=False) is left untouched.
+            if self.calc_mu:
+                mu = self._find_mu_dressed(sigma, beta, Ncond_target)
+                self.mu = mu
+
             # Step 3: Compute dressed Green's function G(k, iwn)
             green_kw = self._calc_dressed_green(beta, mu, sigma)
 
+            # Tail-subtracted G for the Matsubara-FFT transforms (see the
+            # coeff_tail contract above); identical to green_kw when aa == 0.
+            if green_tail_w is not None:
+                green_scf = green_kw - green_tail_w
+            else:
+                green_scf = green_kw
+
             # Step 4: Compute chi0(q, ivn) from dressed G
-            chi0q_raw = self._calc_chi0q(green_kw, green0_tail, beta)
+            chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
 
             # Remove spin block dimension
             if self.spin_mode in ["spin-free", "spinful"]:
@@ -341,6 +390,122 @@ class FLEX(RPA):
         green = np.linalg.inv(green_inv)
 
         return green
+
+    @do_profile
+    def _calc_number_dressed(self, sigma, mu, beta):
+        """Particle number carried by the dressed Green's function at ``mu``.
+
+        The self-energy shifts and renormalizes the dressed G, so the actual
+        electron count differs from the non-interacting Fermi count.  The count
+        is evaluated with the standard tail-subtracted Matsubara sum: the
+        non-interacting reference is summed analytically (Fermi function) and
+        only the small, absolutely-convergent difference ``G - G0`` is summed
+        over the finite Matsubara grid::
+
+            N(mu) = sum_{block,k,a} f(eps_a(k) - mu)
+                    + (1/beta) sum_{k,n} Tr[ G(k,iwn) - G0(k,iwn) ]
+
+        Here ``G0(k,iwn) = [(iwn+mu)I - H0(k)]^{-1}`` (same mu), whose analytic
+        occupation is exactly the Fermi term, and ``G - G0 = G0 Sigma G`` decays
+        as ``1/(iwn)^2`` so the residual sum needs no e^{iwn 0+} convergence
+        factor and is real.  At ``Sigma = 0`` the residual vanishes and ``N``
+        reduces exactly to the ``_find_mu`` Fermi count.
+
+        The total is compared against the SAME target convention as
+        :meth:`RPA._find_mu`: the sum runs over all spin blocks, so for
+        spin-free (one block) it is the one-spin count (target ``Ncond/2``).
+
+        Parameters
+        ----------
+        sigma : ndarray
+            Self-energy, shape (nblock, nmat, nvol, nd_block, nd_block).
+        mu : float
+            Trial chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        float
+            Particle number N(mu).
+        """
+        nmat = self.nmat
+        ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
+
+        # analytic non-interacting reference (Fermi function)
+        n_ref = self._fermi_occupation(1.0 / beta, mu, ew).sum()
+
+        # dressed correction Tr[G - G0], summed over the finite Matsubara grid
+        green = self._calc_dressed_green(beta, mu, sigma)
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        trG = np.einsum('bnkaa->bnk', green)          # (nblock, nmat, nvol)
+        trG0 = (1.0 / ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                       + (mu - ew)[:, np.newaxis, :, :])).sum(axis=-1)
+        corr = (trG - trG0).sum() / beta
+
+        return n_ref + corr.real
+
+    @staticmethod
+    def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
+        """Fermi function with the same overflow guard as RPA._find_mu."""
+        w = (ev - mu) / t
+        mask = w < ene_cutoff
+        w1 = np.where(mask, w, 0.0)
+        v1 = 1.0 / (1.0 + np.exp(w1))
+        return np.where(mask, v1, 0.0)
+
+    @do_profile
+    def _find_mu_dressed(self, sigma, beta, Ncond):
+        """Re-solve mu so the dressed Green's function carries ``Ncond``.
+
+        Holds ``sigma`` fixed and solves ``N(mu) = Ncond`` with
+        :meth:`_calc_number_dressed`.  Mirrors :meth:`RPA._find_mu`
+        (bisection, Newton fallback), but the bracket is widened by the
+        self-energy scale because Sigma can push spectral weight outside the
+        bare band edges.
+
+        Parameters
+        ----------
+        sigma : ndarray
+            Current self-energy (fixed during the mu search).
+        beta : float
+            Inverse temperature.
+        Ncond : float
+            Target particle number (already halved for spin-free, matching
+            :meth:`RPA._find_mu`).
+
+        Returns
+        -------
+        float
+            Chemical potential mu such that N(mu) = Ncond.
+        """
+        from scipy import optimize
+
+        w = self.H0_eigenvalue
+        # widen the bracket by the (static) self-energy scale: Sigma shifts the
+        # band, so the bare eigenvalue range may not bracket the root.
+        pad = float(np.abs(sigma.real).max()) + 1.0
+        lo = float(w.min()) - pad
+        hi = float(w.max()) + pad
+
+        def _delta_n(mu):
+            return self._calc_number_dressed(sigma, mu, beta) - Ncond
+
+        is_converged = False
+        if _delta_n(lo) * _delta_n(hi) < 0.0:
+            mu, r = optimize.bisect(_delta_n, lo, hi,
+                                    full_output=True, disp=False)
+            is_converged = r.converged
+        if not is_converged:
+            mu, r = optimize.newton(_delta_n, 0.5 * (lo + hi),
+                                    full_output=True, disp=False)
+            is_converged = r.converged
+        if not is_converged:
+            logger.error("FLEX._find_mu_dressed: not converged. abort")
+            sys.exit(1)
+
+        logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
+        return mu
 
     @do_profile
     def _flex_compute_veff(self, chi0q_raw, ham_orig):
@@ -906,6 +1071,11 @@ class FLEX(RPA):
         1. Transform G and V_eff to (r, tau) space
         2. Multiply in (r, tau) space: Sigma(r,tau) = V(r,tau) * G(r,tau)
         3. Transform back to (k, iwn) space
+
+        ``green_kw`` is the FULL physical Green's function (NOT the
+        tail-subtracted one used for chi0q): the self-energy convolution is an
+        exact cyclic frequency convolution and needs no tau-space tail
+        reconstruction.
 
         Parameters
         ----------
