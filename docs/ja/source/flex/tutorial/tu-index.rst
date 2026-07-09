@@ -190,7 +190,14 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``T = 0.5``: 温度
 - ``CellShape = [8, 8, 1]``: 2D系の 8 x 8 k点メッシュ
 - ``Nmat = 64``: 松原周波数の数
-- ``filling = 0.5``: ハーフフィリング
+- ``filling = 0.5``: 1サイトあたりの目標電子数（ハーフフィリング）。``filling``
+  （または ``Ncond``）を指定すると、FLEX は各SCF反復でドレスドGreen関数から化学
+  ポテンシャル :math:`\mu` を解き直し、自己エネルギーが成長してもフィリングを保存
+  します。代わりに ``mu`` を指定した場合は固定されます。
+- ``coeff_tail = 1.0``（省略可）: 松原和の高振動数テール加速係数。``coeff_tail = 1``
+  は :math:`G` の厳密な :math:`1/(i\omega_n)` 係数（ユニタリ性）に一致するため、
+  結果を歪めずに ``Nmat`` に対する収束を加速します。RPAソルバーでもサポートされて
+  います。
 - ``IterationMax = 100``: SCF反復の最大回数
 - ``Mix = 0.2``: 自己エネルギー更新の混合パラメータ
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`)

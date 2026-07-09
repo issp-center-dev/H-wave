@@ -15,7 +15,6 @@ The solver inherits from the RPA class to reuse infrastructure for:
 from __future__ import annotations
 from typing import Optional
 
-import sys
 import os
 import numpy as np
 import numpy.fft as FFT
@@ -763,11 +762,15 @@ class FLEX(RPA):
             f_hi = _delta_n(hi)
         else:
             # 60 doublings span ~1e18 * initial width: a real root cannot be
-            # this far out. Fail loudly rather than return garbage.
-            logger.error("FLEX._find_mu_dressed: root not bracketed after "
-                         "expansion to [{}, {}] (N-Ncond = {}, {}). abort"
-                         .format(lo, hi, f_lo, f_hi))
-            sys.exit(1)
+            # this far out. Fail loudly rather than return garbage. Raise a
+            # catchable exception (not sys.exit) so parameter sweeps, pipelines,
+            # and notebooks can handle/aggregate the failure instead of having
+            # the whole interpreter torn down.
+            raise RuntimeError(
+                "FLEX._find_mu_dressed: chemical-potential root not bracketed "
+                "after expansion to [{}, {}] (N-Ncond = {}, {}). Check the "
+                "target filling/Ncond and temperature.".format(
+                    lo, hi, f_lo, f_hi))
 
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
         if f_lo > 0.0:

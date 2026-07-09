@@ -203,7 +203,16 @@ Key parameters:
 - ``T = 0.5``: Temperature.
 - ``CellShape = [8, 8, 1]``: 8 x 8 k-point mesh for a 2D system.
 - ``Nmat = 64``: Number of Matsubara frequencies.
-- ``filling = 0.5``: Half filling.
+- ``filling = 0.5``: target electron number per site (half filling). Specifying
+  ``filling`` (or ``Ncond``) makes FLEX re-solve the chemical potential
+  :math:`\mu` from the dressed Green's function at every SCF iteration so the
+  filling is conserved as the self-energy grows; specifying ``mu`` instead holds
+  it fixed.
+- ``coeff_tail = 1.0`` (optional): high-frequency tail-acceleration coefficient
+  for the Matsubara sums. ``coeff_tail = 1`` matches the exact
+  :math:`1/(i\omega_n)` coefficient of :math:`G` (unitarity), so it accelerates
+  convergence in ``Nmat`` without biasing the result. Also supported by the RPA
+  solver.
 - ``IterationMax = 100``: Maximum number of SCF iterations.
 - ``Mix = 0.2``: Mixing parameter for self-energy update
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`).

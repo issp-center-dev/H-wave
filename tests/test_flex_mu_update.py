@@ -212,6 +212,21 @@ class TestFlexMuUpdate(unittest.TestCase):
         self.assertLess(mu, float(solver.H0_eigenvalue.min()) - 1.0)
         self.assertAlmostEqual(n_at_mu, target, places=6)
 
+    def test_find_mu_unbracketable_target_raises(self):
+        """A target above the total number of states can never be bracketed
+        (N(mu) -> Nstate < target as mu -> +inf).  _find_mu_dressed must raise
+        a catchable RuntimeError (not sys.exit, which would tear down the whole
+        interpreter and break sweeps/notebooks)."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64, T=1.0)
+        solver._calc_epsilon_k(green_info)
+        beta = 1.0 / solver.T
+        nb, nv, nd = solver.H0_eigenvalue.shape
+        sigma = np.zeros((nb, solver.nmat, nv, nd, nd), dtype=np.complex128)
+
+        nstate = int(np.prod(solver.H0_eigenvalue.shape))
+        with self.assertRaises(RuntimeError):
+            solver._find_mu_dressed(sigma, beta, float(nstate) * 10.0)
+
     def test_fixed_mu_is_not_resolved(self):
         """calc_mu=False: mu stays at the user value through the whole run."""
         mu_in = 0.5
