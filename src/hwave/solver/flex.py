@@ -455,11 +455,101 @@ class FLEX(RPA):
         return np.where(mask, v1, 0.0)
 
     @do_profile
+    def _matsubara_number_operator(self, sigma, beta):
+        r"""Eigenvalues of the mu-independent part of ``G^{-1}``, for the mu
+        search.
+
+        During the chemical-potential search ``sigma`` is held FIXED, so
+
+            G^{-1}(k, iwn; mu) = (iwn + mu) I - H0(k) - Sigma(k, iwn)
+                               = M(k, iwn) + mu I,
+            M(k, iwn) = iwn I - H0(k) - Sigma(k, iwn)   (mu-independent).
+
+        Diagonalizing ``M`` ONCE then gives ``Tr[G(mu)] = sum_j 1/(lam_j + mu)``
+        for ANY trial ``mu`` -- one eigenvalue decomposition per iteration
+        instead of one full matrix inversion per bisection step (the mu search
+        was ~50% of solve()).  ``M`` is non-Hermitian, but its eigenvalues sit
+        at ``lam_j ~ iwn - (real band+Sigma)``, i.e. ``|Im(lam_j)| ~ |wn| >=
+        pi/beta > 0``, so ``lam_j + mu`` (mu real) never touches zero: the
+        1/(lam+mu) sum is well conditioned.
+
+        Parameters
+        ----------
+        sigma : ndarray
+            Self-energy, shape (nblock, nmat, nvol, nd_block, nd_block).
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        lam : ndarray
+            Eigenvalues of ``M``, shape (nblock, nmat, nvol, nd_block).
+        ew : ndarray
+            H0 band energies ``self.H0_eigenvalue`` (returned for convenience,
+            used by :meth:`_number_from_eigs` for the analytic reference).
+        """
+        ew = self.H0_eigenvalue
+        ev = self.H0_eigenvector
+        nblock, nvol, nd = ew.shape
+        nmat = self.nmat
+
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        H0_k = np.matmul(ev * ew[:, :, np.newaxis, :],
+                         np.conj(ev).swapaxes(-2, -1))       # (nb, nvol, nd, nd)
+        eye = np.eye(nd, dtype=np.complex128)
+        iw = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
+        M = iw * eye - H0_k[:, np.newaxis, :, :, :] - sigma  # (nb,nmat,nvol,nd,nd)
+
+        lam = np.linalg.eigvals(M)                            # (nb,nmat,nvol,nd)
+        return lam, ew
+
+    def _number_from_eigs(self, lam, ew, mu, beta):
+        """Particle number N(mu) from precomputed ``M`` eigenvalues.
+
+        Cheap closure evaluated for every trial ``mu`` in the bisection:
+        identical formula and result as :meth:`_calc_number_dressed` (verified
+        to machine precision in the tests), but reusing the eigenvalues from
+        :meth:`_matsubara_number_operator` instead of re-inverting G::
+
+            N(mu) = sum_{block,k,a} f(eps_a - mu)
+                    + (1/beta) sum_{k,n} [ sum_j 1/(lam_j + mu)
+                                           - sum_a 1/(iwn + mu - eps_a) ]
+
+        Parameters
+        ----------
+        lam : ndarray
+            ``M`` eigenvalues from :meth:`_matsubara_number_operator`,
+            shape (nblock, nmat, nvol, nd_block).
+        ew : ndarray
+            H0 band energies, shape (nblock, nvol, nd_block).
+        mu : float
+            Trial chemical potential.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        float
+            Particle number N(mu).
+        """
+        nmat = self.nmat
+        n_ref = self._fermi_occupation(1.0 / beta, mu, ew).sum()
+
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        trG = (1.0 / (lam + mu)).sum(axis=-1)                # (nb, nmat, nvol)
+        trG0 = (1.0 / ((1j * iomega)[np.newaxis, :, np.newaxis, np.newaxis]
+                       + (mu - ew)[:, np.newaxis, :, :])).sum(axis=-1)
+        corr = (trG - trG0).sum() / beta
+        return n_ref + corr.real
+
+    @do_profile
     def _find_mu_dressed(self, sigma, beta, Ncond):
         """Re-solve mu so the dressed Green's function carries ``Ncond``.
 
-        Holds ``sigma`` fixed and solves ``N(mu) = Ncond`` with
-        :meth:`_calc_number_dressed`.  Mirrors :meth:`RPA._find_mu`
+        Holds ``sigma`` fixed and solves ``N(mu) = Ncond``.  The ``M``
+        eigenvalues are computed ONCE via :meth:`_matsubara_number_operator`
+        and every trial ``mu`` is then a cheap :meth:`_number_from_eigs` call
+        (no per-step matrix inversion).  Mirrors :meth:`RPA._find_mu`
         (bisection, Newton fallback), but the bracket is widened by the
         self-energy scale because Sigma can push spectral weight outside the
         bare band edges.
@@ -488,8 +578,12 @@ class FLEX(RPA):
         lo = float(w.min()) - pad
         hi = float(w.max()) + pad
 
+        # Diagonalize the mu-independent part of G^{-1} once; each trial mu is
+        # then a cheap sum over eigenvalues (see _matsubara_number_operator).
+        lam, ew = self._matsubara_number_operator(sigma, beta)
+
         def _delta_n(mu):
-            return self._calc_number_dressed(sigma, mu, beta) - Ncond
+            return self._number_from_eigs(lam, ew, mu, beta) - Ncond
 
         is_converged = False
         if _delta_n(lo) * _delta_n(hi) < 0.0:

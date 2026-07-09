@@ -94,6 +94,31 @@ class TestFlexMuUpdate(unittest.TestCase):
 
         self.assertAlmostEqual(n_dressed, n_fermi, places=10)
 
+    def test_eig_number_matches_dressed_number(self):
+        """The eigenvalue-accelerated particle count used inside the mu search
+        must equal the reference inversion-based _calc_number_dressed to
+        machine precision, for a NON-trivial (frequency-dependent, complex)
+        self-energy.  This pins the optimization: G^{-1}(mu) = M + mu*I with M
+        fixed, so Tr[G(mu)] = sum_j 1/(lam_j(M) + mu) needs the eigenvalues of
+        M only once, not one inversion per trial mu."""
+        solver, green_info = _make_solver({'Ncond': 40.0}, Nmat=64)
+        beta = 1.0 / solver.T
+        solver._calc_epsilon_k(green_info)
+        nblock, nvol, nd_block = solver.H0_eigenvalue.shape
+
+        rng = np.random.default_rng(1)
+        sigma = 0.3 * (rng.standard_normal((nblock, solver.nmat, nvol,
+                                            nd_block, nd_block))
+                       + 1j * rng.standard_normal((nblock, solver.nmat, nvol,
+                                                   nd_block, nd_block)))
+        mu = 0.42
+
+        n_ref = solver._calc_number_dressed(sigma, mu, beta)
+        lam, ew = solver._matsubara_number_operator(sigma, beta)
+        n_eig = solver._number_from_eigs(lam, ew, mu, beta)
+
+        self.assertAlmostEqual(n_ref, n_eig, places=10)
+
     def test_particle_number_conserved_after_scf_doped(self):
         """After a converging FLEX run at a doped filling with U>0, the stored
         dressed Green's function must carry exactly Ncond electrons -- the
