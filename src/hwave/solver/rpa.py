@@ -1005,11 +1005,16 @@ class RPA:
                 sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
                 green_info["chiq_pm"] = _bk.to_host(sol_pm)
 
-        # Leave the reference Green's function on the host for downstream
-        # consumers (save_results, tests) after a GPU run.
-        if gpu_active and getattr(self, "green0", None) is not None:
-            self.green0 = _bk.to_host(self.green0)
-            self.green0_tail = _bk.to_host(self.green0_tail)
+        # Restore the solver's public attributes to host arrays so the
+        # post-solve object state is backend-independent for downstream
+        # consumers (save_results, tests).
+        if gpu_active:
+            if getattr(self, "green0", None) is not None:
+                self.green0 = _bk.to_host(self.green0)
+                self.green0_tail = _bk.to_host(self.green0_tail)
+            if getattr(self, "H0_eigenvalue", None) is not None:
+                self.H0_eigenvalue = _bk.to_host(self.H0_eigenvalue)
+                self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
 
         logger.info("End RPA calculations")
         pass

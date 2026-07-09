@@ -249,13 +249,14 @@ Parameters
 - ``fft_workers``
 
   **Type :**
-  Integer (default value is -1)
+  Integer (default value is 1)
 
   **Description :**
   Number of worker threads for the spatial FFTs (parallelized via
-  ``scipy.fft``; -1 uses all cores, 1 selects the serial numpy path).
-  Ignored on the GPU. Set a smaller number when running several
-  calculations concurrently.
+  ``scipy.fft``). The default 1 keeps the serial numpy path, unchanged
+  from previous releases (opt-in); -1 uses all cores. Ignored on the
+  GPU. Set a smaller number when running several calculations
+  concurrently.
 
 
 ``log`` section
