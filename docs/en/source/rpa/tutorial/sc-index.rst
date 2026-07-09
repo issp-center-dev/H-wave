@@ -588,6 +588,10 @@ moved to the device once before the iteration starts; each iteration then only
 transfers the gap vector. The result is numerically identical to the CPU run
 (within double-precision round-off).
 
+- Applies to ``frequency = "dynamic"`` only. The static solver is CPU-only, so
+  setting ``gpu = true`` with ``frequency = "static"`` (or omitted, which
+  defaults to static) fails fast with a ``ValueError`` rather than silently
+  ignoring the flag.
 - Requires `CuPy <https://cupy.dev/>`_ and a usable CUDA device. When CuPy is
   missing or no device is found, the solver warns and falls back to the CPU
   (numpy) path automatically -- same result, only slower.

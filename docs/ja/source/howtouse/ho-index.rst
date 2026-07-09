@@ -11,6 +11,7 @@
     - scipy モジュール
     - requests モジュール
     - tomli モジュール
+    - cupy モジュール（任意。動的 Eliashberg ソルバー ``hwave_sc`` を ``frequency = "dynamic"`` かつ ``gpu = true`` で GPU 実行する場合のみ）
 
     なお、H-waveのUHFk、RPA、FLEXモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
 
