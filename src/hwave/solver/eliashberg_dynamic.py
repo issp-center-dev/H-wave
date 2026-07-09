@@ -14,6 +14,19 @@ from hwave.solver import matsubara as ms
 logger = logging.getLogger("qlms").getChild("eliashberg_dynamic")
 
 
+def _gpu_requested(eli_param):
+    """Whether ``[eliashberg] gpu`` requests GPU execution.
+
+    Accepts a real TOML boolean, and (for programmatic dict configs) a truthy
+    string such as ``"true"``/``"1"``/``"yes"`` so a stray ``"false"`` string is
+    not treated as True by ``bool("false")``.
+    """
+    val = eli_param.get("gpu", False)
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return bool(val)
+
+
 # ---------------------------------------------------------------------------
 # Channel-parity of the frequency-resolved gap
 #
@@ -404,8 +417,11 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None):
     F = xp.einsum('iljmxyzn,lmxyzn->ijxyzn', G2_w, phi_w)
     # spatial k->r on F (per orbital pair, per fermionic freq); freq fermion->tau
     F_rt = xp.fft.ifftn(ms.fermion_to_tau(F, axis=-1), axes=(2, 3, 4))
-    # V(q, iv_l) -> (r, tau): spatial q->r, freq boson->tau
+    # V(q, iv_l) -> (r, tau): spatial q->r, freq boson->tau. Normalize the
+    # vertex to G2's backend: a caller may pass a host (numpy) Vs_rt/Vs_q_w with
+    # a device (cupy) G2_w, and the einsum below must not mix host/device arrays.
     V_rt = vertex_qw_to_rt(Vs_q_w) if Vs_rt is None else Vs_rt
+    V_rt = xp.asarray(V_rt)
     # phi_out_{l1,l4}(r,tau) = - sum_{l2,l3} V_{l1,l2,l3,l4}(r,tau) F_{l2,l3}(r,tau)
     prod = -xp.einsum('abcdxyzt,bcxyzt->adxyzt', V_rt, F_rt)
     # back: spatial r->k (fftn), freq tau->fermion. The single spatial fold's
@@ -617,7 +633,7 @@ def solve_dynamic(input_dict):
     alpha = eli_param.get("alpha", 0.5)
     tol = eli_param.get("convergence_tol", 1.0e-5)
     init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
-    use_gpu = bool(eli_param.get("gpu", False))
+    use_gpu = _gpu_requested(eli_param)
     xp, gpu_active = backend.get_backend(use_gpu, logger=logger)
 
     # --- Geometry / interactions (norb from the geometry file) ---

@@ -39,6 +39,26 @@ def test_dynamic_requires_even_nmat():
         sc._validate_dynamic_prereqs(inp)
 
 
+def test_gpu_requested_parses_bool_and_string():
+    from hwave.solver import eliashberg_dynamic as ed
+    assert ed._gpu_requested({"gpu": True}) is True
+    assert ed._gpu_requested({"gpu": False}) is False
+    assert ed._gpu_requested({}) is False
+    # programmatic string configs: only truthy strings enable GPU
+    assert ed._gpu_requested({"gpu": "true"}) is True
+    assert ed._gpu_requested({"gpu": "false"}) is False   # not bool("false")==True
+    assert ed._gpu_requested({"gpu": "0"}) is False
+
+
+def test_gpu_true_with_static_frequency_raises():
+    """gpu=true is only wired into the dynamic solver; on the static (CPU-only)
+    path it must fail loudly rather than silently ignore the flag."""
+    import hwave.sc as sc
+    inp = _min_input(gpu=True)          # frequency omitted -> static
+    with pytest.raises(ValueError, match="gpu"):
+        sc.calc_eliashberg(inp)
+
+
 def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     nvol = Nx*Ny*Nz; nd = norb*norb
     rng = np.random.default_rng(3)
