@@ -74,6 +74,49 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
     return chis_w, chic_w, green_w, chi_convention
 
 
+def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
+                                  Nx, Ny, Nz, pairing_type, convention):
+    """Full-frequency pairing vertex: apply sc._compute_vertices_flex per
+    bosonic Matsubara frequency and stack along the trailing axis.
+
+    Parameters
+    ----------
+    chis_w, chic_w : ndarray
+        Spin/charge susceptibilities, shape (Nx, Ny, Nz, nd, nd, nmat)
+        with nd = norb**2.
+    inter_k : dict
+        Interactions in k-space from sc._build_interaction_k.
+    norb, Nx, Ny, Nz : int
+        Orbital count and grid dimensions.
+    pairing_type : str
+        "singlet" or "triplet".
+    convention : str
+        "kuroki" or "myo" — MUST match the orbital convention chis_w/chic_w
+        were produced in (chi_convention from the FLEX loader); forwarded
+        unchanged to sc._compute_vertices_flex so the matching S/C matrices
+        are used at every frequency.
+
+    Returns
+    -------
+    Vs_q_w : ndarray
+        Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat).
+    """
+    import hwave.sc as sc
+    nmat = chis_w.shape[-1]
+
+    def _one(l):
+        return sc._compute_vertices_flex(
+            chis_w[..., l], chic_w[..., l], inter_k, norb, Nx, Ny, Nz,
+            pairing_type=pairing_type, convention=convention)
+
+    v0 = _one(0)
+    out = np.empty(v0.shape + (nmat,), dtype=v0.dtype)
+    out[..., 0] = v0
+    for l in range(1, nmat):
+        out[..., l] = _one(l)
+    return out
+
+
 def solve_dynamic(input_dict):
     """Solve the dynamic (frequency-resolved) Eliashberg equation.
 

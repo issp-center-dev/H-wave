@@ -78,3 +78,24 @@ def test_check_memory_aborts_over_limit():
     with pytest.raises(MemoryError, match="mem_limit_gb"):
         ed.check_memory(norb=2, Nk=1024, nmat=512, mem_limit_gb=0.01)
     ed.check_memory(norb=1, Nk=4, nmat=8, mem_limit_gb=0)  # disabled: no raise
+
+
+def test_dynamic_vertex_matches_static_per_frequency():
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
+    nd = norb*norb
+    rng = np.random.default_rng(5)
+    chis_w = rng.standard_normal((Nx, Ny, Nz, nd, nd, nmat)) + 0j
+    chic_w = rng.standard_normal((Nx, Ny, Nz, nd, nd, nmat)) + 0j
+    U = rng.standard_normal((norb, norb, Nx, Ny, Nz)) + 0j
+    inter_k = {"CoulombIntra": U}
+    Vw = ed.compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
+                                          Nx, Ny, Nz, pairing_type="singlet",
+                                          convention="kuroki")
+    # compare frequency l against the static routine fed that single slice
+    for l in range(nmat):
+        Vstat = sc._compute_vertices_flex(chis_w[..., l], chic_w[..., l], inter_k,
+                                          norb, Nx, Ny, Nz, pairing_type="singlet",
+                                          convention="kuroki")
+        assert np.allclose(Vw[..., l], Vstat, atol=1e-12)
