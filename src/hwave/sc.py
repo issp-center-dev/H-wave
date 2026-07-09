@@ -2114,6 +2114,29 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     # Eigenvalue family: ARPACK Arnoldi or shift-invert.
     A, _ = make_operator()
 
+    if not (solver_mode == "arnoldi" or solver_mode.startswith("shift-invert")):
+        raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
+
+    if vec_size < 1:
+        raise ValueError("Eliashberg operator has empty vector space")
+
+    if vec_size <= 2:
+        # scipy.sparse.linalg.eigs requires k < N - 1 for LinearOperator input,
+        # so the smallest valid dynamic grid (e.g. norb=1, Nk=1, Nmat=2) cannot
+        # go through ARPACK. Reconstruct the tiny dense operator directly.
+        dense = np.empty((vec_size, vec_size), dtype=complex)
+        basis = np.eye(vec_size, dtype=complex)
+        for j in range(vec_size):
+            dense[:, j] = A.matvec(basis[:, j])
+        vals, vecs = np.linalg.eig(dense)
+        vals, vecs = _order_eigenpairs(vals, vecs)
+        n_keep = min(max(1, num_eigenvalues), vec_size)
+        vals = vals[:n_keep]
+        vecs = vecs[:, :n_keep]
+        return vals[0], vecs[:, 0], {"eigenvalues": vals,
+                                     "eigenvectors": vecs,
+                                     "sigma_shift": sigma_shift}
+
     max_ev = min(num_eigenvalues, vec_size - 2)
     if max_ev < 1:
         max_ev = 1
@@ -2143,9 +2166,6 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         vals, vecs = _eigs_shift_invert(
             A, vec_size, max_ev, solver_mode, sigma=sigma_shift
         )
-
-    else:
-        raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
 
     # Order by largest real part (the physical SC eigenvalue), not magnitude.
     vals, vecs = _order_eigenpairs(vals, vecs)

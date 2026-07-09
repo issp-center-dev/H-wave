@@ -354,6 +354,26 @@ def test_dense_oracle(norb, Nx, Ny, Nz, nmat):
             lam, dense_leading)
 
 
+@pytest.mark.parametrize("solver_mode", ["arnoldi", "shift-invert-gmres"])
+def test_solve_leading_tiny_operator_uses_dense_fallback(solver_mode):
+    """ARPACK cannot handle LinearOperator eigenproblems with k >= N - 1.
+    The smallest dynamic grid has vec_size=2, so the shared eigenvalue driver
+    must use a dense fallback instead of calling eigs."""
+    import hwave.sc as sc
+    from scipy.sparse.linalg import LinearOperator
+
+    dense = np.array([[2.0, 0.0],
+                      [0.0, -3.0]], dtype=complex)
+    op = LinearOperator((2, 2), matvec=lambda x: dense @ x, dtype=complex)
+
+    lam, vec, info = sc._solve_leading(
+        lambda: (op, 2), 2, solver_mode, num_eigenvalues=10)
+
+    assert np.isclose(lam, 2.0)
+    assert info["eigenvalues"].shape == (2,)
+    assert np.allclose(dense @ vec, lam * vec)
+
+
 def test_analytic_flat_diagonal():
     """Closed-form pin: a frequency-flat, orbital-diagonal, k-uniform vertex V0
     with a k-uniform (but frequency-resolved) diagonal pair bubble G2(n) makes
