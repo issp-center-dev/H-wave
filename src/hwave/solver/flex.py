@@ -152,6 +152,31 @@ class FLEX(RPA):
         logger.info("    mix             = {}".format(self.mix))
         logger.info("    eps             = {:e}".format(self.eps))
 
+    def read_init(self, info_inputfile):
+        """Read initial configs, plus the FLEX-specific ``sigma_init``.
+
+        In addition to the inherited RPA inputs (``green_init`` / ``trans_mod``,
+        used to build H0(k)), FLEX can warm-start its SCF loop from a previously
+        saved self-energy: pass ``[file.input] sigma_init = "sigma.npz"`` (a
+        ``sigma.npz`` written by an earlier FLEX run). Starting from a converged
+        neighbouring solution (e.g. the next-higher temperature) instead of
+        ``Sigma = 0`` is often decisive for convergence near a magnetic
+        instability, where the zero-start transient makes the SCF oscillate.
+        """
+        info = super().read_init(info_inputfile)
+        if "sigma_init" in info_inputfile:
+            path_to_input = info_inputfile.get("path_to_input", "")
+            file_name = os.path.join(path_to_input,
+                                     info_inputfile["sigma_init"])
+            info["sigma_init"] = self._read_sigma(file_name)
+        return info
+
+    def _read_sigma(self, file_name):
+        """Load a saved self-energy array from a FLEX ``sigma.npz``."""
+        logger.info("FLEX: read initial self-energy from {}".format(file_name))
+        data = np.load(file_name)
+        return data["sigma"]
+
     @do_profile
     def solve(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
@@ -258,12 +283,28 @@ class FLEX(RPA):
         else:
             green_tail_w = None
 
-        # Initialize self-energy to zero
-        # Shape: (nblock, nmat, nvol, nd_block, nd_block)
+        # Initialize the self-energy: zero by default, or warm-start from a
+        # provided ``sigma_init`` (see read_init). Shape must match this run's
+        # (nblock, nmat, nvol, nd_block, nd_block) -- warm-start needs the same
+        # k-mesh and Matsubara grid.
         nblock = green0.shape[0]
         nd_block = green0.shape[-1]
-        sigma = xp.zeros((nblock, nmat, nvol, nd_block, nd_block),
-                         dtype=np.complex128)
+        expected = (nblock, nmat, nvol, nd_block, nd_block)
+        sigma_init = green_info.get("sigma_init")
+        if sigma_init is not None:
+            if sigma_init.shape != expected:
+                raise ValueError(
+                    "sigma_init shape {} does not match this run's {} "
+                    "(nblock, Nmat, Nvol, nd, nd); warm-start requires the same "
+                    "k-mesh and Matsubara grid. Regenerate sigma_init at this "
+                    "Nmat/CellShape.".format(sigma_init.shape, expected))
+            # xp.asarray moves the (host-loaded) seed to the device under GPU
+            # execution; on numpy it is a plain cast.
+            sigma = xp.asarray(np.array(sigma_init, dtype=np.complex128,
+                                        copy=True))
+            logger.info("FLEX: warm-starting the SCF loop from sigma_init")
+        else:
+            sigma = xp.zeros(expected, dtype=np.complex128)
 
         # Prepare interaction Hamiltonian (full spin-orbital space) as a
         # LOCAL backend copy: ham_info is shared state handed in by the
