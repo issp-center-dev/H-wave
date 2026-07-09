@@ -1180,8 +1180,10 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
-    chis_w = np.moveaxis(_expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz), 0, -1)
-    chic_w = np.moveaxis(_expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz), 0, -1)
+    chis_w = np.moveaxis(
+        _expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
+    chic_w = np.moveaxis(
+        _expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
 
     green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     return chis_w, chic_w, green_w, chi_convention
@@ -1223,27 +1225,59 @@ def _read_flex_chi_raw(input_dict):
     return chi_s_raw, chi_c_raw, chi_convention
 
 
-def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz):
+def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     """Reshape H-wave chi ``(nfreq, nvol, nd, nd)`` to
     ``(nfreq, Nx, Ny, Nz, nd, nd)`` in the ``nd = norb^2`` Eliashberg space,
-    expanding the spin-orbital block if the file is in spin-orbital space.
+    resolving the spin-orbital-vs-orbital-pair layout from ``convention``.
 
-    The mapping is elementwise in frequency (no mixing across the Matsubara
-    axis), so it may be applied to a single static slice or to the full axis
-    identically -- the static loader slices FIRST to avoid allocating the full
-    spin-orbital-expanded array.
+    The two FLEX conventions have DIFFERENT physical layouts that shape alone
+    cannot always tell apart:
+
+    - ``"myo"`` (general full-vertex FLEX) is already in orbital-pair space
+      ``nd_chi = norb^2``; passed through unchanged.
+    - ``"kuroki"`` (reduced / squashed FLEX) is in spin-orbital reduced space
+      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``); the spin-up
+      orbital block ``[:norb, :norb]`` is extracted and diagonally expanded to
+      ``norb^2 x norb^2``.
+
+    Whether the spin-orbital block must be extracted is decided by ``nd_chi``:
+    ``nd_chi == norb*ns`` means spin-orbital (extract), ``nd_chi == norb^2``
+    means orbital-pair (pass through). These two collide ONLY for ``norb == 2``
+    (``norb^2 == norb*ns == 4``); there the shape is ambiguous and the layout is
+    resolved from ``convention`` (``"kuroki"`` -> spin-orbital extract,
+    ``"myo"`` -> orbital-pair). The previous shape-only heuristic silently
+    treated a norb=2 kuroki spin-orbital chi as orbital-pair, skipping the
+    extraction and building a wrong pairing vertex.
+
+    The mapping is elementwise in frequency, so it may be applied to a single
+    static slice or the full axis identically.
     """
-    nd = norb * norb
+    ns = 2
+    nd = norb * norb          # orbital-pair dimension
+    nd_so = norb * ns         # spin-orbital reduced dimension
     nfreq = chi_raw.shape[0]
     chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, -1)
     nd_chi = int(np.sqrt(chi_full.shape[-1]))
     chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
 
-    if nd_chi == nd:
+    if nd_chi == nd and nd_chi == nd_so:
+        # ambiguous (norb == 2): the convention tag is the only disambiguator.
+        is_spin_orbital = (convention != "myo")
+    elif nd_chi == nd_so and nd_chi != nd:
+        is_spin_orbital = True
+    elif nd_chi == nd and nd_chi != nd_so:
+        is_spin_orbital = False
+    else:
+        raise ValueError(
+            "FLEX chi dimension nd_chi={} matches neither the orbital-pair "
+            "size norb^2={} nor the spin-orbital size norb*ns={}.".format(
+                nd_chi, nd, nd_so))
+
+    if not is_spin_orbital:
         return chi_full
 
-    # Spin-orbital reduced space (nd_chi = norb*ns): extract the spin-up block
-    # (diagonal in spin) and expand to norb^2 x norb^2 (diagonal in l2).
+    # Spin-orbital reduced (spin-block ordered s*norb+a): extract the spin-up
+    # orbital block and scatter it diagonally into norb^2 x norb^2.
     chi_orb = chi_full[:, :, :, :, :norb, :norb]
     out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
     for l2 in range(norb):
@@ -1325,9 +1359,9 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
 
     # Slice the static frequency FIRST, then expand only that single slice.
     chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
-                            norb, Nx, Ny, Nz)[0]
+                            norb, Nx, Ny, Nz, chi_convention)[0]
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
-                            norb, Nx, Ny, Nz)[0]
+                            norb, Nx, Ny, Nz, chi_convention)[0]
 
     green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     return chis, chic, green_dressed, chi_convention
