@@ -211,8 +211,11 @@ def test_kernel_single_k_matches_dense_freq_operator():
 def test_kernel_precomputed_vertex_rt_matches():
     """The pairing vertex's (q, i nu) -> (r, tau) transform is phi-independent,
     so it can be hoisted out of the power-iteration/Arnoldi matvec: applying
-    the kernel with the precomputed real-space/tau vertex (``Vs_rt``) must be
-    bit-identical to the plain call that transforms ``Vs_q_w`` internally."""
+    the kernel with the precomputed real-space/tau vertex (``Vs_rt``) must
+    match the plain call that transforms ``Vs_q_w`` internally. (Comparison is
+    at fp64 round-off, not bit-identity: numpy's FFT/einsum results vary in
+    the last bits with buffer alignment, so even two identical kernel calls
+    are not bit-reproducible.)"""
     from hwave.solver import eliashberg_dynamic as ed
     norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 8
     beta = 7.0
@@ -229,7 +232,7 @@ def test_kernel_precomputed_vertex_rt_matches():
     V_rt = ed.vertex_qw_to_rt(V_w)
     out = ed.eliashberg_kernel_dynamic(None, G2_w, phi, norb, beta,
                                        Vs_rt=V_rt)
-    np.testing.assert_array_equal(out, ref)
+    np.testing.assert_allclose(out, ref, rtol=1e-12, atol=1e-12)
 
 
 def test_frequency_inner_is_full_vdot():
@@ -314,6 +317,116 @@ def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
     assert np.isfinite(lam)
     assert os.path.exists(os.path.join(output_dir, "eigenvalue.dat"))
     assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
+
+
+def test_kernel_cupy_matches_numpy():
+    """The dynamic kernel applied to cupy arrays (GPU) must reproduce the
+    numpy result to fp64 round-off, and stay on the device."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+    from hwave.solver import eliashberg_dynamic as ed
+    norb, Nx, Ny, Nz, nmat = 2, 4, 2, 1, 8
+    beta = 7.0
+    rng = np.random.default_rng(29)
+
+    def rc(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    V_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    G2_w = rc((norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+    phi = rc((norb, norb, Nx, Ny, Nz, nmat))
+
+    ref = ed.eliashberg_kernel_dynamic(V_w, G2_w, phi, norb, beta)
+
+    V_rt_g = ed.vertex_qw_to_rt(cupy.asarray(V_w))
+    assert isinstance(V_rt_g, cupy.ndarray)
+    out_g = ed.eliashberg_kernel_dynamic(None, cupy.asarray(G2_w),
+                                         cupy.asarray(phi), norb, beta,
+                                         Vs_rt=V_rt_g)
+    assert isinstance(out_g, cupy.ndarray)
+    np.testing.assert_allclose(cupy.asnumpy(out_g), ref, atol=1e-10)
+    # a host-side (numpy) trial gap must also be accepted (the iterative
+    # solvers hand the matvec numpy vectors)
+    out_h = ed.eliashberg_kernel_dynamic(None, cupy.asarray(G2_w),
+                                         phi, norb, beta, Vs_rt=V_rt_g)
+    np.testing.assert_allclose(cupy.asnumpy(out_h), ref, atol=1e-10)
+
+
+def _dynamic_input_dict(input_dir, output_dir, nmat, extra_eliashberg=None):
+    eli = {"chi0q_mode": "flex", "frequency": "dynamic",
+           "solver_mode": "iteration", "max_iter": 50}
+    if extra_eliashberg:
+        eli.update(extra_eliashberg)
+    return {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": nmat,
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": eli,
+    }
+
+
+def test_solve_dynamic_gpu_falls_back_without_cupy(tmp_path, monkeypatch,
+                                                   caplog):
+    """[eliashberg] gpu=true on a machine without CuPy must warn and produce
+    the identical result via the numpy path."""
+    import os
+    import logging
+    from hwave.solver import backend
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1,
+                            Nx=2, Ny=2, Nz=1)
+
+    lam_cpu = ed.solve_dynamic(
+        _dynamic_input_dict(input_dir, output_dir, m["nmat"]))
+
+    def _no_cupy():
+        raise ImportError("No module named 'cupy'")
+
+    monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        lam_gpu_flag = ed.solve_dynamic(
+            _dynamic_input_dict(input_dir, output_dir, m["nmat"],
+                                extra_eliashberg={"gpu": True}))
+    assert any("cupy" in rec.message.lower() for rec in caplog.records)
+    assert np.isclose(lam_gpu_flag, lam_cpu, atol=1e-12)
+
+
+def test_solve_dynamic_gpu_end_to_end_matches_cpu(tmp_path):
+    """gpu=true with a real CUDA device must reproduce the CPU lambda."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1,
+                            Nx=2, Ny=2, Nz=1)
+
+    lam_cpu = ed.solve_dynamic(
+        _dynamic_input_dict(input_dir, output_dir, m["nmat"]))
+    lam_gpu = ed.solve_dynamic(
+        _dynamic_input_dict(input_dir, output_dir, m["nmat"],
+                            extra_eliashberg={"gpu": True}))
+    assert np.isclose(lam_gpu, lam_cpu, atol=1e-10)
 
 
 def test_solve_dynamic_requires_green(tmp_path):
