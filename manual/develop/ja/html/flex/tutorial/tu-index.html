@@ -626,8 +626,10 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <td><p>false</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code> で SCF ループ（dressed G、chi0q、chiq、V_eff、自己エネルギー）を
 GPU（CuPy）で実行します。CuPy または CUDA デバイスが無い場合は警告を出して
-CPU（numpy）実行へフォールバックします（結果は同一）。化学ポテンシャル探索の
-非エルミート固有値分解のみ CPU で実行されます。</p></td>
+CPU（numpy）実行へフォールバックします（結果は同一）。化学ポテンシャル探索も
+スピンブロックあたりの成分数が2以下（1軌道、およびスピン縮約した2軌道系など）
+なら閉形式の固有値により GPU 上で実行され、3以上の場合のみ非エルミート
+固有値分解を CPU で実行します。</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
