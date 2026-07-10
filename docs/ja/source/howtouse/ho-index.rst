@@ -18,6 +18,10 @@
       `CuPyインストールガイド <https://docs.cupy.dev/en/stable/install.html>`_
       を参照してください。CuPyが無い場合、``gpu = true`` は警告を出して
       CPU実行にフォールバックします。）
+    - sparse-ir モジュール（任意。動的 Eliashberg ソルバーの IR 基底松原軸
+      ``[eliashberg] matsubara_basis = "ir"`` にのみ必要です。
+      ``pip install sparse-ir`` でインストールできます。未導入で ``"ir"``
+      を指定した場合はインストール手順つきの明示エラーになります。）
 
     なお、H-waveのUHFk、RPA、FLEXモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
     RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの ``fft_workers``

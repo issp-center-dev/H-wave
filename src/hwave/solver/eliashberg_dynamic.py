@@ -559,7 +559,8 @@ def _fix_gauge(phi_w):
 
 def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                           kx_array, ky_array, kz_array, beta,
-                          gap_file="gap.dat", npz_file="gap_dynamic.npz"):
+                          gap_file="gap.dat", npz_file="gap_dynamic.npz",
+                          extra_meta=None):
     r"""Write the dynamic-Eliashberg gap outputs.
 
     Produces two files under ``output_dir``:
@@ -620,6 +621,7 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         eigenvalue=eigenvalue,
         axis_order=axis_order,
         normalization=normalization,
+        **(extra_meta or {}),
     )
 
     # gap.dat: the fermionic slice nearest omega = 0^+ (smallest positive w_n).
@@ -660,6 +662,146 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                             parts.append("{:.8e}".format(val.real))
                             parts.append("{:.8e}".format(val.imag))
                     fw.write(" ".join(parts) + "\n")
+
+
+def _ir_auto_wmax(hr, inter_k):
+    """Heuristic default for ir_wmax (design Sec. 4): 3x the sum of a
+    Gershgorin-style bound on the single-particle band range and the largest
+    interaction scale. Aborts (ValueError) when the estimate cannot be
+    formed, rather than silently defaulting."""
+    try:
+        tot = None
+        for _, mat in hr.items():
+            m = np.abs(np.asarray(mat, dtype=complex))
+            tot = m if tot is None else tot + m
+        band = float(tot.sum(axis=-1).max())
+        u = 0.0
+        for arr in inter_k.values():
+            u = max(u, float(np.abs(np.asarray(arr)).max()))
+        wmax = 3.0 * (band + u)
+    except Exception as exc:
+        raise ValueError(
+            "ir_wmax auto-estimate failed ({}); set [eliashberg] ir_wmax "
+            "explicitly (a real-frequency bandwidth in the same energy "
+            "units as the Hamiltonian).".format(exc))
+    if not np.isfinite(wmax) or wmax <= 0.0:
+        raise ValueError(
+            "ir_wmax auto-estimate is not a positive finite number "
+            "(band bound + interaction scale gave {}); set [eliashberg] "
+            "ir_wmax explicitly.".format(wmax))
+    return wmax
+
+
+def _ir_axes_for_run(eli_param, beta, hr, inter_k):
+    """Build the fermionic/bosonic IR axes for a dynamic-Eliashberg run."""
+    from hwave.solver.ir_axis import IRAxis
+    eps = float(eli_param.get("ir_tol", 1.0e-8))
+    wmax = eli_param.get("ir_wmax")
+    if wmax is None:
+        wmax = _ir_auto_wmax(hr, inter_k)
+        logger.info("IR: auto ir_wmax = %.6g (override with [eliashberg] "
+                    "ir_wmax)", wmax)
+    wmax = float(wmax)
+    axF = IRAxis(beta=beta, wmax=wmax, eps=eps, statistics="F")
+    axB = IRAxis(beta=beta, wmax=wmax, eps=eps, statistics="B")
+    logger.info("IR: Lambda=%.3g eps=%.1e -> L_F=%d (nodes %d), L_B=%d "
+                "(nodes %d)", beta * wmax, eps, axF.L, axF.n_freq,
+                axB.L, axB.n_freq)
+    return axF, axB
+
+
+def _ir_compress(arr, ax, nmat, label, drop_constant=False,
+                 max_chunk_bytes=1 << 28):
+    """Fit a centered-uniform-grid array (..., nmat) to IR and return its
+    values on the sparse frequency nodes (..., n_freq).
+
+    The least-squares fit runs over ALL uniform frequencies (the uniform grid
+    doubles as an oversampled residual check, design Sec. 3.2/5) and is
+    applied in chunks so transient buffers stay bounded. The max residual
+    over the full grid is logged; a residual large relative to the data
+    scale warns with the remedy.
+
+    ``drop_constant=True`` (used for the uniform-FFT susceptibilities)
+    augments the fit with a frequency-independent constant and DISCARDS it:
+    the constant is the O(beta/Nmat) discretization artifact of the discrete
+    tau -> i nu transform (a delta(tau) component), not part of the physical
+    chi; the IR representation is closer to the continuum object than the
+    raw uniform data. The largest discarded constant is logged.
+    """
+    lead = arr.reshape(-1, nmat)
+    rows = max(1, int(max_chunk_bytes // max(1, arr.itemsize * nmat)))
+    out = np.empty((lead.shape[0], ax.n_freq), dtype=np.complex128)
+    fit_m, _ = ax.uniform_matrices(nmat, with_constant=drop_constant)
+    resid = 0.0
+    const_max = 0.0
+    for s in range(0, lead.shape[0], rows):
+        chunk = lead[s:s + rows]
+        sol = chunk @ fit_m
+        if drop_constant:
+            coeffs = sol[..., :ax.L]
+            const_max = max(const_max, float(np.abs(sol[..., ax.L]).max()))
+            resid = max(resid, float(np.abs(
+                ax.eval_to_uniform(coeffs, nmat)
+                + sol[..., ax.L:ax.L + 1] - chunk).max()))
+        else:
+            coeffs = sol
+            resid = max(resid, float(
+                np.abs(ax.eval_to_uniform(coeffs, nmat) - chunk).max()))
+        out[s:s + rows] = ax.eval_to_freq(coeffs)
+    scale = float(np.abs(lead).max()) or 1.0
+    logger.info("IR compress %-8s: nmat=%d -> nodes=%d (L=%d), max uniform "
+                "residual %.3e (rel %.3e)%s", label, nmat, ax.n_freq, ax.L,
+                resid, resid / scale,
+                (", discarded delta(tau) constant %.3e" % const_max)
+                if drop_constant else "")
+    if drop_constant and const_max > 0.05 * scale:
+        logger.warning(
+            "IR compress %s: the discarded frequency-independent component "
+            "(%.3e) is unusually large (>5%% of the data scale %.3e). The "
+            "O(beta/Nmat) discretization constant should be small; a large "
+            "value may indicate an unexpected constant in the input data -- "
+            "check the FLEX output / increase [mode.param] Nmat in the FLEX run.",
+            label, const_max, scale)
+    if resid > 1.0e3 * ax.eps * scale:
+        logger.warning(
+            "IR fit residual for %s is large (rel %.3e > 1e3*ir_tol); the "
+            "object may exceed the basis bandwidth -- raise ir_wmax or "
+            "tighten ir_tol.", label, resid / scale)
+    return out.reshape(arr.shape[:-1] + (ax.n_freq,))
+
+
+def _ir_vertex_to_rtau(V_nodes, axB, axF, workers=1):
+    """Pairing vertex on bosonic frequency nodes -> (r, fermionic tau nodes).
+
+    The kernel's tau product lives on the FERMIONIC tau nodes (the result
+    V*F is anti-periodic, so the fermionic fit applies); the bosonic
+    coefficients are evaluated there exactly (design Sec. 3.2). This is the
+    IR analogue of the hoisted ``Vs_rt`` invariant.
+    """
+    coeffs = axB.fit_from_freq(V_nodes)
+    V_tau = axB.eval_to_tau_points(coeffs, axF.tau)
+    return _spatial_ifftn(V_tau, axes=(4, 5, 6), workers=workers)
+
+
+def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta, workers=1):
+    """Apply the dynamic Eliashberg kernel on sparse IR nodes.
+
+    Mirrors ``eliashberg_kernel_dynamic`` with the phase-twisted FFT
+    frequency transforms replaced by the IR node transforms (fused
+    fit+evaluate matmuls). The IR transforms are PHYSICAL (G(tau) carries
+    its 1/beta, the tau->freq step is the integral over tau), while the
+    uniform-grid FFT chain carries one net factor beta; the explicit
+    ``beta`` factor here restores the identical operator normalization
+    (pinned by test_ir_matvec_matches_uniform_kernel).
+    """
+    xp = backend.array_module_of(G2_nodes)
+    phi_nodes = xp.asarray(phi_nodes)
+    F = xp.einsum('iljmxyzn,lmxyzn->ijxyzn', G2_nodes, phi_nodes)
+    F_rt = _spatial_ifftn(axF.freq_to_tau(F), axes=(2, 3, 4), workers=workers)
+    prod = -xp.einsum('abcdxyzt,bcxyzt->adxyzt', V_rt_tau, F_rt)
+    out = axF.tau_to_freq(_spatial_fftn(prod, axes=(2, 3, 4),
+                                        workers=workers))
+    return beta * out
 
 
 def solve_dynamic(input_dict):
@@ -714,6 +856,13 @@ def solve_dynamic(input_dict):
     init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     use_gpu = _gpu_requested(eli_param)
     xp, gpu_active = backend.get_backend(use_gpu, logger=logger)
+    matsubara_basis = str(
+        eli_param.get("matsubara_basis", "uniform")).lower()
+    if matsubara_basis not in ("uniform", "ir"):
+        raise ValueError(
+            "matsubara_basis must be 'uniform' or 'ir', got '{}'."
+            .format(matsubara_basis))
+    use_ir = (matsubara_basis == "ir")
 
     # --- Geometry / interactions (norb from the geometry file) ---
     geom_info, hr, interactions = sc._read_interaction_files(input_dict)
@@ -735,7 +884,22 @@ def solve_dynamic(input_dict):
             "[file.input] path_to_flex_output / [eliashberg] flex_green.")
     nmat = chis_w.shape[-1]
 
-    # --- Vertex and pair bubble on the full frequency grid ---
+    # --- Optional IR compression of the frequency axis (design Sec. 3.2):
+    # everything downstream (vertex assembly, pair bubble, kernel, parity
+    # machinery) is per-frequency or reversal-based, so it operates on the
+    # sparse symmetric node axis unchanged. The full uniform tensors of the
+    # VERTEX and G2 are never built on the IR path.
+    axF = axB = None
+    if use_ir:
+        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k)
+        chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
+                              drop_constant=True)
+        chic_w = _ir_compress(chic_w, axB, nmat, "chiq_c",
+                              drop_constant=True)
+        green_w = _ir_compress(green_w, axF, nmat, "green")
+    nfreq_axis = axF.n_freq if use_ir else nmat
+
+    # --- Vertex and pair bubble on the frequency axis ---
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
                 "convention=%s)...", pairing_type, chi_convention)
     Vs_q_w = compute_vertices_flex_dynamic(
@@ -745,7 +909,7 @@ def solve_dynamic(input_dict):
     G2_w = calc_g2_dynamic(green_w, beta)
 
     # --- Seed: static init_gap form factor, broadcast flat across omega ---
-    gap_shape = (norb, norb, Nx, Ny, Nz, nmat)
+    gap_shape = (norb, norb, Nx, Ny, Nz, nfreq_axis)
     sigma_static = sc._initialize_gap(init_gap_mode, norb,
                                       kx_array, ky_array, kz_array)
     phi0 = np.broadcast_to(sigma_static[..., np.newaxis], gap_shape).copy()
@@ -754,7 +918,7 @@ def solve_dynamic(input_dict):
     if n0 > 0:
         phi0 /= n0
 
-    vec_size = norb * norb * Nk * nmat
+    vec_size = norb * norb * Nk * nfreq_axis
     assert phi0.size == vec_size
 
     # GPU path: park the two large invariants (pair bubble and vertex) on the
@@ -778,14 +942,23 @@ def solve_dynamic(input_dict):
 
     # The vertex's (q, i nu) -> (r, tau) transform is phi-independent and
     # dominates the matvec cost, so do it once here; drop the (q, i nu) form
-    # to keep the resident vertex memory unchanged.
-    Vs_rt = vertex_qw_to_rt(Vs_q_w, workers=fft_workers)
+    # to keep the resident vertex memory unchanged. On the IR path the tau
+    # grid is the fermionic node set (the product V*F is anti-periodic).
+    if use_ir:
+        Vs_rt = _ir_vertex_to_rtau(Vs_q_w, axB, axF, workers=fft_workers)
+    else:
+        Vs_rt = vertex_qw_to_rt(Vs_q_w, workers=fft_workers)
     del Vs_q_w
 
     def _matvec(x):
-        out = eliashberg_kernel_dynamic(
-            None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt,
-            workers=fft_workers)
+        if use_ir:
+            out = eliashberg_kernel_ir(
+                Vs_rt, G2_w, x.reshape(gap_shape), axF, beta,
+                workers=fft_workers)
+        else:
+            out = eliashberg_kernel_dynamic(
+                None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt,
+                workers=fft_workers)
         return backend.to_host(out).ravel()
 
     def make_operator():
@@ -855,6 +1028,14 @@ def solve_dynamic(input_dict):
     # Gauge-fix the eigenvector (deterministic phase/normalization) so the
     # written gap is reproducible across runs and linear-algebra backends.
     gap_w = _fix_gauge(np.asarray(sigma_flat).reshape(gap_shape))
+    if use_ir:
+        # Densify the node-resolved gap back to the run's uniform grid so
+        # the output format/metadata is IDENTICAL to the uniform path (the
+        # gauge was fixed on nodes; re-fix after densification so the pivot
+        # convention refers to the written array). The npz records the IR
+        # provenance (design Sec. 3.2).
+        gap_w = _fix_gauge(axF.eval_to_uniform(
+            axF.fit_from_freq(gap_w), nmat))
     output_dir = input_dict["file"]["output"]["path_to_output"]
     os.makedirs(output_dir, exist_ok=True)
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
@@ -877,8 +1058,15 @@ def solve_dynamic(input_dict):
                         i, ev.real, ev.imag, abs(ev)))
 
     gap_file = eli_param.get("output_gap", "gap.dat")
+    # Provenance metadata is added ONLY on the opt-in IR path: the default
+    # uniform output keeps its exact historical key set.
+    if use_ir:
+        extra_meta = {"matsubara_basis": "ir", "ir_tol": axF.eps,
+                      "ir_wmax": axF.wmax, "ir_L": axF.L}
+    else:
+        extra_meta = None
     write_dynamic_outputs(output_dir, gap_w, lam, T, pairing_type,
                           kx_array, ky_array, kz_array, beta,
-                          gap_file=gap_file)
+                          gap_file=gap_file, extra_meta=extra_meta)
 
     return lam
