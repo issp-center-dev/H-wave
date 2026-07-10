@@ -101,7 +101,7 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
 
     # IR-path objects from the SAME npz
-    axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k)
+    axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k, norb)
     chis_n = ed._ir_compress(chis_w, axB, NMAT, "chiq_s", drop_constant=True)
     chic_n = ed._ir_compress(chic_w, axB, NMAT, "chiq_c", drop_constant=True)
     green_n = ed._ir_compress(green_w, axF, NMAT, "green")
@@ -148,9 +148,15 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     # systematically with wmax and is percent-level already at the default.
     assert diff_default < 5e-1
     eli2 = dict(inp["eliashberg"]); eli2["ir_wmax"] = 200.0
-    axF2, axB2 = ed._ir_axes_for_run(eli2, beta, hr, inter_k)
-    chis2 = ed._ir_compress(chis_w, axB2, NMAT, "chiq_s", drop_constant=True)
-    chic2 = ed._ir_compress(chic_w, axB2, NMAT, "chiq_c", drop_constant=True)
+    axF2, axB2 = ed._ir_axes_for_run(eli2, beta, hr, inter_k, norb)
+    # This is a kernel-ALGEBRA gate (operator equivalence on identical
+    # densified data), not a data-fidelity check: at this deliberately large
+    # wmax the delta(tau) constant is big (ill-conditioned drop), which the
+    # production solve would reject -- opt out of that guard here.
+    chis2 = ed._ir_compress(chis_w, axB2, NMAT, "chiq_s", drop_constant=True,
+                            error_on_large_constant=False)
+    chic2 = ed._ir_compress(chic_w, axB2, NMAT, "chiq_c", drop_constant=True,
+                            error_on_large_constant=False)
     green2 = ed._ir_compress(green_w, axF2, NMAT, "green")
     V2 = ed.compute_vertices_flex_dynamic(chis2, chic2, inter_k, norb,
                                           Nx, Ny, Nz, pairing_type="singlet",

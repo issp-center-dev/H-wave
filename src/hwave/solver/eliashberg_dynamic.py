@@ -664,17 +664,40 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                     fw.write(" ".join(parts) + "\n")
 
 
-def _ir_auto_wmax(hr, inter_k):
-    """Heuristic default for ir_wmax (design Sec. 4): 3x the sum of a
-    Gershgorin-style bound on the single-particle band range and the largest
-    interaction scale. Aborts (ValueError) when the estimate cannot be
-    formed, rather than silently defaulting."""
+def _ir_auto_wmax(hr, inter_k, norb, beta, mu=None, filling=None):
+    """Heuristic default for ir_wmax (design Sec. 4): 3x the sum of the
+    single-particle spectral half-range and the largest interaction scale.
+    Aborts (ValueError) when the estimate cannot be formed, rather than
+    silently defaulting.
+
+    The spectral half-range is ``max|eps_k - mu|`` from the actual dispersion
+    eps(k), diagonalized on a coarse k-mesh built from the real-space transfer
+    integrals; this is the real-frequency extent the IR basis must cover. The
+    chemical potential ``mu`` is used directly when given, else solved from
+    ``filling`` via ``sc._determine_mu`` (mu is what sets where the spectral
+    weight sits relative to zero -- ignoring it and using max|eps_k| would
+    re-introduce any on-site energy offset). ``hr`` is the flat wan90 layout
+    ``{((Rx,Ry,Rz),(orb1,orb2)): scalar}`` (see ``sc._build_hamiltonian_k``);
+    it must NOT be summed as if each value were a per-R matrix -- doing so
+    returns the grand total of |t| over every (R, orbital-pair), a large
+    overestimate on realistic multi-hopping models (issue #57)."""
     try:
-        tot = None
-        for _, mat in hr.items():
-            m = np.abs(np.asarray(mat, dtype=complex))
-            tot = m if tot is None else tot + m
-        band = float(tot.sum(axis=-1).max())
+        import hwave.sc as sc
+        # Even nk includes the zone boundary (k = pi); a coarse but tight
+        # bound on the spectral range for the heuristic. The interaction adds
+        # an extra spectral scale on top of the band.
+        nk = 16
+        kaxis = np.linspace(0.0, 2.0 * np.pi, nk, endpoint=False)
+        eps_k = sc._build_hamiltonian_k(kaxis, kaxis, kaxis, hr, norb)
+        # (norb, norb, Nx, Ny, Nz) -> (Nx, Ny, Nz, norb, norb); Hermitize
+        # (guards against tiny asymmetry in the input) and diagonalize.
+        hk = np.moveaxis(eps_k, (0, 1), (-2, -1))
+        hk = 0.5 * (hk + np.conjugate(np.swapaxes(hk, -1, -2)))
+        evals = np.linalg.eigvalsh(hk)
+        if mu is None:
+            mu = (sc._determine_mu(evals, beta, float(filling), norb)
+                  if filling is not None else 0.0)
+        band = float(np.abs(evals - float(mu)).max())
         u = 0.0
         for arr in inter_k.values():
             u = max(u, float(np.abs(np.asarray(arr)).max()))
@@ -687,18 +710,18 @@ def _ir_auto_wmax(hr, inter_k):
     if not np.isfinite(wmax) or wmax <= 0.0:
         raise ValueError(
             "ir_wmax auto-estimate is not a positive finite number "
-            "(band bound + interaction scale gave {}); set [eliashberg] "
+            "(spectral range + interaction scale gave {}); set [eliashberg] "
             "ir_wmax explicitly.".format(wmax))
     return wmax
 
 
-def _ir_axes_for_run(eli_param, beta, hr, inter_k):
+def _ir_axes_for_run(eli_param, beta, hr, inter_k, norb, mu=None, filling=None):
     """Build the fermionic/bosonic IR axes for a dynamic-Eliashberg run."""
     from hwave.solver.ir_axis import IRAxis
     eps = float(eli_param.get("ir_tol", 1.0e-8))
     wmax = eli_param.get("ir_wmax")
     if wmax is None:
-        wmax = _ir_auto_wmax(hr, inter_k)
+        wmax = _ir_auto_wmax(hr, inter_k, norb, beta, mu=mu, filling=filling)
         logger.info("IR: auto ir_wmax = %.6g (override with [eliashberg] "
                     "ir_wmax)", wmax)
     wmax = float(wmax)
@@ -711,6 +734,7 @@ def _ir_axes_for_run(eli_param, beta, hr, inter_k):
 
 
 def _ir_compress(arr, ax, nmat, label, drop_constant=False,
+                 keep_constant=False, error_on_large_constant=True,
                  max_chunk_bytes=1 << 28):
     """Fit a centered-uniform-grid array (..., nmat) to IR and return its
     values on the sparse frequency nodes (..., n_freq).
@@ -722,11 +746,24 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
     scale warns with the remedy.
 
     ``drop_constant=True`` (used for the uniform-FFT susceptibilities)
-    augments the fit with a frequency-independent constant and DISCARDS it:
-    the constant is the O(beta/Nmat) discretization artifact of the discrete
-    tau -> i nu transform (a delta(tau) component), not part of the physical
-    chi; the IR representation is closer to the continuum object than the
-    raw uniform data. The largest discarded constant is logged.
+    augments the fit with a frequency-independent constant. When it is the
+    O(beta/Nmat) discretization artifact of the discrete tau -> i nu transform
+    (a delta(tau) component the smooth IR basis cannot represent) it is small
+    and DISCARDING it makes the IR representation closer to the continuum
+    object than the raw uniform data.
+
+    But when the susceptibility is *static-dominated* (large and nearly flat in
+    nu within the sampled window -- the near-critical regime that matters for
+    superconductivity), the constant column absorbs physical static weight, and
+    dropping it silently corrupts the result (issue #57). A fitted constant
+    that EXCEEDS the data scale cannot be the (small) O(beta/Nmat) artifact --
+    it is the signature of an ill-conditioned fit on static-dominated data --
+    so this raises ValueError unless ``keep_constant=True`` (retain the constant
+    by adding it back onto every frequency node) or ``error_on_large_constant=
+    False`` (drop it anyway -- for the kernel-algebra gate, which feeds both
+    kernels the same densified data and asserts operator equivalence, not data
+    fidelity). A constant above 5% of the data scale (but below it) still warns.
+    The largest constant is logged.
     """
     lead = arr.reshape(-1, nmat)
     rows = max(1, int(max_chunk_bytes // max(1, arr.itemsize * nmat)))
@@ -739,29 +776,51 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
         sol = chunk @ fit_m
         if drop_constant:
             coeffs = sol[..., :ax.L]
-            const_max = max(const_max, float(np.abs(sol[..., ax.L]).max()))
+            const = sol[..., ax.L:ax.L + 1]
+            const_max = max(const_max, float(np.abs(const).max()))
             resid = max(resid, float(np.abs(
-                ax.eval_to_uniform(coeffs, nmat)
-                + sol[..., ax.L:ax.L + 1] - chunk).max()))
+                ax.eval_to_uniform(coeffs, nmat) + const - chunk).max()))
+            node = ax.eval_to_freq(coeffs)
+            if keep_constant:
+                node = node + const
+            out[s:s + rows] = node
         else:
             coeffs = sol
             resid = max(resid, float(
                 np.abs(ax.eval_to_uniform(coeffs, nmat) - chunk).max()))
-        out[s:s + rows] = ax.eval_to_freq(coeffs)
+            out[s:s + rows] = ax.eval_to_freq(coeffs)
     scale = float(np.abs(lead).max()) or 1.0
     logger.info("IR compress %-8s: nmat=%d -> nodes=%d (L=%d), max uniform "
                 "residual %.3e (rel %.3e)%s", label, nmat, ax.n_freq, ax.L,
                 resid, resid / scale,
-                (", discarded delta(tau) constant %.3e" % const_max)
+                ((", retained" if keep_constant else ", discarded")
+                 + " frequency-independent constant %.3e" % const_max)
                 if drop_constant else "")
-    if drop_constant and const_max > 0.05 * scale:
-        logger.warning(
-            "IR compress %s: the discarded frequency-independent component "
-            "(%.3e) is unusually large (>5%% of the data scale %.3e). The "
-            "O(beta/Nmat) discretization constant should be small; a large "
-            "value may indicate an unexpected constant in the input data -- "
-            "check the FLEX output / increase [mode.param] Nmat in the FLEX run.",
-            label, const_max, scale)
+    if drop_constant:
+        if (not keep_constant and error_on_large_constant
+                and const_max > scale):
+            raise ValueError(
+                "IR compress {}: the discarded frequency-independent component "
+                "({:.3e}) exceeds the data scale ({:.3e}). It cannot be the "
+                "small O(beta/Nmat) delta(tau) discretization artifact; this is "
+                "an ill-conditioned fit on a static-dominated susceptibility, "
+                "and dropping the constant gives an unusable result (issue "
+                "#57). Lower [eliashberg] ir_wmax (Lambda = beta*wmax may be "
+                "far too large), increase [mode.param] Nmat in the FLEX run, or "
+                "set [eliashberg] ir_keep_static_chi = true to retain the "
+                "static component.".format(label, const_max, scale))
+        # Warn regardless of keep_constant/escape-hatch: a large constant is a
+        # diagnostic signal (e.g. over-large ir_wmax) that must not be silenced
+        # just because the caller opted to retain or tolerate it.
+        if const_max > 0.05 * scale:
+            logger.warning(
+                "IR compress %s: the frequency-independent component "
+                "(%.3e) is unusually large (>5%% of the data scale %.3e). The "
+                "O(beta/Nmat) discretization constant should be small; a large "
+                "value may indicate an unexpected constant in the input data -- "
+                "check the FLEX output / increase [mode.param] Nmat in the FLEX "
+                "run.%s", label, const_max, scale,
+                " (retained via ir_keep_static_chi)" if keep_constant else "")
     if resid > 1.0e3 * ax.eps * scale:
         logger.warning(
             "IR fit residual for %s is large (rel %.3e > 1e3*ir_tol); the "
@@ -891,11 +950,14 @@ def solve_dynamic(input_dict):
     # VERTEX and G2 are never built on the IR path.
     axF = axB = None
     if use_ir:
-        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k)
+        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
+                                    mu=mode_param.get("mu"),
+                                    filling=mode_param.get("filling"))
+        keep_static = bool(eli_param.get("ir_keep_static_chi", False))
         chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
-                              drop_constant=True)
+                              drop_constant=True, keep_constant=keep_static)
         chic_w = _ir_compress(chic_w, axB, nmat, "chiq_c",
-                              drop_constant=True)
+                              drop_constant=True, keep_constant=keep_static)
         green_w = _ir_compress(green_w, axF, nmat, "green")
     nfreq_axis = axF.n_freq if use_ir else nmat
 
