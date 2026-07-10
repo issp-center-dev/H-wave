@@ -83,6 +83,77 @@ def _eigvals_small(M):
     return np.linalg.eigvals(_bk.to_host(M))
 
 
+class _AndersonMixer:
+    r"""Anderson (Pulay/DIIS-type) acceleration of the FLEX SCF update.
+
+    The SCF loop is a fixed-point iteration ``sigma -> F(sigma)``. Linear
+    mixing takes ``x_{k+1} = x_k + beta r_k`` with the residual
+    ``r_k = F(x_k) - x_k``. Anderson acceleration extrapolates over a short
+    history of ``(x, r)`` pairs: with difference columns
+    ``dR = [r_k - r_{k-1}, ...]`` and ``dX = [x_k - x_{k-1}, ...]`` it solves
+    the (regularized) least-squares problem ``min_gamma |r_k - dR gamma|``
+    via the normal equations and updates
+
+        x_{k+1} = x_k + beta r_k - (dX + beta dR) gamma.
+
+    With no usable history (first step, or ``depth=1``) this reduces exactly
+    to the linear-mixing step. The histories live on the iterate's array
+    backend (device arrays under GPU execution; only the tiny Gram system is
+    solved on the host), so acceleration adds ``2*depth`` sigma-sized arrays
+    of memory but no host round trips. If the extrapolated iterate is not
+    finite (near-singular history), the mixer falls back to the plain linear
+    step and restarts its history.
+    """
+
+    def __init__(self, mix, depth):
+        self.mix = float(mix)
+        self.depth = max(1, int(depth))
+        self._xs = []   # iterate history (flattened, backend arrays)
+        self._rs = []   # residual history
+
+    def step(self, sigma, sigma_new):
+        """Return the next iterate from ``sigma`` and ``F(sigma)=sigma_new``."""
+        xp = _bk.array_module_of(sigma)
+        shape = sigma.shape
+        x = sigma.reshape(-1)
+        r = sigma_new.reshape(-1) - x
+
+        self._xs.append(x)
+        self._rs.append(r)
+        if len(self._xs) > self.depth:
+            self._xs.pop(0)
+            self._rs.pop(0)
+
+        m = len(self._xs)
+        if m == 1:
+            return (x + self.mix * r).reshape(shape)
+
+        # difference columns as (m-1, N) stacks
+        dR = xp.stack([self._rs[i + 1] - self._rs[i] for i in range(m - 1)])
+        dX = xp.stack([self._xs[i + 1] - self._xs[i] for i in range(m - 1)])
+
+        # normal equations on the host (the system is (m-1) x (m-1))
+        G = _bk.to_host(dR.conj() @ dR.T)
+        b = _bk.to_host(dR.conj() @ r)
+        # Tikhonov guard against a (near-)degenerate history
+        lam = 1.0e-10 * max(float(np.trace(G).real) / (m - 1), 1.0e-300)
+        try:
+            gamma = np.linalg.solve(G + lam * np.eye(m - 1), b)
+        except np.linalg.LinAlgError:
+            gamma = None
+
+        if gamma is not None:
+            x_next = (x + self.mix * r
+                      - (dX + self.mix * dR).T @ xp.asarray(gamma))
+            if bool(xp.isfinite(x_next).all()):
+                return x_next.reshape(shape)
+
+        # fallback: plain linear step, restart the history from this point
+        self._xs = [x]
+        self._rs = [r]
+        return (x + self.mix * r).reshape(shape)
+
+
 class FLEX(RPA):
     """FLEX solver that extends RPA with self-consistent Green's functions.
 
@@ -181,6 +252,16 @@ class FLEX(RPA):
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
+
+        # SCF update scheme: plain linear mixing (default, unchanged), or
+        # Anderson acceleration over a short iterate/residual history.
+        self.mixing_scheme = str(
+            self.param_mod.get("mixing_scheme", "linear")).lower()
+        if self.mixing_scheme not in ("linear", "anderson"):
+            raise ValueError(
+                "mixing_scheme must be 'linear' or 'anderson', got '{}'."
+                .format(self.mixing_scheme))
+        self.anderson_depth = int(self.param_mod.get("anderson_depth", 5))
 
         eps_exp = self.param_mod.get("EPS", 6)
         if isinstance(eps_exp, float) and eps_exp < 1.0:
@@ -385,6 +466,9 @@ class FLEX(RPA):
         # Main SCF loop
         diff = float("inf")
         converged = False
+        n_iter_done = 0
+        mixer = (_AndersonMixer(self.mix, self.anderson_depth)
+                 if self.mixing_scheme == "anderson" else None)
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
 
@@ -437,7 +521,11 @@ class FLEX(RPA):
             diff = self._calc_convergence(sigma, sigma_new)
             logger.info("  convergence: |dSigma|/|Sigma| = {:.3e}".format(diff))
 
-            sigma = (1.0 - self.mix) * sigma + self.mix * sigma_new
+            n_iter_done = iteration + 1
+            if mixer is not None:
+                sigma = mixer.step(sigma, sigma_new)
+            else:
+                sigma = (1.0 - self.mix) * sigma + self.mix * sigma_new
 
             if diff < self.eps:
                 logger.info("FLEX converged after {} iterations".format(
@@ -449,6 +537,11 @@ class FLEX(RPA):
             logger.warning("FLEX did not converge after {} iterations "
                            "(diff={:.3e}, eps={:.3e})".format(
                                self.max_iter, diff, self.eps))
+
+        # SCF outcome, for programmatic consumers (sweeps, tests, mixer
+        # comparisons)
+        self.scf_converged = converged
+        self.scf_iterations = n_iter_done
 
         if self.max_iter == 0:
             # No SCF iteration ran: green_kw / chi_s / chi_c / chi0q_out were

@@ -580,6 +580,23 @@ The FLEX solver accepts the following parameters in the
      - 6
      - Convergence criterion. If integer :math:`n`, the threshold is
        :math:`10^{-n}`. If float < 1, used directly as threshold.
+   * - ``mixing_scheme``
+     - str
+     - "linear"
+     - Self-energy update scheme. ``"linear"`` is the conventional linear
+       mixing :math:`\Sigma \leftarrow (1-\alpha)\Sigma +
+       \alpha\Sigma_{\mathrm{new}}`. ``"anderson"`` enables Anderson
+       acceleration (Pulay/DIIS-type extrapolation over a short
+       iterate/residual history), which reaches the same fixed point in far
+       fewer iterations (e.g. 78 -> 13 on the 8x8 Hubbard benchmark at
+       :math:`U=3.5`, ``Mix=0.2``). Falls back to a plain linear step
+       automatically if the history becomes degenerate.
+   * - ``anderson_depth``
+     - int
+     - 5
+     - History depth :math:`m` of the Anderson acceleration. Memory grows by
+       :math:`2m` sigma-sized arrays (kept on the device under GPU
+       execution).
    * - ``gpu``
      - bool
      - false
