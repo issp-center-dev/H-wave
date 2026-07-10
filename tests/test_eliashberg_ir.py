@@ -12,7 +12,17 @@ import os
 import numpy as np
 import pytest
 
-pytest.importorskip("sparse_ir")
+# Import-safe under BOTH pytest and unittest discovery (the CI runs
+# `unittest discover`, where pytest.importorskip at module level would turn
+# a missing optional dependency into an import ERROR instead of a skip).
+try:
+    import sparse_ir  # noqa: F401
+    _HAVE_SPARSE_IR = True
+except ImportError:
+    _HAVE_SPARSE_IR = False
+
+pytestmark = pytest.mark.skipif(not _HAVE_SPARSE_IR,
+                                reason="sparse-ir not installed")
 
 
 BETA_T = 0.5          # temperature of the mini pipeline

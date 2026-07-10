@@ -9,7 +9,17 @@ beta^- route to equal-time observables.
 import numpy as np
 import pytest
 
-pytest.importorskip("sparse_ir")
+# Import-safe under BOTH pytest and unittest discovery (the CI runs
+# `unittest discover`, where pytest.importorskip at module level would turn
+# a missing optional dependency into an import ERROR instead of a skip).
+try:
+    import sparse_ir  # noqa: F401
+    _HAVE_SPARSE_IR = True
+except ImportError:
+    _HAVE_SPARSE_IR = False
+
+pytestmark = pytest.mark.skipif(not _HAVE_SPARSE_IR,
+                                reason="sparse-ir not installed")
 
 
 def _axis(statistics, beta=50.0, wmax=8.0, eps=1e-8):
