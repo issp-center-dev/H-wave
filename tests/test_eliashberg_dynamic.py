@@ -847,7 +847,7 @@ def test_outputs_written(tmp_path):
     npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
     assert set(npz.files) == {
         "gap", "iomega", "T", "pairing_type", "frequency",
-        "eigenvalue", "axis_order", "normalization"}, \
+        "eigenvalue", "axis_order", "normalization", "matsubara_basis"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
     assert str(npz["frequency"]) == "dynamic"
     assert npz["iomega"].shape == (m["nmat"],)

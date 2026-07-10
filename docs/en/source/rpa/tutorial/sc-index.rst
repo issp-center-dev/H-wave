@@ -181,6 +181,13 @@ This section controls the Eliashberg solver. Key parameters:
 - ``fft_workers``: Number of FFT worker threads for the dynamic-mode spatial
   FFTs (default ``1`` = the serial numpy path, unchanged from previous
   releases; ``-1`` uses all cores; ignored on the GPU).
+- ``matsubara_basis``: Matsubara-axis representation of the dynamic mode:
+  ``"uniform"`` (default, unchanged) or ``"ir"`` (the sparse-ir intermediate
+  representation; see :ref:`the IR section <sc_dynamic_ir_en>` below).
+- ``ir_tol``: IR basis cutoff accuracy (default 1e-8).
+- ``ir_wmax``: real-frequency bandwidth of the IR basis (auto-estimated from
+  the band range and interaction scale when omitted; an unformable estimate
+  is a fail-fast error asking for an explicit value).
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -606,6 +613,34 @@ several dynamic solves concurrently to avoid oversubscribing the CPU. Together
 these give roughly a 4x speedup at ``norb = 2``, ``N_k = 1024``,
 ``N_{mat} = 1024``. On the GPU (``gpu = true``) the FFTs already run on the
 device and ``fft_workers`` is ignored.
+
+.. _sc_dynamic_ir_en:
+
+IR-basis (sparse-ir) compression of the Matsubara axis
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``matsubara_basis = "ir"`` replaces the dynamic mode's uniform Matsubara grid
+(``Nmat`` points) by the sparse sampling nodes of the intermediate
+representation (IR) basis -- typically 50-100 nodes, improving with lower
+temperature. Requires the optional
+`sparse-ir <https://sparse-ir.readthedocs.io>`_ package
+(``pip install sparse-ir``). The kernel, the eigen-iteration, and the parity
+filtering all run on the sparse nodes, cutting the frequency-axis memory and
+compute by ``Nmat/L`` (20-40x). Composes with GPU execution (``gpu = true``).
+
+Outputs (``gap_dynamic.npz`` / ``gap.dat``) are densified back to the uniform
+grid, so downstream analysis works unchanged (the npz gains provenance
+metadata such as ``matsubara_basis``).
+
+.. note::
+
+   FLEX outputs computed on the uniform FFT grid (``chiq_s.npz`` etc.) carry
+   ``O(beta/Nmat)`` discretization artifacts (a delta(tau)-derived constant
+   offset plus aliasing images). The IR loader isolates and discards the
+   constant (logged), and the eigenvalue difference between the IR and
+   uniform paths is bounded by this input-data quality (measured ~1% at
+   ``Nmat=128`` and 5e-4 at ``Nmat=512`` on the test fixture); both converge
+   to the same continuum limit as ``Nmat`` grows.
 
 .. _sc_dynamic_gpu_en:
 
