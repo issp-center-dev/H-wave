@@ -647,6 +647,17 @@ Outputs (``gap_dynamic.npz`` / ``gap.dat``) are densified back to the uniform
 grid, so downstream analysis works unchanged (the npz gains provenance
 metadata such as ``matsubara_basis``).
 
+When the FLEX run itself uses ``[mode.param] matsubara_basis = "ir"`` with
+``write_densified = false`` (IR-native output files, recognizable by their
+``frequency_grid = "sparse_ir_nodes"`` key), the dynamic solver with
+``matsubara_basis = "ir"`` consumes them directly: the stored node values
+are used as-is when the node sets coincide (the common case), or refit onto
+this run's basis otherwise (logged, with a residual check). The temperature
+must match the FLEX run (a mismatch is an error — the susceptibilities are
+physics input). With ``matsubara_basis = "uniform"``, IR-native inputs are
+rejected with an explicit error; either switch this solver to ``"ir"`` or
+re-run FLEX with ``write_densified = true``.
+
 .. note::
 
    FLEX outputs computed on the uniform FFT grid (``chiq_s.npz`` etc.) carry

@@ -24,6 +24,7 @@ from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
 import hwave
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.rpa import validate_chi0q_index_convention
+from hwave.solver.ir_axis import is_ir_native, ir_native_meta
 
 logger = logging.getLogger("hwave_sc")
 
@@ -223,6 +224,18 @@ def _read_freq_meta(data):
     return freq_index, file_nmat
 
 
+def _reject_ir_native(data, file_name, hint):
+    """Fail fast when a uniform-grid reader is handed sparse-node data
+    (design ir-matsubara-stage3.md Sec. 4). MUST run before any freq_index
+    metadata interpretation: the legacy fallbacks (missing freq_index ->
+    center row) would otherwise silently read a sparse node as the static
+    slice."""
+    if is_ir_native(data):
+        raise ValueError(
+            "file '{}' holds sparse-IR node data "
+            "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
+
+
 def _load_chi0q(input_dict):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
@@ -246,6 +259,12 @@ def _load_chi0q(input_dict):
 
     logger.info("Loading chi0q from {}".format(file_name))
     data = np.load(file_name)
+    _reject_ir_native(
+        data, file_name,
+        "the static Eliashberg solver requires uniform-grid files. Re-run "
+        "FLEX with [mode.param] write_densified = true, or switch to "
+        "frequency = \"dynamic\" with [eliashberg] matsubara_basis = "
+        "\"ir\".")
     enable_spin_orbital = input_dict.get("mode", {}).get(
         "enable_spin_orbital", False)
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
@@ -1148,7 +1167,8 @@ def _resolve_flex_paths(input_dict):
     return chi_s_path, chi_c_path, green_path
 
 
-def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
+def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
+                                     allow_ir=False):
     """Load FLEX-computed susceptibilities from NPZ files (full frequency axis).
 
     Parameters
@@ -1175,8 +1195,29 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
         Orbital convention of chis_w/chic_w: "myo" (general full-vertex FLEX)
         or "kuroki" (reduced FLEX / legacy files). Pass this to
         _compute_vertices_flex so the matching S/C matrices are used.
+    ir_meta : dict or None
+        Only when ``allow_ir=True``: ``None`` for uniform files, else the
+        per-file IR node metadata ``{"chis":..., "chic":..., "green":...}``
+        ("green" absent when there is no green file). Mixed encodings raise.
     """
-    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+    if not allow_ir:
+        chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+        ir_meta = None
+        green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    else:
+        chi_s_raw, chi_c_raw, chi_convention, ir_meta = _read_flex_chi_raw(
+            input_dict, allow_ir=True)
+        green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                               allow_ir=True)
+        if green_w is not None and (green_meta is None) != (ir_meta is None):
+            raise ValueError(
+                "all dynamic-Eliashberg inputs must share one encoding; "
+                "re-run FLEX so chiq_s/chiq_c/green are all densified or "
+                "all IR-native (chi: {}, green: {}).".format(
+                    "IR-native" if ir_meta is not None else "densified",
+                    "IR-native" if green_meta is not None else "densified"))
+        if ir_meta is not None and green_meta is not None:
+            ir_meta = dict(ir_meta, green=green_meta)
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
@@ -1185,21 +1226,38 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz):
     chic_w = np.moveaxis(
         _expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
 
-    green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
-    return chis_w, chic_w, green_w, chi_convention
+    if not allow_ir:
+        return chis_w, chic_w, green_w, chi_convention
+    return chis_w, chic_w, green_w, chi_convention, ir_meta
 
 
-def _read_flex_chi_raw(input_dict):
+_STATIC_IR_HINT = (
+    "the static Eliashberg solver requires uniform-grid files. Re-run FLEX "
+    "with [mode.param] write_densified = true, or switch to frequency = "
+    "\"dynamic\" with [eliashberg] matsubara_basis = \"ir\".")
+
+
+def _read_flex_chi_raw(input_dict, allow_ir=False):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
     Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
-    ``(nmat, nvol, nd, nd)`` -- no reshape/expansion, so callers that only need
-    one static frequency can slice before expanding.
-    """
+    ``(nfreq, nvol, nd, nd)`` -- no reshape/expansion, so callers that only
+    need one static frequency can slice before expanding.
+
+    With ``allow_ir=True`` (the dynamic Eliashberg caller) the return value
+    gains a fourth element ``ir_meta``: ``None`` for uniform files, or
+    ``{"chis": meta, "chic": meta}`` for IR-native ones (each file carries
+    its own node set; the caller refits both independently). The arity
+    changes ONLY under ``allow_ir=True``, so every existing call site keeps
+    its unpacking. Mixed encodings (one native, one densified) are rejected
+    -- refitting one of the pair would silently pair susceptibilities of
+    different provenance."""
     chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
 
     logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
     data_s = np.load(chi_s_path)
+    if not allow_ir:
+        _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
     # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
     # The tag and the general-path MYO consumption ship together, so any
@@ -1212,6 +1270,8 @@ def _read_flex_chi_raw(input_dict):
 
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
+    if not allow_ir:
+        _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
     # The spin and charge files must share one convention; combining e.g. an MYO
     # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
@@ -1222,7 +1282,20 @@ def _read_flex_chi_raw(input_dict):
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
             "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
                 chi_convention, chi_convention_c))
-    return chi_s_raw, chi_c_raw, chi_convention
+    if not allow_ir:
+        return chi_s_raw, chi_c_raw, chi_convention
+
+    native_s, native_c = is_ir_native(data_s), is_ir_native(data_c)
+    if native_s != native_c:
+        raise ValueError(
+            "all dynamic-Eliashberg inputs must share one encoding; re-run "
+            "FLEX so chiq_s/chiq_c/green are all densified or all IR-native "
+            "(chiq_s: {}, chiq_c: {}).".format(
+                "IR-native" if native_s else "densified",
+                "IR-native" if native_c else "densified"))
+    ir_meta = ({"chis": ir_native_meta(data_s),
+                "chic": ir_native_meta(data_c)} if native_s else None)
+    return chi_s_raw, chi_c_raw, chi_convention, ir_meta
 
 
 def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
@@ -1296,23 +1369,32 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     return out
 
 
-def _load_flex_green(input_dict, norb, Nx, Ny, Nz):
+def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
 
-    Returns shape ``(norb, norb, Nx, Ny, Nz, nmat)`` (full fermionic axis).
+    Returns shape ``(norb, norb, Nx, Ny, Nz, nfreq)`` (full fermionic axis;
+    ``nfreq`` = Nmat for uniform files, the node count for IR-native ones).
+    With ``allow_ir=True`` returns ``(green, ir_meta)`` instead (``ir_meta``
+    is ``None`` for uniform files) -- arity changes only under that flag.
     """
     _, _, green_path = _resolve_flex_paths(input_dict)
     if not os.path.exists(green_path):
-        return None
+        return (None, None) if allow_ir else None
     logger.info("Loading FLEX dressed Green from: {}".format(green_path))
     data_g = np.load(green_path)
+    if not allow_ir:
+        _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
     green_raw = data_g["green"]
-    # H-wave format: (nblock, nmat, nvol, norb, norb)
+    # H-wave format: (nblock, nfreq, nvol, norb, norb)
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
-    # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nmat)
-    return green_raw[0].reshape(
+    # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
+    green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
     ).transpose(4, 5, 1, 2, 3, 0).copy()
+    if not allow_ir:
+        return green
+    meta = ir_native_meta(data_g) if is_ir_native(data_g) else None
+    return green, meta
 
 
 def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):

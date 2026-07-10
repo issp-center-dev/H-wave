@@ -143,3 +143,71 @@ def test_compress_drop_constant_isolates_known_offset(caplog):
     chi_nodes_clean = 2.0 * g / (nu_n ** 2 + g ** 2) * (1.0 - np.exp(-beta * g))
     np.testing.assert_allclose(nodes[0], chi_nodes_clean, atol=1e-6)
     assert any("unusually large" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: fit_from_freq_points (values at ARBITRARY integer Matsubara nodes)
+# ---------------------------------------------------------------------------
+
+def _gf_at(freq_n, beta, e=0.7):
+    """Reference representable function: G(iw_n) = 1/(iw_n - e)."""
+    iw = 1j * np.asarray(freq_n) * np.pi / beta
+    return 1.0 / (iw - e)
+
+
+def test_fit_from_freq_points_identity_on_own_nodes():
+    """At the axis' own node set the fit must reproduce fit_from_freq."""
+    ax = _axis("F")
+    vals = _gf_at(ax.freq_n, ax.beta)[None, :]
+    c_pts = ax.fit_from_freq_points(vals, ax.freq_n)
+    c_own = ax.fit_from_freq(vals)
+    np.testing.assert_allclose(c_pts, c_own, atol=1e-12)
+
+
+def test_fit_from_freq_points_foreign_node_set():
+    """Values on a DIFFERENT basis' nodes (a tighter-eps writer -> more
+    nodes than this axis' L: overdetermined, the supported direction) must
+    recover coefficients that evaluate correctly on the run axis' own
+    nodes. The reverse (fewer file nodes than the run L) raises -- covered
+    by the underdetermined case in the validation test."""
+    ax_run = _axis("F", eps=1e-6)
+    ax_file = _axis("F", eps=1e-8)          # tighter basis -> more nodes
+    assert not np.array_equal(ax_file.freq_n, ax_run.freq_n)
+    assert ax_file.n_freq > ax_run.L
+    vals_file = _gf_at(ax_file.freq_n, ax_run.beta)[None, :]
+    coeffs = ax_run.fit_from_freq_points(vals_file, ax_file.freq_n)
+    vals_run = ax_run.eval_to_freq(coeffs)
+    ref_run = _gf_at(ax_run.freq_n, ax_run.beta)[None, :]
+    np.testing.assert_allclose(vals_run, ref_run, atol=1e-5)
+
+
+def test_fit_from_freq_points_validation_errors():
+    ax = _axis("F")
+    n_ok = ax.freq_n
+    vals = _gf_at(n_ok, ax.beta)[None, :]
+    # wrong parity (even indices into a fermionic axis)
+    with pytest.raises(ValueError, match="parity"):
+        ax.fit_from_freq_points(vals, n_ok + 1)
+    # not strictly increasing (duplicate)
+    bad = n_ok.copy()
+    bad[1] = bad[0]
+    with pytest.raises(ValueError, match="strictly increasing"):
+        ax.fit_from_freq_points(vals, bad)
+    # not 1-D
+    with pytest.raises(ValueError, match="1-D"):
+        ax.fit_from_freq_points(vals, n_ok.reshape(-1, 1))
+    # underdetermined (fewer nodes than L)
+    few = n_ok[:ax.L - 1]
+    with pytest.raises(ValueError, match="at least"):
+        ax.fit_from_freq_points(vals[..., :ax.L - 1], few)
+
+
+def test_fit_from_freq_points_matrix_cached():
+    """Second call with the same node set must reuse the cached matrix."""
+    ax = _axis("B")
+    n = ax.freq_n
+    vals = (1.0 / (1.0 + (np.asarray(n) * np.pi / ax.beta) ** 2))[None, :]
+    ax.fit_from_freq_points(vals.astype(complex), n)
+    n_keys = len(ax._device_m)
+    ax.fit_from_freq_points(vals.astype(complex), n)
+    assert len(ax._device_m) == n_keys

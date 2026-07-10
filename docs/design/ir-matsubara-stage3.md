@@ -142,10 +142,17 @@ misread an IR-native file. The guard is a single shared helper
   run (fail fast otherwise: "re-run the seeding FLEX with
   write_densified=true to seed a uniform run" — v1 scope, revisit only if
   a real workflow needs it; recorded as OQ-S3-D disposition). The seed is
-  refit via `fit_from_freq_points` onto the run's fermionic axis; the
-  existing `sigma_init_on_error` residual policy applies unchanged (the
-  residual is evaluated at the file's nodes). Shape check compares against
-  the file's node count, mirroring `expected_uniform` today.
+  brought to the run's nodes via the WRITER's basis: reconstruct
+  `IRAxis(file ir_beta/ir_wmax/ir_tol, "F")`, `fit_from_freq_points` at
+  the file's own nodes (determined by construction), then
+  `eval_to_freq_points` at the RUN's node indices. A direct fit onto the
+  run basis would be UNDERDETERMINED on every high-T -> low-T sweep step
+  (the run's L grows with beta while the file carries only ~L_file nodes)
+  — found in implementation, recorded as OQ-S3-J. The existing
+  `sigma_init_on_error` residual policy applies unchanged (the residual is
+  evaluated at the file's nodes, in the writer basis). Shape check
+  compares against the file's node count, mirroring `expected_uniform`
+  today.
 - **Cross-temperature seeding semantics (deliberate, OQ-S3-G)**: sweeps
   seed from a NEIGHBOURING temperature, so the seed's `ir_beta` will
   usually differ from the run's beta. This is NOT an error — it mirrors
@@ -320,3 +327,15 @@ NOT to point legacy scripts at native outputs.
   snippet (load npz -> IRAxis(file params) -> fit_from_freq_points ->
   eval_to_uniform -> save), and re-running FLEX densified stays the
   supported path. Revisit if users ask.
+- OQ-S3-J (implementation round): a run-basis fit of the sigma_init seed
+  is underdetermined for every high-T -> low-T sweep step (run L grows
+  with beta; the file has only ~L_file nodes) — exactly the intended use
+  case. RESOLVED by fitting in the reconstructed WRITER basis at the
+  file's own nodes and evaluating at the run's node indices; this also
+  realizes the index-matched semantics literally. Note the deliberate
+  contrast: sigma_init MAY reconstruct the writer basis because a warm
+  start needs only a good starting point (sparse-ir version drift merely
+  perturbs the seed, and the residual policy guards it); the chi/green
+  ingestion path must NOT depend on basis reconstruction (physics input,
+  OQ-3), which is why `_ir_refit_nodes` fits file node VALUES onto the
+  run's own basis instead.
