@@ -197,7 +197,7 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``coeff_tail = 1.0``（省略可）: 松原和の高振動数テール加速係数。``coeff_tail = 1``
   は :math:`G` の厳密な :math:`1/(i\omega_n)` 係数（ユニタリ性）に一致するため、
   結果を歪めずに ``Nmat`` に対する収束を加速します。RPAソルバーでもサポートされて
-  います。
+  います。``matsubara_basis = "ir"`` の場合は不要のため無視されます。
 - ``IterationMax = 100``: SCF反復の最大回数
 - ``Mix = 0.2``: 自己エネルギー更新の混合パラメータ
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`)
@@ -589,9 +589,9 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
    * - ``sigma_init_on_error``
      - str
      - "warn"
-     - IR実行で ``sigma_init``（一様グリッド）のフィット残差が 100×``ir_tol``
-       を超えた場合の挙動: ``"warn"``（使用して警告）/ ``"abort"`` /
-       ``"zero"``（ゼロ初期化に退避）。
+     - IR実行で一様グリッドの ``sigma_init`` のフィット残差が ``ir_tol``
+       の100倍を超えた場合の挙動: ``"warn"`` は使用して警告、``"abort"``
+       はエラー停止、``"zero"`` はゼロ初期化に退避します。
    * - ``gpu``
      - bool
      - false
@@ -611,6 +611,32 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
 
 その他のパラメータ (``T``, ``CellShape``, ``Nmat``, ``filling`` 等)
 はRPAソルバーと共通です。詳細は :ref:`Ch:Config_rpa` を参照してください。
+
+.. note::
+
+   **IR基底でFLEXを実行するには。** オプションの依存パッケージを一度
+   インストールし（``pip install sparse-ir``）、既存のFLEX入力の
+   ``[mode.param]`` に1行追加するだけです。``Nmat`` を含め他の行は
+   そのままで動作します:
+
+   .. code-block:: toml
+
+      [mode]
+      mode = "FLEX"
+      calc_scheme = "reduced"     # または "squashed"（"general" は一様グリッドのみ）
+      [mode.param]
+      CellShape = [64, 64, 1]
+      T = 0.05
+      Nmat = 4096                 # 従来どおり必要（出力グリッド）
+      matsubara_basis = "ir"      # sparse-IR 軸へのオプトイン
+      # ir_tol = 1e-8             # 省略可: 基底の打ち切り精度
+      # ir_wmax = 30.0            # 省略可: バンド幅（自動推定あり）
+
+   SCF は ``Nmat`` 個の振動数の代わりに数十個のスパースノード上で走り
+   （例: :math:`T=0.05` で 4096 → 42）、出力ファイルはすべて ``Nmat``
+   グリッドへ密評価して書き出されるため、下流のツール（動的 Eliashberg
+   ソルバーを含む）は無変更で動作します。``coeff_tail`` はこのパスでは
+   無視されます（IR基底が :math:`1/(i\omega)` テールを厳密に保持するため）。
 
 .. note::
 

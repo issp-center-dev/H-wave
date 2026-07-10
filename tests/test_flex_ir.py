@@ -239,3 +239,67 @@ def test_ir_gpu_matches_cpu():
                      iteration_max=10)
     np.testing.assert_allclose(gi_g["sigma"], gi_c["sigma"], atol=1e-9)
     assert isinstance(gi_g["sigma"], np.ndarray)
+
+
+def test_ir_subshape_folded_matches_uniform():
+    """Sublattice folding (SubShape != [1,1,1]) composes with the IR path:
+    on the folded lattice (norb=2 after fold) the uniform chi_s static peak
+    at large Nmat matches the IR one."""
+    sub = {'SubShape': [2, 1, 1]}
+    s_ir, gi_ir = _run(256, dict(sub, matsubara_basis='ir'))
+    assert s_ir.scf_converged
+    s_u, gi_u = _run(1024, dict(sub))
+    assert s_u.scf_converged
+    chis_ir = gi_ir["chiq_s"][256 // 2].real.max()
+    chis_u = gi_u["chiq_s"][1024 // 2].real.max()
+    assert abs(chis_u - chis_ir) / abs(chis_ir) < 2e-3
+    n_ir = gi_ir["physics"]["NCond"]
+    n_u = gi_u["physics"]["NCond"]
+    assert abs(n_u - n_ir) / abs(n_ir) < 2e-3
+
+
+def test_ir_wmax_explicit_override_and_decay_warning(caplog):
+    """An explicit ir_wmax is honored verbatim, and an insufficient
+    bandwidth must trip the always-on coefficient-decay diagnostic."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="hwave.solver.flex"):
+        s, gi = _run(256, {'matsubara_basis': 'ir', 'ir_wmax': 0.5},
+                     iteration_max=2)
+    assert s._ir_axF.wmax == 0.5
+    assert any("coefficient tail" in r.getMessage() for r in caplog.records)
+
+
+def test_ir_sigma_init_policies(caplog):
+    """A white-noise sigma_init exceeds the basis bandwidth by construction:
+    'abort' raises, 'zero' falls back to the zero start (logged), 'warn'
+    (default) proceeds with the fitted seed under a warning."""
+    import logging
+    nmat = 64
+    s_u, gi_u = _run(nmat, None, iteration_max=1)
+    shape = gi_u["sigma"].shape          # (nblock, nmat, nvol, nd, nd)
+    rng = np.random.default_rng(12345)
+    noise = 0.1 * (rng.standard_normal(shape)
+                   + 1j * rng.standard_normal(shape))
+
+    def _seeded(policy):
+        solver, gi = _make_solver(nmat, {'matsubara_basis': 'ir',
+                                         'sigma_init_on_error': policy},
+                                  iteration_max=1)
+        gi["sigma_init"] = noise.copy()
+        return solver, gi
+
+    solver, gi = _seeded('abort')
+    with pytest.raises(ValueError, match="sigma_init"):
+        solver.solve(gi, 'tests/flex/output')
+
+    solver, gi = _seeded('zero')
+    with caplog.at_level(logging.WARNING, logger="hwave.solver.flex"):
+        solver.solve(gi, 'tests/flex/output')
+    assert any("zero start" in r.getMessage() for r in caplog.records)
+
+    caplog.clear()
+    solver, gi = _seeded('warn')
+    with caplog.at_level(logging.WARNING, logger="hwave.solver.flex"):
+        solver.solve(gi, 'tests/flex/output')
+    assert any("fitted seed anyway" in r.getMessage()
+               for r in caplog.records)

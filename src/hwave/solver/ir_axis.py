@@ -11,9 +11,12 @@ Wraps the optional ``sparse-ir`` package behind explicit H-wave conventions:
   (asserted at construction; tau nodes are snapped to symmetric pair means).
   Frequency-axis reversals in existing solver code therefore keep their
   meaning on IR node arrays.
-- Transforms are pure basis changes contracting the LAST axis, with no
-  temperature factors inside (the 1/beta factors stay at product exits, as in
-  ``solver/matsubara.py``).
+- Transforms contract the LAST axis and are PHYSICAL: ``tau_to_freq`` is the
+  integral over tau (u_l(tau) fits carry the measure) and ``freq_to_tau``
+  contains the 1/beta Matsubara sum through the basis. Consumers therefore
+  apply NO extra 1/beta at product exits on the IR path -- unlike the
+  uniform-FFT path of ``solver/matsubara.py``, whose bare FFTs need explicit
+  1/beta factors there.
 - Transform matrices are built once on the host; applications are plain
   matmuls, so they work unchanged on numpy or cupy arrays (the caller moves
   matrices to the device via :func:`hwave.solver.backend.array_module_of`

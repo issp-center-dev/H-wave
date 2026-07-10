@@ -271,22 +271,22 @@ class FLEX(RPA):
             self.param_mod.get("matsubara_basis", "uniform")).lower()
         if self.matsubara_basis not in ("uniform", "ir"):
             raise ValueError(
-                "matsubara_basis must be 'uniform' or 'ir', got '{}'."
-                .format(self.matsubara_basis))
+                "[mode.param] matsubara_basis must be 'uniform' or 'ir', "
+                "got '{}'.".format(self.matsubara_basis))
         self.use_ir = (self.matsubara_basis == "ir")
         if self.use_ir and self._flex_general:
             raise ValueError(
-                "matsubara_basis='ir' supports calc_scheme='reduced'/"
-                "'squashed' only (v1); the general full-vertex path stays on "
-                "the uniform grid.")
+                "[mode.param] matsubara_basis='ir' supports [mode] "
+                "calc_scheme='reduced'/'squashed' only (v1); the general "
+                "full-vertex path stays on the uniform grid.")
         self.ir_tol = float(self.param_mod.get("ir_tol", 1.0e-8))
         self.ir_wmax = self.param_mod.get("ir_wmax")
         self.sigma_init_on_error = str(
             self.param_mod.get("sigma_init_on_error", "warn")).lower()
         if self.sigma_init_on_error not in ("warn", "abort", "zero"):
             raise ValueError(
-                "sigma_init_on_error must be 'warn', 'abort' or 'zero', "
-                "got '{}'.".format(self.sigma_init_on_error))
+                "[mode.param] sigma_init_on_error must be 'warn', 'abort' "
+                "or 'zero', got '{}'.".format(self.sigma_init_on_error))
         self._ir_axF = None
         self._ir_axB = None
 
@@ -851,15 +851,16 @@ class FLEX(RPA):
         return n, dn
 
     @do_profile
-    def _ir_densify(self, arr, ax, freq_axis, max_chunk_bytes=1 << 28):
+    def _ir_densify(self, arr, ax, freq_axis):
         """Evaluate a node-resolved array back onto the run's uniform grid
         (output compatibility; the frequency axis is ``freq_axis``).
 
         The uniform-grid OUTPUT is Nmat/L times larger than the node array
         (GB-scale at production sizes), so only the small coefficient array
-        crosses the device boundary; the expansion to the uniform grid runs
-        as chunked host GEMMs straight into the output buffer (design R-4:
-        memory-aware densification)."""
+        crosses the device boundary; the expansion runs as one host GEMM per
+        leading index, written straight into the preallocated output buffer,
+        so peak extra memory beyond that buffer is the coefficient array
+        (design R-4: memory-aware densification)."""
         xp = _bk.array_module_of(arr)
         a = xp.ascontiguousarray(xp.moveaxis(arr, freq_axis, -1))
         coeffs = _bk.to_host(ax.fit_from_freq(a))       # (..., L): small
@@ -890,7 +891,8 @@ class FLEX(RPA):
             logger.warning(
                 "IR coefficient tail of %s is not decaying (ratio %.2e > "
                 "10*ir_tol): the object exceeds the basis bandwidth -- "
-                "raise ir_wmax or tighten ir_tol.", label, tail / peak)
+                "raise [mode.param] ir_wmax or tighten [mode.param] ir_tol.",
+                label, tail / peak)
 
     def _ir_sigma_init(self, seed):
         """Uniform-grid sigma_init -> fermionic nodes (uniform -> IR
@@ -913,8 +915,8 @@ class FLEX(RPA):
                    "bandwidth.".format(rel))
             if self.sigma_init_on_error == "abort":
                 raise ValueError(
-                    msg + " Raise ir_wmax, or set sigma_init_on_error="
-                    "'warn'/'zero'.")
+                    msg + " Raise [mode.param] ir_wmax, or set [mode.param] "
+                    "sigma_init_on_error='warn'/'zero'.")
             if self.sigma_init_on_error == "zero":
                 logger.warning(
                     "%s Falling back to the zero start "
