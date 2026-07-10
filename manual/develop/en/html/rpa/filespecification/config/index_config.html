@@ -282,6 +282,26 @@ from previous releases (opt-in); -1 uses all cores. Ignored on the
 GPU. Set a smaller number when running several calculations
 concurrently.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code></p>
+<p><strong>Type :</strong>
+String (default value is “linear”; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Self-energy update scheme of the FLEX SCF loop. <code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code> is the
+conventional linear mixing; <code class="docutils literal notranslate"><span class="pre">&quot;anderson&quot;</span></code> enables Anderson acceleration
+(Pulay/DIIS-type extrapolation over a short iterate/residual history),
+which reaches the same fixed point in far fewer iterations. Anderson
+acceleration is less sensitive to step-size instability than linear
+mixing, so a somewhat larger <code class="docutils literal notranslate"><span class="pre">Mix</span></code> (e.g. 0.3–0.5) can reduce the
+iteration count further. Falls back to a plain linear step automatically
+if the history becomes degenerate.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code></p>
+<p><strong>Type :</strong>
+Integer (default value is 5; FLEX mode only)</p>
+<p><strong>Description :</strong>
+History depth of the Anderson acceleration. Memory grows by 2*depth
+sigma-sized arrays (kept on the device under GPU execution).</p>
+</li>
 </ul>
 </section>
 <section id="log-section">

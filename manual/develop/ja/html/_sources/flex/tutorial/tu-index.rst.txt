@@ -550,6 +550,20 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
      - 6
      - 収束判定基準。整数 :math:`n` の場合、閾値は :math:`10^{-n}`。
        1未満の浮動小数点数の場合、直接閾値として使用。
+   * - ``mixing_scheme``
+     - str
+     - "linear"
+     - 自己エネルギーの更新方法。``"linear"`` は従来の線形混合
+       :math:`\Sigma \leftarrow (1-\alpha)\Sigma + \alpha\Sigma_{\mathrm{new}}`。
+       ``"anderson"`` は直近の反復・残差履歴に基づく Anderson 加速
+       （Pulay/DIIS型の外挿）で、同じ固定点により少ない反復数で到達します
+       （例: :math:`U=3.5`, ``Mix=0.2`` の8×8 Hubbardで78→13反復）。
+       履歴が退化した場合は自動的に線形ステップへフォールバックします。
+   * - ``anderson_depth``
+     - int
+     - 5
+     - Anderson 加速の履歴の深さ :math:`m`。メモリは :math:`\Sigma` サイズの
+       配列 :math:`2m` 本分増加します（GPU実行時はデバイス上に保持）。
    * - ``gpu``
      - bool
      - false

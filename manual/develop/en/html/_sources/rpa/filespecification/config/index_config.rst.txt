@@ -260,6 +260,30 @@ Parameters
   GPU. Set a smaller number when running several calculations
   concurrently.
 
+- ``mixing_scheme``
+
+  **Type :**
+  String (default value is "linear"; FLEX mode only)
+
+  **Description :**
+  Self-energy update scheme of the FLEX SCF loop. ``"linear"`` is the
+  conventional linear mixing; ``"anderson"`` enables Anderson acceleration
+  (Pulay/DIIS-type extrapolation over a short iterate/residual history),
+  which reaches the same fixed point in far fewer iterations. Anderson
+  acceleration is less sensitive to step-size instability than linear
+  mixing, so a somewhat larger ``Mix`` (e.g. 0.3--0.5) can reduce the
+  iteration count further. Falls back to a plain linear step automatically
+  if the history becomes degenerate.
+
+- ``anderson_depth``
+
+  **Type :**
+  Integer (default value is 5; FLEX mode only)
+
+  **Description :**
+  History depth of the Anderson acceleration. Memory grows by 2*depth
+  sigma-sized arrays (kept on the device under GPU execution).
+
 
 ``log`` section
 ================================

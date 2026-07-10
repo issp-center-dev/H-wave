@@ -652,6 +652,22 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <td><p>収束判定基準。整数 <span class="math notranslate nohighlight">\(n\)</span> の場合、閾値は <span class="math notranslate nohighlight">\(10^{-n}\)</span>。
 1未満の浮動小数点数の場合、直接閾値として使用。</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code></p></td>
+<td><p>str</p></td>
+<td><p>&quot;linear&quot;</p></td>
+<td><p>自己エネルギーの更新方法。<code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code> は従来の線形混合
+<span class="math notranslate nohighlight">\(\Sigma \leftarrow (1-\alpha)\Sigma + \alpha\Sigma_{\mathrm{new}}\)</span>。
+<code class="docutils literal notranslate"><span class="pre">&quot;anderson&quot;</span></code> は直近の反復・残差履歴に基づく Anderson 加速
+（Pulay/DIIS型の外挿）で、同じ固定点により少ない反復数で到達します
+（例: <span class="math notranslate nohighlight">\(U=3.5\)</span>, <code class="docutils literal notranslate"><span class="pre">Mix=0.2</span></code> の8×8 Hubbardで78→13反復）。
+履歴が退化した場合は自動的に線形ステップへフォールバックします。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code></p></td>
+<td><p>int</p></td>
+<td><p>5</p></td>
+<td><p>Anderson 加速の履歴の深さ <span class="math notranslate nohighlight">\(m\)</span>。メモリは <span class="math notranslate nohighlight">\(\Sigma\)</span> サイズの
+配列 <span class="math notranslate nohighlight">\(2m\)</span> 本分増加します（GPU実行時はデバイス上に保持）。</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>

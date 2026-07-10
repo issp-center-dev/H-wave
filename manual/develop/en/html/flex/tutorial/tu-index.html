@@ -681,6 +681,25 @@ Smaller values give more stable convergence but slower progress.</p></td>
 <td><p>Convergence criterion. If integer <span class="math notranslate nohighlight">\(n\)</span>, the threshold is
 <span class="math notranslate nohighlight">\(10^{-n}\)</span>. If float &lt; 1, used directly as threshold.</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code></p></td>
+<td><p>str</p></td>
+<td><p>“linear”</p></td>
+<td><p>Self-energy update scheme. <code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code> is the conventional linear
+mixing <span class="math notranslate nohighlight">\(\Sigma \leftarrow (1-\alpha)\Sigma +
+\alpha\Sigma_{\mathrm{new}}\)</span>. <code class="docutils literal notranslate"><span class="pre">&quot;anderson&quot;</span></code> enables Anderson
+acceleration (Pulay/DIIS-type extrapolation over a short
+iterate/residual history), which reaches the same fixed point in far
+fewer iterations (e.g. 78 -&gt; 13 on the 8x8 Hubbard benchmark at
+<span class="math notranslate nohighlight">\(U=3.5\)</span>, <code class="docutils literal notranslate"><span class="pre">Mix=0.2</span></code>). Falls back to a plain linear step
+automatically if the history becomes degenerate.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code></p></td>
+<td><p>int</p></td>
+<td><p>5</p></td>
+<td><p>History depth <span class="math notranslate nohighlight">\(m\)</span> of the Anderson acceleration. Memory grows by
+<span class="math notranslate nohighlight">\(2m\)</span> sigma-sized arrays (kept on the device under GPU
+execution).</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>

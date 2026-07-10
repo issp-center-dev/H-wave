@@ -221,6 +221,14 @@ FLEXソルバーでは、裸の感受率 <span class="math notranslate nohighlig
 <p><strong>形式 :</strong> int型 (デフォルトは 1)</p>
 <p><strong>説明 :</strong> 空間FFTのワーカースレッド数を指定します（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> による並列化）。デフォルトの <code class="docutils literal notranslate"><span class="pre">1</span></code> は従来どおりの直列 numpy で、並列化はオプトインです。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コアを使用します。GPU 実行時は無視されます。複数の計算を同時に実行する場合は小さめの値を指定してください。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは &quot;linear&quot;、FLEXモードのみ)</p>
+<p><strong>説明 :</strong> FLEX の自己エネルギー更新方法を指定します。<code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code> は従来の線形混合、<code class="docutils literal notranslate"><span class="pre">&quot;anderson&quot;</span></code> は Anderson 加速（直近の反復・残差履歴に基づく Pulay/DIIS 型の外挿）で、同じ固定点により少ない反復数で到達します。Anderson 加速は線形混合よりステップの不安定性に強いため、<code class="docutils literal notranslate"><span class="pre">Mix</span></code> をやや大きめ（例: 0.3--0.5）にしてさらに反復数を減らせる場合があります。履歴が退化した場合は自動的に線形ステップへフォールバックします。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは 5、FLEXモードのみ)</p>
+<p><strong>説明 :</strong> Anderson 加速の履歴の深さを指定します。メモリは自己エネルギーサイズの配列 <span class="math notranslate nohighlight">\(2m\)</span> 本分増加します（GPU実行時はデバイス上に保持）。</p>
+</li>
 </ul>
 </section>
 <section id="log">
