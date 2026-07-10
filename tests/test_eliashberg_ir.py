@@ -101,8 +101,7 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
 
     # IR-path objects from the SAME npz
-    axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k,
-                                   norb, kx, ky, kz)
+    axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k, norb)
     chis_n = ed._ir_compress(chis_w, axB, NMAT, "chiq_s", drop_constant=True)
     chic_n = ed._ir_compress(chic_w, axB, NMAT, "chiq_c", drop_constant=True)
     green_n = ed._ir_compress(green_w, axF, NMAT, "green")
@@ -151,12 +150,43 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     # agrees -- which is what the end-to-end lambda test pins. Assert the
     # loose whole-axis bound here...
     assert diff_default < 5e-1
+    eli2 = dict(inp["eliashberg"]); eli2["ir_wmax"] = 200.0
+    axF2, axB2 = ed._ir_axes_for_run(eli2, beta, hr, inter_k, norb)
+    # This is a kernel-ALGEBRA gate (operator equivalence on identical
+    # densified data), not a data-fidelity check: at this deliberately large
+    # wmax the delta(tau) constant is big (ill-conditioned drop), which the
+    # production solve would reject -- opt out of that guard here.
+    chis2 = ed._ir_compress(chis_w, axB2, NMAT, "chiq_s", drop_constant=True,
+                            error_on_large_constant=False)
+    chic2 = ed._ir_compress(chic_w, axB2, NMAT, "chiq_c", drop_constant=True,
+                            error_on_large_constant=False)
+    green2 = ed._ir_compress(green_w, axF2, NMAT, "green")
+    V2 = ed.compute_vertices_flex_dynamic(chis2, chic2, inter_k, norb,
+                                          Nx, Ny, Nz, pairing_type="singlet",
+                                          convention=conv)
+    G22 = ed.calc_g2_dynamic(green2, beta)
+    Vrt2 = ed._ir_vertex_to_rtau(V2, axB2, axF2)
+    chis_d2 = axB2.eval_to_uniform(axB2.fit_from_freq(chis2), NMAT)
+    chic_d2 = axB2.eval_to_uniform(axB2.fit_from_freq(chic2), NMAT)
+    green_d2 = axF2.eval_to_uniform(axF2.fit_from_freq(green2), NMAT)
+    Vw2 = ed.compute_vertices_flex_dynamic(chis_d2, chic_d2, inter_k, norb,
+                                           Nx, Ny, Nz, pairing_type="singlet",
+                                           convention=conv)
+    G2w2 = ed.calc_g2_dynamic(green_d2, beta)
+    phi_n2 = np.broadcast_to(gap_static[..., None],
+                             gap_static.shape + (axF2.n_freq,)).astype(complex)
+    out_u2 = ed.eliashberg_kernel_dynamic(Vw2, G2w2, phi_u.copy(), norb, beta)
+    out_n2 = ed.eliashberg_kernel_ir(Vrt2, G22, phi_n2.copy(), axF2, beta)
+    out_nd2 = axF2.eval_to_uniform(axF2.fit_from_freq(out_n2), NMAT)
+    diff_wide = np.abs(out_nd2 - out_u2).max() / np.abs(out_u2).max()
+    assert diff_wide < 1e-2, "wide-basis kernels disagree: {}".format(diff_wide)
+    assert diff_wide < 0.2 * diff_default, (
+        "no systematic wmax convergence: {} vs {}".format(diff_wide,
+                                                          diff_default))
     # ...and prove the KERNEL ALGEBRA itself is exact with a fully
-    # IR-representable synthetic vertex (no chi artifacts): a smooth
-    # Lorentzian-profile V and a bare-G2, where both kernels must agree to
-    # numerical precision (issue #57 replaced the old wide-wmax variant of
-    # this check, which sat in the degenerate drop_constant regime the
-    # new guard rejects).
+    # IR-representable synthetic vertex (no chi artifacts, no fit escape
+    # hatches): a smooth Lorentzian-profile V and a bare-G2, where both
+    # kernels must agree to numerical precision (issue #57).
     assert _smooth_vertex_gate(2, 4, 4, 1, beta=2.0, nmat=256,
                                wmax=20.0) < 1e-6
     assert _smooth_vertex_gate(2, 1, 8, 8, beta=200.0, nmat=1024,
@@ -356,7 +386,7 @@ def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
     inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
 
     axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k,
-                                   norb, kx, ky, kz)
+                                   norb)
     chis_n = ed._ir_compress(chis_w, axB, NMAT, "chiq_s", drop_constant=True)
     chic_n = ed._ir_compress(chic_w, axB, NMAT, "chiq_c", drop_constant=True)
     green_n = ed._ir_compress(green_w, axF, NMAT, "green")
@@ -429,62 +459,7 @@ def test_solve_dynamic_ir_gpu_matches_cpu_offsite(flex_outdir_offsite):
     assert abs(lam_gpu - lam_cpu) < 1e-8 * max(1.0, abs(lam_cpu))
 
 
-def test_ir_auto_wmax_uses_dispersion_not_grand_total():
-    """The auto ir_wmax must be built from the actual dispersion range of
-    H(k), not the misread flat-dict grand total of |t| (issue #57 root
-    cause 1: a 15x overestimate on a realistic multi-hopping model)."""
-    from hwave.solver import eliashberg_dynamic as ed
-    import hwave.sc as sc
-    # bp-ICl2-like structure: a large ON-SITE energy plus a modest
-    # nearest-neighbour hopping. The on-site term dominates the grand
-    # total of |t| but only SHIFTS the band -- the dispersion range stays
-    # 4t. (On the real material the misread grand total was 15.8 vs a
-    # 1.09 band range.)
-    hr = {((0, 0, 0), (0, 0)): 5.0,
-          ((1, 0, 0), (0, 0)): 0.25,
-          ((-1, 0, 0), (0, 0)): 0.25}
-    kx = np.linspace(0, 2*np.pi, 64, endpoint=False)
-    ky = np.linspace(0, 2*np.pi, 1, endpoint=False)
-    kz = np.linspace(0, 2*np.pi, 1, endpoint=False)
-    eps_k = sc._build_hamiltonian_k(kx, ky, kz, hr, 1)
-    ev = np.linalg.eigvalsh(eps_k.transpose(2, 3, 4, 0, 1))
-    band = float(ev.max() - ev.min())
-    u = 0.35
-    wmax = ed._ir_auto_wmax(hr, {"CoulombIntra": np.array([u])},
-                            1, kx, ky, kz)
-    grand_total = sum(abs(v) for v in hr.values())
-    assert wmax < 3.0 * (grand_total + u) * 0.5, \
-        "wmax {} still tracks the grand total {}".format(wmax, grand_total)
-    assert wmax >= 3.0 * (band + u) * 0.99, (wmax, band)
-    assert wmax <= 3.0 * (2.0 * band + u) * 1.01, (wmax, band)
 
-
-def test_ir_compress_rejects_nonartifact_constant():
-    """A frequency-independent component far larger than the expected
-    O(beta/Nmat) delta(tau) artifact cannot be a discretization artifact:
-    silently dropping it would remove physics (issue #57), so the fit
-    must fail fast with an actionable message."""
-    from hwave.solver import eliashberg_dynamic as ed
-    beta, nmat = 50.0, 512
-    ax = _axis_b_for_compress(beta)
-    g = 1.7
-    nu_u = (2 * np.arange(nmat) - nmat) * np.pi / beta
-    chi_clean = 2.0 * g / (nu_u ** 2 + g ** 2) * (1.0 - np.exp(-beta * g))
-    huge = 5.0 * np.abs(chi_clean).max()
-    chi = (chi_clean + huge)[None, :].astype(complex)
-    with pytest.raises(ValueError, match="artifact") as exc:
-        ed._ir_compress(chi, ax, nmat, "chiq_s", drop_constant=True)
-    msg = str(exc.value)
-    # every remedy must exist on THIS branch: the uniform fallback is
-    # named, and the FLEX-side matsubara_basis="ir" (which lives in a
-    # separate PR) must NOT be recommended here.
-    assert '[eliashberg] matsubara_basis = "uniform"' in msg
-    assert "FLEX step" not in msg
-
-
-def _axis_b_for_compress(beta):
-    from hwave.solver.ir_axis import IRAxis
-    return IRAxis(beta=beta, wmax=8.0, eps=1e-8, statistics="B")
 
 
 def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):

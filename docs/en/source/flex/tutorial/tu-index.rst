@@ -212,7 +212,7 @@ Key parameters:
   for the Matsubara sums. ``coeff_tail = 1`` matches the exact
   :math:`1/(i\omega_n)` coefficient of :math:`G` (unitarity), so it accelerates
   convergence in ``Nmat`` without biasing the result. Also supported by the RPA
-  solver.
+  solver. Ignored (unnecessary) when ``matsubara_basis = "ir"``.
 - ``IterationMax = 100``: Maximum number of SCF iterations.
 - ``Mix = 0.2``: Mixing parameter for self-energy update
   (:math:`\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}`).
@@ -597,6 +597,38 @@ The FLEX solver accepts the following parameters in the
      - History depth :math:`m` of the Anderson acceleration. Memory grows by
        :math:`2m` sigma-sized arrays (kept on the device under GPU
        execution).
+   * - ``matsubara_basis``
+     - str
+     - "uniform"
+     - Matsubara-axis representation: ``"uniform"`` (default, unchanged) or
+       ``"ir"`` (the sparse-ir intermediate representation; chi0 and Sigma
+       are computed NATIVELY on sparse nodes, so the uniform-FFT
+       :math:`O(\beta/N_{\mathrm{mat}})` discretization artifacts do not
+       arise by construction). ``Nmat`` keeps its role as the output grid
+       (all output files are densified onto it). Not combinable with
+       ``calc_scheme = "general"`` (v1). Requires the optional
+       `sparse-ir <https://sparse-ir.readthedocs.io>`_ package. The mu
+       search becomes the basis evaluation of
+       :math:`n = -\mathrm{Tr}\,G(\tau=\beta^-)`, and ``coeff_tail`` is
+       unnecessary (ignored).
+   * - ``ir_tol``
+     - float
+     - 1e-8
+     - IR basis cutoff accuracy.
+   * - ``ir_wmax``
+     - float
+     - auto
+     - Real-frequency bandwidth of the IR basis (same energy units as the
+       Hamiltonian); auto-estimated from the band range and interaction
+       scale when omitted (a fail-fast error asks for an explicit value if
+       the estimate cannot be formed). An always-on coefficient-decay
+       diagnostic warns when the bandwidth is insufficient.
+   * - ``sigma_init_on_error``
+     - str
+     - "warn"
+     - Behavior when the IR fit residual of a (uniform-grid) ``sigma_init``
+       exceeds 100x ``ir_tol``: ``"warn"`` (use it, warn), ``"abort"``, or
+       ``"zero"`` (fall back to the zero start).
    * - ``gpu``
      - bool
      - false
@@ -619,6 +651,32 @@ The FLEX solver accepts the following parameters in the
 
 All other parameters (``T``, ``CellShape``, ``Nmat``, ``filling``, etc.)
 are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
+
+.. note::
+
+   **Running FLEX on the IR basis.** Install the optional dependency once
+   (``pip install sparse-ir``), then add a single line under
+   ``[mode.param]`` of any existing FLEX input — every other line, including
+   ``Nmat``, stays as it is:
+
+   .. code-block:: toml
+
+      [mode]
+      mode = "FLEX"
+      calc_scheme = "reduced"     # or "squashed"; "general" stays uniform
+      [mode.param]
+      CellShape = [64, 64, 1]
+      T = 0.05
+      Nmat = 4096                 # still required: the output grid
+      matsubara_basis = "ir"      # opt in to the sparse-IR axis
+      # ir_tol = 1e-8             # optional: basis cutoff accuracy
+      # ir_wmax = 30.0            # optional: bandwidth (auto-estimated)
+
+   The SCF then runs on a few dozen sparse nodes instead of ``Nmat``
+   frequencies (e.g. 4096 -> 42 at :math:`T=0.05`), while all output files
+   are densified back onto the ``Nmat`` grid, so downstream tools (including
+   the dynamic Eliashberg solver) work unchanged. ``coeff_tail`` is ignored
+   on this path — the IR basis carries the :math:`1/(i\omega)` tail exactly.
 
 .. note::
 

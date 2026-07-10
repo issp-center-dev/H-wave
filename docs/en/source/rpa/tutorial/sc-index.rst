@@ -186,9 +186,18 @@ This section controls the Eliashberg solver. Key parameters:
   representation; see :ref:`the IR section <sc_dynamic_ir_en>` below).
 - ``ir_tol``: IR basis cutoff accuracy (default 1e-8).
 - ``ir_wmax``: real-frequency bandwidth of the IR basis, in the same energy
-  units as the Hamiltonian (auto-estimated from the band range and
-  interaction scale when omitted; if the estimate cannot be formed, the
-  solver fails fast and asks for an explicit value).
+  units as the Hamiltonian (auto-estimated from the dispersion spectral range
+  ``max|eps_k - mu|`` and the interaction scale when omitted; if the estimate
+  cannot be formed, the solver fails fast and asks for an explicit value).
+- ``ir_keep_static_chi``: ``true`` / ``false`` (default ``false``). When the
+  spin/charge susceptibility is static-dominated (large and nearly frequency-
+  independent within the sampled window, i.e. the near-critical regime), the
+  frequency-independent component the IR compression would otherwise discard as
+  the small :math:`O(\beta/N_\mathrm{mat})` :math:`\delta(\tau)` artifact instead
+  carries physical weight; dropping it corrupts the leading eigenvalue. If that discarded
+  component exceeds the data scale the solver aborts with guidance. Set this to
+  ``true`` to retain the static component instead of aborting (alternatively
+  lower ``ir_wmax`` or increase the FLEX ``Nmat``).
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -657,7 +666,8 @@ metadata such as ``matsubara_basis``).
    and the run stops with an error instead of silently corrupting the
    result (remedies, also printed by the error: use the automatic
    ``ir_wmax`` or a value near ``3*(bandwidth + max interaction)``;
-   increase the FLEX ``Nmat``; or fall back to
+   increase the FLEX ``Nmat``; set ``ir_keep_static_chi = true`` to
+   retain a genuinely static component; or fall back to
    ``matsubara_basis = "uniform"``). The eigenvalue difference between
    the IR and uniform paths is bounded by this input-data quality
    (measured ~1.5e-2 relative at ``Nmat=128`` and ~4e-3 at ``Nmat=512``

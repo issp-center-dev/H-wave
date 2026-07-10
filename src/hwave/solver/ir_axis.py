@@ -11,9 +11,12 @@ Wraps the optional ``sparse-ir`` package behind explicit H-wave conventions:
   (asserted at construction; tau nodes are snapped to symmetric pair means).
   Frequency-axis reversals in existing solver code therefore keep their
   meaning on IR node arrays.
-- Transforms are pure basis changes contracting the LAST axis, with no
-  temperature factors inside (the 1/beta factors stay at product exits, as in
-  ``solver/matsubara.py``).
+- Transforms contract the LAST axis and are PHYSICAL: ``tau_to_freq`` is the
+  integral over tau (u_l(tau) fits carry the measure) and ``freq_to_tau``
+  contains the 1/beta Matsubara sum through the basis. Consumers therefore
+  apply NO extra 1/beta at product exits on the IR path -- unlike the
+  uniform-FFT path of ``solver/matsubara.py``, whose bare FFTs need explicit
+  1/beta factors there.
 - Transform matrices are built once on the host; applications are plain
   matmuls, so they work unchanged on numpy or cupy arrays (the caller moves
   matrices to the device via :func:`hwave.solver.backend.array_module_of`
@@ -169,12 +172,27 @@ class IRAxis:
 
     def eval_to_tau_points(self, coeffs, tau_points):
         """Evaluate coefficients on ARBITRARY tau points (e.g. this axis is
-        bosonic and ``tau_points`` are the fermionic product nodes)."""
-        m = np.ascontiguousarray(self._basis.u(np.asarray(tau_points)))  # (L, npts)
+        bosonic and ``tau_points`` are the fermionic product nodes). The
+        evaluation matrix is cached per tau-point set (and per backend), so
+        repeated SCF-loop calls with the same node array are matmuls only."""
+        tau_points = np.asarray(tau_points, dtype=np.float64)
+        key = ("taupts", hash(tau_points.tobytes()))
+        if key not in self._device_m:
+            self._device_m[key] = np.ascontiguousarray(
+                self._basis.u(tau_points))              # (L, npts)
+        m = self._device_m[key]
         xp = _bk.array_module_of(coeffs)
         if xp is not np:
-            m = xp.asarray(m)
+            dkey = key + ("dev",)
+            if dkey not in self._device_m:
+                self._device_m[dkey] = xp.asarray(m)
+            m = self._device_m[dkey]
         return coeffs @ m
+
+    def freq_to_tau_points(self, arr, tau_points):
+        """(..., n_freq) node values -> values on ARBITRARY tau points
+        (fused fit + evaluate, cached like :meth:`eval_to_tau_points`)."""
+        return self.eval_to_tau_points(self.fit_from_freq(arr), tau_points)
 
     # -- uniform-grid (centered H-wave) interface ----------------------------
 
