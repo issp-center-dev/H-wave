@@ -694,6 +694,16 @@ ignored on the GPU).</p>
 <p>Outputs (<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>) are densified back to the uniform
 grid, so downstream analysis works unchanged (the npz gains provenance
 metadata such as <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>).</p>
+<p>When the FLEX run itself uses <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> with
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> (IR-native output files, recognizable by their
+<code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code> key), the dynamic solver with
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> consumes them directly: the stored node values
+are used as-is when the node sets coincide (the common case), or refit onto
+this run’s basis otherwise (logged, with a residual check). The temperature
+must match the FLEX run (a mismatch is an error — the susceptibilities are
+physics input). With <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>, IR-native inputs are
+rejected with an explicit error; either switch this solver to <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> or
+re-run FLEX with <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>FLEX outputs computed on the uniform FFT grid (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> etc.) carry

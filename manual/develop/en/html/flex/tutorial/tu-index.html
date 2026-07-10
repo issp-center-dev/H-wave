@@ -736,7 +736,21 @@ diagnostic warns when the bandwidth is insufficient.</p></td>
 exceeds 100x <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> (use it, warn), <code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code> (fall back to the zero start).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">write_densified</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>true</p></td>
+<td><p>IR runs only. <code class="docutils literal notranslate"><span class="pre">true</span></code> (default): all output files are densified
+onto the uniform <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grid (unchanged format, readable by every
+tool). <code class="docutils literal notranslate"><span class="pre">false</span></code>: outputs stay on the sparse IR nodes — the fixed
+densify+write cost disappears (the dominant remaining cost of an IR
+run), files shrink by ~``Nmat``/L, and downstream IR-aware
+consumers (the dynamic Eliashberg solver with
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>, and <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>
+chaining into another IR FLEX run) read them directly. Uniform-only
+readers (static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>, legacy scripts)
+reject such files with an explicit error. See the note below.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
 <td><p>Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the SCF loop (dressed G, chi0q, chiq, V_eff, and
@@ -748,7 +762,7 @@ components (single-orbital, or e.g. a spin-reduced two-orbital model);
 only larger blocks fall back to a host non-Hermitian
 eigendecomposition.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
 <td><p>1</p></td>
 <td><p>Number of worker threads for the spatial FFTs (parallelized via
@@ -784,6 +798,35 @@ frequencies (e.g. 4096 -&gt; 42 at <span class="math notranslate nohighlight">\(
 are densified back onto the <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grid, so downstream tools (including
 the dynamic Eliashberg solver) work unchanged. <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> is ignored
 on this path — the IR basis carries the <span class="math notranslate nohighlight">\(1/(i\omega)\)</span> tail exactly.</p>
+<p><strong>IR-native outputs.</strong> Adding <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> keeps the
+outputs on the sparse nodes. Use it for pure IR chains — IR FLEX
+feeding the dynamic Eliashberg solver
+(<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>) or seeding the next IR FLEX
+run of a temperature sweep via <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> (cross-temperature seeds
+are supported) — where it removes the fixed densification and file-size
+cost entirely. You can recognize such a file by the
+<code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code> key in the <code class="docutils literal notranslate"><span class="pre">.npz</span></code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Do <strong>not</strong> point legacy analysis scripts (anything that indexes the
+frequency axis positionally, e.g. the static slice at <code class="docutils literal notranslate"><span class="pre">Nmat/2</span></code>) at
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> outputs — the frequency axis holds
+sparse nodes, not the uniform grid. All H-wave readers detect this
+and stop with an explicit error; external scripts may not. To
+recover a uniform-grid file, re-run FLEX with
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code> (cheap: seed it with <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> from
+the native run), or densify offline:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>import numpy as np
+from hwave.solver.ir_axis import IRAxis
+d = np.load(&quot;chiq_s.npz&quot;)
+ax = IRAxis(float(d[&quot;ir_beta&quot;]), float(d[&quot;ir_wmax&quot;]),
+            float(d[&quot;ir_tol&quot;]), str(d[&quot;ir_statistics&quot;]))
+c = ax.fit_from_freq_points(np.moveaxis(d[&quot;chiq_s&quot;], 0, -1),
+                            d[&quot;ir_freq_n&quot;])
+chi_u = np.moveaxis(ax.eval_to_uniform(c, nmat=4096), -1, 0)
+</pre></div>
+</div>
+</div>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>

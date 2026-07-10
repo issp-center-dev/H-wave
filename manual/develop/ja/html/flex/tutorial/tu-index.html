@@ -700,7 +700,20 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 の100倍を超えた場合の挙動: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> は使用して警告、<code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>
 はエラー停止、<code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code> はゼロ初期化に退避します。</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">write_densified</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>true</p></td>
+<td><p>IR実行専用。<code class="docutils literal notranslate"><span class="pre">true``（デフォルト）では全出力ファイルを一様</span> <span class="pre">``Nmat</span></code>
+グリッドへ密評価して書き出します（従来形式、全ツールで可読）。
+<code class="docutils literal notranslate"><span class="pre">false</span></code> では出力がスパースIRノードのまま保存され、IR実行の残りの
+支配的コストである密評価・書き出しの固定費が消え、ファイルサイズも
+約 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/L 分の1になります。IR対応の下流（動的 Eliashberg の
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>、および次のIR FLEX実行への
+<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> 連鎖）は直接読めます。一様グリッド前提のリーダー
+（静的 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>、<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>、旧解析スクリプト）は明示エラーで
+停止します。下の注意も参照してください。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code> で SCF ループ（dressed G、chi0q、chiq、V_eff、自己エネルギー）を
@@ -710,7 +723,7 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 なら閉形式の固有値により GPU 上で実行され、3以上の場合のみ非エルミート
 固有値分解を CPU で実行します。</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
 <td><p>1</p></td>
 <td><p>空間 FFT のワーカースレッド数（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> による並列化）。デフォルト
@@ -745,6 +758,24 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 グリッドへ密評価して書き出されるため、下流のツール（動的 Eliashberg
 ソルバーを含む）は無変更で動作します。<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> はこのパスでは
 無視されます（IR基底が <span class="math notranslate nohighlight">\(1/(i\omega)\)</span> テールを厳密に保持するため）。</p>
+<p><strong>IRネイティブ出力。</strong> さらに <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> を指定すると
+出力はスパースノードのまま保存されます。IRで完結するチェーン — IR FLEX
+→ 動的 Eliashberg（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>）、あるいは
+温度スイープで次のIR FLEX実行へ <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> で継ぐ場合（異なる温度
+間のseedにも対応）— で使うと、密評価とファイル書き出しの固定費が完全に
+消えます。ネイティブファイルは <code class="docutils literal notranslate"><span class="pre">.npz</span></code> 内の
+<code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code> キーで識別できます。</p>
+<div class="admonition warning">
+<p class="admonition-title">警告</p>
+<p>振動数軸を位置で参照する旧解析スクリプト（例: <code class="docutils literal notranslate"><span class="pre">Nmat/2</span></code> の静的
+スライス）に <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> の出力を渡さないでください。
+振動数軸は一様グリッドではなくスパースノードです。H-wave内の
+リーダーはすべて検出して明示エラーで停止しますが、外部スクリプトは
+検出できません。一様グリッドのファイルが必要になった場合は、
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code> でFLEXを再実行するか（ネイティブ出力の
+<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> でseedすれば安価です）、ドキュメント記載のスニペットで
+オフライン密評価してください（英語版チュートリアル参照）。</p>
+</div>
 </div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>

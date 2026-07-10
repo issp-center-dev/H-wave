@@ -114,7 +114,7 @@ G^{(0)}_{\beta\beta'}(-\mathbf{k}', -i\varepsilon_{n'})
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id7" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id3">1</a>,<a role="doc-backlink" href="#id30">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id3">1</a>,<a role="doc-backlink" href="#id20">2</a>)</span>
 <p>K. Yoshimi, M. Nakamura, and H. Mori,
 J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <a class="reference external" href="https://arxiv.org/abs/cond-mat/0608466">arXiv:cond-mat/0608466</a>.</p>
@@ -229,14 +229,14 @@ GPU（CuPy）で実行します（デフォルト <code class="docutils literal 
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: 動的モードの空間 FFT のワーカースレッド数
 （デフォルト <code class="docutils literal notranslate"><span class="pre">1</span></code> = 従来どおりの直列 numpy。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コア。
 GPU 実行時は無視されます）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>: 動的モードの松原軸の表現。<a href="#id11"><span class="problematic" id="id12">``</span></a>&quot;uniform&quot;<a href="#id13"><span class="problematic" id="id14">``</span></a>（デフォルト、
-従来どおり）または <a href="#id15"><span class="problematic" id="id16">``</span></a>&quot;ir&quot;<a href="#id17"><span class="problematic" id="id18">``</span></a>（sparse-ir による中間表現基底。下記の
-<a class="reference internal" href="#sc-dynamic-ir"><span class="std std-ref">IR基底の節</span></a> を参照）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: IR基底の打ち切り精度 :math:<a href="#id19"><span class="problematic" id="id20">`</span></a>varepsilon`（デフォルト 1e-8）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: IR基底の実周波数バンド幅 <span class="math notranslate nohighlight">\(\omega_{\max}`（省略時は
-分散のスペクトル範囲 :math:\)</span>max|varepsilon_k-mu|` と相互作用スケールから
-自動推定。推定できない場合は明示指定を求めるエラーになります）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false``（デフォルト</span> <span class="pre">``false</span></code>）。
+<li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>: 動的モードの松原軸の表現。デフォルトは <code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code>
+（従来どおり）。<code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> を指定すると sparse-ir による中間表現基底を
+使用します（下記の <a class="reference internal" href="#sc-dynamic-ir"><span class="std std-ref">IR基底の節</span></a> を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: IR基底の打ち切り精度 <span class="math notranslate nohighlight">\(\varepsilon\)</span> 。デフォルトは 1e-8。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: IR基底の実周波数バンド幅 <span class="math notranslate nohighlight">\(\omega_{\max}\)</span> 。省略時は
+分散のスペクトル範囲 <span class="math notranslate nohighlight">\(\max|\varepsilon_k-\mu|\)</span> と相互作用スケールから
+自動推定します（推定できない場合は明示指定を求めるエラーになります）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code> 。デフォルトは <code class="docutils literal notranslate"><span class="pre">false</span></code>。
 スピン・電荷感受率が静的支配的な場合（サンプリング窓内でほぼ振動数に依存せず
 大きい、すなわち臨界近傍）、IR圧縮が <span class="math notranslate nohighlight">\(O(\beta/N_\mathrm{mat})\)</span> の
 <span class="math notranslate nohighlight">\(\delta(\tau)\)</span> アーティファクトとして破棄する振動数非依存成分が
@@ -246,8 +246,8 @@ GPU 実行時は無視されます）。</p></li>
 </ul>
 </section>
 </section>
-<section id="id21">
-<h3>相互作用定義ファイル<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h3>
+<section id="id11">
+<h3>相互作用定義ファイル<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
 <p>相互作用定義ファイルはWannier90形式で記述し、
 RPAソルバーと共通です。詳細は <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a> を参照してください。</p>
 <p><code class="docutils literal notranslate"><span class="pre">Geometry</span></code> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
@@ -321,8 +321,8 @@ RPAソルバーと共通です。詳細は <a class="reference internal" href=".
 <p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code> が生成されます。
 32 x 32メッシュの場合、数秒で完了します。</p>
 </section>
-<section id="id22">
-<h2><span class="section-number">5.2.6. </span>ステップ2: Eliashberg方程式ソルバーの実行<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h2>
+<section id="id12">
+<h2><span class="section-number">5.2.6. </span>ステップ2: Eliashberg方程式ソルバーの実行<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h2>
 <p>次に、同じ入力ファイルを使ってEliashberg方程式ソルバーを実行します:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave_sc<span class="w"> </span>input.toml
 </pre></div>
@@ -372,15 +372,15 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> の末尾列 <code class="docutils literal notranslate"><span class="pre">match</span></code> がこれを記録します（<code class="docutils literal notranslate"><span class="pre">1</span></code> = チャネルのパリティ
 セクター、<code class="docutils literal notranslate"><span class="pre">0</span></code> = 逆パリティセクター）。</p>
 </section>
-<section id="id23">
-<h2><span class="section-number">5.2.7. </span>計算結果<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h2>
-<section id="id24">
-<h3>ギャップ関数<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h3>
+<section id="id13">
+<h2><span class="section-number">5.2.7. </span>計算結果<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h2>
+<section id="id14">
+<h3>ギャップ関数<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h3>
 <p>以下の図は、自己無撞着反復から得られた
 ギャップ関数 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id39">
+<figure class="align-center" id="id27">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -388,11 +388,11 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id39" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id27" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id40">
+<figure class="align-center" id="id28">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -401,14 +401,14 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span> （および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id40" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id28" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
-<section id="id25">
-<h3>固有値スペクトル<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
+<section id="id15">
+<h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id41">
+<figure class="align-center" id="id29">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -418,7 +418,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満。1を超える2つの白抜きマーカーは
 <em>三重項</em> カーネルの偶パリティ解で、スピン三重項ペアリングにはパウリ原理により
-禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id41" title="Link to this image">¶</a></p>
+禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id29" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -435,16 +435,16 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 クロスオーバー近傍にあることを示します。実際の転移（ <span class="math notranslate nohighlight">\(\lambda = 1\)</span> ）は
 より低温で到達します。</p>
 </section>
-<section id="id26">
-<h3>描画スクリプト<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
+<section id="id16">
+<h3>描画スクリプト<a class="headerlink" href="#id16" title="Link to this heading">¶</a></h3>
 <p>上記の図はサンプルディレクトリに含まれる描画スクリプトで再現できます:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>plot_results.py
 </pre></div>
 </div>
 </section>
 </section>
-<section id="id27">
-<h2><span class="section-number">5.2.8. </span>出力ファイル<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
+<section id="id17">
+<h2><span class="section-number">5.2.8. </span>出力ファイル<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h2>
 <p>ソルバーは <code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに以下のファイルを出力します。</p>
 <section id="gap-dat">
 <h3><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code><a class="headerlink" href="#gap-dat" title="Link to this heading">¶</a></h3>
@@ -473,8 +473,8 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 読み込めます。</p>
 </section>
 </section>
-<section id="id28">
-<h2><span class="section-number">5.2.9. </span>物理的解釈<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h2>
+<section id="id18">
+<h2><span class="section-number">5.2.9. </span>物理的解釈<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h2>
 <p>線形化Eliashberg方程式の最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span> は
 超伝導の発生を判定します:</p>
 <ul class="simple">
@@ -512,8 +512,8 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <span class="math notranslate nohighlight">\(\lambda \approx 1.58,\ 1.09\)</span> という大きな値はこのような spurious な
 偶パリティモードであり、三重項不安定性では <strong>ありません</strong> 。</p>
 </div>
-<section id="id29">
-<h3>一重項と三重項の比較<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h3>
+<section id="id19">
+<h3>一重項と三重項の比較<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
 <p>入力ファイルの <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> を <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code> に変更することで、
 一重項と三重項のチャネルを比較できます。
 三重項チャネルに切り替える際は、<code class="docutils literal notranslate"><span class="pre">init_gap</span></code> も <code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code> のような
@@ -526,14 +526,14 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 同じパラメータで <span class="math notranslate nohighlight">\(T = 0.1\)</span> の場合、主要な物理的固有値は
 <span class="math notranslate nohighlight">\(\lambda_T \approx 0.97\)</span> （三重項）と <span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>
 （一重項）で、ともに1未満、三重項がわずかに先行します。これは本サンプルが
-文献 <a class="footnote-reference brackets" href="#id7" id="id30" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> の一重項・三重項クロスオーバー近傍にあることを示します。
+文献 <a class="footnote-reference brackets" href="#id7" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> の一重項・三重項クロスオーバー近傍にあることを示します。
 同文献では、<span class="math notranslate nohighlight">\(T &gt; 0.05\)</span> で三重項SC状態が一重項SC状態と競合し、低温
 (<span class="math notranslate nohighlight">\(T &lt; 0.05\)</span>) ではスピンゆらぎの増大により一重項SC転移が支配的になることが
 報告されています。実際の転移（ <span class="math notranslate nohighlight">\(\lambda = 1\)</span> ）は低温で到達します。</p>
 </section>
 </section>
 <section id="sc-dynamic-frequency">
-<span id="id31"></span><h2><span class="section-number">5.2.10. </span>動的（振動数依存）Eliashberg方程式<a class="headerlink" href="#sc-dynamic-frequency" title="Link to this heading">¶</a></h2>
+<span id="id21"></span><h2><span class="section-number">5.2.10. </span>動的（振動数依存）Eliashberg方程式<a class="headerlink" href="#sc-dynamic-frequency" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は既定では <strong>静的近似</strong> で Eliashberg 方程式を解きます。すなわち
 ペアリング頂点をボゾン松原振動数ゼロで評価し（Nakano--Kuroki 式(9) の静的近似）、
 ギャップ <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k})\)</span> は振動数依存性を持ちません。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
@@ -580,8 +580,8 @@ orbital-pair と誤認して pairing vertex を壊していました。該当す
 <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> ディレクトリ）、個々のファイル名は <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> の
 <code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_green</span></code> で上書きできます。</p>
 </section>
-<section id="id32">
-<h3>出力<a class="headerlink" href="#id32" title="Link to this heading">¶</a></h3>
+<section id="id22">
+<h3>出力<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h3>
 <p>動的モードは <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> （最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>）に加えて、
 以下を書き出します:</p>
 <dl class="simple">
@@ -608,10 +608,10 @@ orbital-pair と誤認して pairing vertex を壊していました。該当す
 </dd>
 </dl>
 </section>
-<section id="id33">
-<h3>チャネルパリティによる選別<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h3>
-<p>静的ソルバーと同様に、動的モードも単に代数的に最大の固有値ではなく、<a href="#id34"><span class="problematic" id="id35">**</span></a>指定した
-ペアリングチャネルの**先頭固有対を報告します。フェルミオンの反対称性により、
+<section id="id23">
+<h3>チャネルパリティによる選別<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h3>
+<p>静的ソルバーと同様に、動的モードも単に代数的に最大の固有値ではなく、
+<strong>指定したペアリングチャネルの</strong> 先頭固有対を報告します。フェルミオンの反対称性により、
 ギャップの結合パリティ <span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
 \phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)\)</span> が決まります（<code class="docutils literal notranslate"><span class="pre">singlet</span></code> では偶
 ――従来型の偶振動数解と奇振動数解の両方を許容――、<code class="docutils literal notranslate"><span class="pre">triplet</span></code> では奇）。Arnoldi
@@ -625,8 +625,8 @@ orbital-pair と誤認して pairing vertex を壊していました。該当す
 系では各反復ベクトルをチャネルセクターへ射影します。可換でない場合は警告を出して
 射影を無効化し、射影なしの反復を用います。</p>
 </section>
-<section id="id36">
-<h3>メモリに関する注意<a class="headerlink" href="#id36" title="Link to this heading">¶</a></h3>
+<section id="id24">
+<h3>メモリに関する注意<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h3>
 <p>動的ソルバーは複数の全振動数テンソル（ペアリング頂点・ペアバブル・ギャップ）を
 保持するため、ピークメモリはおおよそ
 <span class="math notranslate nohighlight">\(\mathcal{O}(N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}})\)</span> で増加し、軌道数・
@@ -640,8 +640,8 @@ RAM の一部が上限に使われます。この見積もりは、設定値だ�
 （k メッシュと軌道数は設定から取得し、その不一致はローダーの reshape エラーとして
 現れます）。</p>
 </section>
-<section id="id37">
-<h3>性能に関する注意<a class="headerlink" href="#id37" title="Link to this heading">¶</a></h3>
+<section id="id25">
+<h3>性能に関する注意<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
 <p>固有値ソルブはカーネルの繰り返し適用が支配的です。2つの最適化でこれを軽く
 保ちます：頂点の虚時間変換（カーネルで最も重いステップ）を matvec ごとではなく
 一度だけ事前計算し、空間 FFT を <code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> で並列化します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
@@ -670,6 +670,16 @@ CPU の空間 FFT にのみ作用します。</p>
 <p>出力（<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>）は従来どおり一様グリッドへ密評価
 して書き出されるため、下流の解析はそのまま動作します（npz には
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code> などの由来メタデータが追加されます）。</p>
+<p>FLEX 側が <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> かつ
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false``（IRネイティブ出力、</span></code>.npz`` 内の
+<code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code> キーで識別可能）の場合、動的ソルバーは
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> でそのファイルを直接読み込みます。ノード集合が
+一致すれば保存値をそのまま使用（通常のケース）、異なる場合は本実行の基底へ
+リフィットします（残差をログ出力）。温度は FLEX 実行と一致している必要が
+あります（感受率は物理入力のため、不一致はエラーです）。
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code> のままIRネイティブ入力を渡すと明示エラーに
+なります。本ソルバーを <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> に切り替えるか、FLEX を
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code> で再実行してください。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p>一様グリッドFFTで計算された FLEX 出力（<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> 等）には
@@ -709,8 +719,8 @@ CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です�
 </ul>
 </section>
 </section>
-<section id="id38">
-<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h2>
+<section id="id26">
+<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h2>
 <p>Eliashberg方程式ソルバーは、H-waveで利用可能な
 全ての相互作用型に対応しています:</p>
 <ul class="simple">
@@ -779,12 +789,12 @@ CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です�
 <li class="toctree-l3"><a class="reference internal" href="#id4">5.2.3. 理論</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id8">5.2.4. 入力ファイルの準備</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#rpa">5.2.5. ステップ1: RPA計算の実行</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id22">5.2.6. ステップ2: Eliashberg方程式ソルバーの実行</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id23">5.2.7. 計算結果</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id27">5.2.8. 出力ファイル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id28">5.2.9. 物理的解釈</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id12">5.2.6. ステップ2: Eliashberg方程式ソルバーの実行</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id13">5.2.7. 計算結果</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id17">5.2.8. 出力ファイル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id18">5.2.9. 物理的解釈</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#sc-dynamic-frequency">5.2.10. 動的（振動数依存）Eliashberg方程式</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id38">5.2.11. 対応する相互作用</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id26">5.2.11. 対応する相互作用</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tips">5.2.12. Tips</a></li>
 </ul>
 </li>
