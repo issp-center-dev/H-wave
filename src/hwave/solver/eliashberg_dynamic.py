@@ -617,7 +617,8 @@ def _ir_auto_wmax(hr, inter_k):
     except Exception as exc:
         raise ValueError(
             "ir_wmax auto-estimate failed ({}); set [eliashberg] ir_wmax "
-            "explicitly.".format(exc))
+            "explicitly (a real-frequency bandwidth in the same energy "
+            "units as the Hamiltonian).".format(exc))
     if not np.isfinite(wmax) or wmax <= 0.0:
         raise ValueError(
             "ir_wmax auto-estimate is not a positive finite number "
@@ -694,7 +695,7 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
             "(%.3e) is unusually large (>5%% of the data scale %.3e). The "
             "O(beta/Nmat) discretization constant should be small; a large "
             "value may indicate an unexpected constant in the input data -- "
-            "check the FLEX output / increase its Nmat.",
+            "check the FLEX output / increase [mode.param] Nmat in the FLEX run.",
             label, const_max, scale)
     if resid > 1.0e3 * ax.eps * scale:
         logger.warning(

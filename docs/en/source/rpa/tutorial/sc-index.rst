@@ -185,9 +185,10 @@ This section controls the Eliashberg solver. Key parameters:
   ``"uniform"`` (default, unchanged) or ``"ir"`` (the sparse-ir intermediate
   representation; see :ref:`the IR section <sc_dynamic_ir_en>` below).
 - ``ir_tol``: IR basis cutoff accuracy (default 1e-8).
-- ``ir_wmax``: real-frequency bandwidth of the IR basis (auto-estimated from
-  the band range and interaction scale when omitted; an unformable estimate
-  is a fail-fast error asking for an explicit value).
+- ``ir_wmax``: real-frequency bandwidth of the IR basis, in the same energy
+  units as the Hamiltonian (auto-estimated from the band range and
+  interaction scale when omitted; if the estimate cannot be formed, the
+  solver fails fast and asks for an explicit value).
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -626,7 +627,14 @@ temperature. Requires the optional
 `sparse-ir <https://sparse-ir.readthedocs.io>`_ package
 (``pip install sparse-ir``). The kernel, the eigen-iteration, and the parity
 filtering all run on the sparse nodes, cutting the frequency-axis memory and
-compute by ``Nmat/L`` (20-40x). Composes with GPU execution (``gpu = true``).
+compute by ``Nmat/L`` (20-40x). Note that ``Nmat`` keeps its role: the
+preceding FLEX run still produces (and must converge on) the uniform
+``Nmat`` grid that the IR loader reads, and the outputs below are densified
+back onto it -- IR compresses the dynamic solver's INTERNAL frequency axis,
+whose node count is set by ``beta * ir_wmax`` and ``ir_tol``, not by
+``Nmat``. Composes with GPU execution (``gpu = true``, which still requires
+CuPy; ``fft_workers`` keeps its meaning for the CPU spatial FFTs and is
+ignored on the GPU).
 
 Outputs (``gap_dynamic.npz`` / ``gap.dat``) are densified back to the uniform
 grid, so downstream analysis works unchanged (the npz gains provenance
@@ -639,8 +647,12 @@ metadata such as ``matsubara_basis``).
    offset plus aliasing images). The IR loader isolates and discards the
    constant (logged), and the eigenvalue difference between the IR and
    uniform paths is bounded by this input-data quality (measured ~1% at
-   ``Nmat=128`` and 5e-4 at ``Nmat=512`` on the test fixture); both converge
-   to the same continuum limit as ``Nmat`` grows.
+   ``Nmat=128`` and 5e-4 at ``Nmat=512`` on the small test fixture; these
+   numbers are fixture-specific, not a general guarantee); both converge
+   to the same continuum limit as ``Nmat`` grows. For production use,
+   validate once per model: raise the FLEX ``Nmat`` (or compare a uniform
+   run against the IR run at the same ``Nmat``) and check that the leading
+   eigenvalue shift is within your tolerance.
 
 .. _sc_dynamic_gpu_en:
 
