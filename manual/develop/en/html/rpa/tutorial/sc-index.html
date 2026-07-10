@@ -230,6 +230,14 @@ kernel applications on a GPU via CuPy (default <code class="docutils literal not
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: Number of FFT worker threads for the dynamic-mode spatial
 FFTs (default <code class="docutils literal notranslate"><span class="pre">1</span></code> = the serial numpy path, unchanged from previous
 releases; <code class="docutils literal notranslate"><span class="pre">-1</span></code> uses all cores; ignored on the GPU).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>: Matsubara-axis representation of the dynamic mode:
+<code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code> (default, unchanged) or <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> (the sparse-ir intermediate
+representation; see <a class="reference internal" href="#sc-dynamic-ir-en"><span class="std std-ref">the IR section</span></a> below).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: IR basis cutoff accuracy (default 1e-8).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: real-frequency bandwidth of the IR basis, in the same energy
+units as the Hamiltonian (auto-estimated from the band range and
+interaction scale when omitted; if the estimate cannot be formed, the
+solver fails fast and asks for an explicit value).</p></li>
 </ul>
 </section>
 </section>
@@ -656,6 +664,41 @@ several dynamic solves concurrently to avoid oversubscribing the CPU. Together
 these give roughly a 4x speedup at <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>, <code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">=</span> <span class="pre">1024</span></code>,
 <code class="docutils literal notranslate"><span class="pre">N_{mat}</span> <span class="pre">=</span> <span class="pre">1024</span></code>. On the GPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>) the FFTs already run on the
 device and <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> is ignored.</p>
+</section>
+<section id="ir-basis-sparse-ir-compression-of-the-matsubara-axis">
+<span id="sc-dynamic-ir-en"></span><h3>IR-basis (sparse-ir) compression of the Matsubara axis<a class="headerlink" href="#ir-basis-sparse-ir-compression-of-the-matsubara-axis" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> replaces the dynamic mode’s uniform Matsubara grid
+(<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> points) by the sparse sampling nodes of the intermediate
+representation (IR) basis – typically 50-100 nodes, improving with lower
+temperature. Requires the optional
+<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> package
+(<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>). The kernel, the eigen-iteration, and the parity
+filtering all run on the sparse nodes, cutting the frequency-axis memory and
+compute by <code class="docutils literal notranslate"><span class="pre">Nmat/L</span></code> (20-40x). Note that <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> keeps its role: the
+preceding FLEX run still produces (and must converge on) the uniform
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grid that the IR loader reads, and the outputs below are densified
+back onto it – IR compresses the dynamic solver’s INTERNAL frequency axis,
+whose node count is set by <code class="docutils literal notranslate"><span class="pre">beta</span> <span class="pre">*</span> <span class="pre">ir_wmax</span></code> and <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>, not by
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. Composes with GPU execution (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>, which still requires
+CuPy; <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> keeps its meaning for the CPU spatial FFTs and is
+ignored on the GPU).</p>
+<p>Outputs (<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>) are densified back to the uniform
+grid, so downstream analysis works unchanged (the npz gains provenance
+metadata such as <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>).</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>FLEX outputs computed on the uniform FFT grid (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> etc.) carry
+<code class="docutils literal notranslate"><span class="pre">O(beta/Nmat)</span></code> discretization artifacts (a delta(tau)-derived constant
+offset plus aliasing images). The IR loader isolates and discards the
+constant (logged), and the eigenvalue difference between the IR and
+uniform paths is bounded by this input-data quality (measured ~1% at
+<code class="docutils literal notranslate"><span class="pre">Nmat=128</span></code> and 5e-4 at <code class="docutils literal notranslate"><span class="pre">Nmat=512</span></code> on the small test fixture; these
+numbers are fixture-specific, not a general guarantee); both converge
+to the same continuum limit as <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grows. For production use,
+validate once per model: raise the FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (or compare a uniform
+run against the IR run at the same <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) and check that the leading
+eigenvalue shift is within your tolerance.</p>
+</div>
 </section>
 <section id="gpu-execution-cupy">
 <span id="sc-dynamic-gpu-en"></span><h3>GPU execution (CuPy)<a class="headerlink" href="#gpu-execution-cupy" title="Link to this heading">¶</a></h3>

@@ -50,6 +50,10 @@ RPA/FLEX via <code class="docutils literal notranslate"><span class="pre">[mode.
 version, e.g. <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code> for CUDA 12.x – see the
 <a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPy installation guide</a>.
 Without CuPy, <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> falls back to the CPU path with a warning.)</p></li>
+<li><p>sparse-ir module (optional; only for the IR-basis Matsubara axis of the
+dynamic Eliashberg solver, <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>.
+Install with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>; without it, <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> is a
+fail-fast error with this install hint.)</p></li>
 </ul>
 <p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
 The spatial FFTs of the RPA/FLEX/dynamic-Eliashberg solvers switch to
