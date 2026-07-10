@@ -664,17 +664,26 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                     fw.write(" ".join(parts) + "\n")
 
 
-def _ir_auto_wmax(hr, inter_k):
-    """Heuristic default for ir_wmax (design Sec. 4): 3x the sum of a
-    Gershgorin-style bound on the single-particle band range and the largest
-    interaction scale. Aborts (ValueError) when the estimate cannot be
-    formed, rather than silently defaulting."""
+def _ir_auto_wmax(hr, inter_k, norb, kx_array, ky_array, kz_array):
+    """Heuristic default for ir_wmax: 3x the sum of the ACTUAL dispersion
+    range of H(k) on the run's k-mesh and the largest interaction scale.
+
+    Issue #57 root cause 1: the previous Gershgorin-style estimate misread
+    the flat ``{((Rx,Ry,Rz),(i,j)): t}`` layout of ``hr`` and summed |t|
+    over EVERY (R, orbital-pair) entry -- a grand total, not a band bound
+    (15x overestimate on beta'-(ET)2ICl2, Lambda ~ 1e4, ill-conditioned
+    basis, lambda ~ 1e9). Diagonalizing H(k) is cheap (norb^2 * Nk) and
+    exact. The dispersion RANGE (max - min) bounds both the particle-hole
+    (bosonic) content and |eps - mu| for any mu inside the band; the
+    factor 3 gives the tau-product headroom (V*F spectra add). Aborts
+    (ValueError) when the estimate cannot be formed, rather than silently
+    defaulting."""
+    import hwave.sc as sc
     try:
-        tot = None
-        for _, mat in hr.items():
-            m = np.abs(np.asarray(mat, dtype=complex))
-            tot = m if tot is None else tot + m
-        band = float(tot.sum(axis=-1).max())
+        eps_k = sc._build_hamiltonian_k(kx_array, ky_array, kz_array,
+                                        hr, norb)
+        ev = np.linalg.eigvalsh(eps_k.transpose(2, 3, 4, 0, 1))
+        band = float(ev.max() - ev.min())
         u = 0.0
         for arr in inter_k.values():
             u = max(u, float(np.abs(np.asarray(arr)).max()))
@@ -687,18 +696,19 @@ def _ir_auto_wmax(hr, inter_k):
     if not np.isfinite(wmax) or wmax <= 0.0:
         raise ValueError(
             "ir_wmax auto-estimate is not a positive finite number "
-            "(band bound + interaction scale gave {}); set [eliashberg] "
+            "(band range + interaction scale gave {}); set [eliashberg] "
             "ir_wmax explicitly.".format(wmax))
     return wmax
 
 
-def _ir_axes_for_run(eli_param, beta, hr, inter_k):
+def _ir_axes_for_run(eli_param, beta, hr, inter_k, norb, kx_array, ky_array,
+                     kz_array):
     """Build the fermionic/bosonic IR axes for a dynamic-Eliashberg run."""
     from hwave.solver.ir_axis import IRAxis
     eps = float(eli_param.get("ir_tol", 1.0e-8))
     wmax = eli_param.get("ir_wmax")
     if wmax is None:
-        wmax = _ir_auto_wmax(hr, inter_k)
+        wmax = _ir_auto_wmax(hr, inter_k, norb, kx_array, ky_array, kz_array)
         logger.info("IR: auto ir_wmax = %.6g (override with [eliashberg] "
                     "ir_wmax)", wmax)
     wmax = float(wmax)
@@ -754,6 +764,26 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
                 resid, resid / scale,
                 (", discarded delta(tau) constant %.3e" % const_max)
                 if drop_constant else "")
+    if drop_constant and const_max > 0.5 * scale:
+        # Issue #57: a "constant" comparable to the data scale cannot be
+        # the O(beta/Nmat) discretization artifact -- it is either physics
+        # this fit would silently delete, or the collinearity blow-up of an
+        # ill-conditioned (too-large-Lambda) basis. Either way the result
+        # would be wrong; stop instead of warn-and-proceed.
+        raise ValueError(
+            "IR compress {}: the fitted frequency-independent component "
+            "({:.3e}) is comparable to the data scale ({:.3e}); it cannot "
+            "be the O(beta/Nmat) delta(tau) discretization artifact, and "
+            "discarding it would corrupt the result. Likely causes and "
+            "fixes: (a) [eliashberg] ir_wmax is far too large "
+            "(ill-conditioned basis) -- remove it to use the auto "
+            "estimate, or set it near 3*(bandwidth + max interaction); "
+            "(b) the static part of chi cannot be separated from the "
+            "artifact at this Nmat -- increase [mode.param] Nmat in the "
+            "FLEX run; (c) run the FLEX step with [mode.param] "
+            "matsubara_basis = \"ir\" (its chi is artifact-free) or this "
+            "solver with matsubara_basis = \"uniform\".".format(
+                label, const_max, scale))
     if drop_constant and const_max > 0.05 * scale:
         logger.warning(
             "IR compress %s: the discarded frequency-independent component "
@@ -783,7 +813,23 @@ def _ir_vertex_to_rtau(V_nodes, axB, axF, workers=1):
     return _spatial_ifftn(V_tau, axes=(4, 5, 6), workers=workers)
 
 
-def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta, workers=1):
+def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
+                          convention):
+    """The frequency-INDEPENDENT part of the pairing vertex: the bare
+    ``0.5*(S+C)``-type term of ``sc._compute_vertices_flex``, obtained by
+    evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
+    (CoulombIntra-only) model in the Kuroki convention this cancels
+    exactly (S+C = U-U = 0), which is why the issue-#57 defect stayed
+    invisible on the CoulombIntra-only test fixtures."""
+    import hwave.sc as sc
+    zero = np.zeros((Nx, Ny, Nz, norb ** 2, norb ** 2), dtype=complex)
+    return sc._compute_vertices_flex(zero, zero, inter_k, norb, Nx, Ny, Nz,
+                                     pairing_type=pairing_type,
+                                     convention=convention)
+
+
+def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
+                         V_inst_rt=None, workers=1):
     """Apply the dynamic Eliashberg kernel on sparse IR nodes.
 
     Mirrors ``eliashberg_kernel_dynamic`` with the phase-twisted FFT
@@ -793,14 +839,38 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta, workers=1):
     uniform-grid FFT chain carries one net factor beta; the explicit
     ``beta`` factor here restores the identical operator normalization
     (pinned by test_ir_matvec_matches_uniform_kernel).
+
+    ``V_inst_rt`` (issue #57): the frequency-INDEPENDENT part of the
+    pairing vertex (:func:`_instantaneous_vertex`), spatially transformed
+    to r, shape (norb, norb, norb, norb, Nx, Ny, Nz). In imaginary time it
+    is ``V_inst * delta(tau)`` -- OUT OF the bosonic IR basis, so it must
+    never be fitted (``_ir_vertex_to_rtau`` would alias it into an
+    uncontrolled smooth function); its tau integral is analytic instead:
+    ``integral dtau e^{i w tau} V_inst delta(tau) F(tau) = V_inst F(0)``
+    with ``F(0) = (1/beta) sum_nu F(i nu)`` evaluated exactly through the
+    fermionic basis (``u_zero_plus``; F ~ 1/nu^2, so the equal-time value
+    is continuous and needs no 0^+ regularization). The uniform-grid
+    kernel needs no such split: its dense tau grid represents the delta as
+    a single bin.
     """
     xp = backend.array_module_of(G2_nodes)
     phi_nodes = xp.asarray(phi_nodes)
     F = xp.einsum('iljmxyzn,lmxyzn->ijxyzn', G2_nodes, phi_nodes)
-    F_rt = _spatial_ifftn(axF.freq_to_tau(F), axes=(2, 3, 4), workers=workers)
+    F_coeff = axF.fit_from_freq(F)
+    F_rt = _spatial_ifftn(axF.eval_to_tau(F_coeff), axes=(2, 3, 4),
+                          workers=workers)
     prod = -xp.einsum('abcdxyzt,bcxyzt->adxyzt', V_rt_tau, F_rt)
     out = axF.tau_to_freq(_spatial_fftn(prod, axes=(2, 3, 4),
                                         workers=workers))
+    if V_inst_rt is not None:
+        u0 = axF.u_zero_plus
+        if xp is not np:
+            u0 = xp.asarray(u0)
+        F0_r = _spatial_ifftn(F_coeff @ u0, axes=(2, 3, 4), workers=workers)
+        inst_r = -xp.einsum('abcdxyz,bcxyz->adxyz',
+                            xp.asarray(V_inst_rt), F0_r)
+        inst_k = _spatial_fftn(inst_r, axes=(2, 3, 4), workers=workers)
+        out = out + inst_k[..., np.newaxis]
     return beta * out
 
 
@@ -891,7 +961,8 @@ def solve_dynamic(input_dict):
     # VERTEX and G2 are never built on the IR path.
     axF = axB = None
     if use_ir:
-        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k)
+        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k,
+                                    norb, kx_array, ky_array, kz_array)
         chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
                               drop_constant=True)
         chic_w = _ir_compress(chic_w, axB, nmat, "chiq_c",
@@ -944,7 +1015,25 @@ def solve_dynamic(input_dict):
     # dominates the matvec cost, so do it once here; drop the (q, i nu) form
     # to keep the resident vertex memory unchanged. On the IR path the tau
     # grid is the fermionic node set (the product V*F is anti-periodic).
+    V_inst_rt = None
     if use_ir:
+        # Issue #57: split off the frequency-INDEPENDENT (bare 0.5*(S+C))
+        # part of the vertex BEFORE the bosonic-basis fit -- in tau it is a
+        # delta(tau), out of any IR basis, and fitting it aliases it into
+        # an uncontrolled smooth function. The kernel handles it
+        # analytically (see eliashberg_kernel_ir).
+        V_inst = _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                       pairing_type=pairing_type,
+                                       convention=chi_convention)
+        inst_scale = float(np.abs(V_inst).max())
+        if inst_scale > 0.0:
+            logger.info("IR: instantaneous vertex part split off "
+                        "analytically (max |V_inst| = %.6g).", inst_scale)
+            Vs_q_w = Vs_q_w - V_inst[..., np.newaxis]
+            V_inst_rt = _spatial_ifftn(V_inst.astype(complex),
+                                       axes=(4, 5, 6), workers=fft_workers)
+            if gpu_active:
+                V_inst_rt = xp.asarray(V_inst_rt)
         Vs_rt = _ir_vertex_to_rtau(Vs_q_w, axB, axF, workers=fft_workers)
     else:
         Vs_rt = vertex_qw_to_rt(Vs_q_w, workers=fft_workers)
@@ -954,7 +1043,7 @@ def solve_dynamic(input_dict):
         if use_ir:
             out = eliashberg_kernel_ir(
                 Vs_rt, G2_w, x.reshape(gap_shape), axF, beta,
-                workers=fft_workers)
+                V_inst_rt=V_inst_rt, workers=fft_workers)
         else:
             out = eliashberg_kernel_dynamic(
                 None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt,
