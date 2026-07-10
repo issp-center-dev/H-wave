@@ -338,6 +338,40 @@ traces the <span class="math notranslate nohighlight">\(\mu\)</span>-<span class
 paramagnetic (spin-free) calculation and non-zero only for
 spin-dependent (spin-diagonal / spinful) runs.</p>
 </div>
+</section>
+<section id="warm-starting-the-scf-loop-sigma-init">
+<h3>Warm-starting the SCF loop (<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>)<a class="headerlink" href="#warm-starting-the-scf-loop-sigma-init" title="Link to this heading">¶</a></h3>
+<p>By default FLEX starts the self-consistency loop from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span>.
+Setting <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> in <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> to a <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> written by an
+earlier FLEX run instead seeds the loop from that self-energy:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
+</pre></div>
+</div>
+<p>This is often decisive near a magnetic instability (low temperature, strong
+spin fluctuations), where the <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> transient makes the SCF
+<em>oscillate</em> (the residual <code class="docutils literal notranslate"><span class="pre">|dSigma|/|Sigma|</span></code> stalls around 1 instead of
+decreasing) and the run hits <code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> without converging. Starting from
+a converged neighbouring solution – for example, stepping the temperature down
+and feeding each run the previous (higher-<span class="math notranslate nohighlight">\(T\)</span>) <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> – begins the
+iteration near the fixed point and avoids the oscillation. The seed must have
+the same <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> and <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> as the current run (both are fail-fast
+errors: <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> records its <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, so even a same-volume
+aspect-ratio change like <code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> vs <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code> is caught), so keep
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> fixed across a continuation sweep.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> path is resolved relative to <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
+<span class="pre">path_to_input</span></code>, while the previous run wrote its <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> under
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>. In a sweep, either copy the previous
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> into the input directory, or point <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> at the
+previous output directory with a relative path, e.g.:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[file.input]
+  path_to_input = &quot;.&quot;
+  sigma_init = &quot;run_T0.50/output/sigma.npz&quot;
+</pre></div>
+</div>
+</div>
 <p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
 <figure class="align-center" id="id22">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />

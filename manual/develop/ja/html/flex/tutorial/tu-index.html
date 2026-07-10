@@ -320,6 +320,37 @@ FLEX converged after 64 iterations
 <span class="math notranslate nohighlight">\(\mu\)</span>-<span class="math notranslate nohighlight">\(N\)</span> 関係が得られます。<code class="docutils literal notranslate"><span class="pre">Sz</span></code> は常磁性（spin-free）計算では 0
 となり、スピン依存（spin-diagonal / spinful）計算でのみ非ゼロになります。</p>
 </div>
+</section>
+<section id="scf-sigma-init">
+<h3>SCFループのウォームスタート（<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>）<a class="headerlink" href="#scf-sigma-init" title="Link to this heading">¶</a></h3>
+<p>FLEX はデフォルトで自己無撞着ループを <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> から始めます。
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> の <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> に、以前の FLEX 計算が出力した <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
+を指定すると、その自己エネルギーからループを開始します:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
+</pre></div>
+</div>
+<p>これは磁気不安定点の近傍（低温・強いスピン揺らぎ）で特に有効です。そこでは
+<span class="math notranslate nohighlight">\(\Sigma = 0\)</span> からの過渡により SCF が*振動*し（残差 <code class="docutils literal notranslate"><span class="pre">|dSigma|/|Sigma|</span></code>
+が減少せず 1 付近で停滞）、<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> に達しても収束しません。収束済みの
+近傍解 ― 例えば温度を段階的に下げ、各計算に直前（高 <span class="math notranslate nohighlight">\(T\)</span>）の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
+を与える ― から始めれば、固定点の近くから反復が始まり振動を回避できます。種は
+現在の計算と同じ <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> と <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> でなければなりません（どちらも即エラー
+になります。<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> を記録するため、体積が同じでも
+<code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> と <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code> のようなアスペクト比違いも検出されます）。
+continuation スイープでは <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> と <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> を固定してください。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> のパスは <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_input</span></code> からの相対で解決され
+ます。一方、前の計算の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code> に
+書き出されています。スイープでは、前の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> を入力ディレクトリに
+コピーするか、相対パスで前の出力ディレクトリを直接指してください。例:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[file.input]
+  path_to_input = &quot;.&quot;
+  sigma_init = &quot;run_T0.50/output/sigma.npz&quot;
+</pre></div>
+</div>
+</div>
 <p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
 <figure class="align-center" id="id42">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />

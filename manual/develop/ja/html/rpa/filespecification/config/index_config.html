@@ -258,6 +258,10 @@ FLEXソルバーでは、裸の感受率 <span class="math notranslate nohighlig
 <p><strong>形式 :</strong> str型</p>
 <p><strong>説明 :</strong> RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の <code class="docutils literal notranslate"><span class="pre">green</span></code> の出力ファイル形式に対応しています。 <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> が指定されている場合、 <code class="docutils literal notranslate"><span class="pre">green_init</span></code> は使われません。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code></p>
+<p><strong>形式 :</strong> str型（FLEXモードのみ）</p>
+<p><strong>説明 :</strong> FLEX の SCF ループの初期自己エネルギーとして読み込む <code class="docutils literal notranslate"><span class="pre">sigma.npz``（以前の</span> <span class="pre">FLEX</span> <span class="pre">計算の出力）のファイル名を指定します。パスは</span> <span class="pre">``path_to_input</span></code> からの相対で解決されます。<code class="docutils literal notranslate"><span class="pre">CellShape</span></code> と <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。</p>
+</li>
 </ul>
 </section>
 <section id="file-input-interaction">

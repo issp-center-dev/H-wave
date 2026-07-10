@@ -330,6 +330,17 @@ String</p>
 <p><strong>Description :</strong>
 This parameter specifies the filename of the initial Green’s function for RPA calculation. The file format corresponds to the output file of <code class="docutils literal notranslate"><span class="pre">green</span></code> of UHFk. When <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> is specified, <code class="docutils literal notranslate"><span class="pre">green_init</span></code> is not used.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code></p>
+<p><strong>Type :</strong>
+String (FLEX mode only)</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of a <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> (written by an
+earlier FLEX run) used to seed the FLEX SCF loop instead of Sigma = 0. The
+path is resolved relative to <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>. The recorded <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>
+and the array’s <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must match the current run (a mismatch is a
+fail-fast error). See the FLEX tutorial section “Warm-starting the SCF
+loop” for the sweep workflow.</p>
+</li>
 </ul>
 </section>
 <section id="file-input-interaction-section">

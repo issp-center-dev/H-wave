@@ -270,6 +270,39 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
    :math:`\mu`-:math:`N` 関係が得られます。``Sz`` は常磁性（spin-free）計算では 0
    となり、スピン依存（spin-diagonal / spinful）計算でのみ非ゼロになります。
 
+SCFループのウォームスタート（``sigma_init``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+FLEX はデフォルトで自己無撞着ループを :math:`\Sigma = 0` から始めます。
+``[file.input]`` の ``sigma_init`` に、以前の FLEX 計算が出力した ``sigma.npz``
+を指定すると、その自己エネルギーからループを開始します:
+
+.. code-block:: toml
+
+   [file.input]
+     sigma_init = "sigma.npz"
+
+これは磁気不安定点の近傍（低温・強いスピン揺らぎ）で特に有効です。そこでは
+:math:`\Sigma = 0` からの過渡により SCF が*振動*し（残差 ``|dSigma|/|Sigma|``
+が減少せず 1 付近で停滞）、``IterationMax`` に達しても収束しません。収束済みの
+近傍解 ― 例えば温度を段階的に下げ、各計算に直前（高 :math:`T`）の ``sigma.npz``
+を与える ― から始めれば、固定点の近くから反復が始まり振動を回避できます。種は
+現在の計算と同じ ``CellShape`` と ``Nmat`` でなければなりません（どちらも即エラー
+になります。``sigma.npz`` は ``CellShape`` を記録するため、体積が同じでも
+``[2,8,1]`` と ``[4,4,1]`` のようなアスペクト比違いも検出されます）。
+continuation スイープでは ``Nmat`` と ``CellShape`` を固定してください。
+
+.. note::
+
+   ``sigma_init`` のパスは ``[file.input] path_to_input`` からの相対で解決され
+   ます。一方、前の計算の ``sigma.npz`` は ``[file.output] path_to_output`` に
+   書き出されています。スイープでは、前の ``sigma.npz`` を入力ディレクトリに
+   コピーするか、相対パスで前の出力ディレクトリを直接指してください。例::
+
+      [file.input]
+        path_to_input = "."
+        sigma_init = "run_T0.50/output/sigma.npz"
+
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
 .. figure:: ../sample/1orb/chi_s.png

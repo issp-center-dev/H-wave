@@ -319,6 +319,19 @@ They specify the settings of the input and output files, respectively, on the ty
   **Description :**
   This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used.
 
+- ``sigma_init``
+
+  **Type :**
+  String (FLEX mode only)
+
+  **Description :**
+  This parameter specifies the filename of a ``sigma.npz`` (written by an
+  earlier FLEX run) used to seed the FLEX SCF loop instead of Sigma = 0. The
+  path is resolved relative to ``path_to_input``. The recorded ``CellShape``
+  and the array's ``Nmat`` must match the current run (a mismatch is a
+  fail-fast error). See the FLEX tutorial section "Warm-starting the SCF
+  loop" for the sweep workflow.
+
 
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
