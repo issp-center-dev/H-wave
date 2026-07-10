@@ -376,5 +376,87 @@ class TestFlexPhysicsOutput(unittest.TestCase):
         self.assertNotAlmostEqual(physics["Sz"], 0.0, places=3)  # truly magnetized
 
 
+class TestEigvalsSmall(unittest.TestCase):
+    """Closed-form batched eigenvalues for the mu-search operator M.
+
+    The mu search only consumes the eigenvalues as an (unordered) set --
+    N(mu) = sum_j 1/(lam_j + mu) -- so the closed-form nd<=2 path must
+    reproduce LAPACK geev's spectra as multisets, on the input's array
+    backend (avoiding both the host round-trip and the batched-geev cost)."""
+
+    def _assert_same_spectra(self, lam_a, lam_b, nd):
+        a = np.sort_complex(np.asarray(lam_a).reshape(-1, nd))
+        b = np.sort_complex(np.asarray(lam_b).reshape(-1, nd))
+        np.testing.assert_allclose(a, b, atol=1e-12)
+
+    def test_closed_form_1x1_matches_geev(self):
+        from hwave.solver.flex import _eigvals_small
+        rng = np.random.default_rng(3)
+        M = (rng.standard_normal((2, 5, 7, 1, 1))
+             + 1j * rng.standard_normal((2, 5, 7, 1, 1)))
+        self._assert_same_spectra(_eigvals_small(M), np.linalg.eigvals(M), 1)
+
+    def test_closed_form_2x2_matches_geev(self):
+        from hwave.solver.flex import _eigvals_small
+        rng = np.random.default_rng(4)
+        M = (rng.standard_normal((3, 4, 6, 2, 2))
+             + 1j * rng.standard_normal((3, 4, 6, 2, 2)))
+        self._assert_same_spectra(_eigvals_small(M), np.linalg.eigvals(M), 2)
+
+    def test_geev_fallback_3x3(self):
+        from hwave.solver.flex import _eigvals_small
+        rng = np.random.default_rng(5)
+        M = (rng.standard_normal((2, 3, 3, 3))
+             + 1j * rng.standard_normal((2, 3, 3, 3)))
+        self._assert_same_spectra(_eigvals_small(M), np.linalg.eigvals(M), 3)
+
+    def test_number_from_eigs_returns_plain_floats(self):
+        """The mu-search closure consumes N (and dN/dmu) in host-side float
+        comparisons, so _number_from_eigs must return plain Python floats."""
+        solver, _ = _make_solver({'Ncond': 0.8})
+        nvol = solver.lattice.nvol
+        rng = np.random.default_rng(6)
+        solver.H0_eigenvalue = rng.standard_normal((1, nvol, 1))
+        beta = 1.0 / solver.T
+        sigma = 0.1 * (rng.standard_normal((1, solver.nmat, nvol, 1, 1))
+                       + 1j * rng.standard_normal((1, solver.nmat, nvol, 1, 1)))
+        # keep H0_eigenvector consistent for _matsubara_number_operator
+        solver.H0_eigenvector = np.ones((1, nvol, 1, 1), dtype=np.complex128)
+        lam, ew = solver._matsubara_number_operator(sigma, beta)
+        n = solver._number_from_eigs(lam, ew, 0.1, beta)
+        n2, dn = solver._number_from_eigs(lam, ew, 0.1, beta, with_deriv=True)
+        self.assertIsInstance(n, float)
+        self.assertIsInstance(n2, float)
+        self.assertIsInstance(dn, float)
+        self.assertEqual(n, n2)
+
+
+def test_mu_search_gpu_matches_cpu():
+    """On a CUDA device the whole dressed mu search (closed-form eigenvalues
+    + device-resident N(mu) evaluations) must reproduce the CPU mu."""
+    import pytest
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+
+    solver, _ = _make_solver({'Ncond': 0.8}, Lx=4, Ly=4, Nmat=32)
+    nvol = solver.lattice.nvol
+    rng = np.random.default_rng(7)
+    solver.H0_eigenvalue = rng.standard_normal((1, nvol, 1))
+    solver.H0_eigenvector = np.ones((1, nvol, 1, 1), dtype=np.complex128)
+    beta = 1.0 / solver.T
+    sigma = 0.2 * (rng.standard_normal((1, solver.nmat, nvol, 1, 1))
+                   + 1j * rng.standard_normal((1, solver.nmat, nvol, 1, 1)))
+
+    mu_cpu = solver._find_mu_dressed(sigma, beta, 0.8)
+
+    solver.H0_eigenvalue = cupy.asarray(solver.H0_eigenvalue)
+    solver.H0_eigenvector = cupy.asarray(solver.H0_eigenvector)
+    mu_gpu = solver._find_mu_dressed(cupy.asarray(sigma), beta, 0.8)
+    assert np.isclose(mu_gpu, mu_cpu, atol=1e-10)
+
+
 if __name__ == '__main__':
     unittest.main()

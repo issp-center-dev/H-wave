@@ -37,6 +37,46 @@ from . import backend as _bk
 from . import matsubara as _ms
 
 
+def _eigvals_small(M):
+    """Eigenvalues of a batched ``(..., nd, nd)`` matrix for the mu search.
+
+    For ``nd <= 2`` the eigenvalues are evaluated in closed form ON THE
+    INPUT'S ARRAY BACKEND -- the trace/determinant formula for 2x2 blocks and
+    the diagonal element itself for 1x1 -- which both avoids the batched
+    LAPACK geev cost and, on the GPU, avoids the device-to-host round trip
+    (CuPy has no general eigensolver). For ``nd >= 3`` this falls back to
+    host ``numpy.linalg.eigvals``.
+
+    The mu search consumes the eigenvalues only as an unordered set
+    (``N(mu) = sum_j 1/(lam_j + mu)``), so no eigenvalue ordering is
+    guaranteed.
+
+    Parameters
+    ----------
+    M : ndarray
+        Batched square matrices, shape ``(..., nd, nd)`` (numpy or cupy).
+
+    Returns
+    -------
+    lam : ndarray
+        Eigenvalues, shape ``(..., nd)``; same backend as ``M`` for
+        ``nd <= 2``, host numpy otherwise.
+    """
+    nd = M.shape[-1]
+    if nd == 1:
+        return M[..., 0]
+    if nd == 2:
+        xp = _bk.array_module_of(M)
+        a = M[..., 0, 0]
+        b = M[..., 0, 1]
+        c = M[..., 1, 0]
+        d = M[..., 1, 1]
+        tr = a + d
+        disc = xp.sqrt(tr * tr - 4.0 * (a * d - b * c))
+        return xp.stack([0.5 * (tr + disc), 0.5 * (tr - disc)], axis=-1)
+    return np.linalg.eigvals(_bk.to_host(M))
+
+
 class FLEX(RPA):
     """FLEX solver that extends RPA with self-consistent Green's functions.
 
@@ -662,11 +702,16 @@ class FLEX(RPA):
         iw = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
         M = iw * eye - H0_k[:, np.newaxis, :, :, :] - sigma  # (nb,nmat,nvol,nd,nd)
 
-        # M is non-Hermitian; CuPy has no general (geev) eigensolver, so the
-        # decomposition runs on the host. Both outputs are returned as host
-        # arrays so the mu search (_number_from_eigs) is pure numpy.
-        lam = np.linalg.eigvals(_bk.to_host(M))               # (nb,nmat,nvol,nd)
-        return lam, _bk.to_host(ew)
+        # M is non-Hermitian, but for nd <= 2 the eigenvalues have a closed
+        # form evaluated on M's own backend (_eigvals_small), so the mu search
+        # stays on the GPU end-to-end. Only nd >= 3 needs LAPACK geev, which
+        # CuPy does not provide -- that case runs on the host, and ew is
+        # returned on the matching backend so _number_from_eigs never mixes
+        # host and device arrays.
+        lam = _eigvals_small(M)                               # (nb,nmat,nvol,nd)
+        if _bk.array_module_of(lam) is np:
+            return lam, _bk.to_host(ew)
+        return lam, ew
 
     def _number_from_eigs(self, lam, ew, mu, beta, with_deriv=False):
         """Particle number N(mu) (and optionally dN/dmu) from precomputed
@@ -710,7 +755,8 @@ class FLEX(RPA):
         """
         nmat = self.nmat
         T = 1.0 / beta
-        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        xp = _bk.array_module_of(lam)
+        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
         f = self._fermi_occupation(T, mu, ew)
         n_ref = f.sum()
@@ -720,7 +766,9 @@ class FLEX(RPA):
                    + (mu - ew)[:, np.newaxis, :, :])
         trG = (1.0 / denomG).sum(axis=-1)                    # (nb, nmat, nvol)
         trG0 = (1.0 / denomG0).sum(axis=-1)
-        n = n_ref + ((trG - trG0).sum() / beta).real
+        # plain Python floats: the safeguarded-Newton loop does host-side
+        # comparisons on every trial mu, so device scalars would sync anyway.
+        n = float(n_ref + ((trG - trG0).sum() / beta).real)
 
         if not with_deriv:
             return n
@@ -730,7 +778,7 @@ class FLEX(RPA):
         dref = ((1.0 / T) * f * (1.0 - f)).sum()
         dtrG = (-1.0 / denomG ** 2).sum(axis=-1)
         dtrG0 = (-1.0 / denomG0 ** 2).sum(axis=-1)
-        dn = dref + ((dtrG - dtrG0).sum() / beta).real
+        dn = float(dref + ((dtrG - dtrG0).sum() / beta).real)
         return n, dn
 
     @do_profile
@@ -770,8 +818,10 @@ class FLEX(RPA):
         """
         # Diagonalize the mu-independent part of G^{-1} once; each trial mu is
         # then a cheap sum over eigenvalues (see _matsubara_number_operator).
-        # ew is returned as a HOST array, so the whole search below is pure
-        # numpy regardless of the solve backend.
+        # lam/ew come back on a consistent backend (device for nd<=2 under
+        # GPU execution, host otherwise); _number_from_eigs dispatches on it
+        # and returns plain floats, so the Newton/bisection logic below is
+        # backend-independent.
         lam, ew = self._matsubara_number_operator(sigma, beta)
         w = ew
 
@@ -788,6 +838,13 @@ class FLEX(RPA):
         # (doubling the pad) until N(mu) changes sign, instead of failing on the
         # first guess.  N(mu) -> 0 as mu -> -inf and -> Nstate as mu -> +inf, so
         # a finite root is always bracketed after enough expansion.
+        #
+        # NOTE: do NOT warm-start this search from the previous iteration's mu
+        # with a narrow bracket. With a large (not-yet-converged) Sigma the
+        # truncated-Matsubara N(mu) is not strictly monotone, so a narrow
+        # bracket can select a DIFFERENT root than the wide band-range bracket
+        # and silently change the SCF trajectory (observed at 64^2, Nmat=1024:
+        # the warm-started run diverged while the cold-bracket run was stable).
         pad = float(_bk.array_module_of(sigma).abs(sigma.real).max()) + 1.0
         lo = float(w.min()) - pad
         hi = float(w.max()) + pad
