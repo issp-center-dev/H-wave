@@ -672,14 +672,35 @@ re-run FLEX with ``write_densified = true``.
    FLEX outputs computed on the uniform FFT grid (``chiq_s.npz`` etc.) carry
    ``O(beta/Nmat)`` discretization artifacts (a delta(tau)-derived constant
    offset plus aliasing images). The IR loader isolates and discards the
-   constant (logged), and the eigenvalue difference between the IR and
-   uniform paths is bounded by this input-data quality (measured ~1% at
-   ``Nmat=128`` and 5e-4 at ``Nmat=512`` on the small test fixture; these
-   numbers are fixture-specific, not a general guarantee); both converge
-   to the same continuum limit as ``Nmat`` grows. For production use,
-   validate once per model: raise the FLEX ``Nmat`` (or compare a uniform
-   run against the IR run at the same ``Nmat``) and check that the leading
-   eigenvalue shift is within your tolerance.
+   constant when it is small (logged); if the fitted constant is
+   COMPARABLE to the data scale it cannot be the discretization artifact,
+   and the run stops with an error instead of silently corrupting the
+   result (remedies, also printed by the error: use the automatic
+   ``ir_wmax`` or a value near ``3*(bandwidth + max interaction)``;
+   increase the FLEX ``Nmat``; set ``ir_keep_static_chi = true`` to
+   retain a genuinely static component; or fall back to
+   ``matsubara_basis = "uniform"``). The eigenvalue difference between
+   the IR and uniform paths is bounded by this input-data quality
+   (measured ~1.5e-2 relative at ``Nmat=128`` and ~4e-3 at ``Nmat=512``
+   on the small test fixture with the dispersion-based automatic
+   ``ir_wmax``; these numbers are fixture-specific, not a general
+   guarantee); both converge to the same continuum limit as ``Nmat``
+   grows. For production use, validate once per model: raise the FLEX
+   ``Nmat`` (or compare a uniform run against the IR run at the same
+   ``Nmat``) and check that the leading eigenvalue shift is within your
+   tolerance.
+
+.. warning::
+
+   Dynamic IR results computed with H-wave versions BEFORE the issue-#57
+   fix are incorrect for any model whose pairing vertex has a nonzero
+   frequency-independent part — in particular anything with off-site
+   ``CoulombInter`` (pure on-site-``CoulombIntra`` models were
+   unaffected: their bare vertex term cancels exactly). Recompute such
+   runs; large changes in lambda are expected (they were the bug, not a
+   physics change). The automatic ``ir_wmax`` estimate also changed to a
+   dispersion-based bound and is now much smaller (and correct) on
+   realistic multi-hopping models.
 
 .. _sc_dynamic_gpu_en:
 

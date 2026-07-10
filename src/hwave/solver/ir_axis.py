@@ -149,6 +149,10 @@ class IRAxis:
             self._m["fit_tau"] @ self._m["eval_freq"])         # (n_tau, n_freq)
 
         self.u_beta_minus = basis.u(self.beta * (1.0 - 1e-15))  # (L,)
+        # u_l(0^+): equal-time evaluation at the other endpoint, e.g. the
+        # anomalous bubble F(tau=0) = (1/beta) sum_nu F(i nu) needed by the
+        # instantaneous-vertex term of the dynamic Eliashberg kernel.
+        self.u_zero_plus = basis.u(self.beta * 1e-15)            # (L,)
 
         # device mirrors, filled lazily per array module
         self._device_m = {}
