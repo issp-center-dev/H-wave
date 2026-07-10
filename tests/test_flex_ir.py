@@ -303,3 +303,71 @@ def test_ir_sigma_init_policies(caplog):
         solver.solve(gi, 'tests/flex/output')
     assert any("fitted seed anyway" in r.getMessage()
                for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: IR-native outputs (write_densified = false)
+# ---------------------------------------------------------------------------
+
+def _outdict(path):
+    return {"path_to_output": path, "chi0q": "chi0q", "sigma": "sigma",
+            "green": "green", "chiq_s": "chiq_s", "chiq_c": "chiq_c"}
+
+
+def test_write_densified_false_requires_ir():
+    with pytest.raises(ValueError, match="write_densified"):
+        _make_solver(64, {'write_densified': False})
+
+
+def test_ir_native_output_schema(tmp_path):
+    """write_densified=false: arrays stay on the sparse nodes and every
+    written file carries the IR-native schema (design Sec. 3): D-1 keys,
+    frequency_grid marker, symmetric integer ir_freq_n, basis params, NO
+    freq_index."""
+    out = str(tmp_path)
+    solver, gi = _make_solver(64, {'matsubara_basis': 'ir',
+                                   'write_densified': False},
+                              iteration_max=5)
+    solver.solve(gi, out)
+    axF, axB = solver._ir_axF, solver._ir_axB
+    assert gi["sigma"].shape[1] == axF.n_freq
+    assert gi["chiq_s"].shape[0] == axB.n_freq
+    solver.save_results(_outdict(out), gi)
+
+    for name, nfreq, stat in (("chi0q", axB.n_freq, "B"),
+                              ("chiq_s", axB.n_freq, "B"),
+                              ("chiq_c", axB.n_freq, "B"),
+                              ("sigma", axF.n_freq, "F"),
+                              ("green", axF.n_freq, "F")):
+        data = np.load(os.path.join(out, name + ".npz"))
+        assert str(data["matsubara_basis"]) == "ir", name
+        assert str(data["frequency_grid"]) == "sparse_ir_nodes", name
+        n = data["ir_freq_n"]
+        assert n.size == nfreq, name
+        assert np.array_equal(-n[::-1], n), name
+        assert str(data["ir_statistics"]) == stat, name
+        for k in ("ir_beta", "ir_wmax", "ir_tol", "ir_L"):
+            assert k in data, (name, k)
+        assert "freq_index" not in data, name
+    g = np.load(os.path.join(out, "green.npz"))
+    assert "cell_shape" in g
+
+
+def test_ir_native_roundtrip_matches_densified(tmp_path):
+    """Densifying the stored node values offline must reproduce the
+    write_densified=true outputs (same run, ~ir_tol agreement)."""
+    nmat = 256
+    s_n, gi_n = _run(nmat, {'matsubara_basis': 'ir',
+                            'write_densified': False})
+    s_d, gi_d = _run(nmat, {'matsubara_basis': 'ir'})
+    axF, axB = s_n._ir_axF, s_n._ir_axB
+    # sigma: fermionic, freq axis 1
+    dens = np.moveaxis(axF.eval_to_uniform(
+        axF.fit_from_freq(np.moveaxis(gi_n["sigma"], 1, -1)), nmat), -1, 1)
+    scale = np.abs(gi_d["sigma"]).max()
+    np.testing.assert_allclose(dens, gi_d["sigma"], atol=1e-6 * scale)
+    # chi_s: bosonic, freq axis 0
+    dens = np.moveaxis(axB.eval_to_uniform(
+        axB.fit_from_freq(np.moveaxis(gi_n["chiq_s"], 0, -1)), nmat), -1, 0)
+    scale = np.abs(gi_d["chiq_s"]).max()
+    np.testing.assert_allclose(dens, gi_d["chiq_s"], atol=1e-6 * scale)

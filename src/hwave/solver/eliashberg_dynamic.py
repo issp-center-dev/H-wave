@@ -278,7 +278,67 @@ def _npz_freq_size(path, keys, axis):
     return None
 
 
-def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
+def _ir_refit_nodes(arr, meta, ax, label, beta):
+    """Bring IR-native node values (..., n_file_nodes) onto the RUN's axis
+    nodes (design ir-matsubara-stage3.md Sec. 4.1). Returns NODE VALUES.
+
+    Exact node-set equality is a pure pass-through (the common case: same
+    beta, auto wmax, same sparse-ir version) -- a fit/eval round trip would
+    not be zero-cost and could perturb the values. The chi/green files are
+    physics input, so a beta mismatch is a hard error (contrast the
+    sigma_init warm start, where cross-temperature seeding is deliberate).
+    """
+    file_beta = float(meta["beta"])
+    if not np.isclose(file_beta, beta, rtol=1e-9, atol=1e-9 * beta):
+        raise ValueError(
+            "IR-native {}: ir_beta {:.12g} differs from this run's beta "
+            "{:.12g} (rel {:.3e}); the susceptibilities/Green function are "
+            "physics input and must match. Re-run FLEX at this temperature."
+            .format(label, file_beta, beta,
+                    abs(file_beta - beta) / abs(beta)))
+    freq_n = np.asarray(meta["freq_n"], dtype=np.int64)
+    if np.array_equal(freq_n, ax.freq_n):
+        logger.info("IR-native %s: file node set equals the run basis "
+                    "(%d nodes); stored values used directly.", label,
+                    freq_n.size)
+        return arr
+    if ax.wmax < meta["wmax"] or ax.eps > meta["tol"]:
+        logger.warning(
+            "IR-native %s: the run basis is weaker than the writer's "
+            "(wmax %.4g vs %.4g, eps %.1e vs %.1e); refit quality is "
+            "empirical -- consider matching [eliashberg] ir_wmax/ir_tol to "
+            "the FLEX run.", label, ax.wmax, meta["wmax"], ax.eps,
+            meta["tol"])
+    coeffs = ax.fit_from_freq_points(arr, freq_n)
+    resid = float(np.abs(
+        ax.eval_to_freq_points(coeffs, freq_n) - arr).max())
+    scale = float(np.abs(arr).max()) or 1.0
+    logger.info("IR-native %s: refit %d file nodes -> %d run nodes (L=%d), "
+                "max residual at file nodes %.3e (rel %.3e)", label,
+                freq_n.size, ax.n_freq, ax.L, resid, resid / scale)
+    if resid > 0.05 * scale:
+        logger.warning(
+            "IR-native %s: refit residual is large (>5%% of the data "
+            "scale); the run basis cannot represent the file's content -- "
+            "raise [eliashberg] ir_wmax or tighten [eliashberg] ir_tol.",
+            label)
+    return ax.eval_to_freq(coeffs)
+
+
+def _npz_is_ir_native(path):
+    """Header-level D-1 discriminator (design ir-matsubara-stage3.md): a
+    lazily-opened npz reads only the two small metadata keys, so this stays
+    a preflight (no large-array load). Missing/unreadable files return
+    False -- the authoritative loader raises the clearer error."""
+    from hwave.solver.ir_axis import is_ir_native
+    try:
+        with np.load(path) as data:
+            return is_ir_native(data)
+    except Exception:
+        return False
+
+
+def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     import hwave.sc as sc
     cfg_nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
     if cfg_nmat % 2 != 0:
@@ -290,34 +350,91 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
     # a larger on-disk grid slip past the guard and OOM inside the loader before
     # the post-load grid check could fire.
     chi_s_path, chi_c_path, green_path = sc._resolve_flex_paths(input_dict)
+    # Stage 3, D-1 FIRST (design Sec. 4.1): for IR-native files the stored
+    # frequency-axis length is the sparse node count, not Nmat, so the
+    # uniform-grid equality check below must not see them.
+    native = {"chis": _npz_is_ir_native(chi_s_path),
+              "chic": _npz_is_ir_native(chi_c_path)}
+    if os.path.exists(green_path):
+        native["green"] = _npz_is_ir_native(green_path)
+    any_native = any(native.values())
+    if any_native and not allow_ir:
+        first = next(k for k, v in native.items() if v)
+        paths = {"chis": chi_s_path, "chic": chi_c_path, "green": green_path}
+        raise ValueError(
+            "file '{}' holds sparse-IR node data "
+            "(frequency_grid=sparse_ir_nodes); set [eliashberg] "
+            "matsubara_basis = \"ir\" to consume it, or re-run FLEX with "
+            "[mode.param] write_densified = true.".format(paths[first]))
     stored = {"chis": _npz_freq_size(chi_s_path, ("chiq_s", "chiq"), axis=0),
               "chic": _npz_freq_size(chi_c_path, ("chiq_c", "chiq"), axis=0)}
     if os.path.exists(green_path):
         stored["green"] = _npz_freq_size(green_path, ("green",), axis=1)
-    for name, n in stored.items():
-        if n is not None and n != cfg_nmat:
-            raise ValueError(
-                "dynamic Eliashberg grid mismatch: {} nmat={} differs from "
-                "config Nmat={}".format(name, n, cfg_nmat))
-    # sizes agree with the config here, but guard on the stored value so the
-    # estimate always reflects what is on disk.
-    file_nmat = max([n for n in stored.values() if n is not None]
-                    + [cfg_nmat])
+    if not any_native:
+        for name, n in stored.items():
+            if n is not None and n != cfg_nmat:
+                raise ValueError(
+                    "dynamic Eliashberg grid mismatch: {} nmat={} differs "
+                    "from config Nmat={}".format(name, n, cfg_nmat))
+        # sizes agree with the config here, but guard on the stored value so
+        # the estimate always reflects what is on disk.
+        file_nmat = max([n for n in stored.values() if n is not None]
+                        + [cfg_nmat])
+    else:
+        # IR-native: every large tensor downstream lives on the node axis
+        # (design Sec. 4.1) -- size the guard from the node counts. Read
+        # them from the tiny ir_freq_n member itself rather than the
+        # best-effort header probe above: on numpy >= 2.4 the probe's
+        # private-API path degrades to None (by design), which would
+        # silently undersize the guard here. Unreadable files fall back to
+        # the conservative config Nmat.
+        counts = []
+        for path, is_native in ((chi_s_path, native.get("chis")),
+                                (chi_c_path, native.get("chic")),
+                                (green_path, native.get("green"))):
+            if is_native:
+                try:
+                    with np.load(path) as d:
+                        counts.append(int(np.asarray(d["ir_freq_n"]).size))
+                except Exception:
+                    pass
+        file_nmat = max(counts) if counts else cfg_nmat
     check_memory(norb, Nx * Ny * Nz, file_nmat,
                  input_dict["eliashberg"].get("mem_limit_gb"))
 
     # reuse the exact static path/name/convention/spin-orbital-expansion logic
-    chis_w, chic_w, green_w, chi_convention = \
-        sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
+    if allow_ir:
+        chis_w, chic_w, green_w, chi_convention, ir_meta = \
+            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
+                                                allow_ir=True)
+    else:
+        chis_w, chic_w, green_w, chi_convention = \
+            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
+        ir_meta = None
     # Belt-and-suspenders: the header check above already rejected a mismatch,
     # but keep a post-load assertion in case the loader reshapes unexpectedly.
-    green_nmat = green_w.shape[-1] if green_w is not None else cfg_nmat
-    if not (chis_w.shape[-1] == chic_w.shape[-1] == green_nmat == cfg_nmat):
-        raise ValueError(
-            "dynamic Eliashberg grid mismatch: nmat differs — chis={}, chic={}, "
-            "green={}, config Nmat={}".format(
-                chis_w.shape[-1], chic_w.shape[-1], green_nmat, cfg_nmat))
-    return chis_w, chic_w, green_w, chi_convention
+    if ir_meta is None:
+        green_nmat = green_w.shape[-1] if green_w is not None else cfg_nmat
+        if not (chis_w.shape[-1] == chic_w.shape[-1] == green_nmat
+                == cfg_nmat):
+            raise ValueError(
+                "dynamic Eliashberg grid mismatch: nmat differs — chis={}, "
+                "chic={}, green={}, config Nmat={}".format(
+                    chis_w.shape[-1], chic_w.shape[-1], green_nmat, cfg_nmat))
+    else:
+        for label, arr, key in (("chiq_s", chis_w, "chis"),
+                                ("chiq_c", chic_w, "chic"),
+                                ("green", green_w, "green")):
+            if arr is not None and arr.shape[-1] != ir_meta[key][
+                    "freq_n"].size:
+                raise ValueError(
+                    "IR-native {}: stored axis length {} does not match its "
+                    "own ir_freq_n count {} -- the file is inconsistent."
+                    .format(label, arr.shape[-1],
+                            ir_meta[key]["freq_n"].size))
+    if not allow_ir:
+        return chis_w, chic_w, green_w, chi_convention
+    return chis_w, chic_w, green_w, chi_convention, ir_meta
 
 
 def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
@@ -934,8 +1051,14 @@ def solve_dynamic(input_dict):
                                       interactions, norb)
 
     # --- FLEX inputs (full frequency) ---
-    chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
-        input_dict, norb, Nx, Ny, Nz)
+    if use_ir:
+        chis_w, chic_w, green_w, chi_convention, ir_file_meta = \
+            load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz,
+                                  allow_ir=True)
+    else:
+        chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
+            input_dict, norb, Nx, Ny, Nz)
+        ir_file_meta = None
     if green_w is None:
         raise ValueError(
             "dynamic Eliashberg requires the dressed green.npz from the FLEX "
@@ -943,7 +1066,7 @@ def solve_dynamic(input_dict):
             "[file.input] path_to_flex_output / [eliashberg] flex_green.")
     nmat = chis_w.shape[-1]
 
-    # --- Optional IR compression of the frequency axis (design Sec. 3.2):
+    # --- IR frequency axis (design Sec. 3.2 / Stage-3 Sec. 4.1):
     # everything downstream (vertex assembly, pair bubble, kernel, parity
     # machinery) is per-frequency or reversal-based, so it operates on the
     # sparse symmetric node axis unchanged. The full uniform tensors of the
@@ -953,12 +1076,28 @@ def solve_dynamic(input_dict):
         axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
                                     mu=mode_param.get("mu"),
                                     filling=mode_param.get("filling"))
-        keep_static = bool(eli_param.get("ir_keep_static_chi", False))
-        chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
-                              drop_constant=True, keep_constant=keep_static)
-        chic_w = _ir_compress(chic_w, axB, nmat, "chiq_c",
-                              drop_constant=True, keep_constant=keep_static)
-        green_w = _ir_compress(green_w, axF, nmat, "green")
+        if ir_file_meta is not None:
+            # IR-native inputs (Stage 3): the files already hold node
+            # values; refit each onto the run axes (pass-through when the
+            # node sets coincide). No drop_constant -- node values carry no
+            # uniform-FFT delta(tau) artifact.
+            chis_w = _ir_refit_nodes(chis_w, ir_file_meta["chis"], axB,
+                                     "chiq_s", beta)
+            chic_w = _ir_refit_nodes(chic_w, ir_file_meta["chic"], axB,
+                                     "chiq_c", beta)
+            green_w = _ir_refit_nodes(green_w, ir_file_meta["green"], axF,
+                                      "green", beta)
+            # the uniform grid exists only as the OUTPUT grid here
+            nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
+        else:
+            keep_static = bool(eli_param.get("ir_keep_static_chi", False))
+            chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
+                                  drop_constant=True,
+                                  keep_constant=keep_static)
+            chic_w = _ir_compress(chic_w, axB, nmat, "chiq_c",
+                                  drop_constant=True,
+                                  keep_constant=keep_static)
+            green_w = _ir_compress(green_w, axF, nmat, "green")
     nfreq_axis = axF.n_freq if use_ir else nmat
 
     # --- Vertex and pair bubble on the frequency axis ---
