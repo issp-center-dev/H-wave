@@ -54,7 +54,8 @@
 を参照してください。CuPyが無い場合、<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> は警告を出して
 CPU実行にフォールバックします。）</p></li>
 <li><p>sparse-ir モジュール（任意。動的 Eliashberg ソルバーの IR 基底松原軸
-<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> にのみ必要です。
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> および FLEX ソルバーの
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> にのみ必要です。
 <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code> でインストールできます。未導入で <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>
 を指定した場合はインストール手順つきの明示エラーになります。）</p></li>
 </ul>

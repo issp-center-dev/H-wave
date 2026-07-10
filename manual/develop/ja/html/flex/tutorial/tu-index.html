@@ -238,7 +238,7 @@ Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0``（省略可）:</span> <span class="pre">松原和の高振動数テール加速係数。``coeff_tail</span> <span class="pre">=</span> <span class="pre">1</span></code>
 は <span class="math notranslate nohighlight">\(G\)</span> の厳密な <span class="math notranslate nohighlight">\(1/(i\omega_n)\)</span> 係数（ユニタリ性）に一致するため、
 結果を歪めずに <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> に対する収束を加速します。RPAソルバーでもサポートされて
-います。</p></li>
+います。<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> の場合は不要のため無視されます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">100</span></code>: SCF反復の最大回数</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0.2</span></code>: 自己エネルギー更新の混合パラメータ
 (<span class="math notranslate nohighlight">\(\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}\)</span>)</p></li>
@@ -668,6 +668,38 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <td><p>Anderson 加速の履歴の深さ <span class="math notranslate nohighlight">\(m\)</span>。メモリは <span class="math notranslate nohighlight">\(\Sigma\)</span> サイズの
 配列 <span class="math notranslate nohighlight">\(2m\)</span> 本分増加します（GPU実行時はデバイス上に保持）。</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code></p></td>
+<td><p>str</p></td>
+<td><p>&quot;uniform&quot;</p></td>
+<td><p>松原軸の表現。<code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;``（デフォルト、従来どおり）または</span> <span class="pre">``&quot;ir&quot;</span></code>
+（sparse-ir の中間表現基底。χ₀ と Σ をスパースノード上でネイティブに
+計算するため、一様FFT由来の <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span>
+離散化アーティファクトが原理的に生じません）。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は出力グリッド
+として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> とは併用できません（v1）。オプションの
+<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> が必要です。μ探索は
+<span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span> の基底評価に置き換わり、
+<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は不要（無視）になります。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code></p></td>
+<td><p>float</p></td>
+<td><p>1e-8</p></td>
+<td><p>IR基底の打ち切り精度 <span class="math notranslate nohighlight">\(\varepsilon\)</span>。</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code></p></td>
+<td><p>float</p></td>
+<td><p>auto</p></td>
+<td><p>IR基底の実周波数バンド幅（ハミルトニアンと同じエネルギー単位）。
+省略時はバンド幅と相互作用スケールから自動推定（推定不能なら明示指定を
+求めるエラー）。係数テールの減衰診断が常時走り、帯域不足は警告されます。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
+<td><p>str</p></td>
+<td><p>&quot;warn&quot;</p></td>
+<td><p>IR実行で一様グリッドの <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> のフィット残差が <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>
+の100倍を超えた場合の挙動: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> は使用して警告、<code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>
+はエラー停止、<code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code> はゼロ初期化に退避します。</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
@@ -690,6 +722,30 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 </table>
 <p>その他のパラメータ (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code> 等)
 はRPAソルバーと共通です。詳細は <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a> を参照してください。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>IR基底でFLEXを実行するには。</strong> オプションの依存パッケージを一度
+インストールし（<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>）、既存のFLEX入力の
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> に1行追加するだけです。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を含め他の行は
+そのままで動作します:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># または &quot;squashed&quot;（&quot;general&quot; は一様グリッドのみ）</span>
+<span class="k">[mode.param]</span>
+<span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
+<span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span><span class="w">                 </span><span class="c1"># 従来どおり必要（出力グリッド）</span>
+<span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ir&quot;</span><span class="w">      </span><span class="c1"># sparse-IR 軸へのオプトイン</span>
+<span class="c1"># ir_tol = 1e-8             # 省略可: 基底の打ち切り精度</span>
+<span class="c1"># ir_wmax = 30.0            # 省略可: バンド幅（自動推定あり）</span>
+</pre></div>
+</div>
+<p>SCF は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 個の振動数の代わりに数十個のスパースノード上で走り
+（例: <span class="math notranslate nohighlight">\(T=0.05\)</span> で 4096 → 42）、出力ファイルはすべて <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+グリッドへ密評価して書き出されるため、下流のツール（動的 Eliashberg
+ソルバーを含む）は無変更で動作します。<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> はこのパスでは
+無視されます（IR基底が <span class="math notranslate nohighlight">\(1/(i\omega)\)</span> テールを厳密に保持するため）。</p>
+</div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> として <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>,

@@ -252,7 +252,7 @@ it fixed.</p></li>
 for the Matsubara sums. <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1</span></code> matches the exact
 <span class="math notranslate nohighlight">\(1/(i\omega_n)\)</span> coefficient of <span class="math notranslate nohighlight">\(G\)</span> (unitarity), so it accelerates
 convergence in <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> without biasing the result. Also supported by the RPA
-solver.</p></li>
+solver. Ignored (unnecessary) when <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">100</span></code>: Maximum number of SCF iterations.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0.2</span></code>: Mixing parameter for self-energy update
 (<span class="math notranslate nohighlight">\(\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}\)</span>).</p></li>
@@ -700,6 +700,42 @@ automatically if the history becomes degenerate.</p></td>
 <span class="math notranslate nohighlight">\(2m\)</span> sigma-sized arrays (kept on the device under GPU
 execution).</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code></p></td>
+<td><p>str</p></td>
+<td><p>“uniform”</p></td>
+<td><p>Matsubara-axis representation: <code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code> (default, unchanged) or
+<code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> (the sparse-ir intermediate representation; chi0 and Sigma
+are computed NATIVELY on sparse nodes, so the uniform-FFT
+<span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span> discretization artifacts do not
+arise by construction). <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> keeps its role as the output grid
+(all output files are densified onto it). Not combinable with
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (v1). Requires the optional
+<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> package. The mu
+search becomes the basis evaluation of
+<span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span>, and <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> is
+unnecessary (ignored).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code></p></td>
+<td><p>float</p></td>
+<td><p>1e-8</p></td>
+<td><p>IR basis cutoff accuracy.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code></p></td>
+<td><p>float</p></td>
+<td><p>auto</p></td>
+<td><p>Real-frequency bandwidth of the IR basis (same energy units as the
+Hamiltonian); auto-estimated from the band range and interaction
+scale when omitted (a fail-fast error asks for an explicit value if
+the estimate cannot be formed). An always-on coefficient-decay
+diagnostic warns when the bandwidth is insufficient.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
+<td><p>str</p></td>
+<td><p>“warn”</p></td>
+<td><p>Behavior when the IR fit residual of a (uniform-grid) <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>
+exceeds 100x <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> (use it, warn), <code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code> (fall back to the zero start).</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
@@ -725,6 +761,30 @@ calculations concurrently.</p></td>
 </table>
 <p>All other parameters (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>, etc.)
 are shared with the RPA solver. See <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">Parameter files</span></a> for details.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Running FLEX on the IR basis.</strong> Install the optional dependency once
+(<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>), then add a single line under
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> of any existing FLEX input — every other line, including
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, stays as it is:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># or &quot;squashed&quot;; &quot;general&quot; stays uniform</span>
+<span class="k">[mode.param]</span>
+<span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
+<span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span><span class="w">                 </span><span class="c1"># still required: the output grid</span>
+<span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ir&quot;</span><span class="w">      </span><span class="c1"># opt in to the sparse-IR axis</span>
+<span class="c1"># ir_tol = 1e-8             # optional: basis cutoff accuracy</span>
+<span class="c1"># ir_wmax = 30.0            # optional: bandwidth (auto-estimated)</span>
+</pre></div>
+</div>
+<p>The SCF then runs on a few dozen sparse nodes instead of <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+frequencies (e.g. 4096 -&gt; 42 at <span class="math notranslate nohighlight">\(T=0.05\)</span>), while all output files
+are densified back onto the <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grid, so downstream tools (including
+the dynamic Eliashberg solver) work unchanged. <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> is ignored
+on this path — the IR basis carries the <span class="math notranslate nohighlight">\(1/(i\omega)\)</span> tail exactly.</p>
+</div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>The FLEX solver accepts <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> in <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>,

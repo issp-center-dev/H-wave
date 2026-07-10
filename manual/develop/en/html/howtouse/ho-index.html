@@ -51,7 +51,8 @@ version, e.g. <code class="docutils literal notranslate"><span class="pre">pip</
 <a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPy installation guide</a>.
 Without CuPy, <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> falls back to the CPU path with a warning.)</p></li>
 <li><p>sparse-ir module (optional; only for the IR-basis Matsubara axis of the
-dynamic Eliashberg solver, <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>.
+dynamic Eliashberg solver, <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>, and
+of the FLEX solver, <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>.
 Install with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>; without it, <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> is a
 fail-fast error with this install hint.)</p></li>
 </ul>
