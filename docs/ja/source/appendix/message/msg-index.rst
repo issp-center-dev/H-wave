@@ -373,3 +373,11 @@
 
   **モード :** UHFr [warning]
 
+
+- ``dynamic Eliashberg grid mismatch: nmat differs``
+
+  **説明 :** FLEX 出力ファイル（``chiq_s.npz`` / ``chiq_c.npz`` / ``green.npz``）に
+  保存された松原振動数の数（``Nmat``）が、現在の計算の ``[mode.param] Nmat`` と
+  異なる。一致する ``Nmat`` で FLEX 出力を再生成するか、``Nmat`` を保存値に合わせること。
+
+  **モード :** RPA (hwave_sc, dynamic Eliashberg) [error]

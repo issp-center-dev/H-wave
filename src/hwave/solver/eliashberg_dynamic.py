@@ -254,10 +254,13 @@ def _npz_freq_size(path, keys, axis):
     """
     import zipfile
     from numpy.lib import format as _npformat
-    # Best-effort header probe: any unreadable/absent/malformed/truncated file or
-    # missing axis returns None so the caller falls back to the config grid and
-    # the loader raises the existing, clearer missing/corrupt-file error rather
-    # than a new failure mode from the header parser.
+    # Best-effort header probe. This is a pure optimization/safety pre-check --
+    # the loader below is the authoritative path -- so ANY failure returns None
+    # and lets the loader raise the existing, clearer error. The broad catch is
+    # deliberate: besides unreadable/malformed/truncated files and a missing
+    # axis, it also covers the numpy.lib.format internals used here being
+    # renamed/removed in a future numpy (AttributeError), which must degrade
+    # gracefully rather than crash.
     try:
         with zipfile.ZipFile(path) as z:
             names = set(z.namelist())
@@ -270,7 +273,7 @@ def _npz_freq_size(path, keys, axis):
                         shape, _fortran, _dtype = _npformat._read_array_header(
                             f, version)
                     return int(shape[axis])
-    except (OSError, ValueError, EOFError, IndexError, zipfile.BadZipFile):
+    except Exception:
         return None
     return None
 

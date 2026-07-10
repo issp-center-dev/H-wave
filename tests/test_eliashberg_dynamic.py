@@ -124,6 +124,22 @@ def test_npz_freq_size_returns_none_on_bad_or_missing(tmp_path):
                              ("absent_key",), axis=0) is None
 
 
+def test_npz_freq_size_returns_none_if_numpy_header_api_changes(tmp_path, monkeypatch):
+    """The probe uses numpy.lib.format internals; if a future numpy renames them
+    (AttributeError), the best-effort probe must still return None (fall back to
+    the loader) rather than crash."""
+    from hwave.solver import eliashberg_dynamic as ed
+    from numpy.lib import format as npformat
+    _write_flex_fixture(tmp_path, nmat=8)
+
+    def _boom(*a, **k):
+        raise AttributeError("simulated numpy internal API change")
+
+    monkeypatch.setattr(npformat, "read_magic", _boom)
+    assert ed._npz_freq_size(str(tmp_path / "chiq_s.npz"),
+                             ("chiq_s",), axis=0) is None
+
+
 def test_grid_mismatch_detected_before_loading(monkeypatch, tmp_path):
     """Issue #41: a FLEX file whose stored nmat exceeds the config Nmat must be
     rejected from the NPZ headers BEFORE the full arrays are allocated -- the
