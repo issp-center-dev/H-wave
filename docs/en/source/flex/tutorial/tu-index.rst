@@ -629,6 +629,19 @@ The FLEX solver accepts the following parameters in the
      - Behavior when the IR fit residual of a (uniform-grid) ``sigma_init``
        exceeds 100x ``ir_tol``: ``"warn"`` (use it, warn), ``"abort"``, or
        ``"zero"`` (fall back to the zero start).
+   * - ``write_densified``
+     - bool
+     - true
+     - IR runs only. ``true`` (default): all output files are densified
+       onto the uniform ``Nmat`` grid (unchanged format, readable by every
+       tool). ``false``: outputs stay on the sparse IR nodes — the fixed
+       densify+write cost disappears (the dominant remaining cost of an IR
+       run), files shrink by ~``Nmat``/L, and downstream IR-aware
+       consumers (the dynamic Eliashberg solver with
+       ``[eliashberg] matsubara_basis = "ir"``, and ``sigma_init``
+       chaining into another IR FLEX run) read them directly. Uniform-only
+       readers (static ``hwave_sc``, ``chi0q_init``, legacy scripts)
+       reject such files with an explicit error. See the note below.
    * - ``gpu``
      - bool
      - false
@@ -677,6 +690,35 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    are densified back onto the ``Nmat`` grid, so downstream tools (including
    the dynamic Eliashberg solver) work unchanged. ``coeff_tail`` is ignored
    on this path — the IR basis carries the :math:`1/(i\omega)` tail exactly.
+
+   **IR-native outputs.** Adding ``write_densified = false`` keeps the
+   outputs on the sparse nodes. Use it for pure IR chains — IR FLEX
+   feeding the dynamic Eliashberg solver
+   (``[eliashberg] matsubara_basis = "ir"``) or seeding the next IR FLEX
+   run of a temperature sweep via ``sigma_init`` (cross-temperature seeds
+   are supported) — where it removes the fixed densification and file-size
+   cost entirely. You can recognize such a file by the
+   ``frequency_grid = "sparse_ir_nodes"`` key in the ``.npz``.
+
+   .. warning::
+
+      Do **not** point legacy analysis scripts (anything that indexes the
+      frequency axis positionally, e.g. the static slice at ``Nmat/2``) at
+      ``write_densified = false`` outputs — the frequency axis holds
+      sparse nodes, not the uniform grid. All H-wave readers detect this
+      and stop with an explicit error; external scripts may not. To
+      recover a uniform-grid file, re-run FLEX with
+      ``write_densified = true`` (cheap: seed it with ``sigma_init`` from
+      the native run), or densify offline::
+
+         import numpy as np
+         from hwave.solver.ir_axis import IRAxis
+         d = np.load("chiq_s.npz")
+         ax = IRAxis(float(d["ir_beta"]), float(d["ir_wmax"]),
+                     float(d["ir_tol"]), str(d["ir_statistics"]))
+         c = ax.fit_from_freq_points(np.moveaxis(d["chiq_s"], 0, -1),
+                                     d["ir_freq_n"])
+         chi_u = np.moveaxis(ax.eval_to_uniform(c, nmat=4096), -1, 0)
 
 .. note::
 

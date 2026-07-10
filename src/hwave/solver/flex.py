@@ -287,6 +287,14 @@ class FLEX(RPA):
             raise ValueError(
                 "[mode.param] sigma_init_on_error must be 'warn', 'abort' "
                 "or 'zero', got '{}'.".format(self.sigma_init_on_error))
+        # Stage 3 (design: docs/design/ir-matsubara-stage3.md): keep outputs
+        # on the sparse nodes instead of densifying onto the Nmat grid.
+        self.write_densified = _bk.as_bool(
+            self.param_mod.get("write_densified", True))
+        if not self.write_densified and not self.use_ir:
+            raise ValueError(
+                "[mode.param] write_densified = false requires "
+                "[mode.param] matsubara_basis = 'ir'.")
         self._ir_axF = None
         self._ir_axB = None
 
@@ -322,11 +330,25 @@ class FLEX(RPA):
             path_to_input = info_inputfile.get("path_to_input", "")
             file_name = os.path.join(path_to_input,
                                      info_inputfile["sigma_init"])
-            info["sigma_init"] = self._read_sigma(file_name)
+            sigma, ir_meta = self._read_sigma(file_name)
+            if ir_meta is not None and not self.use_ir:
+                raise ValueError(
+                    "sigma_init file '{}' holds sparse-IR node data "
+                    "(frequency_grid=sparse_ir_nodes); an IR-native seed "
+                    "requires [mode.param] matsubara_basis = 'ir' in this "
+                    "run, or re-run the seeding FLEX with [mode.param] "
+                    "write_densified = true.".format(file_name))
+            info["sigma_init"] = sigma
+            if ir_meta is not None:
+                info["sigma_init_ir"] = ir_meta
         return info
 
     def _read_sigma(self, file_name):
         """Load a saved self-energy array from a FLEX ``sigma.npz``.
+
+        Returns ``(sigma, ir_meta)``: ``ir_meta`` is ``None`` for uniform
+        (densified) files, or the node metadata of an IR-native file
+        (Stage 3; ``read_init`` decides whether this run can consume it).
 
         Validates the recorded ``cell_shape`` against this run's lattice:
         ``Nvol = Lx*Ly*Lz`` is a single dimension of the sigma array, so an
@@ -335,6 +357,7 @@ class FLEX(RPA):
         the wrong k-points. Files written before the key existed load with a
         warning instead (the grid cannot be verified).
         """
+        from hwave.solver.ir_axis import is_ir_native, ir_native_meta
         logger.info("FLEX: read initial self-energy from {}".format(file_name))
         data = np.load(file_name)
         if "cell_shape" in data:
@@ -352,7 +375,8 @@ class FLEX(RPA):
                 "run's {} -- a mismatched k-point layout cannot be detected "
                 "from the array shape alone.".format(
                     file_name, list(self.lattice.shape)))
-        return data["sigma"]
+        meta = ir_native_meta(data) if is_ir_native(data) else None
+        return data["sigma"], meta
 
     @do_profile
     def solve(self, green_info, path_to_output):
@@ -477,17 +501,34 @@ class FLEX(RPA):
         expected_uniform = (nblock, nmat, nvol, nd_block, nd_block)
         expected = (nblock, nfreq_axis, nvol, nd_block, nd_block)
         sigma_init = green_info.get("sigma_init")
+        seed_ir_meta = green_info.get("sigma_init_ir")
         if sigma_init is not None:
-            if sigma_init.shape != expected_uniform:
-                raise ValueError(
-                    "sigma_init shape {} does not match this run's {} "
-                    "(nblock, Nmat, Nvol, nd, nd); warm-start requires the same "
-                    "k-mesh and Matsubara grid. Regenerate sigma_init at this "
-                    "Nmat/CellShape.".format(sigma_init.shape,
-                                             expected_uniform))
-            seed = np.array(sigma_init, dtype=np.complex128, copy=True)
-            if self.use_ir:
-                seed = self._ir_sigma_init(seed)
+            if seed_ir_meta is not None:
+                # IR-native seed (Stage 3): the file holds node values;
+                # read_init already guaranteed this run is IR.
+                expected_native = (nblock, seed_ir_meta["freq_n"].size,
+                                   nvol, nd_block, nd_block)
+                if sigma_init.shape != expected_native:
+                    raise ValueError(
+                        "IR-native sigma_init shape {} does not match its "
+                        "own metadata {} (nblock, n_nodes, Nvol, nd, nd); "
+                        "the file is inconsistent or from a different "
+                        "k-mesh. Regenerate sigma_init at this CellShape."
+                        .format(sigma_init.shape, expected_native))
+                seed = self._ir_sigma_init_native(
+                    np.array(sigma_init, dtype=np.complex128, copy=True),
+                    seed_ir_meta, beta)
+            else:
+                if sigma_init.shape != expected_uniform:
+                    raise ValueError(
+                        "sigma_init shape {} does not match this run's {} "
+                        "(nblock, Nmat, Nvol, nd, nd); warm-start requires "
+                        "the same k-mesh and Matsubara grid. Regenerate "
+                        "sigma_init at this Nmat/CellShape.".format(
+                            sigma_init.shape, expected_uniform))
+                seed = np.array(sigma_init, dtype=np.complex128, copy=True)
+                if self.use_ir:
+                    seed = self._ir_sigma_init(seed)
             # xp.asarray moves the (host-loaded) seed to the device under GPU
             # execution; on numpy it is a plain cast.
             if seed is None:
@@ -636,7 +677,7 @@ class FLEX(RPA):
         # frequency axis is densified back onto the run's uniform Nmat grid
         # so the output files keep their exact format (design OQ-1) and the
         # Stage-1 dynamic Eliashberg loader works unchanged.
-        if self.use_ir:
+        if self.use_ir and self.write_densified:
             axF, axB = self._ir_axF, self._ir_axB
             sigma = self._ir_densify(sigma, axF, 1)
             green_kw = self._ir_densify(green_kw, axF, 1)
@@ -644,6 +685,9 @@ class FLEX(RPA):
             chi_c = self._ir_densify(chi_c, axB, 0)
             chi0q_out = self._ir_densify(chi0q_out, axB, 0)
         else:
+            # uniform run, or IR-native (write_densified=false): the arrays
+            # stay on their working frequency axis (sparse nodes for IR),
+            # host-copied for the numpy-only writers/consumers.
             sigma = _bk.to_host(sigma)
             green_kw = _bk.to_host(green_kw)
             chi_s = _bk.to_host(chi_s)
@@ -909,24 +953,74 @@ class FLEX(RPA):
         rel = resid / scale
         logger.info("IR sigma_init fit: max uniform residual %.3e (rel "
                     "%.3e)", resid, rel)
-        if rel > 100.0 * axF.eps:
-            msg = ("sigma_init IR fit residual (rel {:.3e}) exceeds "
-                   "100*ir_tol; the seed may exceed the basis "
-                   "bandwidth.".format(rel))
-            if self.sigma_init_on_error == "abort":
-                raise ValueError(
-                    msg + " Raise [mode.param] ir_wmax, or set [mode.param] "
-                    "sigma_init_on_error='warn'/'zero'.")
-            if self.sigma_init_on_error == "zero":
-                logger.warning(
-                    "%s Falling back to the zero start "
-                    "(sigma_init_on_error='zero').", msg)
-                return None
-            logger.warning(
-                "%s Using the fitted seed anyway "
-                "(sigma_init_on_error='warn').", msg)
+        if not self._sigma_seed_residual_ok(rel):
+            return None
         return np.ascontiguousarray(
             np.moveaxis(axF.eval_to_freq(coeffs), -1, 1))
+
+    def _sigma_seed_residual_ok(self, rel):
+        """Shared sigma_init residual policy: True = use the fitted seed,
+        False = fall back to the zero start; 'abort' raises."""
+        if rel <= 100.0 * self._ir_axF.eps:
+            return True
+        msg = ("sigma_init IR fit residual (rel {:.3e}) exceeds "
+               "100*ir_tol; the seed may exceed the basis "
+               "bandwidth.".format(rel))
+        if self.sigma_init_on_error == "abort":
+            raise ValueError(
+                msg + " Raise [mode.param] ir_wmax, or set [mode.param] "
+                "sigma_init_on_error='warn'/'zero'.")
+        if self.sigma_init_on_error == "zero":
+            logger.warning(
+                "%s Falling back to the zero start "
+                "(sigma_init_on_error='zero').", msg)
+            return False
+        logger.warning(
+            "%s Using the fitted seed anyway "
+            "(sigma_init_on_error='warn').", msg)
+        return True
+
+    def _ir_sigma_init_native(self, seed, meta, beta):
+        """IR-native sigma_init -> this run's fermionic nodes (Stage 3,
+        design Sec. 4.2). Cross-temperature seeding is DELIBERATE (sweep
+        chains): the file's integer node indices are interpreted on the
+        run's beta (index-matched rescaling, mirroring the uniform warm
+        start), logged when the betas differ. Returns None to request the
+        zero start (residual policy)."""
+        axF = self._ir_axF
+        file_beta = float(meta["beta"])
+        if not np.isclose(file_beta, beta, rtol=1e-9, atol=1e-9 * beta):
+            logger.info(
+                "sigma_init: seed ir_beta %.12g differs from this run's "
+                "beta %.12g (temperature-sweep warm start); node values "
+                "are consumed index-matched on the run's frequencies.",
+                file_beta, beta)
+        freq_n = np.asarray(meta["freq_n"], dtype=np.int64)
+        if np.array_equal(freq_n, axF.freq_n):
+            return np.ascontiguousarray(seed)      # already run-node values
+        # Fit in the WRITER's basis (reconstructed from the stored params)
+        # at its own nodes, then evaluate at THIS run's node indices. A fit
+        # onto the run basis would be underdetermined for every
+        # high-T -> low-T sweep step (the run L grows with beta while the
+        # file only carries its own ~L_file nodes); the writer-basis fit is
+        # determined by construction and realizes the index-matched
+        # semantics literally (the seed as a function of n, evaluated at
+        # the new n's).
+        from hwave.solver.ir_axis import IRAxis
+        ax_file = IRAxis(beta=file_beta, wmax=meta["wmax"], eps=meta["tol"],
+                         statistics="F")
+        a = np.moveaxis(seed, 1, -1)
+        coeffs = ax_file.fit_from_freq_points(a, freq_n)
+        resid = float(np.abs(
+            ax_file.eval_to_freq_points(coeffs, freq_n) - a).max())
+        scale = float(np.abs(a).max()) or 1.0
+        rel = resid / scale
+        logger.info("IR-native sigma_init fit (writer basis): max residual "
+                    "at file nodes %.3e (rel %.3e)", resid, rel)
+        if not self._sigma_seed_residual_ok(rel):
+            return None
+        out = ax_file.eval_to_freq_points(coeffs, axF.freq_n)
+        return np.ascontiguousarray(np.moveaxis(out, -1, 1))
 
     @do_profile
     def _calc_dressed_green(self, beta, mu, sigma):
@@ -2266,6 +2360,27 @@ class FLEX(RPA):
                 "matsubara_frequency is restricted but FLEX outputs always "
                 "hold the full frequency grid; the option is ignored.")
 
+        # Stage 3: IR-native files replace the uniform-grid freq_index with
+        # the sparse-node schema (design ir-matsubara-stage3.md Sec. 3).
+        # freq_index is OMITTED on purpose -- its positional uniform-grid
+        # semantics would lie about a node-resolved axis. (getattr: tests
+        # drive save_results on __new__-built stubs without __init__.)
+        ir_native = (getattr(self, "use_ir", False)
+                     and not getattr(self, "write_densified", True))
+
+        def _freq_meta(statistics):
+            if not ir_native:
+                return {"freq_index": full_freq_index}
+            ax = self._ir_axF if statistics == "F" else self._ir_axB
+            return {"matsubara_basis": "ir",
+                    "frequency_grid": "sparse_ir_nodes",
+                    "ir_freq_n": ax.freq_n,
+                    "ir_beta": ax.beta,
+                    "ir_wmax": ax.wmax,
+                    "ir_tol": ax.eps,
+                    "ir_L": ax.L,
+                    "ir_statistics": ax.statistics}
+
         # Save physical observables (particle number, spin, chemical potential)
         # as a plain-text energy file, mirroring UHFr/UHFk.  In fixed-mu mode
         # the NCond line is the mu-N single point for the given mu.
@@ -2289,16 +2404,17 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
-                     freq_index=full_freq_index,
                      # full grid size: lets consumers locate the zero bosonic
-                     # frequency (index nmat//2) unambiguously
+                     # frequency (index nmat//2) unambiguously (run
+                     # provenance only on IR-native files)
                      nmat=self.nmat,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      # FLEX chi0q comes from the same spin-block-ordered RPA
                      # internals; tag it so the chi0q consumers (RPA read_chi0q,
                      # hwave_sc _load_chi0q) accept the file in SO mode.
-                     index_convention="spin_block")
+                     index_convention="spin_block",
+                     **_freq_meta("B"))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -2306,12 +2422,12 @@ class FLEX(RPA):
         # consumer (_load_flex_susceptibilities / _compute_vertices_flex) pairs
         # them with the matching S/C matrices: the general (full-vertex) path
         # produces MYO-convention susceptibilities, the reduced path Kuroki.
-        common_meta = dict(freq_index=full_freq_index,
-                           nmat=self.nmat,
+        common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
-                                           else "kuroki"))
+                                           else "kuroki"),
+                           **_freq_meta("B"))
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
@@ -2340,18 +2456,24 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
-                     freq_index=full_freq_index,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
-                     cell_shape=np.array(self.lattice.shape))
+                     cell_shape=np.array(self.lattice.shape),
+                     **_freq_meta("F"))
             logger.info("save_results: save sigma in file {}".format(file_name))
 
         # Save Green's function
         if "green" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["green"])
+            green_extra = {}
+            if ir_native:
+                # native-only provenance key (the densified green.npz key
+                # set stays unchanged -- design R-S3-2)
+                green_extra["cell_shape"] = np.array(self.lattice.shape)
             np.savez(file_name,
                      green=green_info.get("green"),
-                     freq_index=full_freq_index,
                      wavevector_unit=self.kvec,
-                     wavevector_index=self.wavenum_table)
+                     wavevector_index=self.wavenum_table,
+                     **green_extra,
+                     **_freq_meta("F"))
             logger.info("save_results: save green in file {}".format(file_name))

@@ -1232,6 +1232,18 @@ class RPA:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
 
+        # Stage 3 (design ir-matsubara-stage3.md Sec. 4): chi0q_init assumes
+        # a uniform frequency grid; sparse-node files must not fall through
+        # to the positional metadata handling below. (Outside the try block
+        # on purpose -- the except above would turn this into sys.exit.)
+        from hwave.solver.ir_axis import is_ir_native
+        if is_ir_native(data):
+            raise ValueError(
+                "file '{}' holds sparse-IR node data "
+                "(frequency_grid=sparse_ir_nodes); chi0q_init requires a "
+                "uniform-grid file. Re-run FLEX with [mode.param] "
+                "write_densified = true.".format(file_name))
+
         validate_chi0q_index_convention(
             data, self.ham_info.enable_spin_orbital, file_name)
 

@@ -22,9 +22,13 @@ Wraps the optional ``sparse-ir`` package behind explicit H-wave conventions:
   matrices to the device via :func:`hwave.solver.backend.array_module_of`
   dispatch -- see :meth:`IRAxis.mats`).
 """
+import logging
+
 import numpy as np
 
 from hwave.solver import backend as _bk
+
+_logger = logging.getLogger(__name__)
 
 
 def _import_sparse_ir():
@@ -32,6 +36,30 @@ def _import_sparse_ir():
     installation)."""
     import sparse_ir
     return sparse_ir
+
+
+def is_ir_native(data):
+    """Discriminator D-1 (design ir-matsubara-stage3.md Sec. 3): a loaded
+    npz holds sparse-IR NODE data iff ``matsubara_basis == "ir"`` AND
+    ``ir_freq_n`` is present. The key alone is not enough -- densified
+    outputs (e.g. the Stage-1 ``gap_dynamic.npz``) carry
+    ``matsubara_basis="ir"`` as provenance on a uniform-grid array.
+
+    Requires no sparse-ir installation (uniform-only readers use it to
+    fail fast even where the IR stack is absent)."""
+    return ("matsubara_basis" in data
+            and str(data["matsubara_basis"]) == "ir"
+            and "ir_freq_n" in data)
+
+
+def ir_native_meta(data):
+    """Extract the IR-node metadata of an IR-native npz (Sec. 3 schema)."""
+    return {"freq_n": np.asarray(data["ir_freq_n"], dtype=np.int64),
+            "beta": float(data["ir_beta"]),
+            "wmax": float(data["ir_wmax"]),
+            "tol": float(data["ir_tol"]),
+            "L": int(data["ir_L"]),
+            "statistics": str(data["ir_statistics"])}
 
 
 class IRAxis:
@@ -193,6 +221,90 @@ class IRAxis:
         """(..., n_freq) node values -> values on ARBITRARY tau points
         (fused fit + evaluate, cached like :meth:`eval_to_tau_points`)."""
         return self.eval_to_tau_points(self.fit_from_freq(arr), tau_points)
+
+    def fit_from_freq_points(self, arr, freq_n):
+        """(..., npts) values at ARBITRARY integer Matsubara indices
+        ``freq_n`` -> (..., L) coefficients (design: Stage-3 addendum
+        Sec. 5; the re-ingestion primitive for IR-native files).
+
+        ``freq_n`` must be 1-D, integer, strictly increasing, of the axis'
+        parity, with at least L entries whose design matrix has full rank
+        -- everything else raises, because a pinv of a deficient system
+        would silently amplify noise into physics."""
+        freq_n = np.asarray(freq_n)
+        if freq_n.ndim != 1:
+            raise ValueError(
+                "fit_from_freq_points: freq_n must be 1-D, got shape {}"
+                .format(freq_n.shape))
+        if not np.issubdtype(freq_n.dtype, np.integer):
+            raise ValueError(
+                "fit_from_freq_points: freq_n must be integer Matsubara "
+                "indices, got dtype {}".format(freq_n.dtype))
+        want_odd = 1 if self.statistics == "F" else 0
+        if np.any(np.abs(freq_n) % 2 != want_odd):
+            raise ValueError(
+                "fit_from_freq_points: freq_n parity does not match the "
+                "{} axis ({} indices required).".format(
+                    "fermionic" if want_odd else "bosonic",
+                    "odd" if want_odd else "even"))
+        if np.any(np.diff(freq_n) <= 0):
+            raise ValueError(
+                "fit_from_freq_points: freq_n must be strictly increasing "
+                "(sorted, no duplicates).")
+        if freq_n.size < self.L:
+            raise ValueError(
+                "fit_from_freq_points: need at least L={} nodes to "
+                "determine the coefficients, got {}."
+                .format(self.L, freq_n.size))
+        freq_n = freq_n.astype(np.int64)
+        self._freq_points_fit_matrix(freq_n)   # build + validate + cache
+        return self._apply_cached(arr, ("freqpts", hash(freq_n.tobytes())))
+
+    def eval_to_freq_points(self, coeffs, freq_n):
+        """(..., L) coefficients -> values at ARBITRARY integer Matsubara
+        indices ``freq_n`` (the evaluation half of
+        :meth:`fit_from_freq_points`; used for refit residuals at a file's
+        own nodes). The node set must have passed
+        :meth:`fit_from_freq_points` validation first (it shares the
+        cache)."""
+        freq_n = np.asarray(freq_n, dtype=np.int64)
+        key = ("freqpts_eval", hash(freq_n.tobytes()))
+        if key not in self._device_m:
+            self._device_m[key] = np.ascontiguousarray(
+                self._basis.uhat(freq_n))               # (L, npts)
+        return self._apply_cached(coeffs, key)
+
+    def _apply_cached(self, arr, key):
+        m = self._device_m[key]
+        xp = _bk.array_module_of(arr)
+        if xp is not np:
+            dkey = key + ("dev",)
+            if dkey not in self._device_m:
+                self._device_m[dkey] = xp.asarray(m)
+            m = self._device_m[dkey]
+        return arr @ m
+
+    def _freq_points_fit_matrix(self, freq_n):
+        key = ("freqpts", hash(freq_n.tobytes()))
+        if key not in self._device_m:
+            design = np.ascontiguousarray(
+                self._basis.uhat(freq_n).T)             # (npts, L)
+            rank = np.linalg.matrix_rank(design)
+            if rank < self.L:
+                raise ValueError(
+                    "fit_from_freq_points: the design matrix for this node "
+                    "set is rank-deficient ({} < L={}); the node set cannot "
+                    "determine the coefficients.".format(rank, self.L))
+            sv = np.linalg.svd(design, compute_uv=False)
+            cond = float(sv[0] / sv[-1])
+            if cond > 1e10:
+                _logger.warning(
+                    "fit_from_freq_points: ill-conditioned node set "
+                    "(cond=%.2e); the fit may amplify noise.", cond)
+            else:
+                _logger.debug("fit_from_freq_points: cond=%.2e", cond)
+            self._device_m[key] = np.ascontiguousarray(
+                np.linalg.pinv(design).T)               # (npts, L)
 
     # -- uniform-grid (centered H-wave) interface ----------------------------
 
