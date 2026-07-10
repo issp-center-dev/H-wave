@@ -780,9 +780,8 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
             "estimate, or set it near 3*(bandwidth + max interaction); "
             "(b) the static part of chi cannot be separated from the "
             "artifact at this Nmat -- increase [mode.param] Nmat in the "
-            "FLEX run; (c) run the FLEX step with [mode.param] "
-            "matsubara_basis = \"ir\" (its chi is artifact-free) or this "
-            "solver with matsubara_basis = \"uniform\".".format(
+            "FLEX run; (c) run this solver with [eliashberg] "
+            "matsubara_basis = \"uniform\".".format(
                 label, const_max, scale))
     if drop_constant and const_max > 0.05 * scale:
         logger.warning(

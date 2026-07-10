@@ -472,8 +472,14 @@ def test_ir_compress_rejects_nonartifact_constant():
     chi_clean = 2.0 * g / (nu_u ** 2 + g ** 2) * (1.0 - np.exp(-beta * g))
     huge = 5.0 * np.abs(chi_clean).max()
     chi = (chi_clean + huge)[None, :].astype(complex)
-    with pytest.raises(ValueError, match="artifact"):
+    with pytest.raises(ValueError, match="artifact") as exc:
         ed._ir_compress(chi, ax, nmat, "chiq_s", drop_constant=True)
+    msg = str(exc.value)
+    # every remedy must exist on THIS branch: the uniform fallback is
+    # named, and the FLEX-side matsubara_basis="ir" (which lives in a
+    # separate PR) must NOT be recommended here.
+    assert '[eliashberg] matsubara_basis = "uniform"' in msg
+    assert "FLEX step" not in msg
 
 
 def _axis_b_for_compress(beta):
