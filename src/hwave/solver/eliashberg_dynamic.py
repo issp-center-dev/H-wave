@@ -688,6 +688,14 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
                 resid, resid / scale,
                 (", discarded delta(tau) constant %.3e" % const_max)
                 if drop_constant else "")
+    if drop_constant and const_max > 0.05 * scale:
+        logger.warning(
+            "IR compress %s: the discarded frequency-independent component "
+            "(%.3e) is unusually large (>5%% of the data scale %.3e). The "
+            "O(beta/Nmat) discretization constant should be small; a large "
+            "value may indicate an unexpected constant in the input data -- "
+            "check the FLEX output / increase its Nmat.",
+            label, const_max, scale)
     if resid > 1.0e3 * ax.eps * scale:
         logger.warning(
             "IR fit residual for %s is large (rel %.3e > 1e3*ir_tol); the "
@@ -984,11 +992,13 @@ def solve_dynamic(input_dict):
                         i, ev.real, ev.imag, abs(ev)))
 
     gap_file = eli_param.get("output_gap", "gap.dat")
+    # Provenance metadata is added ONLY on the opt-in IR path: the default
+    # uniform output keeps its exact historical key set.
     if use_ir:
         extra_meta = {"matsubara_basis": "ir", "ir_tol": axF.eps,
                       "ir_wmax": axF.wmax, "ir_L": axF.L}
     else:
-        extra_meta = {"matsubara_basis": "uniform"}
+        extra_meta = None
     write_dynamic_outputs(output_dir, gap_w, lam, T, pairing_type,
                           kx_array, ky_array, kz_array, beta,
                           gap_file=gap_file, extra_meta=extra_meta)

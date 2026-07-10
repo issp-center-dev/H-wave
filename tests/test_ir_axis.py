@@ -108,3 +108,28 @@ def test_missing_sparse_ir_raises_actionable(monkeypatch):
                         lambda: (_ for _ in ()).throw(ImportError("nope")))
     with pytest.raises(ImportError, match="sparse-ir"):
         ir_axis.IRAxis(beta=10.0, wmax=5.0, eps=1e-8, statistics="F")
+
+
+def test_compress_drop_constant_isolates_known_offset(caplog):
+    """A representable bosonic function plus a KNOWN frequency-independent
+    constant: drop_constant must recover the clean function on the nodes
+    (the constant fully isolated), and an unusually large constant must be
+    surfaced with a warning (review follow-up: the residual alone cannot
+    see it, since the augmented fit absorbs the constant exactly)."""
+    import logging
+    from hwave.solver import eliashberg_dynamic as ed
+    beta, nmat = 50.0, 512
+    ax = _axis("B", beta=beta)
+    g = 1.7
+    nu_u = (2 * np.arange(nmat) - nmat) * np.pi / beta
+    chi_clean = 2.0 * g / (nu_u ** 2 + g ** 2) * (1.0 - np.exp(-beta * g))
+    const = 0.5 * np.abs(chi_clean).max()          # large, must warn
+    chi = (chi_clean + const)[None, :]
+
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        nodes = ed._ir_compress(chi.astype(complex), ax, nmat, "test",
+                                drop_constant=True)
+    nu_n = ax.freq_n * np.pi / beta
+    chi_nodes_clean = 2.0 * g / (nu_n ** 2 + g ** 2) * (1.0 - np.exp(-beta * g))
+    np.testing.assert_allclose(nodes[0], chi_nodes_clean, atol=1e-6)
+    assert any("unusually large" in rec.message for rec in caplog.records)
