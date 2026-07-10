@@ -98,6 +98,72 @@ def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
         ed.load_flex_chi_dynamic(inp, 1, 2, 2, 1)
 
 
+def test_npz_freq_size_reads_header_without_loading(tmp_path):
+    """_npz_freq_size returns the stored frequency-axis length from the NPZ
+    header (chi: axis 0; green: axis 1) without materializing the array."""
+    from hwave.solver import eliashberg_dynamic as ed
+    _write_flex_fixture(tmp_path, nmat=12, norb=1, Nx=2, Ny=2, Nz=1)
+    assert ed._npz_freq_size(str(tmp_path / "chiq_s.npz"),
+                             ("chiq_s", "chiq"), axis=0) == 12
+    assert ed._npz_freq_size(str(tmp_path / "green.npz"),
+                             ("green",), axis=1) == 12
+
+
+def test_npz_freq_size_returns_none_on_bad_or_missing(tmp_path):
+    """Header probe is best-effort: an absent file, a non-NPZ file, or a missing
+    key all return None (so the caller falls back to the config grid and the
+    loader raises the real error) rather than a new header-parser failure."""
+    from hwave.solver import eliashberg_dynamic as ed
+    assert ed._npz_freq_size(str(tmp_path / "nope.npz"),
+                             ("chiq_s",), axis=0) is None
+    (tmp_path / "garbage.npz").write_bytes(b"not a zip file")
+    assert ed._npz_freq_size(str(tmp_path / "garbage.npz"),
+                             ("chiq_s",), axis=0) is None
+    _write_flex_fixture(tmp_path, nmat=8)
+    assert ed._npz_freq_size(str(tmp_path / "chiq_s.npz"),
+                             ("absent_key",), axis=0) is None
+
+
+def test_npz_freq_size_returns_none_if_numpy_header_api_changes(tmp_path, monkeypatch):
+    """The probe uses numpy.lib.format internals; if a future numpy renames them
+    (AttributeError), the best-effort probe must still return None (fall back to
+    the loader) rather than crash."""
+    from hwave.solver import eliashberg_dynamic as ed
+    from numpy.lib import format as npformat
+    _write_flex_fixture(tmp_path, nmat=8)
+
+    def _boom(*a, **k):
+        raise AttributeError("simulated numpy internal API change")
+
+    monkeypatch.setattr(npformat, "read_magic", _boom)
+    assert ed._npz_freq_size(str(tmp_path / "chiq_s.npz"),
+                             ("chiq_s",), axis=0) is None
+
+
+def test_grid_mismatch_detected_before_loading(monkeypatch, tmp_path):
+    """Issue #41: a FLEX file whose stored nmat exceeds the config Nmat must be
+    rejected from the NPZ headers BEFORE the full arrays are allocated -- the
+    memory guard sizes on the real file, not the smaller config."""
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    _write_flex_fixture(tmp_path, nmat=16, norb=1, Nx=2, Ny=2, Nz=1)
+
+    called = {"loaded": False}
+
+    def _must_not_run(*a, **k):
+        called["loaded"] = True
+        raise AssertionError("loader ran before the header-based grid check")
+
+    monkeypatch.setattr(sc, "_load_flex_susceptibilities_full", _must_not_run)
+
+    inp = {"mode": {"param": {"Nmat": 8}},   # config < file (16)
+           "file": {"output": {"path_to_output": str(tmp_path)}},
+           "eliashberg": {"chi0q_mode": "flex"}}
+    with pytest.raises(ValueError, match="nmat"):
+        ed.load_flex_chi_dynamic(inp, 1, 2, 2, 1)
+    assert called["loaded"] is False
+
+
 def _write_flex_so_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     """FLEX chi in spin-orbital space (nd_chi = norb*2) to exercise the
     spin-orbital block-expansion path of the static loader."""

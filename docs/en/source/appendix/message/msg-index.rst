@@ -373,3 +373,12 @@ List of error messages
 
   **mode :** UHFr [warning]
 
+
+- ``dynamic Eliashberg grid mismatch: nmat differs``
+
+  **description :** the Matsubara-frequency count (``Nmat``) stored in a FLEX
+  output file (``chiq_s.npz`` / ``chiq_c.npz`` / ``green.npz``) differs from the
+  ``[mode.param] Nmat`` of the current run. Regenerate the FLEX output with the
+  matching ``Nmat`` or set ``Nmat`` to the stored value.
+
+  **mode :** RPA (hwave_sc, dynamic Eliashberg) [error]

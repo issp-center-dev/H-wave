@@ -230,22 +230,87 @@ def check_memory(norb, Nk, nmat, mem_limit_gb=None):
 # The module also needs the FFT alias for the Task-6 kernel:
 #   from hwave.solver.perf import FFT
 
+def _npz_freq_size(path, keys, axis):
+    """Frequency-axis length of an array in an ``.npz`` read from its header
+    only (no data load).
+
+    Parameters
+    ----------
+    path : str
+        Path to the ``.npz`` file.
+    keys : tuple of str
+        Candidate array names to try, in order (e.g. ``("chiq_s", "chiq")``).
+    axis : int
+        Axis holding the Matsubara frequency in the H-wave layout (chi: 0;
+        green: 1).
+
+    Returns
+    -------
+    int or None
+        The size of ``axis`` for the first present key, or ``None`` if the file
+        is absent/unreadable or none of the keys is in the archive (the caller
+        then falls back to the config grid and lets the loader raise the proper
+        missing-file error).
+    """
+    import zipfile
+    from numpy.lib import format as _npformat
+    # Best-effort header probe. This is a pure optimization/safety pre-check --
+    # the loader below is the authoritative path -- so ANY failure returns None
+    # and lets the loader raise the existing, clearer error. The broad catch is
+    # deliberate: besides unreadable/malformed/truncated files and a missing
+    # axis, it also covers the numpy.lib.format internals used here being
+    # renamed/removed in a future numpy (AttributeError), which must degrade
+    # gracefully rather than crash.
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = set(z.namelist())
+            for key in keys:
+                member = key + ".npy"
+                if member in names:
+                    with z.open(member) as f:
+                        version = _npformat.read_magic(f)
+                        _npformat._check_version(version)
+                        shape, _fortran, _dtype = _npformat._read_array_header(
+                            f, version)
+                    return int(shape[axis])
+    except Exception:
+        return None
+    return None
+
+
 def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz):
     import hwave.sc as sc
     cfg_nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
     if cfg_nmat % 2 != 0:
         raise ValueError("dynamic Eliashberg requires even Nmat; got {}".format(cfg_nmat))
-    # Fail BEFORE allocating: the full-frequency chi/green arrays are large, so
-    # run the memory guard on the requested (norb, Nk, Nmat) size before the
-    # loader allocates anything. All three are known here from the config.
-    check_memory(norb, Nx*Ny*Nz, cfg_nmat,
+
+    # Fail BEFORE allocating: read the STORED frequency-axis sizes from the NPZ
+    # headers (no data load), validate them against the config Nmat, and size
+    # the memory guard on the actual files. Using only the config Nmat would let
+    # a larger on-disk grid slip past the guard and OOM inside the loader before
+    # the post-load grid check could fire.
+    chi_s_path, chi_c_path, green_path = sc._resolve_flex_paths(input_dict)
+    stored = {"chis": _npz_freq_size(chi_s_path, ("chiq_s", "chiq"), axis=0),
+              "chic": _npz_freq_size(chi_c_path, ("chiq_c", "chiq"), axis=0)}
+    if os.path.exists(green_path):
+        stored["green"] = _npz_freq_size(green_path, ("green",), axis=1)
+    for name, n in stored.items():
+        if n is not None and n != cfg_nmat:
+            raise ValueError(
+                "dynamic Eliashberg grid mismatch: {} nmat={} differs from "
+                "config Nmat={}".format(name, n, cfg_nmat))
+    # sizes agree with the config here, but guard on the stored value so the
+    # estimate always reflects what is on disk.
+    file_nmat = max([n for n in stored.values() if n is not None]
+                    + [cfg_nmat])
+    check_memory(norb, Nx * Ny * Nz, file_nmat,
                  input_dict["eliashberg"].get("mem_limit_gb"))
+
     # reuse the exact static path/name/convention/spin-orbital-expansion logic
     chis_w, chic_w, green_w, chi_convention = \
         sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
-    # green_w may be None (missing green.npz); the caller (solve_dynamic) is the
-    # fail-fast site for that with a user-facing message. Only cross-check the
-    # green frequency axis when it was actually loaded.
+    # Belt-and-suspenders: the header check above already rejected a mismatch,
+    # but keep a post-load assertion in case the loader reshapes unexpectedly.
     green_nmat = green_w.shape[-1] if green_w is not None else cfg_nmat
     if not (chis_w.shape[-1] == chic_w.shape[-1] == green_nmat == cfg_nmat):
         raise ValueError(

@@ -591,6 +591,13 @@ quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
 Before allocating, ``hwave_sc`` estimates the peak requirement and aborts if it
 would exceed the limit; set ``[eliashberg] mem_limit_gb`` to cap it explicitly
 (``0`` disables the guard), otherwise a fraction of the available RAM is used.
+The estimate reads the stored ``Nmat`` (the Matsubara-frequency axis) from the
+on-disk file headers (``chiq_s.npz`` / ``chiq_c.npz`` / ``green.npz``) rather
+than trusting only the configured value, so a file whose stored ``Nmat`` differs
+from the configuration is rejected up front (before allocation) instead of
+causing an out-of-memory crash mid-load. (The k-mesh and orbital count are taken
+from the configuration; a mismatch there surfaces as a reshape error from the
+loader.)
 
 Performance note
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
