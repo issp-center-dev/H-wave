@@ -550,8 +550,11 @@ The FLEX solver accepts the following parameters in the
      - Set ``true`` to run the SCF loop (dressed G, chi0q, chiq, V_eff, and
        the self-energy) on a GPU via CuPy. When CuPy or a CUDA device is
        unavailable the solver warns and falls back to the CPU (numpy) path
-       (identical result). Only the chemical-potential search's non-Hermitian
-       eigendecomposition stays on the CPU.
+       (identical result). The chemical-potential search also runs on the GPU
+       via closed-form eigenvalues when each spin block has at most 2
+       components (single-orbital, or e.g. a spin-reduced two-orbital model);
+       only larger blocks fall back to a host non-Hermitian
+       eigendecomposition.
    * - ``fft_workers``
      - int
      - 1
