@@ -235,9 +235,18 @@ releases; <code class="docutils literal notranslate"><span class="pre">-1</span>
 representation; see <a class="reference internal" href="#sc-dynamic-ir-en"><span class="std std-ref">the IR section</span></a> below).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: IR basis cutoff accuracy (default 1e-8).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: real-frequency bandwidth of the IR basis, in the same energy
-units as the Hamiltonian (auto-estimated from the band range and
-interaction scale when omitted; if the estimate cannot be formed, the
-solver fails fast and asks for an explicit value).</p></li>
+units as the Hamiltonian (auto-estimated from the dispersion spectral range
+<code class="docutils literal notranslate"><span class="pre">max|eps_k</span> <span class="pre">-</span> <span class="pre">mu|</span></code> and the interaction scale when omitted; if the estimate
+cannot be formed, the solver fails fast and asks for an explicit value).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>). When the
+spin/charge susceptibility is static-dominated (large and nearly frequency-
+independent within the sampled window, i.e. the near-critical regime), the
+frequency-independent component the IR compression would otherwise discard as
+the small <span class="math notranslate nohighlight">\(O(\beta/N_\mathrm{mat})\)</span> <span class="math notranslate nohighlight">\(\delta(\tau)\)</span> artifact instead
+carries physical weight; dropping it corrupts the leading eigenvalue. If that discarded
+component exceeds the data scale the solver aborts with guidance. Set this to
+<code class="docutils literal notranslate"><span class="pre">true</span></code> to retain the static component instead of aborting (alternatively
+lower <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> or increase the FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>).</p></li>
 </ul>
 </section>
 </section>
