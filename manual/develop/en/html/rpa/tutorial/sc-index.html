@@ -709,14 +709,35 @@ re-run FLEX with <code class="docutils literal notranslate"><span class="pre">wr
 <p>FLEX outputs computed on the uniform FFT grid (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> etc.) carry
 <code class="docutils literal notranslate"><span class="pre">O(beta/Nmat)</span></code> discretization artifacts (a delta(tau)-derived constant
 offset plus aliasing images). The IR loader isolates and discards the
-constant (logged), and the eigenvalue difference between the IR and
-uniform paths is bounded by this input-data quality (measured ~1% at
-<code class="docutils literal notranslate"><span class="pre">Nmat=128</span></code> and 5e-4 at <code class="docutils literal notranslate"><span class="pre">Nmat=512</span></code> on the small test fixture; these
-numbers are fixture-specific, not a general guarantee); both converge
-to the same continuum limit as <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grows. For production use,
-validate once per model: raise the FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (or compare a uniform
-run against the IR run at the same <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) and check that the leading
-eigenvalue shift is within your tolerance.</p>
+constant when it is small (logged); if the fitted constant is
+COMPARABLE to the data scale it cannot be the discretization artifact,
+and the run stops with an error instead of silently corrupting the
+result (remedies, also printed by the error: use the automatic
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> or a value near <code class="docutils literal notranslate"><span class="pre">3*(bandwidth</span> <span class="pre">+</span> <span class="pre">max</span> <span class="pre">interaction)</span></code>;
+increase the FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; set <code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code> to
+retain a genuinely static component; or fall back to
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>). The eigenvalue difference between
+the IR and uniform paths is bounded by this input-data quality
+(measured ~1.5e-2 relative at <code class="docutils literal notranslate"><span class="pre">Nmat=128</span></code> and ~4e-3 at <code class="docutils literal notranslate"><span class="pre">Nmat=512</span></code>
+on the small test fixture with the dispersion-based automatic
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>; these numbers are fixture-specific, not a general
+guarantee); both converge to the same continuum limit as <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+grows. For production use, validate once per model: raise the FLEX
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (or compare a uniform run against the IR run at the same
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) and check that the leading eigenvalue shift is within your
+tolerance.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Dynamic IR results computed with H-wave versions BEFORE the issue-#57
+fix are incorrect for any model whose pairing vertex has a nonzero
+frequency-independent part — in particular anything with off-site
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (pure on-site-<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> models were
+unaffected: their bare vertex term cancels exactly). Recompute such
+runs; large changes in lambda are expected (they were the bug, not a
+physics change). The automatic <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> estimate also changed to a
+dispersion-based bound and is now much smaller (and correct) on
+realistic multi-hopping models.</p>
 </div>
 </section>
 <section id="gpu-execution-cupy">

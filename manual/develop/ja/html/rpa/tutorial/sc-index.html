@@ -685,14 +685,31 @@ CPU の空間 FFT にのみ作用します。</p>
 <p>一様グリッドFFTで計算された FLEX 出力（<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> 等）には
 <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span> の離散化アーティファクト
 （<span class="math notranslate nohighlight">\(\delta(\tau)\)</span> 由来の定数オフセットとエイリアシング・イメージ）
-が含まれます。IR 読み込みは定数成分を分離・除去し（ログに記録）、
-一様パスとの固有値の差はこの入力データ品質程度（小規模テスト
-フィクスチャの実測で <code class="docutils literal notranslate"><span class="pre">Nmat=128</span></code> のとき約1%、<code class="docutils literal notranslate"><span class="pre">Nmat=512</span></code> で 5×10⁻⁴。
-これらはフィクスチャ固有の値であり一般保証ではありません）になります。
-両者は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を増やすと同じ連続極限に収束します。本番計算では
-モデルごとに一度、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を上げる（または同じ <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> で
-uniform と IR を比較する）ことで先頭固有値の変化が許容範囲か確認して
-ください。</p>
+が含まれます。IR 読み込みは定数成分が小さい場合に分離・除去します
+（ログに記録）。フィットされた定数がデータスケールに匹敵する場合、
+それは離散化アーティファクトではあり得ないため、黙って結果を壊す
+代わりにエラーで停止します（対処法はエラーメッセージにも表示:
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> を自動推定に戻す/<code class="docutils literal notranslate"><span class="pre">3×(バンド幅+最大相互作用)</span></code> 程度に
+設定する、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を増やす、真に静的な成分なら
+<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code> で保持する、または
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code> に戻す）。一様パスとの固有値の差は
+この入力データ品質程度（分散ベースの自動 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> での小規模
+フィクスチャ実測: <code class="docutils literal notranslate"><span class="pre">Nmat=128</span></code> で約1.5×10⁻²、<code class="docutils literal notranslate"><span class="pre">Nmat=512</span></code> で約
+4×10⁻³。フィクスチャ固有の値であり一般保証ではありません）に
+なります。両者は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を増やすと同じ連続極限に収束します。
+本番計算ではモデルごとに一度、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を上げる（または同じ
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> で uniform と IR を比較する）ことで先頭固有値の変化が
+許容範囲か確認してください。</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">警告</p>
+<p>Issue #57 修正より前のバージョンで計算した動的IRの結果は、ペアリング
+頂点にν非依存成分を持つモデル——特にオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
+を含む系——では誤りです（オンサイト <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみの模型は
+裸頂点項が厳密に相殺するため影響なし）。該当する計算は再実行して
+ください。λの大きな変化は想定どおりです（変化分がバグであり、物理の
+変更ではありません）。また自動 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> 推定は分散ベースに変わり、
+現実的な多ホッピング模型では大幅に小さい（正しい）値になります。</p>
 </div>
 </section>
 <section id="gpu-cupy">
