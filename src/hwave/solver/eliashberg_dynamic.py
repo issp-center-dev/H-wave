@@ -382,8 +382,23 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                         + [cfg_nmat])
     else:
         # IR-native: every large tensor downstream lives on the node axis
-        # (design Sec. 4.1) -- size the guard from the stored node counts.
-        file_nmat = max([n for n in stored.values() if n is not None] + [1])
+        # (design Sec. 4.1) -- size the guard from the node counts. Read
+        # them from the tiny ir_freq_n member itself rather than the
+        # best-effort header probe above: on numpy >= 2.4 the probe's
+        # private-API path degrades to None (by design), which would
+        # silently undersize the guard here. Unreadable files fall back to
+        # the conservative config Nmat.
+        counts = []
+        for path, is_native in ((chi_s_path, native.get("chis")),
+                                (chi_c_path, native.get("chic")),
+                                (green_path, native.get("green"))):
+            if is_native:
+                try:
+                    with np.load(path) as d:
+                        counts.append(int(np.asarray(d["ir_freq_n"]).size))
+                except Exception:
+                    pass
+        file_nmat = max(counts) if counts else cfg_nmat
     check_memory(norb, Nx * Ny * Nz, file_nmat,
                  input_dict["eliashberg"].get("mem_limit_gb"))
 
