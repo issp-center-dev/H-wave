@@ -83,3 +83,27 @@ def test_sigma_init_shape_mismatch_raises():
     gi["sigma_init"] = np.zeros((1, 8, 16, 2, 2), dtype=complex)  # wrong Nmat
     with pytest.raises(ValueError, match="sigma_init shape"):
         solver.solve(gi, 'tests/flex/output')
+
+
+def test_sigma_init_gpu_matches_cpu():
+    """A GPU run seeded with sigma_init must accept the host-loaded seed
+    (moved to the device internally) and reproduce the CPU warm-started
+    result."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+
+    sigma_star = _converged_sigma()
+
+    solver_c, gi_c = _make_solver({'mu': 0.0}, iteration_max=1)
+    gi_c["sigma_init"] = sigma_star
+    solver_c.solve(gi_c, 'tests/flex/output')
+
+    solver_g, gi_g = _make_solver({'mu': 0.0, 'gpu': True}, iteration_max=1)
+    gi_g["sigma_init"] = sigma_star
+    solver_g.solve(gi_g, 'tests/flex/output')
+
+    assert isinstance(gi_g["sigma"], np.ndarray)
+    np.testing.assert_allclose(gi_g["sigma"], gi_c["sigma"], atol=1e-10)
