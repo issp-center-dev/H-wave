@@ -107,3 +107,35 @@ def test_sigma_init_gpu_matches_cpu():
 
     assert isinstance(gi_g["sigma"], np.ndarray)
     np.testing.assert_allclose(gi_g["sigma"], gi_c["sigma"], atol=1e-10)
+
+
+def test_sigma_init_cellshape_mismatch_raises(tmp_path):
+    """Nvol = Lx*Ly*Lz is a single dimension of the sigma array, so an
+    aspect-ratio change (e.g. [2,8,1] -> [4,4,1], both Nvol=16) passes the
+    plain shape check while mapping the seed to wrong k-points. sigma.npz now
+    records its CellShape and read_init must fail fast on a mismatch."""
+    solver28, gi28 = _make_solver({'mu': 0.0}, Lx=2, Ly=8, iteration_max=1)
+    os.makedirs('tests/flex/output', exist_ok=True)
+    solver28.solve(gi28, 'tests/flex/output')
+    info_out = {'path_to_output': str(tmp_path), 'sigma': 'sigma.npz'}
+    solver28.save_results(info_out, gi28)
+
+    solver44, _ = _make_solver({'mu': 0.0}, Lx=4, Ly=4, iteration_max=1)
+    with pytest.raises(ValueError, match="CellShape"):
+        solver44.read_init({'path_to_input': str(tmp_path),
+                            'sigma_init': 'sigma.npz'})
+
+
+def test_sigma_init_without_cellshape_warns(tmp_path, caplog):
+    """sigma.npz files written before the cell_shape key existed must still
+    load (backward compatible), with a warning that the grid cannot be
+    verified."""
+    import logging
+    sigma = _converged_sigma()
+    np.savez(tmp_path / "sigma.npz", sigma=sigma)  # no cell_shape key
+    solver, _ = _make_solver({'mu': 0.0}, iteration_max=1)
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        info = solver.read_init({'path_to_input': str(tmp_path),
+                                 'sigma_init': 'sigma.npz'})
+    assert "sigma_init" in info
+    assert any("CellShape" in rec.message for rec in caplog.records)

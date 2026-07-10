@@ -308,8 +308,22 @@ decreasing) and the run hits ``IterationMax`` without converging. Starting from
 a converged neighbouring solution -- for example, stepping the temperature down
 and feeding each run the previous (higher-:math:`T`) ``sigma.npz`` -- begins the
 iteration near the fixed point and avoids the oscillation. The seed must have
-the same ``CellShape`` and ``Nmat`` as the current run (a shape mismatch is a
-fail-fast error), so keep ``Nmat`` fixed across a continuation sweep.
+the same ``CellShape`` and ``Nmat`` as the current run (both are fail-fast
+errors: ``sigma.npz`` records its ``CellShape``, so even a same-volume
+aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
+``Nmat`` and ``CellShape`` fixed across a continuation sweep.
+
+.. note::
+
+   The ``sigma_init`` path is resolved relative to ``[file.input]
+   path_to_input``, while the previous run wrote its ``sigma.npz`` under
+   ``[file.output] path_to_output``. In a sweep, either copy the previous
+   ``sigma.npz`` into the input directory, or point ``sigma_init`` at the
+   previous output directory with a relative path, e.g.::
+
+      [file.input]
+        path_to_input = "."
+        sigma_init = "run_T0.50/output/sigma.npz"
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 

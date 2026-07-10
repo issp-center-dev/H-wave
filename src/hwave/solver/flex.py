@@ -172,9 +172,32 @@ class FLEX(RPA):
         return info
 
     def _read_sigma(self, file_name):
-        """Load a saved self-energy array from a FLEX ``sigma.npz``."""
+        """Load a saved self-energy array from a FLEX ``sigma.npz``.
+
+        Validates the recorded ``cell_shape`` against this run's lattice:
+        ``Nvol = Lx*Ly*Lz`` is a single dimension of the sigma array, so an
+        aspect-ratio change (e.g. ``[2,8,1]`` vs ``[4,4,1]``) would pass the
+        plain shape check in ``solve()`` while silently mapping the seed onto
+        the wrong k-points. Files written before the key existed load with a
+        warning instead (the grid cannot be verified).
+        """
         logger.info("FLEX: read initial self-energy from {}".format(file_name))
         data = np.load(file_name)
+        if "cell_shape" in data:
+            saved = tuple(int(x) for x in data["cell_shape"])
+            if saved != tuple(self.lattice.shape):
+                raise ValueError(
+                    "sigma_init was written on CellShape {} but this run uses "
+                    "{}; the k-point layout differs even if the total volume "
+                    "matches. Regenerate sigma_init at this CellShape.".format(
+                        list(saved), list(self.lattice.shape)))
+        else:
+            logger.warning(
+                "sigma_init file '{}' carries no cell_shape metadata (written "
+                "by an older H-wave); make sure its CellShape matches this "
+                "run's {} -- a mismatched k-point layout cannot be detected "
+                "from the array shape alone.".format(
+                    file_name, list(self.lattice.shape)))
         return data["sigma"]
 
     @do_profile
@@ -1824,7 +1847,8 @@ class FLEX(RPA):
                      sigma=green_info.get("sigma"),
                      freq_index=full_freq_index,
                      wavevector_unit=self.kvec,
-                     wavevector_index=self.wavenum_table)
+                     wavevector_index=self.wavenum_table,
+                     cell_shape=np.array(self.lattice.shape))
             logger.info("save_results: save sigma in file {}".format(file_name))
 
         # Save Green's function

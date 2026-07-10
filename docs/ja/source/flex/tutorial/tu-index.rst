@@ -287,8 +287,21 @@ FLEX はデフォルトで自己無撞着ループを :math:`\Sigma = 0` から�
 が減少せず 1 付近で停滞）、``IterationMax`` に達しても収束しません。収束済みの
 近傍解 ― 例えば温度を段階的に下げ、各計算に直前（高 :math:`T`）の ``sigma.npz``
 を与える ― から始めれば、固定点の近くから反復が始まり振動を回避できます。種は
-現在の計算と同じ ``CellShape`` と ``Nmat`` でなければならず（形状不一致は即エラー）、
-continuation スイープでは ``Nmat`` を固定してください。
+現在の計算と同じ ``CellShape`` と ``Nmat`` でなければなりません（どちらも即エラー
+になります。``sigma.npz`` は ``CellShape`` を記録するため、体積が同じでも
+``[2,8,1]`` と ``[4,4,1]`` のようなアスペクト比違いも検出されます）。
+continuation スイープでは ``Nmat`` と ``CellShape`` を固定してください。
+
+.. note::
+
+   ``sigma_init`` のパスは ``[file.input] path_to_input`` からの相対で解決され
+   ます。一方、前の計算の ``sigma.npz`` は ``[file.output] path_to_output`` に
+   書き出されています。スイープでは、前の ``sigma.npz`` を入力ディレクトリに
+   コピーするか、相対パスで前の出力ディレクトリを直接指してください。例::
+
+      [file.input]
+        path_to_input = "."
+        sigma_init = "run_T0.50/output/sigma.npz"
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
