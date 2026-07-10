@@ -634,7 +634,14 @@ the pair bubble, and the gap), so its peak memory scales roughly as
 quickly with the orbital count, k-mesh, and number of Matsubara frequencies.
 Before allocating, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> estimates the peak requirement and aborts if it
 would exceed the limit; set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code> to cap it explicitly
-(<code class="docutils literal notranslate"><span class="pre">0</span></code> disables the guard), otherwise a fraction of the available RAM is used.</p>
+(<code class="docutils literal notranslate"><span class="pre">0</span></code> disables the guard), otherwise a fraction of the available RAM is used.
+The estimate reads the stored <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (the Matsubara-frequency axis) from the
+on-disk file headers (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>) rather
+than trusting only the configured value, so a file whose stored <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> differs
+from the configuration is rejected up front (before allocation) instead of
+causing an out-of-memory crash mid-load. (The k-mesh and orbital count are taken
+from the configuration; a mismatch there surfaces as a reshape error from the
+loader.)</p>
 </section>
 <section id="performance-note">
 <h3>Performance note<a class="headerlink" href="#performance-note" title="Link to this heading">¶</a></h3>

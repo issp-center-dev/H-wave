@@ -284,6 +284,13 @@
 <p><strong>description :</strong> the calculation of UHFr does not converge.</p>
 <p><strong>mode :</strong> UHFr [warning]</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dynamic</span> <span class="pre">Eliashberg</span> <span class="pre">grid</span> <span class="pre">mismatch:</span> <span class="pre">nmat</span> <span class="pre">differs</span></code></p>
+<p><strong>description :</strong> the Matsubara-frequency count (<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) stored in a FLEX
+output file (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>) differs from the
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">Nmat</span></code> of the current run. Regenerate the FLEX output with the
+matching <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> or set <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> to the stored value.</p>
+<p><strong>mode :</strong> RPA (hwave_sc, dynamic Eliashberg) [error]</p>
+</li>
 </ul>
 </section>
 

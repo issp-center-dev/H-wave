@@ -285,6 +285,12 @@
 <p><strong>説明 :</strong> UHFr の計算が収束しなかった</p>
 <p><strong>モード :</strong> UHFr [warning]</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dynamic</span> <span class="pre">Eliashberg</span> <span class="pre">grid</span> <span class="pre">mismatch:</span> <span class="pre">nmat</span> <span class="pre">differs</span></code></p>
+<p><strong>説明 :</strong> FLEX 出力ファイル（<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>）に
+保存された松原振動数の数（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>）が、現在の計算の <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">Nmat</span></code> と
+異なる。一致する <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> で FLEX 出力を再生成するか、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を保存値に合わせること。</p>
+<p><strong>モード :</strong> RPA (hwave_sc, dynamic Eliashberg) [error]</p>
+</li>
 </ul>
 </section>
 

@@ -619,7 +619,12 @@ orbital-pair と誤認して pairing vertex を壊していました。該当す
 k メッシュ・松原振動数の数に対して急速に大きくなります。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は確保前に
 ピーク必要量を見積もり、上限を超える場合は停止します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code>
 で上限を明示的に指定でき（<code class="docutils literal notranslate"><span class="pre">0</span></code> でガードを無効化）、指定しない場合は利用可能な
-RAM の一部が上限に使われます。</p>
+RAM の一部が上限に使われます。この見積もりは、設定値だけを信頼せず、ディスク上のファイルヘッダ
+（<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>）から保存された <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+（松原振動数軸）を読み取ります。そのため、ファイルに保存された <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> が設定と
+異なる場合は、ロード途中で OOM で落ちるのではなく、確保前に事前に拒否されます
+（k メッシュと軌道数は設定から取得し、その不一致はローダーの reshape エラーとして
+現れます）。</p>
 </section>
 <section id="id27">
 <h3>性能に関する注意<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
