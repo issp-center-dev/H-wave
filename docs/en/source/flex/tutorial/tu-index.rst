@@ -597,6 +597,38 @@ The FLEX solver accepts the following parameters in the
      - History depth :math:`m` of the Anderson acceleration. Memory grows by
        :math:`2m` sigma-sized arrays (kept on the device under GPU
        execution).
+   * - ``matsubara_basis``
+     - str
+     - "uniform"
+     - Matsubara-axis representation: ``"uniform"`` (default, unchanged) or
+       ``"ir"`` (the sparse-ir intermediate representation; chi0 and Sigma
+       are computed NATIVELY on sparse nodes, so the uniform-FFT
+       :math:`O(\beta/N_{\mathrm{mat}})` discretization artifacts do not
+       arise by construction). ``Nmat`` keeps its role as the output grid
+       (all output files are densified onto it). Not combinable with
+       ``calc_scheme = "general"`` (v1). Requires the optional
+       `sparse-ir <https://sparse-ir.readthedocs.io>`_ package. The mu
+       search becomes the basis evaluation of
+       :math:`n = -\mathrm{Tr}\,G(\tau=\beta^-)`, and ``coeff_tail`` is
+       unnecessary (ignored).
+   * - ``ir_tol``
+     - float
+     - 1e-8
+     - IR basis cutoff accuracy.
+   * - ``ir_wmax``
+     - float
+     - auto
+     - Real-frequency bandwidth of the IR basis (same energy units as the
+       Hamiltonian); auto-estimated from the band range and interaction
+       scale when omitted (a fail-fast error asks for an explicit value if
+       the estimate cannot be formed). An always-on coefficient-decay
+       diagnostic warns when the bandwidth is insufficient.
+   * - ``sigma_init_on_error``
+     - str
+     - "warn"
+     - Behavior when the IR fit residual of a (uniform-grid) ``sigma_init``
+       exceeds 100x ``ir_tol``: ``"warn"`` (use it, warn), ``"abort"``, or
+       ``"zero"`` (fall back to the zero start).
    * - ``gpu``
      - bool
      - false

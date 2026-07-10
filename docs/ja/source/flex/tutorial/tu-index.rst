@@ -564,6 +564,34 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
      - 5
      - Anderson 加速の履歴の深さ :math:`m`。メモリは :math:`\Sigma` サイズの
        配列 :math:`2m` 本分増加します（GPU実行時はデバイス上に保持）。
+   * - ``matsubara_basis``
+     - str
+     - "uniform"
+     - 松原軸の表現。``"uniform"``（デフォルト、従来どおり）または ``"ir"``
+       （sparse-ir の中間表現基底。χ₀ と Σ をスパースノード上でネイティブに
+       計算するため、一様FFT由来の :math:`O(\beta/N_{\mathrm{mat}})`
+       離散化アーティファクトが原理的に生じません）。``Nmat`` は出力グリッド
+       として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
+       ``calc_scheme = "general"`` とは併用できません（v1）。オプションの
+       `sparse-ir <https://sparse-ir.readthedocs.io>`_ が必要です。μ探索は
+       :math:`n = -\mathrm{Tr}\,G(\tau=\beta^-)` の基底評価に置き換わり、
+       ``coeff_tail`` は不要（無視）になります。
+   * - ``ir_tol``
+     - float
+     - 1e-8
+     - IR基底の打ち切り精度 :math:`\varepsilon`。
+   * - ``ir_wmax``
+     - float
+     - auto
+     - IR基底の実周波数バンド幅（ハミルトニアンと同じエネルギー単位）。
+       省略時はバンド幅と相互作用スケールから自動推定（推定不能なら明示指定を
+       求めるエラー）。係数テールの減衰診断が常時走り、帯域不足は警告されます。
+   * - ``sigma_init_on_error``
+     - str
+     - "warn"
+     - IR実行で ``sigma_init``（一様グリッド）のフィット残差が 100×``ir_tol``
+       を超えた場合の挙動: ``"warn"``（使用して警告）/ ``"abort"`` /
+       ``"zero"``（ゼロ初期化に退避）。
    * - ``gpu``
      - bool
      - false

@@ -263,6 +263,33 @@ class FLEX(RPA):
                 .format(self.mixing_scheme))
         self.anderson_depth = int(self.param_mod.get("anderson_depth", 5))
 
+        # Matsubara-axis representation (design: docs/design/ir-matsubara.md,
+        # Stage 2): the default uniform grid, or the sparse-ir intermediate
+        # representation. IR computes chi0/Sigma natively on sparse nodes (no
+        # uniform-FFT tau products), so the coeff_tail machinery is bypassed.
+        self.matsubara_basis = str(
+            self.param_mod.get("matsubara_basis", "uniform")).lower()
+        if self.matsubara_basis not in ("uniform", "ir"):
+            raise ValueError(
+                "matsubara_basis must be 'uniform' or 'ir', got '{}'."
+                .format(self.matsubara_basis))
+        self.use_ir = (self.matsubara_basis == "ir")
+        if self.use_ir and self._flex_general:
+            raise ValueError(
+                "matsubara_basis='ir' supports calc_scheme='reduced'/"
+                "'squashed' only (v1); the general full-vertex path stays on "
+                "the uniform grid.")
+        self.ir_tol = float(self.param_mod.get("ir_tol", 1.0e-8))
+        self.ir_wmax = self.param_mod.get("ir_wmax")
+        self.sigma_init_on_error = str(
+            self.param_mod.get("sigma_init_on_error", "warn")).lower()
+        if self.sigma_init_on_error not in ("warn", "abort", "zero"):
+            raise ValueError(
+                "sigma_init_on_error must be 'warn', 'abort' or 'zero', "
+                "got '{}'.".format(self.sigma_init_on_error))
+        self._ir_axF = None
+        self._ir_axB = None
+
         eps_exp = self.param_mod.get("EPS", 6)
         if isinstance(eps_exp, float) and eps_exp < 1.0:
             self.eps = eps_exp
@@ -368,6 +395,9 @@ class FLEX(RPA):
                 "only, got '{}'. spin-diag/spinful are deferred to the "
                 "generalized FLEX solver.".format(self.spin_mode))
 
+        if self.use_ir:
+            self._ir_setup(beta)
+
         if self.calc_mu:
             # spin-free counts one spin, so the target is halved (as in
             # RPA._find_mu / RPA.solve).  Ncond_target is reused every SCF
@@ -400,12 +430,16 @@ class FLEX(RPA):
             self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 
         # Step 2: Compute bare Green's function G0(k, iwn)
-        green0, green0_tail = self._calc_green(beta, mu)
+        if self.use_ir:
+            green0, green0_tail = self._calc_green_ir(beta, mu)
+        else:
+            green0, green0_tail = self._calc_green(beta, mu)
 
         # Store for reference (as host arrays; the loop below keeps using the
         # backend-local green0_tail)
         self.green0 = _bk.to_host(green0)
-        self.green0_tail = _bk.to_host(green0_tail)
+        self.green0_tail = (None if green0_tail is None
+                            else _bk.to_host(green0_tail))
 
         # High-frequency tail contract (coeff_tail): RPA's tail acceleration
         # is a two-step pair -- _calc_green subtracts aa/(i w_n) in FREQUENCY
@@ -422,7 +456,7 @@ class FLEX(RPA):
         # convolution and needs no tau-space tail reconstruction -- measured
         # on the 8x8 Hubbard fixture, reconstructing the "true" G(tau) there
         # does not improve the Nmat convergence of Sigma.
-        aa = self.coeff_tail
+        aa = 0.0 if self.use_ir else self.coeff_tail
         if aa != 0.0:
             iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
             ev = self.H0_eigenvector
@@ -439,20 +473,28 @@ class FLEX(RPA):
         # k-mesh and Matsubara grid.
         nblock = green0.shape[0]
         nd_block = green0.shape[-1]
-        expected = (nblock, nmat, nvol, nd_block, nd_block)
+        nfreq_axis = self._ir_axF.n_freq if self.use_ir else nmat
+        expected_uniform = (nblock, nmat, nvol, nd_block, nd_block)
+        expected = (nblock, nfreq_axis, nvol, nd_block, nd_block)
         sigma_init = green_info.get("sigma_init")
         if sigma_init is not None:
-            if sigma_init.shape != expected:
+            if sigma_init.shape != expected_uniform:
                 raise ValueError(
                     "sigma_init shape {} does not match this run's {} "
                     "(nblock, Nmat, Nvol, nd, nd); warm-start requires the same "
                     "k-mesh and Matsubara grid. Regenerate sigma_init at this "
-                    "Nmat/CellShape.".format(sigma_init.shape, expected))
+                    "Nmat/CellShape.".format(sigma_init.shape,
+                                             expected_uniform))
+            seed = np.array(sigma_init, dtype=np.complex128, copy=True)
+            if self.use_ir:
+                seed = self._ir_sigma_init(seed)
             # xp.asarray moves the (host-loaded) seed to the device under GPU
             # execution; on numpy it is a plain cast.
-            sigma = xp.asarray(np.array(sigma_init, dtype=np.complex128,
-                                        copy=True))
-            logger.info("FLEX: warm-starting the SCF loop from sigma_init")
+            if seed is None:
+                sigma = xp.zeros(expected, dtype=np.complex128)
+            else:
+                sigma = xp.asarray(seed)
+                logger.info("FLEX: warm-starting the SCF loop from sigma_init")
         else:
             sigma = xp.zeros(expected, dtype=np.complex128)
 
@@ -494,7 +536,10 @@ class FLEX(RPA):
                 green_scf = green_kw
 
             # Step 4: Compute chi0(q, ivn) from dressed G
-            chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
+            if self.use_ir:
+                chi0q_raw = self._calc_chi0q_ir(green_scf, beta)
+            else:
+                chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
 
             # Remove spin block dimension
             if self.spin_mode in ["spin-free", "spinful"]:
@@ -515,7 +560,14 @@ class FLEX(RPA):
             else:
                 chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
                     chi0q_raw, ham_orig)
-                sigma_new = self._calc_self_energy(green_kw, v_eff, beta)
+                if self.use_ir:
+                    sigma_new = self._calc_self_energy_ir(green_kw, v_eff,
+                                                          beta)
+                else:
+                    sigma_new = self._calc_self_energy(green_kw, v_eff, beta)
+
+            if self.use_ir:
+                self._ir_coeff_decay_check(sigma_new)
 
             # Step 7: Mix and check convergence
             diff = self._calc_convergence(sigma, sigma_new)
@@ -580,12 +632,23 @@ class FLEX(RPA):
             self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
 
         # Store results (as host arrays: everything downstream -- writers,
-        # green_info consumers -- is numpy)
-        sigma = _bk.to_host(sigma)
-        green_kw = _bk.to_host(green_kw)
-        chi_s = _bk.to_host(chi_s)
-        chi_c = _bk.to_host(chi_c)
-        chi0q_out = _bk.to_host(chi0q_out)
+        # green_info consumers -- is numpy). On the IR path every stored
+        # frequency axis is densified back onto the run's uniform Nmat grid
+        # so the output files keep their exact format (design OQ-1) and the
+        # Stage-1 dynamic Eliashberg loader works unchanged.
+        if self.use_ir:
+            axF, axB = self._ir_axF, self._ir_axB
+            sigma = self._ir_densify(sigma, axF, 1)
+            green_kw = self._ir_densify(green_kw, axF, 1)
+            chi_s = self._ir_densify(chi_s, axB, 0)
+            chi_c = self._ir_densify(chi_c, axB, 0)
+            chi0q_out = self._ir_densify(chi0q_out, axB, 0)
+        else:
+            sigma = _bk.to_host(sigma)
+            green_kw = _bk.to_host(green_kw)
+            chi_s = _bk.to_host(chi_s)
+            chi_c = _bk.to_host(chi_c)
+            chi0q_out = _bk.to_host(chi0q_out)
         self.sigma = sigma
         self.green_kw = green_kw
         self.chi_s = chi_s
@@ -600,6 +663,268 @@ class FLEX(RPA):
         green_info["physics"] = physics
 
         logger.info("End FLEX calculations")
+
+    # ------------------------------------------------------------------
+    # IR-basis Matsubara axis (Stage 2, docs/design/ir-matsubara.md 3.3/3.4)
+    # ------------------------------------------------------------------
+
+    def _ir_setup(self, beta):
+        """Build the fermionic/bosonic IR axes once per solve."""
+        if self._ir_axF is not None:
+            return
+        from hwave.solver.ir_axis import IRAxis
+        wmax = self.ir_wmax
+        if wmax is None:
+            ew = _bk.to_host(self.H0_eigenvalue)
+            band = 2.0 * float(np.abs(ew).max())
+            u = float(np.abs(_bk.to_host(
+                self.ham_info.ham_inter_q)).max())
+            wmax = 3.0 * (band + u)
+            if not np.isfinite(wmax) or wmax <= 0.0:
+                raise ValueError(
+                    "ir_wmax auto-estimate is not a positive finite number "
+                    "(band bound {} + interaction scale {}); set "
+                    "[mode.param] ir_wmax explicitly (a real-frequency "
+                    "bandwidth in the same energy units as the "
+                    "Hamiltonian).".format(band, u))
+            logger.info("IR: auto ir_wmax = %.6g (override with "
+                        "[mode.param] ir_wmax)", wmax)
+        wmax = float(wmax)
+        self._ir_axF = IRAxis(beta=beta, wmax=wmax, eps=self.ir_tol,
+                              statistics="F")
+        self._ir_axB = IRAxis(beta=beta, wmax=wmax, eps=self.ir_tol,
+                              statistics="B")
+        logger.info("IR: Lambda=%.3g eps=%.1e -> L_F=%d (nodes %d), "
+                    "L_B=%d (nodes %d)", beta * wmax, self.ir_tol,
+                    self._ir_axF.L, self._ir_axF.n_freq,
+                    self._ir_axB.L, self._ir_axB.n_freq)
+        if self.coeff_tail != 0.0:
+            logger.info("IR: coeff_tail is not used on the IR path (the "
+                        "fermionic basis carries the 1/(i w) tail exactly); "
+                        "the option is ignored.")
+
+    def _freq_omegas(self, beta, xp):
+        """Matsubara frequencies of the working axis (uniform or IR nodes)."""
+        if self._ir_axF is not None:
+            return xp.asarray(self._ir_axF.freq_n) * (np.pi / beta)
+        nmat = self.nmat
+        return (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+
+    @do_profile
+    def _calc_green_ir(self, beta, mu):
+        """Bare Green's function on the fermionic IR nodes (no tail terms:
+        the basis represents the 1/(i w) asymptotics within ir_tol)."""
+        ew = self.H0_eigenvalue
+        ev = self.H0_eigenvector
+        xp = _bk.array_module_of(ew)
+        iomega = xp.asarray(self._ir_axF.freq_n) * (np.pi / beta)
+        wn = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis]
+        ek = (ew - mu)[:, np.newaxis, :, :]
+        g = 1.0 / (wn - ek)
+        ev_conj_t = xp.conj(ev).swapaxes(-2, -1)
+        Vg = ev[:, np.newaxis, :, :, :] * g[:, :, :, np.newaxis, :]
+        green = Vg @ ev_conj_t[:, np.newaxis, :, :, :]
+        return green, None
+
+    @do_profile
+    def _calc_chi0q_ir(self, green_kw, beta):
+        r"""chi0 on the bosonic IR nodes, computed natively from G on the
+        fermionic nodes (reduced scheme).
+
+        chi0_{ab}(r,tau) = -G_{ab}(r,tau) * G_{ba}(-r,-tau) with the
+        fermionic anti-periodicity G(-tau) = -G(beta - tau) realized as a
+        pure tau-node index reversal (symmetric node sets); the spatial
+        r -> -r is the same reverse+roll map as the uniform path. The
+        product lives on the BOSONIC tau nodes (chi0 is periodic), where G
+        is evaluated exactly from its fermionic coefficients. All IR
+        transforms are physical (the tau -> i nu step is the integral over
+        tau), so no 1/beta factors appear -- pinned against the uniform
+        chi0 by test_chi0_gate_ir_matches_uniform_large_nmat.
+        """
+        axF, axB = self._ir_axF, self._ir_axB
+        nx, ny, nz = self.lattice.shape
+        nblock, nw, nvol, nd, _ = green_kw.shape
+        if not self.enable_reduced:
+            raise ValueError(
+                "matsubara_basis='ir' chi0 supports the reduced scheme only")
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+
+        # G(k, tau_B): fermionic coefficients evaluated at the bosonic nodes
+        g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
+        g_tau = axF.freq_to_tau_points(g, axB.tau)      # (nblock, ., n_tauB)
+        ntB = axB.n_tau
+        g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
+            nblock, ntB, nx, ny, nz, nd * nd)
+
+        g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
+
+        # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
+        # plain tau reversal (with the global fermionic -1); r -> -r is
+        # reverse+roll on the k grid (identical to the uniform path).
+        g_rev = -xp.flip(
+            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
+        g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
+
+        # chi0[a,b] = -G[a,b](r,tau) * G[b,a](-r,-tau)
+        chi0_rt = -g_rt * g_rev.swapaxes(-2, -1)
+
+        chi0_qt = _bk.spatial_fftn(
+            chi0_rt.reshape(nblock, ntB, nx, ny, nz, nd * nd),
+            axes=(2, 3, 4), workers=workers)
+        chi0_q = axB.tau_to_freq(
+            xp.moveaxis(chi0_qt.reshape(nblock, ntB, nvol * nd * nd), 1, -1))
+        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
+            nblock, axB.n_freq, nvol, nd, nd)
+        return chi0_q
+
+    @do_profile
+    def _calc_self_energy_ir(self, green_kw, v_eff, beta):
+        """Sigma on the fermionic IR nodes: V (bosonic nodes) and G
+        (fermionic nodes) are both evaluated on the FERMIONIC tau nodes
+        (the product V*G is anti-periodic), multiplied there, and fitted
+        back. Physical transforms -> no explicit 1/beta (pinned by
+        test_sigma_gate_one_iteration)."""
+        axF, axB = self._ir_axF, self._ir_axB
+        nx, ny, nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nblock = green_kw.shape[0]
+        nd_block = green_kw.shape[-1]
+        nd_v = v_eff.shape[-1]
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+        ntF = axF.n_tau
+
+        # G -> (r, tau_F)
+        g = xp.moveaxis(
+            green_kw.reshape(nblock, axF.n_freq, nvol * nd_block ** 2),
+            1, -1)
+        g_tau = xp.moveaxis(axF.freq_to_tau(g), -1, 1).reshape(
+            nblock, ntF, nx, ny, nz, nd_block ** 2)
+        green_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers
+                                     ).reshape(nblock, ntF, nvol,
+                                               nd_block, nd_block)
+
+        # V_eff -> (r, tau_F) via the bosonic basis evaluated on tau_F
+        v = xp.moveaxis(
+            v_eff.reshape(axB.n_freq, nvol * nd_v * nd_v), 0, -1)
+        v_tau = xp.moveaxis(
+            axB.freq_to_tau_points(v, axF.tau), -1, 0).reshape(
+            ntF, nx, ny, nz, nd_v * nd_v)
+        v_rt = _bk.spatial_ifftn(v_tau, axes=(1, 2, 3), workers=workers
+                                 ).reshape(ntF, nvol, nd_v, nd_v)
+
+        # Sigma(r,tau) = V(r,tau) * G(r,tau), spin-slot sliced as uniform
+        if nd_block != nd_v:
+            norb = self.norb
+            sigma_rt = xp.zeros((nblock, ntF, nvol, nd_block, nd_block),
+                                dtype=np.complex128)
+            for gblk in range(nblock):
+                s = gblk if nblock == self.ns else 0
+                sl = slice(s * norb, (s + 1) * norb)
+                sigma_rt[gblk] = v_rt[:, :, sl, sl] * green_rt[gblk]
+        else:
+            sigma_rt = v_rt[np.newaxis] * green_rt
+
+        nd_sig = sigma_rt.shape[-1]
+        sigma_kt = _bk.spatial_fftn(
+            sigma_rt.reshape(nblock, ntF, nx, ny, nz, nd_sig ** 2),
+            axes=(2, 3, 4), workers=workers)
+        sigma_kw = axF.tau_to_freq(xp.moveaxis(
+            sigma_kt.reshape(nblock, ntF, nvol * nd_sig ** 2), 1, -1))
+        return xp.moveaxis(sigma_kw, -1, 1).reshape(
+            nblock, axF.n_freq, nvol, nd_sig, nd_sig)
+
+    def _number_from_eigs_ir(self, lam, mu):
+        """N(mu) (and dN/dmu) on the IR path: the k-summed trace of G at the
+        fermionic nodes has closed form through the eigenvalues lam of M,
+        and the particle number is the beta^- evaluation of its fermionic
+        fit (n_total = -Re Tr G(beta^-)); the derivative passes through the
+        same LINEAR fit (d/dmu of 1/(lam+mu) per node)."""
+        axF = self._ir_axF
+        denom = lam + mu
+        g = _bk.to_host((1.0 / denom).sum(axis=(0, 2, 3)))
+        dg = _bk.to_host((-1.0 / denom ** 2).sum(axis=(0, 2, 3)))
+        n = -float(np.real(axF.fit_from_freq(g) @ axF.u_beta_minus))
+        dn = -float(np.real(axF.fit_from_freq(dg) @ axF.u_beta_minus))
+        return n, dn
+
+    @do_profile
+    def _ir_densify(self, arr, ax, freq_axis, max_chunk_bytes=1 << 28):
+        """Evaluate a node-resolved array back onto the run's uniform grid
+        (output compatibility; the frequency axis is ``freq_axis``).
+
+        The uniform-grid OUTPUT is Nmat/L times larger than the node array
+        (GB-scale at production sizes), so only the small coefficient array
+        crosses the device boundary; the expansion to the uniform grid runs
+        as chunked host GEMMs straight into the output buffer (design R-4:
+        memory-aware densification)."""
+        xp = _bk.array_module_of(arr)
+        a = xp.ascontiguousarray(xp.moveaxis(arr, freq_axis, -1))
+        coeffs = _bk.to_host(ax.fit_from_freq(a))       # (..., L): small
+        _, ev = ax.uniform_matrices(self.nmat)          # (L, nmat)
+        evT = np.ascontiguousarray(ev.T)                # (nmat, L)
+        out = np.empty(arr.shape[:freq_axis] + (self.nmat,)
+                       + arr.shape[freq_axis + 1:], dtype=np.complex128)
+        # Write DIRECTLY in the output layout: for each leading index before
+        # the frequency axis, out[idx] viewed as (nmat, trailing) is a
+        # contiguous matrix filled by one GEMM (the transposed coefficient
+        # operand is handled natively by BLAS) -- no GB-scale axis-move copy.
+        lead_shape = arr.shape[:freq_axis]
+        c = coeffs.reshape(lead_shape + (-1, ax.L))     # (lead..., trail, L)
+        for idx in np.ndindex(lead_shape):
+            np.matmul(evT, c[idx].T, out=out[idx].reshape(self.nmat, -1))
+        return out
+
+    def _ir_coeff_decay_check(self, sigma, label="sigma"):
+        """Always-on layer-1 diagnostic (design Sec. 5): warn when the tail
+        of the fitted coefficients stops decaying (out-of-basis content)."""
+        axF = self._ir_axF
+        c = _bk.to_host(axF.fit_from_freq(
+            np.moveaxis(_bk.to_host(sigma), 1, -1)))
+        mag = np.abs(c).max(axis=tuple(range(c.ndim - 1)))
+        tail = float(mag[-max(1, axF.L // 10):].max())
+        peak = float(mag.max()) or 1.0
+        if tail > 10.0 * axF.eps * peak:
+            logger.warning(
+                "IR coefficient tail of %s is not decaying (ratio %.2e > "
+                "10*ir_tol): the object exceeds the basis bandwidth -- "
+                "raise ir_wmax or tighten ir_tol.", label, tail / peak)
+
+    def _ir_sigma_init(self, seed):
+        """Uniform-grid sigma_init -> fermionic nodes (uniform -> IR
+        migration). The fit residual over the full uniform grid is checked
+        against 100*ir_tol (relative); above it, behavior follows
+        [mode.param] sigma_init_on_error ('warn' default / 'abort' /
+        'zero'). Returns None to request the zero start."""
+        axF = self._ir_axF
+        a = np.moveaxis(seed, 1, -1)
+        coeffs = axF.fit_from_uniform(a, self.nmat)
+        resid = float(np.abs(axF.eval_to_uniform(coeffs, self.nmat)
+                             - a).max())
+        scale = float(np.abs(a).max()) or 1.0
+        rel = resid / scale
+        logger.info("IR sigma_init fit: max uniform residual %.3e (rel "
+                    "%.3e)", resid, rel)
+        if rel > 100.0 * axF.eps:
+            msg = ("sigma_init IR fit residual (rel {:.3e}) exceeds "
+                   "100*ir_tol; the seed may exceed the basis "
+                   "bandwidth.".format(rel))
+            if self.sigma_init_on_error == "abort":
+                raise ValueError(
+                    msg + " Raise ir_wmax, or set sigma_init_on_error="
+                    "'warn'/'zero'.")
+            if self.sigma_init_on_error == "zero":
+                logger.warning(
+                    "%s Falling back to the zero start "
+                    "(sigma_init_on_error='zero').", msg)
+                return None
+            logger.warning(
+                "%s Using the fitted seed anyway "
+                "(sigma_init_on_error='warn').", msg)
+        return np.ascontiguousarray(
+            np.moveaxis(axF.eval_to_freq(coeffs), -1, 1))
 
     @do_profile
     def _calc_dressed_green(self, beta, mu, sigma):
@@ -626,10 +951,9 @@ class FLEX(RPA):
         xp = _bk.array_module_of(sigma)
 
         nblock, nvol, nd = ew.shape
-        nmat = self.nmat
 
-        # Matsubara frequencies
-        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        # Matsubara frequencies of the working axis (uniform or IR nodes)
+        iomega = self._freq_omegas(beta, xp)
 
         # Reconstruct H0 in orbital basis from eigendecomposition
         # H0 = ev @ diag(ew) @ ev†, using matmul for BLAS efficiency
@@ -747,10 +1071,19 @@ class FLEX(RPA):
         ndarray
             Occupation summed over k, shape (nblock, nd_block).
         """
+        xp = _bk.array_module_of(green_kw)
+        if self._ir_axF is not None:
+            # IR path: n_a = -Re G_aa(tau = beta^-) directly through the
+            # fermionic basis (tail-free by construction).
+            axF = self._ir_axF
+            g_aa = xp.einsum('bnkaa->bnka', green_kw)   # (nb, nw, nvol, a)
+            g_aa = _bk.to_host(xp.moveaxis(g_aa, 1, -1))  # (nb, nvol, a, nw)
+            n_k = -np.real(axF.fit_from_freq(g_aa) @ axF.u_beta_minus)
+            return n_k.sum(axis=1)                       # (nblock, nd_block)
+
         nmat = self.nmat
         ew = self.H0_eigenvalue                       # (nblock, nvol, nd_block)
         ev = self.H0_eigenvector                      # (nblock, nvol, a, j)
-        xp = _bk.array_module_of(green_kw)
         vsq = xp.abs(ev) ** 2                          # |V_aj|^2
 
         # bare per-orbital reference: n0_a = sum_j |V_aj|^2 f(eps_j - mu)
@@ -856,9 +1189,8 @@ class FLEX(RPA):
         ev = self.H0_eigenvector
         xp = _bk.array_module_of(sigma)
         nblock, nvol, nd = ew.shape
-        nmat = self.nmat
 
-        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        iomega = self._freq_omegas(beta, xp)
         H0_k = xp.matmul(ev * ew[:, :, np.newaxis, :],
                          xp.conj(ev).swapaxes(-2, -1))       # (nb, nvol, nd, nd)
         eye = xp.eye(nd, dtype=np.complex128)
@@ -989,6 +1321,11 @@ class FLEX(RPA):
         w = ew
 
         def _delta_n(mu, with_deriv=False):
+            if self._ir_axF is not None:
+                n, dn = self._number_from_eigs_ir(lam, mu)
+                if with_deriv:
+                    return n - Ncond, dn
+                return n - Ncond
             r = self._number_from_eigs(lam, ew, mu, beta, with_deriv=with_deriv)
             if with_deriv:
                 return r[0] - Ncond, r[1]
