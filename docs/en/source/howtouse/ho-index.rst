@@ -18,7 +18,8 @@ Basic usage
     `CuPy installation guide <https://docs.cupy.dev/en/stable/install.html>`_.
     Without CuPy, ``gpu = true`` falls back to the CPU path with a warning.)
   - sparse-ir module (optional; only for the IR-basis Matsubara axis of the
-    dynamic Eliashberg solver, ``[eliashberg] matsubara_basis = "ir"``.
+    dynamic Eliashberg solver, ``[eliashberg] matsubara_basis = "ir"``, and
+    of the FLEX solver, ``[mode.param] matsubara_basis = "ir"``.
     Install with ``pip install sparse-ir``; without it, ``"ir"`` is a
     fail-fast error with this install hint.)
 

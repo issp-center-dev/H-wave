@@ -19,7 +19,8 @@
       を参照してください。CuPyが無い場合、``gpu = true`` は警告を出して
       CPU実行にフォールバックします。）
     - sparse-ir モジュール（任意。動的 Eliashberg ソルバーの IR 基底松原軸
-      ``[eliashberg] matsubara_basis = "ir"`` にのみ必要です。
+      ``[eliashberg] matsubara_basis = "ir"`` および FLEX ソルバーの
+      ``[mode.param] matsubara_basis = "ir"`` にのみ必要です。
       ``pip install sparse-ir`` でインストールできます。未導入で ``"ir"``
       を指定した場合はインストール手順つきの明示エラーになります。）
 
