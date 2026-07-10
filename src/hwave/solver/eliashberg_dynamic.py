@@ -1029,7 +1029,10 @@ def solve_dynamic(input_dict):
         if inst_scale > 0.0:
             logger.info("IR: instantaneous vertex part split off "
                         "analytically (max |V_inst| = %.6g).", inst_scale)
-            Vs_q_w = Vs_q_w - V_inst[..., np.newaxis]
+            # xp.asarray: on the GPU path Vs_q_w is already a device array
+            # (moved above), while V_inst is host-built -- the subtraction
+            # must not mix backends. Plain no-op cast on numpy.
+            Vs_q_w = Vs_q_w - xp.asarray(V_inst)[..., np.newaxis]
             V_inst_rt = _spatial_ifftn(V_inst.astype(complex),
                                        axes=(4, 5, 6), workers=fft_workers)
             if gpu_active:

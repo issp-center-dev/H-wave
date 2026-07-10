@@ -303,17 +303,15 @@ def test_ir_kernel_instantaneous_vertex_matches_uniform():
                               wmax=5.0) < 2e-2
 
 
-def test_ir_matvec_gate_offsite_interaction(tmp_path):
-    """End-to-end kernel gate on a model WITH off-site CoulombInter: there
-    S+C != 0 (unlike pure CoulombIntra, where the Kuroki S+C cancels), so
-    the pairing vertex carries a genuine instantaneous part -- the case
+@pytest.fixture(scope="module")
+def flex_outdir_offsite(tmp_path_factory):
+    """FLEX outputs for a model WITH off-site CoulombInter: there S+C != 0
+    (unlike pure CoulombIntra, where the Kuroki S+C cancels), so the
+    pairing vertex carries a genuine instantaneous part -- the model class
     issue #57 hit on beta'-(ET)2ICl2 (UVg)."""
-    from hwave.solver import eliashberg_dynamic as ed
-    import hwave.sc as sc
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
-
-    outdir = str(tmp_path)
+    outdir = str(tmp_path_factory.mktemp("flexout_uv"))
     info_mode = {'mode': 'FLEX', 'param': {
         'T': BETA_T, 'mu': 0.0, 'CellShape': [LX, LY, 1],
         'SubShape': [1, 1, 1], 'Nmat': NMAT,
@@ -330,9 +328,23 @@ def test_ir_matvec_gate_offsite_interaction(tmp_path):
     s.solve(gi, outdir)
     s.save_results({'path_to_output': outdir, 'chiq_s': 'chiq_s',
                     'chiq_c': 'chiq_c', 'green': 'green'}, gi)
+    return outdir
 
-    inp = _eliashberg_input(outdir)
+
+def _offsite_input(outdir, extra=None):
+    inp = _eliashberg_input(outdir, extra=extra)
     inp["file"]["input"]["interaction"]["CoulombInter"] = "coulombinter.dat"
+    return inp
+
+
+def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
+    """End-to-end kernel gate on the off-site model, BOTH pairing channels
+    (the triplet instantaneous part is 0.5*(C-S); a sign regression there
+    must not hide behind the singlet-only gate)."""
+    from hwave.solver import eliashberg_dynamic as ed
+    import hwave.sc as sc
+
+    inp = _offsite_input(flex_outdir_offsite)
     norb, Nx, Ny, Nz = 1, LX, LY, 1
     beta = 1.0 / BETA_T
     chis_w, chic_w, green_w, conv = ed.load_flex_chi_dynamic(
@@ -342,52 +354,79 @@ def test_ir_matvec_gate_offsite_interaction(tmp_path):
     kz = np.linspace(0, 2*np.pi, Nz, endpoint=False)
     geom, hr, inter = sc._read_interaction_files(inp)
     inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
-    # the instantaneous part must be nonzero for this model
-    V_inst = ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
-                                      pairing_type="singlet",
-                                      convention=conv)
-    assert np.abs(V_inst).max() > 1e-10
 
     axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k,
                                    norb, kx, ky, kz)
     chis_n = ed._ir_compress(chis_w, axB, NMAT, "chiq_s", drop_constant=True)
     chic_n = ed._ir_compress(chic_w, axB, NMAT, "chiq_c", drop_constant=True)
     green_n = ed._ir_compress(green_w, axF, NMAT, "green")
-    V_n = ed.compute_vertices_flex_dynamic(chis_n, chic_n, inter_k, norb,
-                                           Nx, Ny, Nz,
-                                           pairing_type="singlet",
-                                           convention=conv)
     G2_n = ed.calc_g2_dynamic(green_n, beta)
-    V_rt_tau = ed._ir_vertex_to_rtau(V_n - V_inst[..., None], axB, axF)
-    V_inst_rt = ed._spatial_ifftn(V_inst.astype(complex), axes=(4, 5, 6))
-
     chis_d = axB.eval_to_uniform(axB.fit_from_freq(chis_n), NMAT)
     chic_d = axB.eval_to_uniform(axB.fit_from_freq(chic_n), NMAT)
     green_d = axF.eval_to_uniform(axF.fit_from_freq(green_n), NMAT)
-    V_w = ed.compute_vertices_flex_dynamic(chis_d, chic_d, inter_k, norb,
-                                           Nx, Ny, Nz,
-                                           pairing_type="singlet",
-                                           convention=conv)
     G2_w = ed.calc_g2_dynamic(green_d, beta)
-
     gap_static = sc._initialize_gap("cos", norb, kx, ky, kz)
     phi_u = np.broadcast_to(gap_static[..., None],
                             gap_static.shape + (NMAT,)).astype(complex)
     phi_n = np.broadcast_to(gap_static[..., None],
                             gap_static.shape + (axF.n_freq,)).astype(complex)
-    out_u = ed.eliashberg_kernel_dynamic(V_w, G2_w, phi_u.copy(), norb, beta)
-    out_n = ed.eliashberg_kernel_ir(V_rt_tau, G2_n, phi_n.copy(), axF, beta,
-                                    V_inst_rt=V_inst_rt)
-    # node-subsampled comparison: the instantaneous part's output is
-    # nu-independent (out of the fermionic basis on purpose), so a
-    # fit/densify round trip would alias it -- compare where the solver
-    # lives, on the nodes.
-    k_idx = (axF.freq_n - 1 + NMAT) // 2
-    inside = (k_idx >= 0) & (k_idx < NMAT)
-    out_u_nodes = out_u[..., k_idx[inside]]
-    diff = (np.abs(out_n[..., inside] - out_u_nodes).max()
-            / np.abs(out_u_nodes).max())
-    assert diff < 2e-2, diff
+
+    for pairing in ("singlet", "triplet"):
+        V_inst = ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                          pairing_type=pairing,
+                                          convention=conv)
+        if pairing == "singlet":
+            # 0.5*(S+C) != 0 with off-site V -- the issue-#57 case
+            assert np.abs(V_inst).max() > 1e-10
+        else:
+            # 0.5*(C-S) vanishes identically on this 1-orbital fixture
+            # (S == C in the Kuroki construction here); the gate still runs
+            # the triplet channel end to end, and the channel-agnostic
+            # split+analytic-add-back algebra is covered for ARBITRARY
+            # V_inst tensors by test_ir_kernel_instantaneous_vertex_*.
+            assert np.abs(V_inst).max() == 0.0
+        V_n = ed.compute_vertices_flex_dynamic(chis_n, chic_n, inter_k,
+                                               norb, Nx, Ny, Nz,
+                                               pairing_type=pairing,
+                                               convention=conv)
+        V_rt_tau = ed._ir_vertex_to_rtau(V_n - V_inst[..., None], axB, axF)
+        V_inst_rt = ed._spatial_ifftn(V_inst.astype(complex),
+                                      axes=(4, 5, 6))
+        V_w = ed.compute_vertices_flex_dynamic(chis_d, chic_d, inter_k,
+                                               norb, Nx, Ny, Nz,
+                                               pairing_type=pairing,
+                                               convention=conv)
+        out_u = ed.eliashberg_kernel_dynamic(V_w, G2_w, phi_u.copy(),
+                                             norb, beta)
+        out_n = ed.eliashberg_kernel_ir(V_rt_tau, G2_n, phi_n.copy(), axF,
+                                        beta, V_inst_rt=V_inst_rt)
+        # node-subsampled comparison: the instantaneous part's output is
+        # nu-independent (out of the fermionic basis on purpose), so a
+        # fit/densify round trip would alias it -- compare where the
+        # solver lives, on the nodes.
+        k_idx = (axF.freq_n - 1 + NMAT) // 2
+        inside = (k_idx >= 0) & (k_idx < NMAT)
+        out_u_nodes = out_u[..., k_idx[inside]]
+        diff = (np.abs(out_n[..., inside] - out_u_nodes).max()
+                / np.abs(out_u_nodes).max())
+        assert diff < 2e-2, (pairing, diff)
+
+
+def test_solve_dynamic_ir_gpu_matches_cpu_offsite(flex_outdir_offsite):
+    """gpu=true with a NONZERO instantaneous vertex: exercises the device
+    handling of the V_inst split (the pure-CoulombIntra GPU test cannot --
+    there V_inst cancels exactly)."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+    from hwave.solver import eliashberg_dynamic as ed
+    lam_cpu = ed.solve_dynamic(_offsite_input(
+        flex_outdir_offsite, extra={"matsubara_basis": "ir"}))
+    lam_gpu = ed.solve_dynamic(_offsite_input(
+        flex_outdir_offsite, extra={"matsubara_basis": "ir", "gpu": True}))
+    assert abs(lam_gpu - lam_cpu) < 1e-8 * max(1.0, abs(lam_cpu))
 
 
 def test_ir_auto_wmax_uses_dispersion_not_grand_total():
