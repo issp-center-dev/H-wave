@@ -254,6 +254,10 @@ def _npz_freq_size(path, keys, axis):
     """
     import zipfile
     from numpy.lib import format as _npformat
+    # Best-effort header probe: any unreadable/absent/malformed/truncated file or
+    # missing axis returns None so the caller falls back to the config grid and
+    # the loader raises the existing, clearer missing/corrupt-file error rather
+    # than a new failure mode from the header parser.
     try:
         with zipfile.ZipFile(path) as z:
             names = set(z.namelist())
@@ -266,7 +270,7 @@ def _npz_freq_size(path, keys, axis):
                         shape, _fortran, _dtype = _npformat._read_array_header(
                             f, version)
                     return int(shape[axis])
-    except (FileNotFoundError, OSError, zipfile.BadZipFile):
+    except (OSError, ValueError, EOFError, IndexError, zipfile.BadZipFile):
         return None
     return None
 

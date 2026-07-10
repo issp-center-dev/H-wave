@@ -109,6 +109,21 @@ def test_npz_freq_size_reads_header_without_loading(tmp_path):
                              ("green",), axis=1) == 12
 
 
+def test_npz_freq_size_returns_none_on_bad_or_missing(tmp_path):
+    """Header probe is best-effort: an absent file, a non-NPZ file, or a missing
+    key all return None (so the caller falls back to the config grid and the
+    loader raises the real error) rather than a new header-parser failure."""
+    from hwave.solver import eliashberg_dynamic as ed
+    assert ed._npz_freq_size(str(tmp_path / "nope.npz"),
+                             ("chiq_s",), axis=0) is None
+    (tmp_path / "garbage.npz").write_bytes(b"not a zip file")
+    assert ed._npz_freq_size(str(tmp_path / "garbage.npz"),
+                             ("chiq_s",), axis=0) is None
+    _write_flex_fixture(tmp_path, nmat=8)
+    assert ed._npz_freq_size(str(tmp_path / "chiq_s.npz"),
+                             ("absent_key",), axis=0) is None
+
+
 def test_grid_mismatch_detected_before_loading(monkeypatch, tmp_path):
     """Issue #41: a FLEX file whose stored nmat exceeds the config Nmat must be
     rejected from the NPZ headers BEFORE the full arrays are allocated -- the
