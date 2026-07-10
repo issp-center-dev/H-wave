@@ -72,7 +72,13 @@ def _eigvals_small(M):
         c = M[..., 1, 0]
         d = M[..., 1, 1]
         tr = a + d
-        disc = xp.sqrt(tr * tr - 4.0 * (a * d - b * c))
+        # Discriminant in the SHIFT-INVARIANT form (a-d)^2 + 4bc, not
+        # tr^2 - 4*det: the mu-search operator is M = i*w*I - H0 - Sigma with
+        # |w| up to (Nmat-1)*pi*T, and tr^2 - 4*det subtracts two nearly equal
+        # O(w^2) terms, losing the O(1) remainder to cancellation (found by
+        # review; pinned by test_closed_form_2x2_stable_under_matsubara_shift).
+        dm = a - d
+        disc = xp.sqrt(dm * dm + 4.0 * (b * c))
         return xp.stack([0.5 * (tr + disc), 0.5 * (tr - disc)], axis=-1)
     return np.linalg.eigvals(_bk.to_host(M))
 

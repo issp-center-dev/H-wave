@@ -403,6 +403,27 @@ class TestEigvalsSmall(unittest.TestCase):
              + 1j * rng.standard_normal((3, 4, 6, 2, 2)))
         self._assert_same_spectra(_eigvals_small(M), np.linalg.eigvals(M), 2)
 
+    def test_closed_form_2x2_stable_under_matsubara_shift(self):
+        """Regression (AI review): the mu-search operator is M = i*w*I - H0 -
+        Sigma with |w| up to (Nmat-1)*pi*T. The naive discriminant
+        tr^2 - 4*det cancels two O(w^2) terms and loses the O(1) remainder;
+        the shift-invariant form (a-d)^2 + 4bc must stay at machine precision
+        for large w."""
+        from hwave.solver.flex import _eigvals_small
+        rng = np.random.default_rng(9)
+        A = (rng.standard_normal((3, 5, 2, 2))
+             + 1j * rng.standard_normal((3, 5, 2, 2)))
+        eye = np.eye(2)
+        for w in (1.0e2, 1.0e3, 1.0e5):
+            M = 1j * w * eye + A
+            a = np.sort_complex(_eigvals_small(M).reshape(-1, 2))
+            b = np.sort_complex(np.linalg.eigvals(M).reshape(-1, 2))
+            # |lam| ~ w, so compare RELATIVE to the eigenvalue magnitude:
+            # LAPACK's own error is ~eps in relative terms, while the naive
+            # tr^2-4det discriminant loses ~eps*w^2 absolutely (~eps*w rel.).
+            np.testing.assert_allclose(a, b, rtol=5e-15, atol=1e-14,
+                                       err_msg="w={}".format(w))
+
     def test_geev_fallback_3x3(self):
         from hwave.solver.flex import _eigvals_small
         rng = np.random.default_rng(5)
