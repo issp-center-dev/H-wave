@@ -49,3 +49,37 @@ def test_resolve_gap_name_dynamic_vs_static():
 def test_rung_dir_format():
     assert ts.rung_dir("/out", 0, 0.01).endswith("000_T0.01")
     assert ts.rung_dir("/out", 12, 0.002).endswith("012_T0.002")
+
+
+def _valid_base():
+    return {"mode": {"param": {"CellShape": [2, 2, 1], "Nmat": 16, "filling": 0.5}},
+            "file": {"input": {}, "output": {}},
+            "eliashberg": {"frequency": "dynamic"}}
+
+
+def test_preflight_ok():
+    ts.preflight(_valid_base(), {"run_eliashberg": True})
+
+
+@pytest.mark.parametrize("drop", ["CellShape", "Nmat"])
+def test_preflight_missing_shape_field(drop):
+    base = _valid_base()
+    del base["mode"]["param"][drop]
+    with pytest.raises(ValueError, match=drop):
+        ts.preflight(base, {"run_eliashberg": True})
+
+
+def test_preflight_missing_filling_and_ncond():
+    base = _valid_base()
+    del base["mode"]["param"]["filling"]
+    with pytest.raises(ValueError, match="filling"):
+        ts.preflight(base, {"run_eliashberg": True})
+
+
+def test_preflight_run_eliashberg_without_section():
+    base = _valid_base()
+    del base["eliashberg"]
+    with pytest.raises(ValueError, match="eliashberg"):
+        ts.preflight(base, {"run_eliashberg": True})
+    # FLEX-only is fine without [eliashberg]:
+    ts.preflight(base, {"run_eliashberg": False})

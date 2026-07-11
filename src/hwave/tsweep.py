@@ -58,3 +58,19 @@ def resolve_gap_name(base):
 
 def rung_dir(output_dir, idx, T):
     return os.path.join(output_dir, "%03d_T%g" % (idx, T))
+
+
+def preflight(base, cont):
+    param = base.get("mode", {}).get("param", {})
+    for field in ("CellShape", "Nmat"):
+        if field not in param:
+            raise ValueError("[mode.param] missing required field %r." % field)
+    has_filling, has_ncond = "filling" in param, "Ncond" in param
+    if has_filling == has_ncond:
+        raise ValueError(
+            "[mode.param] must set exactly one of `filling`/`Ncond`.")
+    if cont.get("run_eliashberg", True) and "eliashberg" not in base:
+        raise ValueError(
+            "run_eliashberg=true but the base config has no [eliashberg] "
+            "section; add [eliashberg] or set "
+            "[continuation] run_eliashberg = false.")
