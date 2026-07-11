@@ -597,6 +597,165 @@ continuation スイープでは ``Nmat`` を固定してください。IR経路�
 指定します（未指定なら予備 Arnoldi から推定）。``sigma_shift`` をブランチ近傍に置き
 ``seed_eigenvector`` と併用するのが、隠れた／複素化する固有値を解決する最も堅牢な方法です。
 
+温度継続計算（``hwave_tsweep``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+上記のように ``sigma_init`` と ``seed_eigenvector`` を温度掃引で手動でつなぐには、
+温度ごとに ``hwave``/``hwave_sc`` を実行し直し、各ステップの出力を次のステップの
+入力へ手作業で配線する必要があります。``hwave_tsweep`` コマンド（``hwave``・
+``hwave_sc`` と同様にパッケージに同梱されています）はこれを自動化します。1つの
+ベース TOML（単一の FLEX+Eliashberg 計算で使う ``[mode]``/``[mode.param]``/
+``[file]``/``[eliashberg]`` の設定そのもの）に ``[continuation]`` セクションを
+加えて渡すと、降順の温度ラダーに沿って FLEX（および、無効化していなければ
+Eliashberg ソルバー）を実行します。各段では、直前の段の収束した自己エネルギーを
+``sigma_init`` としてこの段の FLEX へ（ウォームスタート）、直前の段の動的ギャップを
+``seed_eigenvector`` としてこの段の Eliashberg 計算へ（固有ベクトル継続）与えます。
+ウォームスタートの連鎖全体を自動化することで、各温度点をコールドスタートして
+（毎回異なる準安定解に落ち着く恐れを抱えながら）計算するのではなく、1つの物理的
+ブランチを低温まで滑らかに追跡できます。
+
+段の間で変化させるのは ``mode.param.T`` のみです。``CellShape``、``Nmat``、
+その他の形状を決定するフィールドはラダー全体で固定されます。これにより、各段の
+``sigma_init``／``seed_eigenvector`` ファイルが次の段と形状互換になります。
+
+``[continuation]`` セクション
+""""""""""""""""""""""""""""""
+
+.. code-block:: toml
+
+    [continuation]
+      temperatures   = [0.02, 0.015, 0.01, 0.008, 0.006]  # 明示的なラダー
+      # または、`temperatures` が無い場合に生成するラダー:
+      #   T_start = 0.02
+      #   T_stop  = 0.006
+      #   num     = 5
+      #   spacing = "linear"          # "linear"（デフォルト）または "log"
+      output_dir     = "tsweep"       # デフォルト
+      run_eliashberg = true           # デフォルト
+      warm_start     = true           # デフォルト
+      seed_gap       = true           # デフォルト
+      summary_file   = "lambda_vs_T.dat"  # デフォルト
+
+- ``temperatures``: 明示的な温度のリスト。与えた順に実行されます。存在する場合、
+  ``T_start``/``T_stop``/``num`` より優先されます。
+- ``T_start`` / ``T_stop`` / ``num`` / ``spacing``: ``temperatures`` が無い場合に
+  ラダーを生成するために使われます。``T_start`` と ``T_stop`` の間に ``num`` 個の
+  点を生成し、``spacing`` は ``"linear"``（デフォルト）または ``"log"`` です。
+  ``temperatures`` と ``T_start``/``T_stop``/``num`` の三つ組のどちらも与えない場合は
+  pre-flight エラーになります。
+- ``output_dir``（デフォルト ``"tsweep"``）: 掃引全体の親ディレクトリ。温度 ``T`` の
+  段 ``idx`` は ``<output_dir>/<idx>_T<T>/output/`` に出力されます（``idx`` は3桁
+  ゼロ埋め、``T`` は ``%g`` 形式）。
+- ``run_eliashberg``（デフォルト ``true``）: 各段で Eliashberg ソルバーも実行します。
+  これにはベース TOML に ``[eliashberg]`` セクションが必要で、無い場合は pre-flight
+  が欠けているセクション名を挙げてエラーになります。``false`` にすると
+  ``sigma_init`` のみを連鎖させる FLEX 専用の掃引になります。
+- ``warm_start``（デフォルト ``true``）: 各段の収束した自己エネルギーを次の段の
+  ``sigma_init`` として連鎖させます。
+- ``seed_gap``（デフォルト ``true``）: 各段のギャップを次の段の
+  ``seed_eigenvector`` として連鎖させます。これは動的 Eliashberg ソルバー
+  （``[eliashberg] frequency = "dynamic"``）でのみ有効です。``seed_eigenvector``
+  自体が動的モード専用のため、静的ラダーでは効果を持ちません。
+- ``summary_file``（デフォルト ``"lambda_vs_T.dat"``）: ``<output_dir>/<summary_file>``
+  に書き出されるサマリー表のファイル名。
+
+掃引の実行
+""""""""""""""""""""""""""""""
+
+.. code-block:: bash
+
+    $ hwave_tsweep input.toml
+
+実行を制御する2つのフラグがあります:
+
+- ``--dry-run``: 温度ラダー、各段の出力ディレクトリ、配線される
+  ``sigma_init``/``seed_eigenvector`` のパスを解決して表示するだけで、どちらの
+  ソルバーも呼び出しません。長い掃引を実行する前に ``[continuation]`` の設定を
+  検証するのに使います。
+- ``--keep-going``: デフォルトでは、ソルバーがエラーを送出した段で掃引は停止します
+  （壊れた段はそれ以降のすべての種を汚染するため。部分的なサマリーは書き出されます）。
+  ``--keep-going`` を指定すると、代わりに次の段をコールドスタートし、それが成功すれば
+  以降の段への種として再び使われます。
+
+サマリーファイル
+""""""""""""""""""""""""""""""
+
+各実行は ``<output_dir>/<summary_file>``（デフォルト ``tsweep/lambda_vs_T.dat``）
+に段ごとに1行を書き出します:
+
+.. code-block:: text
+
+    # idx  T  status  error_stage  Re_lambda  Im_lambda  parity_match  flex_converged  flex_iter
+    0 0.02   ok    none 0.845000 0.000000 1 1 18
+    1 0.015  ok    none 0.902000 0.000000 1 1 22
+    2 0.01   error flex nan      nan      -1 0 -1
+    ...
+
+``status`` は以下のいずれかです:
+
+- ``ok`` -- FLEX が収束し、``run_eliashberg`` が有効な場合はこの段の
+  ``eigenvalue.dat`` から先頭固有対が読み取れた。
+- ``not_converged`` -- FLEX が ``EPS`` を満たさないまま ``IterationMax`` に
+  達したが、使用可能な自己エネルギー（Eliashberg を実行した場合はギャップも）は
+  書き出された。このような段も次の段の種として利用できます。
+- ``error`` -- ソルバーが例外を送出した、または（``run_eliashberg`` の場合）
+  ``eigenvalue.dat`` が存在しないか解析できなかった場合。``error_stage`` に
+  どちらのソルバーで失敗したか（``flex`` または ``eliashberg``）が記録されます。
+- ``dry`` -- ``--dry-run`` によって生成された行。ソルバーは呼び出されていません。
+
+浮動小数点値が欠けている場合（Eliashberg を実行しなかった、または失敗した場合の
+``Re_lambda``/``Im_lambda``）は ``nan`` と表示され、整数フィールドが欠けている場合
+（``parity_match``、``flex_converged``、``flex_iter``）は ``-1`` と表示されます。
+``error_stage`` は ``status = error`` でない限り ``none`` です。
+
+設定例
+""""""""""""""""""""""""""""""
+
+.. code-block:: toml
+
+    [mode]
+      mode = "FLEX"
+
+    [mode.param]
+      T         = 0.02
+      CellShape = [32, 32, 1]
+      Nmat      = 512
+      filling   = 0.75
+
+    [file]
+    [file.input]
+      path_to_input = "."
+
+    [file.input.interaction]
+      path_to_input = "."
+      Geometry      = "geom.dat"
+      Transfer      = "transfer.dat"
+      CoulombIntra  = "coulombintra.dat"
+      CoulombInter  = "coulombinter.dat"
+
+    [file.output]
+      path_to_output = "output"
+
+    [eliashberg]
+      frequency     = "dynamic"
+      chi0q_mode    = "flex"
+      pairing_type  = "singlet"
+
+    [continuation]
+      T_start        = 0.02
+      T_stop         = 0.005
+      num            = 6
+      spacing        = "log"
+      run_eliashberg = true
+      warm_start     = true
+      seed_gap       = true
+
+この例では :math:`T = 0.02` から :math:`T = 0.005` まで、対数間隔の6段を
+降順に計算します。各段で FLEX と動的 Eliashberg を実行し、``sigma_init`` と
+``seed_eigenvector`` の両方を連鎖させ、``tsweep/lambda_vs_T.dat`` --
+:math:`\lambda(T)` の表を書き出します。先頭の物理固有値が1を横切る点から
+:math:`T_c` を見積もることができます。
+
 メモリに関する注意
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
