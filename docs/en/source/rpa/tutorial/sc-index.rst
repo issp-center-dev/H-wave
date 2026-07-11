@@ -598,6 +598,27 @@ back to the raw leading pair; increase ``num_eigenvalues`` or check
 kernel commutes with parity (a centrosymmetric model); if it does not, the
 projection is disabled with a warning and the un-projected iteration is used.
 
+Eigenvector continuation (``seed_eigenvector``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The reported leading eigenpair is normally the algebraically largest one. For a
+frequency-dependent (non-Hermitian) kernel this can be fragile near an
+*exceptional point* — where two real eigenvalues collide and split into a
+complex-conjugate pair — so the "leading" branch may jump discontinuously
+between neighbouring temperatures even when the FLEX self-energy varies
+smoothly. To follow one physical branch, set ``[eliashberg] seed_eigenvector``
+to a ``gap_dynamic.npz`` written by a neighbouring run (e.g. the next-higher
+temperature): its gap is used as the ARPACK start vector **and** to select the
+eigenpair whose eigenvector maximally overlaps it, rather than the largest one.
+Stepping temperature down and feeding each run the previous ``gap_dynamic.npz``
+tracks the same gap symmetry (e.g. the d-wave mode) continuously. The seed must
+share the run's ``CellShape`` and ``Nmat`` (a mismatch is a fail-fast error), so
+keep ``Nmat`` fixed across a continuation sweep; on the IR path the seed gap is
+refit onto the IR nodes automatically. ``[eliashberg] sigma_shift`` sets an
+explicit shift-invert target (otherwise estimated from a preliminary Arnoldi);
+combining ``sigma_shift`` near the branch with ``seed_eigenvector`` is the most
+robust way to resolve a masked or complexifying eigenvalue.
+
 Memory note
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

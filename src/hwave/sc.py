@@ -1966,6 +1966,28 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
     return A, vec_size
 
 
+def _order_by_seed_overlap(vals, vecs, seed_vec):
+    """Order eigenpairs by descending overlap ``|<seed, vec>|`` with a seed
+    eigenvector (columns already L2-normalized by ARPACK).
+
+    Used for eigenvector continuation: when a converged eigenvector from a
+    neighbouring parameter (e.g. the next temperature) is supplied as a seed,
+    the physical branch is the eigenpair whose eigenvector maximally overlaps
+    it -- NOT the algebraically largest one (which, near an exceptional point
+    of the non-Hermitian kernel, can jump to a different branch). Ties and a
+    zero seed fall back to real-part ordering.
+    """
+    s = np.asarray(seed_vec).ravel()
+    ns = np.linalg.norm(s)
+    if ns == 0:
+        return _order_eigenpairs(vals, vecs)
+    s = s / ns
+    ov = np.abs(vecs.conj().T @ s) / (
+        np.linalg.norm(vecs, axis=0) + 1.0e-300)
+    idx = np.argsort(-ov)
+    return vals[idx], vecs[:, idx]
+
+
 def _order_eigenpairs(vals, vecs):
     """Order eigenpairs by descending real part (largest first).
 
@@ -2150,7 +2172,7 @@ def _shift_from_eigenvalues(vals, factor=0.9):
 
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
-                   sigma_shift=None, alpha=0.5, project_fn=None):
+                   sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None):
     """Shared leading-eigenpair driver behind the static Eliashberg solvers.
 
     This holds the ARPACK/shift-invert eigen-selection-and-ordering body of
@@ -2287,7 +2309,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         max_ev, solver_mode))
 
     if solver_mode == "arnoldi":
-        vals, vecs = eigs(A, k=max_ev, which='LM')
+        vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
 
     elif solver_mode.startswith("shift-invert"):
         if sigma_shift is None:
@@ -2306,11 +2328,17 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = _shift_from_eigenvalues(vals_pre)
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
         vals, vecs = _eigs_shift_invert(
-            A, vec_size, max_ev, solver_mode, sigma=sigma_shift
+            A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
+            seed_vec=seed_vec
         )
 
-    # Order by largest real part (the physical SC eigenvalue), not magnitude.
-    vals, vecs = _order_eigenpairs(vals, vecs)
+    # With a seed eigenvector, track the branch that overlaps it (eigenvector
+    # continuation); otherwise order by largest real part (the physical SC
+    # eigenvalue), not magnitude.
+    if seed_vec is not None:
+        vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
+    else:
+        vals, vecs = _order_eigenpairs(vals, vecs)
 
     return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
                                  "sigma_shift": sigma_shift}
@@ -2398,7 +2426,8 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     return vals, eigenvectors
 
 
-def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8):
+def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8,
+                       seed_vec=None):
     """Eigenvalue computation using shift-invert with iterative linear solver.
 
     Transforms the eigenvalue problem K*x = lambda*x into
@@ -2470,8 +2499,9 @@ def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8)
                            matvec=inv_matvec, dtype=complex)
 
     # eigs on (A - sigma*I)^{-1} finds eigenvalues nu = 1/(lambda - sigma)
-    # largest |nu| correspond to lambda closest to sigma
-    nus, vecs = eigs(A_inv, k=num_ev, which='LM')
+    # largest |nu| correspond to lambda closest to sigma. A seed vector (v0)
+    # biases the Arnoldi start toward the physical branch being tracked.
+    nus, vecs = eigs(A_inv, k=num_ev, which='LM', v0=seed_vec)
 
     logger.info("Shift-invert: {} linear solves, {} failures".format(
         solve_count[0], fail_count[0]))
