@@ -41,3 +41,20 @@ def build_ladder(cont):
                        "warm-start continuation is most effective on a "
                        "descending ladder.")
     return ladder
+
+
+def eliashberg_frequency(base):
+    return str(base.get("eliashberg", {}).get("frequency", "static"))
+
+
+def resolve_sigma_name(base):
+    name = base.get("file", {}).get("output", {}).get("sigma", "sigma")
+    return name if name.endswith(".npz") else name + ".npz"
+
+
+def resolve_gap_name(base):
+    return "gap_dynamic.npz" if eliashberg_frequency(base) == "dynamic" else "gap.npz"
+
+
+def rung_dir(output_dir, idx, T):
+    return os.path.join(output_dir, "%03d_T%g" % (idx, T))

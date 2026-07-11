@@ -32,3 +32,20 @@ def test_non_descending_warns_but_returns(caplog):
         out = ts.build_ladder({"temperatures": [0.002, 0.004], "warm_start": True})
     assert out == [0.002, 0.004]
     assert any("descend" in r.message.lower() for r in caplog.records)
+
+
+def test_resolve_sigma_name_default_and_custom():
+    assert ts.resolve_sigma_name({"file": {"output": {}}}) == "sigma.npz"
+    assert ts.resolve_sigma_name({"file": {"output": {"sigma": "sig"}}}) == "sig.npz"
+    assert ts.resolve_sigma_name({"file": {"output": {"sigma": "s.npz"}}}) == "s.npz"
+
+
+def test_resolve_gap_name_dynamic_vs_static():
+    assert ts.resolve_gap_name({"eliashberg": {"frequency": "dynamic"}}) == "gap_dynamic.npz"
+    assert ts.resolve_gap_name({"eliashberg": {}}) == "gap.npz"
+    assert ts.resolve_gap_name({}) == "gap.npz"
+
+
+def test_rung_dir_format():
+    assert ts.rung_dir("/out", 0, 0.01).endswith("000_T0.01")
+    assert ts.rung_dir("/out", 12, 0.002).endswith("012_T0.002")
