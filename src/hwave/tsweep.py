@@ -134,3 +134,93 @@ def write_summary(path, rows):
                 r["idx"], r["T"], r["status"], r["error_stage"],
                 r["re"], r["im"], r["match"],
                 r["flex_converged"], r["flex_iter"]))
+
+
+def _abspath(base_dir, p):
+    return p if os.path.isabs(p) else os.path.normpath(os.path.join(base_dir, p))
+
+
+def run(input_dict, base_dir=".", keep_going=False, dry_run=False):
+    from . import qlms, sc                       # lazy: avoids heavy import at module load
+    base_dir = os.path.abspath(base_dir)
+    cont = input_dict.get("continuation", {})
+    preflight(input_dict, cont)
+    ladder = build_ladder(cont)
+    run_eli = cont.get("run_eliashberg", True)
+    warm_start = cont.get("warm_start", True)
+    seed_gap_on = cont.get("seed_gap", True) and eliashberg_frequency(input_dict) == "dynamic"
+    out_dir = _abspath(base_dir, cont.get("output_dir", "tsweep"))
+    summary_file = cont.get("summary_file", "lambda_vs_T.dat")
+    sigma_name = resolve_sigma_name(input_dict)
+    gap_name = resolve_gap_name(input_dict)
+
+    # resolve base input paths to absolute so CWD does not matter
+    fin = input_dict.setdefault("file", {}).setdefault("input", {})
+    if "path_to_input" in fin:
+        fin["path_to_input"] = _abspath(base_dir, fin["path_to_input"])
+    inter = fin.get("interaction", {})
+    if "path_to_input" in inter:
+        inter["path_to_input"] = _abspath(base_dir, inter["path_to_input"])
+
+    rows, prev = [], None                          # prev = seedable prev rung dir or None
+    for idx, T in enumerate(ladder):
+        rdir = rung_dir(out_dir, idx, T)
+        rout = os.path.join(rdir, "output")
+        sigma_init = os.path.join(prev, sigma_name) if (prev and warm_start) else None
+        seed = os.path.join(prev, gap_name) if (prev and seed_gap_on) else None
+        if dry_run:
+            logger.info("[dry-run] rung %d T=%g dir=%s sigma_init=%s seed=%s",
+                        idx, T, rdir, sigma_init, seed)
+            rows.append(dict(idx=idx, T=T, status="dry", error_stage="none",
+                             re=float("nan"), im=float("nan"), match=-1,
+                             flex_converged=-1, flex_iter=-1))
+            prev = rout
+            continue
+        flex_dict, eli_dict = make_rung_dicts(
+            input_dict, T, rout, run_eli, sigma_init=sigma_init, seed_gap=seed)
+        eig_name = eli_dict["eliashberg"].get("output_eigenvalue", "eigenvalue.dat") \
+            if eli_dict is not None else "eigenvalue.dat"
+        row = dict(idx=idx, T=T, status="ok", error_stage="none",
+                   re=float("nan"), im=float("nan"), match=-1,
+                   flex_converged=-1, flex_iter=-1)
+        try:
+            res = qlms.run(input_dict=flex_dict) or {}
+            row["flex_converged"] = 1 if res.get("scf_converged") else 0
+            row["flex_iter"] = int(res.get("scf_iterations", -1))
+            if not res.get("scf_converged", False):
+                row["status"] = "not_converged"
+            if run_eli:
+                sc.calc_eliashberg(eli_dict)
+                re, im, match = parse_leading_eig(
+                    os.path.join(rout, eig_name))
+                row["re"], row["im"], row["match"] = re, im, match
+        except Exception as exc:                   # noqa: BLE001 - record & stop/continue
+            row["status"] = "error"
+            row["error_stage"] = "eliashberg" if row["flex_iter"] >= 0 else "flex"
+            logger.error("rung %d T=%g failed at %s: %s",
+                         idx, T, row["error_stage"], exc)
+        rows.append(row)
+        # seedable iff not error and required files exist
+        ok_seed = row["status"] != "error" and _seed_files_present(
+            rout, warm_start, seed_gap_on, sigma_name, gap_name)
+        if row["status"] == "error" and not keep_going:
+            break
+        prev = rout if ok_seed else None
+        if row["status"] == "error":               # keep_going: cold-start next
+            logger.warning("continuing after error at T=%g; next rung cold-started", T)
+
+    os.makedirs(out_dir, exist_ok=True)
+    write_summary(os.path.join(out_dir, summary_file), rows)
+    return rows
+
+
+def _seed_files_present(rout, warm_start, seed_gap_on, sigma_name, gap_name):
+    if warm_start and not os.path.exists(os.path.join(rout, sigma_name)):
+        logger.warning("expected sigma %s missing in %s; next rung cold-starts",
+                       sigma_name, rout)
+        return False
+    if seed_gap_on and not os.path.exists(os.path.join(rout, gap_name)):
+        logger.warning("expected gap %s missing in %s; next rung cold-starts",
+                       gap_name, rout)
+        return False
+    return True

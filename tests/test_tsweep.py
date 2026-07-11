@@ -1,4 +1,6 @@
+import copy
 import logging
+import os
 import pytest
 import hwave.tsweep as ts
 
@@ -192,3 +194,79 @@ def test_write_summary_schema(tmp_path):
     assert lines[0].startswith("#")
     assert "0.361000" in lines[1] and "ok" in lines[1] and "none" in lines[1]
     assert "nan" in lines[2] and "error" in lines[2] and "eliashberg" in lines[2]
+
+
+def _cont_base(tmp_path, temps, run_eli=True):
+    base = _valid_base()
+    base["continuation"] = {"temperatures": temps, "output_dir": "sweep",
+                            "run_eliashberg": run_eli, "warm_start": True,
+                            "seed_gap": True, "summary_file": "lambda_vs_T.dat"}
+    return base
+
+
+def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
+    """Fake qlms.run: writes a sigma.npz, returns converged dict, records calls.
+    Fake sc.calc_eliashberg: writes eigenvalue.dat + gap_dynamic.npz."""
+    calls = {"flex": [], "eli": []}
+
+    def fake_flex(*, input_dict):
+        calls["flex"].append(copy.deepcopy(input_dict))
+        out = input_dict["file"]["output"]["path_to_output"]
+        os.makedirs(out, exist_ok=True)
+        open(os.path.join(out, "sigma.npz"), "wb").close()
+        return {"scf_converged": True, "scf_iterations": 10}
+
+    def fake_eli(input_dict):
+        calls["eli"].append(copy.deepcopy(input_dict))
+        T = input_dict["mode"]["param"]["T"]
+        if fail_at is not None and abs(T - fail_at) < 1e-12:
+            raise RuntimeError("boom")
+        out = input_dict["file"]["output"]["path_to_output"]
+        os.makedirs(out, exist_ok=True)
+        open(os.path.join(out, "gap_dynamic.npz"), "wb").close()
+        with open(os.path.join(out, "eigenvalue.dat"), "w") as fw:
+            fw.write("# index Re Im |ev| match\n0 0.5 0.0 0.5 1\n")
+
+    monkeypatch.setattr("hwave.qlms.run", fake_flex)
+    monkeypatch.setattr("hwave.sc.calc_eliashberg", fake_eli)
+    return calls
+
+
+def test_run_chains_seeds(monkeypatch, tmp_path):
+    calls = _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    rows = ts.run(base, base_dir=str(tmp_path))
+    assert [r["status"] for r in rows] == ["ok", "ok", "ok"]
+    # rung 0 has no seeds; rung 1,2 point at previous rung outputs, absolute
+    assert "sigma_init" not in calls["flex"][0]["file"]["input"]
+    si1 = calls["flex"][1]["file"]["input"]["sigma_init"]
+    assert os.path.isabs(si1) and "000_T0.01" in si1 and si1.endswith("sigma.npz")
+    seed1 = calls["eli"][1]["eliashberg"]["seed_eigenvector"]
+    assert os.path.isabs(seed1) and "000_T0.01" in seed1 and seed1.endswith("gap_dynamic.npz")
+    # summary file written under absolute output_dir
+    assert os.path.exists(os.path.join(tmp_path, "sweep", "lambda_vs_T.dat"))
+
+
+def test_run_error_stops_chain(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path, fail_at=0.008)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    rows = ts.run(base, base_dir=str(tmp_path))
+    assert [r["status"] for r in rows] == ["ok", "error"]           # stopped
+    assert rows[1]["error_stage"] == "eliashberg"
+
+
+def test_run_keep_going_reseeds(monkeypatch, tmp_path):
+    calls = _install_fake_solvers(monkeypatch, tmp_path, fail_at=0.008)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    rows = ts.run(base, base_dir=str(tmp_path), keep_going=True)
+    assert [r["status"] for r in rows] == ["ok", "error", "ok"]
+    # rung 2 (0.006) cold-started (no seed: prev rung failed)
+    assert "sigma_init" not in calls["flex"][2]["file"]["input"]
+
+
+def test_run_dry_run_invokes_no_solver(monkeypatch, tmp_path):
+    calls = _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    rows = ts.run(base, base_dir=str(tmp_path), dry_run=True)
+    assert calls["flex"] == [] and calls["eli"] == []
+    assert all(r["status"] == "dry" for r in rows)
