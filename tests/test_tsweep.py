@@ -83,3 +83,47 @@ def test_preflight_run_eliashberg_without_section():
         ts.preflight(base, {"run_eliashberg": True})
     # FLEX-only is fine without [eliashberg]:
     ts.preflight(base, {"run_eliashberg": False})
+
+
+def test_make_rung_dicts_first_rung_no_seeds():
+    base = _valid_base()
+    base["file"]["input"]["sigma_init"] = "stale.npz"      # must be stripped
+    base["eliashberg"]["seed_eigenvector"] = "stale_gap.npz"
+    base["continuation"] = {"temperatures": [0.01]}         # must be dropped
+    flex, eli = ts.make_rung_dicts(base, 0.01, "/o/000_T0.01", run_eliashberg=True)
+    assert flex["mode"]["param"]["T"] == 0.01
+    assert flex["file"]["output"]["path_to_output"] == "/o/000_T0.01"
+    assert flex["file"]["input"]["path_to_flex_output"] == "/o/000_T0.01"
+    assert "sigma_init" not in flex["file"]["input"]          # stripped, no seed
+    assert "seed_eigenvector" not in eli["eliashberg"]
+    assert "continuation" not in flex and "continuation" not in eli
+
+
+def test_make_rung_dicts_seeded_rung():
+    base = _valid_base()
+    flex, eli = ts.make_rung_dicts(base, 0.008, "/o/001_T0.008", run_eliashberg=True,
+                                   sigma_init="/o/000_T0.01/output/sigma.npz",
+                                   seed_gap="/o/000_T0.01/output/gap_dynamic.npz")
+    assert flex["file"]["input"]["sigma_init"] == "/o/000_T0.01/output/sigma.npz"
+    assert eli["eliashberg"]["seed_eigenvector"] == "/o/000_T0.01/output/gap_dynamic.npz"
+
+
+def test_make_rung_dicts_flex_only():
+    base = _valid_base()
+    del base["eliashberg"]
+    flex, eli = ts.make_rung_dicts(base, 0.01, "/o/000_T0.01", run_eliashberg=False)
+    assert eli is None
+    assert "path_to_flex_output" not in flex["file"]["input"]
+
+
+def test_make_rung_dicts_invariance_except_seed_keys():
+    import copy
+    base = _valid_base()
+    flex, eli = ts.make_rung_dicts(base, 0.008, "/o/r", run_eliashberg=True,
+                                   sigma_init="S", seed_gap="G")
+    # canonical = flex without its sigma_init:
+    canon = copy.deepcopy(flex)
+    del canon["file"]["input"]["sigma_init"]
+    eli_canon = copy.deepcopy(eli)
+    del eli_canon["eliashberg"]["seed_eigenvector"]
+    assert canon == eli_canon      # differ only by their own seed keys

@@ -74,3 +74,29 @@ def preflight(base, cont):
             "run_eliashberg=true but the base config has no [eliashberg] "
             "section; add [eliashberg] or set "
             "[continuation] run_eliashberg = false.")
+
+
+def make_rung_dicts(base, T, rung_out, run_eliashberg,
+                    sigma_init=None, seed_gap=None):
+    canon = copy.deepcopy(base)
+    canon.pop("continuation", None)
+    canon.setdefault("file", {}).setdefault("input", {})
+    canon["file"].setdefault("output", {})
+    canon["file"]["input"].pop("sigma_init", None)
+    if "eliashberg" in canon:
+        canon["eliashberg"].pop("seed_eigenvector", None)
+    canon["mode"]["param"]["T"] = T
+    canon["file"]["output"]["path_to_output"] = rung_out
+    if run_eliashberg:
+        canon["file"]["input"]["path_to_flex_output"] = rung_out
+
+    flex = copy.deepcopy(canon)
+    if sigma_init is not None:
+        flex["file"]["input"]["sigma_init"] = sigma_init
+
+    eli = None
+    if run_eliashberg:
+        eli = copy.deepcopy(canon)
+        if seed_gap is not None:
+            eli["eliashberg"]["seed_eigenvector"] = seed_gap
+    return flex, eli
