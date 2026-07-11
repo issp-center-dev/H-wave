@@ -34,6 +34,17 @@ def test_non_descending_warns_but_returns(caplog):
     assert any("descend" in r.message.lower() for r in caplog.records)
 
 
+def test_generated_single_point_ladder():
+    # num == 1 is a distinct branch: yields [T_start], ignoring T_stop/spacing.
+    assert ts.build_ladder(
+        {"T_start": 0.01, "T_stop": 0.002, "num": 1, "spacing": "log"}) == [0.01]
+
+
+def test_invalid_spacing_raises():
+    with pytest.raises(ValueError):
+        ts.build_ladder({"T_start": 0.01, "T_stop": 0.002, "num": 3, "spacing": "cubic"})
+
+
 def test_resolve_sigma_name_default_and_custom():
     assert ts.resolve_sigma_name({"file": {"output": {}}}) == "sigma.npz"
     assert ts.resolve_sigma_name({"file": {"output": {"sigma": "sig"}}}) == "sig.npz"
@@ -127,6 +138,21 @@ def test_make_rung_dicts_invariance_except_seed_keys():
     eli_canon = copy.deepcopy(eli)
     del eli_canon["eliashberg"]["seed_eigenvector"]
     assert canon == eli_canon      # differ only by their own seed keys
+
+
+def test_make_rung_dicts_does_not_mutate_base():
+    base = _valid_base()
+    base["file"]["input"]["sigma_init"] = "stale.npz"
+    base["eliashberg"]["seed_eigenvector"] = "stale_gap.npz"
+    base["continuation"] = {"temperatures": [0.01]}
+    base["mode"]["param"]["T"] = 0.5
+    ts.make_rung_dicts(base, 0.008, "/o/r", run_eliashberg=True,
+                       sigma_init="S", seed_gap="G")
+    # caller's base must be untouched (function operates on deep copies only)
+    assert base["file"]["input"]["sigma_init"] == "stale.npz"
+    assert base["eliashberg"]["seed_eigenvector"] == "stale_gap.npz"
+    assert base["continuation"] == {"temperatures": [0.01]}
+    assert base["mode"]["param"]["T"] == 0.5
 
 
 def test_parse_leading_eig_with_match(tmp_path):
