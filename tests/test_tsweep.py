@@ -270,3 +270,12 @@ def test_run_dry_run_invokes_no_solver(monkeypatch, tmp_path):
     rows = ts.run(base, base_dir=str(tmp_path), dry_run=True)
     assert calls["flex"] == [] and calls["eli"] == []
     assert all(r["status"] == "dry" for r in rows)
+
+
+def test_run_does_not_mutate_caller_input(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    base["file"]["input"]["path_to_input"] = "rel/inputs"   # relative -> resolved inside
+    snapshot = copy.deepcopy(base)
+    ts.run(base, base_dir=str(tmp_path))
+    assert base == snapshot        # run() operates on its own deep copy

@@ -142,6 +142,10 @@ def _abspath(base_dir, p):
 
 def run(input_dict, base_dir=".", keep_going=False, dry_run=False):
     from . import qlms, sc                       # lazy: avoids heavy import at module load
+    # Work on our own copy: run() resolves input paths to absolute below, and
+    # the importable API must not mutate the caller's dict (mirrors the
+    # non-mutation guarantee of make_rung_dicts).
+    input_dict = copy.deepcopy(input_dict)
     base_dir = os.path.abspath(base_dir)
     cont = input_dict.get("continuation", {})
     preflight(input_dict, cont)
