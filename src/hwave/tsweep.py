@@ -100,3 +100,37 @@ def make_rung_dicts(base, T, rung_out, run_eliashberg,
         if seed_gap is not None:
             eli["eliashberg"]["seed_eigenvector"] = seed_gap
     return flex, eli
+
+
+def parse_leading_eig(path):
+    if not os.path.exists(path):
+        raise ValueError("eigenvalue file not found: %s" % path)
+    for line in open(path):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        cols = s.split()
+        try:
+            idx = int(cols[0])
+        except (ValueError, IndexError):
+            continue
+        if idx != 0:
+            continue
+        re, im = float(cols[1]), float(cols[2])
+        match = int(cols[4]) if len(cols) >= 5 else -1
+        return re, im, match
+    raise ValueError("no leading (index 0) eigenpair row in %s" % path)
+
+
+_SUMMARY_HEADER = ("# idx  T  status  error_stage  Re_lambda  Im_lambda  "
+                   "parity_match  flex_converged  flex_iter\n")
+
+
+def write_summary(path, rows):
+    with open(path, "w") as fw:
+        fw.write(_SUMMARY_HEADER)
+        for r in rows:
+            fw.write("%d %.12g %s %s %.6f %.6f %d %d %d\n" % (
+                r["idx"], r["T"], r["status"], r["error_stage"],
+                r["re"], r["im"], r["match"],
+                r["flex_converged"], r["flex_iter"]))

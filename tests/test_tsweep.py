@@ -127,3 +127,42 @@ def test_make_rung_dicts_invariance_except_seed_keys():
     eli_canon = copy.deepcopy(eli)
     del eli_canon["eliashberg"]["seed_eigenvector"]
     assert canon == eli_canon      # differ only by their own seed keys
+
+
+def test_parse_leading_eig_with_match(tmp_path):
+    p = tmp_path / "eigenvalue.dat"
+    p.write_text("# Eigenvalue analysis\n"
+                 "# index  Re  Im  |ev|  match\n"
+                 "   0  6.63000000e-01  0.00000000e+00  6.63e-01 1\n"
+                 "   1  3.20000000e-01  0.00000000e+00  3.20e-01 0\n")
+    re, im, match = ts.parse_leading_eig(str(p))
+    assert re == pytest.approx(0.663)
+    assert im == pytest.approx(0.0)
+    assert match == 1
+
+
+def test_parse_leading_eig_no_match_column(tmp_path):
+    p = tmp_path / "eigenvalue.dat"
+    p.write_text("# index Re Im |ev|\n   0  4.00e-01  1.00e-02  4.0e-01\n")
+    re, im, match = ts.parse_leading_eig(str(p))
+    assert re == pytest.approx(0.4) and im == pytest.approx(0.01) and match == -1
+
+
+def test_parse_leading_eig_missing_raises(tmp_path):
+    with pytest.raises(ValueError):
+        ts.parse_leading_eig(str(tmp_path / "nope.dat"))
+
+
+def test_write_summary_schema(tmp_path):
+    p = tmp_path / "lambda_vs_T.dat"
+    ts.write_summary(str(p), [
+        {"idx": 0, "T": 0.01, "status": "ok", "error_stage": "none",
+         "re": 0.361, "im": 0.0, "match": 1, "flex_converged": 1, "flex_iter": 14},
+        {"idx": 1, "T": 0.006, "status": "error", "error_stage": "eliashberg",
+         "re": float("nan"), "im": float("nan"), "match": -1,
+         "flex_converged": 1, "flex_iter": 12},
+    ])
+    lines = p.read_text().splitlines()
+    assert lines[0].startswith("#")
+    assert "0.361000" in lines[1] and "ok" in lines[1] and "none" in lines[1]
+    assert "nan" in lines[2] and "error" in lines[2] and "eliashberg" in lines[2]
