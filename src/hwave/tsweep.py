@@ -228,3 +228,27 @@ def _seed_files_present(rout, warm_start, seed_gap_on, sigma_name, gap_name):
                        gap_name, rout)
         return False
     return True
+
+
+def main():
+    import argparse
+    import tomli
+    parser = argparse.ArgumentParser(
+        prog="hwave_tsweep",
+        description="Temperature-continuation driver for FLEX(+Eliashberg).")
+    parser.add_argument("input", help="base TOML with a [continuation] section")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the resolved ladder and seed wiring; run nothing")
+    parser.add_argument("--keep-going", action="store_true",
+                        help="on a rung error, cold-start the next rung instead of stopping")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    with open(args.input, "rb") as f:
+        input_dict = tomli.load(f)
+    run(input_dict, base_dir=os.path.dirname(os.path.abspath(args.input)),
+        keep_going=args.keep_going, dry_run=args.dry_run)
+
+
+if __name__ == "__main__":
+    main()

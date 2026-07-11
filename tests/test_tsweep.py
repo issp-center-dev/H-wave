@@ -279,3 +279,18 @@ def test_run_does_not_mutate_caller_input(monkeypatch, tmp_path):
     snapshot = copy.deepcopy(base)
     ts.run(base, base_dir=str(tmp_path))
     assert base == snapshot        # run() operates on its own deep copy
+
+
+def test_main_dry_run(monkeypatch, tmp_path, capsys):
+    # tomli_w is not a project dependency; write the TOML as plain text
+    # instead of relying on it (see plan Task 8 fallback).
+    toml_path = tmp_path / "in.toml"
+    toml_path.write_text(
+        '[mode.param]\nCellShape=[2,2,1]\nNmat=16\nfilling=0.5\n'
+        '[file.input]\n[file.output]\n'
+        '[continuation]\ntemperatures=[0.01,0.008]\noutput_dir="sweep"\n'
+        'run_eliashberg=false\n')
+    monkeypatch.setattr("sys.argv", ["hwave_tsweep", str(toml_path), "--dry-run"])
+    ts.main()
+    # dry-run writes a summary of planned rungs, invokes no solver
+    assert (tmp_path / "sweep" / "lambda_vs_T.dat").exists()
