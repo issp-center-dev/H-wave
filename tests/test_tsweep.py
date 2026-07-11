@@ -67,11 +67,24 @@ def test_rung_dir_format():
 def _valid_base():
     return {"mode": {"param": {"CellShape": [2, 2, 1], "Nmat": 16, "filling": 0.5}},
             "file": {"input": {}, "output": {}},
-            "eliashberg": {"frequency": "dynamic"}}
+            "eliashberg": {"frequency": "dynamic", "solver_mode": "eigenvalue"}}
 
 
 def test_preflight_ok():
     ts.preflight(_valid_base(), {"run_eliashberg": True})
+
+
+def test_preflight_requires_eigenvalue_solver_mode():
+    # default solver_mode "iteration" writes no parity/index-0 block -> reject
+    base = _valid_base()
+    base["eliashberg"]["solver_mode"] = "iteration"
+    with pytest.raises(ValueError, match="solver_mode"):
+        ts.preflight(base, {"run_eliashberg": True})
+    del base["eliashberg"]["solver_mode"]            # absent -> defaults iteration
+    with pytest.raises(ValueError, match="solver_mode"):
+        ts.preflight(base, {"run_eliashberg": True})
+    # FLEX-only ladders are unaffected
+    ts.preflight(base, {"run_eliashberg": False})
 
 
 @pytest.mark.parametrize("drop", ["CellShape", "Nmat"])
@@ -270,6 +283,23 @@ def test_run_dry_run_invokes_no_solver(monkeypatch, tmp_path):
     rows = ts.run(base, base_dir=str(tmp_path), dry_run=True)
     assert calls["flex"] == [] and calls["eli"] == []
     assert all(r["status"] == "dry" for r in rows)
+
+
+def test_run_injects_sigma_output_for_warm_start(monkeypatch, tmp_path):
+    calls = _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])       # _valid_base has no file.output.sigma
+    assert "sigma" not in base["file"]["output"]
+    ts.run(base, base_dir=str(tmp_path))
+    # every FLEX dict must carry a sigma output name so the self-energy is written
+    assert all(f["file"]["output"].get("sigma") == "sigma" for f in calls["flex"])
+
+
+def test_run_respects_custom_sigma_output(monkeypatch, tmp_path):
+    calls = _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    base["file"]["output"]["sigma"] = "selfE"        # user-set name is preserved
+    ts.run(base, base_dir=str(tmp_path))
+    assert all(f["file"]["output"]["sigma"] == "selfE" for f in calls["flex"])
 
 
 def test_run_does_not_mutate_caller_input(monkeypatch, tmp_path):

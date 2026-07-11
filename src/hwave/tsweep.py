@@ -69,11 +69,27 @@ def preflight(base, cont):
     if has_filling == has_ncond:
         raise ValueError(
             "[mode.param] must set exactly one of `filling`/`Ncond`.")
-    if cont.get("run_eliashberg", True) and "eliashberg" not in base:
-        raise ValueError(
-            "run_eliashberg=true but the base config has no [eliashberg] "
-            "section; add [eliashberg] or set "
-            "[continuation] run_eliashberg = false.")
+    if cont.get("run_eliashberg", True):
+        if "eliashberg" not in base:
+            raise ValueError(
+                "run_eliashberg=true but the base config has no [eliashberg] "
+                "section; add [eliashberg] or set "
+                "[continuation] run_eliashberg = false.")
+        # The per-rung summary reports the parity-selected leading eigenpair
+        # (Re/Im/parity), which sc.py writes to eigenvalue.dat only in the
+        # "# Eigenvalue analysis" block -- present only for solver_mode
+        # "eigenvalue"/"both".  The default "iteration" writes a bare leading
+        # value with no parity/Im and no index-0 row, which parse_leading_eig
+        # cannot read.  Require an eigenvalue-analysis mode up front rather than
+        # failing on rung 0.
+        smode = str(base["eliashberg"].get("solver_mode", "iteration"))
+        if smode not in ("eigenvalue", "both"):
+            raise ValueError(
+                "[eliashberg] solver_mode = %r cannot drive a temperature "
+                "sweep: hwave_tsweep reads the parity-selected leading "
+                "eigenpair from the eigenvalue-analysis block, which is only "
+                "written for solver_mode 'eigenvalue' or 'both'. Set "
+                "[eliashberg] solver_mode = \"eigenvalue\"." % smode)
 
 
 def make_rung_dicts(base, T, rung_out, run_eliashberg,
@@ -155,6 +171,16 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False):
     seed_gap_on = cont.get("seed_gap", True) and eliashberg_frequency(input_dict) == "dynamic"
     out_dir = _abspath(base_dir, cont.get("output_dir", "tsweep"))
     summary_file = cont.get("summary_file", "lambda_vs_T.dat")
+
+    # FLEX writes the self-energy only when [file.output] sigma is set (flex.py).
+    # warm_start chains that file into the next rung, so ensure it is written;
+    # inject the default name when the user omitted it rather than silently
+    # cold-starting every rung.  tsweep already owns the per-rung output layout.
+    fout = input_dict.setdefault("file", {}).setdefault("output", {})
+    if warm_start and not fout.get("sigma"):
+        fout["sigma"] = "sigma"
+        logger.info("warm_start: [file.output] sigma not set; using 'sigma' so "
+                    "the self-energy is written and chained between rungs.")
     sigma_name = resolve_sigma_name(input_dict)
     gap_name = resolve_gap_name(input_dict)
 
