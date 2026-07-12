@@ -173,6 +173,24 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 - ``eigenvalue_method``: ``"arnoldi"`` （デフォルト）、 ``"subspace"`` 、
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` /
   ``"shift-invert-lgmres"``。
+- ``sigma_shift`` （shift-invert 系の ``eigenvalue_method`` のみ）: shift-invert
+  ソルバの実数ターゲット :math:`\sigma` 。 :math:`\sigma` 近傍の固有値が先に
+  求まります。素の ``"arnoldi"`` では無視されます（警告あり）。arnoldi では
+  代わりに ``spectral_shift`` を使ってください。
+- ``spectral_shift`` （ ``eigenvalue_method = "arnoldi"`` のときのみ有効）:
+  正の数値または ``"auto"`` 。ARPACK の既定の選択 （ ``which='LM'`` ）は
+  *絶対値* 最大の固有値を返すため、超伝導不安定性から遠い場合、小さな正
+  （引力的）の主固有値が、より大きな負（斥力的）の固有値に隠れて取りこぼされ、
+  報告される主固有値が負（非物理的）になることがあります。 ``spectral_shift``
+  を指定すると、シフトした演算子 :math:`A + \sigma I` に対して *実部* 最大の
+  固有値（ ``which='LR'`` ； :math:`T_c` で :math:`\lambda \to 1` となる物理的な
+  SC固有値）を求めます。シフトは内部で差し引かれるので、受け取る／保存される
+  固有値はシフト前の正しい値です。 ``"auto"`` はスペクトル半径から
+  :math:`\sigma` を自動設定します。明示的に指定する場合は、最も負の固有値の
+  *絶対値* より大きい正の :math:`\sigma` を与えます（ :math:`A + \sigma I` の
+  スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
+  弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の ``sigma_shift``
+  （shift-invert のターゲット）とは別物である点に注意してください。
 - ``gpu``: ``true`` で動的モード（``frequency = "dynamic"``）のカーネル適用を
   GPU（CuPy）で実行します（デフォルト ``false``。下記の
   :ref:`GPU実行の節 <sc_dynamic_gpu>` を参照）。
@@ -579,6 +597,205 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 （``solver_mode = "iteration"``）でも、カーネルがパリティと可換な（中心対称な）
 系では各反復ベクトルをチャネルセクターへ射影します。可換でない場合は警告を出して
 射影を無効化し、射影なしの反復を用います。
+
+固有ベクトル継続（``seed_eigenvector``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+通常、報告される先頭固有対は「代数的に最大」のものです。振動数依存（非エルミート）
+カーネルでは、これは *exceptional point*（2つの実固有値が衝突して複素共役対に分裂
+する点）近傍で脆弱になり、FLEX自己エネルギーが滑らかに変化していても、隣接温度で
+「先頭」ブランチが不連続にジャンプすることがあります。1つの物理ブランチを追うには、
+``[eliashberg] seed_eigenvector`` に近傍の計算（例：1つ上の温度）が出力した
+``gap_dynamic.npz`` を指定します。その gap が ARPACK の開始ベクトルとして使われ、
+**かつ** 最大に重なる固有対を「最大の固有値」でなく選択します。温度を段階的に下げ、
+各計算に直前の ``gap_dynamic.npz`` を与えれば、同じ対称性（例：d波）を連続的に追跡
+できます。種は計算と同じ ``CellShape`` と ``Nmat`` でなければならず（不一致は即エラー）、
+continuation スイープでは ``Nmat`` を固定してください。IR経路では種の gap は IR ノード
+へ自動で再フィットされます。``[eliashberg] sigma_shift`` は shift-invert の狙い値を明示
+指定します（未指定なら予備 Arnoldi から推定）。``sigma_shift`` をブランチ近傍に置き
+``seed_eigenvector`` と併用するのが、隠れた／複素化する固有値を解決する最も堅牢な方法です。
+
+温度継続計算（``hwave_tsweep``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+上記のように ``sigma_init`` と ``seed_eigenvector`` を温度掃引で手動でつなぐには、
+温度ごとに ``hwave``/``hwave_sc`` を実行し直し、各ステップの出力を次のステップの
+入力へ手作業で配線する必要があります。``hwave_tsweep`` コマンド（``hwave``・
+``hwave_sc`` と同様にパッケージに同梱されています）はこれを自動化します。1つの
+ベース TOML（単一の FLEX+Eliashberg 計算で使う ``[mode]``/``[mode.param]``/
+``[file]``/``[eliashberg]`` の設定そのもの）に ``[continuation]`` セクションを
+加えて渡すと、降順の温度ラダーに沿って FLEX（および、無効化していなければ
+Eliashberg ソルバー）を実行します。各段では、直前の段の収束した自己エネルギーを
+``sigma_init`` としてこの段の FLEX へ（ウォームスタート）、直前の段の動的ギャップを
+``seed_eigenvector`` としてこの段の Eliashberg 計算へ（固有ベクトル継続）与えます。
+ウォームスタートの連鎖全体を自動化することで、各温度点をコールドスタートして
+（毎回異なる準安定解に落ち着く恐れを抱えながら）計算するのではなく、1つの物理的
+ブランチを低温まで滑らかに追跡できます。
+
+段の間で変化させるのは ``mode.param.T`` のみです。``CellShape``、``Nmat``、
+その他の形状を決定するフィールドはラダー全体で固定されます。これにより、各段の
+``sigma_init``／``seed_eigenvector`` ファイルが次の段と形状互換になります。
+
+``[continuation]`` セクション
+""""""""""""""""""""""""""""""
+
+.. code-block:: toml
+
+    [continuation]
+      temperatures   = [0.02, 0.015, 0.01, 0.008, 0.006]  # 明示的なラダー
+      # または、`temperatures` が無い場合に生成するラダー:
+      #   T_start = 0.02
+      #   T_stop  = 0.006
+      #   num     = 5
+      #   spacing = "linear"          # "linear"（デフォルト）または "log"
+      output_dir     = "tsweep"       # デフォルト
+      run_eliashberg = true           # デフォルト
+      warm_start     = true           # デフォルト
+      seed_gap       = true           # デフォルト
+      resume         = false          # デフォルト（または --resume）
+      summary_file   = "lambda_vs_T.dat"  # デフォルト
+
+- ``temperatures``: 明示的な温度のリスト。与えた順に実行されます。存在する場合、
+  ``T_start``/``T_stop``/``num`` より優先されます。
+- ``T_start`` / ``T_stop`` / ``num`` / ``spacing``: ``temperatures`` が無い場合に
+  ラダーを生成するために使われます。``T_start`` と ``T_stop`` の間に ``num`` 個の
+  点を生成し、``spacing`` は ``"linear"``（デフォルト）または ``"log"`` です。
+  ``temperatures`` と ``T_start``/``T_stop``/``num`` の三つ組のどちらも与えない場合は
+  pre-flight エラーになります。
+- ``output_dir``（デフォルト ``"tsweep"``）: 掃引全体の親ディレクトリ。温度 ``T`` の
+  段 ``idx`` は ``<output_dir>/<idx>_T<T>/output/`` に出力されます（``idx`` は3桁
+  ゼロ埋め、``T`` は ``%g`` 形式）。
+- ``run_eliashberg``（デフォルト ``true``）: 各段で Eliashberg ソルバーも実行します。
+  これにはベース TOML に ``[eliashberg]`` セクションが必要で、無い場合は pre-flight
+  が欠けているセクション名を挙げてエラーになります。``false`` にすると
+  ``sigma_init`` のみを連鎖させる FLEX 専用の掃引になります。
+- ``warm_start``（デフォルト ``true``）: 各段の収束した自己エネルギーを次の段の
+  ``sigma_init`` として連鎖させます。
+- ``seed_gap``（デフォルト ``true``）: 各段のギャップを次の段の
+  ``seed_eigenvector`` として連鎖させます。これは動的 Eliashberg ソルバー
+  （``[eliashberg] frequency = "dynamic"``）でのみ有効です。``seed_eigenvector``
+  自体が動的モード専用のため、静的ラダーでは効果を持ちません。
+- ``summary_file``（デフォルト ``"lambda_vs_T.dat"``）: ``<output_dir>/<summary_file>``
+  に書き出されるサマリー表のファイル名。
+
+掃引の実行
+""""""""""""""""""""""""""""""
+
+.. code-block:: bash
+
+    $ hwave_tsweep input.toml
+
+実行を制御する3つのフラグがあります:
+
+- ``--dry-run``: 温度ラダー、各段の出力ディレクトリ、配線される
+  ``sigma_init``/``seed_eigenvector`` のパスを解決して表示するだけで、どちらの
+  ソルバーも呼び出しません。長い掃引を実行する前に ``[continuation]`` の設定を
+  検証するのに使います。
+- ``--keep-going``: デフォルトでは、ソルバーがエラーを送出した段で掃引は停止します
+  （壊れた段はそれ以降のすべての種を汚染するため。部分的なサマリーは書き出されます）。
+  ``--keep-going`` を指定すると、代わりに次の段をコールドスタートし、それが成功すれば
+  以降の段への種として再び使われます。これは *1プロセス内でのエラー継続* であって、
+  プロセス自体が中断された後の再開ではありません。
+- ``--resume``（または ``[continuation] resume = true``）: *ジョブレベルの再開*。
+  resume 付きで掃引を再実行すると、``hwave_tsweep`` は既に完了して種として使える段の
+  連続する先頭部分を読み飛ばし、最初の未完了段から――直前の有効な段の ``sigma`` と
+  動的ギャップを種として――あたかも掃引が止まらなかったかのように再開します。
+  ウォールクロック／スケジューラによる kill、クラッシュ、手動中断の後に使います。
+
+  段が「完了」と見なされるのは、記録されたサマリー行が error でなく、**かつ**
+  ディスク上の出力が実際に存在して解析可能な場合だけです（途中まで書かれた／壊れた
+  ``eigenvalue.dat`` は検出され、その段とそれ以降の段は再計算されます）。resume は
+  小さなマニフェスト（初回実行時に書かれる ``tsweep_manifest.json``。解決済みラダーと、
+  形状・物理設定=``CellShape``/``SubShape``/``Nmat``/``filling``/``Ncond``/相互作用
+  ファイル/``[eliashberg]`` frequency・pairing のフィンガープリントを記録）で保護されます。
+  異なるラダーや設定に対して resume すると、非互換な結果を混ぜずに **即時停止** します。
+  サマリーとマニフェストは各段の後にアトミックに書かれるため、中断でチェックポイントが
+  途中で切れることはありません。``--resume`` 無しでの再実行は新規実行として既存の掃引を
+  段ごとに上書きします（既存の掃引を検出すると警告を出します）。
+
+3つは別物です。**ウォームスタート**（``warm_start``/``seed_gap``）は1回の実行内で
+ある段の結果を *次の* 段の種に繋ぎ、**--keep-going** は1回の実行内で *段がエラーした後*
+の挙動を決め、**--resume** は *実行全体* が再起動されたときの挙動を決めます。
+
+サマリーファイル
+""""""""""""""""""""""""""""""
+
+各実行は ``<output_dir>/<summary_file>``（デフォルト ``tsweep/lambda_vs_T.dat``）
+に段ごとに1行を書き出します:
+
+.. code-block:: text
+
+    # idx  T  status  error_stage  Re_lambda  Im_lambda  parity_match  flex_converged  flex_iter
+    0 0.02   ok    none 0.845000 0.000000 1 1 18
+    1 0.015  ok    none 0.902000 0.000000 1 1 22
+    2 0.01   error flex nan      nan      -1 0 -1
+    ...
+
+``status`` は以下のいずれかです:
+
+- ``ok`` -- FLEX が収束し、``run_eliashberg`` が有効な場合はこの段の
+  ``eigenvalue.dat`` から先頭固有対が読み取れた。
+- ``not_converged`` -- FLEX が ``EPS`` を満たさないまま ``IterationMax`` に
+  達したが、使用可能な自己エネルギー（Eliashberg を実行した場合はギャップも）は
+  書き出された。このような段も次の段の種として利用できます。
+- ``error`` -- ソルバーが例外を送出した、または（``run_eliashberg`` の場合）
+  ``eigenvalue.dat`` が存在しないか解析できなかった場合。``error_stage`` に
+  どちらのソルバーで失敗したか（``flex`` または ``eliashberg``）が記録されます。
+- ``dry`` -- ``--dry-run`` によって生成された行。ソルバーは呼び出されていません。
+
+浮動小数点値が欠けている場合（Eliashberg を実行しなかった、または失敗した場合の
+``Re_lambda``/``Im_lambda``）は ``nan`` と表示され、整数フィールドが欠けている場合
+（``parity_match``、``flex_converged``、``flex_iter``）は ``-1`` と表示されます。
+``error_stage`` は ``status = error`` でない限り ``none`` です。
+
+設定例
+""""""""""""""""""""""""""""""
+
+.. code-block:: toml
+
+    [mode]
+      mode = "FLEX"
+
+    [mode.param]
+      T         = 0.02
+      CellShape = [32, 32, 1]
+      Nmat      = 512
+      filling   = 0.75
+
+    [file]
+    [file.input]
+      path_to_input = "."
+
+    [file.input.interaction]
+      path_to_input = "."
+      Geometry      = "geom.dat"
+      Transfer      = "transfer.dat"
+      CoulombIntra  = "coulombintra.dat"
+      CoulombInter  = "coulombinter.dat"
+
+    [file.output]
+      path_to_output = "output"
+
+    [eliashberg]
+      frequency     = "dynamic"
+      chi0q_mode    = "flex"
+      pairing_type  = "singlet"
+      solver_mode   = "eigenvalue"   # hwave_tsweep の pre-flight で必須
+
+    [continuation]
+      T_start        = 0.02
+      T_stop         = 0.005
+      num            = 6
+      spacing        = "log"
+      run_eliashberg = true
+      warm_start     = true
+      seed_gap       = true
+
+この例では :math:`T = 0.02` から :math:`T = 0.005` まで、対数間隔の6段を
+降順に計算します。各段で FLEX と動的 Eliashberg を実行し、``sigma_init`` と
+``seed_eigenvector`` の両方を連鎖させ、``tsweep/lambda_vs_T.dat`` --
+:math:`\lambda(T)` の表を書き出します。先頭の物理固有値が1を横切る点から
+:math:`T_c` を見積もることができます。
 
 メモリに関する注意
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
