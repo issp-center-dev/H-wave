@@ -69,16 +69,16 @@ def get_backend(use_gpu, logger=None, required=False):
     try:
         cupy = _import_cupy()
     except ImportError:
-        msg = ("CuPy is not installed. Install the precompiled wheel matching "
-               "your CUDA version (e.g. 'pip install cupy-cuda12x' for CUDA "
-               "12.x); see https://docs.cupy.dev/en/stable/install.html")
+        install_hint = ("Install the precompiled wheel matching your CUDA "
+                        "version (e.g. 'pip install cupy-cuda12x' for CUDA "
+                        "12.x); see https://docs.cupy.dev/en/stable/install.html")
         if required:
             raise RuntimeError(
-                "gpu_required=true but " + msg[0].lower() + msg[1:])
+                "gpu_required=true but CuPy is not installed. " + install_hint)
         if logger is not None:
             logger.warning(
-                "gpu=true requested but %s falling back to the numpy (CPU) "
-                "backend.", msg)
+                "gpu=true requested but CuPy is not installed; falling back to "
+                "the numpy (CPU) backend. %s", install_hint)
         return np, False
     try:
         ndev = cupy.cuda.runtime.getDeviceCount()
@@ -145,10 +145,13 @@ def restore_host_attrs(obj, names):
             if val is None:
                 continue
             setattr(obj, name, to_host(val))
-        except Exception:                       # noqa: BLE001 - never mask caller's error
+        except Exception as exc:                 # noqa: BLE001 - never mask caller's error
+            # No traceback (exc_info): this runs in a finally, often after the
+            # real error is already being logged/raised; keep it a one-line note
+            # per attribute rather than flooding the log with stacks.
             logging.getLogger("qlms").warning(
-                "restore_host_attrs: could not host-restore %r; leaving it "
-                "backend-local.", name, exc_info=True)
+                "restore_host_attrs: could not host-restore %r (%s); leaving "
+                "it backend-local.", name, exc)
 
 
 def to_host(arr):

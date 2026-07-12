@@ -178,6 +178,11 @@ This section controls the Eliashberg solver. Key parameters:
 - ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
   kernel applications on a GPU via CuPy (default ``false``; see the
   :ref:`GPU section <sc_dynamic_gpu_en>` below).
+- ``gpu_required``: Set ``true`` to make ``gpu = true`` strict -- the solver
+  raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
+  (default ``false``). Honored by the dynamic Eliashberg solver (set it in
+  ``[eliashberg]``) and by the FLEX and RPA solvers (set it in
+  ``[mode.param]``, alongside their ``gpu`` flag).
 - ``fft_workers``: Number of FFT worker threads for the dynamic-mode spatial
   FFTs (default ``1`` = the serial numpy path, unchanged from previous
   releases; ``-1`` uses all cores; ignored on the GPU).

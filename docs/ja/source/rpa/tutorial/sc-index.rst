@@ -176,6 +176,11 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 - ``gpu``: ``true`` で動的モード（``frequency = "dynamic"``）のカーネル適用を
   GPU（CuPy）で実行します（デフォルト ``false``。下記の
   :ref:`GPU実行の節 <sc_dynamic_gpu>` を参照）。
+- ``gpu_required``: ``true`` にすると ``gpu = true`` を厳格化し、CuPy/CUDA が
+  使えない場合に静かに CPU へフォールバックせずエラーで停止します
+  （デフォルト ``false``）。動的 Eliashberg ソルバー（``[eliashberg]`` に設定）
+  および FLEX・RPA ソルバー（``gpu`` フラグと同じく ``[mode.param]`` に設定）で
+  有効です。
 - ``fft_workers``: 動的モードの空間 FFT のワーカースレッド数
   （デフォルト ``1`` = 従来どおりの直列 numpy。``-1`` で全コア。
   GPU 実行時は無視されます）。
