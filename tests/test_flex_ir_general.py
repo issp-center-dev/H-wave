@@ -37,28 +37,11 @@ def _make_general_solver(nmat, matsubara_basis="uniform", T=2.0,
         'CoulombInter': 'coulombinter.dat'}}
     ham = read_input_k.QLMSkInput(info_input).get_param("ham")
     param = {'T': T, 'mu': 0.0, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
-             'Nmat': nmat, 'IterationMax': iteration_max, 'Mix': mix, 'EPS': 8}
-    # Construct with matsubara_basis='uniform' unconditionally: flex.py still
-    # has a construction-time guard (`raise ValueError` when
-    # use_ir and self._flex_general), pinned by the existing
-    # tests/test_flex_ir.py::test_ir_rejects_general_scheme; removing it is
-    # out of scope for this task (it belongs to the SCF-dispatch task that
-    # follows this one) and this test must not touch it. Instead, flip the
-    # two purely-descriptive post-construction attributes that
-    # `matsubara_basis='ir'` would otherwise have set. This is safe here:
-    # `_init_flex_param` (the only __init__ code that reads `self.use_ir`)
-    # only consults it at the guard itself and at the already-satisfied
-    # `write_densified` check -- no other construction-time branch depends
-    # on it, and this test never calls solve() (which is where any
-    # remaining use_ir-dependent SCF dispatch lives).
-    if matsubara_basis != "uniform":
-        param['matsubara_basis'] = "uniform"
+             'Nmat': nmat, 'IterationMax': iteration_max, 'Mix': mix, 'EPS': 8,
+             'matsubara_basis': matsubara_basis}
     info_mode = {'mode': 'FLEX', 'param': param, 'calc_scheme': 'general'}
     gi = read_input_k.QLMSkInput(info_input).get_param("green")
     solver = solver_flex.FLEX(ham, {}, info_mode)
-    if matsubara_basis != "uniform":
-        solver.matsubara_basis = matsubara_basis
-        solver.use_ir = (matsubara_basis == "ir")
     return solver, gi
 
 
@@ -164,3 +147,77 @@ def test_sigma_general_ir_direct_matches_uniform():
         np.moveaxis(sig_u[0], 0, -1), axF, nmat, "sig_u"), -1, 0)
     scale = np.abs(sig_u_nodes).max()
     assert np.abs(sig_ir[0] - sig_u_nodes).max() / scale < 2e-2
+
+
+def test_sigma_general_gate_one_iteration():
+    """GATE: one general SCF step (sigma=0 -> sigma_new) on the IR path must
+    match the uniform general step at large Nmat, compressed onto the
+    fermionic nodes."""
+    from hwave.solver import eliashberg_dynamic as ed
+    T = 2.0
+    beta = 1.0 / T
+    diffs = []
+    for nmat in (256, 1024):
+        s, gi = _make_general_solver(nmat, "ir", T=T, iteration_max=1)
+        os.makedirs('tests/flex/output', exist_ok=True)
+        s.solve(gi, 'tests/flex/output')
+        sig_ir = s.sigma                                   # densified (uniform grid)
+
+        su, giu = _make_general_solver(nmat, "uniform", T=T, iteration_max=1)
+        su.solve(giu, 'tests/flex/output')
+        sig_u = su.sigma
+        axF = s._ir_axF
+        # compress both onto fermionic nodes for a node-space comparison
+        a = np.moveaxis(ed._ir_compress(
+            np.moveaxis(sig_ir, 1, -1), axF, nmat, "sig_ir_gen"), -1, 1)
+        b = np.moveaxis(ed._ir_compress(
+            np.moveaxis(sig_u, 1, -1), axF, nmat, "sig_u_gen"), -1, 1)
+        scale = np.abs(b).max()
+        diffs.append(np.abs(a - b).max() / scale)
+    assert diffs[-1] < 2e-2, "general sigma gate failed: {}".format(diffs)
+    assert diffs[-1] < 0.7 * diffs[0], \
+        "no Nmat convergence of sigma: {}".format(diffs)
+
+
+def test_e2e_general_flex_ir_vs_uniform():
+    """Converged general FLEX on IR nodes reproduces the uniform general run
+    (densified outputs), within the input-Nmat-limited IR tolerance."""
+    T = 2.0
+    s_ir, gi_ir = _make_general_solver(1024, "ir", T=T, iteration_max=60)
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s_ir.solve(gi_ir, 'tests/flex/output')
+    s_u, gi_u = _make_general_solver(1024, "uniform", T=T, iteration_max=60)
+    s_u.solve(gi_u, 'tests/flex/output')
+    for key in ("sigma", "chi_s", "chi_c"):
+        a = getattr(s_ir, key)
+        b = getattr(s_u, key)
+        scale = np.abs(b).max()
+        assert np.abs(a - b).max() / scale < 3e-2, key
+
+
+def test_dispatch_routes_general_uniform_and_ir(monkeypatch):
+    """The SCF calls exactly _calc_chi0q_general_ir + _calc_self_energy_general_ir
+    for general+IR, and the uniform general methods for general+uniform."""
+    import hwave.solver.flex as flex
+    for basis, chi_name, sig_name in (
+            ("ir", "_calc_chi0q_general_ir", "_calc_self_energy_general_ir"),
+            ("uniform", "_calc_chi0q", "_calc_self_energy_general")):
+        s, gi = _make_general_solver(64, basis, T=2.0, iteration_max=1)
+        called = {"chi": 0, "sig": 0}
+        orig_chi = getattr(flex.FLEX, chi_name)
+        orig_sig = getattr(flex.FLEX, sig_name)
+
+        def wrap_chi(self, *a, _o=orig_chi, **k):
+            called["chi"] += 1
+            return _o(self, *a, **k)
+
+        def wrap_sig(self, *a, _o=orig_sig, **k):
+            called["sig"] += 1
+            return _o(self, *a, **k)
+
+        monkeypatch.setattr(flex.FLEX, chi_name, wrap_chi)
+        monkeypatch.setattr(flex.FLEX, sig_name, wrap_sig)
+        os.makedirs('tests/flex/output', exist_ok=True)
+        s.solve(gi, 'tests/flex/output')
+        assert called["chi"] >= 1 and called["sig"] >= 1, basis
+        monkeypatch.undo()

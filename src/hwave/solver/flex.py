@@ -274,11 +274,6 @@ class FLEX(RPA):
                 "[mode.param] matsubara_basis must be 'uniform' or 'ir', "
                 "got '{}'.".format(self.matsubara_basis))
         self.use_ir = (self.matsubara_basis == "ir")
-        if self.use_ir and self._flex_general:
-            raise ValueError(
-                "[mode.param] matsubara_basis='ir' supports [mode] "
-                "calc_scheme='reduced'/'squashed' only (v1); the general "
-                "full-vertex path stays on the uniform grid.")
         self.ir_tol = float(self.param_mod.get("ir_tol", 1.0e-8))
         self.ir_wmax = self.param_mod.get("ir_wmax")
         self.sigma_init_on_error = str(
@@ -478,7 +473,12 @@ class FLEX(RPA):
             # only; CuPy raises a clear OutOfMemoryError on the actual
             # allocation.
             nblk0, _, _, nd0 = self.H0_eigenvector.shape
-            resident_bytes = nblk0 * nmat * nvol * nd0 * nd0 * 16
+            # IR compresses the frequency axis to the node count; the general
+            # (full-vertex) susceptibilities carry a rank-4 orbital block
+            # (nd0**4) vs the reduced nd0**2.
+            nfreq_est = self._ir_axB.n_freq if self.use_ir else nmat
+            orb_factor = nd0 ** 4 if self._flex_general else nd0 ** 2
+            resident_bytes = nblk0 * nfreq_est * nvol * orb_factor * 16
             _bk.warn_if_device_memory_short(
                 5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
@@ -607,9 +607,14 @@ class FLEX(RPA):
             else:
                 green_scf = green_kw
 
-            # Step 4: Compute chi0(q, ivn) from dressed G
+            # Step 4: Compute chi0(q, ivn) from dressed G. Four-way dispatch:
+            # (general/reduced) x (uniform/ir). The reduced IR chi0 is a
+            # density-density shortcut; general needs the full rank-6 bubble.
             if self.use_ir:
-                chi0q_raw = self._calc_chi0q_ir(green_scf, beta)
+                if self._flex_general:
+                    chi0q_raw = self._calc_chi0q_general_ir(green_scf, beta)
+                else:
+                    chi0q_raw = self._calc_chi0q_ir(green_scf, beta)
             else:
                 chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
 
@@ -628,7 +633,12 @@ class FLEX(RPA):
             if self._flex_general:
                 chi0q_out, v_eff, chi_s, chi_c = \
                     self._flex_compute_veff_general(chi0q_raw, ham_orig)
-                sigma_new = self._calc_self_energy_general(green_kw, v_eff, beta)
+                if self.use_ir:
+                    sigma_new = self._calc_self_energy_general_ir(
+                        green_kw, v_eff, beta)
+                else:
+                    sigma_new = self._calc_self_energy_general(
+                        green_kw, v_eff, beta)
             else:
                 chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
                     chi0q_raw, ham_orig)
