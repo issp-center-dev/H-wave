@@ -686,10 +686,22 @@ class TestSeedOverlapSelection(unittest.TestCase):
         self.assertAlmostEqual(info["eigenvalues"][0].real, 1.0)
 
     def test_dense_fallback_without_seed_uses_largest_real(self):
-        make_op = self._diag_operator([2.0, 1.0])
+        # eigenvalues [2.0, -5.0]: largest real (2.0) != largest magnitude (5.0),
+        # so this catches a regression back to magnitude ordering.
+        make_op = self._diag_operator([2.0, -5.0])
         val, vec, info = _solve_leading(make_op, 2, "arnoldi")
         # No seed -> physical SC eigenvalue is the algebraically largest.
         self.assertAlmostEqual(val.real, 2.0)
+
+    def test_dense_fallback_equal_overlap_breaks_tie_by_real_part(self):
+        # A seed equally overlapping both basis eigenvectors must fall back to
+        # the physical (largest-real) ordering, not the eigensolver's arbitrary
+        # order (issue #61 tie-break contract).
+        make_op = self._diag_operator([1.0, 3.0])       # e1 has the larger real
+        seed = np.array([1.0, 1.0], dtype=complex) / np.sqrt(2.0)
+        val, vec, info = _solve_leading(make_op, 2, "arnoldi", seed_vec=seed)
+        self.assertAlmostEqual(val.real, 3.0)
+        self.assertAlmostEqual(info["eigenvalues"][0].real, 3.0)
 
 
 class TestParitySelection(unittest.TestCase):

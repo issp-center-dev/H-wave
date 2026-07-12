@@ -1984,7 +1984,12 @@ def _order_by_seed_overlap(vals, vecs, seed_vec):
     s = s / ns
     ov = np.abs(vecs.conj().T @ s) / (
         np.linalg.norm(vecs, axis=0) + 1.0e-300)
-    idx = np.argsort(-ov)
+    # Primary key: descending overlap. Secondary key: descending real part, so
+    # an exact overlap TIE deterministically falls back to the physical
+    # real-part ordering (as the docstring promises) instead of the arbitrary
+    # order np.linalg.eig / ARPACK happened to return. np.lexsort takes the
+    # primary key last.
+    idx = np.lexsort((-vals.real, -ov))
     return vals[idx], vecs[:, idx]
 
 
