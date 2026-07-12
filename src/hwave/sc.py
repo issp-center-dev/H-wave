@@ -2304,6 +2304,15 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 "[eliashberg] spectral_shift is only supported for "
                 "eigenvalue_method='arnoldi', not {!r}".format(solver_mode))
 
+    # sigma_shift is the shift-invert target; it has no effect on the plain
+    # arnoldi path (which uses spectral_shift instead). Warn rather than fail so
+    # existing configs keep working.
+    if sigma_shift is not None and solver_mode == "arnoldi":
+        logger.warning(
+            "[eliashberg] sigma_shift is ignored for eigenvalue_method="
+            "'arnoldi' (it targets the shift-invert methods); use "
+            "spectral_shift to bias the arnoldi selection.")
+
     if vec_size < 1:
         raise ValueError("Eliashberg operator has empty vector space")
 
@@ -2397,12 +2406,23 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     else:
         vals, vecs = _order_eigenpairs(vals, vecs)
 
+    # A negative leading eigenvalue from plain which='LM' (no spectral_shift) is
+    # often an artifact: a small positive lambda masked by larger repulsive
+    # modes. Tip the user toward spectral_shift='auto'.
+    if (solver_mode == "arnoldi" and spectral_shift is None
+            and len(vals) and vals[0].real < 0.0):
+        logger.warning(
+            "Leading eigenvalue Re(lambda)=%.4g is negative; if a positive "
+            "(attractive) mode is expected, set [eliashberg] spectral_shift="
+            "\"auto\" so the largest-REAL eigenvalue is selected instead of the "
+            "largest-magnitude one.", vals[0].real)
+
     return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
                                  "sigma_shift": sigma_shift}
 
 
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
-                      method="arnoldi", sigma_shift=None):
+                      method="arnoldi", sigma_shift=None, spectral_shift=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
 
     Parameters
@@ -2471,6 +2491,7 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     _, _, eig_analysis = _solve_leading(
         make_operator, vec_size, method,
         num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+        spectral_shift=spectral_shift,
     )
     vals = eig_analysis["eigenvalues"]
     vecs = eig_analysis["eigenvectors"]
@@ -3113,7 +3134,9 @@ def calc_eliashberg(input_dict):
         eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
             Vs_q, G2, norb, Nx, Ny, Nz,
             num_eigenvalues=num_eigenvalues,
-            method=eigenvalue_method
+            method=eigenvalue_method,
+            sigma_shift=eli_param.get("sigma_shift"),
+            spectral_shift=eli_param.get("spectral_shift"),
         )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
         # requested channel parity (singlet even / triplet odd) so the reported

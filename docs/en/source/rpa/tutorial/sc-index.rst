@@ -175,18 +175,26 @@ This section controls the Eliashberg solver. Key parameters:
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
+  :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
+  :math:`\sigma` are found first. Ignored (with a warning) for the plain
+  ``"arnoldi"`` method -- use ``spectral_shift`` there instead.
 - ``spectral_shift`` (``eigenvalue_method = "arnoldi"`` only): a positive number,
   or ``"auto"``. The default ARPACK selection (``which='LM'``) returns the
   eigenvalues of largest *magnitude*; far from a pairing instability, a small
   positive (attractive) leading eigenvalue can be masked by much larger negative
   (repulsive) eigenvalues, so the reported leading value comes out negative and
   unphysical. Setting ``spectral_shift`` makes the solver request the eigenvalue
-  of largest *real* part (the physical SC eigenvalue, :math:`\lambda \to 1` at
-  :math:`T_c`) on the shifted operator :math:`A + \sigma I`. Use ``"auto"`` to
-  set :math:`\sigma` from the spectral radius automatically, or give an explicit
-  positive :math:`\sigma` larger than the most negative eigenvalue. Recommended
-  whenever the leading eigenvalue comes out negative or you scan weakly-pairing
-  systems (low pressure, quasi-1D).
+  of largest *real* part (``which='LR'``; the physical SC eigenvalue,
+  :math:`\lambda \to 1` at :math:`T_c`) on the shifted operator
+  :math:`A + \sigma I`; the shift is subtracted internally, so the eigenvalues
+  you receive/save are the true unshifted ones. Use ``"auto"`` to set
+  :math:`\sigma` from the spectral radius automatically, or give an explicit
+  positive :math:`\sigma` larger than the *absolute value* of the most negative
+  eigenvalue (so :math:`A + \sigma I` has an all-positive-real spectrum).
+  Recommended whenever the leading eigenvalue comes out negative or you scan
+  weakly-pairing systems (low pressure, quasi-1D). Note this differs from
+  ``sigma_shift`` above (a shift-invert *target*, not a spectral shift).
 - ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
   kernel applications on a GPU via CuPy (default ``false``; see the
   :ref:`GPU section <sc_dynamic_gpu_en>` below).

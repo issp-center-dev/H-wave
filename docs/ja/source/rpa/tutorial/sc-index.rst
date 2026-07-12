@@ -173,17 +173,24 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 - ``eigenvalue_method``: ``"arnoldi"`` （デフォルト）、 ``"subspace"`` 、
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` /
   ``"shift-invert-lgmres"``。
+- ``sigma_shift`` （shift-invert 系の ``eigenvalue_method`` のみ）: shift-invert
+  ソルバの実数ターゲット :math:`\sigma` 。 :math:`\sigma` 近傍の固有値が先に
+  求まります。素の ``"arnoldi"`` では無視されます（警告あり）。arnoldi では
+  代わりに ``spectral_shift`` を使ってください。
 - ``spectral_shift`` （ ``eigenvalue_method = "arnoldi"`` のときのみ有効）:
   正の数値または ``"auto"`` 。ARPACK の既定の選択 （ ``which='LM'`` ）は
   *絶対値* 最大の固有値を返すため、超伝導不安定性から遠い場合、小さな正
   （引力的）の主固有値が、より大きな負（斥力的）の固有値に隠れて取りこぼされ、
   報告される主固有値が負（非物理的）になることがあります。 ``spectral_shift``
   を指定すると、シフトした演算子 :math:`A + \sigma I` に対して *実部* 最大の
-  固有値（ :math:`T_c` で :math:`\lambda \to 1` となる物理的なSC固有値）を
-  求めます。 ``"auto"`` はスペクトル半径から :math:`\sigma` を自動設定します。
-  明示的に、最も負の固有値より大きい正の :math:`\sigma` を与えることもできます。
-  主固有値が負になる場合や、対形成が弱い系（低圧・擬1次元）を走査する場合に
-  推奨します。
+  固有値（ ``which='LR'`` ； :math:`T_c` で :math:`\lambda \to 1` となる物理的な
+  SC固有値）を求めます。シフトは内部で差し引かれるので、受け取る／保存される
+  固有値はシフト前の正しい値です。 ``"auto"`` はスペクトル半径から
+  :math:`\sigma` を自動設定します。明示的に指定する場合は、最も負の固有値の
+  *絶対値* より大きい正の :math:`\sigma` を与えます（ :math:`A + \sigma I` の
+  スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
+  弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の ``sigma_shift``
+  （shift-invert のターゲット）とは別物である点に注意してください。
 - ``gpu``: ``true`` で動的モード（``frequency = "dynamic"``）のカーネル適用を
   GPU（CuPy）で実行します（デフォルト ``false``。下記の
   :ref:`GPU実行の節 <sc_dynamic_gpu>` を参照）。
