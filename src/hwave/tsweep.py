@@ -415,7 +415,13 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
     ladder = build_ladder(cont)
     run_eli = cont.get("run_eliashberg", True)
     warm_start = cont.get("warm_start", True)
-    seed_gap_on = cont.get("seed_gap", True) and eliashberg_frequency(input_dict) == "dynamic"
+    # Gap seeding requires the Eliashberg solver to actually run: a FLEX-only
+    # sweep (run_eliashberg=false) never writes gap_dynamic.npz, even if a
+    # leftover [eliashberg] block still says frequency="dynamic". Without the
+    # run_eli guard, resume would demand a gap file no rung can produce (so no
+    # rung is ever reusable) and normal continuation would cold-start every rung.
+    seed_gap_on = (run_eli and cont.get("seed_gap", True)
+                   and eliashberg_frequency(input_dict) == "dynamic")
     out_dir = _abspath(base_dir, cont.get("output_dir", "tsweep"))
     summary_file = cont.get("summary_file", "lambda_vs_T.dat")
     resume = resume or bool(cont.get("resume", False))

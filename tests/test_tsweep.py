@@ -592,6 +592,20 @@ def test_resume_final_rung_corrupt_output_recomputed(monkeypatch, tmp_path):
     assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.006]
 
 
+def test_resume_flex_only_with_dynamic_block_is_noop(monkeypatch, tmp_path):
+    """A FLEX-only sweep (run_eliashberg=false) that still carries a dynamic
+    [eliashberg] block must not demand a gap file: it seeds only sigma, and a
+    completed sweep resumes with no solver calls."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006], run_eli=False)
+    base["eliashberg"] = {"frequency": "dynamic", "solver_mode": "eigenvalue"}
+    ts.run(base, base_dir=str(tmp_path))
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    rows = ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert calls2["flex"] == [] and calls2["eli"] == []
+    assert [r["status"] for r in rows] == ["ok", "ok", "ok"]
+
+
 def test_validate_resume_rejects_nan_ladder():
     """A NaN manifest temperature must fail fast, not slip through the tolerance
     comparison (NaN comparisons are always False)."""
