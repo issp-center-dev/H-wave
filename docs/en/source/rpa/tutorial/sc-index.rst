@@ -659,6 +659,7 @@ The ``[continuation]`` section
       run_eliashberg = true           # default
       warm_start     = true           # default
       seed_gap       = true           # default
+      resume         = false          # default; or pass --resume
       summary_file   = "lambda_vs_T.dat"  # default
 
 - ``temperatures``: an explicit list of temperatures, run in the order given.
@@ -693,7 +694,7 @@ Running the sweep
 
     $ hwave_tsweep input.toml
 
-Two flags control the run:
+Three flags control the run:
 
 - ``--dry-run``: resolve and print the temperature ladder, each rung's
   output directory, and the ``sigma_init``/``seed_eigenvector`` paths that
@@ -703,7 +704,33 @@ Two flags control the run:
   sweep (a broken rung would otherwise poison every downstream seed, and the
   partial summary is still written); with ``--keep-going`` the next rung is
   instead cold-started, and if it succeeds it becomes the seed for
-  subsequent rungs again.
+  subsequent rungs again. This is *error continuation within one process*,
+  not a restart after the process itself was interrupted.
+- ``--resume`` (or ``[continuation] resume = true``): *job-level restart*.
+  When a sweep is rerun with resume, ``hwave_tsweep`` skips the longest
+  contiguous prefix of already-completed, seedable rungs and restarts at the
+  first incomplete one -- seeded from the last valid rung's ``sigma`` and
+  dynamic gap, exactly as if the sweep had never stopped. Use it after a
+  wall-clock/scheduler kill, a crash, or a manual interrupt.
+
+  A rung counts as completed only when its recorded summary row is non-error
+  **and** its on-disk outputs are actually present and parseable (a
+  half-written or corrupt ``eigenvalue.dat`` is detected and that rung, plus
+  every rung after it, is recomputed). Resume is guarded by a small manifest
+  (``tsweep_manifest.json``, written on the first run) recording the resolved
+  ladder and a fingerprint of the shape/physics configuration
+  (``CellShape``/``SubShape``/``Nmat``/``filling``/``Ncond``/interaction
+  files/``[eliashberg]`` frequency/pairing). Resuming against a different
+  ladder or configuration **fails fast** rather than mixing incompatible
+  results. The summary and manifest are written atomically after every rung,
+  so an interruption can never leave a truncated checkpoint. Without
+  ``--resume`` a rerun starts fresh and overwrites the existing sweep
+  rung-by-rung (a warning is logged when it detects an existing sweep).
+
+The three are distinct: **warm start** (``warm_start``/``seed_gap``) chains
+one rung's result into the *next* rung's seed within a single run;
+**--keep-going** decides what happens *after a rung errors* within one run;
+**--resume** decides what happens when a *whole run* is restarted.
 
 Summary file
 """"""""""""""""""""""""""""""
