@@ -32,6 +32,18 @@ def _gpu_requested(eli_param):
     return backend.as_bool(eli_param.get("gpu", False))
 
 
+def _ir_keep_static_requested(eli_param):
+    """Whether ``[eliashberg] ir_keep_static_chi`` requests retaining the
+    IR-compression static (frequency-independent) susceptibility component.
+
+    Like ``_gpu_requested``, delegates to ``backend.as_bool`` so a programmatic
+    dict config with a string ``"false"``/``"off"``/``"0"`` is not read as True
+    by plain ``bool("false")`` -- which would silently retain the static
+    component and change the numerical path. TOML booleans are unaffected.
+    """
+    return backend.as_bool(eli_param.get("ir_keep_static_chi", False))
+
+
 # ---------------------------------------------------------------------------
 # Channel-parity of the frequency-resolved gap
 #
@@ -1158,7 +1170,7 @@ def solve_dynamic(input_dict):
             # the uniform grid exists only as the OUTPUT grid here
             nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
         else:
-            keep_static = bool(eli_param.get("ir_keep_static_chi", False))
+            keep_static = _ir_keep_static_requested(eli_param)
             chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
                                   drop_constant=True,
                                   keep_constant=keep_static)
