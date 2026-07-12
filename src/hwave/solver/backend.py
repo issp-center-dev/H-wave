@@ -10,6 +10,8 @@ GPU use is strictly opt-in (``gpu = true`` in the ``[eliashberg]`` section);
 when CuPy or a CUDA device is unavailable the run falls back to numpy with a
 warning -- the result is identical, only slower.
 """
+import logging
+
 import numpy as np
 
 try:
@@ -130,11 +132,23 @@ def restore_host_attrs(obj, names):
     call unconditionally (including on the CPU path). Used in the solvers'
     ``finally`` cleanup so public state (H0 eigenpairs, stored Green functions)
     is NumPy-backed after both normal completion and a GPU-path exception.
+
+    Restoration is best-effort and exception-safe: because this runs inside a
+    ``finally``, a failing device->host copy (e.g. a dead CUDA context after
+    the original error) must NOT mask the original solver exception nor stop
+    the remaining attributes from being restored. Such a failure is logged and
+    the offending attribute is left as-is.
     """
     for name in names:
         val = getattr(obj, name, None)
-        if val is not None:
+        if val is None:
+            continue
+        try:
             setattr(obj, name, to_host(val))
+        except Exception:                       # noqa: BLE001 - never mask caller's error
+            logging.getLogger("qlms").warning(
+                "restore_host_attrs: could not host-restore %r; leaving it "
+                "backend-local.", name, exc_info=True)
 
 
 def to_host(arr):

@@ -470,10 +470,13 @@ class FLEX(RPA):
             logger.info("FLEX: GPU backend active (CuPy); moving H0 "
                         "eigenpairs and interaction to the device.")
             # VRAM preflight: the resident device tensors (dressed G, sigma,
-            # chi_s/chi_c, v_eff) are each ~ nblock*Nmat*Nvol*nd^2 complex128
-            # (H0_eigenvector has shape (nblock, Nvol, nd, nd)), and the SCF
-            # loop keeps several live at once. Advisory only; CuPy raises a
-            # clear OutOfMemoryError on the actual allocation.
+            # chi_s/chi_c, v_eff, chi0q) are each ~ nblock*Nmat*Nvol*nd^2
+            # complex128 (H0_eigenvector has shape (nblock, Nvol, nd, nd)), and
+            # the SCF loop keeps several live at once. The 5x factor is a rough
+            # order-of-magnitude estimate -- transient FFT/einsum/solve
+            # workspace is not counted, so treat it as a lower bound. Advisory
+            # only; CuPy raises a clear OutOfMemoryError on the actual
+            # allocation.
             nblk0, _, _, nd0 = self.H0_eigenvector.shape
             resident_bytes = nblk0 * nmat * nvol * nd0 * nd0 * 16
             _bk.warn_if_device_memory_short(

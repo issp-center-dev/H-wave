@@ -844,6 +844,13 @@ class RPA:
                 logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
                 #self.nmat = chi0q.shape[0]
             if gpu_active:
+                # VRAM preflight for the externally-supplied chi0q path: the
+                # transfer below plus the same-sized chiq solve workspace.
+                # Advisory only (CuPy raises OutOfMemoryError on the actual
+                # allocation).
+                _bk.warn_if_device_memory_short(
+                    2 * chi0q.nbytes, logger,
+                    label="the RPA chiq solve (supplied chi0q)")
                 chi0q = xp.asarray(chi0q)
         else:
             self._calc_epsilon_k(green_info)
@@ -863,8 +870,11 @@ class RPA:
                 # VRAM preflight: the largest resident device tensor is the
                 # inflated chi0q / chiq, ~ Nmat*Nvol*nd^4 complex128 in the full
                 # (rank-4 orbital) channel; the chiq solve holds a same-sized
-                # workspace. Advisory only (CuPy raises OutOfMemoryError on the
-                # actual allocation). H0_eigenvector shape = (nblock, Nvol, nd, nd).
+                # workspace. This nd^4 figure is an upper bound for the reduced/
+                # squashed (rank-2) schemes and a rough order-of-magnitude
+                # estimate otherwise -- advisory only (CuPy raises
+                # OutOfMemoryError on the actual allocation).
+                # H0_eigenvector shape = (nblock, Nvol, nd, nd).
                 nd0 = self.H0_eigenvector.shape[-1]
                 chi_bytes = self.nmat * self.lattice.nvol * (nd0 ** 4) * 16
                 _bk.warn_if_device_memory_short(

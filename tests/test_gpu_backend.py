@@ -65,8 +65,12 @@ def test_get_backend_non_strict_still_falls_back(monkeypatch, caplog):
         raise ImportError("No module named 'cupy'")
 
     monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
-    xp, gpu_active = backend.get_backend(True, required=False)
+    logger = logging.getLogger("test_backend_nonstrict")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        xp, gpu_active = backend.get_backend(True, logger=logger, required=False)
     assert xp is np and gpu_active is False
+    assert any("cupy" in rec.message.lower() and "fall" in rec.message.lower()
+               for rec in caplog.records)
 
 
 def test_get_backend_gpu_active_with_cupy():

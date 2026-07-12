@@ -164,6 +164,53 @@ def test_vram_preflight_warns_when_short(kind, monkeypatch, caplog):
         with pytest.raises(RuntimeError):
             solver.solve(green_info, 'tests/rpa/output')
 
-    assert any("GPU memory" in rec.message or "free" in rec.message.lower()
-               for rec in caplog.records), \
+    assert any("GPU memory" in rec.message for rec in caplog.records), \
         "no VRAM preflight warning emitted"
+
+
+# --- restore_host_attrs helper (direct) -------------------------------------
+
+def test_restore_host_attrs_converts_all_named_attrs(monkeypatch):
+    """All named device-backed attributes (H0 eigenpairs AND stored Green
+    functions) are host-restored; None/absent attributes are skipped."""
+    from hwave.solver import backend
+    fake = _fake_cupy()
+    monkeypatch.setattr(backend, "_import_cupy", lambda: fake)
+
+    class _Obj:
+        pass
+
+    o = _Obj()
+    o.H0_eigenvalue = fake.asarray(np.arange(3.0))
+    o.H0_eigenvector = fake.asarray(np.eye(2))
+    o.green0 = fake.asarray(np.ones(4))
+    o.green0_tail = None                        # legitimately None (aa == 0)
+
+    backend.restore_host_attrs(
+        o, ("H0_eigenvalue", "H0_eigenvector", "green0", "green0_tail",
+            "not_an_attribute"))
+
+    for name in ("H0_eigenvalue", "H0_eigenvector", "green0"):
+        val = getattr(o, name)
+        assert isinstance(val, np.ndarray) and not isinstance(val, _DevArr), name
+    assert o.green0_tail is None
+
+
+def test_restore_host_attrs_does_not_mask_original_error(monkeypatch, caplog):
+    """A failing device->host copy inside the finally cleanup must be swallowed
+    (logged), never raised -- so it cannot mask the solver's real exception."""
+    from hwave.solver import backend
+
+    def _boom(_):
+        raise RuntimeError("device->host copy failed")
+
+    monkeypatch.setattr(backend, "to_host", _boom)
+
+    class _Obj:
+        pass
+
+    o = _Obj()
+    o.H0_eigenvalue = object()                  # non-None -> restoration attempted
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        backend.restore_host_attrs(o, ("H0_eigenvalue",))   # must NOT raise
+    assert any("host-restore" in rec.message for rec in caplog.records)
