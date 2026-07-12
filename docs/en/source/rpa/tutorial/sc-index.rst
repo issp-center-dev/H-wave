@@ -198,6 +198,11 @@ This section controls the Eliashberg solver. Key parameters:
 - ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
   kernel applications on a GPU via CuPy (default ``false``; see the
   :ref:`GPU section <sc_dynamic_gpu_en>` below).
+- ``gpu_required``: Set ``true`` to make ``gpu = true`` strict -- the solver
+  raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
+  (default ``false``). Honored by the dynamic Eliashberg solver (set it in
+  ``[eliashberg]``) and by the FLEX and RPA solvers (set it in
+  ``[mode.param]``, alongside their ``gpu`` flag).
 - ``fft_workers``: Number of FFT worker threads for the dynamic-mode spatial
   FFTs (default ``1`` = the serial numpy path, unchanged from previous
   releases; ``-1`` uses all cores; ignored on the GPU).
@@ -956,6 +961,16 @@ transfers the gap vector. The result is numerically identical to the CPU run
 - Requires `CuPy <https://cupy.dev/>`_ and a usable CUDA device. When CuPy is
   missing or no device is found, the solver warns and falls back to the CPU
   (numpy) path automatically -- same result, only slower.
+- ``gpu_required = true`` (default ``false``) turns the silent CPU fallback
+  into a hard error: if ``gpu = true`` is requested but no usable CuPy/CUDA
+  backend exists, the solver raises instead of quietly running on the CPU, so
+  a large scheduler job fails fast rather than turning a short GPU run into a
+  very long CPU run. The same flag is honored by the FLEX and RPA solvers.
+- Before the large device allocation, the FLEX and RPA GPU paths run an
+  advisory VRAM preflight: if the estimated resident tensors exceed the free
+  device memory, they log a warning naming the solver and the estimated/free
+  amounts (CuPy still raises a hard out-of-memory error on the actual
+  allocation).
 - The GPU memory requirement is roughly the two resident tensors,
   :math:`2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}` bytes,
   plus workspace; if it does not fit, CuPy aborts with an explicit

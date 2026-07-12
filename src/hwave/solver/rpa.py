@@ -644,6 +644,12 @@ class RPA:
         # fft_workers defaults to 1 (the serial numpy path, bit-compatible
         # with previous releases); scipy-parallel FFTs are opt-in.
         self.use_gpu = _bk.as_bool(self.param_mod.get("gpu", False))
+        # Strict GPU mode: when gpu_required=true, get_backend raises instead of
+        # falling back to the (much slower) CPU path if CuPy/CUDA is unusable,
+        # so a large scheduler job fails fast. Default false keeps the existing
+        # warn-and-fall-back behavior. Inherited by the FLEX solver (subclass).
+        self.gpu_required = _bk.as_bool(self.param_mod.get("gpu_required",
+                                                           False))
         self.fft_workers = int(self.param_mod.get("fft_workers", 1))
 
         # exclusive options: mu and Ncond/filling
@@ -779,10 +785,28 @@ class RPA:
 
     @do_profile
     def solve(self, green_info, path_to_output):
+        """Solve the RPA equation, restoring host-backed public state.
+
+        Thin wrapper around :meth:`_solve_impl` that guarantees the solver's
+        public array attributes (``H0_eigenvalue``/``H0_eigenvector`` and the
+        stored ``green0``/``green0_tail``) are NumPy-backed after the call --
+        on normal completion AND after a GPU-path exception. Under GPU
+        execution ``_solve_impl`` converts these to CuPy in place; without the
+        ``finally`` a mid-solve error would leave a reused or inspected solver
+        object holding device arrays (issue #63).
+        """
+        try:
+            return self._solve_impl(green_info, path_to_output)
+        finally:
+            _bk.restore_host_attrs(
+                self, ("H0_eigenvalue", "H0_eigenvector",
+                       "green0", "green0_tail"))
+
+    def _solve_impl(self, green_info, path_to_output):
         """Solve the RPA equation to calculate susceptibility.
 
-        This is the main method that performs RPA calculations. It either calculates 
-        or loads chi0q, transforms interaction Hamiltonians based on spin state, 
+        This is the main method that performs RPA calculations. It either calculates
+        or loads chi0q, transforms interaction Hamiltonians based on spin state,
         and solves the RPA equation.
 
         Parameters
@@ -810,7 +834,8 @@ class RPA:
         # inflation einsums, and the batched chiq solve -- all dispatch on
         # their input arrays, so moving the inputs to the device here runs the
         # whole solve on the GPU; outputs are stored back as host arrays.
-        xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger)
+        xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger,
+                                         required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
             # use chi0q input
@@ -819,6 +844,13 @@ class RPA:
                 logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
                 #self.nmat = chi0q.shape[0]
             if gpu_active:
+                # VRAM preflight for the externally-supplied chi0q path: the
+                # transfer below plus the same-sized chiq solve workspace.
+                # Advisory only (CuPy raises OutOfMemoryError on the actual
+                # allocation).
+                _bk.warn_if_device_memory_short(
+                    2 * chi0q.nbytes, logger,
+                    label="the RPA chiq solve (supplied chi0q)")
                 chi0q = xp.asarray(chi0q)
         else:
             self._calc_epsilon_k(green_info)
@@ -835,6 +867,18 @@ class RPA:
             if gpu_active:
                 logger.info("RPA: GPU backend active (CuPy); moving H0 "
                             "eigenpairs to the device.")
+                # VRAM preflight: the largest resident device tensor is the
+                # inflated chi0q / chiq, ~ Nmat*Nvol*nd^4 complex128 in the full
+                # (rank-4 orbital) channel; the chiq solve holds a same-sized
+                # workspace. This nd^4 figure is an upper bound for the reduced/
+                # squashed (rank-2) schemes and a rough order-of-magnitude
+                # estimate otherwise -- advisory only (CuPy raises
+                # OutOfMemoryError on the actual allocation).
+                # H0_eigenvector shape = (nblock, Nvol, nd, nd).
+                nd0 = self.H0_eigenvector.shape[-1]
+                chi_bytes = self.nmat * self.lattice.nvol * (nd0 ** 4) * 16
+                _bk.warn_if_device_memory_short(
+                    2 * chi_bytes, logger, label="the RPA chi0q/chiq solve")
                 self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
                 self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 

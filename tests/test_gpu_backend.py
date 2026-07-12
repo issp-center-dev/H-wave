@@ -29,6 +29,58 @@ def test_get_backend_gpu_falls_back_without_cupy(monkeypatch, caplog):
     assert any("cupy" in rec.message.lower() for rec in caplog.records)
 
 
+def test_get_backend_strict_raises_without_cupy(monkeypatch):
+    """gpu_required=true (required=True) must FAIL FAST when CuPy is missing,
+    instead of silently falling back to the slow CPU path (issue #63)."""
+    from hwave.solver import backend
+
+    def _no_cupy():
+        raise ImportError("No module named 'cupy'")
+
+    monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
+    with pytest.raises(RuntimeError, match="gpu_required"):
+        backend.get_backend(True, required=True)
+
+
+def test_get_backend_strict_raises_without_device(monkeypatch):
+    """required=True must also fail fast when CuPy imports but no CUDA device
+    is usable."""
+    import types
+    from hwave.solver import backend
+
+    fake = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(
+            runtime=types.SimpleNamespace(getDeviceCount=lambda: 0)))
+    monkeypatch.setattr(backend, "_import_cupy", lambda: fake)
+    with pytest.raises(RuntimeError, match="CUDA device"):
+        backend.get_backend(True, required=True)
+
+
+def test_get_backend_required_with_gpu_off_returns_numpy():
+    """required=True is only about GPU-was-requested-but-unusable; with
+    use_gpu=False it must still return numpy and never raise."""
+    from hwave.solver import backend
+    xp, gpu_active = backend.get_backend(False, required=True)
+    assert xp is np and gpu_active is False
+
+
+def test_get_backend_non_strict_still_falls_back(monkeypatch, caplog):
+    """The default (required=False) must keep warning and falling back, so
+    existing gpu=true configs are unchanged."""
+    from hwave.solver import backend
+
+    def _no_cupy():
+        raise ImportError("No module named 'cupy'")
+
+    monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
+    logger = logging.getLogger("test_backend_nonstrict")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        xp, gpu_active = backend.get_backend(True, logger=logger, required=False)
+    assert xp is np and gpu_active is False
+    assert any("cupy" in rec.message.lower() and "fall" in rec.message.lower()
+               for rec in caplog.records)
+
+
 def test_get_backend_gpu_active_with_cupy():
     cupy = pytest.importorskip("cupy")
     try:

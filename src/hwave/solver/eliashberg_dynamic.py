@@ -32,6 +32,15 @@ def _gpu_requested(eli_param):
     return backend.as_bool(eli_param.get("gpu", False))
 
 
+def _gpu_required_requested(eli_param):
+    """Whether ``[eliashberg] gpu_required`` requests strict GPU mode: fail
+    fast (get_backend raises) instead of falling back to CPU when CuPy/CUDA is
+    unusable. Like ``_gpu_requested``, coerced via ``backend.as_bool`` so a
+    programmatic string "false"/"0" is not read as True. Default false.
+    """
+    return backend.as_bool(eli_param.get("gpu_required", False))
+
+
 def _ir_keep_static_requested(eli_param):
     """Whether ``[eliashberg] ir_keep_static_chi`` requests retaining the
     IR-compression static (frequency-independent) susceptibility component.
@@ -1111,7 +1120,8 @@ def solve_dynamic(input_dict):
     tol = eli_param.get("convergence_tol", 1.0e-5)
     init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     use_gpu = _gpu_requested(eli_param)
-    xp, gpu_active = backend.get_backend(use_gpu, logger=logger)
+    xp, gpu_active = backend.get_backend(
+        use_gpu, logger=logger, required=_gpu_required_requested(eli_param))
     matsubara_basis = str(
         eli_param.get("matsubara_basis", "uniform")).lower()
     if matsubara_basis not in ("uniform", "ir"):
