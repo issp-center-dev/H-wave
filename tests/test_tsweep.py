@@ -1,6 +1,8 @@
 import copy
+import json
 import logging
 import os
+import numpy as np
 import pytest
 import hwave.tsweep as ts
 
@@ -226,7 +228,7 @@ def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
         calls["flex"].append(copy.deepcopy(input_dict))
         out = input_dict["file"]["output"]["path_to_output"]
         os.makedirs(out, exist_ok=True)
-        open(os.path.join(out, "sigma.npz"), "wb").close()
+        np.savez(os.path.join(out, "sigma.npz"), sigma=np.ones((1,)))
         return {"scf_converged": True, "scf_iterations": 10}
 
     def fake_eli(input_dict):
@@ -236,7 +238,7 @@ def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
             raise RuntimeError("boom")
         out = input_dict["file"]["output"]["path_to_output"]
         os.makedirs(out, exist_ok=True)
-        open(os.path.join(out, "gap_dynamic.npz"), "wb").close()
+        np.savez(os.path.join(out, "gap_dynamic.npz"), gap=np.ones((1,)))
         with open(os.path.join(out, "eigenvalue.dat"), "w") as fw:
             fw.write("# index Re Im |ev| match\n0 0.5 0.0 0.5 1\n")
 
@@ -393,6 +395,19 @@ def test_resume_detects_missing_output(monkeypatch, tmp_path):
     assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.008, 0.006]
 
 
+@pytest.mark.parametrize("name", ["sigma.npz", "gap_dynamic.npz"])
+def test_resume_detects_corrupt_seed(monkeypatch, tmp_path, name):
+    """A present but unreadable seed forces its producing rung to rerun."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    with open(os.path.join(_rout(tmp_path, 1, 0.008), name), "wb") as fw:
+        fw.write(b"not an npz")
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.008, 0.006]
+
+
 def test_resume_config_mismatch_fails_fast(monkeypatch, tmp_path):
     _install_fake_solvers(monkeypatch, tmp_path)
     base = _cont_base(tmp_path, [0.01, 0.008])
@@ -435,6 +450,40 @@ def test_fresh_run_writes_manifest(monkeypatch, tmp_path):
     base = _cont_base(tmp_path, [0.01, 0.008])
     ts.run(base, base_dir=str(tmp_path))
     assert os.path.exists(os.path.join(tmp_path, "sweep", ts.MANIFEST_NAME))
+
+
+def test_fresh_run_invalidates_old_summary_before_new_manifest(monkeypatch,
+                                                               tmp_path):
+    """An interrupted fresh run cannot pair old rows with its new manifest."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+
+    original = ts.write_manifest
+
+    def interrupt_after_checkpoint_reset(*args, **kwargs):
+        original(*args, **kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ts, "write_manifest", interrupt_after_checkpoint_reset)
+    with pytest.raises(KeyboardInterrupt):
+        ts.run(base, base_dir=str(tmp_path))
+    assert ts.read_summary_rows(
+        os.path.join(tmp_path, "sweep", "lambda_vs_T.dat")) == []
+
+
+def test_resume_rejects_unknown_manifest_version(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+    manifest = os.path.join(tmp_path, "sweep", ts.MANIFEST_NAME)
+    with open(manifest) as f:
+        data = json.load(f)
+    data["version"] += 1
+    with open(manifest, "w") as f:
+        json.dump(data, f)
+    with pytest.raises(ValueError, match="version mismatch"):
+        ts.run(base, base_dir=str(tmp_path), resume=True)
 
 
 def test_summary_roundtrip_and_atomic(tmp_path):

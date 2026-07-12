@@ -11,6 +11,8 @@ import logging
 import math
 import os
 
+import numpy as np
+
 logger = logging.getLogger("qlms").getChild("tsweep")
 
 MANIFEST_NAME = "tsweep_manifest.json"
@@ -253,6 +255,11 @@ def _validate_resume(manifest, ladder, fingerprint):
             "resume requested but no %s was found in the output directory; "
             "cannot prove existing rungs belong to this sweep. Run without "
             "resume to start fresh." % MANIFEST_NAME)
+    if not isinstance(manifest, dict) or manifest.get("version") != _MANIFEST_VERSION:
+        raise ValueError(
+            "resume manifest version mismatch: expected version %d. Start "
+            "fresh in a new output_dir or regenerate the sweep." %
+            _MANIFEST_VERSION)
     m_ladder = [float(t) for t in manifest.get("ladder", [])]
     if len(m_ladder) != len(ladder) or any(
             abs(a - b) > 1e-12 * max(1.0, abs(b))
@@ -275,6 +282,18 @@ def _eig_parseable(rout, eig_name):
         parse_leading_eig(os.path.join(rout, eig_name))
         return True
     except (ValueError, OSError):
+        return False
+
+
+def _npz_parseable(path, key):
+    """Return whether an NPZ seed can be opened and contains readable data."""
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            value = data[key]
+            # Force NumPy/zipfile to read and CRC-check the payload instead of
+            # merely accepting a valid archive header.
+            return value.size > 0
+    except (OSError, ValueError, KeyError, EOFError):
         return False
 
 
@@ -392,6 +411,11 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
                            "run overwrites it rung-by-rung. Pass resume=true "
                            "(--resume) to continue the existing sweep instead.",
                            out_dir)
+        # Invalidate the old checkpoint before installing the new manifest.
+        # Otherwise a kill before the first completed rung could leave a
+        # new-config manifest beside old-config rows and outputs, which a later
+        # resume would incorrectly reuse.
+        write_summary(summary_path, rows)
         write_manifest(out_dir, ladder, fingerprint)
 
     for idx, T in enumerate(ladder):
@@ -452,15 +476,16 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
 
 def _seed_files_present(rout, warm_start, seed_gap_on, sigma_name, gap_name,
                         quiet=False):
-    if warm_start and not os.path.exists(os.path.join(rout, sigma_name)):
+    if warm_start and not _npz_parseable(os.path.join(rout, sigma_name),
+                                         "sigma"):
         if not quiet:
-            logger.warning("expected sigma %s missing in %s; next rung "
-                           "cold-starts", sigma_name, rout)
+            logger.warning("expected sigma %s missing or corrupt in %s; next "
+                           "rung cold-starts", sigma_name, rout)
         return False
-    if seed_gap_on and not os.path.exists(os.path.join(rout, gap_name)):
+    if seed_gap_on and not _npz_parseable(os.path.join(rout, gap_name), "gap"):
         if not quiet:
-            logger.warning("expected gap %s missing in %s; next rung "
-                           "cold-starts", gap_name, rout)
+            logger.warning("expected gap %s missing or corrupt in %s; next "
+                           "rung cold-starts", gap_name, rout)
         return False
     return True
 
