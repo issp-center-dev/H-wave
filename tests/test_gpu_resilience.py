@@ -231,15 +231,15 @@ def test_restore_host_attrs_converts_all_named_attrs(monkeypatch):
     assert o.green0_tail is None
 
 
-def test_restore_host_attrs_does_not_mask_original_error(monkeypatch, caplog):
-    """A failing device->host copy inside the finally cleanup must be swallowed
-    (logged), never raised -- so it cannot mask the solver's real exception."""
+def test_restore_host_attrs_swallows_during_unwinding(monkeypatch, caplog):
+    """While an exception is already propagating (the solver's finally), a
+    failing device->host copy must be swallowed+logged, never raised -- so it
+    cannot mask the solver's real exception."""
     from hwave.solver import backend
 
-    def _boom(_):
-        raise RuntimeError("device->host copy failed")
-
-    monkeypatch.setattr(backend, "to_host", _boom)
+    monkeypatch.setattr(
+        backend, "to_host",
+        lambda _: (_ for _ in ()).throw(RuntimeError("device->host failed")))
 
     class _Obj:
         pass
@@ -247,5 +247,27 @@ def test_restore_host_attrs_does_not_mask_original_error(monkeypatch, caplog):
     o = _Obj()
     o.H0_eigenvalue = object()                  # non-None -> restoration attempted
     with caplog.at_level(logging.WARNING, logger="qlms"):
-        backend.restore_host_attrs(o, ("H0_eigenvalue",))   # must NOT raise
+        try:
+            raise ValueError("original solver error")   # active exception
+        except ValueError:
+            backend.restore_host_attrs(o, ("H0_eigenvalue",))   # must NOT raise
     assert any("host-restore" in rec.message for rec in caplog.records)
+
+
+def test_restore_host_attrs_propagates_on_success_path(monkeypatch):
+    """With NO exception active (normal-success finally), a failing device->host
+    copy must PROPAGATE: silently returning success while an attribute stays
+    device-backed would break the wrapper's postcondition."""
+    from hwave.solver import backend
+
+    monkeypatch.setattr(
+        backend, "to_host",
+        lambda _: (_ for _ in ()).throw(RuntimeError("device->host failed")))
+
+    class _Obj:
+        pass
+
+    o = _Obj()
+    o.H0_eigenvalue = object()
+    with pytest.raises(RuntimeError, match="device->host failed"):
+        backend.restore_host_attrs(o, ("H0_eigenvalue",))

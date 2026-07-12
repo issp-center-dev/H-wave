@@ -11,6 +11,7 @@ when CuPy or a CUDA device is unavailable the run falls back to numpy with a
 warning -- the result is identical, only slower.
 """
 import logging
+import sys
 
 import numpy as np
 
@@ -89,7 +90,7 @@ def get_backend(use_gpu, logger=None, required=False):
             raise RuntimeError(
                 "gpu_required=true but no usable CUDA device was found "
                 "({}). Check the driver/runtime, or unset gpu_required to "
-                "allow the CPU fallback.".format(exc))
+                "allow the CPU fallback.".format(exc)) from exc
         if logger is not None:
             logger.warning(
                 "gpu=true requested but no usable CUDA device was found "
@@ -133,25 +134,35 @@ def restore_host_attrs(obj, names):
     ``finally`` cleanup so public state (H0 eigenpairs, stored Green functions)
     is NumPy-backed after both normal completion and a GPU-path exception.
 
-    Restoration is best-effort and exception-safe: because this runs inside a
-    ``finally``, a failing device->host copy (e.g. a dead CUDA context after
-    the original error) must NOT mask the original solver exception nor stop
-    the remaining attributes from being restored. Such a failure is logged and
-    the offending attribute is left as-is.
+    Behavior depends on whether an exception is already propagating (this runs
+    inside the solvers' ``finally``):
+
+    * During exception unwinding, a failing device->host copy (e.g. a dead CUDA
+      context after the original error) is logged and swallowed -- it must NOT
+      mask the original solver exception, and the remaining attributes are still
+      attempted.
+    * On the normal-success path there is no error to mask, so a restoration
+      failure is PROPAGATED: silently returning success while a public attribute
+      is left CuPy-backed would break the wrapper's postcondition and surface
+      later as a more confusing, less-local failure.
     """
+    unwinding = sys.exc_info()[0] is not None
     for name in names:
         try:
             val = getattr(obj, name, None)
             if val is None:
                 continue
             setattr(obj, name, to_host(val))
-        except Exception as exc:                 # noqa: BLE001 - never mask caller's error
-            # No traceback (exc_info): this runs in a finally, often after the
-            # real error is already being logged/raised; keep it a one-line note
-            # per attribute rather than flooding the log with stacks.
+        except Exception as exc:                 # noqa: BLE001
+            if not unwinding:
+                # normal-success path: make the broken postcondition visible.
+                raise
+            # No traceback (exc_info): the real error is already propagating;
+            # keep it a one-line note per attribute rather than flooding stacks.
             logging.getLogger("qlms").warning(
-                "restore_host_attrs: could not host-restore %r (%s); leaving "
-                "it backend-local.", name, exc)
+                "restore_host_attrs: could not host-restore %r (%s) while "
+                "handling an earlier error; leaving it backend-local.",
+                name, exc)
 
 
 def to_host(arr):

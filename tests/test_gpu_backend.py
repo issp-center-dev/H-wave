@@ -56,6 +56,14 @@ def test_get_backend_strict_raises_without_device(monkeypatch):
         backend.get_backend(True, required=True)
 
 
+def test_get_backend_required_with_gpu_off_returns_numpy():
+    """required=True is only about GPU-was-requested-but-unusable; with
+    use_gpu=False it must still return numpy and never raise."""
+    from hwave.solver import backend
+    xp, gpu_active = backend.get_backend(False, required=True)
+    assert xp is np and gpu_active is False
+
+
 def test_get_backend_non_strict_still_falls_back(monkeypatch, caplog):
     """The default (required=False) must keep warning and falling back, so
     existing gpu=true configs are unchanged."""
