@@ -41,6 +41,18 @@ def _gpu_required_requested(eli_param):
     return backend.as_bool(eli_param.get("gpu_required", False))
 
 
+def _ir_keep_static_requested(eli_param):
+    """Whether ``[eliashberg] ir_keep_static_chi`` requests retaining the
+    IR-compression static (frequency-independent) susceptibility component.
+
+    Like ``_gpu_requested``, delegates to ``backend.as_bool`` so a programmatic
+    dict config with a string ``"false"``/``"off"``/``"0"`` is not read as True
+    by plain ``bool("false")`` -- which would silently retain the static
+    component and change the numerical path. TOML booleans are unaffected.
+    """
+    return backend.as_bool(eli_param.get("ir_keep_static_chi", False))
+
+
 # ---------------------------------------------------------------------------
 # Channel-parity of the frequency-resolved gap
 #
@@ -1029,6 +1041,34 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
     return beta * out
 
 
+def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
+    """Load an eigenvector-continuation seed from ``[eliashberg]
+    seed_eigenvector`` (a ``gap_dynamic.npz`` written by a neighbouring run).
+
+    Returns a flat complex vector matching ``gap_shape`` (C-order, the space
+    the kernel operator acts on), or ``None`` when no seed is configured. The
+    seed must be on the same uniform Matsubara grid and CellShape as this run
+    (fail-fast otherwise); on the IR path the uniform-grid seed gap is refit
+    onto the IR fermionic nodes so it lands in the same eigenvector space.
+    """
+    path = eli_param.get("seed_eigenvector")
+    if not path:
+        return None
+    gap = np.asarray(np.load(path)["gap"])   # (norb,norb,Nx,Ny,Nz,Nmat)
+    if gap.shape[-1] != nmat:
+        raise ValueError(
+            "seed_eigenvector has Nmat={} but this run uses Nmat={}; "
+            "eigenvector continuation requires the same uniform Matsubara grid "
+            "and CellShape.".format(gap.shape[-1], nmat))
+    if use_ir:
+        gap = _ir_compress(gap, axF, nmat, "seed_gap", drop_constant=False)
+    if gap.shape != gap_shape:
+        raise ValueError(
+            "seed_eigenvector shape {} does not match this run's {}."
+            .format(gap.shape, gap_shape))
+    return np.ascontiguousarray(gap).astype(complex).ravel()
+
+
 def solve_dynamic(input_dict):
     """Solve the dynamic (frequency-resolved) Eliashberg equation.
 
@@ -1140,7 +1180,7 @@ def solve_dynamic(input_dict):
             # the uniform grid exists only as the OUTPUT grid here
             nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
         else:
-            keep_static = bool(eli_param.get("ir_keep_static_chi", False))
+            keep_static = _ir_keep_static_requested(eli_param)
             chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
                                   drop_constant=True,
                                   keep_constant=keep_static)
@@ -1171,6 +1211,15 @@ def solve_dynamic(input_dict):
 
     vec_size = norb * norb * Nk * nfreq_axis
     assert phi0.size == vec_size
+
+    # Optional eigenvector-continuation seed: a gap_dynamic.npz from a
+    # neighbouring run (e.g. the next temperature). Used as the ARPACK start
+    # vector AND to pick the eigenpair that overlaps it -- tracking one physical
+    # branch across an exceptional point of the non-Hermitian kernel, where the
+    # algebraically-largest eigenvalue can jump between a real and a complex
+    # branch. On the IR path the (uniform-grid) seed gap is refit onto the IR
+    # fermionic nodes so it lives in the same eigenvector space.
+    seed_vec = _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat)
 
     # GPU path: park the two large invariants (pair bubble and vertex) on the
     # device once; every matvec then only moves the gap vector across PCIe.
@@ -1279,7 +1328,10 @@ def solve_dynamic(input_dict):
                 "the power-iteration cross-check is skipped.")
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, eigenvalue_method,
-            num_eigenvalues=num_eigenvalues)
+            num_eigenvalues=num_eigenvalues,
+            sigma_shift=eli_param.get("sigma_shift"),
+            spectral_shift=eli_param.get("spectral_shift"),
+            seed_vec=seed_vec)
         eigenvalues_all = info.get("eigenvalues")
         vecs_all = info.get("eigenvectors")
         # Promote the eigenpair with the channel's combined (k, orbital,

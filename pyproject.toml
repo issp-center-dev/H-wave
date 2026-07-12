@@ -34,6 +34,7 @@ coverage = "^7.0.0"
 hwave = "hwave.qlms:main"
 hwave_dos = "hwave.dos:main"
 hwave_sc = "hwave.sc:main"
+hwave_tsweep = "hwave.tsweep:main"
 
 [tool.mypy]
 ignore_missing_imports = true

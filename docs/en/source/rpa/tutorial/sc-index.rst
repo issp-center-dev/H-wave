@@ -175,6 +175,26 @@ This section controls the Eliashberg solver. Key parameters:
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
+  :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
+  :math:`\sigma` are found first. Ignored (with a warning) for the plain
+  ``"arnoldi"`` method -- use ``spectral_shift`` there instead.
+- ``spectral_shift`` (``eigenvalue_method = "arnoldi"`` only): a positive number,
+  or ``"auto"``. The default ARPACK selection (``which='LM'``) returns the
+  eigenvalues of largest *magnitude*; far from a pairing instability, a small
+  positive (attractive) leading eigenvalue can be masked by much larger negative
+  (repulsive) eigenvalues, so the reported leading value comes out negative and
+  unphysical. Setting ``spectral_shift`` makes the solver request the eigenvalue
+  of largest *real* part (``which='LR'``; the physical SC eigenvalue,
+  :math:`\lambda \to 1` at :math:`T_c`) on the shifted operator
+  :math:`A + \sigma I`; the shift is subtracted internally, so the eigenvalues
+  you receive/save are the true unshifted ones. Use ``"auto"`` to set
+  :math:`\sigma` from the spectral radius automatically, or give an explicit
+  positive :math:`\sigma` larger than the *absolute value* of the most negative
+  eigenvalue (so :math:`A + \sigma I` has an all-positive-real spectrum).
+  Recommended whenever the leading eigenvalue comes out negative or you scan
+  weakly-pairing systems (low pressure, quasi-1D). Note this differs from
+  ``sigma_shift`` above (a shift-invert *target*, not a spectral shift).
 - ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
   kernel applications on a GPU via CuPy (default ``false``; see the
   :ref:`GPU section <sc_dynamic_gpu_en>` below).
@@ -602,6 +622,221 @@ back to the raw leading pair; increase ``num_eigenvalues`` or check
 "iteration"``) likewise projects every iterate onto the channel sector when the
 kernel commutes with parity (a centrosymmetric model); if it does not, the
 projection is disabled with a warning and the un-projected iteration is used.
+
+Eigenvector continuation (``seed_eigenvector``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The reported leading eigenpair is normally the algebraically largest one. For a
+frequency-dependent (non-Hermitian) kernel this can be fragile near an
+*exceptional point* — where two real eigenvalues collide and split into a
+complex-conjugate pair — so the "leading" branch may jump discontinuously
+between neighbouring temperatures even when the FLEX self-energy varies
+smoothly. To follow one physical branch, set ``[eliashberg] seed_eigenvector``
+to a ``gap_dynamic.npz`` written by a neighbouring run (e.g. the next-higher
+temperature): its gap is used as the ARPACK start vector **and** to select the
+eigenpair whose eigenvector maximally overlaps it, rather than the largest one.
+Stepping temperature down and feeding each run the previous ``gap_dynamic.npz``
+tracks the same gap symmetry (e.g. the d-wave mode) continuously. The seed must
+share the run's ``CellShape`` and ``Nmat`` (a mismatch is a fail-fast error), so
+keep ``Nmat`` fixed across a continuation sweep; on the IR path the seed gap is
+refit onto the IR nodes automatically. ``[eliashberg] sigma_shift`` sets an
+explicit shift-invert target (otherwise estimated from a preliminary Arnoldi);
+combining ``sigma_shift`` near the branch with ``seed_eigenvector`` is the most
+robust way to resolve a masked or complexifying eigenvalue.
+
+Temperature continuation (``hwave_tsweep``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Chaining ``sigma_init`` and ``seed_eigenvector`` by hand across a temperature
+sweep, as described above, means re-running ``hwave``/``hwave_sc`` once per
+temperature and wiring each step's output into the next step's input. The
+``hwave_tsweep`` command (installed alongside ``hwave`` and ``hwave_sc``)
+automates this: given one base TOML -- the same
+``[mode]``/``[mode.param]``/``[file]``/``[eliashberg]`` configuration used
+for a single FLEX+Eliashberg run -- plus a ``[continuation]`` section, it
+runs FLEX (and, unless disabled, the Eliashberg solver) across a descending
+ladder of temperatures. At each rung it feeds the previous rung's converged
+self-energy into this rung's FLEX via ``sigma_init`` (warm start) and the
+previous rung's dynamic gap into this rung's Eliashberg solve via
+``seed_eigenvector`` (eigenvector continuation) -- automating the whole
+warm-start chain so a single physical branch is tracked smoothly down to low
+temperature instead of being cold-started, and potentially landing on a
+different metastable solution, at every point.
+
+Only ``mode.param.T`` is varied between rungs; ``CellShape``, ``Nmat``, and
+every other shape-determining field are held fixed across the ladder, which
+is what keeps each rung's ``sigma_init``/``seed_eigenvector`` files
+shape-compatible with the next rung.
+
+The ``[continuation]`` section
+""""""""""""""""""""""""""""""
+
+.. code-block:: toml
+
+    [continuation]
+      temperatures   = [0.02, 0.015, 0.01, 0.008, 0.006]  # explicit ladder
+      # or, if `temperatures` is absent, a generated ladder:
+      #   T_start = 0.02
+      #   T_stop  = 0.006
+      #   num     = 5
+      #   spacing = "linear"          # "linear" (default) or "log"
+      output_dir     = "tsweep"       # default
+      run_eliashberg = true           # default
+      warm_start     = true           # default
+      seed_gap       = true           # default
+      resume         = false          # default; or pass --resume
+      summary_file   = "lambda_vs_T.dat"  # default
+
+- ``temperatures``: an explicit list of temperatures, run in the order given.
+  If present it takes precedence over ``T_start``/``T_stop``/``num``.
+- ``T_start`` / ``T_stop`` / ``num`` / ``spacing``: used to generate the
+  ladder when ``temperatures`` is absent -- ``num`` points between
+  ``T_start`` and ``T_stop``, with ``spacing`` ``"linear"`` (default) or
+  ``"log"``. Supplying neither ``temperatures`` nor the ``T_start``/``T_stop``/``num``
+  triple is a pre-flight error.
+- ``output_dir`` (default ``"tsweep"``): the parent directory for the sweep.
+  Rung ``idx`` at temperature ``T`` writes to
+  ``<output_dir>/<idx>_T<T>/output/`` (``idx`` zero-padded to 3 digits, ``T``
+  ``%g``-formatted).
+- ``run_eliashberg`` (default ``true``): also run the Eliashberg solver at
+  each rung. This requires the base TOML to already have an ``[eliashberg]``
+  section -- pre-flight raises an error otherwise, naming the missing
+  section. Set to ``false`` to run a FLEX-only sweep that chains only
+  ``sigma_init``.
+- ``warm_start`` (default ``true``): chain each rung's converged self-energy
+  into the next rung's ``sigma_init``.
+- ``seed_gap`` (default ``true``): chain each rung's gap into the next
+  rung's ``seed_eigenvector``. This is only active for the dynamic
+  Eliashberg solver (``[eliashberg] frequency = "dynamic"``); for a static
+  ladder it has no effect, since ``seed_eigenvector`` itself is dynamic-only.
+- ``summary_file`` (default ``"lambda_vs_T.dat"``): filename of the summary
+  table written to ``<output_dir>/<summary_file>``.
+
+Running the sweep
+""""""""""""""""""""""""""""""
+
+.. code-block:: bash
+
+    $ hwave_tsweep input.toml
+
+Three flags control the run:
+
+- ``--dry-run``: resolve and print the temperature ladder, each rung's
+  output directory, and the ``sigma_init``/``seed_eigenvector`` paths that
+  would be wired up -- without invoking either solver. Use this to validate
+  a ``[continuation]`` config before committing to a long sweep.
+- ``--keep-going``: by default a rung whose solver raises an error stops the
+  sweep (a broken rung would otherwise poison every downstream seed, and the
+  partial summary is still written); with ``--keep-going`` the next rung is
+  instead cold-started, and if it succeeds it becomes the seed for
+  subsequent rungs again. This is *error continuation within one process*,
+  not a restart after the process itself was interrupted.
+- ``--resume`` (or ``[continuation] resume = true``): *job-level restart*.
+  When a sweep is rerun with resume, ``hwave_tsweep`` skips the longest
+  contiguous prefix of already-completed, seedable rungs and restarts at the
+  first incomplete one -- seeded from the last valid rung's ``sigma`` and
+  dynamic gap, exactly as if the sweep had never stopped. Use it after a
+  wall-clock/scheduler kill, a crash, or a manual interrupt.
+
+  A rung counts as completed only when its recorded summary row is non-error
+  **and** its on-disk outputs are actually present and parseable (a
+  half-written or corrupt ``eigenvalue.dat`` is detected and that rung, plus
+  every rung after it, is recomputed). Resume is guarded by a small manifest
+  (``tsweep_manifest.json``, written on the first run) recording the resolved
+  ladder and a fingerprint of the shape/physics configuration
+  (``CellShape``/``SubShape``/``Nmat``/``filling``/``Ncond``/interaction
+  files/``[eliashberg]`` frequency/pairing). Resuming against a different
+  ladder or configuration **fails fast** rather than mixing incompatible
+  results. The summary and manifest are written atomically after every rung,
+  so an interruption can never leave a truncated checkpoint. Without
+  ``--resume`` a rerun starts fresh and overwrites the existing sweep
+  rung-by-rung (a warning is logged when it detects an existing sweep).
+
+The three are distinct: **warm start** (``warm_start``/``seed_gap``) chains
+one rung's result into the *next* rung's seed within a single run;
+**--keep-going** decides what happens *after a rung errors* within one run;
+**--resume** decides what happens when a *whole run* is restarted.
+
+Summary file
+""""""""""""""""""""""""""""""
+
+Each run writes ``<output_dir>/<summary_file>`` (default
+``tsweep/lambda_vs_T.dat``), one row per rung:
+
+.. code-block:: text
+
+    # idx  T  status  error_stage  Re_lambda  Im_lambda  parity_match  flex_converged  flex_iter
+    0 0.02   ok    none 0.845000 0.000000 1 1 18
+    1 0.015  ok    none 0.902000 0.000000 1 1 22
+    2 0.01   error flex nan      nan      -1 0 -1
+    ...
+
+``status`` is one of:
+
+- ``ok`` -- FLEX converged and, if ``run_eliashberg``, the leading eigenpair
+  was parsed from this rung's ``eigenvalue.dat``.
+- ``not_converged`` -- FLEX ran to ``IterationMax`` without meeting ``EPS``,
+  but still wrote a usable self-energy (and gap, if Eliashberg ran); such a
+  rung is still eligible to seed the next one.
+- ``error`` -- a solver raised, or (with ``run_eliashberg``) ``eigenvalue.dat``
+  was missing or unparseable; ``error_stage`` then records which solver
+  failed (``flex`` or ``eliashberg``).
+- ``dry`` -- a row produced by ``--dry-run``; no solver was invoked.
+
+Missing floats (``Re_lambda``/``Im_lambda`` when Eliashberg did not run or
+failed) print as ``nan``; missing integer fields (``parity_match``,
+``flex_converged``, ``flex_iter``) print as ``-1``. ``error_stage`` is
+``none`` unless ``status = error``.
+
+Example
+""""""""""""""""""""""""""""""
+
+.. code-block:: toml
+
+    [mode]
+      mode = "FLEX"
+
+    [mode.param]
+      T         = 0.02
+      CellShape = [32, 32, 1]
+      Nmat      = 512
+      filling   = 0.75
+
+    [file]
+    [file.input]
+      path_to_input = "."
+
+    [file.input.interaction]
+      path_to_input = "."
+      Geometry      = "geom.dat"
+      Transfer      = "transfer.dat"
+      CoulombIntra  = "coulombintra.dat"
+      CoulombInter  = "coulombinter.dat"
+
+    [file.output]
+      path_to_output = "output"
+
+    [eliashberg]
+      frequency     = "dynamic"
+      chi0q_mode    = "flex"
+      pairing_type  = "singlet"
+      solver_mode   = "eigenvalue"   # required by hwave_tsweep pre-flight
+
+    [continuation]
+      T_start        = 0.02
+      T_stop         = 0.005
+      num            = 6
+      spacing        = "log"
+      run_eliashberg = true
+      warm_start     = true
+      seed_gap       = true
+
+This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
+log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
+``sigma_init`` and ``seed_eigenvector``, and writing
+``tsweep/lambda_vs_T.dat`` -- a :math:`\lambda(T)` table from which
+:math:`T_c` can be estimated as the point where the leading physical
+eigenvalue crosses 1.
 
 Memory note
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
