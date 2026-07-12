@@ -530,6 +530,43 @@ def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
     assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
 
 
+def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
+    """[eliashberg] spectral_shift must plumb through solve_dynamic into
+    sc._solve_leading (the arnoldi eigenvalue path)."""
+    import os
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+
+    captured = {}
+    real_solve = sc._solve_leading
+
+    def spy(*args, **kwargs):
+        captured["spectral_shift"] = kwargs.get("spectral_shift")
+        return real_solve(*args, **kwargs)
+    monkeypatch.setattr(sc, "_solve_leading", spy)
+
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "solver_mode": "eigenvalue", "eigenvalue_method": "arnoldi",
+                       "num_eigenvalues": 4, "spectral_shift": "auto"},
+    }
+    ed.solve_dynamic(inp)
+    assert captured.get("spectral_shift") == "auto"
+
+
 def test_kernel_cupy_matches_numpy():
     """The dynamic kernel applied to cupy arrays (GPU) must reproduce the
     numpy result to fp64 round-off, and stay on the device."""
@@ -1301,3 +1338,80 @@ class TestIrKeepStaticChiBoolParsing:
     def test_default_is_false(self):
         from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
         assert _ir_keep_static_requested({}) is False
+
+
+# ---------------------------------------------------------------------------
+# Eigenvector-continuation seed (v0) — track one physical branch across an
+# exceptional point of the non-Hermitian kernel, where the algebraically
+# largest eigenvalue can jump between a real and a complex branch.
+# ---------------------------------------------------------------------------
+
+def test_order_by_seed_overlap_picks_overlapping_branch():
+    import hwave.sc as sc
+    vecs = np.eye(4, dtype=complex)[:, :3]        # e0, e1, e2
+    vals = np.array([2.0 + 0j, 0.5 + 0j, 1.0 + 0j])   # largest-real is e0 (2.0)
+    seed = vecs[:, 1].copy()                       # overlaps e1 (eigenvalue 0.5)
+    v, w = sc._order_by_seed_overlap(vals, vecs, seed)
+    assert np.isclose(v[0], 0.5)                    # picks the seeded branch, not 2.0
+    assert np.allclose(w[:, 0], vecs[:, 1])
+    # a zero seed falls back to real-part ordering
+    v2, _ = sc._order_by_seed_overlap(vals, vecs, np.zeros(4, dtype=complex))
+    assert np.isclose(v2[0], 2.0)
+
+
+def _dyn_input(tmp_path, extra_eli):
+    import os
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    eli = {"chi0q_mode": "flex", "frequency": "dynamic",
+           "pairing_type": "singlet", "solver_mode": "eigenvalue",
+           "num_eigenvalues": 6}
+    eli.update(extra_eli)
+    return {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": eli}, output_dir
+
+
+def test_solve_dynamic_seed_selects_overlapping_eigenpair(tmp_path):
+    """Seeding with a saved gap makes the run report the eigenpair that
+    overlaps the seed. Seeding from its own leading gap is self-consistent
+    (returns the same lambda); seeding from a sub-leading eigenvector selects
+    that branch instead of the algebraically-largest one."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    inp, out = _dyn_input(tmp_path, {})
+    lam0 = ed.solve_dynamic(inp)
+    gap_path = os.path.join(out, "gap_dynamic.npz")
+    assert os.path.exists(gap_path)
+
+    # self-seed: same leading branch -> same lambda
+    inp2, out2 = _dyn_input(tmp_path / "b", {"seed_eigenvector": gap_path})
+    lam_self = ed.solve_dynamic(inp2)
+    assert np.isclose(lam_self, lam0, rtol=1e-6)
+
+    # the run consumed the seed and its written gap overlaps it strongly
+    g = np.load(os.path.join(out2, "gap_dynamic.npz"))["gap"].ravel()
+    s = np.load(gap_path)["gap"].ravel()
+    ov = abs(np.vdot(s / np.linalg.norm(s), g / np.linalg.norm(g)))
+    assert ov > 0.99
+
+
+def test_seed_gap_nmat_mismatch_raises(tmp_path):
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    # a seed gap with a different Nmat than the run
+    bad = str(tmp_path / "bad_seed.npz")
+    np.savez(bad, gap=np.zeros((1, 1, 2, 2, 1, 6), dtype=complex))  # Nmat=6
+    inp, _ = _dyn_input(tmp_path, {"seed_eigenvector": bad})        # run Nmat=8
+    with pytest.raises(ValueError, match="Nmat"):
+        ed.solve_dynamic(inp)
