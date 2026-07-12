@@ -1265,8 +1265,12 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     # output -> default to "kuroki". (A pre-tag general output could only exist
     # as a transient artifact of an unreleased dev build; the s/c-agreement
     # check below still guards against accidentally mixing conventions.)
+    # This default is legacy-only: an IR-native file missing the tag is
+    # rejected below instead of silently defaulting (an IR-native norb=2 MYO
+    # file would otherwise be mis-read as spin-orbital "kuroki").
+    chi_convention_present_s = "chi_convention" in data_s
     chi_convention = (str(data_s["chi_convention"])
-                      if "chi_convention" in data_s else "kuroki")
+                      if chi_convention_present_s else "kuroki")
 
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
@@ -1275,8 +1279,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
     # The spin and charge files must share one convention; combining e.g. an MYO
     # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
+    chi_convention_present_c = "chi_convention" in data_c
     chi_convention_c = (str(data_c["chi_convention"])
-                        if "chi_convention" in data_c else "kuroki")
+                        if chi_convention_present_c else "kuroki")
     if chi_convention_c != chi_convention:
         raise ValueError(
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
@@ -1293,6 +1298,13 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "(chiq_s: {}, chiq_c: {}).".format(
                 "IR-native" if native_s else "densified",
                 "IR-native" if native_c else "densified"))
+    if native_s and not (chi_convention_present_s and chi_convention_present_c):
+        raise ValueError(
+            "FLEX chi_s/chi_c are IR-native but missing 'chi_convention'; "
+            "the file appears to be an MYO/IR-native FLEX output and its "
+            "orbital layout (spin-orbital 'kuroki' vs orbital-pair 'myo') "
+            "cannot be safely defaulted -- re-run FLEX with a build that "
+            "tags chi_convention, or re-tag the npz explicitly.")
     ir_meta = ({"chis": ir_native_meta(data_s),
                 "chic": ir_native_meta(data_c)} if native_s else None)
     return chi_s_raw, chi_c_raw, chi_convention, ir_meta

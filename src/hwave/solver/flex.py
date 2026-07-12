@@ -866,6 +866,9 @@ class FLEX(RPA):
 
     @do_profile
     def _calc_chi0q_general_ir(self, green_kw, beta):
+        # General (full-vertex/MYO) counterpart of `_calc_chi0q_ir`; called
+        # only on the general path (mirrors that method's `enable_reduced`
+        # guard, which is why this one has no analogous check).
         r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
         (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
         coefficients on the bosonic tau nodes; tau flip-only reversal, spatial

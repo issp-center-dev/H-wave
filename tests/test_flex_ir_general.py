@@ -291,21 +291,35 @@ def test_dynamic_consumes_general_ir_densified(tmp_path):
 
 def test_dynamic_consumes_general_ir_native(tmp_path):
     """End-to-end with IR-native output (write_densified=false): the dynamic
-    solver (matsubara_basis='ir') consumes MYO sparse-node susceptibilities."""
+    solver (matsubara_basis='ir') consumes MYO sparse-node susceptibilities,
+    and the resulting lambda matches a general+uniform run within tolerance
+    (guards against a finite-but-wrong-parity result on the IR-native
+    sparse-node path -- measured lam_ir=~lam_u to well within 5e-2)."""
     T = 2.0
-    out = str(tmp_path / "gen_ir_native")
-    os.makedirs(out, exist_ok=True)
+    out_ir_native = str(tmp_path / "gen_ir_native")
+    out_u = str(tmp_path / "gen_u")
+    os.makedirs(out_ir_native, exist_ok=True)
+    os.makedirs(out_u, exist_ok=True)
     s, gi = _make_general_solver(256, "ir", T=T, iteration_max=40)
     s.write_densified = False
-    s.solve(gi, out)
-    s.save_results(_outdict(out), gi)
-    lam = _run_dynamic_lambda(out, T, matsubara_basis="ir")
+    s.solve(gi, out_ir_native)
+    s.save_results(_outdict(out_ir_native), gi)
+    s_u, gi_u = _make_general_solver(256, "uniform", T=T, iteration_max=40)
+    s_u.solve(gi_u, out_u)
+    s_u.save_results(_outdict(out_u), gi_u)
+    lam = _run_dynamic_lambda(out_ir_native, T, matsubara_basis="ir")
+    lam_u = _run_dynamic_lambda(out_u, T)
     assert np.isfinite(lam)
+    assert abs(lam - lam_u) / abs(lam_u) < 5e-2, \
+        "lam_ir_native={} lam_u={}".format(lam, lam_u)
 
 
 def test_dynamic_rejects_ir_native_missing_convention(tmp_path):
-    """An IR-native chi npz missing chi_convention must be rejected, not
-    silently read as the default (kuroki) convention."""
+    """An IR-native chi npz pair (chiq_s AND chiq_c) missing chi_convention
+    must be rejected via the missing-convention fail-fast path, not silently
+    read as the default (kuroki) convention. (Stripping only one of the two
+    files would instead trip the s/c convention-mismatch guard, which
+    doesn't exercise the missing-convention check on its own.)"""
     import glob
     out = str(tmp_path / "bad")
     os.makedirs(out, exist_ok=True)
@@ -313,11 +327,12 @@ def test_dynamic_rejects_ir_native_missing_convention(tmp_path):
     s.write_densified = False
     s.solve(gi, out)
     s.save_results(_outdict(out), gi)
-    # strip chi_convention from chiq_s.npz
-    path = glob.glob(os.path.join(out, "chiq_s*.npz"))[0]
-    d = dict(np.load(path, allow_pickle=True))
-    d.pop("chi_convention", None)
-    np.savez(path, **d)
+    # strip chi_convention from both chiq_s.npz and chiq_c.npz
+    for pattern in ("chiq_s*.npz", "chiq_c*.npz"):
+        path = glob.glob(os.path.join(out, pattern))[0]
+        d = dict(np.load(path, allow_pickle=True))
+        d.pop("chi_convention", None)
+        np.savez(path, **d)
     with pytest.raises((ValueError, KeyError)):
         _run_dynamic_lambda(out, 2.0, matsubara_basis="ir")
 
