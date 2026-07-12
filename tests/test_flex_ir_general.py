@@ -320,3 +320,64 @@ def test_dynamic_rejects_ir_native_missing_convention(tmp_path):
     np.savez(path, **d)
     with pytest.raises((ValueError, KeyError)):
         _run_dynamic_lambda(out, 2.0, matsubara_basis="ir")
+
+
+# ---------------------------------------------------------------------------
+# Task 5: CPU/GPU parity, dtype, and static-solver graceful handling
+# ---------------------------------------------------------------------------
+
+def _has_cupy_device():
+    try:
+        import cupy
+        cupy.zeros(1)
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _has_cupy_device(), reason="no CuPy device")
+def test_general_ir_gpu_matches_cpu():
+    """general+IR SCF on GPU reproduces the CPU run (host outputs)."""
+    T = 2.0
+    s_c, gi_c = _make_general_solver(256, "ir", T=T, iteration_max=10)
+    s_c.solve(gi_c, 'tests/flex/output')
+    s_g, gi_g = _make_general_solver(256, "ir", T=T, iteration_max=10)
+    s_g.use_gpu = True
+    s_g.solve(gi_g, 'tests/flex/output')
+    for key in ("sigma", "chi_s", "chi_c"):
+        a, b = getattr(s_c, key), getattr(s_g, key)
+        assert isinstance(b, np.ndarray)               # host-backed
+        np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-8)
+
+
+def test_general_ir_chi0_dtype_is_complex128():
+    T = 2.0
+    beta = 1.0 / T
+    s, gi = _make_general_solver(64, "ir", T=T)
+    s._calc_epsilon_k(gi)
+    s._ir_setup(beta)
+    g_nodes, _ = s._calc_green_ir(beta, 0.0)
+    chi0 = s._calc_chi0q_general_ir(g_nodes, beta)
+    assert chi0.dtype == np.complex128
+
+
+def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
+    """§6.9: the static Eliashberg solver (hwave_sc, [eliashberg] frequency
+    left at its "static" default) already fails fast on IR-native chi0q
+    files via sc._reject_ir_native/is_ir_native, which inspects only the
+    npz's frequency_grid tag and is agnostic to calc_scheme. This asserts
+    that existing guard also covers calc_scheme='general' (previously only
+    exercised for calc_scheme='reduced' in test_ir_native_readers.py) --
+    the static path does not otherwise know about matsubara_basis and never
+    silently misreads sparse IR nodes as a uniform grid."""
+    import hwave.sc as sc
+    out = str(tmp_path)
+    s, gi = _make_general_solver(64, "ir", T=2.0, iteration_max=1)
+    s.write_densified = False
+    s.solve(gi, out)
+    s.save_results(_outdict(out), gi)
+    input_dict = {"file": {"output": {"path_to_output": out,
+                                      "chi0q": "chi0q"}},
+                  "mode": {}}
+    with pytest.raises(ValueError, match="write_densified"):
+        sc._load_chi0q(input_dict)
