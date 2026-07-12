@@ -89,6 +89,23 @@ def test_preflight_requires_eigenvalue_solver_mode():
     ts.preflight(base, {"run_eliashberg": False})
 
 
+def test_documented_example_passes_preflight():
+    # Mirror the complete [eliashberg]/[continuation] example in
+    # docs/{en,ja}/source/rpa/tutorial/sc-index.rst so a copy-paste of the
+    # tutorial does not fail hwave_tsweep preflight (issue #61).
+    base = {
+        "mode": {"param": {"T": 0.02, "CellShape": [32, 32, 1],
+                           "Nmat": 512, "filling": 0.75}},
+        "file": {"input": {}, "output": {"path_to_output": "output"}},
+        "eliashberg": {"frequency": "dynamic", "chi0q_mode": "flex",
+                       "pairing_type": "singlet",
+                       "solver_mode": "eigenvalue"},
+    }
+    cont = {"T_start": 0.02, "T_stop": 0.005, "num": 6, "spacing": "log",
+            "run_eliashberg": True, "warm_start": True, "seed_gap": True}
+    ts.preflight(base, cont)
+
+
 @pytest.mark.parametrize("drop", ["CellShape", "Nmat"])
 def test_preflight_missing_shape_field(drop):
     base = _valid_base()
