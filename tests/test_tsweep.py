@@ -495,7 +495,9 @@ def test_summary_roundtrip_and_atomic(tmp_path):
          "re": 0.41, "im": 0.0, "match": 1, "flex_converged": 0, "flex_iter": 50},
     ]
     ts.write_summary(p, rows)
-    assert not os.path.exists(p + ".tmp")                    # atomic: no temp left
+    # atomic: no staging file (`.tmp.<pid>`) left behind after a clean write
+    import glob
+    assert glob.glob(p + ".tmp*") == []
     back = ts.read_summary_rows(p)
     assert [r["idx"] for r in back] == [0, 1]
     assert back[0]["status"] == "ok" and back[1]["status"] == "not_converged"
@@ -516,6 +518,38 @@ def test_fingerprint_ignores_temperature_but_tracks_shape():
 
 # --- review follow-ups: fingerprint completeness, final-rung validation,
 #     NaN ladder, strict summary parsing (Codex Phase-1 on #64) --------------
+
+def test_atomic_write_failed_replace_preserves_old(tmp_path, monkeypatch):
+    """If os.replace fails mid-update, the previous checkpoint must survive
+    intact and no staging file should be observable to a reader."""
+    import glob
+    p = str(tmp_path / "s.dat")
+    with open(p, "w") as fw:
+        fw.write("OLD")
+    monkeypatch.setattr(ts.os, "replace",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        ts._atomic_write_text(p, "NEW")
+    assert open(p).read() == "OLD"                          # old content intact
+    # (the leaked .tmp.<pid> is the caller's to clean up; the target is safe)
+
+
+@pytest.mark.parametrize("key,val", [("Coulomb", "coulomb.dat"),
+                                     ("Extern", "extern.dat")])
+def test_config_fingerprint_tracks_all_supported_interaction_files(
+        tmp_path, key, val):
+    """`Coulomb` (combined) and `Extern` are accepted by the k-space reader and
+    must be part of the fingerprint (filename + content)."""
+    (tmp_path / val).write_text("1 0 0\n")
+    base = {"mode": {"mode": "FLEX",
+                     "param": {"CellShape": [2, 2, 1], "Nmat": 16, "filling": 0.5}},
+            "file": {"input": {"interaction": {"path_to_input": ".", key: val}}},
+            "eliashberg": {"frequency": "dynamic", "solver_mode": "eigenvalue"}}
+    fp1 = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    (tmp_path / val).write_text("2 0 0\n")                  # in-place edit
+    assert ts.config_fingerprint(base, run_eli=True,
+                                 base_dir=str(tmp_path)) != fp1
+
 
 def test_config_fingerprint_tracks_interaction_content(tmp_path):
     """Editing an interaction file in place (same filename) must change the

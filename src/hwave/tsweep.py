@@ -219,9 +219,12 @@ def read_summary_rows(path):
     return rows
 
 
-_INTERACTION_KEYS = ("Geometry", "Transfer", "CoulombIntra", "CoulombInter",
-                     "Hund", "Exchange", "Ising", "PairLift", "PairHop",
-                     "Interall", "Initial")
+# Every interaction input the k-space reader accepts (QLMSkInput.valid_namelist:
+# the combined ``Coulomb`` and the external field ``Extern`` are easy to miss).
+# Changing any of their filenames OR contents must invalidate a resume.
+_INTERACTION_KEYS = ("Geometry", "Transfer", "Coulomb", "CoulombIntra",
+                     "CoulombInter", "Hund", "Exchange", "Ising", "PairLift",
+                     "PairHop", "Extern", "Interall", "Initial")
 
 # Eliashberg keys that vary per rung or are purely operational (output paths,
 # the continuation seed) and therefore must NOT enter the physics fingerprint.
