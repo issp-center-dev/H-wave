@@ -740,6 +740,7 @@ Eliashberg ソルバー）を実行します。各段では、直前の段の収
       frequency     = "dynamic"
       chi0q_mode    = "flex"
       pairing_type  = "singlet"
+      solver_mode   = "eigenvalue"   # hwave_tsweep の pre-flight で必須
 
     [continuation]
       T_start        = 0.02

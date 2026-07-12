@@ -768,6 +768,7 @@ Example
       frequency     = "dynamic"
       chi0q_mode    = "flex"
       pairing_type  = "singlet"
+      solver_mode   = "eigenvalue"   # required by hwave_tsweep preflight
 
     [continuation]
       T_start        = 0.02

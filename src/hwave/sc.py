@@ -2293,7 +2293,13 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         for j in range(vec_size):
             dense[:, j] = A.matvec(basis[:, j])
         vals, vecs = np.linalg.eig(dense)
-        vals, vecs = _order_eigenpairs(vals, vecs)
+        # Match the ARPACK path below: with a seed eigenvector, track the branch
+        # that overlaps it (eigenvector continuation); otherwise order by
+        # largest real part (the physical SC eigenvalue), not magnitude.
+        if seed_vec is not None:
+            vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
+        else:
+            vals, vecs = _order_eigenpairs(vals, vecs)
         n_keep = min(max(1, num_eigenvalues), vec_size)
         vals = vals[:n_keep]
         vecs = vecs[:, :n_keep]
