@@ -154,13 +154,25 @@ def _atomic_write_text(path, text):
     manifest must never be observable (a killed process leaves either the old
     file or the fully new one, never a truncated checkpoint). os.replace is
     atomic within a filesystem, and the temp file is co-located with the
-    target so it always is."""
-    tmp = path + ".tmp"
+    target so it always is. The temp name carries the pid so two processes
+    writing the same directory cannot clobber each other's staging file, and
+    the parent directory is fsynced after the rename so the rename itself is
+    durable across a machine/filesystem crash (not just a process kill)."""
+    directory = os.path.dirname(path) or "."
+    tmp = "%s.tmp.%d" % (path, os.getpid())
     with open(tmp, "w") as fw:
         fw.write(text)
         fw.flush()
         os.fsync(fw.fileno())
     os.replace(tmp, path)
+    try:
+        dfd = os.open(directory, os.O_DIRECTORY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except (OSError, AttributeError):
+        pass                                    # best-effort (e.g. non-POSIX)
 
 
 def write_summary(path, rows):
@@ -175,51 +187,97 @@ def write_summary(path, rows):
 
 def read_summary_rows(path):
     """Parse a summary file back into row dicts (inverse of write_summary).
-    Malformed/short lines are skipped so a stray edit cannot crash a resume."""
+
+    Returns only the clean, contiguous prefix starting at idx 0: the FIRST
+    malformed/short line, or a row whose index is not the next expected one
+    (a duplicate or out-of-order index), TRUNCATES the result. A damaged
+    checkpoint must shorten the reusable prefix, never be silently patched over
+    with last-row-wins semantics that could resurrect a stale/incompatible
+    rung."""
     rows = []
     if not os.path.exists(path):
         return rows
+    expected = 0
     for line in open(path):
         s = line.strip()
         if not s or s.startswith("#"):
             continue
         c = s.split()
         if len(c) < 9:
-            continue
+            break
         try:
-            rows.append(dict(
+            row = dict(
                 idx=int(c[0]), T=float(c[1]), status=c[2], error_stage=c[3],
                 re=float(c[4]), im=float(c[5]), match=int(c[6]),
-                flex_converged=int(c[7]), flex_iter=int(c[8])))
+                flex_converged=int(c[7]), flex_iter=int(c[8]))
         except ValueError:
-            continue
+            break
+        if row["idx"] != expected:              # duplicate / out-of-order
+            break
+        rows.append(row)
+        expected += 1
     return rows
 
 
-def config_fingerprint(base, run_eli):
+_INTERACTION_KEYS = ("Geometry", "Transfer", "CoulombIntra", "CoulombInter",
+                     "Hund", "Exchange", "Ising", "PairLift", "PairHop",
+                     "Interall", "Initial")
+
+# Eliashberg keys that vary per rung or are purely operational (output paths,
+# the continuation seed) and therefore must NOT enter the physics fingerprint.
+_ELI_OPERATIONAL_KEYS = ("seed_eigenvector", "output_eigenvalue", "output_gap",
+                         "path_to_flex_output")
+
+
+def _file_digest(path):
+    """SHA-256 of a file's bytes, or a stable sentinel if it cannot be read.
+    Used so editing an interaction file in place invalidates a resume."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return "unreadable:" + os.path.basename(str(path))
+
+
+def config_fingerprint(base, run_eli, base_dir="."):
     """A stable hash of the shape/physics-relevant configuration (everything
     that must NOT change between the original sweep and a resume, except the
     per-rung temperature). File existence alone does not prove a rung is
-    reusable -- a resume against a differently-shaped config must fail fast
-    rather than mix incompatible results."""
-    param = base.get("mode", {}).get("param", {})
-    eli = base.get("eliashberg", {})
-    inter = base.get("file", {}).get("input", {}).get("interaction", {})
+    reusable -- a resume against a differently-shaped/parameterised config must
+    fail fast rather than mix incompatible results.
+
+    The fingerprint covers the FULL ``[mode.param]`` (minus the per-rung ``T``),
+    the FULL ``[eliashberg]`` block (minus per-rung/operational keys), the
+    continuation seeding flags, the interaction file *names*, and -- crucially
+    -- a content digest of each interaction file, so an in-place edit of a
+    Geometry/Transfer/Coulomb/... file also invalidates the resume."""
+    param = dict(base.get("mode", {}).get("param", {}))
+    param.pop("T", None)                       # per-rung; excluded
+    eli = {k: v for k, v in base.get("eliashberg", {}).items()
+           if k not in _ELI_OPERATIONAL_KEYS}
+    cont = base.get("continuation", {})
+    fin = base.get("file", {}).get("input", {})
+    inter = fin.get("interaction", {})
+    ipath = _abspath(base_dir,
+                     inter.get("path_to_input", fin.get("path_to_input", ".")))
+    digests = {}
+    for key in _INTERACTION_KEYS:
+        fn = inter.get(key)
+        if fn:
+            digests[key] = _file_digest(_abspath(ipath, fn))
     src = {
         "mode": base.get("mode", {}).get("mode"),
-        "CellShape": param.get("CellShape"),
-        "SubShape": param.get("SubShape"),
-        "Nmat": param.get("Nmat"),
-        "filling": param.get("filling"),
-        "Ncond": param.get("Ncond"),
+        "param": param,                        # full mode.param minus T
+        "eliashberg": eli,                     # full eliashberg minus operational
         "run_eliashberg": bool(run_eli),
-        # interaction is identified by its file NAMES (not the resolved absolute
-        # path_to_input, which is machine/CWD-dependent).
-        "interaction": {k: inter.get(k) for k in (
-            "Geometry", "Transfer", "CoulombIntra", "CoulombInter",
-            "Hund", "Exchange", "Ising", "PairLift", "PairHop", "Interall")},
-        "eliashberg": {k: eli.get(k) for k in (
-            "frequency", "pairing_type", "chi0q_mode", "solver_mode")},
+        "warm_start": cont.get("warm_start", True),
+        "seed_gap": cont.get("seed_gap", True),
+        # names identify the files; digests catch in-place content edits.
+        "interaction_files": {k: inter.get(k) for k in _INTERACTION_KEYS},
+        "interaction_digests": digests,
     }
     blob = json.dumps(src, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -261,13 +319,19 @@ def _validate_resume(manifest, ladder, fingerprint):
             "fresh in a new output_dir or regenerate the sweep." %
             _MANIFEST_VERSION)
     m_ladder = [float(t) for t in manifest.get("ladder", [])]
-    if len(m_ladder) != len(ladder) or any(
-            abs(a - b) > 1e-12 * max(1.0, abs(b))
-            for a, b in zip(m_ladder, ladder)):
+    # Reject non-finite entries explicitly: NaN comparisons are always False,
+    # so a NaN manifest temperature would otherwise slip through the tolerance
+    # check and be treated as matching a real ladder value.
+    bad = (len(m_ladder) != len(ladder)
+           or any(not math.isfinite(a) or not math.isfinite(b)
+                  for a, b in zip(m_ladder, ladder))
+           or any(abs(a - b) > 1e-12 * max(1.0, abs(b))
+                  for a, b in zip(m_ladder, ladder)))
+    if bad:
         raise ValueError(
             "resume ladder mismatch: the existing sweep ran %r but this run "
-            "resolves to %r. Ladders must be identical to resume." % (
-                m_ladder, list(ladder)))
+            "resolves to %r. Ladders must be identical (and finite) to "
+            "resume." % (m_ladder, list(ladder)))
     if manifest.get("fingerprint") != fingerprint:
         raise ValueError(
             "resume configuration mismatch: the shape/physics fingerprint of "
@@ -299,15 +363,17 @@ def _npz_parseable(path, key):
 
 def _resume_scan(out_dir, ladder, old_by_idx, run_eli, warm_start,
                  seed_gap_on, sigma_name, gap_name, eig_name):
-    """Longest contiguous prefix of completed, seedable rungs.
+    """Longest contiguous prefix of completed rungs.
 
-    A rung qualifies when its recorded summary row is present and non-error,
-    its temperature matches the ladder, and (for an Eliashberg sweep) its
-    eigenvalue.dat is parseable. A prefix rung must additionally be *seedable*
-    (its sigma/gap outputs exist) so the following rung can be warm-started --
-    except the final ladder rung, which seeds nothing. Returns
-    ``(prefix_rows, prev, start_idx)`` where ``prev`` is the seed source for
-    ``ladder[start_idx]``."""
+    A rung qualifies only when its recorded summary row is present and
+    non-error, its temperature matches the ladder, its eigenvalue.dat is
+    parseable (for an Eliashberg sweep), AND every output the rung was
+    configured to produce (sigma when ``warm_start``, gap when ``seed_gap_on``)
+    is present and parseable on disk. This on-disk validation applies to EVERY
+    completed rung -- including the final ladder rung -- so a fully resumed
+    sweep can never report success while retaining a missing/corrupt output.
+    Returns ``(prefix_rows, prev, start_idx)`` where ``prev`` is the seed
+    source (always a validated rung) for ``ladder[start_idx]``."""
     prefix_rows, prev, start_idx = [], None, 0
     for idx, T in enumerate(ladder):
         row = old_by_idx.get(idx)
@@ -316,19 +382,16 @@ def _resume_scan(out_dir, ladder, old_by_idx, run_eli, warm_start,
             row is not None
             and row.get("status") in ("ok", "not_converged")
             and abs(row["T"] - T) <= 1e-12 * max(1.0, abs(T))
-            and (not run_eli or _eig_parseable(rout, eig_name)))
+            and (not run_eli or _eig_parseable(rout, eig_name))
+            # the rung's own promised seed outputs must exist+parse, or it did
+            # not truly complete -> recompute from here (final rung included).
+            and _seed_files_present(rout, warm_start, seed_gap_on,
+                                    sigma_name, gap_name, quiet=True))
         if not completed:
-            break
-        seedable = _seed_files_present(rout, warm_start, seed_gap_on,
-                                       sigma_name, gap_name, quiet=True)
-        is_last = idx == len(ladder) - 1
-        if not seedable and not is_last:
-            # completed but cannot seed the next rung -> recompute this one so
-            # the following rung gets a valid seed.
             break
         prefix_rows.append(row)
         start_idx = idx + 1
-        prev = rout if seedable else None
+        prev = rout
     return prefix_rows, prev, start_idx
 
 
@@ -358,8 +421,9 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
     eig_name = input_dict.get("eliashberg", {}).get(
         "output_eigenvalue", "eigenvalue.dat")
     # Fingerprint the shape/physics config BEFORE resolving input paths to
-    # absolute, so it is stable across machines/CWD (see config_fingerprint).
-    fingerprint = config_fingerprint(input_dict, run_eli)
+    # absolute, so it is stable across machines/CWD (see config_fingerprint);
+    # base_dir lets it still locate + content-hash the interaction files.
+    fingerprint = config_fingerprint(input_dict, run_eli, base_dir=base_dir)
 
     # FLEX writes the self-energy only when [file.output] sigma is set (flex.py).
     # warm_start chains that file into the next rung, so ensure it is written;
@@ -438,6 +502,18 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
             input_dict, T, rout, run_eli, sigma_init=sigma_init, seed_gap=seed)
         eig_name = eli_dict["eliashberg"].get("output_eigenvalue", "eigenvalue.dat") \
             if eli_dict is not None else "eigenvalue.dat"
+        # Remove this rung's expected checkpoint/seed outputs before running it
+        # so a later "file present" check reflects THIS execution -- a solver
+        # that returns success without rewriting a file must not let a stale
+        # output from a previous sweep be validated and chained as a seed.
+        for fn in (sigma_name if warm_start else None,
+                   gap_name if seed_gap_on else None,
+                   eig_name if run_eli else None):
+            if fn:
+                try:
+                    os.remove(os.path.join(rout, fn))
+                except OSError:
+                    pass
         row = dict(idx=idx, T=T, status="ok", error_stage="none",
                    re=float("nan"), im=float("nan"), match=-1,
                    flex_converged=-1, flex_iter=-1)

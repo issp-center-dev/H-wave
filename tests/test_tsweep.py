@@ -512,3 +512,77 @@ def test_fingerprint_ignores_temperature_but_tracks_shape():
     assert fp_a == fp_b
     base["mode"]["param"]["Nmat"] = 999                      # shape must matter
     assert ts.config_fingerprint(base, run_eli=True) != fp_a
+
+
+# --- review follow-ups: fingerprint completeness, final-rung validation,
+#     NaN ladder, strict summary parsing (Codex Phase-1 on #64) --------------
+
+def test_config_fingerprint_tracks_interaction_content(tmp_path):
+    """Editing an interaction file in place (same filename) must change the
+    fingerprint, so resume cannot silently reuse rungs from a different system."""
+    (tmp_path / "geom.dat").write_text("1 0 0\n")
+    base = {"mode": {"mode": "FLEX",
+                     "param": {"CellShape": [2, 2, 1], "Nmat": 16, "filling": 0.5}},
+            "file": {"input": {"interaction": {"path_to_input": ".",
+                                               "Geometry": "geom.dat"}}},
+            "eliashberg": {"frequency": "dynamic", "solver_mode": "eigenvalue"}}
+    fp1 = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    (tmp_path / "geom.dat").write_text("2 0 0\n")            # in-place edit
+    fp2 = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    assert fp1 != fp2
+
+
+def test_config_fingerprint_tracks_all_solver_params(tmp_path):
+    """The fingerprint must cover the full mode.param and eliashberg blocks,
+    not just a hand-picked subset."""
+    base = _valid_base()
+    fp = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    b2 = copy.deepcopy(base)
+    b2["eliashberg"]["pairing_type"] = "triplet"            # physics param
+    assert ts.config_fingerprint(b2, run_eli=True, base_dir=str(tmp_path)) != fp
+    b3 = copy.deepcopy(base)
+    b3["mode"]["param"]["Mix"] = 0.9                        # any mode param
+    assert ts.config_fingerprint(b3, run_eli=True, base_dir=str(tmp_path)) != fp
+
+
+def test_resume_final_rung_corrupt_output_recomputed(monkeypatch, tmp_path):
+    """A corrupt output on the FINAL ladder rung must be detected and that rung
+    recomputed -- the final rung is no longer exempt from output validation."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    with open(os.path.join(_rout(tmp_path, 2, 0.006), "sigma.npz"), "w") as fw:
+        fw.write("garbage not an npz")
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.006]
+
+
+def test_validate_resume_rejects_nan_ladder():
+    """A NaN manifest temperature must fail fast, not slip through the tolerance
+    comparison (NaN comparisons are always False)."""
+    manifest = {"version": ts._MANIFEST_VERSION,
+                "ladder": [0.01, float("nan")], "fingerprint": "x"}
+    with pytest.raises(ValueError, match="ladder mismatch"):
+        ts._validate_resume(manifest, [0.01, 0.008], "x")
+
+
+def test_read_summary_rows_truncates_on_out_of_order(tmp_path):
+    """A duplicate/out-of-order (or malformed) row truncates the parsed prefix,
+    so a damaged checkpoint shortens the reusable prefix instead of being
+    silently patched over."""
+    p = str(tmp_path / "s.dat")
+    with open(p, "w") as fw:
+        fw.write(ts._SUMMARY_HEADER)
+        fw.write("0 0.01 ok none 0.5 0.0 1 1 10\n")
+        fw.write("2 0.006 ok none 0.5 0.0 1 1 10\n")        # expected idx 1
+    assert [r["idx"] for r in ts.read_summary_rows(p)] == [0]
+
+
+def test_read_summary_rows_truncates_on_malformed(tmp_path):
+    p = str(tmp_path / "s.dat")
+    with open(p, "w") as fw:
+        fw.write(ts._SUMMARY_HEADER)
+        fw.write("0 0.01 ok none 0.5 0.0 1 1 10\n")
+        fw.write("1 notanumber ok none 0.5 0.0 1 1 10\n")   # malformed T
+    assert [r["idx"] for r in ts.read_summary_rows(p)] == [0]
