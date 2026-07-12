@@ -154,6 +154,13 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     solver.save_results(info_outputfile, green_info)
     logger.info("All procedures are finished.")
 
+    if mode == "FLEX":
+        return {
+            "scf_converged": bool(getattr(solver, "scf_converged", False)),
+            "scf_iterations": int(getattr(solver, "scf_iterations", -1)),
+        }
+    return {}
+
 
 def main():
     """Command-line interface entry point.

@@ -37,6 +37,7 @@ from hwave.sc import (
     _initialize_gap,
     _is_gap_parity,
     _make_kernel_operator,
+    _order_by_seed_overlap,
     _order_eigenpairs,
     _project_gap_parity,
     _reorder_eigenpairs_by_parity,
@@ -46,9 +47,11 @@ from hwave.sc import (
     _shift_from_eigenvalues,
     _solve_eigenvalue,
     _solve_iteration,
+    _solve_leading,
     _solve_subspace_iteration,
     _solve_shifted_bicg,
 )
+from scipy.sparse.linalg import LinearOperator
 
 
 class TestGreenFunction(unittest.TestCase):
@@ -650,6 +653,55 @@ class TestEigenpairOrdering(unittest.TestCase):
         self.assertAlmostEqual(ovals[0].real, 2.0)
         npt.assert_allclose(ovecs[:, 0], vecs[:, 1])
         npt.assert_allclose([v.real for v in ovals], [2.0, 0.5, -5.0])
+
+
+class TestSeedOverlapSelection(unittest.TestCase):
+    """When a seed eigenvector is supplied (eigenvector continuation), the
+    leading eigenpair must be the one that maximally overlaps the seed, not
+    the algebraically largest one. This must hold in the ``vec_size <= 2``
+    dense fallback (smallest dynamic grids, e.g. norb=1/Nk=1/Nmat=2) just as
+    it does in the ARPACK path -- see issue #61."""
+
+    @staticmethod
+    def _diag_operator(diag):
+        """A LinearOperator for a real diagonal matrix, standard-basis
+        eigenvectors. ``make_operator`` returns ``(A, vec_size)``."""
+        diag = np.asarray(diag, dtype=complex)
+        n = diag.size
+        A = LinearOperator(
+            (n, n), matvec=lambda x: diag * np.asarray(x).ravel(),
+            dtype=complex)
+        return lambda: (A, n)
+
+    def test_dense_fallback_selects_seeded_branch(self):
+        # eigenvalues 2.0 (basis vec e0) and 1.0 (basis vec e1); the largest
+        # real part is 2.0, but the seed points at the 1.0-branch.
+        make_op = self._diag_operator([2.0, 1.0])
+        seed = np.array([0.0, 1.0], dtype=complex)
+        val, vec, info = _solve_leading(
+            make_op, 2, "arnoldi", seed_vec=seed)
+        # Without seed handling the dense fallback would return 2.0/e0.
+        self.assertAlmostEqual(val.real, 1.0)
+        self.assertAlmostEqual(abs(np.vdot(vec, seed)), 1.0, places=10)
+        self.assertAlmostEqual(info["eigenvalues"][0].real, 1.0)
+
+    def test_dense_fallback_without_seed_uses_largest_real(self):
+        # eigenvalues [2.0, -5.0]: largest real (2.0) != largest magnitude (5.0),
+        # so this catches a regression back to magnitude ordering.
+        make_op = self._diag_operator([2.0, -5.0])
+        val, vec, info = _solve_leading(make_op, 2, "arnoldi")
+        # No seed -> physical SC eigenvalue is the algebraically largest.
+        self.assertAlmostEqual(val.real, 2.0)
+
+    def test_dense_fallback_equal_overlap_breaks_tie_by_real_part(self):
+        # A seed equally overlapping both basis eigenvectors must fall back to
+        # the physical (largest-real) ordering, not the eigensolver's arbitrary
+        # order (issue #61 tie-break contract).
+        make_op = self._diag_operator([1.0, 3.0])       # e1 has the larger real
+        seed = np.array([1.0, 1.0], dtype=complex) / np.sqrt(2.0)
+        val, vec, info = _solve_leading(make_op, 2, "arnoldi", seed_vec=seed)
+        self.assertAlmostEqual(val.real, 3.0)
+        self.assertAlmostEqual(info["eigenvalues"][0].real, 3.0)
 
 
 class TestParitySelection(unittest.TestCase):

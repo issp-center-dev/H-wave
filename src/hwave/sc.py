@@ -1966,6 +1966,33 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
     return A, vec_size
 
 
+def _order_by_seed_overlap(vals, vecs, seed_vec):
+    """Order eigenpairs by descending overlap ``|<seed, vec>|`` with a seed
+    eigenvector (columns already L2-normalized by ARPACK).
+
+    Used for eigenvector continuation: when a converged eigenvector from a
+    neighbouring parameter (e.g. the next temperature) is supplied as a seed,
+    the physical branch is the eigenpair whose eigenvector maximally overlaps
+    it -- NOT the algebraically largest one (which, near an exceptional point
+    of the non-Hermitian kernel, can jump to a different branch). Ties and a
+    zero seed fall back to real-part ordering.
+    """
+    s = np.asarray(seed_vec).ravel()
+    ns = np.linalg.norm(s)
+    if ns == 0:
+        return _order_eigenpairs(vals, vecs)
+    s = s / ns
+    ov = np.abs(vecs.conj().T @ s) / (
+        np.linalg.norm(vecs, axis=0) + 1.0e-300)
+    # Primary key: descending overlap. Secondary key: descending real part, so
+    # an exact overlap TIE deterministically falls back to the physical
+    # real-part ordering (as the docstring promises) instead of the arbitrary
+    # order np.linalg.eig / ARPACK happened to return. np.lexsort takes the
+    # primary key last.
+    idx = np.lexsort((-vals.real, -ov))
+    return vals[idx], vecs[:, idx]
+
+
 def _order_eigenpairs(vals, vecs):
     """Order eigenpairs by descending real part (largest first).
 
@@ -2150,7 +2177,8 @@ def _shift_from_eigenvalues(vals, factor=0.9):
 
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
-                   sigma_shift=None, alpha=0.5, project_fn=None):
+                   sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
+                   spectral_shift=None):
     """Shared leading-eigenpair driver behind the static Eliashberg solvers.
 
     This holds the ARPACK/shift-invert eigen-selection-and-ordering body of
@@ -2259,6 +2287,37 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     if not (solver_mode == "arnoldi" or solver_mode.startswith("shift-invert")):
         raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
 
+    # Validate spectral_shift up front (before any branch, incl. the small-dense
+    # early return) so invalid values / incompatible modes fail fast everywhere.
+    if spectral_shift is not None:
+        if isinstance(spectral_shift, str):
+            if spectral_shift != "auto":
+                raise ValueError(
+                    "[eliashberg] spectral_shift string must be \"auto\", got "
+                    "{!r}".format(spectral_shift))
+        else:
+            try:
+                sv = float(spectral_shift)
+            except (TypeError, ValueError, OverflowError):
+                sv = float("nan")
+            if not np.isfinite(sv) or sv <= 0.0:
+                raise ValueError(
+                    "[eliashberg] spectral_shift must be a positive finite "
+                    "number or \"auto\", got {!r}".format(spectral_shift))
+        if solver_mode != "arnoldi":
+            raise ValueError(
+                "[eliashberg] spectral_shift is only supported for "
+                "eigenvalue_method='arnoldi', not {!r}".format(solver_mode))
+
+    # sigma_shift is the shift-invert target; it has no effect on the plain
+    # arnoldi path (which uses spectral_shift instead). Warn rather than fail so
+    # existing configs keep working.
+    if sigma_shift is not None and solver_mode == "arnoldi":
+        logger.warning(
+            "[eliashberg] sigma_shift is ignored for eigenvalue_method="
+            "'arnoldi' (it targets the shift-invert methods); use "
+            "spectral_shift to bias the arnoldi selection.")
+
     if vec_size < 1:
         raise ValueError("Eliashberg operator has empty vector space")
 
@@ -2271,7 +2330,13 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         for j in range(vec_size):
             dense[:, j] = A.matvec(basis[:, j])
         vals, vecs = np.linalg.eig(dense)
-        vals, vecs = _order_eigenpairs(vals, vecs)
+        # Match the ARPACK path below: with a seed eigenvector, track the branch
+        # that overlaps it (eigenvector continuation); otherwise order by
+        # largest real part (the physical SC eigenvalue), not magnitude.
+        if seed_vec is not None:
+            vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
+        else:
+            vals, vecs = _order_eigenpairs(vals, vecs)
         n_keep = min(max(1, num_eigenvalues), vec_size)
         vals = vals[:n_keep]
         vecs = vecs[:, :n_keep]
@@ -2287,7 +2352,41 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         max_ev, solver_mode))
 
     if solver_mode == "arnoldi":
-        vals, vecs = eigs(A, k=max_ev, which='LM')
+        if spectral_shift is not None:
+            # Select the LARGEST-REAL eigenvalue (the physical SC eigenvalue,
+            # lambda -> 1 at Tc), which plain which='LM' misses when a small
+            # positive lambda is masked by larger repulsive (negative)
+            # eigenvalues. We ask ARPACK for the largest real part directly
+            # (which='LR') -- unlike which='LM', this is the correct criterion
+            # even for the non-Hermitian kernel's complex eigenvalues, where
+            # |lambda+sigma| would otherwise be dominated by a large-|Im| mode.
+            # The real spectral shift A -> A + sigma*I preserves the real-part
+            # ordering (Re(lambda+sigma) = Re(lambda) + sigma) but moves the
+            # spectrum into the right half-plane, which conditions ARPACK's LR
+            # iteration; we subtract sigma afterwards.
+            from scipy.sparse.linalg import LinearOperator as _LinOp
+            # spectral_shift is validated (positive-finite / "auto", arnoldi)
+            # near the top of _solve_leading.
+            if isinstance(spectral_shift, str):  # "auto"
+                k_pre = min(6, vec_size - 2)
+                if k_pre >= 1:
+                    vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                    sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
+                else:
+                    sig = 1.0
+                if not np.isfinite(sig):
+                    raise ValueError(
+                        "auto spectral_shift overflowed to a non-finite value "
+                        "(spectral radius too large); pass an explicit shift.")
+            else:
+                sig = float(spectral_shift)
+            logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
+            A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
+                          dtype=A.dtype)
+            vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=seed_vec)
+            vals = vals - sig
+        else:
+            vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
 
     elif solver_mode.startswith("shift-invert"):
         if sigma_shift is None:
@@ -2306,18 +2405,43 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = _shift_from_eigenvalues(vals_pre)
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
         vals, vecs = _eigs_shift_invert(
-            A, vec_size, max_ev, solver_mode, sigma=sigma_shift
+            A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
+            seed_vec=seed_vec
         )
 
-    # Order by largest real part (the physical SC eigenvalue), not magnitude.
-    vals, vecs = _order_eigenpairs(vals, vecs)
+    # With a seed eigenvector, track the branch that overlaps it (eigenvector
+    # continuation); otherwise order by largest real part (the physical SC
+    # eigenvalue), not magnitude.
+    if seed_vec is not None:
+        vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
+    else:
+        vals, vecs = _order_eigenpairs(vals, vecs)
+
+    # A negative leading eigenvalue from plain which='LM' (no spectral_shift) is
+    # often an artifact: a small positive lambda masked by larger repulsive
+    # modes. Tip the user toward spectral_shift='auto'. Skip this when a
+    # seed_vec is given -- there vals[0] is the seed-overlap continuation
+    # branch, which may be intentionally negative, not a masked leading mode.
+    # Require a meaningfully negative value (relative to the spectral scale)
+    # so roundoff-scale negatives near a numerically-zero leading eigenvalue
+    # do not trigger a misleading recommendation.
+    if (solver_mode == "arnoldi" and spectral_shift is None
+            and seed_vec is None and len(vals)):
+        scale = float(np.max(np.abs(vals))) if len(vals) else 0.0
+        neg_tol = 1.0e-8 * max(scale, 1.0)
+        if vals[0].real < -neg_tol:
+            logger.warning(
+                "Leading eigenvalue Re(lambda)=%.4g is negative; if a positive "
+                "(attractive) mode is expected, set [eliashberg] spectral_shift="
+                "\"auto\" so the largest-REAL eigenvalue is selected instead of "
+                "the largest-magnitude one.", vals[0].real)
 
     return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
                                  "sigma_shift": sigma_shift}
 
 
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
-                      method="arnoldi", sigma_shift=None):
+                      method="arnoldi", sigma_shift=None, spectral_shift=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
 
     Parameters
@@ -2366,6 +2490,14 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     vec_size = norb * norb * Nx * Ny * Nz
 
     if method == "subspace":
+        # spectral_shift routes through the ARPACK largest-real path in
+        # _solve_leading; the subspace driver never reaches it, so reject a
+        # non-None spectral_shift here (same arnoldi-only contract) rather
+        # than silently ignoring a misconfigured static input.
+        if spectral_shift is not None:
+            raise ValueError(
+                "[eliashberg] spectral_shift is only supported for "
+                "eigenvalue_method='arnoldi', not '{}'".format(method))
         # Subspace (block power) iteration has its own dedicated driver
         # (magnitude-based Ritz selection, not the ARPACK/shift-invert path),
         # so it is not routed through _solve_leading; call it directly, exactly
@@ -2386,6 +2518,7 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     _, _, eig_analysis = _solve_leading(
         make_operator, vec_size, method,
         num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+        spectral_shift=spectral_shift,
     )
     vals = eig_analysis["eigenvalues"]
     vecs = eig_analysis["eigenvectors"]
@@ -2398,7 +2531,8 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     return vals, eigenvectors
 
 
-def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8):
+def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8,
+                       seed_vec=None):
     """Eigenvalue computation using shift-invert with iterative linear solver.
 
     Transforms the eigenvalue problem K*x = lambda*x into
@@ -2470,8 +2604,9 @@ def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8)
                            matvec=inv_matvec, dtype=complex)
 
     # eigs on (A - sigma*I)^{-1} finds eigenvalues nu = 1/(lambda - sigma)
-    # largest |nu| correspond to lambda closest to sigma
-    nus, vecs = eigs(A_inv, k=num_ev, which='LM')
+    # largest |nu| correspond to lambda closest to sigma. A seed vector (v0)
+    # biases the Arnoldi start toward the physical branch being tracked.
+    nus, vecs = eigs(A_inv, k=num_ev, which='LM', v0=seed_vec)
 
     logger.info("Shift-invert: {} linear solves, {} failures".format(
         solve_count[0], fail_count[0]))
@@ -3026,7 +3161,9 @@ def calc_eliashberg(input_dict):
         eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
             Vs_q, G2, norb, Nx, Ny, Nz,
             num_eigenvalues=num_eigenvalues,
-            method=eigenvalue_method
+            method=eigenvalue_method,
+            sigma_shift=eli_param.get("sigma_shift"),
+            spectral_shift=eli_param.get("spectral_shift"),
         )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
         # requested channel parity (singlet even / triplet odd) so the reported
