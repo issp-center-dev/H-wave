@@ -2291,7 +2291,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     "[eliashberg] spectral_shift string must be \"auto\", got "
                     "{!r}".format(spectral_shift))
         else:
-            sv = float(spectral_shift)
+            try:
+                sv = float(spectral_shift)
+            except (TypeError, ValueError, OverflowError):
+                sv = float("nan")
             if not np.isfinite(sv) or sv <= 0.0:
                 raise ValueError(
                     "[eliashberg] spectral_shift must be a positive finite "
