@@ -1,6 +1,8 @@
 import copy
+import json
 import logging
 import os
+import numpy as np
 import pytest
 import hwave.tsweep as ts
 
@@ -226,7 +228,7 @@ def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
         calls["flex"].append(copy.deepcopy(input_dict))
         out = input_dict["file"]["output"]["path_to_output"]
         os.makedirs(out, exist_ok=True)
-        open(os.path.join(out, "sigma.npz"), "wb").close()
+        np.savez(os.path.join(out, "sigma.npz"), sigma=np.ones((1,)))
         return {"scf_converged": True, "scf_iterations": 10}
 
     def fake_eli(input_dict):
@@ -236,7 +238,7 @@ def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
             raise RuntimeError("boom")
         out = input_dict["file"]["output"]["path_to_output"]
         os.makedirs(out, exist_ok=True)
-        open(os.path.join(out, "gap_dynamic.npz"), "wb").close()
+        np.savez(os.path.join(out, "gap_dynamic.npz"), gap=np.ones((1,)))
         with open(os.path.join(out, "eigenvalue.dat"), "w") as fw:
             fw.write("# index Re Im |ev| match\n0 0.5 0.0 0.5 1\n")
 
@@ -324,3 +326,311 @@ def test_main_dry_run(monkeypatch, tmp_path, capsys):
     ts.main()
     # dry-run writes a summary of planned rungs, invokes no solver
     assert (tmp_path / "sweep" / "lambda_vs_T.dat").exists()
+
+
+# --- resume / restart (issue #64) -------------------------------------------
+
+def _rout(tmp_path, idx, T):
+    return os.path.join(tmp_path, "sweep", ts.rung_dir("", idx, T).lstrip("/"),
+                        "output")
+
+
+def test_resume_after_eliashberg_complete_sweep_is_noop(monkeypatch, tmp_path):
+    """A fully completed sweep resumed reruns NO solver and reproduces every
+    rung from the recorded state."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)     # fresh call log
+    rows = ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert calls2["flex"] == [] and calls2["eli"] == []
+    assert [r["status"] for r in rows] == ["ok", "ok", "ok"]
+
+
+def test_resume_after_flex_interruption_reseeds(monkeypatch, tmp_path):
+    """Interrupted mid-sweep (rung 1's Eliashberg failed): resume reuses the
+    completed rung 0 and restarts at rung 1, seeded from rung 0."""
+    _install_fake_solvers(monkeypatch, tmp_path, fail_at=0.008)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    rows1 = ts.run(base, base_dir=str(tmp_path))
+    assert [r["status"] for r in rows1] == ["ok", "error"]
+
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)     # healthy now
+    rows2 = ts.run(base, base_dir=str(tmp_path), resume=True)
+    # rung 0 reused (not recomputed): first solver call is rung 1
+    assert calls2["flex"], "resume ran no rungs"
+    assert calls2["flex"][0]["mode"]["param"]["T"] == 0.008
+    # ... and it is seeded from rung 0's outputs
+    si = calls2["flex"][0]["file"]["input"].get("sigma_init")
+    assert si and "000_T0.01" in si and si.endswith("sigma.npz")
+    seed = calls2["eli"][0]["eliashberg"].get("seed_eigenvector")
+    assert seed and "000_T0.01" in seed
+    assert [r["status"] for r in rows2] == ["ok", "ok", "ok"]
+
+
+def test_resume_detects_corrupt_eigenvalue(monkeypatch, tmp_path):
+    """A rung whose eigenvalue.dat is unparseable is NOT reused even if the
+    summary marked it ok; it (and everything after) is recomputed."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    # corrupt rung 1's eigenvalue.dat
+    eig = os.path.join(_rout(tmp_path, 1, 0.008), "eigenvalue.dat")
+    with open(eig, "w") as fw:
+        fw.write("# garbage\nnot a number here\n")
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.008, 0.006]
+
+
+def test_resume_detects_missing_output(monkeypatch, tmp_path):
+    """A rung missing its eigenvalue.dat on disk is recomputed (file existence
+    is checked, not only the summary)."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    os.remove(os.path.join(_rout(tmp_path, 1, 0.008), "eigenvalue.dat"))
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.008, 0.006]
+
+
+@pytest.mark.parametrize("name", ["sigma.npz", "gap_dynamic.npz"])
+def test_resume_detects_corrupt_seed(monkeypatch, tmp_path, name):
+    """A present but unreadable seed forces its producing rung to rerun."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    with open(os.path.join(_rout(tmp_path, 1, 0.008), name), "wb") as fw:
+        fw.write(b"not an npz")
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.008, 0.006]
+
+
+def test_resume_config_mismatch_fails_fast(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+    base2 = copy.deepcopy(base)
+    base2["mode"]["param"]["Nmat"] = 999                     # shape change
+    with pytest.raises(ValueError, match="configuration mismatch"):
+        ts.run(base2, base_dir=str(tmp_path), resume=True)
+
+
+def test_resume_ladder_mismatch_fails_fast(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+    base2 = _cont_base(tmp_path, [0.01, 0.008, 0.006])       # different ladder
+    with pytest.raises(ValueError, match="ladder mismatch"):
+        ts.run(base2, base_dir=str(tmp_path), resume=True)
+
+
+def test_resume_without_manifest_fails_fast(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    with pytest.raises(ValueError, match="manifest"):
+        ts.run(base, base_dir=str(tmp_path), resume=True)
+
+
+def test_resume_via_continuation_flag(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    base["continuation"]["resume"] = True                    # config-driven resume
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    rows = ts.run(base, base_dir=str(tmp_path))
+    assert calls2["flex"] == [] and calls2["eli"] == []
+    assert [r["status"] for r in rows] == ["ok", "ok", "ok"]
+
+
+def test_fresh_run_writes_manifest(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+    assert os.path.exists(os.path.join(tmp_path, "sweep", ts.MANIFEST_NAME))
+
+
+def test_fresh_run_invalidates_old_summary_before_new_manifest(monkeypatch,
+                                                               tmp_path):
+    """An interrupted fresh run cannot pair old rows with its new manifest."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+
+    original = ts.write_manifest
+
+    def interrupt_after_checkpoint_reset(*args, **kwargs):
+        original(*args, **kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ts, "write_manifest", interrupt_after_checkpoint_reset)
+    with pytest.raises(KeyboardInterrupt):
+        ts.run(base, base_dir=str(tmp_path))
+    assert ts.read_summary_rows(
+        os.path.join(tmp_path, "sweep", "lambda_vs_T.dat")) == []
+
+
+def test_resume_rejects_unknown_manifest_version(monkeypatch, tmp_path):
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008])
+    ts.run(base, base_dir=str(tmp_path))
+    manifest = os.path.join(tmp_path, "sweep", ts.MANIFEST_NAME)
+    with open(manifest) as f:
+        data = json.load(f)
+    data["version"] += 1
+    with open(manifest, "w") as f:
+        json.dump(data, f)
+    with pytest.raises(ValueError, match="version mismatch"):
+        ts.run(base, base_dir=str(tmp_path), resume=True)
+
+
+def test_summary_roundtrip_and_atomic(tmp_path):
+    p = str(tmp_path / "lambda_vs_T.dat")
+    rows = [
+        {"idx": 0, "T": 0.01, "status": "ok", "error_stage": "none",
+         "re": 0.36, "im": 0.0, "match": 1, "flex_converged": 1, "flex_iter": 14},
+        {"idx": 1, "T": 0.008, "status": "not_converged", "error_stage": "none",
+         "re": 0.41, "im": 0.0, "match": 1, "flex_converged": 0, "flex_iter": 50},
+    ]
+    ts.write_summary(p, rows)
+    # atomic: no staging file (`.tmp.<pid>`) left behind after a clean write
+    import glob
+    assert glob.glob(p + ".tmp*") == []
+    back = ts.read_summary_rows(p)
+    assert [r["idx"] for r in back] == [0, 1]
+    assert back[0]["status"] == "ok" and back[1]["status"] == "not_converged"
+    assert abs(back[0]["re"] - 0.36) < 1e-9
+    assert back[1]["flex_converged"] == 0 and back[1]["flex_iter"] == 50
+
+
+def test_fingerprint_ignores_temperature_but_tracks_shape():
+    base = _valid_base()
+    base["mode"]["param"]["T"] = 0.01
+    fp_a = ts.config_fingerprint(base, run_eli=True)
+    base["mode"]["param"]["T"] = 0.5                         # T must not matter
+    fp_b = ts.config_fingerprint(base, run_eli=True)
+    assert fp_a == fp_b
+    base["mode"]["param"]["Nmat"] = 999                      # shape must matter
+    assert ts.config_fingerprint(base, run_eli=True) != fp_a
+
+
+# --- review follow-ups: fingerprint completeness, final-rung validation,
+#     NaN ladder, strict summary parsing (Codex Phase-1 on #64) --------------
+
+def test_atomic_write_failed_replace_preserves_old(tmp_path, monkeypatch):
+    """If os.replace fails mid-update, the previous checkpoint must survive
+    intact and no staging file should be observable to a reader."""
+    import glob
+    p = str(tmp_path / "s.dat")
+    with open(p, "w") as fw:
+        fw.write("OLD")
+    monkeypatch.setattr(ts.os, "replace",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        ts._atomic_write_text(p, "NEW")
+    assert open(p).read() == "OLD"                          # old content intact
+    # (the leaked .tmp.<pid> is the caller's to clean up; the target is safe)
+
+
+@pytest.mark.parametrize("key,val", [("Coulomb", "coulomb.dat"),
+                                     ("Extern", "extern.dat")])
+def test_config_fingerprint_tracks_all_supported_interaction_files(
+        tmp_path, key, val):
+    """`Coulomb` (combined) and `Extern` are accepted by the k-space reader and
+    must be part of the fingerprint (filename + content)."""
+    (tmp_path / val).write_text("1 0 0\n")
+    base = {"mode": {"mode": "FLEX",
+                     "param": {"CellShape": [2, 2, 1], "Nmat": 16, "filling": 0.5}},
+            "file": {"input": {"interaction": {"path_to_input": ".", key: val}}},
+            "eliashberg": {"frequency": "dynamic", "solver_mode": "eigenvalue"}}
+    fp1 = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    (tmp_path / val).write_text("2 0 0\n")                  # in-place edit
+    assert ts.config_fingerprint(base, run_eli=True,
+                                 base_dir=str(tmp_path)) != fp1
+
+
+def test_config_fingerprint_tracks_interaction_content(tmp_path):
+    """Editing an interaction file in place (same filename) must change the
+    fingerprint, so resume cannot silently reuse rungs from a different system."""
+    (tmp_path / "geom.dat").write_text("1 0 0\n")
+    base = {"mode": {"mode": "FLEX",
+                     "param": {"CellShape": [2, 2, 1], "Nmat": 16, "filling": 0.5}},
+            "file": {"input": {"interaction": {"path_to_input": ".",
+                                               "Geometry": "geom.dat"}}},
+            "eliashberg": {"frequency": "dynamic", "solver_mode": "eigenvalue"}}
+    fp1 = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    (tmp_path / "geom.dat").write_text("2 0 0\n")            # in-place edit
+    fp2 = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    assert fp1 != fp2
+
+
+def test_config_fingerprint_tracks_all_solver_params(tmp_path):
+    """The fingerprint must cover the full mode.param and eliashberg blocks,
+    not just a hand-picked subset."""
+    base = _valid_base()
+    fp = ts.config_fingerprint(base, run_eli=True, base_dir=str(tmp_path))
+    b2 = copy.deepcopy(base)
+    b2["eliashberg"]["pairing_type"] = "triplet"            # physics param
+    assert ts.config_fingerprint(b2, run_eli=True, base_dir=str(tmp_path)) != fp
+    b3 = copy.deepcopy(base)
+    b3["mode"]["param"]["Mix"] = 0.9                        # any mode param
+    assert ts.config_fingerprint(b3, run_eli=True, base_dir=str(tmp_path)) != fp
+
+
+def test_resume_final_rung_corrupt_output_recomputed(monkeypatch, tmp_path):
+    """A corrupt output on the FINAL ladder rung must be detected and that rung
+    recomputed -- the final rung is no longer exempt from output validation."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    ts.run(base, base_dir=str(tmp_path))
+    with open(os.path.join(_rout(tmp_path, 2, 0.006), "sigma.npz"), "w") as fw:
+        fw.write("garbage not an npz")
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert [c["mode"]["param"]["T"] for c in calls2["flex"]] == [0.006]
+
+
+def test_resume_flex_only_with_dynamic_block_is_noop(monkeypatch, tmp_path):
+    """A FLEX-only sweep (run_eliashberg=false) that still carries a dynamic
+    [eliashberg] block must not demand a gap file: it seeds only sigma, and a
+    completed sweep resumes with no solver calls."""
+    _install_fake_solvers(monkeypatch, tmp_path)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006], run_eli=False)
+    base["eliashberg"] = {"frequency": "dynamic", "solver_mode": "eigenvalue"}
+    ts.run(base, base_dir=str(tmp_path))
+    calls2 = _install_fake_solvers(monkeypatch, tmp_path)
+    rows = ts.run(base, base_dir=str(tmp_path), resume=True)
+    assert calls2["flex"] == [] and calls2["eli"] == []
+    assert [r["status"] for r in rows] == ["ok", "ok", "ok"]
+
+
+def test_validate_resume_rejects_nan_ladder():
+    """A NaN manifest temperature must fail fast, not slip through the tolerance
+    comparison (NaN comparisons are always False)."""
+    manifest = {"version": ts._MANIFEST_VERSION,
+                "ladder": [0.01, float("nan")], "fingerprint": "x"}
+    with pytest.raises(ValueError, match="ladder mismatch"):
+        ts._validate_resume(manifest, [0.01, 0.008], "x")
+
+
+def test_read_summary_rows_truncates_on_out_of_order(tmp_path):
+    """A duplicate/out-of-order (or malformed) row truncates the parsed prefix,
+    so a damaged checkpoint shortens the reusable prefix instead of being
+    silently patched over."""
+    p = str(tmp_path / "s.dat")
+    with open(p, "w") as fw:
+        fw.write(ts._SUMMARY_HEADER)
+        fw.write("0 0.01 ok none 0.5 0.0 1 1 10\n")
+        fw.write("2 0.006 ok none 0.5 0.0 1 1 10\n")        # expected idx 1
+    assert [r["idx"] for r in ts.read_summary_rows(p)] == [0]
+
+
+def test_read_summary_rows_truncates_on_malformed(tmp_path):
+    p = str(tmp_path / "s.dat")
+    with open(p, "w") as fw:
+        fw.write(ts._SUMMARY_HEADER)
+        fw.write("0 0.01 ok none 0.5 0.0 1 1 10\n")
+        fw.write("1 notanumber ok none 0.5 0.0 1 1 10\n")   # malformed T
+    assert [r["idx"] for r in ts.read_summary_rows(p)] == [0]
