@@ -380,6 +380,24 @@ class FLEX(RPA):
 
     @do_profile
     def solve(self, green_info, path_to_output):
+        """Solve the FLEX equations, restoring host-backed public state.
+
+        Thin wrapper around :meth:`_solve_impl` that guarantees the solver's
+        public array attributes (``H0_eigenvalue``/``H0_eigenvector``, and the
+        stored ``green0``/``green0_tail``) are NumPy-backed after the call --
+        on normal completion AND after a GPU-path exception. Under GPU
+        execution ``_solve_impl`` converts these to CuPy in place; without the
+        ``finally`` a mid-solve error would leave a reused or inspected solver
+        object holding device arrays (issue #63).
+        """
+        try:
+            return self._solve_impl(green_info, path_to_output)
+        finally:
+            _bk.restore_host_attrs(
+                self, ("H0_eigenvalue", "H0_eigenvector",
+                       "green0", "green0_tail"))
+
+    def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
 
         Parameters
@@ -446,10 +464,20 @@ class FLEX(RPA):
         # (_find_mu_dressed) is the one exception: it needs a general
         # (non-Hermitian) eigensolver, which CuPy does not provide, so it
         # brings its operator to the host internally.
-        xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger)
+        xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger,
+                                         required=self.gpu_required)
         if gpu_active:
             logger.info("FLEX: GPU backend active (CuPy); moving H0 "
                         "eigenpairs and interaction to the device.")
+            # VRAM preflight: the resident device tensors (dressed G, sigma,
+            # chi_s/chi_c, v_eff) are each ~ nblock*Nmat*Nvol*nd^2 complex128
+            # (H0_eigenvector has shape (nblock, Nvol, nd, nd)), and the SCF
+            # loop keeps several live at once. Advisory only; CuPy raises a
+            # clear OutOfMemoryError on the actual allocation.
+            nblk0, _, _, nd0 = self.H0_eigenvector.shape
+            resident_bytes = nblk0 * nmat * nvol * nd0 * nd0 * 16
+            _bk.warn_if_device_memory_short(
+                5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
             self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 

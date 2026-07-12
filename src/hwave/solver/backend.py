@@ -34,7 +34,7 @@ def _import_cupy():
     return cupy
 
 
-def get_backend(use_gpu, logger=None):
+def get_backend(use_gpu, logger=None, required=False):
     """Select the array module.
 
     Parameters
@@ -43,6 +43,12 @@ def get_backend(use_gpu, logger=None):
         Whether GPU execution was requested.
     logger : logging.Logger, optional
         Logger for the fallback warning.
+    required : bool, optional
+        Strict mode. When True and GPU execution was requested but no usable
+        CuPy/CUDA backend exists, raise ``RuntimeError`` instead of silently
+        falling back to the (much slower) numpy path -- so a large scheduler
+        job fails fast rather than turning a short GPU run into a very long CPU
+        run. Opt-in via ``gpu_required`` so the default stays compatible.
 
     Returns
     -------
@@ -50,25 +56,38 @@ def get_backend(use_gpu, logger=None):
         ``cupy`` when GPU execution is requested and usable, else ``numpy``.
     gpu_active : bool
         True only when ``xp`` is cupy with at least one CUDA device.
+
+    Raises
+    ------
+    RuntimeError
+        When ``required`` and ``use_gpu`` but the GPU backend is unusable.
     """
     if not use_gpu:
         return np, False
     try:
         cupy = _import_cupy()
     except ImportError:
+        msg = ("CuPy is not installed. Install the precompiled wheel matching "
+               "your CUDA version (e.g. 'pip install cupy-cuda12x' for CUDA "
+               "12.x); see https://docs.cupy.dev/en/stable/install.html")
+        if required:
+            raise RuntimeError(
+                "gpu_required=true but " + msg[0].lower() + msg[1:])
         if logger is not None:
             logger.warning(
-                "gpu=true requested but CuPy is not installed; "
-                "falling back to the numpy (CPU) backend. Install the "
-                "precompiled wheel matching your CUDA version (e.g. "
-                "'pip install cupy-cuda12x' for CUDA 12.x); see "
-                "https://docs.cupy.dev/en/stable/install.html")
+                "gpu=true requested but %s falling back to the numpy (CPU) "
+                "backend.", msg)
         return np, False
     try:
         ndev = cupy.cuda.runtime.getDeviceCount()
         if ndev < 1:
             raise RuntimeError("no CUDA device")
     except Exception as exc:
+        if required:
+            raise RuntimeError(
+                "gpu_required=true but no usable CUDA device was found "
+                "({}). Check the driver/runtime, or unset gpu_required to "
+                "allow the CPU fallback.".format(exc))
         if logger is not None:
             logger.warning(
                 "gpu=true requested but no usable CUDA device was found "
@@ -101,6 +120,21 @@ def warn_if_device_memory_short(required_bytes, logger, label=""):
             "Reduce Nmat / the k-mesh, or run with gpu=false.",
             label or "the GPU transfer", required_bytes / 1e9,
             free_b / 1e9, total_b / 1e9)
+
+
+def restore_host_attrs(obj, names):
+    """Host-restore the named array attributes of ``obj`` in place.
+
+    For each name present and non-None, replace the attribute with
+    ``to_host(value)``. Identity for numpy/None attributes, so it is safe to
+    call unconditionally (including on the CPU path). Used in the solvers'
+    ``finally`` cleanup so public state (H0 eigenpairs, stored Green functions)
+    is NumPy-backed after both normal completion and a GPU-path exception.
+    """
+    for name in names:
+        val = getattr(obj, name, None)
+        if val is not None:
+            setattr(obj, name, to_host(val))
 
 
 def to_host(arr):

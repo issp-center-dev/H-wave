@@ -721,6 +721,16 @@ transfers the gap vector. The result is numerically identical to the CPU run
 - Requires `CuPy <https://cupy.dev/>`_ and a usable CUDA device. When CuPy is
   missing or no device is found, the solver warns and falls back to the CPU
   (numpy) path automatically -- same result, only slower.
+- ``gpu_required = true`` (default ``false``) turns the silent CPU fallback
+  into a hard error: if ``gpu = true`` is requested but no usable CuPy/CUDA
+  backend exists, the solver raises instead of quietly running on the CPU, so
+  a large scheduler job fails fast rather than turning a short GPU run into a
+  very long CPU run. The same flag is honored by the FLEX and RPA solvers.
+- Before the large device allocation, the FLEX and RPA GPU paths run an
+  advisory VRAM preflight: if the estimated resident tensors exceed the free
+  device memory, they log a warning naming the solver and the estimated/free
+  amounts (CuPy still raises a hard out-of-memory error on the actual
+  allocation).
 - The GPU memory requirement is roughly the two resident tensors,
   :math:`2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}` bytes,
   plus workspace; if it does not fit, CuPy aborts with an explicit
