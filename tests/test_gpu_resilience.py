@@ -7,7 +7,6 @@ These run without a real CUDA device: a tiny fake CuPy backend routes
 the repository root (they use the shared fixtures under tests/rpa/input).
 """
 import logging
-import os
 import types
 
 import numpy as np
@@ -87,14 +86,13 @@ def _make_solver(kind, extra_param=None):
     else:
         import hwave.solver.rpa as m
         solver = m.RPA(ham_info, {}, info_mode)
-    os.makedirs('tests/rpa/output', exist_ok=True)
     return solver, green_info
 
 
 # --- strict mode (opt-in fail-fast) -----------------------------------------
 
 @pytest.mark.parametrize("kind", ["RPA", "FLEX"])
-def test_gpu_required_fails_fast_without_cupy(kind, monkeypatch):
+def test_gpu_required_fails_fast_without_cupy(kind, monkeypatch, tmp_path):
     """gpu_required=true must raise (not silently fall back to CPU) when CuPy
     is unavailable, so a large scheduler job fails fast."""
     from hwave.solver import backend
@@ -104,11 +102,11 @@ def test_gpu_required_fails_fast_without_cupy(kind, monkeypatch):
     solver, green_info = _make_solver(kind, {'gpu_required': True})
     assert solver.gpu_required is True
     with pytest.raises(RuntimeError, match="gpu_required"):
-        solver.solve(green_info, 'tests/rpa/output')
+        solver.solve(green_info, str(tmp_path))
 
 
 @pytest.mark.parametrize("kind", ["RPA", "FLEX"])
-def test_gpu_required_string_false_disables_strict(kind, monkeypatch):
+def test_gpu_required_string_false_disables_strict(kind, monkeypatch, tmp_path):
     """A programmatic string "false" must NOT enable strict mode (as_bool
     coercion): the run falls back to CPU and completes."""
     from hwave.solver import backend
@@ -117,13 +115,13 @@ def test_gpu_required_string_false_disables_strict(kind, monkeypatch):
         lambda: (_ for _ in ()).throw(ImportError("no cupy")))
     solver, green_info = _make_solver(kind, {'gpu_required': "false"})
     assert solver.gpu_required is False
-    solver.solve(green_info, 'tests/rpa/output')   # must not raise
+    solver.solve(green_info, str(tmp_path))   # must not raise
 
 
 # --- public-state restoration after a GPU-path exception --------------------
 
 @pytest.mark.parametrize("kind", ["RPA", "FLEX"])
-def test_public_state_restored_after_gpu_exception(kind, monkeypatch):
+def test_public_state_restored_after_gpu_exception(kind, monkeypatch, tmp_path):
     """If a GPU-path operation raises mid-solve, the solver's public H0
     eigenpairs must be host (numpy) arrays afterward, not device arrays."""
     _install_fake_backend(monkeypatch, _fake_cupy())
@@ -136,7 +134,7 @@ def test_public_state_restored_after_gpu_exception(kind, monkeypatch):
     monkeypatch.setattr(solver, "_calc_green", _boom)
 
     with pytest.raises(RuntimeError, match="injected"):
-        solver.solve(green_info, 'tests/rpa/output')
+        solver.solve(green_info, str(tmp_path))
 
     # H0 was converted to the fake device type before the failure; the finally
     # cleanup must have restored it to a host numpy array.
@@ -145,10 +143,28 @@ def test_public_state_restored_after_gpu_exception(kind, monkeypatch):
     assert not isinstance(solver.H0_eigenvalue, _DevArr)
 
 
+@pytest.mark.parametrize("kind", ["RPA", "FLEX"])
+def test_original_exception_survives_failed_restore(kind, monkeypatch, tmp_path):
+    """The end-to-end finally contract: if BOTH the GPU solve AND the host
+    restoration fail, the solver's ORIGINAL exception must be the one observed
+    -- the cleanup failure must not replace it."""
+    from hwave.solver import backend
+    _install_fake_backend(monkeypatch, _fake_cupy())
+    monkeypatch.setattr(
+        backend, "to_host",
+        lambda a: (_ for _ in ()).throw(RuntimeError("restore boom")))
+    solver, green_info = _make_solver(kind)
+    monkeypatch.setattr(
+        solver, "_calc_green",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("solve boom")))
+    with pytest.raises(RuntimeError, match="solve boom"):
+        solver.solve(green_info, str(tmp_path))
+
+
 # --- VRAM preflight (advisory) ----------------------------------------------
 
 @pytest.mark.parametrize("kind", ["RPA", "FLEX"])
-def test_vram_preflight_warns_when_short(kind, monkeypatch, caplog):
+def test_vram_preflight_warns_when_short(kind, monkeypatch, caplog, tmp_path):
     """FLEX/RPA must run a VRAM preflight that warns (advisory) when the
     estimated resident tensors exceed free device memory, naming the solver."""
     _install_fake_backend(monkeypatch, _fake_cupy(free_bytes=1, total_bytes=2))
@@ -162,10 +178,29 @@ def test_vram_preflight_warns_when_short(kind, monkeypatch, caplog):
 
     with caplog.at_level(logging.WARNING, logger="qlms"):
         with pytest.raises(RuntimeError):
-            solver.solve(green_info, 'tests/rpa/output')
+            solver.solve(green_info, str(tmp_path))
 
     assert any("GPU memory" in rec.message for rec in caplog.records), \
         "no VRAM preflight warning emitted"
+
+
+def test_rpa_external_chi0q_preflight_warns(monkeypatch, caplog, tmp_path):
+    """The externally-supplied chi0q branch must also run the VRAM preflight
+    (warning before the device transfer), not only the computed-chi0q path."""
+    _install_fake_backend(monkeypatch, _fake_cupy(free_bytes=1, total_bytes=2))
+    solver, green_info = _make_solver("RPA")
+    # supply a chi0q so the `if "chi0q" in green_info` branch runs; the fake
+    # device array does not support the subsequent indexing/inflation, so the
+    # solve raises right after the preflight -- which is all we need to assert.
+    green_info["chi0q"] = np.zeros((solver.nmat, 4), dtype=complex)
+
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        with pytest.raises(Exception):
+            solver.solve(green_info, str(tmp_path))
+
+    assert any("GPU memory" in rec.message and "supplied chi0q" in rec.message
+               for rec in caplog.records), \
+        "external-chi0q path did not run the VRAM preflight"
 
 
 # --- restore_host_attrs helper (direct) -------------------------------------

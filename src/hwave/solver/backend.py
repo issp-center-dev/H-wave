@@ -140,10 +140,10 @@ def restore_host_attrs(obj, names):
     the offending attribute is left as-is.
     """
     for name in names:
-        val = getattr(obj, name, None)
-        if val is None:
-            continue
         try:
+            val = getattr(obj, name, None)
+            if val is None:
+                continue
             setattr(obj, name, to_host(val))
         except Exception:                       # noqa: BLE001 - never mask caller's error
             logging.getLogger("qlms").warning(
