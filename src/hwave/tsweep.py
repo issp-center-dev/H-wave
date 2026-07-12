@@ -128,7 +128,7 @@ def make_rung_dicts(base, T, rung_out, run_eliashberg,
 def parse_leading_eig(path):
     if not os.path.exists(path):
         raise ValueError("eigenvalue file not found: %s" % path)
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         s = line.strip()
         if not s or s.startswith("#"):
             continue
@@ -160,7 +160,7 @@ def _atomic_write_text(path, text):
     durable across a machine/filesystem crash (not just a process kill)."""
     directory = os.path.dirname(path) or "."
     tmp = "%s.tmp.%d" % (path, os.getpid())
-    with open(tmp, "w") as fw:
+    with open(tmp, "w", encoding="utf-8") as fw:
         fw.write(text)
         fw.flush()
         os.fsync(fw.fileno())
@@ -198,7 +198,7 @@ def read_summary_rows(path):
     if not os.path.exists(path):
         return rows
     expected = 0
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         s = line.strip()
         if not s or s.startswith("#"):
             continue
@@ -301,7 +301,7 @@ def load_manifest(out_dir):
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (ValueError, OSError):
         return None
