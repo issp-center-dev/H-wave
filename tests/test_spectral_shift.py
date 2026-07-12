@@ -105,3 +105,38 @@ def test_spectral_shift_rejected_for_non_arnoldi():
         sc._solve_leading(mk, n, "shift-invert", num_eigenvalues=3,
                           spectral_shift="auto")
 
+
+def test_spectral_shift_rejected_for_subspace():
+    # method="subspace" bypasses _solve_leading; _solve_eigenvalue must reject
+    # a spectral_shift itself rather than silently ignoring it.
+    with pytest.raises(ValueError, match="arnoldi"):
+        sc._solve_eigenvalue(None, None, 1, 1, 1, 1, num_eigenvalues=3,
+                             method="subspace", spectral_shift="auto")
+
+
+def test_negative_leading_warns_for_unseeded_arnoldi(caplog):
+    mk, n = _make_operator_for(SPECTRUM)
+    with caplog.at_level("WARNING"):
+        sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
+    assert any("negative" in r.message for r in caplog.records)
+
+
+def test_negative_leading_no_warn_with_seed_vec(caplog):
+    # A seed vector selects the continuation branch (here the -0.5 mode);
+    # that branch is intentionally tracked, so no misleading tip must fire.
+    mk, n = _make_operator_for(SPECTRUM)
+    seed = np.zeros(n, dtype=complex)
+    seed[0] = 1.0  # overlaps the -0.5 eigenvector
+    with caplog.at_level("WARNING"):
+        sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=5, seed_vec=seed)
+    assert not any("negative" in r.message for r in caplog.records)
+
+
+def test_negative_leading_no_warn_for_roundoff_scale(caplog):
+    # An all-but-zero spectrum whose leading real part is only -machine-eps
+    # must not trigger the recommendation.
+    mk, n = _make_operator_for([-1.0e-14, -2.0e-14, 1.0e-15, 3.0e-15])
+    with caplog.at_level("WARNING"):
+        sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=2)
+    assert not any("negative" in r.message for r in caplog.records)
+

@@ -2408,14 +2408,22 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
 
     # A negative leading eigenvalue from plain which='LM' (no spectral_shift) is
     # often an artifact: a small positive lambda masked by larger repulsive
-    # modes. Tip the user toward spectral_shift='auto'.
+    # modes. Tip the user toward spectral_shift='auto'. Skip this when a
+    # seed_vec is given -- there vals[0] is the seed-overlap continuation
+    # branch, which may be intentionally negative, not a masked leading mode.
+    # Require a meaningfully negative value (relative to the spectral scale)
+    # so roundoff-scale negatives near a numerically-zero leading eigenvalue
+    # do not trigger a misleading recommendation.
     if (solver_mode == "arnoldi" and spectral_shift is None
-            and len(vals) and vals[0].real < 0.0):
-        logger.warning(
-            "Leading eigenvalue Re(lambda)=%.4g is negative; if a positive "
-            "(attractive) mode is expected, set [eliashberg] spectral_shift="
-            "\"auto\" so the largest-REAL eigenvalue is selected instead of the "
-            "largest-magnitude one.", vals[0].real)
+            and seed_vec is None and len(vals)):
+        scale = float(np.max(np.abs(vals))) if len(vals) else 0.0
+        neg_tol = 1.0e-8 * max(scale, 1.0)
+        if vals[0].real < -neg_tol:
+            logger.warning(
+                "Leading eigenvalue Re(lambda)=%.4g is negative; if a positive "
+                "(attractive) mode is expected, set [eliashberg] spectral_shift="
+                "\"auto\" so the largest-REAL eigenvalue is selected instead of "
+                "the largest-magnitude one.", vals[0].real)
 
     return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
                                  "sigma_shift": sigma_shift}
@@ -2471,6 +2479,14 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     vec_size = norb * norb * Nx * Ny * Nz
 
     if method == "subspace":
+        # spectral_shift routes through the ARPACK largest-real path in
+        # _solve_leading; the subspace driver never reaches it, so reject a
+        # non-None spectral_shift here (same arnoldi-only contract) rather
+        # than silently ignoring a misconfigured static input.
+        if spectral_shift is not None:
+            raise ValueError(
+                "[eliashberg] spectral_shift is only supported for "
+                "eigenvalue_method='arnoldi', not '{}'".format(method))
         # Subspace (block power) iteration has its own dedicated driver
         # (magnitude-based Ritz selection, not the ARPACK/shift-invert path),
         # so it is not routed through _solve_leading; call it directly, exactly
