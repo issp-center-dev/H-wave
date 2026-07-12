@@ -1308,6 +1308,7 @@ def solve_dynamic(input_dict):
             make_operator, vec_size, eigenvalue_method,
             num_eigenvalues=num_eigenvalues,
             sigma_shift=eli_param.get("sigma_shift"),
+            spectral_shift=eli_param.get("spectral_shift"),
             seed_vec=seed_vec)
         eigenvalues_all = info.get("eigenvalues")
         vecs_all = info.get("eigenvectors")

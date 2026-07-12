@@ -2172,7 +2172,8 @@ def _shift_from_eigenvalues(vals, factor=0.9):
 
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
-                   sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None):
+                   sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
+                   spectral_shift=None):
     """Shared leading-eigenpair driver behind the static Eliashberg solvers.
 
     This holds the ARPACK/shift-invert eigen-selection-and-ordering body of
@@ -2309,7 +2310,33 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         max_ev, solver_mode))
 
     if solver_mode == "arnoldi":
-        vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
+        if spectral_shift is not None:
+            # Spectral shift: eigs(A + sigma*I, which='LM') then subtract sigma.
+            # With sigma > |most-negative eigenvalue| every eigenvalue of A+sI
+            # is positive, so the LARGEST-magnitude one of A+sI maps back to the
+            # LARGEST-REAL eigenvalue of A -- the physical SC eigenvalue. This
+            # cures the plain which='LM' failure where a small positive lambda
+            # is masked by much larger repulsive (negative) eigenvalues.
+            # (Caveat: for a strongly non-normal kernel a complex eigenvalue
+            # with large |Im| can still dominate |lambda+sigma|; the subsequent
+            # order-by-real-part + parity filter guard against that.)
+            from scipy.sparse.linalg import LinearOperator as _LinOp
+            if isinstance(spectral_shift, str) and spectral_shift == "auto":
+                k_pre = min(6, vec_size - 2)
+                if k_pre >= 1:
+                    vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                    sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
+                else:
+                    sig = 1.0
+            else:
+                sig = float(spectral_shift)
+            logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LM)".format(sig))
+            A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
+                          dtype=A.dtype)
+            vals, vecs = eigs(A_sh, k=max_ev, which='LM', v0=seed_vec)
+            vals = vals - sig
+        else:
+            vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
 
     elif solver_mode.startswith("shift-invert"):
         if sigma_shift is None:
