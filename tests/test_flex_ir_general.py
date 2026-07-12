@@ -133,3 +133,34 @@ def test_chi0_general_ir_orbital_covariance():
     chi0_from_chi0 = chi0[:, :, :, P][:, :, :, :, P][:, :, :, :, :, P] \
         [:, :, :, :, :, :, P]
     np.testing.assert_allclose(chi0_perm, chi0_from_chi0, atol=1e-10)
+
+
+def test_sigma_general_ir_direct_matches_uniform():
+    """Direct method call: general IR self-energy vs uniform general
+    self-energy on the same dressed G and v_eff, compressed onto nodes."""
+    from hwave.solver import eliashberg_dynamic as ed
+    T = 2.0
+    beta = 1.0 / T
+    nmat = 1024
+    su, giu = _make_general_solver(nmat, "uniform", T=T)
+    su._calc_epsilon_k(giu)
+    gu, gtail = su._calc_green(beta, 0.0)
+    chi0_u = su._calc_chi0q(gu, gtail, beta)[0]
+    _, v_eff_u, _, _ = su._flex_compute_veff_general(
+        chi0_u, su.ham_info.ham_inter_q)
+    sig_u = su._calc_self_energy_general(gu, v_eff_u, beta)   # (g,nmat,r,no,no)
+
+    s, gi = _make_general_solver(nmat, "ir", T=T)
+    s._calc_epsilon_k(gi)
+    s._ir_setup(beta)
+    axF, axB = s._ir_axF, s._ir_axB
+    g_nodes, _ = s._calc_green_ir(beta, 0.0)
+    chi0_ir = s._calc_chi0q_general_ir(g_nodes, beta)[0]
+    _, v_eff_ir, _, _ = s._flex_compute_veff_general(
+        chi0_ir, s.ham_info.ham_inter_q)
+    sig_ir = s._calc_self_energy_general_ir(g_nodes, v_eff_ir, beta)
+
+    sig_u_nodes = np.moveaxis(ed._ir_compress(
+        np.moveaxis(sig_u[0], 0, -1), axF, nmat, "sig_u"), -1, 0)
+    scale = np.abs(sig_u_nodes).max()
+    assert np.abs(sig_ir[0] - sig_u_nodes).max() / scale < 2e-2

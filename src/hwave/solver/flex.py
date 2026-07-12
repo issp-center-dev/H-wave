@@ -956,6 +956,51 @@ class FLEX(RPA):
         return xp.moveaxis(sigma_kw, -1, 1).reshape(
             nblock, axF.n_freq, nvol, nd_sig, nd_sig)
 
+    @do_profile
+    def _calc_self_energy_general_ir(self, green_kw, v_eff, beta):
+        r"""Sigma on the fermionic IR nodes, general (MYO) scheme: the IR-node
+        transport of `_calc_self_energy_ir` with the rank-4 orbital contraction
+        `_sigma_orbital_contract` of `_calc_self_energy_general` (Hadamard ->
+        orbital sum). Pure-orbital (nd_block == nd_v == norb), no spin slice.
+        Physical transforms -> no explicit 1/beta.
+        """
+        axF, axB = self._ir_axF, self._ir_axB
+        nx, ny, nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nblock = green_kw.shape[0]
+        norb = green_kw.shape[-1]
+        ndx = v_eff.shape[-1]           # norb ** 2
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+        ntF = axF.n_tau
+
+        # G -> (r, tau_F)
+        g = xp.moveaxis(
+            green_kw.reshape(nblock, axF.n_freq, nvol * norb * norb), 1, -1)
+        g_tau = xp.moveaxis(axF.freq_to_tau(g), -1, 1).reshape(
+            nblock, ntF, nx, ny, nz, norb * norb)
+        green_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers
+                                     ).reshape(nblock, ntF, nvol, norb, norb)
+
+        # V_eff -> (r, tau_F) via the bosonic basis evaluated on tau_F
+        v = xp.moveaxis(v_eff.reshape(axB.n_freq, nvol * ndx * ndx), 0, -1)
+        v_tau = xp.moveaxis(
+            axB.freq_to_tau_points(v, axF.tau), -1, 0).reshape(
+            ntF, nx, ny, nz, ndx * ndx)
+        v_rt = _bk.spatial_ifftn(v_tau, axes=(1, 2, 3), workers=workers
+                                 ).reshape(ntF, nvol, ndx, ndx)
+
+        # Sigma(r,tau) = rank-4 orbital contraction (general)
+        sigma_rt = self._sigma_orbital_contract(v_rt, green_rt)
+
+        sigma_kt = _bk.spatial_fftn(
+            sigma_rt.reshape(nblock, ntF, nx, ny, nz, norb * norb),
+            axes=(2, 3, 4), workers=workers)
+        sigma_kw = axF.tau_to_freq(xp.moveaxis(
+            sigma_kt.reshape(nblock, ntF, nvol * norb * norb), 1, -1))
+        return xp.moveaxis(sigma_kw, -1, 1).reshape(
+            nblock, axF.n_freq, nvol, norb, norb)
+
     def _number_from_eigs_ir(self, lam, mu):
         """N(mu) (and dN/dmu) on the IR path: the k-summed trace of G at the
         fermionic nodes has closed form through the eigenvalues lam of M,
