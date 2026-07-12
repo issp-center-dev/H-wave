@@ -497,7 +497,7 @@ class TestInitializeGap(unittest.TestCase):
 
         all_modes = [
             "cos", "s", "s_ext", "s_ext_2d",
-            "d_x2y2", "d_xy", "d_xz", "d_yz", "d_z2",
+            "d_x2y2", "d_y2z2", "d_xy", "d_xz", "d_yz", "d_z2",
             "p_x", "p_y", "p_z",
             "random",
         ]
@@ -521,7 +521,7 @@ class TestInitializeGap(unittest.TestCase):
 
         all_modes = [
             "cos", "s", "s_ext", "s_ext_2d",
-            "d_x2y2", "d_xy", "d_xz", "d_yz", "d_z2",
+            "d_x2y2", "d_y2z2", "d_xy", "d_xz", "d_yz", "d_z2",
             "p_x", "p_y", "p_z",
             "random",
         ]
@@ -550,6 +550,72 @@ class TestInitializeGap(unittest.TestCase):
         val_0pi = sigma[0, 0, 0, iy_pi, 0]
         self.assertLess(val_pi0 * val_0pi, 0,
                         "d_{x^2-y^2} should change sign between (pi,0) and (0,pi)")
+
+    def test_d_y2z2_symmetry(self):
+        """In-plane d_{y^2-z^2} = cos(ky) - cos(kz) sign structure.
+
+        For a [1, Ny, Nz] cell (kx squashed) this is the d-wave that
+        sign-changes across the (pi, 0) <-> (0, pi) zone-boundary q, unlike
+        d_yz = sin(ky) sin(kz) which has a node there.
+        """
+        N = 8
+        kx = np.linspace(0, 2 * np.pi, 1, endpoint=False)   # Nx=1, kx=0
+        ky = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        i_pi = N // 2
+        d = _initialize_gap("d_y2z2", 1, kx, ky, kz)
+        val_pi0 = d[0, 0, 0, i_pi, 0]     # (ky, kz) = (pi, 0) -> cos(pi)-cos(0) < 0
+        val_0pi = d[0, 0, 0, 0, i_pi]     # (ky, kz) = (0, pi) -> cos(0)-cos(pi) > 0
+        self.assertLess(val_pi0 * val_0pi, 0,
+                        "d_{y^2-z^2} should change sign between (pi,0) and (0,pi)")
+        # contrast: d_yz has a node at both of these q-points
+        dyz = _initialize_gap("d_yz", 1, kx, ky, kz)
+        npt.assert_allclose(dyz[0, 0, 0, i_pi, 0], 0.0, atol=1e-12)
+        npt.assert_allclose(dyz[0, 0, 0, 0, i_pi], 0.0, atol=1e-12)
+        # even under k -> -k over the whole grid (singlet/even parity)
+        for iy in range(N):
+            for iz in range(N):
+                npt.assert_allclose(
+                    d[0, 0, 0, iy, iz], d[0, 0, 0, (-iy) % N, (-iz) % N],
+                    atol=1e-12,
+                    err_msg="d_y2z2 not even at (iy,iz)=({},{})".format(iy, iz))
+
+    def test_inplane_modes_vanish_when_kx_squashed(self):
+        """Form factors built from sin(kx) vanish identically for a [1,Ny,Nz]
+        cell (kx=0), so p_x / d_xy / d_xz are invalid seeds there; the valid
+        in-plane seeds are p_y, p_z, d_yz and d_y2z2."""
+        N = 8
+        kx = np.linspace(0, 2 * np.pi, 1, endpoint=False)   # kx = 0
+        ky = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        for mode in ("p_x", "d_xy", "d_xz"):
+            sigma = _initialize_gap(mode, 1, kx, ky, kz)
+            npt.assert_allclose(
+                np.linalg.norm(sigma), 0.0, atol=1e-12,
+                err_msg="{} must vanish when kx is squashed".format(mode))
+        for mode in ("p_y", "p_z", "d_yz", "d_y2z2"):
+            sigma = _initialize_gap(mode, 1, kx, ky, kz)
+            self.assertGreater(
+                np.linalg.norm(sigma), 0.5,
+                "{} should be a nonzero in-plane seed".format(mode))
+
+    def test_vanishing_seed_warns(self):
+        """Form factors that vanish on the grid warn on any squashed axis; a
+        valid nonzero seed does not warn."""
+        N = 4
+        k1 = np.linspace(0, 2 * np.pi, 1, endpoint=False)   # squashed axis
+        kN = np.linspace(0, 2 * np.pi, N, endpoint=False)
+        # p_x = sin(kx) vanishes at Nx=1
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _initialize_gap("p_x", 1, k1, kN, kN)
+        self.assertTrue(any("zero" in m for m in cm.output))
+        # p_z = sin(kz) vanishes at Nz=1 (a different axis)
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _initialize_gap("p_z", 1, kN, kN, k1)
+        self.assertTrue(any("zero" in m for m in cm.output))
+        # a valid in-plane seed must NOT warn
+        with self.assertNoLogs("hwave_sc", level="WARNING"):
+            _initialize_gap("p_y", 1, k1, kN, kN)
 
     def test_p_wave_odd(self):
         """Test p-wave gap is odd under k -> -k."""

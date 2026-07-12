@@ -1608,6 +1608,8 @@ def _initialize_gap(mode, norb, kx_array, ky_array, kz_array):
 
         **d-wave:**
         - "d_x2y2"    : cx - cy
+        - "d_y2z2"    : cy - cz (in-plane d_{y^2-z^2}, even parity / singlet;
+                        opposite-sign anti-nodes at (pi,0) and (0,pi))
         - "d_xy"      : sx*sy
         - "d_xz"      : sx*sz
         - "d_yz"      : sy*sz
@@ -1646,6 +1648,7 @@ def _initialize_gap(mode, norb, kx_array, ky_array, kz_array):
         "s_ext_2d": lambda: cx * cy,
         # d-wave
         "d_x2y2":   lambda: cx - cy,
+        "d_y2z2":   lambda: cy - cz,
         "d_xy":     lambda: sx * sy,
         "d_xz":     lambda: sx * sz,
         "d_yz":     lambda: sy * sz,
@@ -1670,6 +1673,14 @@ def _initialize_gap(mode, norb, kx_array, ky_array, kz_array):
     norm = np.linalg.norm(sigma)
     if norm > 0:
         sigma /= norm
+    elif mode != "random":
+        logger.warning(
+            "init_gap='%s' evaluates to zero on the current k-grid: a form "
+            "factor built from sin(k_a) vanishes when the a-axis is squashed "
+            "(e.g. p_x/d_xy at Nx=1, or p_z/d_xz at Nz=1). The seed is all-"
+            "zero -- choose a symmetry that is non-vanishing on this grid "
+            "(e.g. p_y/p_z, d_yz or d_y2z2 for an in-plane [1, Ny, Nz] cell).",
+            mode)
     return sigma
 
 
