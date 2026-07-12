@@ -247,6 +247,11 @@ weakly-pairing systems (low pressure, quasi-1D). Note this differs from
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the dynamic-mode (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>)
 kernel applications on a GPU via CuPy (default <code class="docutils literal notranslate"><span class="pre">false</span></code>; see the
 <a class="reference internal" href="#sc-dynamic-gpu-en"><span class="std std-ref">GPU section</span></a> below).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>: Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to make <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> strict – the solver
+raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
+(default <code class="docutils literal notranslate"><span class="pre">false</span></code>). Honored by the dynamic Eliashberg solver (set it in
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>) and by the FLEX and RPA solvers (set it in
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>, alongside their <code class="docutils literal notranslate"><span class="pre">gpu</span></code> flag).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: Number of FFT worker threads for the dynamic-mode spatial
 FFTs (default <code class="docutils literal notranslate"><span class="pre">1</span></code> = the serial numpy path, unchanged from previous
 releases; <code class="docutils literal notranslate"><span class="pre">-1</span></code> uses all cores; ignored on the GPU).</p></li>
@@ -981,6 +986,16 @@ ignoring the flag.</p></li>
 <li><p>Requires <a class="reference external" href="https://cupy.dev/">CuPy</a> and a usable CUDA device. When CuPy is
 missing or no device is found, the solver warns and falls back to the CPU
 (numpy) path automatically – same result, only slower.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>) turns the silent CPU fallback
+into a hard error: if <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is requested but no usable CuPy/CUDA
+backend exists, the solver raises instead of quietly running on the CPU, so
+a large scheduler job fails fast rather than turning a short GPU run into a
+very long CPU run. The same flag is honored by the FLEX and RPA solvers.</p></li>
+<li><p>Before the large device allocation, the FLEX and RPA GPU paths run an
+advisory VRAM preflight: if the estimated resident tensors exceed the free
+device memory, they log a warning naming the solver and the estimated/free
+amounts (CuPy still raises a hard out-of-memory error on the actual
+allocation).</p></li>
 <li><p>The GPU memory requirement is roughly the two resident tensors,
 <span class="math notranslate nohighlight">\(2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}\)</span> bytes,
 plus workspace; if it does not fit, CuPy aborts with an explicit

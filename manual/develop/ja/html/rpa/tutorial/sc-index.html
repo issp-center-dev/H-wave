@@ -244,6 +244,11 @@ SC固有値）を求めます。シフトは内部で差し引かれるので、
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> で動的モード（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）のカーネル適用を
 GPU（CuPy）で実行します（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>。下記の
 <a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a> を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> にすると <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> を厳格化し、CuPy/CUDA が
+使えない場合に静かに CPU へフォールバックせずエラーで停止します
+（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>）。動的 Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> に設定）
+および FLEX・RPA ソルバー（<code class="docutils literal notranslate"><span class="pre">gpu</span></code> フラグと同じく <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> に設定）で
+有効です。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: 動的モードの空間 FFT のワーカースレッド数
 （デフォルト <code class="docutils literal notranslate"><span class="pre">1</span></code> = 従来どおりの直列 numpy。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コア。
 GPU 実行時は無視されます）。</p></li>
@@ -934,6 +939,15 @@ CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です�
 ある必要があります。CuPy が無い・デバイスが見つからない場合は、警告を出して
 自動的に CPU（numpy）実行へフォールバックします（結果は同一で、速度のみ
 低下します）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true``（デフォルト</span> <span class="pre">``false</span></code>）にすると、この暗黙の CPU
+フォールバックをハードエラーに変えます。<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> を指定したのに利用可能
+な CuPy/CUDA バックエンドが無い場合、静かに CPU 実行へ移らずエラーで停止する
+ため、短い GPU ジョブが長大な CPU ジョブに化けるのをスケジューラ段階で防げます。
+同じフラグは FLEX・RPA ソルバーでも有効です。</p></li>
+<li><p>FLEX・RPA の GPU 経路は、大きなデバイス確保の前に advisory な VRAM プリフライト
+を実行します。常駐テンソルの見積りが空きデバイスメモリを超える場合、ソルバー名と
+見積り／空き容量を示す警告を出します（実際の確保時には CuPy が明示的な
+OutOfMemory エラーで停止します）。</p></li>
 <li><p>必要な GPU メモリはおおよそ常駐テンソル 2 本分
 <span class="math notranslate nohighlight">\(2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}\)</span> バイト＋
 作業領域です。不足する場合は CuPy が明示的な OutOfMemory エラーで停止します。</p></li>
