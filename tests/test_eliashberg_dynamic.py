@@ -530,6 +530,43 @@ def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
     assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
 
 
+def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
+    """[eliashberg] spectral_shift must plumb through solve_dynamic into
+    sc._solve_leading (the arnoldi eigenvalue path)."""
+    import os
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+
+    captured = {}
+    real_solve = sc._solve_leading
+
+    def spy(*args, **kwargs):
+        captured["spectral_shift"] = kwargs.get("spectral_shift")
+        return real_solve(*args, **kwargs)
+    monkeypatch.setattr(sc, "_solve_leading", spy)
+
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "solver_mode": "eigenvalue", "eigenvalue_method": "arnoldi",
+                       "num_eigenvalues": 4, "spectral_shift": "auto"},
+    }
+    ed.solve_dynamic(inp)
+    assert captured.get("spectral_shift") == "auto"
+
+
 def test_kernel_cupy_matches_numpy():
     """The dynamic kernel applied to cupy arrays (GPU) must reproduce the
     numpy result to fp64 round-off, and stay on the device."""

@@ -2282,6 +2282,25 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     if not (solver_mode == "arnoldi" or solver_mode.startswith("shift-invert")):
         raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
 
+    # Validate spectral_shift up front (before any branch, incl. the small-dense
+    # early return) so invalid values / incompatible modes fail fast everywhere.
+    if spectral_shift is not None:
+        if isinstance(spectral_shift, str):
+            if spectral_shift != "auto":
+                raise ValueError(
+                    "[eliashberg] spectral_shift string must be \"auto\", got "
+                    "{!r}".format(spectral_shift))
+        else:
+            sv = float(spectral_shift)
+            if not np.isfinite(sv) or sv <= 0.0:
+                raise ValueError(
+                    "[eliashberg] spectral_shift must be a positive finite "
+                    "number or \"auto\", got {!r}".format(spectral_shift))
+        if solver_mode != "arnoldi":
+            raise ValueError(
+                "[eliashberg] spectral_shift is only supported for "
+                "eigenvalue_method='arnoldi', not {!r}".format(solver_mode))
+
     if vec_size < 1:
         raise ValueError("Eliashberg operator has empty vector space")
 
@@ -2323,19 +2342,21 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             # spectrum into the right half-plane, which conditions ARPACK's LR
             # iteration; we subtract sigma afterwards.
             from scipy.sparse.linalg import LinearOperator as _LinOp
-            if isinstance(spectral_shift, str) and spectral_shift == "auto":
+            # spectral_shift is validated (positive-finite / "auto", arnoldi)
+            # near the top of _solve_leading.
+            if isinstance(spectral_shift, str):  # "auto"
                 k_pre = min(6, vec_size - 2)
                 if k_pre >= 1:
                     vals_pre, _ = eigs(A, k=k_pre, which='LM')
                     sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
                 else:
                     sig = 1.0
+                if not np.isfinite(sig):
+                    raise ValueError(
+                        "auto spectral_shift overflowed to a non-finite value "
+                        "(spectral radius too large); pass an explicit shift.")
             else:
                 sig = float(spectral_shift)
-                if not np.isfinite(sig) or sig <= 0.0:
-                    raise ValueError(
-                        "[eliashberg] spectral_shift must be a positive finite "
-                        "number or \"auto\", got {!r}".format(spectral_shift))
             logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
             A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
                           dtype=A.dtype)

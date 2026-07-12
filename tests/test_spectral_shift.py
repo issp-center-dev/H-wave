@@ -1,8 +1,9 @@
 """Spectral-shift eigenvalue selection: a small positive leading eigenvalue
 masked by larger-magnitude negative (repulsive) eigenvalues must still be
 found. Plain which='LM' returns the large negatives and mis-reports the
-leading lambda; spectral_shift='auto' shifts A -> A + sigma*I so 'LM' maps to
-the largest-REAL eigenvalue (the physical SC eigenvalue)."""
+leading lambda; spectral_shift asks ARPACK for the largest-REAL eigenvalue
+(which='LR') on the right-half-plane-shifted operator A + sigma*I, recovering
+the physical SC eigenvalue even for complex (non-Hermitian) spectra."""
 import numpy as np
 import pytest
 from scipy.sparse.linalg import LinearOperator
@@ -60,10 +61,47 @@ def test_spectral_shift_complex_spectrum_picks_largest_real():
     assert abs(lead.imag) < 1e-6
 
 
+def _make_operator_dense(M):
+    """make_operator() -> (A, None) wrapping a dense (possibly non-normal) matrix."""
+    M = np.asarray(M, dtype=complex)
+
+    def make_operator():
+        A = LinearOperator(M.shape, matvec=lambda v: M @ v, dtype=complex)
+        return A, None
+    return make_operator, M.shape[0]
+
+
+def test_spectral_shift_nonnormal_complex_picks_largest_real():
+    # upper-triangular => eigenvalues are the diagonal (SPECTRUM_CX), but the
+    # off-diagonal makes the operator genuinely NON-NORMAL. Largest |lambda| is
+    # a complex mode; which='LR' must still return the largest-real +0.05.
+    M = np.diag(np.asarray(SPECTRUM_CX, dtype=complex))
+    M[0, 1] = 5.0
+    mk, n = _make_operator_dense(M)
+    lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                                   spectral_shift="auto")
+    assert lead.real == pytest.approx(0.05, abs=1e-4)
+    assert abs(lead.imag) < 1e-4
+
+
 def test_spectral_shift_rejects_nonpositive_numeric():
     mk, n = _make_operator_for(SPECTRUM)
     for bad in (0.0, -1.0, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="spectral_shift"):
             sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                               spectral_shift=bad)
+
+
+def test_spectral_shift_rejects_bad_string():
+    mk, n = _make_operator_for(SPECTRUM)
+    with pytest.raises(ValueError, match="spectral_shift"):
+        sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                          spectral_shift="invalid")
+
+
+def test_spectral_shift_rejected_for_non_arnoldi():
+    mk, n = _make_operator_for(SPECTRUM)
+    with pytest.raises(ValueError, match="arnoldi"):
+        sc._solve_leading(mk, n, "shift-invert", num_eigenvalues=3,
+                          spectral_shift="auto")
 
