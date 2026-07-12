@@ -45,3 +45,25 @@ def test_spectral_shift_numeric_recovers_positive_leading():
                                    spectral_shift=1.0)
     assert lead.real == pytest.approx(0.05, abs=1e-6)
 
+
+# largest REAL part is +0.05, but two complex modes 0.03 +/- 0.6j have larger
+# |lambda + sigma| -- a which='LM' shift would pick one of those; which='LR'
+# must still return +0.05 (non-Hermitian / complex-spectrum case).
+SPECTRUM_CX = [-0.5, 0.05, 0.03 + 0.6j, 0.03 - 0.6j, -0.2, -0.1]
+
+
+def test_spectral_shift_complex_spectrum_picks_largest_real():
+    mk, n = _make_operator_for(SPECTRUM_CX)
+    lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                                   spectral_shift="auto")
+    assert lead.real == pytest.approx(0.05, abs=1e-6)
+    assert abs(lead.imag) < 1e-6
+
+
+def test_spectral_shift_rejects_nonpositive_numeric():
+    mk, n = _make_operator_for(SPECTRUM)
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="spectral_shift"):
+            sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                              spectral_shift=bad)
+

@@ -2311,15 +2311,17 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
 
     if solver_mode == "arnoldi":
         if spectral_shift is not None:
-            # Spectral shift: eigs(A + sigma*I, which='LM') then subtract sigma.
-            # With sigma > |most-negative eigenvalue| every eigenvalue of A+sI
-            # is positive, so the LARGEST-magnitude one of A+sI maps back to the
-            # LARGEST-REAL eigenvalue of A -- the physical SC eigenvalue. This
-            # cures the plain which='LM' failure where a small positive lambda
-            # is masked by much larger repulsive (negative) eigenvalues.
-            # (Caveat: for a strongly non-normal kernel a complex eigenvalue
-            # with large |Im| can still dominate |lambda+sigma|; the subsequent
-            # order-by-real-part + parity filter guard against that.)
+            # Select the LARGEST-REAL eigenvalue (the physical SC eigenvalue,
+            # lambda -> 1 at Tc), which plain which='LM' misses when a small
+            # positive lambda is masked by larger repulsive (negative)
+            # eigenvalues. We ask ARPACK for the largest real part directly
+            # (which='LR') -- unlike which='LM', this is the correct criterion
+            # even for the non-Hermitian kernel's complex eigenvalues, where
+            # |lambda+sigma| would otherwise be dominated by a large-|Im| mode.
+            # The real spectral shift A -> A + sigma*I preserves the real-part
+            # ordering (Re(lambda+sigma) = Re(lambda) + sigma) but moves the
+            # spectrum into the right half-plane, which conditions ARPACK's LR
+            # iteration; we subtract sigma afterwards.
             from scipy.sparse.linalg import LinearOperator as _LinOp
             if isinstance(spectral_shift, str) and spectral_shift == "auto":
                 k_pre = min(6, vec_size - 2)
@@ -2330,10 +2332,14 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     sig = 1.0
             else:
                 sig = float(spectral_shift)
-            logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LM)".format(sig))
+                if not np.isfinite(sig) or sig <= 0.0:
+                    raise ValueError(
+                        "[eliashberg] spectral_shift must be a positive finite "
+                        "number or \"auto\", got {!r}".format(spectral_shift))
+            logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
             A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
                           dtype=A.dtype)
-            vals, vecs = eigs(A_sh, k=max_ev, which='LM', v0=seed_vec)
+            vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=seed_vec)
             vals = vals - sig
         else:
             vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
