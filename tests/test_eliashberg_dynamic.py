@@ -1280,3 +1280,24 @@ def test_parity_leakage_zero_for_commuting_operator():
     def mult(x):
         return (d * x.reshape(gap_shape)).ravel()
     assert ed._parity_leakage(_Op(mult), gap_shape, "singlet") > 0.9
+
+
+class TestIrKeepStaticChiBoolParsing:
+    """`ir_keep_static_chi` must be coerced with backend.as_bool so a
+    programmatic dict config carrying a string like "false"/"off"/"0" is not
+    read as True by plain bool("false"). TOML booleans arrive as real bools
+    and must keep working (issue #62)."""
+
+    def test_disabled_values(self):
+        from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
+        for v in (False, "false", "False", "off", "0", "no", "", 0):
+            assert _ir_keep_static_requested({"ir_keep_static_chi": v}) is False, v
+
+    def test_enabled_values(self):
+        from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
+        for v in (True, "true", "True", "on", "1", "yes", 1):
+            assert _ir_keep_static_requested({"ir_keep_static_chi": v}) is True, v
+
+    def test_default_is_false(self):
+        from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
+        assert _ir_keep_static_requested({}) is False
