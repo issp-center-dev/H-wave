@@ -221,3 +221,102 @@ def test_dispatch_routes_general_uniform_and_ir(monkeypatch):
         s.solve(gi, 'tests/flex/output')
         assert called["chi"] >= 1 and called["sig"] >= 1, basis
         monkeypatch.undo()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: dynamic Eliashberg end-to-end (general + IR, densified + native)
+# ---------------------------------------------------------------------------
+
+def _fixture_dirpath():
+    """Same fixed location `_make_general_solver` writes the on-site
+    2-orbital fixture to, so `_run_dynamic_lambda` can point the dynamic
+    Eliashberg solver's [file.input.interaction] at the identical geometry
+    without re-deriving the path."""
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "hwave_flex_2d_2orb_onsite")
+
+
+def _outdict(path):
+    """FLEX output filenames: solve() only populates in-memory arrays, so
+    save_results must be called explicitly (mirrors tests/test_flex_ir.py)
+    for the dynamic Eliashberg loader to have files to read."""
+    return {"path_to_output": path, "chi0q": "chi0q", "sigma": "sigma",
+            "green": "green", "chiq_s": "chiq_s", "chiq_c": "chiq_c"}
+
+
+def _run_dynamic_lambda(flex_out_dir, T, matsubara_basis="uniform"):
+    """Run the dynamic Eliashberg solver consuming FLEX outputs in flex_out_dir."""
+    from hwave.solver import eliashberg_dynamic as ed
+    dirpath = _fixture_dirpath()
+    _write_2d_2orb_onsite_fixture(dirpath)
+    eli = {"chi0q_mode": "flex", "frequency": "dynamic",
+           "pairing_type": "singlet", "solver_mode": "eigenvalue",
+           "num_eigenvalues": 4}
+    if matsubara_basis != "uniform":
+        eli["matsubara_basis"] = matsubara_basis
+    inp = {"mode": {"param": {"T": T, "CellShape": [4, 4, 1],
+                              "SubShape": [1, 1, 1], "Nmat": 256,
+                              "filling": 0.5}},
+           "file": {"input": {"path_to_flex_output": flex_out_dir,
+                              "interaction": {
+                                  "path_to_input": dirpath,
+                                  "Geometry": "geom.dat",
+                                  "Transfer": "transfer.dat",
+                                  "CoulombIntra": "coulombintra.dat",
+                                  "CoulombInter": "coulombinter.dat"}},
+                    "output": {"path_to_output": flex_out_dir}},
+           "eliashberg": eli}
+    return ed.solve_dynamic(inp)
+
+
+def test_dynamic_consumes_general_ir_densified(tmp_path):
+    """End-to-end: dynamic Eliashberg lambda from general+IR (densified) FLEX
+    outputs matches general+uniform FLEX outputs within tolerance."""
+    T = 2.0
+    out_ir = str(tmp_path / "gen_ir")
+    out_u = str(tmp_path / "gen_u")
+    os.makedirs(out_ir, exist_ok=True)
+    os.makedirs(out_u, exist_ok=True)
+    s_ir, gi_ir = _make_general_solver(256, "ir", T=T, iteration_max=40)
+    s_ir.solve(gi_ir, out_ir)
+    s_ir.save_results(_outdict(out_ir), gi_ir)
+    s_u, gi_u = _make_general_solver(256, "uniform", T=T, iteration_max=40)
+    s_u.solve(gi_u, out_u)
+    s_u.save_results(_outdict(out_u), gi_u)
+    lam_ir = _run_dynamic_lambda(out_ir, T)
+    lam_u = _run_dynamic_lambda(out_u, T)
+    assert abs(lam_ir - lam_u) / abs(lam_u) < 5e-2, \
+        "lam_ir={} lam_u={}".format(lam_ir, lam_u)
+
+
+def test_dynamic_consumes_general_ir_native(tmp_path):
+    """End-to-end with IR-native output (write_densified=false): the dynamic
+    solver (matsubara_basis='ir') consumes MYO sparse-node susceptibilities."""
+    T = 2.0
+    out = str(tmp_path / "gen_ir_native")
+    os.makedirs(out, exist_ok=True)
+    s, gi = _make_general_solver(256, "ir", T=T, iteration_max=40)
+    s.write_densified = False
+    s.solve(gi, out)
+    s.save_results(_outdict(out), gi)
+    lam = _run_dynamic_lambda(out, T, matsubara_basis="ir")
+    assert np.isfinite(lam)
+
+
+def test_dynamic_rejects_ir_native_missing_convention(tmp_path):
+    """An IR-native chi npz missing chi_convention must be rejected, not
+    silently read as the default (kuroki) convention."""
+    import glob
+    out = str(tmp_path / "bad")
+    os.makedirs(out, exist_ok=True)
+    s, gi = _make_general_solver(64, "ir", T=2.0, iteration_max=1)
+    s.write_densified = False
+    s.solve(gi, out)
+    s.save_results(_outdict(out), gi)
+    # strip chi_convention from chiq_s.npz
+    path = glob.glob(os.path.join(out, "chiq_s*.npz"))[0]
+    d = dict(np.load(path, allow_pickle=True))
+    d.pop("chi_convention", None)
+    np.savez(path, **d)
+    with pytest.raises((ValueError, KeyError)):
+        _run_dynamic_lambda(out, 2.0, matsubara_basis="ir")
