@@ -216,6 +216,58 @@ def test_refit_nodes_pass_through_and_beta_guard():
         ed._ir_refit_nodes(vals, bad, ax, "chiq_s", beta)
 
 
+def test_ir_native_discriminator_rejects_incomplete_native_markers():
+    """A partial native schema must not fall through to a permissive
+    uniform-grid reader; only IR provenance by itself denotes densified data.
+    """
+    from hwave.solver.ir_axis import is_ir_native
+    data = {"matsubara_basis": "ir",
+            "frequency_grid": "sparse_ir_nodes",
+            "ir_freq_n": np.array([-2, 0, 2], dtype=np.int64)}
+    assert is_ir_native(data)
+    assert not is_ir_native({"matsubara_basis": "ir"})
+    with pytest.raises(ValueError, match="frequency_grid"):
+        is_ir_native({k: v for k, v in data.items()
+                      if k != "frequency_grid"})
+    wrong = dict(data, frequency_grid="uniform")
+    with pytest.raises(ValueError, match="frequency_grid"):
+        is_ir_native(wrong)
+
+
+@pytest.mark.parametrize("freq_n", [
+    np.array([-2.0, 0.5, 2.0]),
+    np.array([-2, 2, 0], dtype=np.int64),
+])
+def test_ir_native_meta_rejects_malformed_nodes(freq_n):
+    """Node metadata must not be normalized by dtype coercion or sorting;
+    malformed serialized order/type is rejected at the schema boundary.
+    """
+    from hwave.solver.ir_axis import ir_native_meta
+    data = {"ir_freq_n": freq_n, "ir_beta": 2.0, "ir_wmax": 12.0,
+            "ir_tol": 1e-8, "ir_L": 3, "ir_statistics": "B"}
+    with pytest.raises(ValueError, match="ir_freq_n"):
+        ir_native_meta(data)
+
+
+def test_refit_nodes_rejects_wrong_sector_and_node_count():
+    """Even the exact-node pass-through validates the file's statistics and
+    stored array length before accepting native values.
+    """
+    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.ir_axis import IRAxis
+    beta = 2.0
+    ax = IRAxis(beta=beta, wmax=12.0, eps=1e-8, statistics="B")
+    vals = np.ones((1, ax.n_freq), dtype=complex)
+    meta = {"freq_n": ax.freq_n, "beta": beta, "wmax": ax.wmax,
+            "tol": ax.eps, "L": ax.L, "statistics": "F"}
+    with pytest.raises(ValueError, match="statistics"):
+        ed._ir_refit_nodes(vals, meta, ax, "chiq_s", beta)
+
+    meta["statistics"] = "B"
+    with pytest.raises(ValueError, match="frequency-axis length"):
+        ed._ir_refit_nodes(vals[..., :-1], meta, ax, "chiq_s", beta)
+
+
 def test_dynamic_native_memory_guard_uses_node_count(tmp_path, monkeypatch):
     from hwave.solver import eliashberg_dynamic as ed
     out = str(tmp_path)

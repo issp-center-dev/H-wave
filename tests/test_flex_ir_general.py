@@ -45,6 +45,13 @@ def _make_general_solver(nmat, matsubara_basis="uniform", T=2.0,
     return solver, gi
 
 
+def _assert_converged(solver):
+    """Numerical equivalence tests compare fixed points, not matching
+    transient iterates from two runs with the same iteration cap."""
+    assert solver.scf_converged
+    assert 1 < solver.scf_iterations < solver.max_iter
+
+
 def test_grev_index_map_tau_flip_only_spatial_roll_flip():
     """§6.10: the reverse+roll used by the general IR bubble maps tau by
     flip-only (j -> nt-1-j) and each spatial axis by roll(-1)+flip
@@ -188,6 +195,8 @@ def test_e2e_general_flex_ir_vs_uniform():
     s_ir.solve(gi_ir, 'tests/flex/output')
     s_u, gi_u = _make_general_solver(1024, "uniform", T=T, iteration_max=60)
     s_u.solve(gi_u, 'tests/flex/output')
+    _assert_converged(s_ir)
+    _assert_converged(s_u)
     for key in ("sigma", "chi_s", "chi_c"):
         a = getattr(s_ir, key)
         b = getattr(s_u, key)
@@ -277,11 +286,13 @@ def test_dynamic_consumes_general_ir_densified(tmp_path):
     out_u = str(tmp_path / "gen_u")
     os.makedirs(out_ir, exist_ok=True)
     os.makedirs(out_u, exist_ok=True)
-    s_ir, gi_ir = _make_general_solver(256, "ir", T=T, iteration_max=40)
+    s_ir, gi_ir = _make_general_solver(256, "ir", T=T, iteration_max=60)
     s_ir.solve(gi_ir, out_ir)
-    s_ir.save_results(_outdict(out_ir), gi_ir)
-    s_u, gi_u = _make_general_solver(256, "uniform", T=T, iteration_max=40)
+    s_u, gi_u = _make_general_solver(256, "uniform", T=T, iteration_max=60)
     s_u.solve(gi_u, out_u)
+    _assert_converged(s_ir)
+    _assert_converged(s_u)
+    s_ir.save_results(_outdict(out_ir), gi_ir)
     s_u.save_results(_outdict(out_u), gi_u)
     lam_ir = _run_dynamic_lambda(out_ir, T)
     lam_u = _run_dynamic_lambda(out_u, T)
@@ -300,12 +311,14 @@ def test_dynamic_consumes_general_ir_native(tmp_path):
     out_u = str(tmp_path / "gen_u")
     os.makedirs(out_ir_native, exist_ok=True)
     os.makedirs(out_u, exist_ok=True)
-    s, gi = _make_general_solver(256, "ir", T=T, iteration_max=40)
+    s, gi = _make_general_solver(256, "ir", T=T, iteration_max=60)
     s.write_densified = False
     s.solve(gi, out_ir_native)
-    s.save_results(_outdict(out_ir_native), gi)
-    s_u, gi_u = _make_general_solver(256, "uniform", T=T, iteration_max=40)
+    s_u, gi_u = _make_general_solver(256, "uniform", T=T, iteration_max=60)
     s_u.solve(gi_u, out_u)
+    _assert_converged(s)
+    _assert_converged(s_u)
+    s.save_results(_outdict(out_ir_native), gi)
     s_u.save_results(_outdict(out_u), gi_u)
     lam = _run_dynamic_lambda(out_ir_native, T, matsubara_basis="ir")
     lam_u = _run_dynamic_lambda(out_u, T)
@@ -379,8 +392,8 @@ def test_general_ir_chi0_dtype_is_complex128():
 def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
     """§6.9: the static Eliashberg solver (hwave_sc, [eliashberg] frequency
     left at its "static" default) already fails fast on IR-native chi0q
-    files via sc._reject_ir_native/is_ir_native, which inspects only the
-    npz's frequency_grid tag and is agnostic to calc_scheme. This asserts
+    files via sc._reject_ir_native/is_ir_native, which validates the native
+    discriminator and is agnostic to calc_scheme. This asserts
     that existing guard also covers calc_scheme='general' (previously only
     exercised for calc_scheme='reduced' in test_ir_native_readers.py) --
     the static path does not otherwise know about matsubara_basis and never
