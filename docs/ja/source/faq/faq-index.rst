@@ -12,13 +12,11 @@ FAQ
 FLEX の感受率を読み込むモード）では、ペアリング頂点はスピン
 （:math:`\chi_{\mathrm s}`）・電荷（:math:`\chi_{\mathrm c}`）感受率から構成され、
 両チャネルについて\ **線形**\ です。したがって ``[eliashberg]`` セクションで
-一方のチャネルを 0 にすることで、各チャネルのペアリング固有値 :math:`\lambda`
-への寄与を切り分けられます。
+一方のチャネルを 0 にすることで、各チャネルがペアリング固有値 :math:`\lambda`
+に与える効果を比較できます。
 
-- ``zero_chi_c = true`` とすると、スピンゆらぎの寄与
-  （:math:`\lambda_{\mathrm s}`）のみが残ります。
-- ``zero_chi_s = true`` とすると、電荷ゆらぎの寄与
-  （:math:`\lambda_{\mathrm c}`）のみが残ります。
+- ``zero_chi_c = true`` とすると、スピンゆらぎ項＋裸の項が残ります。
+- ``zero_chi_s = true`` とすると、電荷ゆらぎ項＋裸の項が残ります。
 
 full の計算と2つの 0 化計算を行い、得られた :math:`\lambda` を比較すれば、
 どちらのゆらぎチャネルがペアリングを支配しているかがわかります。いずれのフラグも
@@ -29,8 +27,10 @@ full の計算と2つの 0 化計算を行い、得られた :math:`\lambda` を
 
    瞬間的な（裸の）相互作用項は常に保持され、線形化ギャップ固有値問題は
    非線形なので、固有値は加算されません（一般に
-   :math:`\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq \lambda_{\mathrm{full}}`\ ）。
-   この分解は2つのチャネルの相対的な強さの比較に用い、厳密な加法的分割としては
-   扱わないでください。
+   :math:`\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq
+   \lambda_{\mathrm{full}}`\ ）。ここで :math:`\lambda_{\mathrm s}` と
+   :math:`\lambda_{\mathrm c}` は、それぞれスピンゆらぎ項＋裸の項と
+   電荷ゆらぎ項＋裸の項を含む計算の固有値です。この分解は2つのチャネルの
+   相対的な強さの比較に用い、厳密な加法的分割としては扱わないでください。
 
 頂点の式や詳細は :ref:`sc_channel_decomposition` を参照してください。
