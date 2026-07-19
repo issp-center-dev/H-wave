@@ -559,3 +559,32 @@ def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite,
     # nonzero-bare check is asserted only where it is guaranteed.
     if pairing_type == "singlet":
         assert np.max(np.abs(V_bare)) > 1e-8
+
+
+@pytest.mark.parametrize(
+    "extra, expected",
+    [
+        ({"zero_chi_c": True}, (False, True)),
+        ({"zero_chi_s": True}, (True, False)),
+        ({"zero_chi_c": True, "zero_chi_s": True}, (True, True)),
+        ({"zero_chi_c": "false", "zero_chi_s": "false"}, (False, False)),
+    ],
+)
+def test_channel_decomposition_flags_route_through_solve_dynamic(
+        flex_outdir, monkeypatch, extra, expected):
+    """The public solver must route the channel flags to vertex construction."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    captured = {}
+    real_compute = ed.compute_vertices_flex_dynamic
+
+    def capture(chis_w, chic_w, *args, **kwargs):
+        captured["zero"] = (
+            bool(np.all(chis_w == 0)),
+            bool(np.all(chic_w == 0)),
+        )
+        return real_compute(chis_w, chic_w, *args, **kwargs)
+
+    monkeypatch.setattr(ed, "compute_vertices_flex_dynamic", capture)
+    ed.solve_dynamic(_eliashberg_input(flex_outdir, extra=extra))
+    assert captured["zero"] == expected
