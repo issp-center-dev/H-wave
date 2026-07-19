@@ -1190,6 +1190,33 @@ def solve_dynamic(input_dict):
             green_w = _ir_compress(green_w, axF, nmat, "green")
     nfreq_axis = axF.n_freq if use_ir else nmat
 
+    # --- Diagnostic: optionally zero one fluctuation channel to decompose the
+    #     singlet vertex V = 1.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(S+C) into its
+    #     spin (chi_s) and charge (chi_c) contributions. Both default off, so
+    #     the production vertex is unchanged. NOTE: the instantaneous bare
+    #     0.5(S+C) term is retained in every case, and the linearized-gap
+    #     eigenvalue problem is nonlinear in the vertex, so eigenvalues from
+    #     separately zeroed runs are NOT additive
+    #     (lambda_spin + lambda_charge != lambda_full in general).
+    #     Booleans coerced via backend.as_bool (as for the gpu/ir flags) so a
+    #     programmatic string "false" does not silently enable the diagnostic.
+    zero_chi_c = backend.as_bool(eli_param.get("zero_chi_c", False))
+    zero_chi_s = backend.as_bool(eli_param.get("zero_chi_s", False))
+    if zero_chi_c and zero_chi_s:
+        logger.warning("zero_chi_c=zero_chi_s=True: both susceptibilities "
+                       "zeroed; bare (instantaneous) vertex only (diagnostic).")
+        chic_w = np.zeros_like(chic_w)
+        chis_w = np.zeros_like(chis_w)
+    else:
+        if zero_chi_c:
+            logger.warning("zero_chi_c=True: charge susceptibility zeroed in "
+                           "the pairing vertex (spin+bare channel; diagnostic).")
+            chic_w = np.zeros_like(chic_w)
+        if zero_chi_s:
+            logger.warning("zero_chi_s=True: spin susceptibility zeroed in the "
+                           "pairing vertex (charge+bare channel; diagnostic).")
+            chis_w = np.zeros_like(chis_w)
+
     # --- Vertex and pair bubble on the frequency axis ---
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
                 "convention=%s)...", pairing_type, chi_convention)
