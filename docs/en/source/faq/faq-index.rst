@@ -20,16 +20,17 @@ zeroing the other channel in the ``[eliashberg]`` section:
 - ``zero_chi_s = true`` keeps the charge-fluctuation term plus the bare term.
 
 Running the full calculation together with the two zeroed calculations and
-comparing the resulting :math:`\lambda` shows which fluctuation channel
-dominates the pairing. Both flags default to ``false`` (ordinary runs are
-unaffected), and the diagnostic works for both ``pairing_type = "singlet"`` and
-``"triplet"``.
+comparing the resulting :math:`\lambda` provides a diagnostic indication of
+which fluctuation channel has the stronger effect on pairing. Both flags default
+to ``false`` (ordinary runs are unaffected), and the diagnostic works for both
+``pairing_type = "singlet"`` and ``"triplet"``.
 
 .. note::
 
    The instantaneous (bare) interaction term is retained in every case, and the
-   linearized-gap eigenvalue problem is nonlinear, so the eigenvalues do **not**
-   add up: :math:`\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq
+   leading eigenvalue is not a linear function of the pairing vertex, so the
+   eigenvalues do **not** add up: :math:`\lambda_{\mathrm s} +
+   \lambda_{\mathrm c} \neq
    \lambda_{\mathrm{full}}` in general, where :math:`\lambda_{\mathrm s}` and
    :math:`\lambda_{\mathrm c}` denote the spin-plus-bare and charge-plus-bare
    runs, respectively. Use the decomposition to compare the relative strength
