@@ -630,22 +630,29 @@ back to the raw leading pair; increase ``num_eigenvalues`` or check
 kernel commutes with parity (a centrosymmetric model); if it does not, the
 projection is disabled with a warning and the un-projected iteration is used.
 
+.. _sc_channel_decomposition:
+
 Channel decomposition (diagnostic)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The singlet pairing vertex is a sum of a spin-fluctuation, a charge-fluctuation,
-and an instantaneous bare term,
+The pairing vertex is a sum of a spin-fluctuation, a charge-fluctuation, and an
+instantaneous bare term. For the singlet and triplet channels,
 
 .. math::
 
-   V = \tfrac{3}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
+   V^{\mathrm s} &= \tfrac{3}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
        - \tfrac{1}{2}\, \hat C\, \chi_{\mathrm c}\, \hat C
-       + \tfrac{1}{2}(\hat S + \hat C),
+       + \tfrac{1}{2}(\hat S + \hat C), \\
+   V^{\mathrm t} &= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
+       - \tfrac{1}{2}\, \hat C\, \chi_{\mathrm c}\, \hat C
+       + \tfrac{1}{2}(\hat C - \hat S),
 
-which is linear in the spin (:math:`\chi_{\mathrm s}`) and charge
-(:math:`\chi_{\mathrm c}`) susceptibilities. Two optional booleans in the
-``[eliashberg]`` section zero one channel before the vertex is built, to
-attribute the pairing strength to spin vs. charge fluctuations:
+both of which are linear in the spin (:math:`\chi_{\mathrm s}`) and charge
+(:math:`\chi_{\mathrm c}`) susceptibilities (only the coefficients and the bare
+term differ). The decomposition therefore applies to either ``pairing_type``.
+Two optional booleans in the ``[eliashberg]`` section zero one channel before
+the vertex is built, to attribute the pairing strength to spin vs. charge
+fluctuations:
 
 - ``zero_chi_c`` (default ``false``): zero :math:`\chi_{\mathrm c}`; the vertex
   keeps the spin-fluctuation term plus the bare term (spin channel).
@@ -654,9 +661,8 @@ attribute the pairing strength to spin vs. charge fluctuations:
 
 Setting both to ``true`` leaves only the instantaneous bare vertex. Both default
 off, so a production run is unaffected, and each zeroed channel logs a warning.
-These are **diagnostics**: the instantaneous bare
-:math:`\tfrac{1}{2}(\hat S + \hat C)` term is retained in every case, and because
-the linearized-gap eigenvalue problem is nonlinear in the vertex, the
+These are **diagnostics**: the instantaneous bare term is retained in every case,
+and because the linearized-gap eigenvalue problem is nonlinear in the vertex, the
 eigenvalues from separately zeroed runs are **not additive**
 (:math:`\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq \lambda_{\mathrm{full}}`
 in general).

@@ -1191,10 +1191,12 @@ def solve_dynamic(input_dict):
     nfreq_axis = axF.n_freq if use_ir else nmat
 
     # --- Diagnostic: optionally zero one fluctuation channel to decompose the
-    #     singlet vertex V = 1.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(S+C) into its
-    #     spin (chi_s) and charge (chi_c) contributions. Both default off, so
-    #     the production vertex is unchanged. NOTE: the instantaneous bare
-    #     0.5(S+C) term is retained in every case, and the linearized-gap
+    #     pairing vertex into its spin (chi_s) and charge (chi_c) contributions.
+    #     Both the singlet V = 1.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(S+C) and the
+    #     triplet V = -0.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(C-S) vertices are
+    #     linear in chi_s, chi_c, so this works for either pairing_type. Both
+    #     flags default off, so the production vertex is unchanged. NOTE: the
+    #     instantaneous bare term is retained in every case, and the linearized-gap
     #     eigenvalue problem is nonlinear in the vertex, so eigenvalues from
     #     separately zeroed runs are NOT additive
     #     (lambda_spin + lambda_charge != lambda_full in general).
