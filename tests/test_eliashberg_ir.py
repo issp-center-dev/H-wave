@@ -508,8 +508,7 @@ def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
 
 
 @pytest.mark.parametrize("pairing_type", ["singlet", "triplet"])
-def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite,
-                                                     pairing_type):
+def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite, pairing_type):
     """Guard the zero_chi_s / zero_chi_c diagnostic (solve_dynamic): it zeroes
     one susceptibility before compute_vertices_flex_dynamic to isolate the spin
     vs charge contribution to the pairing vertex. Both the singlet vertex
@@ -524,35 +523,41 @@ def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite,
     a separate, nonlinear step -- only at the vertex level.) Uses the off-site
     model where the bare term is genuinely nonzero (the beta'-(ET)2ICl2 UVg
     class, issue #57)."""
-    from hwave.solver import eliashberg_dynamic as ed
     import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
 
     inp = _offsite_input(flex_outdir_offsite)
     norb, Nx, Ny, Nz = 1, LX, LY, 1
-    chis_w, chic_w, green_w, conv = ed.load_flex_chi_dynamic(
-        inp, norb, Nx, Ny, Nz)
-    kx = np.linspace(0, 2*np.pi, Nx, endpoint=False)
-    ky = np.linspace(0, 2*np.pi, Ny, endpoint=False)
-    kz = np.linspace(0, 2*np.pi, Nz, endpoint=False)
+    chis_w, chic_w, green_w, conv = ed.load_flex_chi_dynamic(inp, norb, Nx, Ny, Nz)
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
     geom, hr, inter = sc._read_interaction_files(inp)
     inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
 
-    zeros_c = np.zeros_like(chic_w)   # emulate eli_param zero_chi_c
-    zeros_s = np.zeros_like(chis_w)   # emulate eli_param zero_chi_s
+    zeros_c = np.zeros_like(chic_w)  # emulate eli_param zero_chi_c
+    zeros_s = np.zeros_like(chis_w)  # emulate eli_param zero_chi_s
 
     def V(cs, cc):
         return ed.compute_vertices_flex_dynamic(
-            cs, cc, inter_k, norb, Nx, Ny, Nz,
-            pairing_type=pairing_type, convention=conv)
+            cs,
+            cc,
+            inter_k,
+            norb,
+            Nx,
+            Ny,
+            Nz,
+            pairing_type=pairing_type,
+            convention=conv,
+        )
 
-    V_full = V(chis_w, chic_w)    # production vertex (no flags)
-    V_spin = V(chis_w, zeros_c)   # zero_chi_c -> spin + bare
-    V_chg = V(zeros_s, chic_w)    # zero_chi_s -> charge + bare
+    V_full = V(chis_w, chic_w)  # production vertex (no flags)
+    V_spin = V(chis_w, zeros_c)  # zero_chi_c -> spin + bare
+    V_chg = V(zeros_s, chic_w)  # zero_chi_s -> charge + bare
     V_bare = V(zeros_s, zeros_c)  # both flags -> bare only
 
     # linear separability underpinning the decomposition (both channels)
-    np.testing.assert_allclose(V_full + V_bare, V_spin + V_chg,
-                               rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(V_full + V_bare, V_spin + V_chg, rtol=1e-10, atol=1e-12)
     # the singlet bare term 0.5(S+C) is genuinely nonzero for this off-site
     # model (issue #57), so the cancellation above is non-trivial; the triplet
     # bare term 0.5(C-S) can vanish for density-density interactions, so the
@@ -571,7 +576,8 @@ def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite,
     ],
 )
 def test_channel_decomposition_flags_route_through_solve_dynamic(
-        flex_outdir, monkeypatch, extra, expected):
+    flex_outdir, monkeypatch, extra, expected
+):
     """The public solver must route the channel flags to vertex construction."""
     from hwave.solver import eliashberg_dynamic as ed
 
