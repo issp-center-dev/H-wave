@@ -1205,18 +1205,24 @@ def solve_dynamic(input_dict):
     zero_chi_c = backend.as_bool(eli_param.get("zero_chi_c", False))
     zero_chi_s = backend.as_bool(eli_param.get("zero_chi_s", False))
     if zero_chi_c and zero_chi_s:
-        logger.warning("zero_chi_c=zero_chi_s=True: both susceptibilities "
-                       "zeroed; bare (instantaneous) vertex only (diagnostic).")
+        logger.warning(
+            "zero_chi_c=zero_chi_s=True: both susceptibilities "
+            "zeroed; bare (instantaneous) vertex only (diagnostic)."
+        )
         chic_w = np.zeros_like(chic_w)
         chis_w = np.zeros_like(chis_w)
     else:
         if zero_chi_c:
-            logger.warning("zero_chi_c=True: charge susceptibility zeroed in "
-                           "the pairing vertex (spin+bare channel; diagnostic).")
+            logger.warning(
+                "zero_chi_c=True: charge susceptibility zeroed in "
+                "the pairing vertex (spin+bare channel; diagnostic)."
+            )
             chic_w = np.zeros_like(chic_w)
         if zero_chi_s:
-            logger.warning("zero_chi_s=True: spin susceptibility zeroed in the "
-                           "pairing vertex (charge+bare channel; diagnostic).")
+            logger.warning(
+                "zero_chi_s=True: spin susceptibility zeroed in the "
+                "pairing vertex (charge+bare channel; diagnostic)."
+            )
             chis_w = np.zeros_like(chis_w)
 
     # --- Vertex and pair bubble on the frequency axis ---
