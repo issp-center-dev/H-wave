@@ -468,8 +468,8 @@ class FLEX(RPA):
             # and a chi/vertex tensor, then allow for several live arrays.
             # The reduced chi/vertex is inflated to spin-orbital space, while
             # the general path carries a rank-4 orbital block. The 5x factor is
-            # still only an order-of-magnitude lower bound: transient
-            # FFT/einsum/solve workspace is not counted.
+            # a rough advisory estimate; transient FFT/einsum/solve workspace
+            # is not included, so actual peak usage may be higher.
             nblk0, _, _, nd0 = self.H0_eigenvector.shape
             nfreq_f = self._ir_axF.n_freq if self.use_ir else nmat
             nfreq_b = self._ir_axB.n_freq if self.use_ir else nmat
