@@ -64,6 +64,26 @@ jobs:
         poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml
       continue-on-error: true
 
+    - name: Verify the test suite left the tracked tree clean
+      run: |
+        # A test that modifies/deletes a TRACKED file -- or leaves a NEW stray
+        # generated file in a committed input/output dir -- is a test-isolation
+        # bug (this is how a generated *_fixture.npz once got committed and then
+        # deleted on every run). `git diff --exit-code` catches tracked
+        # modifications/deletions; the scoped `git status` catches a new stray
+        # file in the committed RPA fixture/output dirs. Untracked artifacts
+        # elsewhere (coverage.xml, __pycache__, gitignored outputs) are ignored.
+        git diff --exit-code || {
+          echo "::error::the test suite modified or deleted tracked file(s) -- see the diff above; tests must write generated files to a temp dir, not into the committed tree";
+          exit 1;
+        }
+        stray="$(git status --porcelain -- tests/rpa/input tests/rpa/output)"
+        if [ -n "$stray" ]; then
+          echo "::error::the test suite left stray files in a committed test dir:";
+          echo "$stray";
+          exit 1;
+        fi
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
