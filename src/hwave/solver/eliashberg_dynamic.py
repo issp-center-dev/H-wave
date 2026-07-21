@@ -301,16 +301,8 @@ def _npz_freq_size(path, keys, axis):
     return None
 
 
-def _ir_refit_nodes(arr, meta, ax, label, beta):
-    """Bring IR-native node values (..., n_file_nodes) onto the RUN's axis
-    nodes (design ir-matsubara-stage3.md Sec. 4.1). Returns NODE VALUES.
-
-    Exact node-set equality is a pure pass-through (the common case: same
-    beta, auto wmax, same sparse-ir version) -- a fit/eval round trip would
-    not be zero-cost and could perturb the values. The chi/green files are
-    physics input, so a beta mismatch is a hard error (contrast the
-    sigma_init warm start, where cross-temperature seeding is deliberate).
-    """
+def _ir_validate_native_nodes(arr, meta, label, beta):
+    """Validate native-node metadata without fitting an unused channel."""
     file_beta = float(meta["beta"])
     if not np.isclose(file_beta, beta, rtol=1e-9, atol=1e-9 * beta):
         raise ValueError(
@@ -320,6 +312,23 @@ def _ir_refit_nodes(arr, meta, ax, label, beta):
             .format(label, file_beta, beta,
                     abs(file_beta - beta) / abs(beta)))
     freq_n = np.asarray(meta["freq_n"], dtype=np.int64)
+    if arr.shape[-1] != freq_n.size:
+        raise ValueError(
+            "IR-native {}: stored frequency-axis length {} differs from "
+            "len(ir_freq_n)={}.".format(label, arr.shape[-1], freq_n.size)
+        )
+    return freq_n
+
+
+def _ir_refit_nodes(arr, meta, ax, label, beta):
+    """Bring IR-native node values (..., n_file_nodes) onto the RUN's axis
+    nodes (design ir-matsubara-stage3.md Sec. 4.1). Returns NODE VALUES.
+
+    Exact node-set equality is a pure pass-through (the common case: same
+    beta, auto wmax, same sparse-ir version) -- a fit/eval round trip would
+    not be zero-cost and could perturb the values.
+    """
+    freq_n = _ir_validate_native_nodes(arr, meta, label, beta)
     if np.array_equal(freq_n, ax.freq_n):
         logger.info("IR-native %s: file node set equals the run basis "
                     "(%d nodes); stored values used directly.", label,
@@ -1190,10 +1199,20 @@ def solve_dynamic(input_dict):
             # values; refit each onto the run axes (pass-through when the
             # node sets coincide). No drop_constant -- node values carry no
             # uniform-FFT delta(tau) artifact.
-            chis_w = _ir_refit_nodes(chis_w, ir_file_meta["chis"], axB,
-                                     "chiq_s", beta)
-            chic_w = _ir_refit_nodes(chic_w, ir_file_meta["chic"], axB,
-                                     "chiq_c", beta)
+            if zero_chi_s:
+                _ir_validate_native_nodes(chis_w, ir_file_meta["chis"], "chiq_s", beta)
+                chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
+            else:
+                chis_w = _ir_refit_nodes(
+                    chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
+                )
+            if zero_chi_c:
+                _ir_validate_native_nodes(chic_w, ir_file_meta["chic"], "chiq_c", beta)
+                chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
+            else:
+                chic_w = _ir_refit_nodes(
+                    chic_w, ir_file_meta["chic"], axB, "chiq_c", beta
+                )
             green_w = _ir_refit_nodes(green_w, ir_file_meta["green"], axF,
                                       "green", beta)
             # the uniform grid exists only as the OUTPUT grid here
