@@ -571,6 +571,14 @@ into the directory read by the Eliashberg step:
    gap functions for such runs are **corrected (and therefore change)** in this
    version. Single-orbital and general (myo) results are unaffected.
 
+   As of this version, IR-native susceptibility files (``write_densified =
+   false``) must carry this ``chi_convention`` tag, and the loader also
+   rejects a ``chi_convention`` that contradicts the tensor's shape-inferred
+   layout, failing fast with an explicit message instead of silently building
+   a wrong pairing vertex. Files written by current H-wave always carry a
+   consistent tag, so this only affects hand-edited or externally produced
+   susceptibility files.
+
 ``Nmat`` must be even and must match between the FLEX output and the
 ``[mode.param]`` value. If ``frequency = "dynamic"`` is requested without
 ``chi0q_mode = "flex"``, with an odd ``Nmat``, or without a dressed

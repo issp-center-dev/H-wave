@@ -1265,8 +1265,12 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     # output -> default to "kuroki". (A pre-tag general output could only exist
     # as a transient artifact of an unreleased dev build; the s/c-agreement
     # check below still guards against accidentally mixing conventions.)
+    # This default is legacy-only: an IR-native file missing the tag is
+    # rejected below instead of silently defaulting (an IR-native norb=2 MYO
+    # file would otherwise be mis-read as spin-orbital "kuroki").
+    chi_convention_present_s = "chi_convention" in data_s
     chi_convention = (str(data_s["chi_convention"])
-                      if "chi_convention" in data_s else "kuroki")
+                      if chi_convention_present_s else "kuroki")
 
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
@@ -1275,8 +1279,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
     # The spin and charge files must share one convention; combining e.g. an MYO
     # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
+    chi_convention_present_c = "chi_convention" in data_c
     chi_convention_c = (str(data_c["chi_convention"])
-                        if "chi_convention" in data_c else "kuroki")
+                        if chi_convention_present_c else "kuroki")
     if chi_convention_c != chi_convention:
         raise ValueError(
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
@@ -1293,6 +1298,13 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "(chiq_s: {}, chiq_c: {}).".format(
                 "IR-native" if native_s else "densified",
                 "IR-native" if native_c else "densified"))
+    if native_s and not (chi_convention_present_s and chi_convention_present_c):
+        raise ValueError(
+            "FLEX chi_s/chi_c are IR-native but missing 'chi_convention'; "
+            "the file appears to be an MYO/IR-native FLEX output and its "
+            "orbital layout (spin-orbital 'kuroki' vs orbital-pair 'myo') "
+            "cannot be safely defaulted -- re-run FLEX with a build that "
+            "tags chi_convention, or re-tag the npz explicitly.")
     ir_meta = ({"chis": ir_native_meta(data_s),
                 "chic": ir_native_meta(data_c)} if native_s else None)
     return chi_s_raw, chi_c_raw, chi_convention, ir_meta
@@ -1322,6 +1334,13 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     treated a norb=2 kuroki spin-orbital chi as orbital-pair, skipping the
     extraction and building a wrong pairing vertex.
 
+    For ``norb != 2`` the shape is unambiguous, but ``convention`` is still
+    REQUIRED to agree with the shape-inferred layout (and to be a recognized
+    value): the caller forwards ``convention`` unchanged to
+    ``_compute_vertices_flex``, which uses it (not the shape) to pick the
+    MYO vs Kuroki S/C matrices, so a shape/tag mismatch would silently build
+    the wrong pairing vertex just as in the norb=2 case.
+
     The mapping is elementwise in frequency, so it may be applied to a single
     static slice or the full axis identically.
     """
@@ -1348,8 +1367,34 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
                 "'kuroki') is required to resolve the layout, got '{}'.".format(
                     nd_chi, convention))
     elif nd_chi == nd_so and nd_chi != nd:
+        # Unambiguous spin-orbital shape: the convention tag must still agree,
+        # otherwise a file shaped spin-orbital but mistagged "myo" (or with an
+        # unrecognized tag) would be extracted correctly here yet the wrong
+        # tag would later select the MYO S/C matrices downstream, silently
+        # building the wrong pairing vertex.
+        if convention not in ("myo", "kuroki"):
+            raise ValueError(
+                "FLEX chi has unrecognized chi_convention='{}' (expected "
+                "'myo' or 'kuroki').".format(convention))
+        if convention != "kuroki":
+            raise ValueError(
+                "FLEX chi dimension nd_chi={} (norb={}) is unambiguously "
+                "spin-orbital (nd_so=norb*ns={}, nd=norb^2={}) but is tagged "
+                "chi_convention='{}'; expected 'kuroki'.".format(
+                    nd_chi, norb, nd_so, nd, convention))
         is_spin_orbital = True
     elif nd_chi == nd and nd_chi != nd_so:
+        # Unambiguous orbital-pair shape: same agreement check, mirrored.
+        if convention not in ("myo", "kuroki"):
+            raise ValueError(
+                "FLEX chi has unrecognized chi_convention='{}' (expected "
+                "'myo' or 'kuroki').".format(convention))
+        if convention != "myo":
+            raise ValueError(
+                "FLEX chi dimension nd_chi={} (norb={}) is unambiguously "
+                "orbital-pair (nd=norb^2={}, nd_so=norb*ns={}) but is tagged "
+                "chi_convention='{}'; expected 'myo'.".format(
+                    nd_chi, norb, nd, nd_so, convention))
         is_spin_orbital = False
     else:
         raise ValueError(

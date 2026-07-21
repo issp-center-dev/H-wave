@@ -187,18 +187,20 @@ def test_ir_outputs_are_densified_uniform_grid():
         assert isinstance(gi[key], np.ndarray)
 
 
-def test_ir_rejects_general_scheme():
-    import hwave.qlmsio.read_input_k as read_input_k
-    import hwave.solver.flex as solver_flex
-    info_mode = {'mode': 'FLEX', 'param': {
-        'T': 0.5, 'mu': 0.0, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
-        'Nmat': 64, 'matsubara_basis': 'ir'}, 'calc_scheme': 'general'}
+def test_ir_accepts_general_scheme():
+    """general + IR is now supported (was rejected in v1): construction must
+    succeed and set the IR + general flags."""
     info_input = {'path_to_input': 'tests/rpa/input', 'interaction': {
         'path_to_input': 'tests/rpa/input', 'Geometry': 'geom.dat',
         'Transfer': 'transfer.dat', 'CoulombIntra': 'coulombintra.dat'}}
+    info_mode = {'mode': 'FLEX', 'param': {
+        'T': 0.5, 'mu': 0.0, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+        'Nmat': 64, 'matsubara_basis': 'ir'}, 'calc_scheme': 'general'}
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
     rio = read_input_k.QLMSkInput(info_input)
-    with pytest.raises(ValueError, match="matsubara_basis"):
-        solver_flex.FLEX(rio.get_param("ham"), {}, info_mode)
+    s = solver_flex.FLEX(rio.get_param("ham"), {}, info_mode)
+    assert s.use_ir is True and s._flex_general is True
 
 
 def test_ir_rejects_unknown_basis():

@@ -572,7 +572,8 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
        計算するため、一様FFT由来の :math:`O(\beta/N_{\mathrm{mat}})`
        離散化アーティファクトが原理的に生じません）。``Nmat`` は出力グリッド
        として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
-       ``calc_scheme = "general"`` とは併用できません（v1）。オプションの
+       ``calc_scheme = "reduced"``、``"squashed"``、``"general"``
+       のいずれとも併用できます。オプションの
        `sparse-ir <https://sparse-ir.readthedocs.io>`_ が必要です。μ探索は
        :math:`n = -\mathrm{Tr}\,G(\tau=\beta^-)` の基底評価に置き換わり、
        ``coeff_tail`` は不要（無視）になります。
@@ -635,7 +636,7 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
 
       [mode]
       mode = "FLEX"
-      calc_scheme = "reduced"     # または "squashed"（"general" は一様グリッドのみ）
+      calc_scheme = "reduced"     # または "squashed" または "general"
       [mode.param]
       CellShape = [64, 64, 1]
       T = 0.05
@@ -690,6 +691,17 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
    ます。いずれのスキームでも
    ``calc_type = "ring+ladder"`` には対応していません（ソルバーは
    ``ValueError`` を送出します）。
+
+   **``"general"`` + IR のメモリ使用量。** ``matsubara_basis = "ir"``（上記）
+   は ``calc_scheme = "general"`` でも利用できますが、IRが圧縮するのは
+   *振動数* 軸のみで（``Nmat``/L 倍、目安20〜40倍）、:math:`N_{\mathrm{orb}}`
+   に対するスケーリングは変わりません。``"general"`` は完全なrank-4軌道頂点を
+   保持するため、chi0q/chiq/sigma のストレージはもともと
+   :math:`O(N_{\mathrm{orb}}^4)` でスケールし（軌道方向の縮約はさらに悪化
+   します）、``"general"`` + IR は到達可能な ``Nmat``/:math:`\beta` を拡張
+   しますが、到達可能な :math:`N_{\mathrm{orb}}` は拡張しません。多軌道系の
+   ``"general"`` 実行ではメモリに注意してください（FLEXのGPU経路のVRAM
+   プリフライトは、実行のメモリ余裕が乏しい場合すでに警告を出します）。
 
 
 サンプル 3: 鉄系超伝導体2軌道モデル

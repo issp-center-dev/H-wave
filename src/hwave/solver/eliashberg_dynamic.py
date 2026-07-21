@@ -301,8 +301,19 @@ def _npz_freq_size(path, keys, axis):
     return None
 
 
-def _ir_validate_native_nodes(arr, meta, label, beta):
+def _ir_validate_native_nodes(arr, meta, ax, label, beta):
     """Validate native-node metadata without fitting an unused channel."""
+    statistics = str(meta["statistics"])
+    if statistics != ax.statistics:
+        raise ValueError(
+            "IR-native {}: ir_statistics={!r} does not match the run's "
+            "{} axis ({!r}).".format(
+                label,
+                statistics,
+                "fermionic" if ax.statistics == "F" else "bosonic",
+                ax.statistics,
+            )
+        )
     file_beta = float(meta["beta"])
     if not np.isclose(file_beta, beta, rtol=1e-9, atol=1e-9 * beta):
         raise ValueError(
@@ -328,7 +339,7 @@ def _ir_refit_nodes(arr, meta, ax, label, beta):
     beta, auto wmax, same sparse-ir version) -- a fit/eval round trip would
     not be zero-cost and could perturb the values.
     """
-    freq_n = _ir_validate_native_nodes(arr, meta, label, beta)
+    freq_n = _ir_validate_native_nodes(arr, meta, ax, label, beta)
     if np.array_equal(freq_n, ax.freq_n):
         logger.info("IR-native %s: file node set equals the run basis "
                     "(%d nodes); stored values used directly.", label,
@@ -1200,14 +1211,18 @@ def solve_dynamic(input_dict):
             # node sets coincide). No drop_constant -- node values carry no
             # uniform-FFT delta(tau) artifact.
             if zero_chi_s:
-                _ir_validate_native_nodes(chis_w, ir_file_meta["chis"], "chiq_s", beta)
+                _ir_validate_native_nodes(
+                    chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
+                )
                 chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
             else:
                 chis_w = _ir_refit_nodes(
                     chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
                 )
             if zero_chi_c:
-                _ir_validate_native_nodes(chic_w, ir_file_meta["chic"], "chiq_c", beta)
+                _ir_validate_native_nodes(
+                    chic_w, ir_file_meta["chic"], axB, "chiq_c", beta
+                )
                 chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
             else:
                 chic_w = _ir_refit_nodes(

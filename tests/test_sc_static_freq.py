@@ -209,7 +209,11 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
         from hwave.sc import _load_flex_susceptibilities
 
         with tempfile.TemporaryDirectory() as tmp:
-            nfreq, nvol, nd = 201, 2, 1
+            # norb=1 "kuroki" (reduced/spin-orbital) data is physically
+            # shaped nd_so = norb*2 = 2, not the orbital-pair nd = norb^2 = 1
+            # -- _expand_flex_chi now enforces that the stored shape agrees
+            # with the chi_convention tag.
+            nfreq, nvol, nd = 201, 2, 2
             freq_index = np.arange(400, 601)
             # encode the stored position in the value so the selected
             # slice is observable
@@ -236,7 +240,11 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
         from hwave.sc import _load_flex_susceptibilities
 
         with tempfile.TemporaryDirectory() as tmp:
-            nfreq, nvol, nd = 8, 2, 1
+            # norb=1 "kuroki" (reduced/spin-orbital) data is physically
+            # shaped nd_so = norb*2 = 2, not the orbital-pair nd = norb^2 = 1
+            # -- _expand_flex_chi now enforces that the stored shape agrees
+            # with the chi_convention tag.
+            nfreq, nvol, nd = 8, 2, 2
             chiq = np.zeros((nfreq, nvol, nd, nd), dtype=np.complex128)
             for i in range(nfreq):
                 chiq[i] = float(i)

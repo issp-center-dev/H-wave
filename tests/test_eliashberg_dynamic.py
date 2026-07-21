@@ -243,6 +243,79 @@ def test_expand_flex_chi_dimension_matches_neither_raises():
         sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
 
+# --- unambiguous-shape-vs-tag agreement (norb != 2, so shape alone already
+# determines the layout; the convention tag must still AGREE, otherwise the
+# tag is forwarded downstream and silently selects the wrong S/C matrices) ---
+
+@pytest.mark.parametrize("norb,Nx,Ny,Nz", [(1, 2, 1, 1), (3, 2, 1, 1)])
+def test_expand_flex_chi_unambiguous_spin_orbital_tagged_myo_raises(
+        norb, Nx, Ny, Nz):
+    """Shape says spin-orbital (nd_chi == norb*ns != norb^2) but the file is
+    tagged 'myo' (orbital-pair): must raise, not silently extract-and-forward
+    the contradicting 'myo' tag to the S/C-matrix selection downstream."""
+    import hwave.sc as sc
+    nvol, nd_so, nfreq = Nx * Ny * Nz, norb * 2, 2
+    rng = np.random.default_rng(100 + norb)
+    chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
+               + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
+    with pytest.raises(ValueError, match="chi_convention"):
+        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
+
+
+@pytest.mark.parametrize("norb,Nx,Ny,Nz", [(1, 2, 1, 1), (3, 2, 1, 1)])
+def test_expand_flex_chi_unambiguous_orbital_pair_tagged_kuroki_raises(
+        norb, Nx, Ny, Nz):
+    """Shape says orbital-pair (nd_chi == norb^2 != norb*ns) but the file is
+    tagged 'kuroki' (spin-orbital): must raise, not silently pass the raw
+    matrix through under the contradicting 'kuroki' tag."""
+    import hwave.sc as sc
+    nvol, nd, nfreq = Nx * Ny * Nz, norb * norb, 2
+    rng = np.random.default_rng(200 + norb)
+    chi_raw = (rng.standard_normal((nfreq, nvol, nd, nd))
+               + 1j * rng.standard_normal((nfreq, nvol, nd, nd)))
+    with pytest.raises(ValueError, match="chi_convention"):
+        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+
+
+@pytest.mark.parametrize("norb,Nx,Ny,Nz", [(1, 2, 1, 1), (3, 2, 1, 1)])
+def test_expand_flex_chi_unambiguous_spin_orbital_tagged_kuroki_still_works(
+        norb, Nx, Ny, Nz):
+    """Shape says spin-orbital and the tag agrees ('kuroki'): extraction must
+    still succeed exactly as before this guard was added."""
+    import hwave.sc as sc
+    nvol, nd_so, nd, nfreq = Nx * Ny * Nz, norb * 2, norb * norb, 2
+    rng = np.random.default_rng(300 + norb)
+    chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
+               + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
+
+    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+
+    chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
+    orb = chi6[:, :, :, :, :norb, :norb]
+    expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
+    for l2 in range(norb):
+        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    assert out.shape == (nfreq, Nx, Ny, Nz, nd, nd)
+    np.testing.assert_allclose(out, expected)
+
+
+@pytest.mark.parametrize("norb,Nx,Ny,Nz", [(1, 2, 1, 1), (3, 2, 1, 1)])
+def test_expand_flex_chi_unambiguous_orbital_pair_tagged_myo_still_works(
+        norb, Nx, Ny, Nz):
+    """Shape says orbital-pair and the tag agrees ('myo'): pass-through must
+    still succeed exactly as before this guard was added."""
+    import hwave.sc as sc
+    nvol, nd, nfreq = Nx * Ny * Nz, norb * norb, 2
+    rng = np.random.default_rng(400 + norb)
+    chi_raw = (rng.standard_normal((nfreq, nvol, nd, nd))
+               + 1j * rng.standard_normal((nfreq, nvol, nd, nd)))
+
+    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
+
+    assert out.shape == (nfreq, Nx, Ny, Nz, nd, nd)
+    np.testing.assert_allclose(out, chi_raw.reshape(nfreq, Nx, Ny, Nz, nd, nd))
+
+
 def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     """A legacy untagged norb=2 chi (nd_chi=4) defaults to 'kuroki' and MUST be
     spin-orbital-extracted at the loader level -- the regression the shape-only

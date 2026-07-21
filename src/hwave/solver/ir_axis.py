@@ -40,26 +40,63 @@ def _import_sparse_ir():
 
 def is_ir_native(data):
     """Discriminator D-1 (design ir-matsubara-stage3.md Sec. 3): a loaded
-    npz holds sparse-IR NODE data iff ``matsubara_basis == "ir"`` AND
-    ``ir_freq_n`` is present. The key alone is not enough -- densified
-    outputs (e.g. the Stage-1 ``gap_dynamic.npz``) carry
-    ``matsubara_basis="ir"`` as provenance on a uniform-grid array.
+    npz holds sparse-IR NODE data iff ``matsubara_basis == "ir"``,
+    ``frequency_grid == "sparse_ir_nodes"``, AND ``ir_freq_n`` is present.
+    Provenance alone is not enough -- densified outputs (e.g. the Stage-1
+    ``gap_dynamic.npz``) carry ``matsubara_basis="ir"`` on a uniform-grid
+    array.
 
     Requires no sparse-ir installation (uniform-only readers use it to
     fail fast even where the IR stack is absent)."""
-    return ("matsubara_basis" in data
-            and str(data["matsubara_basis"]) == "ir"
-            and "ir_freq_n" in data)
+    basis_ir = ("matsubara_basis" in data
+                and str(data["matsubara_basis"]) == "ir")
+    grid_sparse = ("frequency_grid" in data
+                   and str(data["frequency_grid"]) == "sparse_ir_nodes")
+    has_freq_n = "ir_freq_n" in data
+    native = basis_ir and grid_sparse and has_freq_n
+    # ``matsubara_basis='ir'`` alone is valid provenance on a densified
+    # uniform array. Any sparse-node marker, however, commits the file to the
+    # complete native discriminator; otherwise a malformed native file could
+    # fall through to a permissive legacy uniform-grid reader.
+    if (grid_sparse or has_freq_n) and not native:
+        raise ValueError(
+            "incomplete IR-native discriminator: sparse-node data requires "
+            "matsubara_basis='ir', frequency_grid='sparse_ir_nodes', and "
+            "ir_freq_n together.")
+    return native
 
 
 def ir_native_meta(data):
     """Extract the IR-node metadata of an IR-native npz (Sec. 3 schema)."""
-    return {"freq_n": np.asarray(data["ir_freq_n"], dtype=np.int64),
+    freq_n = np.asarray(data["ir_freq_n"])
+    if freq_n.ndim != 1:
+        raise ValueError(
+            "IR-native ir_freq_n must be 1-D, got shape {}."
+            .format(freq_n.shape))
+    if not np.issubdtype(freq_n.dtype, np.integer):
+        raise ValueError(
+            "IR-native ir_freq_n must contain integer Matsubara indices, "
+            "got dtype {}.".format(freq_n.dtype))
+    if np.any(np.diff(freq_n) <= 0):
+        raise ValueError(
+            "IR-native ir_freq_n must be strictly increasing (sorted, no "
+            "duplicates).")
+    statistics = str(data["ir_statistics"])
+    if statistics not in ("F", "B"):
+        raise ValueError(
+            "IR-native ir_statistics must be 'F' or 'B', got {!r}."
+            .format(statistics))
+    want_odd = 1 if statistics == "F" else 0
+    if np.any(np.abs(freq_n) % 2 != want_odd):
+        raise ValueError(
+            "IR-native ir_freq_n parity does not match ir_statistics={!r}."
+            .format(statistics))
+    return {"freq_n": freq_n.astype(np.int64, copy=False),
             "beta": float(data["ir_beta"]),
             "wmax": float(data["ir_wmax"]),
             "tol": float(data["ir_tol"]),
             "L": int(data["ir_L"]),
-            "statistics": str(data["ir_statistics"])}
+            "statistics": statistics}
 
 
 class IRAxis:
