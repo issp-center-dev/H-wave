@@ -6,7 +6,7 @@ FAQ
 Separating the spin and charge contributions to superconductivity
 =================================================================
 
-**Q. I want to analyze the superconductivity by separating the charge and spin
+**Q. I want to analyze superconductivity by separating the charge and spin
 contributions. Is that possible?**
 
 Yes. In the dynamic Eliashberg solver (``[eliashberg] frequency = "dynamic"``,
@@ -32,8 +32,10 @@ to ``false`` (ordinary runs are unaffected), and the diagnostic works for both
    eigenvalues do **not** add up: :math:`\lambda_{\mathrm s} +
    \lambda_{\mathrm c} \neq
    \lambda_{\mathrm{full}}` in general, where :math:`\lambda_{\mathrm s}` and
-   :math:`\lambda_{\mathrm c}` denote the spin-plus-bare and charge-plus-bare
-   runs, respectively. Use the decomposition to compare the relative strength
-   of the two channels, not as an exact additive split.
+   :math:`\lambda_{\mathrm c}` denote the ``zero_chi_c = true``
+   (spin-plus-bare) and ``zero_chi_s = true`` (charge-plus-bare) runs,
+   respectively. The bare term is present in both and would also be counted
+   twice by a simple sum. Use the decomposition to compare the relative
+   strength of the two channels, not as an exact additive split.
 
 See :ref:`sc_channel_decomposition` for the vertex formulas and further details.
