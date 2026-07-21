@@ -4,19 +4,19 @@ This module implements the full-frequency Eliashberg equation solver for
 analyzing superconducting instabilities with frequency-dependent kernels.
 """
 
-import os
 import logging
+import os
+
 import numpy as np
 
 from hwave.solver import backend
 from hwave.solver import matsubara as ms
-
 # Shared spatial-FFT helpers (scipy-parallel on CPU, cuFFT on GPU) live in
 # backend.py so RPA/FLEX use the same implementations; keep the module-local
 # names used throughout this file and by the tests.
-from hwave.solver.backend import (_SFFT,                       # noqa: F401
-                                  spatial_fftn as _spatial_fftn,
-                                  spatial_ifftn as _spatial_ifftn)
+from hwave.solver.backend import _SFFT  # noqa: F401
+from hwave.solver.backend import spatial_fftn as _spatial_fftn
+from hwave.solver.backend import spatial_ifftn as _spatial_ifftn
 
 logger = logging.getLogger("qlms").getChild("eliashberg_dynamic")
 
@@ -274,7 +274,9 @@ def _npz_freq_size(path, keys, axis):
         missing-file error).
     """
     import zipfile
+
     from numpy.lib import format as _npformat
+
     # Best-effort header probe. This is a pure optimization/safety pre-check --
     # the loader below is the authoritative path -- so ANY failure returns None
     # and lets the loader raise the existing, clearer error. The broad catch is
@@ -773,6 +775,19 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                   "pairing_type={}".format(pairing_type),
                   "eigenvalue={:.8e}".format(eigenvalue),
                   "T={:.8e}".format(T)]
+        if extra_meta and (
+            extra_meta.get("zero_chi_s") or extra_meta.get("zero_chi_c")
+        ):
+            header.extend(
+                [
+                    "zero_chi_s={}".format(
+                        str(bool(extra_meta.get("zero_chi_s", False))).lower()
+                    ),
+                    "zero_chi_c={}".format(
+                        str(bool(extra_meta.get("zero_chi_c", False))).lower()
+                    ),
+                ]
+            )
         fw.write("  ".join(header) + "\n")
         cols = ["# kx", "ky", "kz"]
         for i in range(norb):
@@ -821,6 +836,7 @@ def _ir_auto_wmax(hr, inter_k, norb, beta, mu=None, filling=None):
     overestimate on realistic multi-hopping models (issue #57)."""
     try:
         import hwave.sc as sc
+
         # Even nk includes the zone boundary (k = pi); a coarse but tight
         # bound on the spectral range for the heuristic. The interaction adds
         # an extra spectral scale on top of the band.
@@ -1088,8 +1104,9 @@ def solve_dynamic(input_dict):
     float
         The leading (largest real part) Eliashberg eigenvalue lambda.
     """
-    import hwave.sc as sc
     from scipy.sparse.linalg import LinearOperator
+
+    import hwave.sc as sc
 
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
@@ -1209,21 +1226,21 @@ def solve_dynamic(input_dict):
             "zero_chi_c=zero_chi_s=True: both susceptibilities "
             "zeroed; bare (instantaneous) vertex only (diagnostic)."
         )
-        chic_w = np.zeros_like(chic_w)
-        chis_w = np.zeros_like(chis_w)
+        chic_w[...] = 0
+        chis_w[...] = 0
     else:
         if zero_chi_c:
             logger.warning(
                 "zero_chi_c=True: charge susceptibility zeroed in "
                 "the pairing vertex (spin+bare channel; diagnostic)."
             )
-            chic_w = np.zeros_like(chic_w)
+            chic_w[...] = 0
         if zero_chi_s:
             logger.warning(
                 "zero_chi_s=True: spin susceptibility zeroed in the "
                 "pairing vertex (charge+bare channel; diagnostic)."
             )
-            chis_w = np.zeros_like(chis_w)
+            chis_w[...] = 0
 
     # --- Vertex and pair bubble on the frequency axis ---
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
@@ -1419,13 +1436,30 @@ def solve_dynamic(input_dict):
     gap_file = eli_param.get("output_gap", "gap.dat")
     # Provenance metadata is added ONLY on the opt-in IR path: the default
     # uniform output keeps its exact historical key set.
+    extra_meta = {}
     if use_ir:
-        extra_meta = {"matsubara_basis": "ir", "ir_tol": axF.eps,
-                      "ir_wmax": axF.wmax, "ir_L": axF.L}
-    else:
-        extra_meta = None
-    write_dynamic_outputs(output_dir, gap_w, lam, T, pairing_type,
-                          kx_array, ky_array, kz_array, beta,
-                          gap_file=gap_file, extra_meta=extra_meta)
+        extra_meta.update(
+            {
+                "matsubara_basis": "ir",
+                "ir_tol": axF.eps,
+                "ir_wmax": axF.wmax,
+                "ir_L": axF.L,
+            }
+        )
+    if zero_chi_s or zero_chi_c:
+        extra_meta.update({"zero_chi_s": zero_chi_s, "zero_chi_c": zero_chi_c})
+    write_dynamic_outputs(
+        output_dir,
+        gap_w,
+        lam,
+        T,
+        pairing_type,
+        kx_array,
+        ky_array,
+        kz_array,
+        beta,
+        gap_file=gap_file,
+        extra_meta=extra_meta or None,
+    )
 
     return lam

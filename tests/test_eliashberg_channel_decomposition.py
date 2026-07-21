@@ -1,5 +1,7 @@
 """Channel-decomposition diagnostics that do not require sparse-ir."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -81,3 +83,14 @@ def test_channel_decomposition_flags_route_through_solve_dynamic(
     options = dict(extra, pairing_type=pairing_type)
     ed.solve_dynamic(_eliashberg_input(flex_outdir, extra=options))
     assert captured["zero"] == expected
+    if any(expected):
+        with np.load(os.path.join(flex_outdir, "gap_dynamic.npz")) as data:
+            assert bool(data["zero_chi_s"]) is expected[0]
+            assert bool(data["zero_chi_c"]) is expected[1]
+        with open(os.path.join(flex_outdir, "gap.dat")) as stream:
+            header = stream.readline()
+        assert "zero_chi_s={}".format(str(expected[0]).lower()) in header
+        assert "zero_chi_c={}".format(str(expected[1]).lower()) in header
+    else:
+        with np.load(os.path.join(flex_outdir, "gap_dynamic.npz")) as data:
+            assert "zero_chi_s" not in data and "zero_chi_c" not in data
