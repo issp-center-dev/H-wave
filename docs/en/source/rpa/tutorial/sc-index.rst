@@ -659,6 +659,15 @@ fluctuations:
 - ``zero_chi_s`` (default ``false``): zero :math:`\chi_{\mathrm s}`; the vertex
   keeps the charge-fluctuation term plus the bare term (charge channel).
 
+For example, a spin-channel diagnostic uses:
+
+.. code-block:: toml
+
+   [eliashberg]
+   zero_chi_c = true
+
+Only the dynamic susceptibility function is zeroed; the static interaction
+matrices :math:`\hat S` and :math:`\hat C` in the bare term are not changed.
 Setting both to ``true`` leaves only the instantaneous bare vertex. Both default
 off, so a production run is unaffected, and each zeroed channel logs a warning.
 These are **diagnostics**: the instantaneous bare term is retained in every case,
@@ -666,6 +675,8 @@ and because the linearized-gap eigenvalue problem is nonlinear in the vertex, th
 eigenvalues from separately zeroed runs are **not additive**
 (:math:`\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq \lambda_{\mathrm{full}}`
 in general).
+Enabled flags are recorded in ``gap_dynamic.npz``, ``gap.dat``, and
+``eigenvalue.dat``. Keep both flags off for production runs.
 
 Eigenvector continuation (``seed_eigenvector``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
