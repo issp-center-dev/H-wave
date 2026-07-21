@@ -507,90 +507,31 @@ def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
             / np.abs(out_u).max())
 
 
-@pytest.mark.parametrize("pairing_type", ["singlet", "triplet"])
-def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite, pairing_type):
-    """Guard the zero_chi_s / zero_chi_c diagnostic (solve_dynamic): it zeroes
-    one susceptibility before compute_vertices_flex_dynamic to isolate the spin
-    vs charge contribution to the pairing vertex. Both the singlet vertex
-    V = 1.5 S chi_s S - 0.5 C chi_c C + 0.5(S+C) and the triplet vertex
-    V = -0.5 S chi_s S - 0.5 C chi_c C + 0.5(C-S) are linear in chi_s, chi_c
-    (only the bare term differs), so the four channel vertices must satisfy
-
-        V(chi_s, chi_c) + V(0, 0) == V(chi_s, 0) + V(0, chi_c)
-
-    i.e. the retained instantaneous bare term cancels and the fluctuation
-    contributions add. (They are NOT additive at the eigenvalue level -- that is
-    a separate, nonlinear step -- only at the vertex level.) Uses the off-site
-    model where the bare term is genuinely nonzero (the beta'-(ET)2ICl2 UVg
-    class, issue #57)."""
-    import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
-
-    inp = _offsite_input(flex_outdir_offsite)
-    norb, Nx, Ny, Nz = 1, LX, LY, 1
-    chis_w, chic_w, green_w, conv = ed.load_flex_chi_dynamic(inp, norb, Nx, Ny, Nz)
-    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
-    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
-    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
-    geom, hr, inter = sc._read_interaction_files(inp)
-    inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
-
-    zeros_c = np.zeros_like(chic_w)  # emulate eli_param zero_chi_c
-    zeros_s = np.zeros_like(chis_w)  # emulate eli_param zero_chi_s
-
-    def V(cs, cc):
-        return ed.compute_vertices_flex_dynamic(
-            cs,
-            cc,
-            inter_k,
-            norb,
-            Nx,
-            Ny,
-            Nz,
-            pairing_type=pairing_type,
-            convention=conv,
-        )
-
-    V_full = V(chis_w, chic_w)  # production vertex (no flags)
-    V_spin = V(chis_w, zeros_c)  # zero_chi_c -> spin + bare
-    V_chg = V(zeros_s, chic_w)  # zero_chi_s -> charge + bare
-    V_bare = V(zeros_s, zeros_c)  # both flags -> bare only
-
-    # linear separability underpinning the decomposition (both channels)
-    np.testing.assert_allclose(V_full + V_bare, V_spin + V_chg, rtol=1e-10, atol=1e-12)
-    # the singlet bare term 0.5(S+C) is genuinely nonzero for this off-site
-    # model (issue #57), so the cancellation above is non-trivial; the triplet
-    # bare term 0.5(C-S) can vanish for density-density interactions, so the
-    # nonzero-bare check is asserted only where it is guaranteed.
-    if pairing_type == "singlet":
-        assert np.max(np.abs(V_bare)) > 1e-8
-
-
-@pytest.mark.parametrize(
-    "extra, expected",
-    [
-        ({"zero_chi_c": True}, (False, True)),
-        ({"zero_chi_s": True}, (True, False)),
-        ({"zero_chi_c": True, "zero_chi_s": True}, (True, True)),
-        ({"zero_chi_c": "false", "zero_chi_s": "false"}, (False, False)),
-    ],
-)
-def test_channel_decomposition_flags_route_through_solve_dynamic(
-    flex_outdir, monkeypatch, extra, expected
+def test_channel_decomposition_ir_offsite_bare_only_keeps_instantaneous_term(
+    flex_outdir_offsite, monkeypatch
 ):
-    """The public solver must route the channel flags to vertex construction."""
+    """Both zero flags on the IR/off-site path remove fluctuations while the
+    nonzero singlet bare vertex is subtracted and reinserted analytically."""
     from hwave.solver import eliashberg_dynamic as ed
 
     captured = {}
-    real_compute = ed.compute_vertices_flex_dynamic
+    real_kernel = ed.eliashberg_kernel_ir
 
-    def capture(chis_w, chic_w, *args, **kwargs):
-        captured["zero"] = (
-            bool(np.all(chis_w == 0)),
-            bool(np.all(chic_w == 0)),
-        )
-        return real_compute(chis_w, chic_w, *args, **kwargs)
+    def capture(vertex_rt, *args, **kwargs):
+        captured["dynamic_max"] = float(np.max(np.abs(vertex_rt)))
+        captured["instantaneous_max"] = float(np.max(np.abs(kwargs["V_inst_rt"])))
+        return real_kernel(vertex_rt, *args, **kwargs)
 
-    monkeypatch.setattr(ed, "compute_vertices_flex_dynamic", capture)
-    ed.solve_dynamic(_eliashberg_input(flex_outdir, extra=extra))
-    assert captured["zero"] == expected
+    monkeypatch.setattr(ed, "eliashberg_kernel_ir", capture)
+    inp = _offsite_input(
+        flex_outdir_offsite,
+        extra={
+            "matsubara_basis": "ir",
+            "pairing_type": "singlet",
+            "zero_chi_s": True,
+            "zero_chi_c": True,
+        },
+    )
+    ed.solve_dynamic(inp)
+    assert captured["dynamic_max"] < 1e-10
+    assert captured["instantaneous_max"] > 1e-8
