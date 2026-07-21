@@ -24,8 +24,14 @@ from tests.test_flex_general import _write_2d_2orb_onsite_fixture
 
 
 def _make_general_solver(nmat, matsubara_basis="uniform", T=2.0,
-                         iteration_max=60, mix=0.3):
-    """A spin-free general FLEX solver on the on-site 2-orbital fixture."""
+                         iteration_max=60, mix=0.3, extra_param=None):
+    """A spin-free general FLEX solver on the on-site 2-orbital fixture.
+
+    ``extra_param``, if given, is merged into ``[mode.param]`` (e.g. to pass
+    ``coeff_tail`` through the same param path production configs use), on
+    top of the defaults below without changing this helper's existing
+    behavior/signature for callers that don't pass it.
+    """
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
@@ -39,6 +45,8 @@ def _make_general_solver(nmat, matsubara_basis="uniform", T=2.0,
     param = {'T': T, 'mu': 0.0, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
              'Nmat': nmat, 'IterationMax': iteration_max, 'Mix': mix, 'EPS': 8,
              'matsubara_basis': matsubara_basis}
+    if extra_param:
+        param.update(extra_param)
     info_mode = {'mode': 'FLEX', 'param': param, 'calc_scheme': 'general'}
     gi = read_input_k.QLMSkInput(info_input).get_param("green")
     solver = solver_flex.FLEX(ham, {}, info_mode)
@@ -199,13 +207,26 @@ def test_chi0_general_ir_orbital_pin_asymmetric_fixture():
         "fixture too symmetric to distinguish orbital leg ordering"
 
 
-def test_sigma_general_ir_direct_matches_uniform():
+@pytest.mark.parametrize("T,nmat,tol", [
+    # T=2.0 (beta=0.5): baseline case, unchanged from before parametrization.
+    # Measured relative diff ~1.2e-2 (see report for the exact figure).
+    (2.0, 1024, 2e-2),
+    # T=0.5 (beta=2.0): a substantially different temperature (4x beta).
+    # The uniform path's node-compression error scales like O(beta/Nmat), so
+    # Nmat is raised 4x (to 4096) to keep the comparison as fair as the
+    # T=2.0 case rather than silently comparing at a laxer effective
+    # resolution; tolerance is kept at the same 2e-2 (not loosened).
+    (0.5, 4096, 2e-2),
+])
+def test_sigma_general_ir_direct_matches_uniform(T, nmat, tol):
     """Direct method call: general IR self-energy vs uniform general
-    self-energy on the same dressed G and v_eff, compressed onto nodes."""
+    self-energy on the same dressed G and v_eff, compressed onto nodes.
+
+    Parameterized over two substantially different temperatures (beta=0.5
+    and beta=2.0) so a beta-dependent normalization bug (e.g. a missing or
+    mis-scaled 1/beta) cannot hide behind a single-temperature comparison."""
     from hwave.solver import eliashberg_dynamic as ed
-    T = 2.0
     beta = 1.0 / T
-    nmat = 1024
     su, giu = _make_general_solver(nmat, "uniform", T=T)
     su._calc_epsilon_k(giu)
     gu, gtail = su._calc_green(beta, 0.0)
@@ -227,7 +248,9 @@ def test_sigma_general_ir_direct_matches_uniform():
     sig_u_nodes = np.moveaxis(ed._ir_compress(
         np.moveaxis(sig_u[0], 0, -1), axF, nmat, "sig_u"), -1, 0)
     scale = np.abs(sig_u_nodes).max()
-    assert np.abs(sig_ir[0] - sig_u_nodes).max() / scale < 2e-2
+    diff = np.abs(sig_ir[0] - sig_u_nodes).max() / scale
+    assert diff < tol, "T={} beta={} nmat={}: relative diff {} >= {}".format(
+        T, beta, nmat, diff, tol)
 
 
 def test_sigma_general_gate_one_iteration():
@@ -276,6 +299,73 @@ def test_e2e_general_flex_ir_vs_uniform():
         b = getattr(s_u, key)
         scale = np.abs(b).max()
         assert np.abs(a - b).max() / scale < 3e-2, key
+
+
+def test_coeff_tail_inert_on_general_ir_path():
+    """Regression pin (see tests/test_flex_coeff_tail.py for the analogous
+    reduced-scheme coverage): ``coeff_tail`` is a pure UNIFORM-grid tail
+    acceleration control (`aa = 0.0 if self.use_ir else self.coeff_tail` in
+    src/hwave/solver/flex.py) and must have NO effect whatsoever on the
+    general+IR path -- a general+IR run with coeff_tail=0.0 and one with
+    coeff_tail=1.0 must produce IDENTICAL sigma/chi_s/chi_c (not merely
+    "close"; the IR branch never reads the value, so the two runs execute
+    bit-identical floating-point operations at every SCF step). Both start
+    from the same Sigma=0 seed, so this holds regardless of whether the SCF
+    has converged by iteration_max -- convergence is not asserted here (it
+    would only add runtime without strengthening the coeff_tail-inertness
+    claim); test_e2e_general_flex_ir_vs_uniform above already separately
+    exercises a converged general+IR run."""
+    T = 2.0
+    s0, gi0 = _make_general_solver(64, "ir", T=T, iteration_max=15,
+                                   extra_param={'coeff_tail': 0.0})
+    s1, gi1 = _make_general_solver(64, "ir", T=T, iteration_max=15,
+                                   extra_param={'coeff_tail': 1.0})
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s0.solve(gi0, 'tests/flex/output')
+    s1.solve(gi1, 'tests/flex/output')
+    for key in ("sigma", "chi_s", "chi_c"):
+        a = getattr(s0, key)
+        b = getattr(s1, key)
+        np.testing.assert_array_equal(
+            a, b, err_msg="coeff_tail affected general+IR {}".format(key))
+
+
+def test_coeff_tail_uniform_converges_toward_ir_as_nmat_grows():
+    """Optional companion to test_coeff_tail_inert_on_general_ir_path: with
+    coeff_tail turned ON (its intended use -- accelerating the UNIFORM-grid
+    tail), the general+uniform path must still converge toward the general
+    IR reference as Nmat grows (coeff_tail is an acceleration aid, not a
+    physics change, on the uniform path either). Cheap (~15s total for one
+    IR reference + three uniform Nmat points), so kept unmarked (not
+    @pytest.mark.slow)."""
+    from hwave.solver import eliashberg_dynamic as ed
+    T = 2.0
+    beta = 1.0 / T
+    s_ir, gi_ir = _make_general_solver(1024, "ir", T=T, iteration_max=60,
+                                       extra_param={'coeff_tail': 0.0})
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s_ir.solve(gi_ir, 'tests/flex/output')
+    _assert_converged(s_ir)
+    axF = s_ir._ir_axF
+    sig_ir_nodes = np.moveaxis(ed._ir_compress(
+        np.moveaxis(s_ir.sigma, 1, -1), axF, 1024, "ref"), -1, 1)
+    scale = np.abs(sig_ir_nodes).max()
+
+    diffs = []
+    for nmat in (256, 512, 1024):
+        su, giu = _make_general_solver(nmat, "uniform", T=T,
+                                       iteration_max=60,
+                                       extra_param={'coeff_tail': 1.0})
+        su.solve(giu, 'tests/flex/output')
+        _assert_converged(su)
+        a = np.moveaxis(ed._ir_compress(
+            np.moveaxis(su.sigma, 1, -1), axF, nmat, "u"), -1, 1)
+        diffs.append(np.abs(a - sig_ir_nodes).max() / scale)
+    # Measured (2026-07-21): diffs ~= [8.1e-3, 4.1e-3, 2.4e-3] -- monotone,
+    # roughly halving as Nmat doubles (O(1/Nmat) truncation error).
+    assert diffs[0] > diffs[1] > diffs[2], \
+        "no monotone Nmat convergence with coeff_tail on: {}".format(diffs)
+    assert diffs[-1] < 1e-2, diffs
 
 
 def test_dispatch_routes_general_uniform_and_ir(monkeypatch):
