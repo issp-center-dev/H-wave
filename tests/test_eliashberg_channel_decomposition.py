@@ -98,3 +98,77 @@ def test_channel_decomposition_flags_route_through_solve_dynamic(
     else:
         with np.load(os.path.join(flex_outdir, "gap_dynamic.npz")) as data:
             assert "zero_chi_s" not in data and "zero_chi_c" not in data
+
+
+@pytest.mark.parametrize(
+    "flags, ignored",
+    [
+        ({"zero_chi_s": True}, ["zero_chi_s"]),
+        ({"zero_chi_c": True}, ["zero_chi_c"]),
+        ({"zero_chi_s": True, "zero_chi_c": True}, ["zero_chi_s", "zero_chi_c"]),
+        ({"zero_chi_s": "true"}, ["zero_chi_s"]),
+        ({}, []),
+        ({"zero_chi_s": False, "zero_chi_c": "false"}, []),
+    ],
+)
+def test_static_channel_flags_warn_they_are_ignored(caplog, flags, ignored):
+    """The channel-decomposition flags only affect the dynamic vertex; on the
+    static path they are silently inert, so calc_eliashberg must warn."""
+    import logging
+
+    import hwave.sc as sc
+
+    with caplog.at_level(logging.WARNING, logger="hwave_sc"):
+        sc._warn_if_static_ignores_channel_flags(flags)
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING
+    ]
+    if ignored:
+        assert any("frequency='static'" in msg for msg in warnings)
+        for name in ignored:
+            assert any(name in msg for msg in warnings)
+    else:
+        assert not any("frequency='static'" in msg for msg in warnings)
+
+
+@pytest.mark.parametrize("freq", [None, "static"])
+def test_static_channel_flags_warn_through_calc_eliashberg(caplog, monkeypatch, freq):
+    """Integration: the warning is wired into calc_eliashberg's static path
+    (not just the helper), for both explicit and default (omitted) static
+    frequency. A ``_read_interaction_files`` stub short-circuits right after the
+    warning so no fixture files are needed; the warning must already be logged
+    by then."""
+    import logging
+
+    import hwave.sc as sc
+
+    class _Stop(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise _Stop()
+
+    monkeypatch.setattr(sc, "_read_interaction_files", stop)
+
+    eli = {"zero_chi_s": True}
+    if freq is not None:
+        eli["frequency"] = freq
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": 8, "filling": 0.5}},
+        "file": {"output": {"path_to_output": "."}},
+        "eliashberg": eli,
+    }
+    with caplog.at_level(logging.WARNING, logger="hwave_sc"):
+        with pytest.raises(_Stop):
+            sc.calc_eliashberg(inp)
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING
+    ]
+    assert any(
+        "frequency='static'" in msg and "zero_chi_s" in msg for msg in warnings
+    )

@@ -97,6 +97,27 @@ def _validate_dynamic_prereqs(input_dict):
             "(centered Matsubara grid); got Nmat={}".format(nmat))
 
 
+def _warn_if_static_ignores_channel_flags(eli_param):
+    """Warn that the channel-decomposition flags are inert on the static path.
+
+    ``zero_chi_s``/``zero_chi_c`` split the DYNAMIC pairing vertex into its
+    spin-/charge-fluctuation and instantaneous-bare pieces (see
+    ``eliashberg_dynamic``). The static solver builds its kernel from the RPA/
+    FLEX static susceptibility and never reads these flags, so a user who sets
+    one with ``frequency='static'`` gets no decomposition. Warn loudly instead
+    of silently ignoring the request.
+    """
+    from hwave.solver.backend import as_bool
+
+    ignored = [name for name in ("zero_chi_s", "zero_chi_c")
+               if as_bool(eli_param.get(name, False))]
+    if ignored:
+        logger.warning(
+            "[eliashberg] %s set but frequency='static'; the channel-"
+            "decomposition flags only apply to frequency='dynamic' and are "
+            "ignored here.", ", ".join(ignored))
+
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -3076,6 +3097,10 @@ def calc_eliashberg(input_dict):
         _validate_dynamic_prereqs(input_dict)
         from hwave.solver import eliashberg_dynamic
         return eliashberg_dynamic.solve_dynamic(input_dict)
+
+    # Static path from here on: the channel-decomposition flags only affect the
+    # dynamic vertex, so warn rather than silently ignore them.
+    _warn_if_static_ignores_channel_flags(eli_param)
 
     solver_mode = eli_param.get("solver_mode", "iteration")
     max_iter = eli_param.get("max_iter", 1000)
