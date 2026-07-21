@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+
+<html lang="ja" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>8. FAQ &#8212; H-waveマニュアル 1.1-dev ドキュメント</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
+    <script src="../_static/documentation_options.js?v=c6080ef3"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/translations.js?v=4755f45a"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="検索" href="../search.html" />
+    <link rel="next" title="9. 謝辞" href="../acknowledgement.html" />
+    <link rel="prev" title="7.3. 線形化Eliashberg方程式" href="../algorithm/eliashberg.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="faq">
+<span id="ch-faq"></span><h1><span class="section-number">8. </span>FAQ<a class="headerlink" href="#faq" title="Link to this heading">¶</a></h1>
+<section id="id1">
+<h2><span class="section-number">8.1. </span>超伝導へのスピン・電荷の寄与を切り分けたい<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<p><strong>Q. 超伝導解析において、電荷とスピンの影響を切り分けて評価できますか？</strong></p>
+<p>可能です。動的 Eliashberg ソルバ（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、
+FLEX の感受率を読み込むモード）では、ペアリング頂点はスピン
+（<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>）・電荷（<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>）感受率から構成され、
+両チャネルについて<strong>線形</strong>です。したがって <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで
+一方のチャネルを 0 にすることで、各チャネルがペアリング固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>
+に与える効果を比較できます。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span> <span class="pre">=</span> <span class="pre">true</span></code> とすると、スピンゆらぎ項＋裸の項が残ります。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span> <span class="pre">=</span> <span class="pre">true</span></code> とすると、電荷ゆらぎ項＋裸の項が残ります。</p></li>
+</ul>
+<p>全チャネルを含む計算（full）と、一方のチャネルをゼロにした2通りの計算を行い、
+得られた <span class="math notranslate nohighlight">\(\lambda\)</span> を比較すれば、
+どちらのゆらぎチャネルの効果が相対的に強いかを診断する目安になります。
+いずれのフラグも既定は <code class="docutils literal notranslate"><span class="pre">false</span></code> なので通常の計算には影響せず、
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> が <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> でも <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code> でも使えます。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>瞬間的な（裸の）相互作用項は常に保持され、主要固有値はペアリング頂点に対して
+線形ではないため、固有値は加算されません（一般に
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq
+\lambda_{\mathrm{full}}\)</span>）。ここで <span class="math notranslate nohighlight">\(\lambda_{\mathrm s}\)</span> と
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm c}\)</span> は、それぞれ <code class="docutils literal notranslate"><span class="pre">zero_chi_c</span> <span class="pre">=</span> <span class="pre">true</span></code>
+（スピンゆらぎ項＋裸の項）と <code class="docutils literal notranslate"><span class="pre">zero_chi_s</span> <span class="pre">=</span> <span class="pre">true</span></code>
+（電荷ゆらぎ項＋裸の項）による計算の固有値です。裸の項は両方に含まれるため、
+単純に加算すると二重に数えることにもなります。この分解は2つのチャネルの
+相対的な強さの比較に用い、厳密な加法的分割としては扱わないでください。</p>
+</div>
+<p>頂点の式や詳細は <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-channel-decomposition"><span class="std std-ref">チャネル分解（診断用）</span></a> を参照してください。</p>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../index.html">
+    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo" />
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>ナビゲーション</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. H-waveとは？</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. 基本的な使用方法</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../flex/flex-index.html">6. ゆらぎ交換近似 (FLEX)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">7. アルゴリズム</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">8. FAQ</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#id1">8.1. 超伝導へのスピン・電荷の寄与を切り分けたい</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">9. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">10. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="../algorithm/eliashberg.html" title="前の章へ"><span class="section-number">7.3. </span>線形化Eliashberg方程式</a></li>
+      <li>Next: <a href="../acknowledgement.html" title="次の章へ"><span class="section-number">9. </span>謝辞</a></li>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">クイック検索</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="検索" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.0.4</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="../_sources/faq/faq-index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -682,6 +682,46 @@ back to the raw leading pair; increase <code class="docutils literal notranslate
 kernel commutes with parity (a centrosymmetric model); if it does not, the
 projection is disabled with a warning and the un-projected iteration is used.</p>
 </section>
+<section id="channel-decomposition-diagnostic">
+<span id="sc-channel-decomposition"></span><h3>Channel decomposition (diagnostic)<a class="headerlink" href="#channel-decomposition-diagnostic" title="Link to this heading">¶</a></h3>
+<p>The pairing vertex is a sum of a spin-fluctuation, a charge-fluctuation, and an
+instantaneous bare term. For the singlet and triplet channels,</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-7">
+<span class="eqno">(5.8)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-7" title="Link to this equation">¶</a></span>\[\begin{split}V^{\mathrm s} &amp;= \tfrac{3}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
+    - \tfrac{1}{2}\, \hat C\, \chi_{\mathrm c}\, \hat C
+    + \tfrac{1}{2}(\hat S + \hat C), \\
+V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
+    - \tfrac{1}{2}\, \hat C\, \chi_{\mathrm c}\, \hat C
+    + \tfrac{1}{2}(\hat C - \hat S),\end{split}\]</div>
+<p>both of which are linear in the spin (<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>) and charge
+(<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>) susceptibilities (only the coefficients and the bare
+term differ). The decomposition therefore applies to either <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>.
+Two optional booleans in the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section zero one channel before
+the vertex is built, to attribute the pairing strength to spin vs. charge
+fluctuations:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>): zero <span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>; the vertex
+keeps the spin-fluctuation term plus the bare term (spin channel).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>): zero <span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>; the vertex
+keeps the charge-fluctuation term plus the bare term (charge channel).</p></li>
+</ul>
+<p>For example, a spin-channel diagnostic uses:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[eliashberg]</span>
+<span class="n">zero_chi_c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</pre></div>
+</div>
+<p>Only the dynamic susceptibility function is zeroed; the static interaction
+matrices <span class="math notranslate nohighlight">\(\hat S\)</span> and <span class="math notranslate nohighlight">\(\hat C\)</span> in the bare term are not changed.
+Setting both to <code class="docutils literal notranslate"><span class="pre">true</span></code> leaves only the instantaneous bare vertex. Both default
+off, so a production run is unaffected, and each zeroed channel logs a warning.
+These are <strong>diagnostics</strong>: the instantaneous bare term is retained in every case,
+and because the linearized-gap eigenvalue problem is nonlinear in the vertex, the
+eigenvalues from separately zeroed runs are <strong>not additive</strong>
+(<span class="math notranslate nohighlight">\(\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq \lambda_{\mathrm{full}}\)</span>
+in general).
+Enabled flags are recorded in <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Keep both flags off for production runs.</p>
+</section>
 <section id="eigenvector-continuation-seed-eigenvector">
 <h3>Eigenvector continuation (<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>)<a class="headerlink" href="#eigenvector-continuation-seed-eigenvector" title="Link to this heading">¶</a></h3>
 <p>The reported leading eigenpair is normally the algebraically largest one. For a
@@ -1103,8 +1143,9 @@ pairing instabilities using the appropriate vertex.</p></li>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../../flex/flex-index.html">6. Fluctuation Exchange Approximation (FLEX)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">7. Algorithms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">8. Acknowledgments</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">9. Appendix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../faq/faq-index.html">8. FAQ</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">9. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">10. Appendix</a></li>
 </ul>
 
 <div class="relations">

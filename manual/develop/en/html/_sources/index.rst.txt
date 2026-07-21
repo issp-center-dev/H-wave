@@ -17,6 +17,7 @@ Contents
    rpa/rpa-index
    flex/flex-index
    algorithm/al-index
+   faq/faq-index
    acknowledgement
    appendix/app-index
    

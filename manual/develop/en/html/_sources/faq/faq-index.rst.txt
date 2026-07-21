@@ -1,0 +1,41 @@
+.. _Ch:FAQ:
+
+FAQ
+****
+
+Separating the spin and charge contributions to superconductivity
+=================================================================
+
+**Q. I want to analyze superconductivity by separating the charge and spin
+contributions. Is that possible?**
+
+Yes. In the dynamic Eliashberg solver (``[eliashberg] frequency = "dynamic"``,
+which reads the FLEX susceptibilities) the pairing vertex is built from the spin
+(:math:`\chi_{\mathrm s}`) and charge (:math:`\chi_{\mathrm c}`)
+susceptibilities and is **linear** in the two channels. You can therefore
+compare each channel's effect on the pairing eigenvalue :math:`\lambda` by
+zeroing the other channel in the ``[eliashberg]`` section:
+
+- ``zero_chi_c = true`` keeps the spin-fluctuation term plus the bare term;
+- ``zero_chi_s = true`` keeps the charge-fluctuation term plus the bare term.
+
+Running the full calculation together with the two zeroed calculations and
+comparing the resulting :math:`\lambda` provides a diagnostic indication of
+which fluctuation channel has the stronger effect on pairing. Both flags default
+to ``false`` (ordinary runs are unaffected), and the diagnostic works for both
+``pairing_type = "singlet"`` and ``"triplet"``.
+
+.. note::
+
+   The instantaneous (bare) interaction term is retained in every case, and the
+   leading eigenvalue is not a linear function of the pairing vertex, so the
+   eigenvalues do **not** add up: :math:`\lambda_{\mathrm s} +
+   \lambda_{\mathrm c} \neq
+   \lambda_{\mathrm{full}}` in general, where :math:`\lambda_{\mathrm s}` and
+   :math:`\lambda_{\mathrm c}` denote the ``zero_chi_c = true``
+   (spin-plus-bare) and ``zero_chi_s = true`` (charge-plus-bare) runs,
+   respectively. The bare term is present in both and would also be counted
+   twice by a simple sum. Use the decomposition to compare the relative
+   strength of the two channels, not as an exact additive split.
+
+See :ref:`sc_channel_decomposition` for the vertex formulas and further details.

@@ -409,7 +409,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ギャップ関数 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id30">
+<figure class="align-center" id="id31">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -417,11 +417,11 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id30" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id31" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id31">
+<figure class="align-center" id="id32">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -430,14 +430,14 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span> （および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id31" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id32" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="id15">
 <h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id32">
+<figure class="align-center" id="id33">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -447,7 +447,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満。1を超える2つの白抜きマーカーは
 <em>三重項</em> カーネルの偶パリティ解で、スピン三重項ペアリングにはパウリ原理により
-禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id32" title="Link to this image">¶</a></p>
+禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id33" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -661,6 +661,43 @@ H-wave が書き出すファイルは常に整合したタグを持つため、�
 系では各反復ベクトルをチャネルセクターへ射影します。可換でない場合は警告を出して
 射影を無効化し、射影なしの反復を用います。</p>
 </section>
+<section id="sc-channel-decomposition">
+<span id="id24"></span><h3>チャネル分解（診断用）<a class="headerlink" href="#sc-channel-decomposition" title="Link to this heading">¶</a></h3>
+<p>ペアリング頂点は、スピンゆらぎ項・電荷ゆらぎ項・瞬間的な裸の項の和です。
+一重項・三重項チャネルではそれぞれ</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-7">
+<span class="eqno">(5.8)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-7" title="Link to this equation">¶</a></span>\[\begin{split}V^{\mathrm s} &amp;= \tfrac{3}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
+    - \tfrac{1}{2}\, \hat C\, \chi_{\mathrm c}\, \hat C
+    + \tfrac{1}{2}(\hat S + \hat C), \\
+V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
+    - \tfrac{1}{2}\, \hat C\, \chi_{\mathrm c}\, \hat C
+    + \tfrac{1}{2}(\hat C - \hat S),\end{split}\]</div>
+<p>であり、いずれもスピン（<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>）・電荷
+（<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>）感受率について線形です（係数と裸の項が異なるだけ）。
+したがってこの分解はどちらの <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> にも適用できます。
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションの2つの任意のブール値により、頂点を構成する前に
+一方のチャネルを 0 にでき、ペアリング強度をスピン／電荷ゆらぎに切り分けられます。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span></code>（既定 <code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span> を 0 にする。
+頂点はスピンゆらぎ項＋裸の項を保持（スピンチャネル）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code>（既定 <code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span> を 0 にする。
+頂点は電荷ゆらぎ項＋裸の項を保持（電荷チャネル）。</p></li>
+</ul>
+<p>例えばスピンチャネルの診断は次のように指定します。</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[eliashberg]</span>
+<span class="n">zero_chi_c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</pre></div>
+</div>
+<p>0 にするのは動的感受率関数だけであり、裸の項に含まれる静的相互作用行列
+<span class="math notranslate nohighlight">\(\hat S\)</span> と <span class="math notranslate nohighlight">\(\hat C\)</span> は変更しません。
+両方を <code class="docutils literal notranslate"><span class="pre">true</span></code> にすると瞬間的な裸の頂点のみが残ります。いずれも既定で off の
+ため通常の計算には影響せず、チャネルを 0 にすると警告が出ます。これらは
+<strong>診断用</strong> です：瞬間的な裸の項は常に保持され、線形化ギャップ固有値問題は
+頂点について非線形なので、別々に 0 にした計算の固有値は<strong>加法的ではありません</strong>（一般に
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq \lambda_{\mathrm{full}}\)</span>）。
+有効なフラグは <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> に記録
+されます。通常の本計算では両方を off にしてください。</p>
+</section>
 <section id="seed-eigenvector">
 <h3>固有ベクトル継続（<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>）<a class="headerlink" href="#seed-eigenvector" title="Link to this heading">¶</a></h3>
 <p>通常、報告される先頭固有対は「代数的に最大」のものです。振動数依存（非エルミート）
@@ -737,8 +774,8 @@ pre-flight エラーになります。</p></li>
 に書き出されるサマリー表のファイル名。</p></li>
 </ul>
 </section>
-<section id="id24">
-<h4>掃引の実行<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h4>
+<section id="id25">
+<h4>掃引の実行<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h4>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave_tsweep<span class="w"> </span>input.toml
 </pre></div>
 </div>
@@ -774,8 +811,8 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 ある段の結果を *次の* 段の種に繋ぎ、</strong>--keep-going** は1回の実行内で <em>段がエラーした後</em>
 の挙動を決め、<strong>--resume</strong> は <em>実行全体</em> が再起動されたときの挙動を決めます。</p>
 </section>
-<section id="id25">
-<h4>サマリーファイル<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h4>
+<section id="id26">
+<h4>サマリーファイル<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h4>
 <p>各実行は <code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;summary_file&gt;``（デフォルト</span> <span class="pre">``tsweep/lambda_vs_T.dat</span></code>）
 に段ごとに1行を書き出します:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span># idx  T  status  error_stage  Re_lambda  Im_lambda  parity_match  flex_converged  flex_iter
@@ -802,8 +839,8 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 （<code class="docutils literal notranslate"><span class="pre">parity_match</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_converged</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_iter</span></code>）は <code class="docutils literal notranslate"><span class="pre">-1</span></code> と表示されます。
 <code class="docutils literal notranslate"><span class="pre">error_stage</span></code> は <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">=</span> <span class="pre">error</span></code> でない限り <code class="docutils literal notranslate"><span class="pre">none</span></code> です。</p>
 </section>
-<section id="id26">
-<h4>設定例<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h4>
+<section id="id27">
+<h4>設定例<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h4>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
 
@@ -850,8 +887,8 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 <span class="math notranslate nohighlight">\(T_c\)</span> を見積もることができます。</p>
 </section>
 </section>
-<section id="id27">
-<h3>メモリに関する注意<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
+<section id="id28">
+<h3>メモリに関する注意<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h3>
 <p>動的ソルバーは複数の全振動数テンソル（ペアリング頂点・ペアバブル・ギャップ）を
 保持するため、ピークメモリはおおよそ
 <span class="math notranslate nohighlight">\(\mathcal{O}(N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}})\)</span> で増加し、軌道数・
@@ -865,8 +902,8 @@ RAM の一部が上限に使われます。この見積もりは、設定値だ�
 （k メッシュと軌道数は設定から取得し、その不一致はローダーの reshape エラーとして
 現れます）。</p>
 </section>
-<section id="id28">
-<h3>性能に関する注意<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h3>
+<section id="id29">
+<h3>性能に関する注意<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h3>
 <p>固有値ソルブはカーネルの繰り返し適用が支配的です。2つの最適化でこれを軽く
 保ちます：頂点の虚時間変換（カーネルで最も重いステップ）を matvec ごとではなく
 一度だけ事前計算し、空間 FFT を <code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> で並列化します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
@@ -970,8 +1007,8 @@ OutOfMemory エラーで停止します）。</p></li>
 </ul>
 </section>
 </section>
-<section id="id29">
-<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h2>
+<section id="id30">
+<h2><span class="section-number">5.2.11. </span>対応する相互作用<a class="headerlink" href="#id30" title="Link to this heading">¶</a></h2>
 <p>Eliashberg方程式ソルバーは、H-waveで利用可能な
 全ての相互作用型に対応しています:</p>
 <ul class="simple">
@@ -1045,7 +1082,7 @@ OutOfMemory エラーで停止します）。</p></li>
 <li class="toctree-l3"><a class="reference internal" href="#id17">5.2.8. 出力ファイル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id18">5.2.9. 物理的解釈</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#sc-dynamic-frequency">5.2.10. 動的（振動数依存）Eliashberg方程式</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id29">5.2.11. 対応する相互作用</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id30">5.2.11. 対応する相互作用</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tips">5.2.12. Tips</a></li>
 </ul>
 </li>
@@ -1054,8 +1091,9 @@ OutOfMemory エラーで停止します）。</p></li>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../../flex/flex-index.html">6. ゆらぎ交換近似 (FLEX)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../algorithm/al-index.html">7. アルゴリズム</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">8. 謝辞</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">9. Appendix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../faq/faq-index.html">8. FAQ</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../acknowledgement.html">9. 謝辞</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/app-index.html">10. Appendix</a></li>
 </ul>
 
 <div class="relations">
