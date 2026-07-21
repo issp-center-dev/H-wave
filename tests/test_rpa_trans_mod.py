@@ -20,6 +20,8 @@ previously unassigned ``self.norb_orig``.
 """
 
 import os
+import shutil
+import tempfile
 import unittest
 
 import numpy as np
@@ -29,7 +31,6 @@ import hwave.solver.rpa as solver_rpa
 
 
 INPUT_DIR = "tests/rpa/input"
-OUTPUT_DIR = "tests/rpa/output"
 
 
 def _make_trans_mod_npz(path, ncell=8, norb_phys=2, ns=2):
@@ -63,7 +64,7 @@ def _make_trans_mod_npz(path, ncell=8, norb_phys=2, ns=2):
     return path
 
 
-def _run(subshape, trans_mod_file):
+def _run(subshape, trans_mod_file, output_dir):
     info_mode = {
         "mode": "RPA",
         "param": {
@@ -88,9 +89,9 @@ def _run(subshape, trans_mod_file):
             "interaction": inter,
             "trans_mod": trans_mod_file,
         },
-        "output": {"path_to_output": OUTPUT_DIR},
+        "output": {"path_to_output": output_dir},
     }
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     read_io = read_input_k.QLMSkInput(info_file["input"])
     ham = read_io.get_param("ham")
     solver = solver_rpa.RPA(ham, {}, info_mode)
@@ -98,7 +99,7 @@ def _run(subshape, trans_mod_file):
     info_in = solver.read_init(info_file["input"])
     for k, v in info_in.items():
         green[k] = v
-    solver.solve(green, OUTPUT_DIR)
+    solver.solve(green, output_dir)
     return solver, green
 
 
@@ -114,21 +115,20 @@ def _uniform_q0_per_site(chiq, n_sites):
 class TestRPATransModSublatticeFold(unittest.TestCase):
     TM_NAME = "trans_mod_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        # The fixture must live under path_to_input (read_init joins it there);
-        # remove the generated artifact so it is not left untracked.
-        p = os.path.join(INPUT_DIR, self.TM_NAME)
-        if os.path.exists(p):
-            os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_folded_chiq_with_trans_mod_matches_unfolded(self):
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        tm_name = self.TM_NAME
-        tm_path = os.path.join(INPUT_DIR, tm_name)
+        tm_path = os.path.join(self._tmpdir, self.TM_NAME)
         _make_trans_mod_npz(tm_path)
 
-        _su, g_unfold = _run((1, 1, 1), tm_name)
-        _sf, g_fold = _run((2, 1, 1), tm_name)
+        _su, g_unfold = _run((1, 1, 1), tm_path, self.output_dir)
+        _sf, g_fold = _run((2, 1, 1), tm_path, self.output_dir)
 
         u = _uniform_q0_per_site(g_unfold["chiq"], 1)
         f = _uniform_q0_per_site(g_fold["chiq"], 2)

@@ -17,6 +17,7 @@ remap) to machine precision. Also a folded-vs-unfolded q=0 invariance check.
 """
 
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -27,7 +28,6 @@ import hwave.solver.rpa as solver_rpa
 
 
 INPUT_DIR = "tests/rpa/input"
-OUTPUT_DIR = "tests/rpa/output"
 
 
 def _build_interleaved_trans_mod_from_so_transfer(transfer_file, cellvol, nd0):
@@ -60,7 +60,7 @@ def _build_interleaved_trans_mod_from_so_transfer(transfer_file, cellvol, nd0):
     return tab
 
 
-def _run(info_mode_extra, inter, trans_mod_file=None, subshape=(1, 1, 1)):
+def _run(info_mode_extra, inter, output_dir, trans_mod_file=None, subshape=(1, 1, 1)):
     info_mode = {
         "mode": "RPA",
         "param": {
@@ -83,9 +83,9 @@ def _run(info_mode_extra, inter, trans_mod_file=None, subshape=(1, 1, 1)):
         input_block["trans_mod"] = trans_mod_file
     info_file = {
         "input": input_block,
-        "output": {"path_to_output": OUTPUT_DIR},
+        "output": {"path_to_output": output_dir},
     }
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     read_io = read_input_k.QLMSkInput(info_file["input"])
     ham = read_io.get_param("ham")
     solver = solver_rpa.RPA(ham, {}, info_mode)
@@ -93,37 +93,40 @@ def _run(info_mode_extra, inter, trans_mod_file=None, subshape=(1, 1, 1)):
     info_in = solver.read_init(info_file["input"])
     for k, v in info_in.items():
         green[k] = v
-    solver.solve(green, OUTPUT_DIR)
+    solver.solve(green, output_dir)
     return solver, green
 
 
 class TestRPASOTransModMultiOrbital(unittest.TestCase):
     TM_NAME = "so_trans_mod_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        p = os.path.join(INPUT_DIR, self.TM_NAME)
-        if os.path.exists(p):
-            os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write_fixture(self):
         tab = _build_interleaved_trans_mod_from_so_transfer(
             os.path.join(INPUT_DIR, "transfer_so_2orb.dat"),
             cellvol=8, nd0=4)
-        path = os.path.join(INPUT_DIR, self.TM_NAME)
+        path = os.path.join(self._tmpdir, self.TM_NAME)
         np.savez(path, trans_mod=tab)
-        return tab
+        return path
 
     def test_so_trans_mod_matches_so_transfer_file(self):
         """SO trans_mod (interleaved) must reproduce the SO transfer-file run."""
-        self._write_fixture()
+        tm_path = self._write_fixture()
         inter = {"Geometry": "geom_so_2orb.dat",
                  "Transfer": "transfer_so_2orb.dat",
                  "CoulombIntra": "coulombintra_2orb.dat"}
         # reference: SO run via the transfer-file remap (no trans_mod)
-        s_ref, g_ref = _run({"enable_spin_orbital": True}, inter)
+        s_ref, g_ref = _run({"enable_spin_orbital": True}, inter, self.output_dir)
         # under test: SO run that REPLACES H0 with the interleaved trans_mod
-        s_tm, g_tm = _run({"enable_spin_orbital": True}, inter,
-                          trans_mod_file=self.TM_NAME)
+        s_tm, g_tm = _run({"enable_spin_orbital": True}, inter, self.output_dir,
+                          trans_mod_file=tm_path)
         self.assertEqual(s_ref.spin_mode, "spin-free")
         self.assertEqual(s_tm.spin_mode, "spin-free")
         self.assertTrue(
@@ -137,15 +140,17 @@ class TestRPASOTransModMultiOrbital(unittest.TestCase):
 
     def test_so_trans_mod_matches_nonso(self):
         """SO trans_mod must also match the equivalent non-SO (ns=2) run."""
-        self._write_fixture()
+        tm_path = self._write_fixture()
         s_nonso, g_nonso = _run(
             {"enable_spin_orbital": False},
             {"Geometry": "geom_2orb.dat", "Transfer": "transfer_nonso_2orb.dat"},
+            self.output_dir,
         )
         s_tm, g_tm = _run(
             {"enable_spin_orbital": True},
             {"Geometry": "geom_so_2orb.dat", "Transfer": "transfer_so_2orb.dat"},
-            trans_mod_file=self.TM_NAME,
+            self.output_dir,
+            trans_mod_file=tm_path,
         )
         self.assertEqual(s_nonso.spin_mode, "spin-free")
         self.assertEqual(s_tm.spin_mode, "spin-free")
@@ -158,18 +163,21 @@ class TestRPASOTransModMultiOrbital(unittest.TestCase):
 class TestRPASOTransModSublatticeFold(unittest.TestCase):
     TM_NAME = "so_trans_mod_fold_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        p = os.path.join(INPUT_DIR, self.TM_NAME)
-        if os.path.exists(p):
-            os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write_fixture(self):
         tab = _build_interleaved_trans_mod_from_so_transfer(
             os.path.join(INPUT_DIR, "transfer_so_2orb.dat"),
             cellvol=8, nd0=4)
-        path = os.path.join(INPUT_DIR, self.TM_NAME)
+        path = os.path.join(self._tmpdir, self.TM_NAME)
         np.savez(path, trans_mod=tab)
-        return tab
+        return path
 
     @staticmethod
     def _uniform_q0_per_site(chiq, n_sites):
@@ -181,14 +189,14 @@ class TestRPASOTransModSublatticeFold(unittest.TestCase):
         return s / n_sites
 
     def test_folded_chiq_matches_unfolded(self):
-        self._write_fixture()
+        tm_path = self._write_fixture()
         inter = {"Geometry": "geom_so_2orb.dat",
                  "Transfer": "transfer_so_2orb.dat",
                  "CoulombIntra": "coulombintra_2orb.dat"}
-        _su, g_unfold = _run({"enable_spin_orbital": True}, inter,
-                             trans_mod_file=self.TM_NAME, subshape=(1, 1, 1))
-        _sf, g_fold = _run({"enable_spin_orbital": True}, inter,
-                           trans_mod_file=self.TM_NAME, subshape=(2, 1, 1))
+        _su, g_unfold = _run({"enable_spin_orbital": True}, inter, self.output_dir,
+                             trans_mod_file=tm_path, subshape=(1, 1, 1))
+        _sf, g_fold = _run({"enable_spin_orbital": True}, inter, self.output_dir,
+                           trans_mod_file=tm_path, subshape=(2, 1, 1))
         u = self._uniform_q0_per_site(g_unfold["chiq"], 1)
         f = self._uniform_q0_per_site(g_fold["chiq"], 2)
         self.assertAlmostEqual(u.real, f.real, places=10)

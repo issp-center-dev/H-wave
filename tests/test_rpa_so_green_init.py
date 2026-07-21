@@ -18,6 +18,8 @@ machine precision. Plus a folded-vs-unfolded q=0 invariance check for the SO pat
 """
 
 import os
+import shutil
+import tempfile
 import unittest
 
 import numpy as np
@@ -27,7 +29,6 @@ import hwave.solver.rpa as solver_rpa
 
 
 INPUT_DIR = "tests/rpa/input"
-OUTPUT_DIR = "tests/rpa/output"
 
 CELLVOL = 8
 NORB_PHYS = 2
@@ -75,7 +76,7 @@ def _spin_block_to_interleaved(tab_sb, norb_phys, ns=2):
     return tab_il
 
 
-def _run(info_mode_extra, inter, green_init_file=None, subshape=(1, 1, 1)):
+def _run(info_mode_extra, inter, output_dir, green_init_file=None, subshape=(1, 1, 1)):
     info_mode = {
         "mode": "RPA",
         "param": {
@@ -98,9 +99,9 @@ def _run(info_mode_extra, inter, green_init_file=None, subshape=(1, 1, 1)):
         input_block["green_init"] = green_init_file
     info_file = {
         "input": input_block,
-        "output": {"path_to_output": OUTPUT_DIR},
+        "output": {"path_to_output": output_dir},
     }
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     read_io = read_input_k.QLMSkInput(info_file["input"])
     ham = read_io.get_param("ham")
     solver = solver_rpa.RPA(ham, {}, info_mode)
@@ -108,7 +109,7 @@ def _run(info_mode_extra, inter, green_init_file=None, subshape=(1, 1, 1)):
     info_in = solver.read_init(info_file["input"])
     for k, v in info_in.items():
         green[k] = v
-    solver.solve(green, OUTPUT_DIR)
+    solver.solve(green, output_dir)
     return solver, green
 
 
@@ -116,29 +117,34 @@ class TestRPASOGreenInitMultiOrbital(unittest.TestCase):
     SB_NAME = "so_green_init_sb_fixture.npz"
     IL_NAME = "so_green_init_il_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        for n in (self.SB_NAME, self.IL_NAME):
-            p = os.path.join(INPUT_DIR, n)
-            if os.path.exists(p):
-                os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write_fixtures(self):
         tab_sb = _spin_block_green(CELLVOL, NORB_PHYS)
         tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)
-        np.savez(os.path.join(INPUT_DIR, self.SB_NAME), green=tab_sb)
-        np.savez(os.path.join(INPUT_DIR, self.IL_NAME), green=tab_il)
-        return tab_sb, tab_il
+        sb_path = os.path.join(self._tmpdir, self.SB_NAME)
+        il_path = os.path.join(self._tmpdir, self.IL_NAME)
+        np.savez(sb_path, green=tab_sb)
+        np.savez(il_path, green=tab_il)
+        return sb_path, il_path
 
     def test_so_green_init_matches_nonso(self):
         """SO green_init (interleaved) must reproduce the non-SO (spin-block) run."""
-        self._write_fixtures()
+        sb_path, il_path = self._write_fixtures()
         # non-SO reference: spin-block green_init fed to a ns=2 run
         s_nonso, g_nonso = _run(
             {"enable_spin_orbital": False},
             {"Geometry": "geom_2orb.dat",
              "Transfer": "transfer_nonso_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.SB_NAME,
+            self.output_dir,
+            green_init_file=sb_path,
         )
         # under test: interleaved green_init fed to the equivalent SO run
         s_so, g_so = _run(
@@ -146,7 +152,8 @@ class TestRPASOGreenInitMultiOrbital(unittest.TestCase):
             {"Geometry": "geom_so_2orb.dat",
              "Transfer": "transfer_so_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.IL_NAME,
+            self.output_dir,
+            green_init_file=il_path,
         )
         self.assertTrue(
             np.allclose(g_nonso["chi0q"], g_so["chi0q"], atol=1e-10),
@@ -170,48 +177,54 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
     SB5D_NAME = "green_init_5d_sb_fixture.npz"
     IL5D_NAME = "green_init_5d_il_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        for n in (self.SB5D_NAME, self.IL5D_NAME):
-            p = os.path.join(INPUT_DIR, n)
-            if os.path.exists(p):
-                os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write_5d_fixtures(self):
         # non-SO 5D: (Lvol, ns=2, norb_phys, ns=2, norb_phys), C-order reshape
         # of the spin-block 3D green -> flat orbital index = spin*norb_phys+orb.
         tab_sb = _spin_block_green(CELLVOL, NORB_PHYS)            # (Lvol, 4, 4)
         tab_sb_5d = tab_sb.reshape(CELLVOL, 2, NORB_PHYS, 2, NORB_PHYS)
-        np.savez(os.path.join(INPUT_DIR, self.SB5D_NAME), green=tab_sb_5d)
+        sb5d_path = os.path.join(self._tmpdir, self.SB5D_NAME)
+        np.savez(sb5d_path, green=tab_sb_5d)
         # SO 5D: (Lvol, ns=1, SO, ns=1, SO) with SO=2*norb_phys, orbital axis
         # in INTERLEAVED order -> reshape of the interleaved 3D green.
         tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)    # (Lvol, 4, 4)
         SO = 2 * NORB_PHYS
         tab_il_5d = tab_il.reshape(CELLVOL, 1, SO, 1, SO)
-        np.savez(os.path.join(INPUT_DIR, self.IL5D_NAME), green=tab_il_5d)
-        return tab_sb_5d, tab_il_5d
+        il5d_path = os.path.join(self._tmpdir, self.IL5D_NAME)
+        np.savez(il5d_path, green=tab_il_5d)
+        return sb5d_path, il5d_path
 
     def test_5d_nonso_accepted_and_shape(self):
         """A realistic non-SO 5D UHFk green must be accepted, yielding (nvol,nd,nd)."""
-        self._write_5d_fixtures()
+        sb5d_path, _il5d_path = self._write_5d_fixtures()
         s_nonso, g_nonso = _run(
             {"enable_spin_orbital": False},
             {"Geometry": "geom_2orb.dat",
              "Transfer": "transfer_nonso_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.SB5D_NAME,
+            self.output_dir,
+            green_init_file=sb5d_path,
         )
         nd = 2 * NORB_PHYS
         self.assertEqual(g_nonso["green_init"].shape, (CELLVOL, nd, nd))
 
     def test_5d_so_accepted_and_shape(self):
         """A realistic SO 5D UHFk green (ns=1, interleaved) must be accepted."""
-        self._write_5d_fixtures()
+        _sb5d_path, il5d_path = self._write_5d_fixtures()
         s_so, g_so = _run(
             {"enable_spin_orbital": True},
             {"Geometry": "geom_so_2orb.dat",
              "Transfer": "transfer_so_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.IL5D_NAME,
+            self.output_dir,
+            green_init_file=il5d_path,
         )
         nd = 2 * NORB_PHYS
         self.assertEqual(g_so["green_init"].shape, (CELLVOL, nd, nd))
@@ -219,20 +232,22 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
     def test_5d_so_matches_5d_nonso(self):
         """Equivalence driven through the REAL 5D layout: SO (interleaved, ns=1)
         5D green must reproduce the non-SO (spin-block, ns=2) 5D run."""
-        self._write_5d_fixtures()
+        sb5d_path, il5d_path = self._write_5d_fixtures()
         s_nonso, g_nonso = _run(
             {"enable_spin_orbital": False},
             {"Geometry": "geom_2orb.dat",
              "Transfer": "transfer_nonso_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.SB5D_NAME,
+            self.output_dir,
+            green_init_file=sb5d_path,
         )
         s_so, g_so = _run(
             {"enable_spin_orbital": True},
             {"Geometry": "geom_so_2orb.dat",
              "Transfer": "transfer_so_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.IL5D_NAME,
+            self.output_dir,
+            green_init_file=il5d_path,
         )
         self.assertTrue(
             np.allclose(g_nonso["chi0q"], g_so["chi0q"], atol=1e-10),
@@ -248,13 +263,14 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
         remap (i.e. mislabeling an interleaved layout as already spin-block by
         running it through the non-SO 5D path) must NOT reproduce the correct
         chi0q for >1 physical orbital -- otherwise the remap is untested."""
-        self._write_5d_fixtures()
+        sb5d_path, il5d_path = self._write_5d_fixtures()
         s_nonso, g_nonso = _run(
             {"enable_spin_orbital": False},
             {"Geometry": "geom_2orb.dat",
              "Transfer": "transfer_nonso_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.SB5D_NAME,
+            self.output_dir,
+            green_init_file=sb5d_path,
         )
         # Feed the INTERLEAVED 5D green to a non-SO run (no SO remap applied):
         # this is the wrong convention, so chi0q must differ.
@@ -263,7 +279,8 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
             {"Geometry": "geom_2orb.dat",
              "Transfer": "transfer_nonso_2orb.dat",
              "CoulombIntra": "coulombintra_2orb.dat"},
-            green_init_file=self.IL5D_NAME,
+            self.output_dir,
+            green_init_file=il5d_path,
         )
         self.assertFalse(
             np.allclose(g_nonso["chi0q"], g_wrong["chi0q"], atol=1e-10),
@@ -274,18 +291,23 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
 class TestRPASOGreenInitSublatticeFold(unittest.TestCase):
     IL_NAME = "so_green_init_fold_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        p = os.path.join(INPUT_DIR, self.IL_NAME)
-        if os.path.exists(p):
-            os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write_fixture(self):
         tab_sb = _spin_block_green(CELLVOL, NORB_PHYS)
         tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)
         # Synthetic new-convention green file: tag it so the sublattice fold
         # path is not rejected as ambiguous (issue #36).
-        np.savez(os.path.join(INPUT_DIR, self.IL_NAME), green=tab_il,
+        path = os.path.join(self._tmpdir, self.IL_NAME)
+        np.savez(path, green=tab_il,
                  green_convention=np.array("green_slot_first"))
+        return path
 
     @staticmethod
     def _uniform_q0_per_site(chiq, n_sites):
@@ -297,14 +319,14 @@ class TestRPASOGreenInitSublatticeFold(unittest.TestCase):
         return s / n_sites
 
     def test_folded_chiq_matches_unfolded(self):
-        self._write_fixture()
+        il_path = self._write_fixture()
         inter = {"Geometry": "geom_so_2orb.dat",
                  "Transfer": "transfer_so_2orb.dat",
                  "CoulombIntra": "coulombintra_2orb.dat"}
-        _su, g_unfold = _run({"enable_spin_orbital": True}, inter,
-                             green_init_file=self.IL_NAME, subshape=(1, 1, 1))
-        _sf, g_fold = _run({"enable_spin_orbital": True}, inter,
-                           green_init_file=self.IL_NAME, subshape=(2, 1, 1))
+        _su, g_unfold = _run({"enable_spin_orbital": True}, inter, self.output_dir,
+                             green_init_file=il_path, subshape=(1, 1, 1))
+        _sf, g_fold = _run({"enable_spin_orbital": True}, inter, self.output_dir,
+                           green_init_file=il_path, subshape=(2, 1, 1))
         u = self._uniform_q0_per_site(g_unfold["chiq"], 1)
         f = self._uniform_q0_per_site(g_fold["chiq"], 2)
         self.assertAlmostEqual(u.real, f.real, places=10)
@@ -328,10 +350,13 @@ class TestRPAGreenInit5DSublattice(unittest.TestCase):
 
     NONSO5D_FOLD_NAME = "green_init_5d_nonso_fold2_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        p = os.path.join(INPUT_DIR, self.NONSO5D_FOLD_NAME)
-        if os.path.exists(p):
-            os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _write_fixture(self):
         """Build a translation-invariant 5D non-SO green.
@@ -359,9 +384,10 @@ class TestRPAGreenInit5DSublattice(unittest.TestCase):
         green5d = green3d.reshape(CELLVOL, ns, norb_orig, ns, norb_orig)
         # Synthetic new-convention green file: tag it so the sublattice fold
         # path is not rejected as ambiguous (issue #36).
-        np.savez(os.path.join(INPUT_DIR, self.NONSO5D_FOLD_NAME), green=green5d,
+        path = os.path.join(self._tmpdir, self.NONSO5D_FOLD_NAME)
+        np.savez(path, green=green5d,
                  green_convention=np.array("green_slot_first"))
-        return green5d
+        return path
 
     @staticmethod
     def _uniform_q0_per_site(chiq, n_sites):
@@ -380,7 +406,7 @@ class TestRPAGreenInit5DSublattice(unittest.TestCase):
         Path exercised:
             _read_green: 5D collapse -> shape-validate -> no SO remap -> _reshape_green
         """
-        self._write_fixture()
+        fixture_path = self._write_fixture()
         inter = {
             "Geometry": "geom_2orb.dat",
             "Transfer": "transfer_nonso_2orb.dat",
@@ -389,13 +415,15 @@ class TestRPAGreenInit5DSublattice(unittest.TestCase):
         _su, g_unfold = _run(
             {"enable_spin_orbital": False},
             inter,
-            green_init_file=self.NONSO5D_FOLD_NAME,
+            self.output_dir,
+            green_init_file=fixture_path,
             subshape=(1, 1, 1),
         )
         _sf, g_fold = _run(
             {"enable_spin_orbital": False},
             inter,
-            green_init_file=self.NONSO5D_FOLD_NAME,
+            self.output_dir,
+            green_init_file=fixture_path,
             subshape=(2, 1, 1),
         )
         u = self._uniform_q0_per_site(g_unfold["chiq"], 1)

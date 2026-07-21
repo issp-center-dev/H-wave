@@ -31,6 +31,8 @@ with the C-order fix both gates hold to machine precision.
 """
 
 import os
+import shutil
+import tempfile
 import unittest
 
 import numpy as np
@@ -40,7 +42,6 @@ import hwave.solver.rpa as solver_rpa
 
 
 INPUT_DIR = "tests/rpa/input"
-OUTPUT_DIR = "tests/rpa/output"
 
 # Non-square super-grid under SubShape [2,2,1]: Nx=4, Ny=2.
 CELL = [8, 4, 1]
@@ -89,7 +90,7 @@ def _make_trans_mod_2d_npz(path, cell=CELL, norb_phys=2, ns=2):
     return path
 
 
-def _build_solver(subshape, trans_mod_file):
+def _build_solver(subshape, trans_mod_file, output_dir):
     info_mode = {
         "mode": "RPA",
         "param": {
@@ -114,9 +115,9 @@ def _build_solver(subshape, trans_mod_file):
             "interaction": inter,
             "trans_mod": trans_mod_file,
         },
-        "output": {"path_to_output": OUTPUT_DIR},
+        "output": {"path_to_output": output_dir},
     }
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     read_io = read_input_k.QLMSkInput(info_file["input"])
     ham = read_io.get_param("ham")
     solver = solver_rpa.RPA(ham, {}, info_mode)
@@ -125,21 +126,21 @@ def _build_solver(subshape, trans_mod_file):
     return solver, green, info_file["input"], info_in
 
 
-def _run(subshape, trans_mod_file):
-    solver, green, _inp, info_in = _build_solver(subshape, trans_mod_file)
+def _run(subshape, trans_mod_file, output_dir):
+    solver, green, _inp, info_in = _build_solver(subshape, trans_mod_file, output_dir)
     for k, v in info_in.items():
         green[k] = v
-    solver.solve(green, OUTPUT_DIR)
+    solver.solve(green, output_dir)
     return solver, green
 
 
-def _h0k_spectrum(subshape, trans_mod_file):
+def _h0k_spectrum(subshape, trans_mod_file, output_dir):
     """Sorted eigenvalue spectrum of the folded q-space H0 read from trans_mod.
 
     This is the band structure RPA feeds into chi0q; it is invariant under any
     basis permutation but exposes a wrong supercell-site -> FFT-phase mapping.
     """
-    _solver, _green, _inp, info_in = _build_solver(subshape, trans_mod_file)
+    _solver, _green, _inp, info_in = _build_solver(subshape, trans_mod_file, output_dir)
     H0 = info_in["trans_mod"]  # q-space (nvol_super, nd, nd)
     return np.sort(np.linalg.eigvalsh(H0).ravel())
 
@@ -156,21 +157,23 @@ def _uniform_q0_per_site(chiq, n_sites):
 class TestRPATransMod2DSublatticeFold(unittest.TestCase):
     TM_NAME = "trans_mod_2d_fixture.npz"
 
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self._tmpdir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def tearDown(self):
-        p = os.path.join(INPUT_DIR, self.TM_NAME)
-        if os.path.exists(p):
-            os.remove(p)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_2d_folded_H0k_spectrum_matches_unfolded(self):
         """Band-folding gate: the folded H0(k) spectrum must equal the unfolded
         one. FAILS by O(0.6) with the old Fortran-order _reshape_green site
         index; PASSES to machine precision with the C-order fix."""
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        tm_path = os.path.join(INPUT_DIR, self.TM_NAME)
+        tm_path = os.path.join(self._tmpdir, self.TM_NAME)
         _make_trans_mod_2d_npz(tm_path)
 
-        eu = _h0k_spectrum((1, 1, 1), self.TM_NAME)
-        ef = _h0k_spectrum((2, 2, 1), self.TM_NAME)
+        eu = _h0k_spectrum((1, 1, 1), tm_path, self.output_dir)
+        ef = _h0k_spectrum((2, 2, 1), tm_path, self.output_dir)
 
         self.assertEqual(eu.size, ef.size)
         np.testing.assert_allclose(eu, ef, atol=1.0e-10)
@@ -178,12 +181,11 @@ class TestRPATransMod2DSublatticeFold(unittest.TestCase):
     def test_2d_folded_chiq_with_trans_mod_matches_unfolded(self):
         """Physics gate: interacting chiq uniform q=0 response per physical site
         is fold-invariant for the same translation-invariant H0."""
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        tm_path = os.path.join(INPUT_DIR, self.TM_NAME)
+        tm_path = os.path.join(self._tmpdir, self.TM_NAME)
         _make_trans_mod_2d_npz(tm_path)
 
-        _su, g_unfold = _run((1, 1, 1), self.TM_NAME)
-        _sf, g_fold = _run((2, 2, 1), self.TM_NAME)
+        _su, g_unfold = _run((1, 1, 1), tm_path, self.output_dir)
+        _sf, g_fold = _run((2, 2, 1), tm_path, self.output_dir)
 
         # Per-physical-site normalization (mirrors test_rpa_trans_mod.py):
         # divide by the sublattice volume.
