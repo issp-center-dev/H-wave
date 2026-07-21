@@ -473,13 +473,14 @@ class FLEX(RPA):
             nblk0, _, _, nd0 = self.H0_eigenvector.shape
             nfreq_f = self._ir_axF.n_freq if self.use_ir else nmat
             nfreq_b = self._ir_axB.n_freq if self.use_ir else nmat
-            green_elems = nblk0 * nfreq_f * nvol * nd0 ** 2
+            green_elems = nblk0 * nfreq_f * nvol * nd0**2
             if self._flex_general:
-                vertex_elems = nfreq_b * nvol * nd0 ** 4
+                vertex_elems = nfreq_b * nvol * nd0**4
             else:
-                inflated_nd = (nd0 if self.spin_mode == "spinful"
-                               else self.ns * self.norb)
-                vertex_elems = nfreq_b * nvol * inflated_nd ** 2
+                inflated_nd = (
+                    nd0 if self.spin_mode == "spinful" else self.ns * self.norb
+                )
+                vertex_elems = nfreq_b * nvol * inflated_nd**2
             resident_bytes = max(green_elems, vertex_elems) * 16
             _bk.warn_if_device_memory_short(
                 5 * resident_bytes, logger, label="the FLEX SCF loop")

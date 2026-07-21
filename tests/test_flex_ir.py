@@ -244,18 +244,16 @@ def test_ir_gpu_matches_cpu():
 
 
 def test_ir_reduced_vram_preflight_uses_inflated_spin_orbital_shape(
-        monkeypatch, tmp_path):
+    monkeypatch, tmp_path
+):
     """The resident reduced chi/V tensors are (2*norb)^2, not norb^2."""
     from hwave.solver import backend
 
-    solver, gi = _make_solver(
-        64, {"matsubara_basis": "ir"}, iteration_max=1)
+    solver, gi = _make_solver(64, {"matsubara_basis": "ir"}, iteration_max=1)
     solver.use_gpu = True
     captured = {}
 
-    monkeypatch.setattr(
-        backend, "get_backend",
-        lambda *a, **k: (np, True))
+    monkeypatch.setattr(backend, "get_backend", lambda *a, **k: (np, True))
 
     def capture(required_bytes, *args, **kwargs):
         captured["required_bytes"] = required_bytes
@@ -267,7 +265,7 @@ def test_ir_reduced_vram_preflight_uses_inflated_spin_orbital_shape(
 
     nfreq = solver._ir_axB.n_freq
     inflated_nd = solver.ns * solver.norb
-    expected = 5 * nfreq * solver.lattice.nvol * inflated_nd ** 2 * 16
+    expected = 5 * nfreq * solver.lattice.nvol * inflated_nd**2 * 16
     assert captured["required_bytes"] == expected
 
 
