@@ -10,6 +10,7 @@ Import-safe under both pytest and unittest discovery (CI lesson from #54).
 Tests must run from the repository root.
 """
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -263,9 +264,44 @@ def test_ir_reduced_vram_preflight_uses_inflated_spin_orbital_shape(
     with pytest.raises(RuntimeError, match="stop after VRAM preflight"):
         solver.solve(gi, str(tmp_path))
 
-    nfreq = solver._ir_axB.n_freq
+    nfreq_f = solver._ir_axF.n_freq
+    nfreq_b = solver._ir_axB.n_freq
+    nblk, _, _, nd = solver.H0_eigenvector.shape
     inflated_nd = solver.ns * solver.norb
-    expected = 5 * nfreq * solver.lattice.nvol * inflated_nd**2 * 16
+    green_elems = nblk * nfreq_f * solver.lattice.nvol * nd**2
+    vertex_elems = nfreq_b * solver.lattice.nvol * inflated_nd**2
+    expected = 5 * max(green_elems, vertex_elems) * 16
+    assert captured["required_bytes"] == expected
+
+
+def test_ir_vram_preflight_uses_larger_fermionic_tensor(monkeypatch, tmp_path):
+    """The fermionic node count controls sizing when dressed G is larger."""
+    from hwave.solver import backend
+
+    solver, gi = _make_solver(64, {"matsubara_basis": "ir"}, iteration_max=1)
+    solver.use_gpu = True
+    captured = {}
+    original_ir_setup = solver._ir_setup
+
+    def setup_with_more_fermionic_nodes(beta):
+        original_ir_setup(beta)
+        nfreq = 10 * solver._ir_axB.n_freq
+        solver._ir_axF = SimpleNamespace(n_freq=nfreq)
+
+    monkeypatch.setattr(solver, "_ir_setup", setup_with_more_fermionic_nodes)
+    monkeypatch.setattr(backend, "get_backend", lambda *a, **k: (np, True))
+
+    def capture(required_bytes, *args, **kwargs):
+        captured["required_bytes"] = required_bytes
+        raise RuntimeError("stop after VRAM preflight")
+
+    monkeypatch.setattr(backend, "warn_if_device_memory_short", capture)
+    with pytest.raises(RuntimeError, match="stop after VRAM preflight"):
+        solver.solve(gi, str(tmp_path))
+
+    nblk, _, _, nd = solver.H0_eigenvector.shape
+    green_elems = nblk * solver._ir_axF.n_freq * solver.lattice.nvol * nd**2
+    expected = 5 * green_elems * 16
     assert captured["required_bytes"] == expected
 
 
