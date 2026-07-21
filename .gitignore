@@ -403,3 +403,9 @@ fabric.properties
 
 # Superpowers planning/spec artifacts (internal dev docs, not public)
 docs/superpowers/
+
+# Test-generated fixture: tests/test_rpa_reshape_green_2d.py writes this npz
+# via _make_trans_mod_2d_npz() and removes it in tearDown. It must NOT be
+# tracked -- when it was (accidentally committed in 624df23b), every full
+# `pytest` run left a spurious deletion in `git status`.
+tests/rpa/input/trans_mod_2d_fixture.npz
