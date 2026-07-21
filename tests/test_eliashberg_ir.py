@@ -505,3 +505,40 @@ def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
     inside = (k_idx >= 0) & (k_idx < nmat)
     return (np.abs(out_n[..., inside] - out_u[..., k_idx[inside]]).max()
             / np.abs(out_u).max())
+
+
+def test_channel_decomposition_ir_offsite_bare_only_keeps_instantaneous_term(
+    flex_outdir_offsite, monkeypatch
+):
+    """Both zero flags on the IR/off-site path remove fluctuations while the
+    nonzero singlet bare vertex is subtracted and reinserted analytically."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    captured = {}
+    real_kernel = ed.eliashberg_kernel_ir
+    real_compress = ed._ir_compress
+
+    def capture(vertex_rt, *args, **kwargs):
+        captured["dynamic_max"] = float(np.max(np.abs(vertex_rt)))
+        captured["instantaneous_max"] = float(np.max(np.abs(kwargs["V_inst_rt"])))
+        return real_kernel(vertex_rt, *args, **kwargs)
+
+    def reject_unused_channel_compression(arr, axis, nmat, label, **kwargs):
+        if label in ("chiq_s", "chiq_c"):
+            raise AssertionError("zeroed channel must bypass IR compression")
+        return real_compress(arr, axis, nmat, label, **kwargs)
+
+    monkeypatch.setattr(ed, "eliashberg_kernel_ir", capture)
+    monkeypatch.setattr(ed, "_ir_compress", reject_unused_channel_compression)
+    inp = _offsite_input(
+        flex_outdir_offsite,
+        extra={
+            "matsubara_basis": "ir",
+            "pairing_type": "singlet",
+            "zero_chi_s": True,
+            "zero_chi_c": True,
+        },
+    )
+    ed.solve_dynamic(inp)
+    assert captured["dynamic_max"] < 1e-10
+    assert captured["instantaneous_max"] > 1e-8
