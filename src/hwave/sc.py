@@ -1334,6 +1334,13 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     treated a norb=2 kuroki spin-orbital chi as orbital-pair, skipping the
     extraction and building a wrong pairing vertex.
 
+    For ``norb != 2`` the shape is unambiguous, but ``convention`` is still
+    REQUIRED to agree with the shape-inferred layout (and to be a recognized
+    value): the caller forwards ``convention`` unchanged to
+    ``_compute_vertices_flex``, which uses it (not the shape) to pick the
+    MYO vs Kuroki S/C matrices, so a shape/tag mismatch would silently build
+    the wrong pairing vertex just as in the norb=2 case.
+
     The mapping is elementwise in frequency, so it may be applied to a single
     static slice or the full axis identically.
     """
@@ -1360,8 +1367,34 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
                 "'kuroki') is required to resolve the layout, got '{}'.".format(
                     nd_chi, convention))
     elif nd_chi == nd_so and nd_chi != nd:
+        # Unambiguous spin-orbital shape: the convention tag must still agree,
+        # otherwise a file shaped spin-orbital but mistagged "myo" (or with an
+        # unrecognized tag) would be extracted correctly here yet the wrong
+        # tag would later select the MYO S/C matrices downstream, silently
+        # building the wrong pairing vertex.
+        if convention not in ("myo", "kuroki"):
+            raise ValueError(
+                "FLEX chi has unrecognized chi_convention='{}' (expected "
+                "'myo' or 'kuroki').".format(convention))
+        if convention != "kuroki":
+            raise ValueError(
+                "FLEX chi dimension nd_chi={} (norb={}) is unambiguously "
+                "spin-orbital (nd_so=norb*ns={}, nd=norb^2={}) but is tagged "
+                "chi_convention='{}'; expected 'kuroki'.".format(
+                    nd_chi, norb, nd_so, nd, convention))
         is_spin_orbital = True
     elif nd_chi == nd and nd_chi != nd_so:
+        # Unambiguous orbital-pair shape: same agreement check, mirrored.
+        if convention not in ("myo", "kuroki"):
+            raise ValueError(
+                "FLEX chi has unrecognized chi_convention='{}' (expected "
+                "'myo' or 'kuroki').".format(convention))
+        if convention != "myo":
+            raise ValueError(
+                "FLEX chi dimension nd_chi={} (norb={}) is unambiguously "
+                "orbital-pair (nd=norb^2={}, nd_so=norb*ns={}) but is tagged "
+                "chi_convention='{}'; expected 'myo'.".format(
+                    nd_chi, norb, nd, nd_so, convention))
         is_spin_orbital = False
     else:
         raise ValueError(

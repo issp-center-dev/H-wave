@@ -125,6 +125,80 @@ def test_chi0_general_ir_orbital_covariance():
     np.testing.assert_allclose(chi0_perm, chi0_from_chi0, atol=1e-10)
 
 
+def test_chi0_general_ir_orbital_pin_asymmetric_fixture():
+    """Component-level pin of `_calc_chi0q_general_ir`'s orbital ordering.
+
+    The covariance test above permutes ALL orbital axes simultaneously, which
+    is covariant under essentially any FIXED axis reordering (including a
+    mistakenly swapped leg), so it cannot by itself catch a mislabeled
+    (a,c,b,d) product hiding behind a dominant diagonal under a global
+    max-relative tolerance. This test instead feeds in a deliberately
+    nonsymmetric, non-Hermitian, complex fermionic-node Green function and
+    independently recomputes the expected chi0 with an EXPLICIT elementwise
+    orbital product ``chi0_rt[...,a,c,b,d] = -g_rt[...,a,b] * g_rev[...,d,c]``
+    (the same physical law the method implements via broadcast+transpose,
+    per its docstring), reusing only the shared transport primitives
+    (freq_to_tau_points / spatial FFTs / tau_to_freq) -- not the method's own
+    orbital-product code. Every orbital component is pinned, not just the
+    transport.
+    """
+    from hwave.solver import backend as _bk
+    T = 2.0
+    beta = 1.0 / T
+    s, gi = _make_general_solver(64, "ir", T=T)
+    s._calc_epsilon_k(gi)
+    s._ir_setup(beta)
+    axF, axB = s._ir_axF, s._ir_axB
+    nx, ny, nz = s.lattice.shape
+    nvol = nx * ny * nz
+    nd = s.norb
+    nblock = 1
+
+    rng = np.random.default_rng(1234)
+    g = (rng.standard_normal((nblock, axF.n_freq, nvol, nd, nd))
+         + 1j * rng.standard_normal((nblock, axF.n_freq, nvol, nd, nd)))
+
+    chi0 = s._calc_chi0q_general_ir(g, beta)
+
+    # --- independent reference: identical shared transport, explicit
+    # (a,c,b,d) orbital-product loop instead of broadcast+transpose ---
+    workers = getattr(s, "fft_workers", 1)
+    g_freq = np.moveaxis(g.reshape(nblock, axF.n_freq, nvol * nd * nd), 1, -1)
+    g_tau = axF.freq_to_tau_points(g_freq, axB.tau)
+    ntB = axB.n_tau
+    g_tau = np.moveaxis(g_tau, -1, 1).reshape(nblock, ntB, nx, ny, nz, nd * nd)
+    g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
+    g_rev = -np.flip(np.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+    g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
+    g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
+
+    chi0_rt_ref = np.zeros((nblock, ntB, nvol, nd, nd, nd, nd), dtype=complex)
+    for a in range(nd):
+        for c in range(nd):
+            for b in range(nd):
+                for d in range(nd):
+                    chi0_rt_ref[:, :, :, a, c, b, d] = (
+                        -g_rt[:, :, :, a, b] * g_rev[:, :, :, d, c])
+
+    chi0_qt_ref = _bk.spatial_fftn(
+        chi0_rt_ref.reshape(nblock, ntB, nx, ny, nz, nd ** 4),
+        axes=(2, 3, 4), workers=workers)
+    chi0_q_ref = axB.tau_to_freq(
+        np.moveaxis(chi0_qt_ref.reshape(nblock, ntB, nvol * nd ** 4), 1, -1))
+    chi0_q_ref = np.moveaxis(chi0_q_ref, -1, 1).reshape(
+        nblock, axB.n_freq, nvol, nd, nd, nd, nd)
+
+    np.testing.assert_allclose(chi0, chi0_q_ref, atol=1e-10, rtol=1e-10)
+
+    # Sanity: the fixture must actually be asymmetric enough to distinguish
+    # (a,c,b,d) orderings -- a comparison that would trivially pass on a
+    # symmetric fixture (chi0[...,0,1,1,0] == chi0[...,1,0,0,1]) proves
+    # nothing about leg ordering.
+    diff = np.abs(chi0[:, :, :, 0, 1, 1, 0] - chi0[:, :, :, 1, 0, 0, 1])
+    assert np.any(diff > 1e-6), \
+        "fixture too symmetric to distinguish orbital leg ordering"
+
+
 def test_sigma_general_ir_direct_matches_uniform():
     """Direct method call: general IR self-energy vs uniform general
     self-energy on the same dressed G and v_eff, compressed onto nodes."""
