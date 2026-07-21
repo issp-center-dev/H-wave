@@ -403,3 +403,13 @@ fabric.properties
 
 # Superpowers planning/spec artifacts (internal dev docs, not public)
 docs/superpowers/
+# Local dev-tool scratch (SDD workspace / planning ledgers) -- never commit.
+.superpowers/
+
+# Test-generated fixtures: several RPA tests write a *_fixture.npz into
+# tests/rpa/input/ at setup and delete it in tearDown (e.g.
+# test_rpa_reshape_green_2d.py::_make_trans_mod_2d_npz). These are generated
+# artifacts, NOT committed inputs -- never track them. (One was accidentally
+# committed once, so every full `pytest` run left a spurious deletion in
+# `git status`.) Committed inputs here are .dat/.in files, never *_fixture.npz.
+tests/rpa/input/*_fixture.npz
