@@ -274,11 +274,6 @@ class FLEX(RPA):
                 "[mode.param] matsubara_basis must be 'uniform' or 'ir', "
                 "got '{}'.".format(self.matsubara_basis))
         self.use_ir = (self.matsubara_basis == "ir")
-        if self.use_ir and self._flex_general:
-            raise ValueError(
-                "[mode.param] matsubara_basis='ir' supports [mode] "
-                "calc_scheme='reduced'/'squashed' only (v1); the general "
-                "full-vertex path stays on the uniform grid.")
         self.ir_tol = float(self.param_mod.get("ir_tol", 1.0e-8))
         self.ir_wmax = self.param_mod.get("ir_wmax")
         self.sigma_init_on_error = str(
@@ -478,7 +473,12 @@ class FLEX(RPA):
             # only; CuPy raises a clear OutOfMemoryError on the actual
             # allocation.
             nblk0, _, _, nd0 = self.H0_eigenvector.shape
-            resident_bytes = nblk0 * nmat * nvol * nd0 * nd0 * 16
+            # IR compresses the frequency axis to the node count; the general
+            # (full-vertex) susceptibilities carry a rank-4 orbital block
+            # (nd0**4) vs the reduced nd0**2.
+            nfreq_est = self._ir_axB.n_freq if self.use_ir else nmat
+            orb_factor = nd0 ** 4 if self._flex_general else nd0 ** 2
+            resident_bytes = nblk0 * nfreq_est * nvol * orb_factor * 16
             _bk.warn_if_device_memory_short(
                 5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
@@ -607,9 +607,14 @@ class FLEX(RPA):
             else:
                 green_scf = green_kw
 
-            # Step 4: Compute chi0(q, ivn) from dressed G
+            # Step 4: Compute chi0(q, ivn) from dressed G. Four-way dispatch:
+            # (general/reduced) x (uniform/ir). The reduced IR chi0 is a
+            # density-density shortcut; general needs the full rank-6 bubble.
             if self.use_ir:
-                chi0q_raw = self._calc_chi0q_ir(green_scf, beta)
+                if self._flex_general:
+                    chi0q_raw = self._calc_chi0q_general_ir(green_scf, beta)
+                else:
+                    chi0q_raw = self._calc_chi0q_ir(green_scf, beta)
             else:
                 chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
 
@@ -628,7 +633,12 @@ class FLEX(RPA):
             if self._flex_general:
                 chi0q_out, v_eff, chi_s, chi_c = \
                     self._flex_compute_veff_general(chi0q_raw, ham_orig)
-                sigma_new = self._calc_self_energy_general(green_kw, v_eff, beta)
+                if self.use_ir:
+                    sigma_new = self._calc_self_energy_general_ir(
+                        green_kw, v_eff, beta)
+                else:
+                    sigma_new = self._calc_self_energy_general(
+                        green_kw, v_eff, beta)
             else:
                 chi0q_out, v_eff, chi_s, chi_c = self._flex_compute_veff(
                     chi0q_raw, ham_orig)
@@ -855,6 +865,54 @@ class FLEX(RPA):
         return chi0_q
 
     @do_profile
+    def _calc_chi0q_general_ir(self, green_kw, beta):
+        # General (full-vertex/MYO) counterpart of `_calc_chi0q_ir`; called
+        # only on the general path (mirrors that method's `enable_reduced`
+        # guard, which is why this one has no analogous check).
+        r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
+        (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
+        coefficients on the bosonic tau nodes; tau flip-only reversal, spatial
+        roll(-1)+flip; physical transforms, no 1/beta); the orbital product is
+        the full (a,c,b,d) form of the uniform general `_calc_chi0q`
+        (rpa.py): chi0[a,c,b,d] = -G[a,b](r,tau) * G[d,c](-r,-tau).
+        """
+        axF, axB = self._ir_axF, self._ir_axB
+        nx, ny, nz = self.lattice.shape
+        nblock, nw, nvol, nd, _ = green_kw.shape
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+
+        # G(k, tau_B): fermionic coefficients evaluated at the bosonic nodes
+        g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
+        g_tau = axF.freq_to_tau_points(g, axB.tau)
+        ntB = axB.n_tau
+        g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
+            nblock, ntB, nx, ny, nz, nd * nd)
+        g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
+
+        # G(-r,-tau): tau flip-only (j -> nt-1-j), spatial roll(-1)+flip, and
+        # the leading -1 folds in the fermionic antiperiodicity.
+        g_rev = -xp.flip(
+            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
+        g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
+
+        # chi0[g,tau,r, a,c,b,d] = -G[a,b] * G_rev[d,c]  (mirror rpa.py general:
+        # (G)[...,a,_,b,_] * (G_rev)[...,_,d,_,c] -> (a,d,b,c) -> transpose (a,c,b,d))
+        chi0_rt = -(g_rt[:, :, :, :, np.newaxis, :, np.newaxis]
+                    * g_rev[:, :, :, np.newaxis, :, np.newaxis, :])
+        chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
+
+        chi0_qt = _bk.spatial_fftn(
+            chi0_rt.reshape(nblock, ntB, nx, ny, nz, nd ** 4),
+            axes=(2, 3, 4), workers=workers)
+        chi0_q = axB.tau_to_freq(
+            xp.moveaxis(chi0_qt.reshape(nblock, ntB, nvol * nd ** 4), 1, -1))
+        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
+            nblock, axB.n_freq, nvol, nd, nd, nd, nd)
+        return chi0_q
+
+    @do_profile
     def _calc_self_energy_ir(self, green_kw, v_eff, beta):
         """Sigma on the fermionic IR nodes: V (bosonic nodes) and G
         (fermionic nodes) are both evaluated on the FERMIONIC tau nodes
@@ -910,6 +968,51 @@ class FLEX(RPA):
             sigma_kt.reshape(nblock, ntF, nvol * nd_sig ** 2), 1, -1))
         return xp.moveaxis(sigma_kw, -1, 1).reshape(
             nblock, axF.n_freq, nvol, nd_sig, nd_sig)
+
+    @do_profile
+    def _calc_self_energy_general_ir(self, green_kw, v_eff, beta):
+        r"""Sigma on the fermionic IR nodes, general (MYO) scheme: the IR-node
+        transport of `_calc_self_energy_ir` with the rank-4 orbital contraction
+        `_sigma_orbital_contract` of `_calc_self_energy_general` (Hadamard ->
+        orbital sum). Pure-orbital (nd_block == nd_v == norb), no spin slice.
+        Physical transforms -> no explicit 1/beta.
+        """
+        axF, axB = self._ir_axF, self._ir_axB
+        nx, ny, nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nblock = green_kw.shape[0]
+        norb = green_kw.shape[-1]
+        ndx = v_eff.shape[-1]           # norb ** 2
+        xp = _bk.array_module_of(green_kw)
+        workers = getattr(self, "fft_workers", 1)
+        ntF = axF.n_tau
+
+        # G -> (r, tau_F)
+        g = xp.moveaxis(
+            green_kw.reshape(nblock, axF.n_freq, nvol * norb * norb), 1, -1)
+        g_tau = xp.moveaxis(axF.freq_to_tau(g), -1, 1).reshape(
+            nblock, ntF, nx, ny, nz, norb * norb)
+        green_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers
+                                     ).reshape(nblock, ntF, nvol, norb, norb)
+
+        # V_eff -> (r, tau_F) via the bosonic basis evaluated on tau_F
+        v = xp.moveaxis(v_eff.reshape(axB.n_freq, nvol * ndx * ndx), 0, -1)
+        v_tau = xp.moveaxis(
+            axB.freq_to_tau_points(v, axF.tau), -1, 0).reshape(
+            ntF, nx, ny, nz, ndx * ndx)
+        v_rt = _bk.spatial_ifftn(v_tau, axes=(1, 2, 3), workers=workers
+                                 ).reshape(ntF, nvol, ndx, ndx)
+
+        # Sigma(r,tau) = rank-4 orbital contraction (general)
+        sigma_rt = self._sigma_orbital_contract(v_rt, green_rt)
+
+        sigma_kt = _bk.spatial_fftn(
+            sigma_rt.reshape(nblock, ntF, nx, ny, nz, norb * norb),
+            axes=(2, 3, 4), workers=workers)
+        sigma_kw = axF.tau_to_freq(xp.moveaxis(
+            sigma_kt.reshape(nblock, ntF, nvol * norb * norb), 1, -1))
+        return xp.moveaxis(sigma_kw, -1, 1).reshape(
+            nblock, axF.n_freq, nvol, norb, norb)
 
     def _number_from_eigs_ir(self, lam, mu):
         """N(mu) (and dN/dmu) on the IR path: the k-summed trace of G at the

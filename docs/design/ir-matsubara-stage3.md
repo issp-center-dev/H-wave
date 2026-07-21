@@ -29,16 +29,17 @@ integer Matsubara indices are self-describing and independent of any
 sparse-ir SVE reproducibility across versions (OQ-3 spirit). Coefficients
 would require bit-reproducing the writer's basis to interpret.
 
-**Discriminator (D-1)**: a file is IR-native iff `matsubara_basis == "ir"`
-AND `ir_freq_n` is present. The key presence alone is NOT sufficient: the
-Stage-1 `gap_dynamic.npz` already carries `matsubara_basis="ir"` as
-provenance on a DENSIFIED array. Readers must test both keys.
+**Discriminator (D-1)**: a file is IR-native iff `matsubara_basis == "ir"`,
+`frequency_grid == "sparse_ir_nodes"`, AND `ir_freq_n` is present. IR
+provenance alone is NOT sufficient: the Stage-1 `gap_dynamic.npz` already
+carries `matsubara_basis="ir"` on a DENSIFIED array. A sparse-grid tag or
+`ir_freq_n` without the other required discriminator fields is malformed and
+readers reject it rather than falling through to a legacy uniform-grid path.
 
 Common added metadata (all IR-native files):
 - `matsubara_basis="ir"`.
-- `frequency_grid="sparse_ir_nodes"`: explicit schema marker for external
-  tooling and migration checks (D-1 remains the in-repo discriminator; this
-  key is the self-documenting one an external script grep can key on).
+- `frequency_grid="sparse_ir_nodes"`: explicit schema marker used by both
+  in-repo readers and external tooling/migration checks.
 - `ir_freq_n` (int64, 1-D): the node Matsubara indices n, with
   i*omega = n*pi/beta (odd fermionic / even bosonic), strictly increasing,
   symmetric under negation. One key per file; each file has exactly one

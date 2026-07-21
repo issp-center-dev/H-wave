@@ -309,6 +309,14 @@ def _ir_refit_nodes(arr, meta, ax, label, beta):
     physics input, so a beta mismatch is a hard error (contrast the
     sigma_init warm start, where cross-temperature seeding is deliberate).
     """
+    statistics = str(meta["statistics"])
+    if statistics != ax.statistics:
+        raise ValueError(
+            "IR-native {}: ir_statistics={!r} does not match the run's "
+            "{} axis ({!r}).".format(
+                label, statistics,
+                "fermionic" if ax.statistics == "F" else "bosonic",
+                ax.statistics))
     file_beta = float(meta["beta"])
     if not np.isclose(file_beta, beta, rtol=1e-9, atol=1e-9 * beta):
         raise ValueError(
@@ -318,6 +326,11 @@ def _ir_refit_nodes(arr, meta, ax, label, beta):
             .format(label, file_beta, beta,
                     abs(file_beta - beta) / abs(beta)))
     freq_n = np.asarray(meta["freq_n"], dtype=np.int64)
+    if arr.shape[-1] != freq_n.size:
+        raise ValueError(
+            "IR-native {}: stored frequency-axis length {} differs from "
+            "len(ir_freq_n)={}.".format(
+                label, arr.shape[-1], freq_n.size))
     if np.array_equal(freq_n, ax.freq_n):
         logger.info("IR-native %s: file node set equals the run basis "
                     "(%d nodes); stored values used directly.", label,
