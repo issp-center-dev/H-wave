@@ -464,21 +464,24 @@ class FLEX(RPA):
         if gpu_active:
             logger.info("FLEX: GPU backend active (CuPy); moving H0 "
                         "eigenpairs and interaction to the device.")
-            # VRAM preflight: the resident device tensors (dressed G, sigma,
-            # chi_s/chi_c, v_eff, chi0q) are each ~ nblock*Nmat*Nvol*nd^2
-            # complex128 (H0_eigenvector has shape (nblock, Nvol, nd, nd)), and
-            # the SCF loop keeps several live at once. The 5x factor is a rough
-            # order-of-magnitude estimate -- transient FFT/einsum/solve
-            # workspace is not counted, so treat it as a lower bound. Advisory
-            # only; CuPy raises a clear OutOfMemoryError on the actual
-            # allocation.
+            # VRAM preflight: estimate the larger of a dressed-G/sigma tensor
+            # and a chi/vertex tensor, then allow for several live arrays.
+            # The reduced chi/vertex is inflated to spin-orbital space, while
+            # the general path carries a rank-4 orbital block. The 5x factor is
+            # a rough advisory estimate; transient FFT/einsum/solve workspace
+            # is not included, so actual peak usage may be higher.
             nblk0, _, _, nd0 = self.H0_eigenvector.shape
-            # IR compresses the frequency axis to the node count; the general
-            # (full-vertex) susceptibilities carry a rank-4 orbital block
-            # (nd0**4) vs the reduced nd0**2.
-            nfreq_est = self._ir_axB.n_freq if self.use_ir else nmat
-            orb_factor = nd0 ** 4 if self._flex_general else nd0 ** 2
-            resident_bytes = nblk0 * nfreq_est * nvol * orb_factor * 16
+            nfreq_f = self._ir_axF.n_freq if self.use_ir else nmat
+            nfreq_b = self._ir_axB.n_freq if self.use_ir else nmat
+            green_elems = nblk0 * nfreq_f * nvol * nd0**2
+            if self._flex_general:
+                vertex_elems = nfreq_b * nvol * nd0**4
+            else:
+                inflated_nd = (
+                    nd0 if self.spin_mode == "spinful" else self.ns * self.norb
+                )
+                vertex_elems = nfreq_b * nvol * inflated_nd**2
+            resident_bytes = max(green_elems, vertex_elems) * 16
             _bk.warn_if_device_memory_short(
                 5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
