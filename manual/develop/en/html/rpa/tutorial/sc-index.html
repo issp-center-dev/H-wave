@@ -616,6 +616,13 @@ layout from shape alone and mislabeled a <code class="docutils literal notransla
 as orbital-pair, corrupting the pairing vertex; Eliashberg eigenvalues and
 gap functions for such runs are <strong>corrected (and therefore change)</strong> in this
 version. Single-orbital and general (myo) results are unaffected.</p>
+<p>As of this version, IR-native susceptibility files (<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span>
+<span class="pre">false</span></code>) must carry this <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> tag, and the loader also
+rejects a <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> that contradicts the tensor’s shape-inferred
+layout, failing fast with an explicit message instead of silently building
+a wrong pairing vertex. Files written by current H-wave always carry a
+consistent tag, so this only affects hand-edited or externally produced
+susceptibility files.</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even and must match between the FLEX output and the
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> value. If <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> is requested without

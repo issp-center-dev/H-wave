@@ -676,7 +676,8 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 計算するため、一様FFT由来の <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span>
 離散化アーティファクトが原理的に生じません）。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は出力グリッド
 として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> とは併用できません（v1）。オプションの
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>
+のいずれとも併用できます。オプションの
 <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> が必要です。μ探索は
 <span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span> の基底評価に置き換わり、
 <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は不要（無視）になります。</p></td>
@@ -743,7 +744,7 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 そのままで動作します:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
-<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># または &quot;squashed&quot;（&quot;general&quot; は一様グリッドのみ）</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># または &quot;squashed&quot; または &quot;general&quot;</span>
 <span class="k">[mode.param]</span>
 <span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
 <span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
@@ -798,6 +799,16 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 ます。いずれのスキームでも
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> には対応していません（ソルバーは
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出します）。</p>
+<p><strong>``&quot;general&quot;`` + IR のメモリ使用量。</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;``（上記）</span>
+<span class="pre">は</span> <span class="pre">``calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> でも利用できますが、IRが圧縮するのは
+<em>振動数</em> 軸のみで（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/L 倍、目安20〜40倍）、<span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span>
+に対するスケーリングは変わりません。<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> は完全なrank-4軌道頂点を
+保持するため、chi0q/chiq/sigma のストレージはもともと
+<span class="math notranslate nohighlight">\(O(N_{\mathrm{orb}}^4)\)</span> でスケールし（軌道方向の縮約はさらに悪化
+します）、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> + IR は到達可能な <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<span class="math notranslate nohighlight">\(\beta\)</span> を拡張
+しますが、到達可能な <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span> は拡張しません。多軌道系の
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> 実行ではメモリに注意してください（FLEXのGPU経路のVRAM
+プリフライトは、実行のメモリ余裕が乏しい場合すでに警告を出します）。</p>
 </div>
 </section>
 <section id="id29">

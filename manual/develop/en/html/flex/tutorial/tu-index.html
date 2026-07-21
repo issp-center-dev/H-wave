@@ -708,8 +708,9 @@ execution).</p></td>
 are computed NATIVELY on sparse nodes, so the uniform-FFT
 <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span> discretization artifacts do not
 arise by construction). <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> keeps its role as the output grid
-(all output files are densified onto it). Not combinable with
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (v1). Requires the optional
+(all output files are densified onto it). Supported with
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>, and <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>.
+Requires the optional
 <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> package. The mu
 search becomes the basis evaluation of
 <span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span>, and <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> is
@@ -783,7 +784,7 @@ are shared with the RPA solver. See <a class="reference internal" href="../../rp
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, stays as it is:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
-<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># or &quot;squashed&quot;; &quot;general&quot; stays uniform</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># or &quot;squashed&quot; or &quot;general&quot;</span>
 <span class="k">[mode.param]</span>
 <span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
 <span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
@@ -849,6 +850,16 @@ must have <code class="docutils literal notranslate"><span class="pre">irvec</sp
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads back automatically. In all schemes
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> is <strong>not</strong> supported (the solver raises a
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>).</p>
+<p><strong>Memory with</strong> <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> <strong>+ IR.</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> (see
+above) works with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, but IR only compresses the
+<em>frequency</em> axis, typically by <code class="docutils literal notranslate"><span class="pre">Nmat/L</span></code> (20-40x); it does not change the
+scaling in <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span>. Because <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> keeps the full
+rank-4 orbital vertex, chi0q/chiq/sigma storage already scales as
+<span class="math notranslate nohighlight">\(O(N_{\mathrm{orb}}^4)\)</span> (and orbital contractions scale worse), so
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> + IR extends the reachable <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<span class="math notranslate nohighlight">\(\beta\)</span> but not the
+reachable <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span>. Watch memory on multi-orbital
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> runs (the FLEX GPU path’s VRAM preflight already warns when a
+run looks under-provisioned).</p>
 </div>
 </section>
 <section id="sample-3-iron-pnictide-2-orbital-model">
