@@ -1146,6 +1146,8 @@ def solve_dynamic(input_dict):
             "matsubara_basis must be 'uniform' or 'ir', got '{}'."
             .format(matsubara_basis))
     use_ir = (matsubara_basis == "ir")
+    zero_chi_c = backend.as_bool(eli_param.get("zero_chi_c", False))
+    zero_chi_s = backend.as_bool(eli_param.get("zero_chi_s", False))
 
     # --- Geometry / interactions (norb from the geometry file) ---
     geom_info, hr, interactions = sc._read_interaction_files(input_dict)
@@ -1198,12 +1200,28 @@ def solve_dynamic(input_dict):
             nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
         else:
             keep_static = _ir_keep_static_requested(eli_param)
-            chis_w = _ir_compress(chis_w, axB, nmat, "chiq_s",
-                                  drop_constant=True,
-                                  keep_constant=keep_static)
-            chic_w = _ir_compress(chic_w, axB, nmat, "chiq_c",
-                                  drop_constant=True,
-                                  keep_constant=keep_static)
+            if zero_chi_s:
+                chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
+            else:
+                chis_w = _ir_compress(
+                    chis_w,
+                    axB,
+                    nmat,
+                    "chiq_s",
+                    drop_constant=True,
+                    keep_constant=keep_static,
+                )
+            if zero_chi_c:
+                chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
+            else:
+                chic_w = _ir_compress(
+                    chic_w,
+                    axB,
+                    nmat,
+                    "chiq_c",
+                    drop_constant=True,
+                    keep_constant=keep_static,
+                )
             green_w = _ir_compress(green_w, axF, nmat, "green")
     nfreq_axis = axF.n_freq if use_ir else nmat
 
@@ -1219,8 +1237,6 @@ def solve_dynamic(input_dict):
     #     (lambda_spin + lambda_charge != lambda_full in general).
     #     Booleans coerced via backend.as_bool (as for the gpu/ir flags) so a
     #     programmatic string "false" does not silently enable the diagnostic.
-    zero_chi_c = backend.as_bool(eli_param.get("zero_chi_c", False))
-    zero_chi_s = backend.as_bool(eli_param.get("zero_chi_s", False))
     if zero_chi_c and zero_chi_s:
         logger.warning(
             "zero_chi_c=zero_chi_s=True: both susceptibilities "
@@ -1417,6 +1433,12 @@ def solve_dynamic(input_dict):
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
     with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
+        if zero_chi_s or zero_chi_c:
+            fw.write(
+                "# zero_chi_s={}  zero_chi_c={}\n".format(
+                    str(zero_chi_s).lower(), str(zero_chi_c).lower()
+                )
+            )
         fw.write("{:.8e}\n".format(lam))
         if eigenvalues_all is not None:
             if eigenvalue_match is not None:

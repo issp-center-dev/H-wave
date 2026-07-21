@@ -91,6 +91,10 @@ def test_channel_decomposition_flags_route_through_solve_dynamic(
             header = stream.readline()
         assert "zero_chi_s={}".format(str(expected[0]).lower()) in header
         assert "zero_chi_c={}".format(str(expected[1]).lower()) in header
+        with open(os.path.join(flex_outdir, "eigenvalue.dat")) as stream:
+            eigenvalue_header = stream.read()
+        assert "zero_chi_s={}".format(str(expected[0]).lower()) in eigenvalue_header
+        assert "zero_chi_c={}".format(str(expected[1]).lower()) in eigenvalue_header
     else:
         with np.load(os.path.join(flex_outdir, "gap_dynamic.npz")) as data:
             assert "zero_chi_s" not in data and "zero_chi_c" not in data

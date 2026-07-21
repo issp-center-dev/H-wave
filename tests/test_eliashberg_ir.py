@@ -516,13 +516,20 @@ def test_channel_decomposition_ir_offsite_bare_only_keeps_instantaneous_term(
 
     captured = {}
     real_kernel = ed.eliashberg_kernel_ir
+    real_compress = ed._ir_compress
 
     def capture(vertex_rt, *args, **kwargs):
         captured["dynamic_max"] = float(np.max(np.abs(vertex_rt)))
         captured["instantaneous_max"] = float(np.max(np.abs(kwargs["V_inst_rt"])))
         return real_kernel(vertex_rt, *args, **kwargs)
 
+    def reject_unused_channel_compression(arr, axis, nmat, label, **kwargs):
+        if label in ("chiq_s", "chiq_c"):
+            raise AssertionError("zeroed channel must bypass IR compression")
+        return real_compress(arr, axis, nmat, label, **kwargs)
+
     monkeypatch.setattr(ed, "eliashberg_kernel_ir", capture)
+    monkeypatch.setattr(ed, "_ir_compress", reject_unused_channel_compression)
     inp = _offsite_input(
         flex_outdir_offsite,
         extra={
