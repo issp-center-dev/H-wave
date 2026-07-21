@@ -605,8 +605,9 @@ The FLEX solver accepts the following parameters in the
        are computed NATIVELY on sparse nodes, so the uniform-FFT
        :math:`O(\beta/N_{\mathrm{mat}})` discretization artifacts do not
        arise by construction). ``Nmat`` keeps its role as the output grid
-       (all output files are densified onto it). Not combinable with
-       ``calc_scheme = "general"`` (v1). Requires the optional
+       (all output files are densified onto it). Supported with
+       ``calc_scheme = "reduced"``, ``"squashed"``, and ``"general"``.
+       Requires the optional
        `sparse-ir <https://sparse-ir.readthedocs.io>`_ package. The mu
        search becomes the basis evaluation of
        :math:`n = -\mathrm{Tr}\,G(\tau=\beta^-)`, and ``coeff_tail`` is
@@ -676,7 +677,7 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
       [mode]
       mode = "FLEX"
-      calc_scheme = "reduced"     # or "squashed"; "general" stays uniform
+      calc_scheme = "reduced"     # or "squashed" or "general"
       [mode.param]
       CellShape = [64, 64, 1]
       T = 0.05
@@ -741,6 +742,17 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    ``hwave_sc`` reads back automatically. In all schemes
    ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
    ``ValueError``).
+
+   **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see
+   above) works with ``calc_scheme = "general"``, but IR only compresses the
+   *frequency* axis, typically by ``Nmat/L`` (20-40x); it does not change the
+   scaling in :math:`N_{\mathrm{orb}}`. Because ``"general"`` keeps the full
+   rank-4 orbital vertex, chi0q/chiq/sigma storage already scales as
+   :math:`O(N_{\mathrm{orb}}^4)` (and orbital contractions scale worse), so
+   ``"general"`` + IR extends the reachable ``Nmat``/:math:`\beta` but not the
+   reachable :math:`N_{\mathrm{orb}}`. Watch memory on multi-orbital
+   ``"general"`` runs (the FLEX GPU path's VRAM preflight already warns when a
+   run looks under-provisioned).
 
 
 Sample 3: Iron pnictide 2-orbital model
