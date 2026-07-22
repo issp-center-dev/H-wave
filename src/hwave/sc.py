@@ -25,6 +25,7 @@ import hwave
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.rpa import validate_chi0q_index_convention
 from hwave.solver.ir_axis import is_ir_native, ir_native_meta
+from hwave.solver import backend
 
 logger = logging.getLogger("hwave_sc")
 
@@ -1918,9 +1919,18 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
     vec_size = norb * norb * Nx * Ny * Nz
     nvol = Nx * Ny * Nz
 
+    # Backend of the resident invariants (numpy on CPU, cupy when calc_eliashberg
+    # parked them on the device). Everything the kernel builds/derives must live
+    # on this same backend; assert Vs_q and G2 agree.
+    xp = backend.array_module_of(Vs_q)
+    if backend.array_module_of(G2) is not xp:
+        raise ValueError(
+            "_make_kernel_operator: Vs_q and G2 must be on the same backend "
+            "(both host or both device).")
+
     # Precompute invariants that don't change per matvec call:
-    # 1. V_r = IFFT(Vs_q) — used every matvec
-    V_r = ifftn(Vs_q, axes=(-3, -2, -1))
+    # 1. V_r = IFFT(Vs_q) -- used every matvec
+    V_r = backend.spatial_ifftn(Vs_q, axes=(-3, -2, -1))
 
     # 2. Precompute G2 reshaped for contraction
     G2_r = G2.reshape(norb, norb, norb, norb, nvol)
@@ -1934,9 +1944,9 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
     # are, per spatial point s, a small dense matvec over j (size norb*norb).
     # numpy.einsum does NOT lower these to batched BLAS GEMM, so we precompute
     # the operator tensors ONCE in GEMM-friendly (nvol, M=il, K=j) layout and
-    # apply them with np.matmul (s, and the column axis z for matmat, as
-    # leading batch axes). This is NOT bit-identical to the einsum (GEMM
-    # changes the reduction order) but matches it to ~1e-13.
+    # apply them with matmul (s, and the column axis z for matmat, as leading
+    # batch axes). This is NOT bit-identical to the einsum (GEMM changes the
+    # reduction order) but matches it to ~1e-13.
     if not is_simple:
         # G2_pre is (i, l, j, s); we need (s, (i,l), j).
         G2_gemm = G2_pre.transpose(3, 0, 1, 2).reshape(
@@ -1948,74 +1958,72 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
             nvol, norb * norb, norb * norb)
 
     def matvec(v):
+        # scipy hands us a HOST numpy vector; move it onto the invariants'
+        # backend before any device op (mixed numpy/cupy operands raise on real
+        # CuPy). On the numpy backend this is a no-op.
+        v = xp.asarray(v)
         sigma = v.reshape(norb, norb, Nx, Ny, Nz)
         sigma_flat = sigma.reshape(norb * norb, nvol)
 
         if is_simple:
-            G2Sigma = np.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
+            G2Sigma = xp.einsum('iljs,js->ils', G2_pre, sigma_flat).reshape(
                 norb, norb, Nx, Ny, Nz)
-            G2Sigma_r = ifftn(G2Sigma, axes=(-3, -2, -1))
+            G2Sigma_r = backend.spatial_ifftn(G2Sigma, axes=(-3, -2, -1))
             Sigma_r = V_r * G2Sigma_r
-            sigma_new = fftn(Sigma_r, axes=(-3, -2, -1))
+            sigma_new = backend.spatial_fftn(Sigma_r, axes=(-3, -2, -1))
         else:
-            # G2Sigma[i,l,s] = sum_j G2_gemm[s,(i,l),j] * sigma_flat[j,s]
-            # sigma_flat (j, s) -> (s, j, 1); matmul -> (s, (i,l), 1).
-            sig = np.moveaxis(sigma_flat, 1, 0)[..., np.newaxis]
+            sig = xp.moveaxis(sigma_flat, 1, 0)[..., np.newaxis]
             G2Sigma = (G2_gemm @ sig)[..., 0]            # (s, (i,l))
-            # Back to the einsum's (i, l, s) order, then to spatial grid.
             G2Sigma = G2Sigma.reshape(nvol, norb, norb).transpose(
                 1, 2, 0).reshape(norb, norb, Nx, Ny, Nz)
 
-            F_r = ifftn(G2Sigma, axes=(-3, -2, -1))
+            F_r = backend.spatial_ifftn(G2Sigma, axes=(-3, -2, -1))
             F_r_flat = F_r.reshape(norb * norb, nvol)
-            f = np.moveaxis(F_r_flat, 1, 0)[..., np.newaxis]
+            f = xp.moveaxis(F_r_flat, 1, 0)[..., np.newaxis]
             sigma_r = (V_r_gemm @ f)[..., 0]             # (s, (i,l))
             sigma_r = sigma_r.reshape(nvol, norb, norb).transpose(
                 1, 2, 0).reshape(norb, norb, Nx, Ny, Nz)
-            sigma_new = fftn(sigma_r, axes=(-3, -2, -1))
+            sigma_new = backend.spatial_fftn(sigma_r, axes=(-3, -2, -1))
 
         # Keep complex: for complex hopping (e.g. spin-orbit coupling),
         # non-centrosymmetric models, or chiral gaps the kernel is genuinely
-        # complex; projecting to real would discard physical components.
-        return (-sigma_new).ravel()
+        # complex; projecting to real would discard physical components. Return
+        # a HOST array so scipy's ARPACK/power/subspace driver stays on numpy.
+        return backend.to_host(-sigma_new).ravel()
 
     def matmat(B):
         # Batched form of matvec: apply the SAME kernel to every column of the
-        # (vec_size, k) block B in a single FFT, instead of column-by-column.
-        # The batch/column axis is appended as the LAST axis so the spatial FFT
-        # axes keep their absolute positions (2, 3, 4) and the precomputed
-        # V_r / G2_pre (which have no column axis) broadcast over it.
-        B = np.asarray(B)
+        # (vec_size, k) block B in a single FFT. The batch/column axis is the
+        # LAST axis so the spatial FFT axes keep absolute positions (2, 3, 4)
+        # and V_r / G2_pre (no column axis) broadcast over it.
+        B = xp.asarray(B)
         if B.ndim == 1:
             return matvec(B)
         k = B.shape[1]
-        # (norb, norb, Nx, Ny, Nz, k)
         sigma = B.reshape(norb, norb, Nx, Ny, Nz, k)
         sigma_flat = sigma.reshape(norb * norb, nvol, k)
 
         if is_simple:
-            G2Sigma = np.einsum('iljs,jsz->ilsz', G2_pre, sigma_flat).reshape(
+            G2Sigma = xp.einsum('iljs,jsz->ilsz', G2_pre, sigma_flat).reshape(
                 norb, norb, Nx, Ny, Nz, k)
-            G2Sigma_r = ifftn(G2Sigma, axes=(2, 3, 4))
+            G2Sigma_r = backend.spatial_ifftn(G2Sigma, axes=(2, 3, 4))
             Sigma_r = V_r[..., np.newaxis] * G2Sigma_r
-            sigma_new = fftn(Sigma_r, axes=(2, 3, 4))
+            sigma_new = backend.spatial_fftn(Sigma_r, axes=(2, 3, 4))
         else:
-            # The column axis z is an extra trailing dim carried through the
-            # GEMM: sigma_flat (j, s, k) -> (s, j, k); matmul -> (s, (i,l), k).
-            sig = np.moveaxis(sigma_flat, 1, 0)          # (nvol, norb*norb, k)
+            sig = xp.moveaxis(sigma_flat, 1, 0)          # (nvol, norb*norb, k)
             G2Sigma = G2_gemm @ sig                      # (s, (i,l), k)
             G2Sigma = G2Sigma.reshape(nvol, norb, norb, k).transpose(
                 1, 2, 0, 3).reshape(norb, norb, Nx, Ny, Nz, k)
 
-            F_r = ifftn(G2Sigma, axes=(2, 3, 4))
+            F_r = backend.spatial_ifftn(G2Sigma, axes=(2, 3, 4))
             F_r_flat = F_r.reshape(norb * norb, nvol, k)
-            f = np.moveaxis(F_r_flat, 1, 0)              # (nvol, norb*norb, k)
+            f = xp.moveaxis(F_r_flat, 1, 0)              # (nvol, norb*norb, k)
             sigma_r = V_r_gemm @ f                       # (s, (i,l), k)
             sigma_r = sigma_r.reshape(nvol, norb, norb, k).transpose(
                 1, 2, 0, 3).reshape(norb, norb, Nx, Ny, Nz, k)
-            sigma_new = fftn(sigma_r, axes=(2, 3, 4))
+            sigma_new = backend.spatial_fftn(sigma_r, axes=(2, 3, 4))
 
-        return (-sigma_new).reshape(vec_size, k)
+        return backend.to_host(-sigma_new).reshape(vec_size, k)
 
     A = LinearOperator((vec_size, vec_size), matvec=matvec, matmat=matmat,
                        dtype=complex)
@@ -3024,22 +3032,17 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
+    Supports ``[eliashberg] gpu = true`` for both ``frequency = "static"`` and
+    ``"dynamic"``: the kernel matvec/matmat runs on the GPU (CuPy) while the
+    host eigensolvers (ARPACK/power/subspace/shift-invert) consume host arrays.
+    Falls back to CPU with a warning when CuPy/CUDA is unusable, unless
+    ``gpu_required = true`` (then it fails fast).
+
     Parameters
     ----------
     input_dict : dict
         Parsed TOML configuration dictionary.
     """
-    # --- Config guards (fail fast before any file I/O) ---
-    # GPU acceleration is only wired into the dynamic solver; on the static
-    # (CPU-only) path refuse gpu=true rather than silently ignoring the flag.
-    from hwave.solver import eliashberg_dynamic as _ed
-    if (_eliashberg_frequency(input_dict) != "dynamic"
-            and _ed._gpu_requested(input_dict.get("eliashberg", {}))):
-        raise ValueError(
-            "[eliashberg] gpu=true is only supported for frequency='dynamic'; "
-            "the static Eliashberg solver is CPU-only. Set frequency='dynamic' "
-            "or remove gpu.")
-
     # --- Parse parameters ---
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
@@ -3076,6 +3079,13 @@ def calc_eliashberg(input_dict):
         _validate_dynamic_prereqs(input_dict)
         from hwave.solver import eliashberg_dynamic
         return eliashberg_dynamic.solve_dynamic(input_dict)
+
+    # GPU backend for the static kernel (the dynamic branch returned above and
+    # handles its own gpu flag). get_backend falls back to numpy with a warning
+    # when CuPy/CUDA is unusable, unless gpu_required=true (then it raises).
+    use_gpu = backend.as_bool(eli_param.get("gpu", False))
+    gpu_required = backend.as_bool(eli_param.get("gpu_required", False))
+    xp, gpu_active = backend.get_backend(use_gpu, logger, required=gpu_required)
 
     solver_mode = eli_param.get("solver_mode", "iteration")
     max_iter = eli_param.get("max_iter", 1000)
@@ -3196,6 +3206,26 @@ def calc_eliashberg(input_dict):
 
     # --- Step 11: Initialize gap function ---
     sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
+
+    # GPU: park the two large invariants (pairing vertex and pair bubble) on the
+    # device once; each matvec then only moves the gap vector across PCIe. The
+    # solver entry points below pass Vs_q/G2 straight to _make_kernel_operator,
+    # which derives its backend from them, so no other change is needed here.
+    if gpu_active:
+        # Resident device tensors are more than the two inputs: the operator
+        # also holds V_r (~Vs_q) and G2_pre (~G2), and in general mode
+        # G2_gemm (~G2) + V_r_gemm (~Vs_q) -- i.e. up to ~3x the inputs. The
+        # per-matmat block workspace (gap-sized x num columns) adds on top; a
+        # subspace/eigenvalue run with a wide block can still exceed this. It is
+        # only a pre-warning -- CuPy raises a clear OutOfMemoryError regardless.
+        est_bytes = 3 * (Vs_q.nbytes + G2.nbytes)
+        backend.warn_if_device_memory_short(
+            est_bytes, logger, label="the static Eliashberg kernel")
+        logger.info("GPU backend active (CuPy): moving the pairing vertex and "
+                    "G2 to the device (%.2f GB).",
+                    (Vs_q.nbytes + G2.nbytes) / 1e9)
+        Vs_q = xp.asarray(Vs_q)
+        G2 = xp.asarray(G2)
 
     # --- Step 12: Solve ---
     sigma_result = None

@@ -202,9 +202,15 @@ This section controls the Eliashberg solver. Key parameters:
   Recommended whenever the leading eigenvalue comes out negative or you scan
   weakly-pairing systems (low pressure, quasi-1D). Note this differs from
   ``sigma_shift`` above (a shift-invert *target*, not a spectral shift).
-- ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
-  kernel applications on a GPU via CuPy (default ``false``; see the
-  :ref:`GPU section <sc_dynamic_gpu_en>` below).
+- ``gpu``: ``true`` runs the kernel-apply (matvec/matmat, the FFT convolution)
+  on the GPU (CuPy) for **both** ``frequency = "dynamic"`` and
+  ``frequency = "static"`` (default ``false``). The eigensolver itself (ARPACK
+  Arnoldi, power iteration, subspace iteration, shift-invert) always runs on the
+  host, because CuPy has no general non-Hermitian eigensolver; only the gap
+  vector crosses to the device per iteration. Without a usable CuPy/CUDA device
+  the run falls back to CPU with a warning (see the
+  :ref:`GPU-execution section <sc_dynamic_gpu_en>` below). ``fft_workers`` is
+  ignored on the GPU path.
 - ``gpu_required``: Set ``true`` to make ``gpu = true`` strict -- the solver
   raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
   (default ``false``). Honored by the dynamic Eliashberg solver (set it in
