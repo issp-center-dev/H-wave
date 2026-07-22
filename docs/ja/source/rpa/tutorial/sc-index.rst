@@ -197,9 +197,14 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
   弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の ``sigma_shift``
   （shift-invert のターゲット）とは別物である点に注意してください。
-- ``gpu``: ``true`` で動的モード（``frequency = "dynamic"``）のカーネル適用を
-  GPU（CuPy）で実行します（デフォルト ``false``。下記の
-  :ref:`GPU実行の節 <sc_dynamic_gpu>` を参照）。
+- ``gpu``: ``true`` でカーネル適用（matvec/matmat、FFT 畳み込み）を GPU（CuPy）で
+  実行します。``frequency = "dynamic"`` と ``frequency = "static"`` の **両方** に
+  対応します（デフォルト ``false``）。固有値ソルバー本体（ARPACK Arnoldi・べき乗
+  反復・部分空間反復・shift-invert）は常にホストで実行されます（CuPy に一般の
+  非エルミート固有値ソルバーが無いため）。反復ごとにデバイスへ渡るのはギャップ
+  ベクトルのみです。使用可能な CuPy/CUDA デバイスが無い場合は警告を出して CPU に
+  フォールバックします（下記の :ref:`GPU実行の節 <sc_dynamic_gpu>` を参照）。GPU
+  実行時は ``fft_workers`` は無視されます。
 - ``gpu_required``: ``true`` にすると ``gpu = true`` を厳格化し、CuPy/CUDA が
   使えない場合に静かに CPU へフォールバックせずエラーで停止します
   （デフォルト ``false``）。動的 Eliashberg ソルバー（``[eliashberg]`` に設定）
