@@ -66,17 +66,20 @@ def test_kernel_operator_routes_input_and_output_through_backend(monkeypatch):
     backend (xp.asarray) BEFORE any kernel op, and (b) return host arrays via
     backend.to_host. Catches the review must-fix: a missing host->device input
     transfer would break real CuPy but not a spy that returns numpy."""
+    Vs_q, G2, norb, Nx, Ny, Nz = _small_simple_operator_inputs()
+    n = norb * norb * Nx * Ny * Nz
+    v = np.ones(n, dtype=complex)
+
+    # true numpy reference computed BEFORE any monkeypatch, so the allclose
+    # below can actually detect a numerical change introduced by the routing
+    # (an unpatched-vs-patched compare, not spy-vs-spy).
+    A_ref, _ = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    ref = A_ref.matvec(v)
+
     record = {}
     spy = _spy_backend(record)
     monkeypatch.setattr(backend, "array_module_of", lambda a: spy)
-
-    Vs_q, G2, norb, Nx, Ny, Nz = _small_simple_operator_inputs()
-    # reference (unpatched) result for correctness
-    A_ref, n = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
-    ref = A_ref.matvec(np.ones(n, dtype=complex))
-
-    A, n = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
-    v = np.ones(n, dtype=complex)
+    A, _ = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
     out = A.matvec(v)
 
     # (a) the input vector (shape (n,)) was passed through xp.asarray
@@ -223,6 +226,31 @@ def test_static_kernel_gpu_matches_cpu_eigenvalue(method):
     if abs(vals_cpu[0] - vals_cpu[1]) > 1e-3 * max(1.0, abs(vals_cpu[0])):
         g_gpu, g_cpu = _phase_align(vecs_gpu[0], vecs_cpu[0])
         assert np.linalg.norm(g_gpu - g_cpu) <= 1e-6
+
+
+@requires_cuda
+@pytest.mark.parametrize("method", ["arnoldi", "subspace"])
+def test_static_kernel_gpu_matches_cpu_general_multiorbital(method):
+    """Real CuPy: the GENERAL 4-index vertex path -- norb=2, a 7-D Vs_q, and
+    distinct non-unit spatial dims (2x3x2) -- exercising the else-branch GEMM /
+    xp.moveaxis and all three FFT axes, where a backend/axis mistake is most
+    likely and which the simple-mode (5-D, norb=1) tests above do not cover."""
+    import cupy
+    norb, Nx, Ny, Nz = 2, 2, 3, 2
+    rng = np.random.default_rng(11)
+
+    def cplx(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    Vs_q = cplx((norb, norb, norb, norb, Nx, Ny, Nz))   # 7-D -> general branch
+    G2 = cplx((norb, norb, norb, norb, Nx, Ny, Nz))
+    kw = dict(num_eigenvalues=4, method=method, sigma_shift=None,
+              spectral_shift=None)
+    vals_cpu, _ = sc._solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, **kw)
+    vals_gpu, vecs_gpu = sc._solve_eigenvalue(
+        cupy.asarray(Vs_q), cupy.asarray(G2), norb, Nx, Ny, Nz, **kw)
+    assert abs(vals_gpu[0] - vals_cpu[0]) <= 1e-8 * max(1.0, abs(vals_cpu[0]))
+    assert isinstance(vals_gpu, np.ndarray) and isinstance(vecs_gpu, np.ndarray)
 
 
 @requires_cuda
