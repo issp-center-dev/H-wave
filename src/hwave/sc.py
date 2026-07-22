@@ -3032,6 +3032,12 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
+    Supports ``[eliashberg] gpu = true`` for both ``frequency = "static"`` and
+    ``"dynamic"``: the kernel matvec/matmat runs on the GPU (CuPy) while the
+    host eigensolvers (ARPACK/power/subspace/shift-invert) consume host arrays.
+    Falls back to CPU with a warning when CuPy/CUDA is unusable, unless
+    ``gpu_required = true`` (then it fails fast).
+
     Parameters
     ----------
     input_dict : dict
