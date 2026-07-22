@@ -101,3 +101,66 @@ def test_kernel_operator_asserts_matched_backends(monkeypatch):
     monkeypatch.setattr(backend, "array_module_of", alternating)
     with pytest.raises(ValueError, match="same backend"):
         sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+
+
+# --- calc_eliashberg static-path GPU orchestration ------------------------
+
+from tests.test_eliashberg_ir import flex_outdir  # noqa: E402  (module fixture)
+
+
+def _static_flex_input(outdir):
+    """A small static (frequency omitted -> 'static') Eliashberg input that
+    reads the FLEX fixture's susceptibilities. Nmat matches the fixture."""
+    from tests.test_eliashberg_ir import BETA_T, LX, LY, NMAT
+    return {
+        "mode": {"param": {"T": BETA_T, "CellShape": [LX, LY, 1],
+                           "SubShape": [1, 1, 1], "Nmat": NMAT,
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": "tests/rpa/input",
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": outdir}},
+        "eliashberg": {"chi0q_mode": "flex", "solver_mode": "iteration",
+                       "max_iter": 50, "convergence_tol": 1e-7},
+    }
+
+
+def _no_cupy(*args, **kwargs):
+    raise ImportError("No module named 'cupy'")
+
+
+def test_static_gpu_true_no_longer_raises_and_falls_back(flex_outdir, tmp_path,
+                                                         monkeypatch, caplog):
+    """gpu=true on the static path no longer raises; without CuPy it warns and
+    completes on numpy."""
+    monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
+    inp = _static_flex_input(flex_outdir)
+    inp["eliashberg"]["gpu"] = True
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(inp)   # must not raise
+    assert any("cupy" in r.getMessage().lower() for r in caplog.records)
+    import os
+    assert os.path.exists(os.path.join(inp["file"]["output"]["path_to_output"],
+                                       "eigenvalue.dat"))
+
+
+def test_static_gpu_required_fails_fast_without_cupy(flex_outdir, tmp_path,
+                                                     monkeypatch):
+    """gpu_required=true must raise (not silently fall back) when CuPy is
+    missing, on the static path too (issue #63 contract)."""
+    monkeypatch.setattr(backend, "_import_cupy", _no_cupy)
+    inp = _static_flex_input(flex_outdir)
+    inp["eliashberg"]["gpu"] = True
+    inp["eliashberg"]["gpu_required"] = True
+    with pytest.raises(RuntimeError, match="gpu_required"):
+        sc.calc_eliashberg(inp)
+
+
+def test_static_gpu_false_default_unchanged(flex_outdir, tmp_path):
+    """The default (gpu=false) static solve still runs and writes results."""
+    import os
+    inp = _static_flex_input(flex_outdir)
+    sc.calc_eliashberg(inp)
+    assert os.path.exists(os.path.join(inp["file"]["output"]["path_to_output"],
+                                       "eigenvalue.dat"))

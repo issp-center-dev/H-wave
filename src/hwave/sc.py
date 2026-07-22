@@ -3037,17 +3037,6 @@ def calc_eliashberg(input_dict):
     input_dict : dict
         Parsed TOML configuration dictionary.
     """
-    # --- Config guards (fail fast before any file I/O) ---
-    # GPU acceleration is only wired into the dynamic solver; on the static
-    # (CPU-only) path refuse gpu=true rather than silently ignoring the flag.
-    from hwave.solver import eliashberg_dynamic as _ed
-    if (_eliashberg_frequency(input_dict) != "dynamic"
-            and _ed._gpu_requested(input_dict.get("eliashberg", {}))):
-        raise ValueError(
-            "[eliashberg] gpu=true is only supported for frequency='dynamic'; "
-            "the static Eliashberg solver is CPU-only. Set frequency='dynamic' "
-            "or remove gpu.")
-
     # --- Parse parameters ---
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
@@ -3084,6 +3073,13 @@ def calc_eliashberg(input_dict):
         _validate_dynamic_prereqs(input_dict)
         from hwave.solver import eliashberg_dynamic
         return eliashberg_dynamic.solve_dynamic(input_dict)
+
+    # GPU backend for the static kernel (the dynamic branch returned above and
+    # handles its own gpu flag). get_backend falls back to numpy with a warning
+    # when CuPy/CUDA is unusable, unless gpu_required=true (then it raises).
+    use_gpu = backend.as_bool(eli_param.get("gpu", False))
+    gpu_required = backend.as_bool(eli_param.get("gpu_required", False))
+    xp, gpu_active = backend.get_backend(use_gpu, logger, required=gpu_required)
 
     solver_mode = eli_param.get("solver_mode", "iteration")
     max_iter = eli_param.get("max_iter", 1000)
@@ -3204,6 +3200,20 @@ def calc_eliashberg(input_dict):
 
     # --- Step 11: Initialize gap function ---
     sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
+
+    # GPU: park the two large invariants (pairing vertex and pair bubble) on the
+    # device once; each matvec then only moves the gap vector across PCIe. The
+    # solver entry points below pass Vs_q/G2 straight to _make_kernel_operator,
+    # which derives its backend from them, so no other change is needed here.
+    if gpu_active:
+        est_bytes = 2 * (Vs_q.nbytes + G2.nbytes)  # invariants + ~one workspace
+        backend.warn_if_device_memory_short(
+            est_bytes, logger, label="the static Eliashberg kernel")
+        logger.info("GPU backend active (CuPy): moving the pairing vertex and "
+                    "G2 to the device (%.2f GB).",
+                    (Vs_q.nbytes + G2.nbytes) / 1e9)
+        Vs_q = xp.asarray(Vs_q)
+        G2 = xp.asarray(G2)
 
     # --- Step 12: Solve ---
     sigma_result = None
