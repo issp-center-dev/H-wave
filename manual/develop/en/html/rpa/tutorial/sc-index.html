@@ -251,9 +251,15 @@ eigenvalue (so <span class="math notranslate nohighlight">\(A + \sigma I\)</span
 Recommended whenever the leading eigenvalue comes out negative or you scan
 weakly-pairing systems (low pressure, quasi-1D). Note this differs from
 <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> above (a shift-invert <em>target</em>, not a spectral shift).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the dynamic-mode (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>)
-kernel applications on a GPU via CuPy (default <code class="docutils literal notranslate"><span class="pre">false</span></code>; see the
-<a class="reference internal" href="#sc-dynamic-gpu-en"><span class="std std-ref">GPU section</span></a> below).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> runs the kernel-apply (matvec/matmat, the FFT convolution)
+on the GPU (CuPy) for <strong>both</strong> <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>). The eigensolver itself (ARPACK
+Arnoldi, power iteration, subspace iteration, shift-invert) always runs on the
+host, because CuPy has no general non-Hermitian eigensolver; only the gap
+vector crosses to the device per iteration. Without a usable CuPy/CUDA device
+the run falls back to CPU with a warning (see the
+<a class="reference internal" href="#sc-dynamic-gpu-en"><span class="std std-ref">GPU-execution section</span></a> below). <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> is
+ignored on the GPU path.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>: Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to make <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> strict – the solver
 raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
 (default <code class="docutils literal notranslate"><span class="pre">false</span></code>). Honored by the dynamic Eliashberg solver (set it in

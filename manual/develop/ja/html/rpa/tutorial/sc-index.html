@@ -247,9 +247,14 @@ SC固有値）を求めます。シフトは内部で差し引かれるので、
 スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
 弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>
 （shift-invert のターゲット）とは別物である点に注意してください。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> で動的モード（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）のカーネル適用を
-GPU（CuPy）で実行します（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>。下記の
-<a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a> を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> でカーネル適用（matvec/matmat、FFT 畳み込み）を GPU（CuPy）で
+実行します。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> と <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> の <strong>両方</strong> に
+対応します（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>）。固有値ソルバー本体（ARPACK Arnoldi・べき乗
+反復・部分空間反復・shift-invert）は常にホストで実行されます（CuPy に一般の
+非エルミート固有値ソルバーが無いため）。反復ごとにデバイスへ渡るのはギャップ
+ベクトルのみです。使用可能な CuPy/CUDA デバイスが無い場合は警告を出して CPU に
+フォールバックします（下記の <a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a> を参照）。GPU
+実行時は <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> は無視されます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> にすると <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> を厳格化し、CuPy/CUDA が
 使えない場合に静かに CPU へフォールバックせずエラーで停止します
 （デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>）。動的 Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> に設定）
