@@ -164,3 +164,82 @@ def test_static_gpu_false_default_unchanged(flex_outdir, tmp_path):
     sc.calc_eliashberg(inp)
     assert os.path.exists(os.path.join(inp["file"]["output"]["path_to_output"],
                                        "eigenvalue.dat"))
+
+
+# --- real-CuPy parity (skips without a usable CUDA device) ----------------
+
+def _usable_cuda():
+    try:
+        import cupy
+        return cupy.cuda.runtime.getDeviceCount() >= 1
+    except Exception:
+        return False
+
+
+requires_cuda = pytest.mark.skipif(
+    not _usable_cuda(), reason="no usable CUDA device / CuPy")
+
+
+def _phase_align(g_gpu, g_cpu):
+    """Remove the arbitrary global complex phase between two eigenvectors."""
+    g_gpu = np.asarray(g_gpu).ravel()
+    g_cpu = np.asarray(g_cpu).ravel()
+    ov = np.vdot(g_cpu, g_gpu)
+    if abs(ov) > 0:
+        g_gpu = g_gpu * np.exp(-1j * np.angle(ov))
+    g_gpu = g_gpu / (np.linalg.norm(g_gpu) + 1e-300)
+    g_cpu = g_cpu / (np.linalg.norm(g_cpu) + 1e-300)
+    return g_gpu, g_cpu
+
+
+@requires_cuda
+@pytest.mark.parametrize("method", ["arnoldi", "subspace",
+                                    "shift-invert-gmres"])
+def test_static_kernel_gpu_matches_cpu_eigenvalue(method):
+    """Real CuPy: the static kernel's leading eigenvalue matches CPU for
+    matvec (arnoldi), matmat (subspace), and the inner-host-solver
+    (shift-invert) paths. The device path validates the host->device input
+    transfer that a numpy spy would tolerate."""
+    import cupy
+    Vs_q, G2, norb, Nx, Ny, Nz = _small_simple_operator_inputs(seed=3)
+    # a slightly larger, well-separated grid so the leading eigenvalue is
+    # non-degenerate
+    norb, Nx, Ny, Nz = 1, 4, 4, 1
+    rng = np.random.default_rng(7)
+    Vs_q = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+            + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+    G2 = (rng.standard_normal((norb, norb, norb, norb, Nx, Ny, Nz))
+          + 1j * rng.standard_normal((norb, norb, norb, norb, Nx, Ny, Nz)))
+
+    kw = dict(num_eigenvalues=4, method=method, sigma_shift=None,
+              spectral_shift=None)
+    vals_cpu, vecs_cpu = sc._solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, **kw)
+    vals_gpu, vecs_gpu = sc._solve_eigenvalue(
+        cupy.asarray(Vs_q), cupy.asarray(G2), norb, Nx, Ny, Nz, **kw)
+
+    lam_cpu, lam_gpu = vals_cpu[0], vals_gpu[0]
+    assert abs(lam_gpu - lam_cpu) <= 1e-8 * max(1.0, abs(lam_cpu))
+    # outputs are host arrays
+    assert isinstance(vals_gpu, np.ndarray) and isinstance(vecs_gpu, np.ndarray)
+    # gap parity only when the leading eigenvalue is well separated
+    if abs(vals_cpu[0] - vals_cpu[1]) > 1e-3 * max(1.0, abs(vals_cpu[0])):
+        g_gpu, g_cpu = _phase_align(vecs_gpu[0], vecs_cpu[0])
+        assert np.linalg.norm(g_gpu - g_cpu) <= 1e-6
+
+
+@requires_cuda
+def test_static_kernel_gpu_matmat_is_host():
+    """The subspace/matmat path returns host arrays on the device backend."""
+    import cupy
+    norb, Nx, Ny, Nz = 1, 4, 4, 1
+    n = norb * norb * Nx * Ny * Nz
+    rng = np.random.default_rng(1)
+    Vs_q = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+            + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+    G2 = (rng.standard_normal((norb, norb, norb, norb, Nx, Ny, Nz))
+          + 1j * rng.standard_normal((norb, norb, norb, norb, Nx, Ny, Nz)))
+    A, _ = sc._make_kernel_operator(cupy.asarray(Vs_q), cupy.asarray(G2),
+                                    norb, Nx, Ny, Nz)
+    out = A.matmat(np.ones((n, 3), dtype=complex))
+    assert isinstance(out, np.ndarray) and out.shape == (n, 3)
+    assert out.dtype == np.complex128
