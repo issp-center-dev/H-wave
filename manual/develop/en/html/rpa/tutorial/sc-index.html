@@ -711,6 +711,14 @@ keeps the spin-fluctuation term plus the bare term (spin channel).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>): zero <span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>; the vertex
 keeps the charge-fluctuation term plus the bare term (charge channel).</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>These flags apply only to the dynamic vertex (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>).
+The static solver (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>, the default) builds its kernel
+from the RPA/FLEX static susceptibility and does not use them when
+constructing the kernel; setting one with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> has no
+effect and logs a warning.</p>
+</div>
 <p>For example, a spin-channel diagnostic uses:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[eliashberg]</span>
 <span class="n">zero_chi_c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>

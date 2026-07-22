@@ -688,6 +688,13 @@ V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
 <li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code>（既定 <code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span> を 0 にする。
 頂点は電荷ゆらぎ項＋裸の項を保持（電荷チャネル）。</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>これらのフラグは動的頂点（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）にのみ適用されます。
+静的ソルバー（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>、既定）はカーネルを RPA/FLEX の
+静的感受率から構成し、カーネル構成時にこれらを使用しません。
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> で指定しても効果はなく、警告が出ます。</p>
+</div>
 <p>例えばスピンチャネルの診断は次のように指定します。</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[eliashberg]</span>
 <span class="n">zero_chi_c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
