@@ -3212,7 +3212,13 @@ def calc_eliashberg(input_dict):
     # solver entry points below pass Vs_q/G2 straight to _make_kernel_operator,
     # which derives its backend from them, so no other change is needed here.
     if gpu_active:
-        est_bytes = 2 * (Vs_q.nbytes + G2.nbytes)  # invariants + ~one workspace
+        # Resident device tensors are more than the two inputs: the operator
+        # also holds V_r (~Vs_q) and G2_pre (~G2), and in general mode
+        # G2_gemm (~G2) + V_r_gemm (~Vs_q) -- i.e. up to ~3x the inputs. The
+        # per-matmat block workspace (gap-sized x num columns) adds on top; a
+        # subspace/eigenvalue run with a wide block can still exceed this. It is
+        # only a pre-warning -- CuPy raises a clear OutOfMemoryError regardless.
+        est_bytes = 3 * (Vs_q.nbytes + G2.nbytes)
         backend.warn_if_device_memory_short(
             est_bytes, logger, label="the static Eliashberg kernel")
         logger.info("GPU backend active (CuPy): moving the pairing vertex and "

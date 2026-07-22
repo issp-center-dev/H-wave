@@ -254,6 +254,37 @@ def test_static_kernel_gpu_matches_cpu_general_multiorbital(method):
 
 
 @requires_cuda
+@pytest.mark.parametrize("pairing_type", ["singlet", "triplet"])
+def test_static_kernel_gpu_iteration_matches_cpu(pairing_type):
+    """Real CuPy: the _solve_iteration path -- the parity-leakage probe (several
+    A.matvec calls) plus the power loop and parity handling -- runs on
+    device-resident invariants and matches CPU. The _solve_eigenvalue tests
+    above never exercise this path; here the device operator is driven by the
+    iteration/probe machinery instead. green_kw is unused by the body, so None."""
+    import cupy
+    norb, Nx, Ny, Nz = 1, 4, 4, 1
+    rng = np.random.default_rng(5)
+
+    def cplx(shape):
+        return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+    Vs_q = cplx((norb, norb, Nx, Ny, Nz))
+    G2 = cplx((norb, norb, norb, norb, Nx, Ny, Nz))
+    sigma_init = cplx((norb, norb, Nx, Ny, Nz))
+    kw = dict(max_iter=300, alpha=0.5, tol=1e-10, pairing_type=pairing_type)
+
+    sig_cpu, lam_cpu, _, _ = sc._solve_iteration(
+        None, Vs_q, G2, sigma_init.copy(), norb, **kw)
+    sig_gpu, lam_gpu, _, _ = sc._solve_iteration(
+        None, cupy.asarray(Vs_q), cupy.asarray(G2), sigma_init.copy(), norb, **kw)
+
+    assert abs(lam_gpu - lam_cpu) <= 1e-8 * max(1.0, abs(lam_cpu))
+    assert isinstance(sig_gpu, np.ndarray)   # returned gap is host
+    g_gpu, g_cpu = _phase_align(sig_gpu, sig_cpu)
+    assert np.linalg.norm(g_gpu - g_cpu) <= 1e-6
+
+
+@requires_cuda
 def test_static_kernel_gpu_matmat_is_host():
     """The subspace/matmat path returns host arrays on the device backend."""
     import cupy
