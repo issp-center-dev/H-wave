@@ -172,3 +172,31 @@ def test_static_channel_flags_warn_through_calc_eliashberg(caplog, monkeypatch, 
     assert any(
         "frequency='static'" in msg and "zero_chi_s" in msg for msg in warnings
     )
+
+
+def test_dynamic_path_does_not_warn_about_channel_flags(monkeypatch):
+    """The static-only channel-flag warning must NOT fire on a dynamic run:
+    calc_eliashberg dispatches to solve_dynamic before reaching the warning, so
+    zero_chi_s/zero_chi_c are honored (not warned about) in dynamic mode. Locks
+    the invariant against a future reordering of the dispatch vs. the warning."""
+    import hwave.sc as sc
+    from hwave.solver import eliashberg_dynamic as ed
+
+    called = {"warn": False}
+
+    def flag_warn(eli_param):
+        called["warn"] = True
+
+    monkeypatch.setattr(sc, "_warn_if_static_ignores_channel_flags", flag_warn)
+    monkeypatch.setattr(ed, "solve_dynamic", lambda input_dict: "DYNAMIC_OK")
+
+    inp = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": 8, "filling": 0.5}},
+        "file": {"output": {"path_to_output": "."}},
+        "eliashberg": {"frequency": "dynamic", "chi0q_mode": "flex",
+                       "zero_chi_s": True},
+    }
+    result = sc.calc_eliashberg(inp)
+    assert result == "DYNAMIC_OK"
+    assert called["warn"] is False
