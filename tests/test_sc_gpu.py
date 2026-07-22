@@ -130,7 +130,7 @@ def _no_cupy(*args, **kwargs):
     raise ImportError("No module named 'cupy'")
 
 
-def test_static_gpu_true_no_longer_raises_and_falls_back(flex_outdir, tmp_path,
+def test_static_gpu_true_no_longer_raises_and_falls_back(flex_outdir,
                                                          monkeypatch, caplog):
     """gpu=true on the static path no longer raises; without CuPy it warns and
     completes on numpy."""
@@ -145,7 +145,7 @@ def test_static_gpu_true_no_longer_raises_and_falls_back(flex_outdir, tmp_path,
                                        "eigenvalue.dat"))
 
 
-def test_static_gpu_required_fails_fast_without_cupy(flex_outdir, tmp_path,
+def test_static_gpu_required_fails_fast_without_cupy(flex_outdir,
                                                      monkeypatch):
     """gpu_required=true must raise (not silently fall back) when CuPy is
     missing, on the static path too (issue #63 contract)."""
@@ -157,7 +157,7 @@ def test_static_gpu_required_fails_fast_without_cupy(flex_outdir, tmp_path,
         sc.calc_eliashberg(inp)
 
 
-def test_static_gpu_false_default_unchanged(flex_outdir, tmp_path):
+def test_static_gpu_false_default_unchanged(flex_outdir):
     """The default (gpu=false) static solve still runs and writes results."""
     import os
     inp = _static_flex_input(flex_outdir)
@@ -201,9 +201,7 @@ def test_static_kernel_gpu_matches_cpu_eigenvalue(method):
     (shift-invert) paths. The device path validates the host->device input
     transfer that a numpy spy would tolerate."""
     import cupy
-    Vs_q, G2, norb, Nx, Ny, Nz = _small_simple_operator_inputs(seed=3)
-    # a slightly larger, well-separated grid so the leading eigenvalue is
-    # non-degenerate
+    # a well-separated grid so the leading eigenvalue is non-degenerate
     norb, Nx, Ny, Nz = 1, 4, 4, 1
     rng = np.random.default_rng(7)
     Vs_q = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
