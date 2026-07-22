@@ -1,0 +1,44 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. With Fock on, CoulombIntra couples up/down into a
+  # single mixed block and column_spin becomes -1, which the bridge
+  # rejects (v1 needs Sz-separable blocks).
+  flag_fock = false
+
+[mode.param]
+  # Ne = 4 (Ne_per_spin = 2) fills the inner (k=+/-pi/8) shell only.
+  # Closed shell at the free-particle level (HOMO-LUMO gap 1.083).
+  Ncond        = 4
+  2Sz          = 0
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [8, 1, 1]
+  SubShape     = [1, 1, 1]
+  BoundaryCondition = ["antiperiodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy     = "energy.dat"
+  eigen      = "eigen.npz"
+  green      = "green.npz"
+  onebodyg   = "greenone.dat"
+  occupation = "occupation.npz"

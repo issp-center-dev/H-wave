@@ -1,0 +1,28 @@
+// APBC 1D Hubbard, L=8, t=1, U=2, quarter filling. Matches the
+// H-wave input.toml (CellShape=[8,1,1], Ncond=4, 2Sz=0,
+// BoundaryCondition=["antiperiodic", "periodic", "periodic"]).
+// phase0 = 180 degrees -> StdFace writes the boundary-crossing sign
+// into trans.def and the sign column of orbitalidx.def.
+L     = 8
+Lsub  = 8
+model = "FermionHubbard"
+lattice = "chain"
+t     = 1.0
+U     = 2.0
+phase0 = 180.0
+ncond = 4
+2Sz   = 0
+NSPGaussLeg    = 1
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+// NSROptItrSmp is not used when NSROptItrStep = 0; vmcdry hangs on the
+// warning emitted for the unused key, so we omit it.
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

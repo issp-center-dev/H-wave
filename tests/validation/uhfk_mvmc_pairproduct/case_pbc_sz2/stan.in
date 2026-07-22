@@ -1,0 +1,39 @@
+// PBC 1D Hubbard, L=8, t=1, U=2, 2Sz=2 (Ne_up=3, Ne_down=1).
+// Matches the H-wave input.toml (CellShape=[8,1,1], Ncond=4, 2Sz=2,
+// BoundaryCondition=["periodic", "periodic", "periodic"]).
+// phase0 = 0.0 -> pure PBC (no boundary-crossing sign).
+//
+// v3 A case: with 2Sz != 0 StdFace's FermionHubbard generator emits
+// orbitalidxgen.def (6-column general format) AND commented
+// "# OrbitalGeneral orbitalidxgen.def" line into namelist.def
+// automatically (see StdFace_main.c:1426). run.sh must uncomment that
+// line and switch InOrbital to InOrbitalGeneral to feed the bridge's
+// general path.
+//
+// TODO: StdFace does not accept a stan.in keyword "OrbitalGeneral".
+// The general orbital file is triggered purely by 2Sz != 0.
+L     = 8
+Lsub  = 8
+model = "FermionHubbard"
+lattice = "chain"
+t     = 1.0
+U     = 2.0
+phase0 = 0.0
+ncond = 4
+2Sz   = 2
+// NSPGaussLeg is not used when 2Sz is fixed (StdFace projects onto the
+// fixed-Sz subspace by construction). vmcdry warns and halts on the
+// unused key, so we omit it.
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+// NSROptItrSmp is not used when NSROptItrStep = 0; vmcdry hangs on the
+// warning emitted for the unused key, so we omit it.
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

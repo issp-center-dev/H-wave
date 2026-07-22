@@ -1,0 +1,42 @@
+// 2D 6x4 Rashba + Hubbard SOC fixture (v3.1 C case, sublattice folding [2,2,1]).
+// Matches the H-wave input.toml (CellShape=[6,4,1], SubShape=[2,2,1],
+// Ncond=8, enable_spin_orbital=true,
+// BoundaryCondition=["periodic", "periodic", "periodic"]).
+// phase0 = 0.0 -> pure PBC (no boundary-crossing sign).
+//
+// Folded BZ = [3, 2, 1]. The folded x direction (length 3) contains
+// k_x = 0 (self canonical) and k_x = +/- 2 pi / 3 (non-self canonical
+// pair). The folded y direction (length 2) is fully self canonical.
+// This mixture is the point of the fixture: exercise the SOC pair
+// emission on both self and non-self canonical blocks simultaneously,
+// with SubShape > 1 also active.
+//
+// FermionHubbardGC sets lGC=1 so StdFace emits orbitalidxgen.def
+// (6-column General format), which the bridge's SOC dispatch requires
+// (tools/uhfk_to_mvmc.py rejects the 4-column AntiParallel format when
+// enable_spin_orbital = true).
+L     = 6
+W     = 4
+Lsub  = 2
+Wsub  = 2
+model = "FermionHubbardGC"
+lattice = "square"
+t     = 1.0
+U     = 2.0
+phase0 = 0.0
+ncond = 8
+// NSPGaussLeg is not used (default projection off); we run at fixed Ne
+// without a 2Sz constraint since Rashba SOC mixes spin.
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+// NSROptItrSmp is not used when NSROptItrStep = 0; vmcdry hangs on the
+// warning emitted for the unused key, so we omit it.
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

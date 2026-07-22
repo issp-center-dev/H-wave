@@ -79,6 +79,27 @@ Parameters
   **Description :**
   This parameter specifies the shape of the sublattice Bx, By, Bz.
 
+- ``BoundaryCondition``
+
+  **Type :**
+  List of strings of length 3 (default value is ``["periodic", "periodic", "periodic"]``)
+
+  **Description :**
+  This parameter specifies the boundary condition along each spatial direction (x, y, z).
+  Accepted values per direction (case-insensitive):
+  ``"periodic"`` / ``"P"`` and ``"antiperiodic"`` / ``"AP"``.
+  Antiperiodic corresponds to a twist angle of :math:`\pi`.
+
+  Compatible with any ``SubShape``, including the default
+  ``SubShape = CellShape``. The gauge phase is applied to the input
+  ``Transfer`` in its original signed-displacement representation before
+  any sublattice fold, so the choice of ``SubShape`` does not change the
+  physical result.
+
+  Non-density-type interactions (``PairHop``, ``PairLift``) combined with
+  any antiperiodic direction are rejected, because they are not gauge
+  invariant under the site-dependent gauge used to implement APBC.
+
 - ``T``
 
   **Type :**

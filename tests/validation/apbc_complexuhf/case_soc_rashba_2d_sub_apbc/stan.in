@@ -1,0 +1,30 @@
+// v3.6 apbc_complexuhf SOC + APBC + SubShape fixture. Mirrors the
+// H-wave case_soc_rashba_2d_sub_apbc geometry and SOC parameters so a
+// ComplexUHF cross-check reads the same Hamiltonian.
+//
+// FermionHubbardGC + lGC=1 mirrors the H-wave / mVMC bridge fixture so
+// StdFace emits the same 6-column General orbitalidxgen.def format the
+// v3.6 bridge consumes; this also matches ComplexUHF's UHF branch
+// (mVMC-1.4.0 src/ComplexUHF/readdef.c reads the GC output).
+//
+// phase0 = 180.0 -> APBC in the L (x) direction. This baked-in sign
+// flip is what ComplexUHF sees on the wrap-around bond; the H-wave
+// side realizes the same APBC via BoundaryCondition = ["antiperiodic",
+// "periodic", "periodic"] in input.toml, so the two Hamiltonians are
+// bit-identical.
+//
+// alpha = 0.5 is Rashba SOC (t_up = t_dn = 1, alpha_R = 0.5), same as
+// case_soc_rashba_2d_sub / case_soc_rashba_2d_sub_apbc.
+//
+// ncond = 8 matches the H-wave fixture's Ncond = 8 (Phase 2 step 2b
+// closed-shell selection under theta = (pi, 0, 0)).
+L     = 6
+W     = 4
+Lsub  = 2
+Wsub  = 2
+model = "FermionHubbardGC"
+lattice = "square"
+t     = 1.0
+U     = 2.0
+phase0 = 180.0
+ncond = 8

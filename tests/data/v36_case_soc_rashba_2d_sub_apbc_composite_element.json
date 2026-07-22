@@ -1,0 +1,76 @@
+{
+  "G_c_abs": 0.06450494134235475,
+  "G_c_imag": -0.050983616572915766,
+  "G_c_real": 0.03951655727320556,
+  "N_pairs": 4,
+  "T_M_per_mutation": {
+    "M-gauge-1": 0.006450494134235475,
+    "M-gauge-2": 0.006450494134235475,
+    "M-gauge-3": 0.006450494134235475,
+    "M-gauge-4": 0.006450494134235475,
+    "M-gauge-5": 0.006450494134235475,
+    "M-ship-1": 0.006450494134235475,
+    "M-ship-2": 0.006450494134235475,
+    "M-ship-3": 0.006450494134235475,
+    "M-ship-4": 0.006450494134235475,
+    "M-ship-5": 0.006450494134235475
+  },
+  "_fixture": "tests/validation/uhfk_mvmc_pairproduct/case_soc_rashba_2d_sub_apbc",
+  "_spec_ref": "docs/superpowers/specs/2026-07-09-uhfk-mvmc-pairproduct-general-v36-design.md \u00a74.3 \u00a74.4 \u00a76.2",
+  "active_apbc_axes": [
+    "x"
+  ],
+  "cell_shape": [
+    6,
+    4,
+    1
+  ],
+  "delta_M_per_mutation_at_producer_time": {
+    "M-gauge-1": 0.06450494134235474,
+    "M-gauge-2": 0.11501336478053455,
+    "M-gauge-3": 0.1246139775316838,
+    "M-gauge-4": 0.12782277153110633,
+    "M-gauge-5": 0.06450494134235477,
+    "M-ship-1": 0.06450494134235481,
+    "M-ship-2": 0.11501336478053459,
+    "M-ship-3": 0.12461397753168382,
+    "M-ship-4": 0.12782277153110638,
+    "M-ship-5": 0.0654921299842608
+  },
+  "i_c": 0,
+  "j_c": 5,
+  "manifest_schema": "whole-vector-10entry",
+  "ncond": 8,
+  "s_c": 1,
+  "site_position_i": [
+    0,
+    0,
+    0
+  ],
+  "site_position_j": [
+    5,
+    0,
+    0
+  ],
+  "sub_offset_i": [
+    0,
+    0,
+    0
+  ],
+  "sub_offset_j": [
+    1,
+    0,
+    0
+  ],
+  "sub_shape": [
+    2,
+    2,
+    1
+  ],
+  "t_c": 0,
+  "theta_radians": [
+    3.141592653589793,
+    0.0,
+    0.0
+  ]
+}

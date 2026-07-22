@@ -1,0 +1,40 @@
+// 2D 4x4 Rashba + Hubbard SOC + APBC in x (v3.2 case, no sublattice folding).
+// Matches the H-wave input.toml (CellShape=[4,4,1], SubShape=[1,1,1],
+// Ncond=8, enable_spin_orbital=true,
+// BoundaryCondition=["antiperiodic", "periodic", "periodic"]).
+// phase0 = 180 (AP in x), phase1 = 0 (PBC in y). StdFace bakes the AP
+// sign column into orbitalidx.def / orbitalidxgen.def. The bridge's
+// trans_emit re-writes trans.def from H-wave Transfer.dat under APBC
+// so Rashba (s != t) rows on the boundary acquire the wrap-phase
+// sign flip.
+//
+// FermionHubbardGC sets lGC=1 so StdFace emits orbitalidxgen.def
+// (6-column General format), which the bridge's SOC dispatch requires
+// (tools/uhfk_to_mvmc.py rejects the 4-column AntiParallel format when
+// enable_spin_orbital = true).
+L     = 4
+W     = 4
+Lsub  = 1
+Wsub  = 1
+model = "FermionHubbardGC"
+lattice = "square"
+t     = 1.0
+U     = 2.0
+phase0 = 180.0
+phase1 = 0.0
+ncond = 8
+// NSPGaussLeg is not used (default projection off); we run at fixed Ne
+// without a 2Sz constraint since Rashba SOC mixes spin.
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+// NSROptItrSmp is not used when NSROptItrStep = 0; vmcdry hangs on the
+// warning emitted for the unused key, so we omit it.
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

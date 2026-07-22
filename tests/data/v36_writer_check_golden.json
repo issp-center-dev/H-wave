@@ -1,0 +1,305 @@
+{
+  "description": "Golden fixture for parse_emitted_F v3.6 pin (spec \u00a75.2). Nsite=3, three non-sequential class ids {2, 5, 7}, one sign=-1 row (cross-spin all_i=0, all_j=4), one spin-block-disambiguating row (all_i=1, all_j=3 from i=1, spn_i=0, j=0, spn_j=1). Hand-written expected F verifies parser conventions.",
+  "Nsite": 3,
+  "orbitalidx": [
+    {
+      "i": 0,
+      "spn_i": 0,
+      "j": 1,
+      "spn_j": 0,
+      "class_idx": 0,
+      "sign": 1
+    },
+    {
+      "i": 0,
+      "spn_i": 0,
+      "j": 2,
+      "spn_j": 0,
+      "class_idx": 1,
+      "sign": 1
+    },
+    {
+      "i": 0,
+      "spn_i": 0,
+      "j": 0,
+      "spn_j": 1,
+      "class_idx": 3,
+      "sign": 1
+    },
+    {
+      "i": 0,
+      "spn_i": 0,
+      "j": 1,
+      "spn_j": 1,
+      "class_idx": 5,
+      "sign": -1
+    },
+    {
+      "i": 0,
+      "spn_i": 0,
+      "j": 2,
+      "spn_j": 1,
+      "class_idx": 4,
+      "sign": 1
+    },
+    {
+      "i": 1,
+      "spn_i": 0,
+      "j": 2,
+      "spn_j": 0,
+      "class_idx": 6,
+      "sign": 1
+    },
+    {
+      "i": 1,
+      "spn_i": 0,
+      "j": 0,
+      "spn_j": 1,
+      "class_idx": 2,
+      "sign": 1
+    },
+    {
+      "i": 1,
+      "spn_i": 0,
+      "j": 1,
+      "spn_j": 1,
+      "class_idx": 8,
+      "sign": 1
+    },
+    {
+      "i": 1,
+      "spn_i": 0,
+      "j": 2,
+      "spn_j": 1,
+      "class_idx": 9,
+      "sign": 1
+    },
+    {
+      "i": 2,
+      "spn_i": 0,
+      "j": 0,
+      "spn_j": 1,
+      "class_idx": 10,
+      "sign": 1
+    },
+    {
+      "i": 2,
+      "spn_i": 0,
+      "j": 1,
+      "spn_j": 1,
+      "class_idx": 11,
+      "sign": 1
+    },
+    {
+      "i": 2,
+      "spn_i": 0,
+      "j": 2,
+      "spn_j": 1,
+      "class_idx": 7,
+      "sign": 1
+    },
+    {
+      "i": 0,
+      "spn_i": 1,
+      "j": 1,
+      "spn_j": 1,
+      "class_idx": 12,
+      "sign": 1
+    },
+    {
+      "i": 0,
+      "spn_i": 1,
+      "j": 2,
+      "spn_j": 1,
+      "class_idx": 13,
+      "sign": 1
+    },
+    {
+      "i": 1,
+      "spn_i": 1,
+      "j": 2,
+      "spn_j": 1,
+      "class_idx": 14,
+      "sign": 1
+    }
+  ],
+  "zqp": [
+    {
+      "class_idx": 0,
+      "re": 0.1,
+      "im": 0.2
+    },
+    {
+      "class_idx": 1,
+      "re": 0.15,
+      "im": -0.05
+    },
+    {
+      "class_idx": 2,
+      "re": 0.3,
+      "im": 0.4
+    },
+    {
+      "class_idx": 3,
+      "re": -0.2,
+      "im": 0.1
+    },
+    {
+      "class_idx": 4,
+      "re": 0.05,
+      "im": -0.15
+    },
+    {
+      "class_idx": 5,
+      "re": 0.7,
+      "im": -0.2
+    },
+    {
+      "class_idx": 6,
+      "re": 0.25,
+      "im": 0.35
+    },
+    {
+      "class_idx": 7,
+      "re": -0.1,
+      "im": 0.6
+    },
+    {
+      "class_idx": 8,
+      "re": 0.4,
+      "im": 0.1
+    },
+    {
+      "class_idx": 9,
+      "re": -0.05,
+      "im": 0.25
+    },
+    {
+      "class_idx": 10,
+      "re": 0.15,
+      "im": 0.3
+    },
+    {
+      "class_idx": 11,
+      "re": 0.2,
+      "im": -0.4
+    },
+    {
+      "class_idx": 12,
+      "re": 0.5,
+      "im": -0.1
+    },
+    {
+      "class_idx": 13,
+      "re": -0.3,
+      "im": 0.15
+    },
+    {
+      "class_idx": 14,
+      "re": 0.35,
+      "im": 0.2
+    }
+  ],
+  "expected_F": {
+    "real": [
+      [
+        0.0,
+        0.1,
+        0.15,
+        -0.2,
+        -0.7,
+        0.05
+      ],
+      [
+        -0.1,
+        0.0,
+        0.25,
+        0.3,
+        0.4,
+        -0.05
+      ],
+      [
+        -0.15,
+        -0.25,
+        0.0,
+        0.15,
+        0.2,
+        -0.1
+      ],
+      [
+        0.2,
+        -0.3,
+        -0.15,
+        0.0,
+        0.5,
+        -0.3
+      ],
+      [
+        0.7,
+        -0.4,
+        -0.2,
+        -0.5,
+        0.0,
+        0.35
+      ],
+      [
+        -0.05,
+        0.05,
+        0.1,
+        0.3,
+        -0.35,
+        0.0
+      ]
+    ],
+    "imag": [
+      [
+        0.0,
+        0.2,
+        -0.05,
+        0.1,
+        0.2,
+        -0.15
+      ],
+      [
+        -0.2,
+        0.0,
+        0.35,
+        0.4,
+        0.1,
+        0.25
+      ],
+      [
+        0.05,
+        -0.35,
+        0.0,
+        0.3,
+        -0.4,
+        0.6
+      ],
+      [
+        -0.1,
+        -0.4,
+        -0.3,
+        0.0,
+        -0.1,
+        0.15
+      ],
+      [
+        -0.2,
+        -0.1,
+        0.4,
+        0.1,
+        0.0,
+        0.2
+      ],
+      [
+        0.15,
+        -0.25,
+        -0.6,
+        -0.15,
+        -0.2,
+        0.0
+      ]
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. With Fock on, CoulombIntra couples up/down into
+  # a single mixed block (column_spin = -1) that the bridge rejects.
+  flag_fock = false
+
+[mode.param]
+  # Half filling (Ne_per_spin = 4) fills BOTH (k, -k) shells at
+  # k = +/- pi/8 and +/- 3pi/8. Larger pair structure than case_apbc
+  # (Ne=4, single shell only): mVMC's Pfaffian reconstruction of the
+  # bridge's F gives <H> within 0.4% of the H-wave UHF energy, while
+  # the inner-shell-only Ne=4 case shows a U/2 mismatch (see
+  # ../README.md and tests/test_uhfk_to_mvmc_pfaffian_density.py for
+  # the diagnosis).
+  Ncond        = 8
+  2Sz          = 0
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [8, 1, 1]
+  SubShape     = [1, 1, 1]
+  BoundaryCondition = ["antiperiodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy     = "energy.dat"
+  eigen      = "eigen.npz"
+  green      = "green.npz"
+  onebodyg   = "greenone.dat"
+  occupation = "occupation.npz"

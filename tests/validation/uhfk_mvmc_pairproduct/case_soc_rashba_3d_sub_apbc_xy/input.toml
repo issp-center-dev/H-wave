@@ -1,0 +1,56 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. Fock is ON so this fixture minimises the same
+  # mean-field functional as the validation ComplexUHF binary, which
+  # hard-codes the on-site exchange term at compile time
+  # (ComplexUHF/include/Def.h:31 "#define Fock 1") with no runtime
+  # switch. The mismatch stayed dormant through v3.6, whose converged
+  # on-site transverse spin density is 8.6e-17, but the v3.7 z-SOC
+  # block drives that density to 2.7e-2: with Fock off the H-wave
+  # solution sits 3.1e-3 away from every ComplexUHF fixed point, so no
+  # seed can close the 1e-6 G2a gate.
+  flag_fock = true
+  # v3.1 SOC dispatch: orbital index in Transfer.dat carries spin as
+  # 2 * orb + spin (Wannier90 SOI packing). Geometry.dat's norb is 2
+  # (one physical orbital times two spin-orbital labels).
+  enable_spin_orbital = true
+
+[mode.param]
+  # v3.7 case_soc_rashba_3d_sub_apbc_xy: AP-AP-P on 3D 4x4x4 lattice.
+  # Phase 2b: soc_pilot_gap.py under this fixture's own theta scans
+  # Ncond in {12,...,24}. Ncond=20 has gap=5.796e-01 >= 5e-2 and
+  # satisfies partner-balance. Ncond=24 also satisfies both criteria,
+  # but 20 has the larger gap and matches the xz sibling. See README.md.
+  Ncond        = 20
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [4, 4, 4]
+  SubShape     = [2, 2, 2]
+  BoundaryCondition = ["antiperiodic", "antiperiodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy   = "energy.dat"
+  eigen    = "eigen.npz"
+  green    = "green.npz"
+  onebodyg = "greenone.dat"
+  occupation = "occupation.npz"

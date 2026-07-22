@@ -8,4 +8,5 @@
 
    tutorial/tu-index
    filespecification/fi-index
+   tools/index_tools
 

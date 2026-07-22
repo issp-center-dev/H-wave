@@ -1,0 +1,39 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  flag_fock = false
+
+[mode.param]
+  # SubShape=[2,1,1]: folded lattice has 4 unit cells, 2-site sublattice
+  Ncond        = 4
+  2Sz          = 0
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [8, 1, 1]
+  SubShape     = [2, 1, 1]
+  BoundaryCondition = ["antiperiodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy     = "energy.dat"
+  eigen      = "eigen.npz"
+  green      = "green.npz"
+  onebodyg   = "greenone.dat"
+  occupation = "occupation.npz"

@@ -1,0 +1,28 @@
+// v3.7 case_soc_rashba_3d_sub_apbc_xz: 3D 4x4x4 Rashba + z-complex SOC with AP-P-AP.
+// Orthorhombic StdFace generates the 64-site workspace; the H-wave bridge
+// still substitutes trans.def (SOC) and orbitalidxgen.def.
+W       = 4
+L       = 4
+Height  = 4
+Wsub    = 2
+Lsub    = 2
+Hsub    = 2
+model = "FermionHubbardGC"
+lattice = "orthorhombic"
+t     = 1.0
+U     = 2.0
+phase0 = 180.0
+phase1 = 0.0
+phase2 = 180.0
+ncond = 20
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

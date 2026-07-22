@@ -1,0 +1,18 @@
+# Post-StdFace ComplexUHF modpara overrides for case_soc_rashba_2d_sub_apbc
+# (v3.6 SOC + APBC + SubShape > [1, 1, 1] fixture).
+#
+# StdFace's FermionHubbardGC path emits a modpara.def with defaults
+# tuned for VMC, not ComplexUHF's UHF binary. This override file is
+# consumed by run.sh (case_1d_hubbard_sublattice pattern) after StdFace
+# to make the modpara ready for ComplexUHF.
+#
+# APBC in x is enforced entirely through stan.in's phase0 = 180.0 (which
+# StdFace bakes into Trans.def's wrap-around sign flip). The NMPTrans
+# knob is a no-op-equivalent record (readdef.c:382-386 reads APFlag but
+# never consumes it), kept as the legacy convention.
+sed -i 's/^NMPTrans.*$/NMPTrans       -1/' modpara.def
+
+# Increase ComplexUHF's iteration budget to match H-wave's
+# IterationMax = 2000 (SOC + APBC convergence is stiffer than PBC).
+sed -i 's/^NDataIdxStart.*$/NDataIdxStart     1/' modpara.def
+sed -i 's/^NDataQtySmp.*$/NDataQtySmp       1/' modpara.def

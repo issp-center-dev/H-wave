@@ -22,6 +22,7 @@ The following code is an example for reading the data from the output file.
 
     wavevector_unit = data["wavevector_unit"]
     wavevector_index = data["wavevector_index"]
+    twist_offset = data["twist_offset"]
 
 ``eigenvalue`` contains the eigenvalues :math:`\lambda_l(\vec{k})` for each wave number.
 The wave number is taken in unit of sublattice when the sublattice is considered.
@@ -47,6 +48,20 @@ The wave number vector that corresponds to the index ``k`` is obtained by
 .. code-block:: python
 
     k_vec = np.dot(wavevector_index[k], wavevector_unit)
+
+``twist_offset`` contains the per-direction twist offset
+:math:`\theta_d / (2\pi)` for the boundary condition under which the
+calculation was run. Each component is ``0`` for ``periodic`` and ``1/2`` for
+``antiperiodic``. The physical wave number that corresponds to the index ``k``
+under arbitrary boundary conditions is obtained by
+
+.. code-block:: python
+
+    k_vec_phys = np.dot(wavevector_index[k] + twist_offset, wavevector_unit)
+
+Under full periodic boundaries ``twist_offset`` is all zeros, so consumers
+that ignore the field continue to observe the original integer-grid
+behavior (backward compatible).
 
 
 .. raw:: latex

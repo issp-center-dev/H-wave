@@ -1,0 +1,11 @@
+# APBC for ComplexUHF is enforced via stan.in (`phase0 = 180.0`), which
+# tells StdFace to emit Trans.def with a -1 sign on the wrap-around bond.
+#
+# The original recipe was to set `NMPTrans = -1` here, which writes the
+# `APFlag = 1` bit into ComplexUHF's parameter struct. ComplexUHF reads
+# the flag (mVMC-1.4.0 src/ComplexUHF/readdef.c:382-386) but never
+# consumes it (no other reference to `APFlag` in the ComplexUHF source
+# tree), so by itself it does not change the Hamiltonian. We keep the
+# sed line below as a no-op-equivalent record of the legacy convention;
+# the real APBC signal lives in stan.in.
+sed -i 's/^NMPTrans.*$/NMPTrans       -1/' modpara.def
