@@ -542,3 +542,70 @@ def test_channel_decomposition_ir_offsite_bare_only_keeps_instantaneous_term(
     ed.solve_dynamic(inp)
     assert captured["dynamic_max"] < 1e-10
     assert captured["instantaneous_max"] > 1e-8
+
+
+@pytest.mark.parametrize("pairing_type", ["singlet", "triplet"])
+@pytest.mark.parametrize(
+    "flags, zeroed",
+    [
+        ({"zero_chi_s": True}, {"chiq_s"}),
+        ({"zero_chi_c": True}, {"chiq_c"}),
+        ({"zero_chi_s": True, "zero_chi_c": True}, {"chiq_s", "chiq_c"}),
+    ],
+)
+def test_channel_decomposition_ir_bypasses_only_zeroed_channel(
+    flex_outdir_offsite, monkeypatch, pairing_type, flags, zeroed
+):
+    """On the IR/off-site path a zeroed susceptibility channel (a) bypasses IR
+    compression entirely and (b) reaches the vertex builder identically zero,
+    while every retained channel is still compressed and nonzero -- for both
+    pairing parities and for single- as well as both-channel zeroing (the
+    both-zeroed case is covered above; here the single-channel routing is the
+    point). (a) guards against a regression that densifies a discarded channel;
+    (b) is the scientifically decisive check that the fluctuations are actually
+    removed from the vertex, not merely routed differently."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    compressed = []
+    captured = {}
+    real_compress = ed._ir_compress
+    real_vertex = ed.compute_vertices_flex_dynamic
+
+    def record_compress(arr, axis, nmat, label, **kwargs):
+        if label in ("chiq_s", "chiq_c"):
+            compressed.append(label)
+        return real_compress(arr, axis, nmat, label, **kwargs)
+
+    def capture_vertex(chis_w, chic_w, *args, **kwargs):
+        captured["chis_max"] = float(np.max(np.abs(chis_w)))
+        captured["chic_max"] = float(np.max(np.abs(chic_w)))
+        return real_vertex(chis_w, chic_w, *args, **kwargs)
+
+    monkeypatch.setattr(ed, "_ir_compress", record_compress)
+    monkeypatch.setattr(ed, "compute_vertices_flex_dynamic", capture_vertex)
+    inp = _offsite_input(
+        flex_outdir_offsite,
+        extra=dict(flags, matsubara_basis="ir", pairing_type=pairing_type),
+    )
+    lam = ed.solve_dynamic(inp)
+
+    # (a) discarded channels are never densified/compressed
+    seen = set(compressed)
+    assert seen.isdisjoint(zeroed), (
+        "zeroed channel(s) {} must bypass IR compression, saw {}".format(
+            zeroed, seen))
+    retained = {"chiq_s", "chiq_c"} - zeroed
+    assert retained <= seen, (
+        "retained channel(s) {} must still be IR-compressed, saw {}".format(
+            retained, seen))
+    # (b) the vertex builder sees an exactly-zero discarded channel and a
+    #     nonzero retained channel
+    if "chiq_s" in zeroed:
+        assert captured["chis_max"] == 0.0
+    else:
+        assert captured["chis_max"] > 0.0
+    if "chiq_c" in zeroed:
+        assert captured["chic_max"] == 0.0
+    else:
+        assert captured["chic_max"] > 0.0
+    assert np.isfinite(lam)

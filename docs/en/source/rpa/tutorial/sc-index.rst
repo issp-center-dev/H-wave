@@ -673,6 +673,14 @@ fluctuations:
 - ``zero_chi_s`` (default ``false``): zero :math:`\chi_{\mathrm s}`; the vertex
   keeps the charge-fluctuation term plus the bare term (charge channel).
 
+.. note::
+
+   These flags apply only to the dynamic vertex (``frequency = "dynamic"``).
+   The static solver (``frequency = "static"``, the default) builds its kernel
+   from the RPA/FLEX static susceptibility and does not use them when
+   constructing the kernel; setting one with ``frequency = "static"`` has no
+   effect and logs a warning.
+
 For example, a spin-channel diagnostic uses:
 
 .. code-block:: toml
