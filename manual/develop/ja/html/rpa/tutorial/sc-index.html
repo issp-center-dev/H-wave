@@ -192,14 +192,27 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <section id="id10">
 <h4><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクション<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h4>
 <p>Eliashberg方程式ソルバーの設定です。主なパラメータ:</p>
-<ul class="simple">
+<ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (自己無撞着べき乗法)、
 <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi固有値解析)、または <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> はRPA出力ファイルから
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を読み込みます。
 <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は内部で計算します。
 <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> はFLEX計算の dressed 感受率を読み込みます
-（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> に必須）。</p></li>
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> に必須）。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は <strong>この</strong> 入力ファイルの <code class="docutils literal notranslate"><span class="pre">mode.param</span></code> の設定で
+<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を再計算します。<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> の結果と比較可能に
+するには、chi0q ファイルを生成した計算とこれらの設定を一致させる必要が
+あります。特に <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> （Matsubara 高周波数裾補正）は中程度の
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> において <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を <span class="math notranslate nohighlight">\(O(1)\)</span> で変えます。
+デフォルトの <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0.0</span></code> （補正なし）は収束が悪い場合があり、
+実用的な RPA/FLEX 計算では通常 <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code> を用います。
+chi0q ファイルには生成時の値が記録されており、読み込み時に設定と
+食い違う場合は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> が警告を出します。</p>
+</div>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: ペアリング頂点の振動数の扱い。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> （デフォルト）は
 ボゾン振動数ゼロでペアリング頂点を評価する静的近似（Nakano--Kuroki 式(9)）で、
 振動数依存性のないギャップを与えます。<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> は、振動数依存のペアリング

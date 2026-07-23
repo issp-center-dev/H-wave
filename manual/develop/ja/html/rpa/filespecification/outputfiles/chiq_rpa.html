@@ -53,6 +53,9 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">index_convention</span></code>:</p>
 <p>スピン軌道の軸が spin*norb+orb（スピンブロック）順で並んでいることを示す文字列マーカー(常に <code class="docutils literal notranslate"><span class="pre">&quot;spin_block&quot;</span></code>)です。これは UHFk のインターリーブ(2*orb+spin)出力とは異なります。このマーカーを持たない <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> ファイル(規約修正前に出力されたもの)は、スピン軌道モードで再読み込みする際に拒否されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code>:</p>
+<p>感受率の計算時に使用された <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> パラメータ(Matsubara 高周波数裾補正)の値です。裾補正は中程度の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> において <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を <span class="math notranslate nohighlight">\(O(1)\)</span> で変えるため、このファイルを読み込む計算(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> など)は、自身の <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> 設定が記録値と異なる場合に警告を出します。事前計算した <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> ファイルをそのまま出力する場合には入力ファイルの値が引き継がれます。生成元がこの値を記録していない場合(旧バージョン)、および一様格子の裾補正が適用されない IR 松原基底(<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>、densified 出力を含む)での FLEX 出力の場合には、キー自体が省略されます。</p>
+</li>
 </ul>
 <p>副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> の出力ファイルは、計算済み既約感受率データとして <code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクションの <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> に指定して使用できます。</p>

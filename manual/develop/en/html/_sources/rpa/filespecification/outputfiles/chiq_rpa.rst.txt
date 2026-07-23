@@ -29,6 +29,10 @@ The file contains several arrays bound to the following keys:
 
   A string marker (always ``"spin_block"``) recording that the spin-orbital axes are ordered as spin*norb+orb (spin-block), distinct from UHFk's interleaved 2*orb+spin output. A ``chi0q`` file lacking this marker (produced before the convention fix) is rejected when reloaded in spin-orbital mode.
 
+- ``coeff_tail``:
+
+  The value of the ``coeff_tail`` parameter (Matsubara high-frequency tail correction) used when the susceptibility was computed. The tail correction changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)` for moderate ``Nmat``, so runs that consume this file (e.g. ``hwave_sc``) warn when their own ``coeff_tail`` setting differs from the recorded value. When a pre-computed ``chi0q_init`` file is passed through, the input file's value is re-saved. The key is omitted when the producing run did not record one (older versions) and for FLEX output on the IR Matsubara basis (``matsubara_basis = "ir"``, including densified output), where the uniform-grid tail correction does not apply.
+
 When the sublattice is considered, the indices of the wave numbers and the orbitals are
 regarded as those of the sublattice.
 

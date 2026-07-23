@@ -196,12 +196,25 @@ and <span class="math notranslate nohighlight">\(\chi(\mathbf{q})\)</span>.</p><
 <section id="eliashberg-section">
 <h4><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section<a class="headerlink" href="#eliashberg-section" title="Link to this heading">¶</a></h4>
 <p>This section controls the Eliashberg solver. Key parameters:</p>
-<ul class="simple">
+<ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (self-consistent power iteration),
 <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi eigenvalue analysis), or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> reads <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> from the RPA output
 file; <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> computes it internally; <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> reads the dressed
-susceptibilities from a FLEX run (required for <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>).</p></li>
+susceptibilities from a FLEX run (required for <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>).</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> recomputes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> with the parameters in
+<code class="docutils literal notranslate"><span class="pre">mode.param</span></code> of <strong>this</strong> input file. For the result to be comparable
+with a <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> run, these must match the run that produced the chi0q
+file — in particular <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> (Matsubara high-frequency tail
+correction), which changes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> at <span class="math notranslate nohighlight">\(O(1)\)</span>
+for moderate <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. Its default <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0.0</span></code> (no correction)
+can be poorly converged; production RPA/FLEX runs typically use
+<code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code>. The chi0q file records the value it was produced
+with, and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> warns on a mismatch when loading.</p>
+</div>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: pairing-vertex frequency treatment. <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> (default)
 evaluates the pairing vertex at zero bosonic frequency (the Nakano–Kuroki
 Eq. 9 static approximation) and gives a frequency-independent gap.
