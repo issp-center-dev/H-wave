@@ -1105,11 +1105,14 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
     ``convention`` selects the S/C interaction matrices applied to the
     susceptibilities: "kuroki" (default, arXiv:0902.3691, used by the reduced
     FLEX path and the rest of the Eliashberg solver) or "myo"
-    (cond-mat/0407094). The two differ in the charge ``C(ab,ab) = -U'+2J`` vs
-    ``-U'+J`` element. Susceptibilities produced by the general (full-vertex)
-    FLEX path are in MYO convention and MUST be paired with ``convention='myo'``
+    (cond-mat/0407094). The two differ ONLY in the charge ``C(ab,ab) = -U'+2J``
+    vs ``-U'+J`` element; they share the native [a,c,b,d] orbital-pair index
+    layout. Susceptibilities produced by the general (full-vertex) FLEX path
+    were computed with the MYO S/C and MUST be paired with ``convention='myo'``
     so the vertex stays self-consistent (mixing them with Kuroki S/C silently
-    changes the physics in the C(ab,ab) channel).
+    changes the physics in the C(ab,ab) channel). ``convention`` is a S/C-charge
+    selector, not an index-layout flag: ``chis``/``chic`` are expected in the
+    native [a,c,b,d] orbital-pair order regardless (issue #78).
 
     Parameters
     ----------
@@ -1214,9 +1217,14 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         Dressed Green's function if available, shape
         (norb, norb, Nx, Ny, Nz, nmat) with the full fermionic axis.
     chi_convention : str
-        Orbital convention of chis_w/chic_w: "myo" (general full-vertex FLEX)
-        or "kuroki" (reduced FLEX / legacy files). Pass this to
-        _compute_vertices_flex so the matching S/C matrices are used.
+        Provenance/S-C-convention tag of chis_w/chic_w: "myo" (general
+        full-vertex FLEX) or "kuroki" (reduced FLEX / legacy files). It selects
+        which S/C interaction matrices _compute_vertices_flex pairs the
+        susceptibilities with (they differ only in the C(ab,ab) charge value)
+        and which orbital-pair shape family the file uses (orbital-pair
+        nd=norb^2 for "myo", spin-orbital nd=norb*ns for "kuroki"). It is NOT an
+        index-layout flag: chis_w/chic_w are returned in the public RPA
+        [a,c,b,d] orbital-pair order for both (issue #78).
     ir_meta : dict or None
         Only when ``allow_ir=True``: ``None`` for uniform files, else the
         per-file IR node metadata ``{"chis":..., "chic":..., "green":...}``
@@ -1309,6 +1317,28 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
             "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
                 chi_convention, chi_convention_c))
+    # Self-describing index-order marker (issue #78 follow-up). Current files
+    # always store [a,c,b,d]; the marker exists so a pre-#78 dev output (the
+    # general path stored MYO-transposed arrays under the SAME "myo" tag,
+    # indistinguishable by tag alone) is rejected instead of silently building
+    # a transposed pairing vertex, and so any future layout change fails fast.
+    # Marker-less "kuroki"/untagged files stay readable: the reduced-path
+    # layout never changed.
+    for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
+        if "chi_orbital_layout" in data:
+            layout = str(data["chi_orbital_layout"])
+            if layout != "acbd":
+                raise ValueError(
+                    "FLEX chi file '{}' declares chi_orbital_layout='{}' but "
+                    "this reader only supports 'acbd'.".format(path, layout))
+        elif chi_convention == "myo":
+            raise ValueError(
+                "FLEX chi file '{}' is tagged chi_convention='myo' but lacks "
+                "the chi_orbital_layout marker: it was produced by a pre-fix "
+                "development build that stored the arrays orbital-pair-"
+                "TRANSPOSED (issue #78) and would yield a wrong pairing "
+                "vertex. Re-run FLEX with the current build to regenerate "
+                "it.".format(path))
     if not allow_ir:
         return chi_s_raw, chi_c_raw, chi_convention
 

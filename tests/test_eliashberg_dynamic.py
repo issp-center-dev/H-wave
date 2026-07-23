@@ -58,9 +58,9 @@ def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     # "myo" convention; tag it so the loader treats it as orbital-pair (no
     # spin-orbital block extraction).
     np.savez(tmp_path/"chiq_s.npz", chiq_s=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo")
+             chi_convention="myo", chi_orbital_layout="acbd")
     np.savez(tmp_path/"chiq_c.npz", chiq_c=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo")
+             chi_convention="myo", chi_orbital_layout="acbd")
     np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)))
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
