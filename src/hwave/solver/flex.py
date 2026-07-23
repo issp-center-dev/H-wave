@@ -2550,6 +2550,16 @@ class FLEX(RPA):
         # Save chi0q
         if "chi0q" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
+            # coeff_tail provenance (issue #80): the tail correction changes
+            # chi0q at O(1); record the producing value. On the IR path the
+            # uniform-grid tail machinery is BYPASSED (aa = 0.0 if self.use_ir
+            # in solve(); the fermionic basis carries the 1/(i w) tail
+            # exactly), so the configured value was never applied -- omit the
+            # key rather than claim a correction that did not happen. This
+            # covers IR-native AND densified-IR output. (getattr: tests drive
+            # save_results on __new__-built stubs without __init__.)
+            tail_meta = ({} if getattr(self, "use_ir", False)
+                         else {"coeff_tail": getattr(self, "coeff_tail", 0.0)})
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
                      # full grid size: lets consumers locate the zero bosonic
@@ -2562,6 +2572,7 @@ class FLEX(RPA):
                      # internals; tag it so the chi0q consumers (RPA read_chi0q,
                      # hwave_sc _load_chi0q) accept the file in SO mode.
                      index_convention="spin_block",
+                     **tail_meta,
                      **_freq_meta("B"))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 

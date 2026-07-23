@@ -293,6 +293,24 @@ def _load_chi0q(input_dict):
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
 
+    # coeff_tail provenance check (issue #80): the Matsubara tail correction
+    # changes chi0q at O(1) (lambda differed by 50% in the reproduction), so
+    # a config whose effective coeff_tail differs from the file's would
+    # recompute DIFFERENT physics under chi0q_mode="calc". Warn so load-vs-
+    # calc comparisons are not silently inconsistent. Files without the key
+    # (older builds) load silently as before.
+    if "coeff_tail" in data:
+        file_tail = float(data["coeff_tail"])
+        config_tail = float(input_dict.get("mode", {}).get("param", {})
+                            .get("coeff_tail", 0.0))
+        if file_tail != config_tail:
+            logger.warning(
+                "chi0q file '{}' was produced with coeff_tail = {} but this "
+                "config's effective value is coeff_tail = {}; results are "
+                "NOT comparable with a chi0q_mode=\"calc\" run under this "
+                "config. Set [mode.param] coeff_tail = {} to match the "
+                "file.".format(file_name, file_tail, config_tail, file_tail))
+
     freq_index, file_nmat = _read_freq_meta(data)
     # Identify the frequency axis from the array LAYOUT, never from the
     # freq_index length (a restricted freq_index can coincidentally match

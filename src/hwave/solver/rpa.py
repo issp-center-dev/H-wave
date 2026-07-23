@@ -1097,7 +1097,13 @@ class RPA:
         def _freq_meta_kwargs(arr):
             init_meta = getattr(self, "_chi0q_init_meta", None)
             if init_meta is None:
-                return {"freq_index": self.freq_index, "nmat": self.nmat}
+                # coeff_tail provenance (issue #80): the tail correction
+                # changes chi0q at O(1), so record which value produced the
+                # file. Lets loaders warn when a chi0q_mode="calc" config
+                # would recompute with a different setting. (getattr: tests
+                # drive save_results on __new__-built stubs without __init__.)
+                return {"freq_index": self.freq_index, "nmat": self.nmat,
+                        "coeff_tail": getattr(self, "coeff_tail", 0.0)}
             kwargs = {}
             if init_meta["freq_index"] is not None:
                 kwargs["freq_index"] = init_meta["freq_index"]
@@ -1110,6 +1116,11 @@ class RPA:
                 kwargs["freq_index"] = np.arange(arr.shape[0])
             if init_meta["nmat"] is not None:
                 kwargs["nmat"] = init_meta["nmat"]
+            # pass-through: re-save the INPUT file's coeff_tail (stamping the
+            # current run's value would mislabel data this run did not
+            # compute); omit the key when the input did not record one.
+            if init_meta.get("coeff_tail") is not None:
+                kwargs["coeff_tail"] = init_meta["coeff_tail"]
             return kwargs
 
         if "chiq" in info_outputfile.keys():
@@ -1294,10 +1305,24 @@ class RPA:
         # Keep the frequency metadata of the file that PRODUCED this chi0q:
         # solve() passes an input chi0q through untouched, so save_results
         # must not relabel its axis with the current run's freq_index/nmat.
+        # coeff_tail rides along for the same reason (issue #80).
         self._chi0q_init_meta = {
             "freq_index": data["freq_index"] if "freq_index" in data else None,
             "nmat": int(data["nmat"]) if "nmat" in data else None,
+            "coeff_tail": (float(data["coeff_tail"])
+                           if "coeff_tail" in data else None),
         }
+        # The tail correction changes chi0q at O(1); a config whose
+        # coeff_tail differs from the file's describes different physics
+        # than this chi0q_init actually contains (issue #80).
+        file_tail = self._chi0q_init_meta["coeff_tail"]
+        if file_tail is not None and file_tail != self.coeff_tail:
+            logger.warning(
+                "chi0q_init file '{}' was produced with coeff_tail = {} but "
+                "the current config uses coeff_tail = {}; the loaded chi0q "
+                "keeps the file's tail treatment, which is NOT comparable "
+                "with a recomputation under this config.".format(
+                    file_name, file_tail, self.coeff_tail))
 
         # check size
         if self.calc_scheme == "general":
