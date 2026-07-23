@@ -530,11 +530,17 @@ def _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb):
     kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
         kx_array, ky_array, kz_array, indexing='ij'
     )
+    # Solver-core convention (rpa.py _make_ham_trans: tab_r[R,orb1,orb2] +
+    # fftn == e^{-ikR}): epsilon[a,b](k) = sum_R t_R[a,b] e^{-ikR}. This keeps
+    # sc-built quantities element-wise consistent with arrays loaded from
+    # FLEX/RPA output files. (The previous [orb2,orb1] + e^{+ikR} form is the
+    # orbital transpose at -k; identical for real hoppings, different for
+    # complex Hermitian ones.)
     for (irvec, orbvec), value in hr.items():
         orb1, orb2 = orbvec
         Rx, Ry, Rz = irvec
-        epsilon_k[orb2, orb1, :, :, :] += value * np.exp(
-            1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+        epsilon_k[orb1, orb2, :, :, :] += value * np.exp(
+            -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
         )
     return epsilon_k
 
@@ -566,12 +572,14 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     )
 
     def _to_k(value_r):
+        # same solver-core convention as _build_hamiltonian_k:
+        # V[a,b](q) = sum_R V_R[a,b] e^{-iqR}
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
-            val_k[orb2, orb1, :, :, :] += value * np.exp(
-                1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+            val_k[orb1, orb2, :, :, :] += value * np.exp(
+                -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
 
