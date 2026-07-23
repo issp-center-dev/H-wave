@@ -2562,6 +2562,11 @@ class FLEX(RPA):
                      # internals; tag it so the chi0q consumers (RPA read_chi0q,
                      # hwave_sc _load_chi0q) accept the file in SO mode.
                      index_convention="spin_block",
+                     # coeff_tail provenance (issue #80): the tail correction
+                     # changes chi0q at O(1); record the producing value.
+                     # (getattr: tests drive save_results on __new__-built
+                     # stubs without __init__.)
+                     coeff_tail=getattr(self, "coeff_tail", 0.0),
                      **_freq_meta("B"))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 

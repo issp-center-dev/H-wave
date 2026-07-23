@@ -153,6 +153,18 @@ This section controls the Eliashberg solver. Key parameters:
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
   susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+
+  .. note::
+
+     ``"calc"`` recomputes :math:`\chi_0(\mathbf{q})` with the parameters in
+     ``mode.param`` of **this** input file. For the result to be comparable
+     with a ``"load"`` run, these must match the run that produced the chi0q
+     file — in particular ``coeff_tail`` (Matsubara high-frequency tail
+     correction), which changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)`
+     for moderate ``Nmat``. Its default ``coeff_tail = 0.0`` (no correction)
+     can be poorly converged; production RPA/FLEX runs typically use
+     ``coeff_tail = 1.0``. The chi0q file records the value it was produced
+     with, and ``hwave_sc`` warns on a mismatch when loading.
 - ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
   evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki
   Eq. 9 static approximation) and gives a frequency-independent gap.
