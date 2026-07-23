@@ -122,6 +122,68 @@ def test_flex_save_records_coeff_tail():
         assert float(data['coeff_tail']) == 1.0
 
 
+def _flex_ir_stub(write_densified):
+    """General FLEX solver posing as an IR run (no sparse-ir dependency)."""
+    from types import SimpleNamespace
+    from tests.test_flex_general import _make_general_flex
+    flex = _make_general_flex(norb=2)
+    flex.coeff_tail = 1.0          # configured but IGNORED on the IR path
+    flex.use_ir = True
+    flex.write_densified = write_densified
+    if not write_densified:
+        # sparse-node output path reads the bosonic IR axis metadata
+        flex._ir_axB = SimpleNamespace(
+            freq_n=np.arange(0, 8, 2), beta=0.5, wmax=10.0, eps=1e-8,
+            L=4, statistics="B")
+    return flex
+
+
+@pytest.mark.parametrize('write_densified', [True, False])
+def test_flex_ir_save_omits_coeff_tail(write_densified):
+    """On the IR path FLEX bypasses the uniform-grid tail machinery
+    (flex.py: aa = 0.0 if self.use_ir else self.coeff_tail), so the file must
+    NOT claim the configured coeff_tail was applied -- omit the key for both
+    IR-native and densified-IR output."""
+    flex = _flex_ir_stub(write_densified)
+    d = tempfile.mkdtemp()
+    nvol = flex.lattice.nvol
+    chi0 = np.zeros((flex.nmat, nvol, 2, 2, 2, 2), dtype=complex)
+    flex.save_results({'path_to_output': d, 'chi0q': 'chi0q'},
+                      {'chi0q': chi0})
+    with np.load(os.path.join(d, 'chi0q.npz')) as data:
+        assert 'coeff_tail' not in data.files
+
+
+def test_rpa_read_then_resave_preserves_coeff_tail():
+    """End-to-end pass-through: _read_chi0q on a tagged file, then
+    save_results -- the INPUT file's coeff_tail must survive the round trip
+    even though the current run uses a different value."""
+    solver = _make_rpa(coeff_tail=0.0)
+    d = tempfile.mkdtemp()
+    nvol = solver.lattice.nvol
+    np.savez(os.path.join(d, 'chi0q.npz'),
+             chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
+             freq_index=np.arange(solver.nmat), nmat=solver.nmat,
+             coeff_tail=1.0)
+    solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
+    saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
+    assert float(saved['coeff_tail']) == 1.0
+
+
+def test_rpa_read_then_resave_omits_for_legacy_file():
+    """End-to-end pass-through of a legacy file WITHOUT the key: re-saving
+    must not fabricate a coeff_tail claim from the current run's config."""
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    nvol = solver.lattice.nvol
+    np.savez(os.path.join(d, 'chi0q.npz'),
+             chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
+             freq_index=np.arange(solver.nmat), nmat=solver.nmat)
+    solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
+    saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
+    assert 'coeff_tail' not in saved
+
+
 # ---------------------------------------------------------------------------
 # readers
 # ---------------------------------------------------------------------------
