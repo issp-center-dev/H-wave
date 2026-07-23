@@ -294,10 +294,114 @@ class TestGeneralOutputConvention(unittest.TestCase):
         myo = chi0_raw.transpose(0, 1, 4, 5, 2, 3)
         self.assertGreater(np.linalg.norm(chi0q_out - myo), 1e-6)
 
+    def test_output_chi_s_c_are_rpa_convention(self):
+        """chi_s/chi_c must exit _flex_compute_veff_general in the same RPA
+        [a,c,b,d] orbital convention as chi0q_out, i.e. the internal MYO
+        channels transposed back with transpose(0,1,4,5,2,3).
+
+        The Eliashberg loader (sc._compute_vertices_flex) consumes chi_s/chi_c
+        with native-[a,c,b,d]-layout S/C matrices, so a residual MYO transpose
+        here builds a transposed pairing vertex and a wrong static lambda
+        (issue #78: chi0q_mode='flex' disagreed with 'load' for identical Sigma=0
+        physics)."""
+        flex = _make_general_flex(norb=2)
+        # Reproduce the exact internal MYO channels the method computes, so the
+        # assertion is anchored to a genuine cross-computation, not a self-check.
+        flex._myo_sc_cache = None
+        chi0_raw = _fake_general_chi0q(flex)
+        chi0q_myo, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+        chi_s_myo, chi_c_myo = flex._solve_channels_general(chi0q_myo, Us, Uc)
+
+        flex._myo_sc_cache = None
+        _, _, chi_s_out, chi_c_out = \
+            flex._flex_compute_veff_general(chi0_raw, None)
+
+        inv = (0, 1, 4, 5, 2, 3)
+        np.testing.assert_allclose(
+            chi_s_out, chi_s_myo.transpose(inv), atol=1e-12,
+            err_msg="chi_s must be exposed in RPA [a,c,b,d] convention")
+        np.testing.assert_allclose(
+            chi_c_out, chi_c_myo.transpose(inv), atol=1e-12,
+            err_msg="chi_c must be exposed in RPA [a,c,b,d] convention")
+        # ...and genuinely differ from the raw MYO layout (norb=2 is asymmetric),
+        # so the assertion above is not vacuously satisfied by a symmetric tensor.
+        self.assertGreater(np.linalg.norm(chi_s_out - chi_s_myo), 1e-6)
+        self.assertGreater(np.linalg.norm(chi_c_out - chi_c_myo), 1e-6)
+
+    def test_flex_vertex_matches_load_vertex_sigma0(self):
+        """Physical regression for issue #78: for identical Sigma=0 physics the
+        Eliashberg pairing vertex built from general-FLEX chi_s/chi_c
+        (sc._compute_vertices_flex, convention='myo') must equal the vertex the
+        'load' path builds directly from the same chi0q
+        (sc._compute_vertices_general).
+
+        This is the end-to-end check the layout-only tests cannot make: a
+        wrong-direction or missing orbital-pair transpose of chi_s/chi_c makes
+        S @ chi @ S build a transposed pairing vertex, so the two paths disagree
+        (that was the bug). The J=0 on-site 2-orbital fixture is used so the MYO
+        and Kuroki S/C matrices coincide and the singlet/triplet vertices must
+        match exactly."""
+        import os
+        import tempfile
+        import hwave.sc as sc
+
+        flex = _make_general_flex(norb=2)   # J=0 on-site 2-orbital fixture
+        flex._myo_sc_cache = None
+        norb = flex.norb
+        Nx, Ny, Nz = flex.lattice.shape
+        nvol = flex.lattice.nvol
+        nd = norb * norb
+        nmat = flex.nmat
+        si = nmat // 2
+
+        # Same random asymmetric chi0q feeds BOTH paths. FLEX solves the RPA
+        # channels in MYO layout then transposes back (issue #78 fix); the load
+        # path solves them natively from the same chi0q.
+        chi0_raw = _fake_general_chi0q(flex)   # (nmat, nvol, a, c, b, d)
+        chi0q_out, _, chi_s, chi_c = \
+            flex._flex_compute_veff_general(chi0_raw, None)
+
+        # Build the interaction on the same grid from the same fixture files the
+        # FLEX solver read, so both S/C matrices come from identical U/U'.
+        dirpath = os.path.join(tempfile.gettempdir(),
+                               "hwave_flex_2d_2orb_onsite")
+        input_dict = {"file": {"input": {"interaction": {
+            "path_to_input": dirpath,
+            "Geometry": "geom.dat", "Transfer": "transfer.dat",
+            "CoulombIntra": "coulombintra.dat",
+            "CoulombInter": "coulombinter.dat"}}}}
+        _, _, interactions = sc._read_interaction_files(input_dict)
+        kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+        ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+
+        # load path consumes chi0q as (a,c,b,d, Nx,Ny,Nz, nmat)
+        chi0q_load = chi0q_out.transpose(2, 3, 4, 5, 1, 0).reshape(
+            norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+        # flex path consumes the static chi_s/chi_c as (Nx,Ny,Nz, nd,nd)
+        chis_stat = chi_s[si].reshape(Nx, Ny, Nz, nd, nd)
+        chic_stat = chi_c[si].reshape(Nx, Ny, Nz, nd, nd)
+
+        for pairing in ("singlet", "triplet"):
+            Vs_flex = sc._compute_vertices_flex(
+                chis_stat, chic_stat, inter_k, norb, Nx, Ny, Nz,
+                pairing_type=pairing, convention="myo")
+            Vs_load = sc._compute_vertices_general(
+                chi0q_load, inter_k, norb, Nx, Ny, Nz, nmat,
+                pairing_type=pairing, static_index=si)
+            np.testing.assert_allclose(
+                Vs_flex, Vs_load, rtol=1e-8, atol=1e-10,
+                err_msg="flex vertex ({}) must match load vertex for "
+                        "Sigma=0".format(pairing))
+
 
 class TestGeneralChiConventionRoundTrip(unittest.TestCase):
-    """General FLEX tags saved chiq_s/chiq_c as MYO; the Eliashberg loader reads
-    that tag back so the pairing vertex uses MYO (not Kuroki) S/C matrices."""
+    """General FLEX tags saved chiq_s/chiq_c with chi_convention='myo'; the
+    Eliashberg loader reads that tag back so the pairing vertex uses the MYO
+    (not Kuroki) S/C matrices. The arrays themselves are stored in the public
+    [a,c,b,d] index order (issue #78); the tag selects the S/C charge
+    convention, not the index layout."""
 
     def _save_and_reload_convention(self, flex):
         import tempfile
@@ -351,17 +455,20 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         with self.assertRaises(ValueError):
             sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
 
-    def test_real_rank6_chi_roundtrips_to_myo_flattening(self):
-        """Save REAL general-path (rank-6 MYO) chi_s/chi_c, reload through the
-        Eliashberg loader, and confirm the static slice flattens to (nd,nd) in
-        the MYO row=(m,n)/col=(mu,nu) order that build_sc_matrices_myo expects."""
+    def test_real_rank6_chi_roundtrips_to_native_flattening(self):
+        """Save REAL general-path (rank-6) chi_s/chi_c, reload through the
+        Eliashberg loader, and confirm the static slice flattens to (nd,nd)
+        consistently. The public chi_s/chi_c are exposed in the RPA [a,c,b,d]
+        orbital convention (issue #78), so the loader passes the orbital-pair
+        arrays through unchanged and the round trip is an identity."""
         import tempfile
         import hwave.sc as sc
         flex = _make_general_flex(norb=2)
         flex._myo_sc_cache = None
         chi0 = _fake_general_chi0q(flex)
         _, _, chi_s, chi_c = flex._flex_compute_veff_general(chi0, None)
-        # real general chi is rank-6 (nmat, nvol, m, n, mu, nu)
+        # real general chi is rank-6 (nmat, nvol, a, c, b, d) after the public
+        # back-transpose (issue #78); MYO ordering is internal to the S/C math
         self.assertEqual(chi_s.ndim, 6)
         nx, ny, nz = flex.lattice.shape
         nd = flex.norb * flex.norb
@@ -376,10 +483,80 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
             input_dict, flex.norb, nx, ny, nz)
         self.assertEqual(conv, "myo")
         self.assertEqual(chis.shape, (nx, ny, nz, nd, nd))
-        # expected static slice flattened with row=(m,n), col=(mu,nu)
+        # expected static slice flattened in the public [a,c,b,d] convention
         center = flex.nmat // 2
         expected = chi_s[center].reshape(nx, ny, nz, nd, nd)
         np.testing.assert_allclose(chis, expected, atol=1e-12)
+
+
+class TestChiOrbitalLayoutMarker(unittest.TestCase):
+    """The chiq_s/chiq_c files carry an explicit ``chi_orbital_layout="acbd"``
+    marker so the on-disk index order is self-describing (issue #78 follow-up).
+
+    Reader contract (_read_flex_chi_raw):
+    - marker present and != "acbd"  -> ValueError (future layout changes fail fast)
+    - marker absent + tag "myo"     -> ValueError (pre-#78 dev build stored the
+      MYO-transposed arrays under the same tag; must be regenerated)
+    - marker absent + tag "kuroki" / untagged -> accepted (reduced-path layout
+      never changed; legacy files stay readable)
+    """
+
+    def _write_pair(self, d, meta_s=None, meta_c=None, nd=4, nmat=4, nvol=4):
+        arr = np.zeros((nmat, nvol, nd, nd), dtype=complex)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(meta_s or {}))
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(meta_c or {}))
+        return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
+
+    def test_writer_stamps_acbd_layout_both_paths(self):
+        import tempfile
+        flex = _make_general_flex(norb=2)
+        nd = flex.norb * flex.norb
+        shape = (flex.nmat, flex.lattice.nvol, nd, nd)
+        green_info = {"chiq_s": np.zeros(shape, dtype=complex),
+                      "chiq_c": np.zeros(shape, dtype=complex)}
+        for general, conv in ((True, "myo"), (False, "kuroki")):
+            d = tempfile.mkdtemp()
+            flex._flex_general = general
+            flex.save_results(
+                {"path_to_output": d, "chiq_s": "chiq_s", "chiq_c": "chiq_c"},
+                green_info)
+            for name in ("chiq_s.npz", "chiq_c.npz"):
+                with np.load(os.path.join(d, name)) as data:
+                    self.assertEqual(str(data["chi_convention"]), conv)
+                    self.assertEqual(str(data["chi_orbital_layout"]), "acbd")
+
+    def test_reader_rejects_myo_without_layout_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        inp = self._write_pair(tempfile.mkdtemp(),
+                               meta_s={"chi_convention": "myo"},
+                               meta_c={"chi_convention": "myo"})
+        with self.assertRaisesRegex(ValueError, "chi_orbital_layout"):
+            sc._read_flex_chi_raw(inp)
+
+    def test_reader_rejects_unknown_layout_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        meta = {"chi_convention": "myo", "chi_orbital_layout": "myo_pair"}
+        inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
+        with self.assertRaisesRegex(ValueError, "acbd"):
+            sc._read_flex_chi_raw(inp)
+
+    def test_reader_accepts_kuroki_without_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        meta = {"chi_convention": "kuroki"}
+        inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
+        _, _, conv = sc._read_flex_chi_raw(inp)
+        self.assertEqual(conv, "kuroki")
+
+    def test_reader_accepts_myo_with_acbd_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        meta = {"chi_convention": "myo", "chi_orbital_layout": "acbd"}
+        inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
+        _, _, conv = sc._read_flex_chi_raw(inp)
+        self.assertEqual(conv, "myo")
 
 
 class TestVeffGeneral(unittest.TestCase):

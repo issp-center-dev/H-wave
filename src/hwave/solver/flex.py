@@ -1721,21 +1721,32 @@ class FLEX(RPA):
         v_eff : ndarray
             Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
         chi_s : ndarray
-            Spin susceptibility in the general-path **MYO** orbital convention
-            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
+            Spin susceptibility for public output, in the RPA ``[a,c,b,d]``
+            orbital convention (rank-6), consistent with chi0q_out and the
+            reduced path -- NOT the internal MYO layout used for the S/C math.
         chi_c : ndarray
-            Charge susceptibility in the general-path **MYO** orbital convention
-            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
+            Charge susceptibility for public output, in the RPA ``[a,c,b,d]``
+            orbital convention (rank-6), consistent with chi0q_out and the
+            reduced path -- NOT the internal MYO layout used for the S/C math.
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
         v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
-        # Expose chi0q in the RPA [a,c,b,d] convention (consistent with the
-        # reduced path) for the public output. The MYO transpose is an internal
-        # detail of the S/C math; transposing back (the transpose is an
-        # involution) recovers the input convention. chi_s/chi_c remain in the
-        # general-path MYO convention (see _solve_channels_general).
+        # Expose chi0q AND chi_s/chi_c in the RPA [a,c,b,d] convention
+        # (consistent with the reduced path) for the public output. The MYO
+        # transpose is an internal detail of the S/C math; transposing back (the
+        # transpose is an involution) recovers the input convention. chi_s/chi_c
+        # MUST be back-converted too: the Eliashberg loader (_compute_vertices_flex)
+        # builds S @ chi @ S with S/C matrices in the native [a,c,b,d] orbital-pair
+        # index layout (build_sc_matrices_myo shares that layout with the Kuroki
+        # builder; convention='myo' only changes the C(ab,ab) charge value), so
+        # leaving chi_s/chi_c in the MYO index order builds a transposed pairing
+        # vertex and a wrong static lambda (issue #78). The "myo" chi_convention
+        # tag still marks these as general-path (orbital-pair shape + MYO S/C
+        # charge convention); only the orbital-pair index order is native here.
         chi0q_out = chi0q.transpose(0, 1, 4, 5, 2, 3)
+        chi_s = chi_s.transpose(0, 1, 4, 5, 2, 3)
+        chi_c = chi_c.transpose(0, 1, 4, 5, 2, 3)
         return chi0q_out, v_eff, chi_s, chi_c
 
     @do_profile
@@ -2555,15 +2566,28 @@ class FLEX(RPA):
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
-        # Eliashberg). Tag the orbital convention so the downstream Eliashberg
-        # consumer (_load_flex_susceptibilities / _compute_vertices_flex) pairs
-        # them with the matching S/C matrices: the general (full-vertex) path
-        # produces MYO-convention susceptibilities, the reduced path Kuroki.
+        # Eliashberg). The chi_convention tag tells the downstream consumer
+        # (_load_flex_susceptibilities / _compute_vertices_flex) which S/C
+        # matrices to pair the susceptibilities with: "myo" (general full-vertex
+        # path) selects build_sc_matrices_myo, "kuroki" (reduced path) the
+        # default builder; the two differ only in the C(ab,ab) charge value.
+        # NOTE: the arrays themselves are stored in the public RPA [a,c,b,d]
+        # orbital-pair index order for BOTH paths (see _flex_compute_veff_general,
+        # issue #78) -- the tag selects the S/C charge convention, not the index
+        # layout. It also marks the general path's orbital-pair shape
+        # (nd = norb^2) vs the reduced path's spin-orbital shape (nd = norb*ns).
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
+                           # Explicit self-describing index-order marker: both
+                           # paths store [a,c,b,d]. Lets the reader distinguish
+                           # these files from pre-#78 dev outputs (which stored
+                           # the general path's chi MYO-transposed under the
+                           # same "myo" tag) and fail fast on any future layout
+                           # change instead of silently misreading.
+                           chi_orbital_layout="acbd",
                            **_freq_meta("B"))
 
         if "chiq_s" in green_info:

@@ -54,6 +54,66 @@ from hwave.sc import (
 from scipy.sparse.linalg import LinearOperator
 
 
+class TestKSpaceBuilderConvention(unittest.TestCase):
+    """The hwave_sc k-space builders must follow the SAME Fourier/orbital
+    convention as the UHFk/RPA/FLEX solver core:
+
+        M[a, b](k) = sum_R M_R[a, b] * exp(-i k.R)
+
+    (rpa.py _make_ham_trans: tab_r[R, orb1, orb2] + numpy fftn == e^{-ikR}).
+    Historically sc.py built epsilon_k[orb2, orb1] with e^{+ikR}, i.e. the
+    orbital-transposed matrix at -k. For real (time-reversal-symmetric)
+    hoppings the two coincide element-wise, which masked the difference; for
+    complex Hermitian hoppings they differ, so quantities loaded from
+    FLEX/RPA files (green, chi0q) disagreed element-wise with sc-built ones.
+    These tests pin the solver convention with a complex Hermitian fixture."""
+
+    def setUp(self):
+        self.Nx, self.Ny, self.Nz = 4, 4, 1
+        self.norb = 2
+        # complex Hermitian hopping: t(-R, b, a) = conj(t(R, a, b))
+        self.hr = {
+            ((0, 0, 0), (0, 1)): -2.5 + 0.3j,
+            ((0, 0, 0), (1, 0)): -2.5 - 0.3j,
+            ((1, 0, 0), (0, 1)): -2.8 + 0.5j,
+            ((-1, 0, 0), (1, 0)): -2.8 - 0.5j,
+            ((0, 1, 0), (0, 0)): -0.5,
+            ((0, -1, 0), (0, 0)): -0.5,
+        }
+        self.kx = np.linspace(0, 2 * np.pi, self.Nx, endpoint=False)
+        self.ky = np.linspace(0, 2 * np.pi, self.Ny, endpoint=False)
+        self.kz = np.linspace(0, 2 * np.pi, self.Nz, endpoint=False)
+
+    def _expected(self, value_r):
+        """Direct evaluation of the solver convention sum_R M_R[a,b] e^{-ikR}."""
+        out = np.zeros((self.norb, self.norb, self.Nx, self.Ny, self.Nz),
+                       dtype=complex)
+        kxm, kym, kzm = np.meshgrid(self.kx, self.ky, self.kz, indexing='ij')
+        for (irvec, (o1, o2)), v in value_r.items():
+            out[o1, o2] += v * np.exp(
+                -1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
+        return out
+
+    def test_hamiltonian_k_matches_solver_convention(self):
+        eps = _build_hamiltonian_k(self.kx, self.ky, self.kz, self.hr,
+                                   self.norb)
+        npt.assert_allclose(eps, self._expected(self.hr), atol=1e-12)
+
+    def test_interaction_k_matches_solver_convention(self):
+        # complex Hermitian off-site "CoulombInter" exercises both the
+        # orbital-index order and the Fourier phase sign
+        vr = {
+            ((1, 0, 0), (0, 1)): 0.7 + 0.2j,
+            ((-1, 0, 0), (1, 0)): 0.7 - 0.2j,
+            ((0, 1, 0), (0, 0)): 0.4,
+            ((0, -1, 0), (0, 0)): 0.4,
+        }
+        inter_k = _build_interaction_k(self.kx, self.ky, self.kz,
+                                       {"CoulombInter": vr}, self.norb)
+        npt.assert_allclose(inter_k["CoulombInter"], self._expected(vr),
+                            atol=1e-12)
+
+
 class TestGreenFunction(unittest.TestCase):
     """Test Green's function construction."""
 
