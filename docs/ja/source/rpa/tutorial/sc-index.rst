@@ -178,7 +178,12 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   ``"cos"`` 、 ``"s"`` 、 ``"s_ext"`` 、 ``"s_ext_2d"`` 、 ``"d_x2y2"`` 、
   ``"d_y2z2"`` (:math:`\cos k_y - \cos k_z`) 、
   ``"d_xy"`` 、 ``"d_xz"`` 、 ``"d_yz"`` 、 ``"d_z2"`` 、
-  ``"p_x"`` 、 ``"p_y"`` 、 ``"p_z"`` 、 ``"random"`` です。
+  ``"p_x"`` 、 ``"p_y"`` 、 ``"p_z"`` 、
+  ``"f_x"`` (:math:`\sin k_x (\cos k_x - \cos k_y)`) 、
+  ``"f_y"`` (:math:`\sin k_y (\cos k_y - \cos k_x)`) 、 ``"random"`` です。
+  2つの :math:`f` 波的な初期値は奇パリティ（三重項パリティ）の高次調和関数で、
+  正方格子では ``"p_x"``/``"p_y"`` と合わせて奇パリティの2次元表現を張るため、
+  点群による分離ではなく初期値としての位置づけです。
   準2次元セル ``CellShape = [1, Ny, Nz]`` （:math:`k_x = 0`）では、
   :math:`\sin k_x` を含む形状因子（``"p_x"`` 、 ``"d_xy"`` 、 ``"d_xz"``）は
   恒等的に消えるため無効です。三重項には ``"p_y"``/``"p_z"`` を、面内 :math:`d` 波
@@ -195,7 +200,8 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   ソルバの実数ターゲット :math:`\sigma` 。 :math:`\sigma` 近傍の固有値が先に
   求まります。素の ``"arnoldi"`` では無視されます（警告あり）。arnoldi では
   代わりに ``spectral_shift`` を使ってください。
-- ``spectral_shift`` （ ``eigenvalue_method = "arnoldi"`` のときのみ有効）:
+- ``spectral_shift`` （ ``eigenvalue_method = "arnoldi"`` および
+  ``solver_mode = "iteration"`` で有効）:
   正の数値または ``"auto"`` 。ARPACK の既定の選択 （ ``which='LM'`` ）は
   *絶対値* 最大の固有値を返すため、超伝導不安定性から遠い場合、小さな正
   （引力的）の主固有値が、より大きな負（斥力的）の固有値に隠れて取りこぼされ、
@@ -209,6 +215,153 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
   弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の ``sigma_shift``
   （shift-invert のターゲット）とは別物である点に注意してください。
+
+  ``spectral_shift`` は **べき乗反復** （ ``solver_mode = "iteration"`` 、
+  ``"both"`` および動的ソルバの反復パス）にも適用されます。斥力優勢な
+  カーネル（ボンド分解パス ``bond_channels = true`` では通常こちら）では
+  主固有値が **負** となるため、反復ごとにベクトルの符号が反転し、収束判定量
+  :math:`\|\sigma_{n+1}/\|\sigma_{n+1}\| - \sigma_n\|` が :math:`\approx 2`
+  に張り付いて、 ``max_iter`` をいくら大きくしても収束しません。シフトを
+  指定すると、主固有値が正となるシフト演算子 :math:`K + \sigma I` で反復し、
+  最後に :math:`\sigma` を差し引くため、 ``eigenvalue.dat`` に書かれる値は
+  元のカーネルの **符号付き** 固有値 :math:`\lambda` （負でも構いません）に
+  なります。固有ベクトル（ギャップ）はシフトの影響を受けません。arnoldi と
+  同じく、選ばれるのは（シードとパリティ射影が定めるセクター内で） *実部最大*
+  の固有値、すなわち物理的なSC固有値であり、絶対値最大の斥力モードでは
+  ありません。 ``"auto"`` は、初期ギャップと決定論的な乱数ベクトルを
+  プローブとして（反復と同じパリティ射影を通して）数回のべき乗反復で
+  スペクトル半径 :math:`\rho` を見積もり、
+  :math:`\sigma = 1.05\,\rho_\mathrm{est} + 10^{-6}` 、すなわち推定半径のすぐ上
+  に設定します。 :math:`\sigma` は条件を満たす範囲でできるだけ小さく取って
+  ください。シフトが大きすぎると固有値の *相対* 間隔が詰まり、べき乗反復の
+  収束が遅くなります（その場合は ``max_iter`` を増やしてください）。
+  採用された :math:`\sigma` と「報告される :math:`\lambda` はシフトを
+  戻した値である」旨は INFO レベルでログ出力されます。
+- ``bond_channels``: ``true`` / ``false`` （デフォルト ``false`` ）。ボンド分解
+  相互作用チャネルを有効にします。サイト間相互作用 :math:`V_{ab}(R)` を
+  :math:`\Delta r = 0` （密度）チャネル1本に潰さず、拡大された
+  :math:`(Z+1)\times(Z+1)` のボンドチャネル行列として保持するため、
+  :math:`V` の Fock（交換）項と裸の対（Cooper）項の構造がペアリング頂点に
+  入ります。 ``CoulombInter`` 項が必須です（値が 0 でも宣言されていれば可。
+  :math:`V` スキャン中もチャネル構成が変わりません）。本リリースでの制限:
+  1軌道（ ``norb = 1`` ）のみ、実かつ反転対称な ``CoulombInter`` のみ、
+  ``frequency = "static"`` のみ、 ``chi0q_mode = "flex"`` とは併用不可
+  （このモードが読み込むのは FLEX の *chi* であり、ボンド構造を持たないため。
+  FLEX の *Green 関数* を使いたい場合は下の ``bond_green`` を参照）。
+  いずれも明示的なエラーになります。このパスは Green 関数から自前のボンド分解
+  バブルを構成するため、 ``chi0q_mode`` / ``chi0q_tensor`` は使われません
+  （chi0q ファイルは読みません）。静的 RPA ラダーによる dressing であり
+  保存則を満たす FLEX の結果ではないので、 :math:`\lambda` の絶対値を
+  FLEX／動的計算と直接比較することはできません。固有値ファイルの ``#``
+  コメント行に近似レベルとチャネル一覧が記録されます。
+- ``bond_diagnostics``: ``true`` / ``false`` （デフォルト ``false`` 。
+  ``bond_channels = true`` のときのみ有効）。主要状態の **キャラクター解析**
+  をオプトインで出力します。出力は固有値ファイルへの ``#`` コメント行の
+  追加のみで、数値行は一切変わりません（既存のリーダーに影響なし。フラグを
+  切っていれば出力はこれまでとバイト単位で同一です）。記録される内容:
+
+  * ``bond_diagnostics_harmonics`` — 得られた（主要）ギャップを奇パリティの
+    調和関数基底
+    :math:`\{\sin k_x,\ \sin k_y,\ \sin k_x(\cos k_x - \cos k_y),\
+    \sin k_y(\cos k_y - \cos k_x)\}` へ、 :math:`\sqrt{GG}` 対重み計量で
+    分解した結果。各値はその調和関数が状態に捕捉される割合（ :math:`[0, 1]` ）
+    です。 :math:`V` スキャンの解釈はこの量に依ります。追跡している状態の
+    f 成分はボンド機構の物理的な観測量であり、1軌道 Onari モデルでは
+    :math:`V = 0` の約 21 % から :math:`V = 1.2` の約 68 % まで増大します。
+    なお正方格子では ``p_x`` / ``p_y`` と ``f_x`` / ``f_y`` は同一の奇2次元
+    表現に属するため、これは点群による分離ではなくキャラクターの報告です。
+  * ``bond_diagnostics_eigenvalue_clusters`` — 計算された固有値の準縮退
+    クラスタリング（ :math:`|\lambda_i - \lambda_j| \le` ``deg_tol`` の
+    単連結法。既定値 :math:`10^{-3}` も併せて記録）。下の数値行へのインデックス
+    のリストで、 :math:`\mathrm{Re}\,\lambda` の降順に並びます。併せて出力される
+    ``bond_diagnostics_leading_cluster`` （およびそのサイズ）は **0行目** を
+    含むクラスタ、すなわちチャネルパリティによる並べ替えの後に実際に返される
+    固有対のクラスタです（ :math:`\lambda` 最大のクラスタとは限りません）。
+    報告された状態が正方格子の奇 :math:`E` **2重項** なのか非縮退の枝なのかを
+    直接確認できます。実際にスペクトルを計算した場合、すなわち ``solver_mode``
+    に ``"eigenvalue"`` を含む場合のみ出力されます（反復パスはベクトル1本のみで
+    スペクトルを持たないため、調和関数分解のみを報告します）。
+  * 既存の ``lambda_pp`` / ``lambda_fl`` の寄与分解（フラグに関係なく
+    全ボンド計算で出力）も同じブロックに並びます。
+
+  スキャンを **またいで** 1つの不変部分空間を追跡する操作は多点計算なので、
+  ソルバではなくライブラリ側にあります。スキャンドライバから
+  ``hwave.solver.bond_channels.track_subspace`` を各点の固有対
+  （固有ベクトルは1本を1 **行** として渡します。
+  ``scipy.sparse.linalg.eigs`` は列で返す点に注意）とともに呼んでください。
+- ``bond_green`` （ ``bond_channels = true`` のときのみ）: 外部から与える
+  Green 関数 ``npz`` へのパス（ H-wave の ``green`` 配列、形状
+  ``(nblock, nfreq, nvol, norb, norb)`` = FLEX/UHF が出力する形式）。
+  トランスファーから作る裸の Green 関数の **代わりに** これを使います。
+  FLEX で自己無撞着に求めた Green 関数をボンドパスに渡す手段であり、
+  Onari のマイルストーンの値はこの方法でのみ再現できます（当該パラメータでは
+  裸の RPA スピンチャネルは既に不安定領域に入っているため）。
+  ``chi0q_mode = "calc"`` / ``"load"`` と併用可能です（どちらもこのパスでは
+  使われません）。 ``chi0q_mode = "flex"`` は FLEX の *chi* を読み込む
+  モードなので、引き続きエラーです。ファイルの振動数点数は ``Nmat`` より
+  優先されます（ボンドバブルはその格子上で構成されるため）。不一致は警告し、
+  ファイルが無い・ ``green`` 配列が無い・格子や軌道数が合わない場合は
+  エラーになります。実際に使った Green 関数のパスは固有値ファイルに
+  ``bond_green`` として、対応する ``approximation`` 記述とともに記録されます。
+- ``bond_max_shells`` （ ``bond_channels = true`` のときのみ）: 近接シェル
+  ``0..n`` を残します（シェル0 = オンサイト :math:`\Delta r = 0` 、
+  シェル1 = 最近接、…）。省略時は宣言された全シェル。同一のフィルタ済み
+  相互作用が Hartree・Fock・Cooper のすべてに使われるため、切り詰めの
+  不整合は起きません。非ゼロのサイト間 :math:`V` があるのに ``0`` を
+  指定した場合はエラーです（本当に局所的な模型なら
+  ``bond_channels = false`` を使ってください）。
+- ``bond_memory_cap_gb`` （ ``bond_channels = true`` のときのみ）: ボンドパスの
+  ピークメモリ上限（GB、デフォルト ``8.0`` ）。事前見積りで
+  :math:`N_q \times ND \times ND` 配列（ :math:`ND = n_{\rm orb}^2 B` ）の
+  サイズを評価し、超える場合は原因となるチャネル数を示してエラーにします
+  （暴走した確保は行いません）。
+- ``bond_precondition_atol`` / ``bond_precondition_rtol`` /
+  ``bond_precondition_dense_limit`` （ ``bond_channels = true`` のときのみ）:
+  実行時エルミート性チェックの許容値と dense／probe 切り替え
+  （デフォルト ``1e-8`` / ``1e-8`` / ``1024`` ）。残差は :math:`W K` 上で
+  測りますが、判定では残差とその基準スケールの **両方** を厳密な変換
+  :math:`\tilde K = W^{-1/2} (W K) W^{-1/2}` で対称化カーネルに換算します。
+  したがって ``bond_precondition_rtol`` は :math:`\tilde K` の *相対* 非対称度
+  であり、 :math:`\beta` を上げて :math:`\min w` が小さくなっても判定基準が
+  勝手に厳しくなることはありません。一方、 :math:`w` の小さい成分に局在した
+  破れは（ :math:`W K` 上では :math:`w_i w_j` で抑えられますが
+  :math:`\tilde K` 上では :math:`\sqrt{w_i w_j}` にとどまるため）従来どおり
+  検出されます。両方の値が固有値ファイルに
+  記録されます（ ``kernel_hermiticity_residual`` と ``..._residual_ktilde`` ）。
+  ``bond_precondition_dense_limit = 0`` にすると、厳密な dense 残差が高価な
+  格子でも確率的 probe 推定を強制できます。
+
+  **dense チェックのコスト。** ``bond_precondition_dense_limit`` 以下では、
+  完全なカーネルを dense に構築（``vec_size`` 回のボンドカーネル matvec）する
+  だけでなく、``pp``／``fl`` の各パートについても別途 dense に構築する
+  （それぞれ ``vec_size`` 回）ため、固有値ソルバーが始まる前に合計
+  :math:`3 \times` ``vec_size`` 回のボンドカーネル matvec が実行されます。
+  デフォルトの ``bond_precondition_dense_limit = 1024`` では、32×32 の単一
+  バンド格子（``vec_size`` :math:`= n_{\rm orb}^2 N_x N_y N_z = 1024`）が
+  ちょうどこの上限に一致するため、このプリコンディション チェックだけで
+  約 3072 回のボンドカーネル matvec がかかります。各 matvec は安価な dense
+  行列ベクトル積ではなく、:math:`O(B)` の FFT 分解演算です。これは（SCF や
+  固有値ソルバーの反復ごとではなく）1 回の求解あたりの前払いコストですが、
+  この格子サイズでは無視できません。気になる場合は
+  ``bond_precondition_dense_limit`` を下げて、より安価な確率的 probe 推定に
+  切り替えてください。
+
+  ``bond_channels = false`` のときは、これらボンドオプションはすべて
+  警告付きで無視されます。
+
+.. note::
+
+   ``bond_channels = true`` では ``solver_mode = "eigenvalue"`` を使うか、
+   ``solver_mode = "iteration"`` に ``spectral_shift`` を **併用** して
+   ください。シフトなしのべき乗反復が返すのは :math:`\|A\sigma\|` という
+   **符号を持たない** ノルムであり、斥力優勢なボンドカーネルでは最大固有値が
+   **負** になるため、反復ベクトルが毎ステップ符号反転して ``max_iter`` を
+   いくら増やしても収束しません。このパスでは警告を出し、固有値ファイルにも
+   「未収束の符号なしノルム」であることを明記します。符号を持つ物理量は
+   provenance の ``lambda_rayleigh`` です。 ``spectral_shift = "auto"`` を
+   加えるとこの問題は解消し、 :math:`K + \sigma I` で反復して収束し、元の
+   カーネルの符号付き :math:`\lambda` （ ``solver_mode = "eigenvalue"`` や
+   ``lambda_rayleigh`` と一致）が報告されます（上記 ``spectral_shift`` 参照）。
 - ``gpu``: ``true`` でカーネル適用（matvec/matmat、FFT 畳み込み）を GPU（CuPy）で
   実行します。``frequency = "dynamic"`` と ``frequency = "static"`` の **両方** に
   対応します（デフォルト ``false``）。固有値ソルバー本体（ARPACK Arnoldi・べき乗
@@ -216,7 +369,10 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   非エルミート固有値ソルバーが無いため）。反復ごとにデバイスへ渡るのはギャップ
   ベクトルのみです。使用可能な CuPy/CUDA デバイスが無い場合は警告を出して CPU に
   フォールバックします（下記の :ref:`GPU実行の節 <sc_dynamic_gpu>` を参照）。GPU
-  実行時は ``fft_workers`` は無視されます。
+  実行時は ``fft_workers`` は無視されます。``bond_channels = true`` の場合、
+  このフラグは無条件で無視されます: ボンド分解カーネルは v1 では CPU 専用
+  なので、ソルバーは警告（"gpu=true is ignored for bond_channels=true"）を
+  出して CPU で実行します —— エラーには **なりません**。
 - ``gpu_required``: ``true`` にすると ``gpu = true`` を厳格化し、CuPy/CUDA が
   使えない場合に静かに CPU へフォールバックせずエラーで停止します
   （デフォルト ``false``）。動的 Eliashberg ソルバー（``[eliashberg]`` に設定）
@@ -457,6 +613,99 @@ Arnoldi固有値解析は複数の固有値を検出します。
 一重項／三重項ギャップ）とき ``1`` 、逆パリティの spurious モードのとき ``0`` です
 （上記のパリティに関する注記を参照）。この列を持たない旧形式の出力もそのまま
 読み込めます。
+
+ボンドチャネルの provenance（``bond_channels = true``）
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+``[eliashberg] bond_channels = true`` のとき、``eigenvalue.dat`` の数値表の
+上に追加の ``# key = value`` コメント行が付きます（純粋に追加のみで、
+``np.loadtxt`` など既存の読み込み側は ``#`` 行を読み飛ばすため影響を受けません）。
+記録される内容:
+
+- ``bond_channels = True``、``bond_n_channels``（オンサイトを含む解決済み
+  ボンドチャネル数 :math:`B`）、``bond_delta_r``（各チャネルの
+  :math:`\Delta r_m` シェルベクトルのリスト、``bond_n_channels`` と
+  同じ順序）。
+- ``bond_max_shells``（設定した打ち切り、または ``"all"``）と
+  ``bond_memory_cap_gb`` （設定した上限）: 再現性のために記録されるだけで、
+  この時点ではもう計算結果に影響しません（シェルのフィルタリングと
+  リソース事前見積りはオペレータ構築の前にすでに完了しています）。
+- ``approximation`` — 実際に何を計算したかを表す自由記述: トランスファー
+  から作った裸の Green 関数、または（``bond_green`` を設定した場合は）
+  そこで指定した外部 Green 関数のどちらかの上で行った静的 RPA ラダー
+  dressing であること、そしてどちらも保存則を満たす FLEX の結果ではない
+  ため :math:`\lambda` の絶対値を近似レベルの異なる計算間で比較できない
+  ことを明記します。
+- ``bond_green`` — ``[eliashberg] bond_green`` を設定したときのみ出現し、
+  実際に読み込んだ外部 Green 関数のパスを記録します。
+- ``collapsed_to_pure_hubbard = True`` — ``bond_n_channels == 1``
+  のとき（例えばオンサイト以外の :math:`V` を宣言せずに
+  ``bond_max_shells = 0`` としたときなど、オンサイト以外のチャネルが
+  1本も解決されなかった場合）のみ出現し、``bond_channels = true`` でも
+  実質的には純粋 Hubbard（潰れたボンド）極限であることを示します。
+- ``kernel_hermiticity_residual`` / ``kernel_hermiticity_residual_ktilde`` /
+  ``kernel_hermiticity_relative_ktilde`` / ``kernel_hermiticity_method`` —
+  実行時エルミート性事前条件チェックの診断値（上記の
+  ``bond_precondition_atol`` / ``bond_precondition_rtol`` /
+  ``bond_precondition_dense_limit`` を参照）: 生の残差と対称化カーネル
+  :math:`\tilde K` の残差、その *相対* :math:`\tilde K` 残差、
+  どちらのチェック（``"dense"`` または ``"randomized-probe"``）で
+  得られたか。
+- ``pair_weight_min_eigenvalue`` — 事前条件チェック中に見つかった
+  :math:`\sqrt{GG}` 対重み計量の最小固有値。下記の Rayleigh 商による
+  寄与分解が well-defined であるためには正である必要があります。
+
+**「** :math:`\lambda = \lambda^{\rm pp} + \lambda^{\rm fl}` **」の寄与分解。**
+これはボンドパスの目玉となる診断量であり、``bond_diagnostics`` の設定に
+関係なく全てのボンド計算で出力されます:
+
+- ``lambda_rayleigh`` — 完全な対称化カーネル :math:`\tilde K` の
+  **符号付き** Rayleigh 商を、実行が返すギャップで評価した値
+  （そのギャップが収束した固有ベクトルである場合に限りソルバー自身の
+  固有値と一致します。下記の ``lambda_rayleigh_solver_mode`` /
+  ``lambda_rayleigh_converged`` を参照）。
+- ``lambda_pp`` — カーネルの **裸の particle-particle（瞬時）部分**
+  の Rayleigh 商。ゆらぎによる dressing を受けない直接の Cooper 頂点
+  :math:`\tfrac12 V^{\rm pp}` です。
+- ``lambda_fl`` — **ゆらぎ媒介部分** の Rayleigh 商。ペアリング頂点への
+  particle-hole ラダー（スピン・電荷感受率）の寄与です。
+- ``lambda_attribution`` — :math:`\lambda = \lambda^{\rm pp} +
+  \lambda^{\rm fl}` が :math:`\tilde K` の実 Rayleigh 商であり、両方とも
+  *返された* ギャップで評価されていることを述べる自由記述です。
+- ``lambda_rayleigh_solver_mode`` — Rayleigh 商を評価したギャップを
+  どのソルバー（``"iteration"``、``"eigenvalue"``、``"both"``）が
+  生成したか。
+- ``lambda_rayleigh_converged`` — 反復パスでは、そのギャップが収束した
+  かどうか（``"True"``/``"False"``）。固有値モードでは ``"n/a"`` です。
+
+**寄与分解の読み方。** サイト間相互作用が斥力的（:math:`V > 0`）の場合、
+裸の particle-particle 頂点自体がペアリングチャネルで斥力的であるため、
+:math:`\lambda^{\rm pp} \le 0` になります。:math:`V` を増やすにつれて
+:math:`\lambda` が上昇し（最終的には引力的にすらなり得る）場合、それは
+**完全にゆらぎ駆動** の効果であり、:math:`\lambda^{\rm fl}` によって
+運ばれています——ボンド機構は「:math:`V` が直接電子対を作る」のではなく
+「:math:`V` が電子対を作るスピン・電荷ゆらぎを駆動する」というものです。
+（例えば :math:`V` スキャンにわたって）``lambda_pp`` / ``lambda_fl`` を
+別々に見ることで、和だけを見るのではなくこの2つの機構を区別できます。
+
+**オプトインのキャラクター解析（** ``bond_diagnostics = true`` **）。**
+有効にすると、さらに3グループのキーが出現します（各項目の物理の詳細は
+上記の ``bond_diagnostics`` パラメータの説明を参照）:
+
+- ``bond_diagnostics_harmonics`` と ``bond_diagnostics_harmonics_note`` —
+  返されたギャップを
+  :math:`\{\sin k_x,\ \sin k_y,\ \sin k_x(\cos k_x-\cos k_y),\
+  \sin k_y(\cos k_y-\cos k_x)\}` 基底へ分解した結果で、それぞれ
+  :math:`[0, 1]` の割合です。
+- ``bond_diagnostics_eigenvalue_clusters``、
+  ``bond_diagnostics_leading_cluster``、
+  ``bond_diagnostics_leading_cluster_size``、``bond_diagnostics_deg_tol`` —
+  計算された固有値スペクトルの準縮退グルーピングと、返された状態を含む
+  グループのサイズ（``solver_mode`` に ``"eigenvalue"`` を含む場合のみ
+  出現し、反復パスは調和関数分解のみを報告します）。
+- ``bond_diagnostics_clusters_note`` — クラスタリングの規約
+  （:math:`|\lambda_i-\lambda_j|\le` ``deg_tol`` による単連結法）を
+  説明する自由記述です。
 
 
 物理的解釈
@@ -1045,5 +1294,12 @@ Tips
 - 反復法では異なる ``init_gap`` 対称性を使用して、
   特定のペアリングチャネルを狙うことができます。
   固有値法は全ての主要対称性を自動的に見つけます。
+  これはボンド分解パス（``bond_channels = true``）には当てはまり
+  **ません**: そのカーネルは斥力優勢なので、単純なべき乗反復はそもそも
+  収束できません（上記の ``spectral_shift`` の注記を参照）。まず
+  ``spectral_shift`` を設定してください。また、それを設定していても
+  ``init_gap`` のシードが依然として反復が見つける枝／パリティセクターを
+  決めます——固有値法がスペクトル全体を走査するのとは異なり、シードは
+  自動的にスキャンされないためです。
 - ``pairing_type = "triplet"`` オプションで、
   適切な頂点を用いた三重項ペアリング不安定性を解析できます。

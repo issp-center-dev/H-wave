@@ -912,6 +912,18 @@ Tips
   これによりFLEXレベルのスピン・電荷ゆらぎを用いた超伝導不安定性の
   解析が可能になります。
 
+  .. note::
+
+     ``chi0q_mode = "flex"`` は ``[eliashberg] bond_channels = true``
+     と併用すると **エラーになります**: ボンド分解パスは Green 関数から
+     直接自前の :math:`\bar\chi` バブルを構成するため ``chi0q``/``chiq``
+     ファイルを一切読み込まず、FLEX 感受率の取り込みには対応していません。
+     代わりに FLEX でdressされた Green 関数をボンドパスに渡したい場合は、
+     FLEX を収束まで実行し、その ``green.npz`` 出力を
+     ``[eliashberg] bond_green`` に指定してください。詳細は
+     :doc:`/rpa/tutorial/sc-index` の ``bond_green`` パラメータの説明を
+     参照してください。
+
 
 実装の詳細と制限事項
 ----------------------------

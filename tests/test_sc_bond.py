@@ -1,0 +1,1754 @@
+"""Task 6: ``sc.py`` wiring of the bond-resolved Eliashberg path.
+
+Covers, per
+``docs/superpowers/specs/2026-07-25-bond-channels-eliashberg-design.md``:
+
+* S5  -- config keys (``bond_channels``, ``bond_max_shells``,
+  ``bond_memory_cap_gb``), the ignore-with-warning rule, and every guard.
+* S4.3 star -- the Case-2 correction (only ``V_ab(R=0)`` stays in the m=0 Fock
+  block; the Hartree ``2 V_ab(q)`` stays in the m=0 charge block).
+* S3.2 -- the resource preflight.
+* S7.3 -- regression: with the flag off the default path is **bit-identical**.
+* S7.4 -- ``V=0`` (declared-but-zero NN topology) reduces to the default path.
+
+Tests must be run from the repository root (fixture paths are relative).
+"""
+import logging
+import os
+import shutil
+import tempfile
+
+import numpy as np
+import pytest
+from scipy.sparse.linalg import LinearOperator
+
+import hwave.sc as sc
+
+
+# ---------------------------------------------------------------------------
+# fixtures / helpers
+# ---------------------------------------------------------------------------
+
+RPA_INPUT = "tests/rpa/input"
+
+
+def _write_w90(path, norb, entries, header="generated for test"):
+    """Write an H-wave "wannier90-like" interaction file.
+
+    ``entries`` is a list of ``(irvec, (orb1_0based, orb2_0based), value)``.
+    """
+    with open(path, "w") as fw:
+        fw.write(header + "\n")
+        fw.write("{}\n".format(norb))
+        fw.write("{}\n".format(len(entries)))
+        fw.write(" ".join(["1"] * len(entries)) + "\n")
+        for irvec, orbvec, value in entries:
+            value = complex(value)
+            fw.write("{:4d} {:4d} {:4d} {:4d} {:4d} {:.12f} {:.12f}\n".format(
+                irvec[0], irvec[1], irvec[2], orbvec[0] + 1, orbvec[1] + 1,
+                value.real, value.imag))
+
+
+def _nn_entries(value):
+    return [((-1, 0, 0), (0, 0), value),
+            ((0, -1, 0), (0, 0), value),
+            ((0, 1, 0), (0, 0), value),
+            ((1, 0, 0), (0, 0), value)]
+
+
+def _base_input(outdir, coulomb_inter=None, **eli):
+    """Small single-band static Eliashberg input (4x4, chi0q computed
+    internally) built on the existing ``tests/rpa/input`` fixture."""
+    interaction = {"path_to_input": RPA_INPUT,
+                   "Geometry": "geom.dat",
+                   "Transfer": "transfer.dat",
+                   "CoulombIntra": "coulombintra.dat"}
+    if coulomb_inter is not None:
+        # absolute paths survive os.path.join(path_to_input, ...)
+        interaction["CoulombInter"] = coulomb_inter
+    eli_param = {"chi0q_mode": "calc", "solver_mode": "iteration",
+                 "max_iter": 40, "convergence_tol": 1e-8}
+    eli_param.update(eli)
+    return {
+        "mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
+                           "SubShape": [1, 1, 1], "Nmat": 128,
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": interaction},
+                 "output": {"path_to_output": outdir}},
+        "eliashberg": eli_param,
+    }
+
+
+_CHI0Q_CACHE = {}
+
+
+def _deterministic_input(outdir, **eli):
+    """Same fixture as ``_base_input`` but with chi0q *loaded* from a file
+    computed once.
+
+    ``_calc_chi0q_internal`` (the RPA path) is not bit-reproducible run to run
+    -- repeated calls with identical inputs differ at the ~1e-14 level (ULP
+    jitter in the FFT/BLAS kernels, pre-existing and unrelated to this work).
+    Everything downstream of chi0q *is* bit-reproducible, so a bit-identity
+    regression test must pin chi0q by loading the same array both times.
+    """
+    inp = _base_input(outdir, chi0q_mode="load", **eli)
+    if "chi0q" not in _CHI0Q_CACHE:
+        _CHI0Q_CACHE["chi0q"] = sc._calc_chi0q_internal(
+            _base_input(outdir, chi0q_mode="calc"))
+    os.makedirs(outdir, exist_ok=True)
+    np.savez(os.path.join(outdir, "chi0q.npz"), chi0q=_CHI0Q_CACHE["chi0q"])
+    return inp
+
+
+def _two_orbital_input(outdir, coulomb_inter, **eli):
+    interaction = {"path_to_input": RPA_INPUT,
+                   "Geometry": "geom_2orb.dat",
+                   "Transfer": "transfer_nonso_2orb.dat",
+                   "CoulombIntra": "coulombintra_2orb.dat",
+                   "CoulombInter": coulomb_inter}
+    eli_param = {"chi0q_mode": "calc", "solver_mode": "iteration",
+                 "max_iter": 5}
+    eli_param.update(eli)
+    return {
+        "mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
+                           "SubShape": [1, 1, 1], "Nmat": 64,
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": interaction},
+                 "output": {"path_to_output": outdir}},
+        "eliashberg": eli_param,
+    }
+
+
+@pytest.fixture
+def tmpout():
+    d = tempfile.mkdtemp(prefix="hwave_sc_bond_")
+    try:
+        yield d
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _read_outputs(outdir):
+    gap = np.loadtxt(os.path.join(outdir, "gap.dat"))
+    with open(os.path.join(outdir, "eigenvalue.dat"), "rb") as f:
+        eig_bytes = f.read()
+    with open(os.path.join(outdir, "gap.dat"), "rb") as f:
+        gap_bytes = f.read()
+    return gap, eig_bytes, gap_bytes
+
+
+def _leading_eigenvalue(outdir):
+    with open(os.path.join(outdir, "eigenvalue.dat")) as f:
+        lines = [l for l in f if not l.strip().startswith("#") and l.strip()]
+    return float(lines[0].split()[0])
+
+
+# ---------------------------------------------------------------------------
+# S7.3 regression: the default path is untouched (bit-identical)
+# ---------------------------------------------------------------------------
+
+def test_bond_channels_absent_and_false_are_bit_identical(tmpout):
+    """The flag defaults to false, and setting it explicitly false must run the
+    *same* code path -- byte-for-byte identical gap.dat/eigenvalue.dat."""
+    d1 = os.path.join(tmpout, "a")
+    d2 = os.path.join(tmpout, "b")
+    sc.calc_eliashberg(_deterministic_input(d1))
+    sc.calc_eliashberg(_deterministic_input(d2, bond_channels=False))
+
+    gap1, eig1, raw1 = _read_outputs(d1)
+    gap2, eig2, raw2 = _read_outputs(d2)
+    assert np.array_equal(gap1, gap2)
+    assert eig1 == eig2
+    assert raw1 == raw2
+
+
+def test_bond_options_ignored_with_warning_when_flag_off(tmpout, caplog):
+    """bond_max_shells / bond_memory_cap_gb set while bond_channels=false are
+    ignored WITH A WARNING (spec S5) and change nothing bit-wise."""
+    d1 = os.path.join(tmpout, "a")
+    d2 = os.path.join(tmpout, "b")
+    sc.calc_eliashberg(_deterministic_input(d1))
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_deterministic_input(d2, bond_channels=False,
+                                                bond_max_shells=1,
+                                                bond_memory_cap_gb=2.0))
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "bond_max_shells" in msgs and "bond_memory_cap_gb" in msgs
+    assert "bond_channels" in msgs
+
+    _, eig1, raw1 = _read_outputs(d1)
+    _, eig2, raw2 = _read_outputs(d2)
+    assert eig1 == eig2 and raw1 == raw2
+
+
+def test_compute_vertices_general_dressing_is_bit_identical():
+    """The Task-4 refactor factors the inline dressing of
+    ``_compute_vertices_general`` into a shared helper. Its output must stay
+    bit-identical to the historical inline code (verbatim copy below)."""
+    rng = np.random.default_rng(5)
+    norb, Nx, Ny, Nz, nmat = 2, 3, 2, 1, 4
+    nd = norb * norb
+    chi0q = (rng.normal(size=(norb, norb, norb, norb, Nx, Ny, Nz, nmat))
+             + 1j * rng.normal(size=(norb, norb, norb, norb, Nx, Ny, Nz, nmat)))
+    inter_k = {
+        "CoulombIntra": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
+        "CoulombInter": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
+        "Hund": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
+    }
+    got = sc._compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
+                                       pairing_type="singlet")
+
+    # --- historical inline body (sc.py:1095-1118 before the refactor) ---
+    S_all, C_all = sc._build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    si = nmat // 2
+    chi0_static = chi0q[:, :, :, :, :, :, :, si].reshape(
+        nd, nd, Nx, Ny, Nz).transpose(2, 3, 4, 0, 1).copy()
+    I_mat = np.broadcast_to(np.eye(nd, dtype=complex),
+                            (Nx, Ny, Nz, nd, nd)).copy()
+    mat_s = I_mat - chi0_static @ S_all
+    mat_c = I_mat + chi0_static @ C_all
+    chis = np.linalg.solve(mat_s, chi0_static)
+    chic = np.linalg.solve(mat_c, chi0_static)
+    Vs_all = (1.5 * (S_all @ chis @ S_all) - 0.5 * (C_all @ chic @ C_all)
+              + 0.5 * (S_all + C_all))
+    ref = Vs_all.reshape(Nx, Ny, Nz, norb, norb, norb, norb).transpose(
+        3, 4, 5, 6, 0, 1, 2)
+
+    assert np.array_equal(got, ref)
+
+
+# ---------------------------------------------------------------------------
+# S5 guards
+# ---------------------------------------------------------------------------
+
+def test_guard_flex_mode(tmpout):
+    """(a) bond_channels=true + chi0q_mode='flex' -> error naming the deferred
+    bond-FLEX work."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(1.0))
+    inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True,
+                      chi0q_mode="flex")
+    with pytest.raises(ValueError, match="(?i)flex"):
+        sc.calc_eliashberg(inp)
+
+
+def test_guard_multi_orbital(tmpout):
+    """(b) bond_channels=true + norb>1 -> error at the top level only."""
+    ci = os.path.join(tmpout, "ci2.dat")
+    _write_w90(ci, 2, [((1, 0, 0), (0, 1), 0.25), ((-1, 0, 0), (1, 0), 0.25)])
+    inp = _two_orbital_input(tmpout, ci, bond_channels=True)
+    with pytest.raises(ValueError, match="(?i)multi-orbital|norb"):
+        sc.calc_eliashberg(inp)
+
+
+def test_guard_complex_coulomb_inter(tmpout):
+    """(c) bond_channels=true + a non-real CoulombInter entry -> error."""
+    ci = os.path.join(tmpout, "ci_cplx.dat")
+    _write_w90(ci, 1, [((1, 0, 0), (0, 0), 1.0 + 0.3j),
+                       ((-1, 0, 0), (0, 0), 1.0 - 0.3j)])
+    inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True)
+    with pytest.raises(ValueError, match="(?i)complex|real"):
+        sc.calc_eliashberg(inp)
+
+
+def test_guard_no_coulomb_inter(tmpout):
+    """(d) bond_channels=true with no CoulombInter term at all -> error."""
+    inp = _base_input(tmpout, bond_channels=True)
+    with pytest.raises(ValueError, match="(?i)CoulombInter"):
+        sc.calc_eliashberg(inp)
+
+
+def test_guard_dynamic_entry_point(tmpout):
+    """(e) bond_channels=true on the dynamic entry point -> error, both via
+    calc_eliashberg's dispatch and via solve_dynamic directly."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(1.0))
+    inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True,
+                      frequency="dynamic", chi0q_mode="flex")
+    with pytest.raises(ValueError, match="(?i)dynamic"):
+        sc.calc_eliashberg(inp)
+
+    from hwave.solver import eliashberg_dynamic
+    with pytest.raises(ValueError, match="(?i)dynamic"):
+        eliashberg_dynamic.solve_dynamic(inp)
+
+
+def test_resource_preflight_errors_and_names_channels(tmpout):
+    """S3.2: the preflight refuses to allocate beyond bond_memory_cap_gb and
+    names the offending channel count."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(1.0))
+    inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True,
+                      bond_memory_cap_gb=1.0e-9)
+    with pytest.raises(ValueError, match="(?i)bond_memory_cap_gb"):
+        sc.calc_eliashberg(inp)
+
+
+def test_resource_preflight_raises_before_green_allocation(tmpout, monkeypatch):
+    """I-2 review fix: the resource preflight (S3.2) must run BEFORE
+    ``green_kw`` is allocated -- previously ``_calc_green`` ran first in the
+    bond-channel dispatch branch, so a large-Nmat run could OOM before the
+    cap was ever consulted, defeating "never a silent runaway allocation".
+    Patch ``_calc_green`` to blow up if called; the preflight's ValueError
+    must surface instead of the patched crash."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(1.0))
+    inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True,
+                      bond_memory_cap_gb=1.0e-9)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(
+            "_calc_green must not be called before the bond-channel "
+            "resource preflight (I-2)")
+
+    monkeypatch.setattr(sc, "_calc_green", _boom)
+    with pytest.raises(ValueError, match="(?i)bond_memory_cap_gb"):
+        sc.calc_eliashberg(inp)
+
+
+# ---------------------------------------------------------------------------
+# S4.3 star -- the Case-2 correction, and the V=0 reduction
+# ---------------------------------------------------------------------------
+
+def test_m0_blocks_single_band_match_simple_path():
+    """Single band: the Case-2-corrected m=0 blocks must be S=U and
+    C=U+2V(q) -- exactly the ``_compute_vertices_simple`` Ws=-U/Wc=U+2V pair
+    (spec S4.5 "Concretely, from the derivation")."""
+    from hwave.solver.bond_channels import resolve_interactions
+
+    norb, Nx, Ny, Nz = 1, 4, 4, 1
+    U, V = 4.0, 0.7
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+    interactions = {
+        "CoulombIntra": {((0, 0, 0), (0, 0)): U},
+        "CoulombInter": {ir: V for ir in
+                         [((-1, 0, 0), (0, 0)), ((1, 0, 0), (0, 0)),
+                          ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
+    }
+    inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+    bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
+    S0, C0 = sc._build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
+                                      kx, ky, kz)
+    assert S0.shape == (Nx, Ny, Nz, 1, 1)
+    Vq = inter_k["CoulombInter"][0, 0]
+    np.testing.assert_allclose(S0[:, :, :, 0, 0], U, atol=1e-13)
+    np.testing.assert_allclose(C0[:, :, :, 0, 0], U + 2.0 * Vq, atol=1e-13)
+
+
+def test_case2_correction_keeps_only_rzero_fock():
+    """S4.3 star (multi-orbital, exercised below the top-level norb guard):
+    the m=0 Fock (ab,ab) element carries ONLY V_ab(R=0), while the charge
+    (aa,bb) Hartree keeps the full 2 V_ab(q)."""
+    from hwave.solver.bond_channels import resolve_interactions
+
+    norb, Nx, Ny, Nz = 2, 4, 1, 1
+    Uprime, Vbond = 1.0, 0.25
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+    interactions = {
+        "CoulombInter": {
+            ((0, 0, 0), (0, 1)): Uprime,
+            ((0, 0, 0), (1, 0)): Uprime,
+            ((1, 0, 0), (0, 1)): Vbond,
+            ((-1, 0, 0), (1, 0)): Vbond,
+        },
+    }
+    inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+    bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
+    S0, C0 = sc._build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
+                                      kx, ky, kz)
+
+    i01 = 0 * norb + 1                     # (l1,l2) = (0,1)
+    # Fock: ONLY the R=0 component (U'), NOT the full V_01(q).
+    np.testing.assert_allclose(S0[:, :, :, i01, i01], Uprime, atol=1e-13)
+    np.testing.assert_allclose(C0[:, :, :, i01, i01], -Uprime, atol=1e-13)
+    # and it is genuinely a correction: the un-corrected value is q-dependent
+    V01_q = inter_k["CoulombInter"][0, 1]
+    assert not np.allclose(V01_q, Uprime)
+    # Hartree (aa,bb) keeps the full q-dependent 2 V_ab(q).
+    i00, i11 = 0, norb + 1
+    np.testing.assert_allclose(C0[:, :, :, i00, i11], 2.0 * V01_q, atol=1e-13)
+
+
+def test_bond_kernel_reduces_to_standard_kernel_when_V_is_zero():
+    """S7.4: with a DECLARED but zero NN topology (B=5) the whole bond path
+    (m=0 blocks -> dressing -> two-part operator) must reproduce the standard
+    single-band kernel exactly, when both are fed the SAME bubble."""
+    from hwave.solver.bond_channels import (resolve_interactions, bond_bubble,
+                                            bare_bond_vertices, dress_bond,
+                                            make_bond_kernel)
+
+    norb, Nx, Ny, Nz, nmat = 1, 4, 4, 1, 64
+    beta = 2.0
+    U = 3.0
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+    interactions = {
+        "CoulombIntra": {((0, 0, 0), (0, 0)): U},
+        "CoulombInter": {ir: 0.0 for ir in
+                         [((-1, 0, 0), (0, 0)), ((1, 0, 0), (0, 0)),
+                          ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
+    }
+    inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+    hr = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0,
+          ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
+    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
+    evals, evecs = sc._calc_eigenvalues(eps)
+    green = sc._calc_green(evals, evecs, 0.1, beta, nmat)
+
+    bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
+    assert bond_set.n_channels == 5           # declared topology survives V=0
+
+    chi_bar = bond_bubble(green, bond_set, beta)
+    S0, C0 = sc._build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
+                                      kx, ky, kz)
+    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0, C0, norb)
+    chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
+    A_bond, n_bond = make_bond_kernel(chi_s, chi_c, S_bond, C_bond,
+                                      Vpp_s, Vpp_t, green, bond_set,
+                                      "singlet", beta)
+
+    # standard path fed the SAME bubble (the m=m'=0 block of chi_bar)
+    chi0q = chi_bar[:, :, :, 0, 0].transpose(0, 1, 2).reshape(
+        1, 1, Nx, Ny, Nz, 1)
+    Pc, Ps = sc._compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, 1,
+                                         pairing_type="singlet",
+                                         static_index=0)
+    G2 = sc._calc_g2(green, beta)
+    A_std, n_std = sc._make_kernel_operator(Pc + Ps, G2, norb, Nx, Ny, Nz)
+    assert n_bond == n_std
+
+    rng = np.random.default_rng(3)
+    v = rng.normal(size=n_std) + 1j * rng.normal(size=n_std)
+    np.testing.assert_allclose(A_bond.matvec(v), A_std.matvec(v),
+                               rtol=1e-9, atol=1e-11)
+
+
+def test_bond_channels_true_with_zero_V_matches_default_run(tmpout):
+    """End-to-end S7.4: bond_channels=true with a declared-but-zero V (B=5
+    declared topology, zero Fock/Cooper) is numerically equivalent to
+    bond_channels=false. Numerical (not bit-wise) per the spec's tolerance
+    policy -- the enabled path is a different computation of the same
+    quantity."""
+    ci = os.path.join(tmpout, "ci0.dat")
+    _write_w90(ci, 1, _nn_entries(0.0))
+    d_off = os.path.join(tmpout, "off")
+    d_on = os.path.join(tmpout, "on")
+    sc.calc_eliashberg(_base_input(d_off, coulomb_inter=ci,
+                                   bond_channels=False))
+    sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
+                                   bond_channels=True))
+    lam_off = _leading_eigenvalue(d_off)
+    lam_on = _leading_eigenvalue(d_on)
+    assert lam_off == pytest.approx(lam_on, rel=1.0e-7)
+
+
+def test_bond_channels_true_is_not_inert_for_nonzero_V(tmpout):
+    """The flag must actually route through the bond path: at V != 0 the
+    bond-resolved result differs from the default (which, for a single band
+    with a 4-index chi0q, carries no inter-site V at all -- the scope
+    limitation this feature addresses)."""
+    ci = os.path.join(tmpout, "ci1.dat")
+    _write_w90(ci, 1, _nn_entries(1.0))
+    d_off = os.path.join(tmpout, "off")
+    d_on = os.path.join(tmpout, "on")
+    sc.calc_eliashberg(_base_input(d_off, coulomb_inter=ci,
+                                   bond_channels=False))
+    sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
+                                   bond_channels=True))
+    assert abs(_leading_eigenvalue(d_on) - _leading_eigenvalue(d_off)) > 1e-3
+
+
+def test_bond_run_writes_provenance_without_breaking_readers(tmpout):
+    """S5 output provenance is additive: new comment keys in eigenvalue.dat,
+    existing numeric rows (and the tsweep reader) unaffected."""
+    from hwave import tsweep
+
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d_on = os.path.join(tmpout, "on")
+    sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci, bond_channels=True,
+                                   solver_mode="both", num_eigenvalues=3))
+    text = open(os.path.join(d_on, "eigenvalue.dat")).read()
+    assert "bond_channels" in text
+    assert "bond_max_shells" in text
+    assert "delta_r" in text or "channels" in text
+    assert "RPA-ladder" in text
+    # a downstream reader still parses the numeric rows
+    re, im, match = tsweep.parse_leading_eig(
+        os.path.join(d_on, "eigenvalue.dat"))
+    assert np.isfinite(re) and np.isfinite(im)
+
+
+def test_collapsed_to_pure_hubbard_flag(tmpout):
+    """A B=1 run (bond_max_shells=0 with no inter-site V declared beyond
+    on-site) is recorded as collapsed_to_pure_hubbard so a single-channel run
+    is distinguishable from a genuine multi-channel one (spec S5)."""
+    ci = os.path.join(tmpout, "ci_onsite.dat")
+    # on-site-only CoulombInter: no bond channels at all -> B = 1
+    _write_w90(ci, 1, [((0, 0, 0), (0, 0), 0.0)])
+    d_on = os.path.join(tmpout, "on")
+    sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci, bond_channels=True))
+    text = open(os.path.join(d_on, "eigenvalue.dat")).read()
+    assert "collapsed_to_pure_hubbard" in text
+
+
+# ---------------------------------------------------------------------------
+# Task 7 -- S4.5 lambda attribution on the symmetrized kernel, the runtime
+# Hermiticity/positivity preconditions, the odd f-wave seed, and the S7.7
+# invariant-subspace tracker.
+# ---------------------------------------------------------------------------
+
+def _analytic_pp_fixture():
+    """Spec S7.9: single-band 1D 4-point grid, U=4, V(R)=1, chi_s=chi_c=0.
+
+    green == 1 with nmat=1 and beta=1 gives G2(k) = 1 for every k, so the pair
+    weight is w = 1 and the (T/N) G G fold is 1/4.  Returns everything
+    make_bond_kernel_parts needs plus the odd gap Delta = sin k.
+    """
+    from hwave.solver.bond_channels import (resolve_interactions,
+                                            bare_bond_vertices)
+    norb, Nx, Ny, Nz, nmat = 1, 4, 1, 1, 1
+    beta = 1.0
+    green = np.ones((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
+    ci = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}
+    bset = resolve_interactions(ci, np.eye(3), norb=norb)
+    U = 4.0
+    S0 = np.full((1, 1, 1, 1, 1), U, dtype=complex)
+    C0 = np.full((1, 1, 1, 1, 1), 8.0, dtype=complex)     # U + 2 V(q=0)
+    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bset, S0, C0, norb)
+    ND = S_bond.shape[-1]
+    chi_zero = np.zeros((Nx, Ny, Nz, ND, ND), dtype=complex)
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    phi = np.sin(kx).reshape(norb, norb, Nx, Ny, Nz).astype(complex)
+    return dict(green=green, beta=beta, bond_set=bset, S_bond=S_bond,
+                C_bond=C_bond, Vpp_s=Vpp_s, Vpp_t=Vpp_t, chi=chi_zero,
+                phi=phi, norb=norb, shape=(Nx, Ny, Nz))
+
+
+def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
+    """A physical (centrosymmetric, spin-degenerate) single-band bond setup:
+    real >= 0 pair weight and a Hermitian symmetrized kernel."""
+    from hwave.solver.bond_channels import (resolve_interactions, bond_bubble,
+                                            bare_bond_vertices, dress_bond)
+    norb = 1
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+    interactions = {
+        "CoulombIntra": {((0, 0, 0), (0, 0)): U},
+        "CoulombInter": {ir: V for ir in
+                         [((-1, 0, 0), (0, 0)), ((1, 0, 0), (0, 0)),
+                          ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
+    }
+    inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+    hr = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0,
+          ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
+    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
+    evals, evecs = sc._calc_eigenvalues(eps)
+    green = sc._calc_green(evals, evecs, 0.1, beta, nmat)
+    bset = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
+    chi_bar = bond_bubble(green, bset, beta)
+    S0, C0 = sc._build_bond_m0_blocks(bset, interactions, inter_k, norb,
+                                      kx, ky, kz)
+    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bset, S0, C0, norb)
+    chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
+    return dict(green=green, beta=beta, bond_set=bset, S_bond=S_bond,
+                C_bond=C_bond, Vpp_s=Vpp_s, Vpp_t=Vpp_t, chi_s=chi_s,
+                chi_c=chi_c, norb=norb, shape=(Nx, Ny, Nz),
+                kgrid=(kx, ky, kz))
+
+
+# --- (a) lambda attribution on the analytic S7.9 fixture -------------------
+
+def test_lambda_attribution_analytic_fixture():
+    """S7.9 + S4.5: lambda_t = -1 splits as lambda_t^pp = -1, lambda_t^fl = 0,
+    as REAL Rayleigh quotients on the symmetrized kernel."""
+    from hwave.solver import bond_channels as bc
+
+    f = _analytic_pp_fixture()
+    A, A_fl, A_pp, vec_size = bc.make_bond_kernel_parts(
+        f["chi"], f["chi"], f["S_bond"], f["C_bond"], f["Vpp_s"], f["Vpp_t"],
+        f["green"], f["bond_set"], "triplet", f["beta"])
+    W = bc.pair_weight(f["green"], f["beta"])
+
+    v = f["phi"].ravel()
+    # the fixture's gap IS an eigenvector with lambda = -1
+    np.testing.assert_allclose(A.matvec(v), -v, atol=1e-12)
+
+    attr = bc.attribute_lambda(v, W, A_pp, A_fl, op_full=A)
+    assert attr["lambda_pp"] == pytest.approx(-1.0, abs=1e-12)
+    assert attr["lambda_fl"] == pytest.approx(0.0, abs=1e-12)
+    assert attr["lambda"] == pytest.approx(-1.0, abs=1e-12)
+    # sum identity
+    assert attr["lambda_pp"] + attr["lambda_fl"] == pytest.approx(
+        attr["lambda"], abs=1e-12)
+    assert attr["sum_residual"] == pytest.approx(0.0, abs=1e-12)
+    # real Rayleigh quotients (the Hermitian path)
+    assert isinstance(attr["lambda_pp"], float)
+    assert abs(attr["imag_pp"]) < 1e-12 and abs(attr["imag_fl"]) < 1e-12
+
+
+def test_lambda_attribution_sum_identity_physical():
+    """On a physical bond setup the two parts add up to the full Rayleigh
+    quotient, and (for the converged eigenvector) to the eigenvalue."""
+    from hwave.solver import bond_channels as bc
+    from scipy.sparse.linalg import eigs
+
+    f = _physical_single_band(V=1.0)
+    A, A_fl, A_pp, n = bc.make_bond_kernel_parts(
+        f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+        f["Vpp_t"], f["green"], f["bond_set"], "singlet", f["beta"])
+    W = bc.pair_weight(f["green"], f["beta"])
+
+    vals, vecs = eigs(A, k=1, which="LR", maxiter=5000, tol=1e-12)
+    v = vecs[:, 0]
+    attr = bc.attribute_lambda(v, W, A_pp, A_fl, op_full=A)
+    # the Rayleigh quotient of the converged eigenvector IS the eigenvalue,
+    # and it is real (the Hermitian path)
+    assert attr["lambda"] == pytest.approx(vals[0].real, rel=1e-8)
+    assert abs(attr["imag"]) < 1e-8 * max(1.0, abs(attr["lambda"]))
+    assert attr["lambda_pp"] + attr["lambda_fl"] == pytest.approx(
+        attr["lambda"], abs=1e-10)
+
+    # the sum identity is an operator identity, so it also holds off the
+    # eigenvector -- checked on a d_x2y2 gap, for which BOTH parts are
+    # non-zero (the leading eigenvector of this fixture happens to be
+    # orthogonal to every bond harmonic, so its lambda^pp vanishes exactly).
+    kx, ky, kz = f["kgrid"]
+    d = sc._initialize_gap("d_x2y2", 1, kx, ky, kz).ravel().astype(complex)
+    attr_d = bc.attribute_lambda(d, W, A_pp, A_fl, op_full=A)
+    assert abs(attr_d["lambda_fl"]) > 1e-6
+    assert abs(attr_d["lambda_pp"]) > 1e-6
+    assert attr_d["lambda_pp"] + attr_d["lambda_fl"] == pytest.approx(
+        attr_d["lambda"], abs=1e-10)
+
+
+# --- (b) runtime Hermiticity / positivity preconditions (S4.5) -------------
+
+def test_preconditions_pass_on_physical_green():
+    from hwave.solver import bond_channels as bc
+
+    f = _physical_single_band(V=1.0)
+    A, _, _, n = bc.make_bond_kernel_parts(
+        f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+        f["Vpp_t"], f["green"], f["bond_set"], "singlet", f["beta"])
+    W = bc.pair_weight(f["green"], f["beta"])
+    diag = bc.check_hermitian_preconditions(A, W)
+    assert diag["weight_min_eigenvalue"] > 0.0
+    assert diag["weight_hermiticity_residual"] < 1e-10
+    assert diag["kernel_hermiticity_residual"] < 1e-8
+
+
+def test_preconditions_error_on_unphysical_green():
+    """A green that violates the inversion/time-reversal symmetry makes the
+    static pair weight w = GG complex/indefinite -- v1 must ERROR (no
+    non-Hermitian biorthogonal fallback)."""
+    from hwave.solver import bond_channels as bc
+
+    rng = np.random.default_rng(7)
+    norb, Nx, Ny, Nz, nmat = 1, 4, 4, 1, 4
+    beta = 2.0
+    green = (rng.normal(size=(norb, norb, Nx, Ny, Nz, nmat))
+             + 1j * rng.normal(size=(norb, norb, Nx, Ny, Nz, nmat)))
+    W = bc.pair_weight(green, beta)
+    ident = LinearOperator((norb * norb * Nx * Ny * Nz,) * 2,
+                           matvec=lambda v: v, dtype=complex)
+    with pytest.raises(ValueError, match="(?i)weight|real|positive|Hermitian"):
+        bc.check_hermitian_preconditions(ident, W)
+
+
+def test_preconditions_error_on_non_hermitian_kernel():
+    """Even with a perfectly physical weight, a non-Hermitian symmetrized
+    kernel must ERROR and name the residual."""
+    from hwave.solver import bond_channels as bc
+
+    n = 6
+    rng = np.random.default_rng(11)
+    M = rng.normal(size=(n, n))
+    M_ns = M.copy()
+    M_ns[0, 1] += 3.0                      # deliberately non-symmetric
+    W = np.ones((n, 1, 1, 1, 1))           # identity metric, w = 1 >= 0
+    op_ns = LinearOperator((n, n), matvec=lambda v: M_ns @ v, dtype=complex)
+    with pytest.raises(ValueError, match="(?i)hermit"):
+        bc.check_hermitian_preconditions(op_ns, W)
+
+    M_h = 0.5 * (M + M.T)
+    op_h = LinearOperator((n, n), matvec=lambda v: M_h @ v, dtype=complex)
+    diag = bc.check_hermitian_preconditions(op_h, W)
+    assert diag["kernel_hermiticity_residual"] < 1e-10
+
+
+def test_bond_run_reports_lambda_attribution(tmpout):
+    """End-to-end: a bond run records the pp/fl attribution in the eigenvalue
+    file provenance (S4.5/S7.10b)."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d_on = os.path.join(tmpout, "on")
+    sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci, bond_channels=True))
+    text = open(os.path.join(d_on, "eigenvalue.dat")).read()
+    assert "lambda_pp" in text and "lambda_fl" in text
+    vals = {}
+    for line in text.splitlines():
+        if line.startswith("#") and "=" in line:
+            k, _, v = line.lstrip("# ").partition("=")
+            vals[k.strip()] = v.strip()
+    lam = float(vals["lambda_rayleigh"])
+    assert (float(vals["lambda_pp"]) + float(vals["lambda_fl"])
+            == pytest.approx(lam, abs=1e-8))
+
+
+# --- (c) the odd f-wave seed ----------------------------------------------
+
+def _gap_parity_residual(sigma):
+    """max |Delta(-k) + Delta(k)| (0 for a perfectly ODD gap)."""
+    flipped = np.roll(sigma[:, :, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
+    return np.abs(flipped + sigma).max()
+
+
+def _gap_even_residual(sigma):
+    flipped = np.roll(sigma[:, :, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
+    return np.abs(flipped - sigma).max()
+
+
+def test_initialize_gap_f_wave_is_odd():
+    """S7.7: the f-like seed sin kx (cos kx - cos ky) is ODD under k -> -k."""
+    Nx = Ny = 8
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+    for mode in ("f_x", "f_y"):
+        sigma = sc._initialize_gap(mode, 1, kx, ky, kz)
+        assert np.linalg.norm(sigma) == pytest.approx(1.0)
+        assert _gap_parity_residual(sigma) < 1e-12
+        assert not sc._is_gap_parity(sigma, "singlet")
+        assert sc._is_gap_parity(sigma, "triplet")
+
+    # f_x is the specified form factor, not a p-wave in disguise
+    KX, KY, _ = np.meshgrid(kx, ky, kz, indexing='ij')
+    ref = np.sin(KX) * (np.cos(KX) - np.cos(KY))
+    ref = ref / np.linalg.norm(ref)
+    got = sc._initialize_gap("f_x", 1, kx, ky, kz)[0, 0]
+    np.testing.assert_allclose(got, ref, atol=1e-12)
+    # and it is linearly independent of p_x
+    px = sc._initialize_gap("p_x", 1, kx, ky, kz)[0, 0]
+    assert abs(np.vdot(px.ravel(), ref.ravel())) < 1e-12
+
+
+def test_initialize_gap_existing_seeds_unchanged():
+    """No regression: the pre-existing seeds keep their parity/values."""
+    Nx = Ny = 8
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+    KX, KY, _ = np.meshgrid(kx, ky, kz, indexing='ij')
+    cases = {
+        "p_x": np.sin(KX),
+        "d_x2y2": np.cos(KX) - np.cos(KY),
+        "cos": np.cos(KX + KY),
+        "s_ext_2d": np.cos(KX) * np.cos(KY),
+    }
+    for mode, ref in cases.items():
+        ref = ref / np.linalg.norm(ref)
+        got = sc._initialize_gap(mode, 1, kx, ky, kz)[0, 0]
+        np.testing.assert_allclose(got, ref, atol=1e-12)
+    assert _gap_parity_residual(sc._initialize_gap("p_x", 1, kx, ky, kz)) < 1e-12
+    assert _gap_even_residual(sc._initialize_gap("d_x2y2", 1, kx, ky, kz)) < 1e-12
+    with pytest.raises(ValueError, match="(?i)unknown init_gap"):
+        sc._initialize_gap("not_a_mode", 1, kx, ky, kz)
+
+
+# --- (d) invariant-subspace tracking (S7.7) -------------------------------
+
+def _basis_vec(n, idx):
+    v = np.zeros(n, dtype=complex)
+    v[idx] = 1.0
+    return v
+
+
+def test_track_subspace_follows_degenerate_branch_not_single_vector():
+    """S7.7 (iii)+(iv): near-degenerate eigenpairs are clustered into an
+    invariant subspace and tracked by PRINCIPAL-ANGLE overlap of the whole
+    subspace.  This test is discriminating: a naive "max overlap of one
+    eigenvector" rule follows the WRONG branch here, because the degenerate
+    pair comes back in a rotated basis (each rotated vector only has 1/sqrt(2)
+    overlap with the previous single vector) while a nearby non-degenerate
+    competitor has 0.8."""
+    from hwave.solver import bond_channels as bc
+
+    n = 5
+    e1, e2, e3 = (_basis_vec(n, 0), _basis_vec(n, 1), _basis_vec(n, 2))
+    e4 = _basis_vec(n, 3)
+    p0 = (np.array([1.0, 1.0, 0.99, 0.5]),
+          np.stack([e1, e2, e3, e4]))
+    u1 = (e1 + e2) / np.sqrt(2.0)
+    u2 = (e1 - e2) / np.sqrt(2.0)
+    competitor = 0.8 * e1 + 0.6 * e3
+    p1 = (np.array([1.02, 1.02, 1.01, 0.4]),
+          np.stack([u1, u2, competitor, e4]))
+
+    out = bc.track_subspace([p0, p1], seed=e1, deg_tol=1e-3)
+    assert len(out) == 2
+    assert out[0]["lambda"] == pytest.approx(1.0)
+    assert out[0]["dim"] == 2
+    # the tracked branch is the 2D degenerate one (1.02), NOT the 1.01
+    # competitor a single-vector rule would pick
+    assert out[1]["lambda"] == pytest.approx(1.02)
+    assert out[1]["dim"] == 2
+    assert out[1]["overlap"] == pytest.approx(1.0, abs=1e-10)
+    assert out[1]["captured"]
+
+    # the naive rule really does fail here (this is what makes the test
+    # discriminating, not just passing)
+    naive = max(range(4), key=lambda i: abs(np.vdot(e1, p1[1][i])))
+    assert p1[0][naive] == pytest.approx(1.01)
+
+
+def test_track_subspace_anchors_on_f_seed_not_leading_lambda():
+    """S7.7 (v): at V = 0 the tracked subspace is the one with maximal overlap
+    with the odd f-seed -- not simply the largest eigenvalue."""
+    from hwave.solver import bond_channels as bc
+
+    n = 4
+    e1, e2 = _basis_vec(n, 0), _basis_vec(n, 1)
+    pts = [(np.array([2.0, 0.5]), np.stack([e1, e2]))]
+    out = bc.track_subspace(pts, seed=e2, deg_tol=1e-3)
+    assert out[0]["lambda"] == pytest.approx(0.5)
+    out2 = bc.track_subspace(pts, seed=e1, deg_tol=1e-3)
+    assert out2[0]["lambda"] == pytest.approx(2.0)
+
+
+def test_track_subspace_adaptive_n_ev():
+    """S7.7: when the tracked subspace is not captured by the current n_ev the
+    tracker re-solves with a larger n_ev (points given as callables)."""
+    from hwave.solver import bond_channels as bc
+
+    n = 6
+    e = [_basis_vec(n, i) for i in range(n)]
+    calls = []
+
+    def point0(n_ev):
+        calls.append(("p0", n_ev))
+        return np.array([1.0]), np.stack([e[0]])
+
+    def point1(n_ev):
+        calls.append(("p1", n_ev))
+        # the tracked state is only the 4th eigenpair at this V
+        vals = np.array([3.0, 2.0, 1.5, 1.1, 0.2, 0.1])[:n_ev]
+        vecs = np.stack([e[1], e[2], e[3], e[0], e[4], e[5]])[:n_ev]
+        return vals, vecs
+
+    out = bc.track_subspace([point0, point1], seed=e[0], deg_tol=1e-3,
+                            n_ev=2, max_n_ev=8, capture_tol=0.5)
+    assert out[1]["lambda"] == pytest.approx(1.1)
+    assert out[1]["captured"]
+    assert out[1]["n_ev"] > 2               # it escalated
+    assert any(name == "p1" and k > 2 for name, k in calls)
+
+
+def test_track_subspace_harmonic_decomposition():
+    """S7.7: the tracked subspace is reported as a decomposition onto the
+    normalized odd basis {sin kx, sin ky, sin kx(cos kx - cos ky),
+    sin ky(cos ky - cos kx)}."""
+    from hwave.solver import bond_channels as bc
+
+    Nx = Ny = 8
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
+    basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+    assert set(basis) == {"p_x", "p_y", "f_x", "f_y"}
+
+    f_x = basis["f_x"]
+    p_x = basis["p_x"]
+    mix = (f_x + p_x) / np.linalg.norm(f_x + p_x)
+
+    pts = [(np.array([1.0]), np.stack([f_x])),
+           (np.array([1.1]), np.stack([mix]))]
+    out = bc.track_subspace(pts, seed=f_x, deg_tol=1e-3, basis=basis)
+    assert out[0]["harmonics"]["f_x"] == pytest.approx(1.0, abs=1e-8)
+    assert out[0]["harmonics"]["p_x"] == pytest.approx(0.0, abs=1e-8)
+    assert out[1]["harmonics"]["f_x"] == pytest.approx(0.5, abs=1e-8)
+    assert out[1]["harmonics"]["p_x"] == pytest.approx(0.5, abs=1e-8)
+    assert out[1]["harmonics"]["p_y"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_track_subspace_uses_the_gg_metric():
+    """S7.7 (i): the inner product is the sqrt(GG)-weighted Hermitian form, so
+    a non-uniform weight changes which branch is tracked."""
+    from hwave.solver import bond_channels as bc
+
+    n = 3
+    e0, e1, _ = (_basis_vec(n, i) for i in range(3))
+    seed = 0.8 * e0 + 0.6 * e1
+    pts = [(np.array([1.0, 0.9]), np.stack([e0, e1]))]
+    # identity metric: the seed leans on e0, so the lambda=1.0 branch wins.
+    out = bc.track_subspace(pts, seed=seed, weight=np.ones(n), deg_tol=1e-3)
+    assert out[0]["lambda"] == pytest.approx(1.0)
+    # a metric that suppresses component 0 (as a vanishing GG weight would)
+    # flips the anchor onto the lambda=0.9 branch.
+    out2 = bc.track_subspace(pts, seed=seed, deg_tol=1e-3,
+                             weight=np.array([1e-6, 1.0, 1.0]))
+    assert out2[0]["lambda"] == pytest.approx(0.9)
+
+
+# --- covering tests: kernel split, probe path, metric guards --------------
+
+def test_kernel_parts_sum_to_the_full_operator():
+    """K = K^fl + K^pp as an OPERATOR identity (not just on the eigenvector),
+    and ``make_bond_kernel(part=...)`` selects the same pieces."""
+    from hwave.solver import bond_channels as bc
+
+    f = _physical_single_band(V=0.7)
+    args = (f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+            f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+    A, A_fl, A_pp, n = bc.make_bond_kernel_parts(*args)
+    A_only, n2 = bc.make_bond_kernel(*args)
+    A_fl2, _ = bc.make_bond_kernel(*args, part="fluctuation")
+    A_pp2, _ = bc.make_bond_kernel(*args, part="instantaneous")
+    assert n == n2
+
+    rng = np.random.default_rng(19)
+    for _ in range(3):
+        v = rng.normal(size=n) + 1j * rng.normal(size=n)
+        full = A.matvec(v)
+        np.testing.assert_allclose(full, A_only.matvec(v), atol=1e-12)
+        np.testing.assert_allclose(A_fl.matvec(v) + A_pp.matvec(v), full,
+                                   atol=1e-12)
+        np.testing.assert_allclose(A_fl2.matvec(v), A_fl.matvec(v), atol=1e-12)
+        np.testing.assert_allclose(A_pp2.matvec(v), A_pp.matvec(v), atol=1e-12)
+
+    with pytest.raises(ValueError, match="(?i)unknown part"):
+        bc.make_bond_kernel(*args, part="nonsense")
+
+
+def test_precondition_probe_path_matches_dense_verdict():
+    """Above ``dense_limit`` the Hermiticity residual is estimated
+    stochastically; it must still PASS a Hermitian kernel and ERROR on a
+    non-Hermitian one (deterministic given the seed)."""
+    from hwave.solver import bond_channels as bc
+
+    f = _physical_single_band(V=1.0)
+    A, _, _, n = bc.make_bond_kernel_parts(
+        f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+        f["Vpp_t"], f["green"], f["bond_set"], "singlet", f["beta"])
+    W = bc.pair_weight(f["green"], f["beta"])
+    diag = bc.check_hermitian_preconditions(A, W, dense_limit=0)
+    assert diag["method"] == "probe"
+    assert diag["kernel_hermiticity_relative"] < 1e-8
+
+    broken = LinearOperator(
+        (n, n), matvec=lambda v: A.matvec(v) + 0.5 * np.roll(v, 1),
+        dtype=complex)
+    with pytest.raises(ValueError, match="(?i)hermit"):
+        bc.check_hermitian_preconditions(broken, W, dense_limit=0)
+
+
+def test_attribute_lambda_rejects_a_null_metric_vector():
+    from hwave.solver import bond_channels as bc
+
+    n = 4
+    zero = LinearOperator((n, n), matvec=lambda v: 0.0 * v, dtype=complex)
+    v = np.zeros(n, dtype=complex)
+    v[0] = 1.0
+    with pytest.raises(ValueError, match="(?i)rayleigh|positive|W-norm"):
+        bc.attribute_lambda(v, np.array([0.0, 1.0, 1.0, 1.0]), zero, zero)
+
+
+def test_cluster_eigenvalues_and_subspace_similarity_basics():
+    from hwave.solver import bond_channels as bc
+
+    cl = bc.cluster_eigenvalues(np.array([1.0, 0.5, 1.0005, 0.4995]),
+                                deg_tol=1e-3)
+    assert [sorted(c) for c in cl] == [[0, 2], [1, 3]]
+    # a tighter tolerance splits them
+    cl2 = bc.cluster_eigenvalues(np.array([1.0, 0.5, 1.0005, 0.4995]),
+                                 deg_tol=1e-6)
+    assert [len(c) for c in cl2] == [1, 1, 1, 1]
+
+    # subspace similarity is invariant under a rotation inside the subspace
+    rng = np.random.default_rng(4)
+    Q = np.linalg.qr(rng.normal(size=(5, 5)))[0]
+    S = Q[:2]
+    theta = 0.7
+    R = np.array([[np.cos(theta), -np.sin(theta)],
+                  [np.sin(theta), np.cos(theta)]])
+    s1, _ = bc.subspace_similarity(S, R @ S)
+    assert s1 == pytest.approx(1.0, abs=1e-12)
+    s2, cos = bc.subspace_similarity(S, Q[2:4])
+    assert s2 == pytest.approx(0.0, abs=1e-12)
+    assert len(cos) == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 7 review fixes: C1 (iteration-mode lambda vs lambda_rayleigh),
+# I2 (precondition tolerance scaled by the weight conditioning), I3 (subspace
+# tracking on a REAL kernel with the 5-D pair-weight metric), M5-M8.
+# ---------------------------------------------------------------------------
+
+def _provenance_keys(path):
+    """``# key = value`` comment lines of an eigenvalue file, as a dict."""
+    vals = {}
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("#") and "=" in line:
+                k, _, v = line.lstrip("# ").partition("=")
+                vals[k.strip()] = v.strip()
+    return vals
+
+
+def test_iteration_mode_lambda_is_flagged_against_lambda_rayleigh(tmpout,
+                                                                  caplog):
+    """C1: on a repulsive-dominant bond kernel the power iterate's norm
+    (positive, unconverged) and the signed Rayleigh quotient
+    ``lambda_rayleigh`` (negative) land in the SAME file. The artifact must
+    record which solver mode produced the number and whether it converged, the
+    run must warn, and the file must say in words that the iteration value is
+    an unsigned iterate norm."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d_on = os.path.join(tmpout, "on")
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
+                                       bond_channels=True,
+                                       solver_mode="iteration"))
+    path = os.path.join(d_on, "eigenvalue.dat")
+    vals = _provenance_keys(path)
+
+    # (a) provenance records the mode and the convergence flag
+    assert vals["lambda_rayleigh_solver_mode"] == "iteration"
+    assert vals["lambda_rayleigh_converged"] == "False"
+
+    # the situation this guards against really occurs on this kernel: the two
+    # numbers in the file have OPPOSITE signs
+    lam_rayleigh = float(vals["lambda_rayleigh"])
+    lam_iter = _leading_eigenvalue(d_on)
+    assert lam_rayleigh < 0.0 < lam_iter
+
+    # (b) a warning names both quantities and recommends the eigenvalue mode
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "lambda_rayleigh" in msgs
+    assert "unsigned" in msgs.lower()
+    assert "solver_mode" in msgs and "eigenvalue" in msgs
+
+    # (c) the artifact itself distinguishes the two numbers
+    lines = open(path).read().splitlines()
+    idx = lines.index("# Iteration eigenvalue")
+    note = " ".join(l for l in lines[idx + 1:] if l.startswith("#")).lower()
+    assert "unsigned" in note
+    assert "lambda_rayleigh" in note
+    assert "did not converge" in note
+    # ... and the numeric row is still the first non-comment line
+    assert lam_iter == pytest.approx(lam_iter)
+
+
+def test_iteration_with_spectral_shift_converges_and_matches_eigenvalue_mode(
+        tmpout, caplog):
+    """The payoff of the power-iteration spectral shift: the repulsive-dominant
+    bond kernel (dominant eigenvalue ~ -2.75) makes the plain power iteration
+    flip sign every step and never converge. Iterating on K + sigma*I and
+    subtracting sigma back converges to the SIGNED physical eigenvalue, which
+    must agree with ``solver_mode="eigenvalue"`` and with the Task-7
+    ``lambda_rayleigh`` attribution."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    # d_x2y2 seed: the leading in-sector eigenvector of this kernel. A seed
+    # orthogonal to it (the default "cos") converges to a sub-leading mode --
+    # a property of power iteration itself, unrelated to the shift.
+    common = dict(coulomb_inter=ci, bond_channels=True, init_gap="d_x2y2")
+
+    d_it = os.path.join(tmpout, "iter")
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_base_input(d_it, solver_mode="iteration",
+                                       spectral_shift="auto", alpha=0.0,
+                                       max_iter=3000, convergence_tol=1e-9,
+                                       **common))
+    d_ev = os.path.join(tmpout, "eig")
+    sc.calc_eliashberg(_base_input(d_ev, solver_mode="eigenvalue",
+                                   num_eigenvalues=10, **common))
+
+    vals_it = _provenance_keys(os.path.join(d_it, "eigenvalue.dat"))
+    vals_ev = _provenance_keys(os.path.join(d_ev, "eigenvalue.dat"))
+
+    # (a) it converges now (it structurally could not before)
+    assert vals_it["lambda_rayleigh_converged"] == "True"
+
+    lam_it = _leading_eigenvalue(d_it)
+    lam_ev = _leading_eigenvalue(d_ev)
+    # (b) the reported number is the un-shifted, signed eigenvalue and agrees
+    #     with the eigenvalue solver ...
+    assert lam_it == pytest.approx(lam_ev, rel=1e-6)
+    # (c) ... and with the signed Rayleigh quotient of the same run
+    assert lam_it == pytest.approx(float(vals_it["lambda_rayleigh"]), rel=1e-6)
+    assert float(vals_it["lambda_rayleigh"]) == pytest.approx(
+        float(vals_ev["lambda_rayleigh"]), rel=1e-6)
+
+    # (d) the "unsigned iterate norm" warning must NOT fire for a shifted,
+    #     converged run -- the value really is a signed eigenvalue
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "unsigned" not in msgs.lower()
+
+
+def test_eigenvalue_mode_provenance_marks_convergence_not_applicable(tmpout,
+                                                                     caplog):
+    """C1: with ``solver_mode='eigenvalue'`` there is no power iterate, so the
+    convergence flag is ``n/a`` and no unsigned-norm warning is emitted."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d_on = os.path.join(tmpout, "on")
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
+                                       bond_channels=True,
+                                       solver_mode="eigenvalue",
+                                       num_eigenvalues=3))
+    vals = _provenance_keys(os.path.join(d_on, "eigenvalue.dat"))
+    assert vals["lambda_rayleigh_solver_mode"] == "eigenvalue"
+    assert vals["lambda_rayleigh_converged"] == "n/a"
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "unsigned iterate norm" not in msgs.lower()
+
+
+def test_precondition_catches_a_violation_on_a_small_weight_index():
+    """I2 (kept; re-referred by the I1 fix): a Hermiticity violation sitting
+    on a badly-conditioned (small-``w``) index must still be caught.
+
+    The residual is measured on ``M = W K`` but the criterion is about
+    ``K~ = W^-1/2 M W^-1/2``, and the two weight such a violation differently:
+    ``M`` suppresses it by ``w_i w_j`` (which HIDES it -- the original I2
+    finding), ``K~`` by ``sqrt(w_i w_j)``, which is exactly its effect on
+    ``Im lambda``.  The check therefore compares the EXACT ``K~`` residual
+    against an equally ``K~``-referred scale (the I1 fix), and the violation
+    below is caught while the same kernel without it passes.
+    """
+    from hwave.solver import bond_channels as bc
+
+    n = 8
+    w = np.ones(n)
+    w[n - 1] = 1.0e-6                     # the badly-conditioned index
+    gamma = np.eye(n, dtype=complex)
+    gamma[n - 1, 0] += 1.0j               # a NON-Hermitian vertex entry
+    # the kernel always factorizes as K = -Gamma W (make_bond_kernel_parts)
+    K = -gamma * w[np.newaxis, :]
+    op = LinearOperator((n, n), matvec=lambda v: K @ v, dtype=complex)
+
+    M = w[:, np.newaxis] * K
+    resid_M = np.linalg.norm(M - np.conj(M.T))
+    scale_M = np.linalg.norm(M)
+    atol = rtol = 1.0e-6
+    # on M the violation is doubly suppressed (w_{n-1} w_0) and hides ...
+    assert resid_M < max(atol, rtol * scale_M)
+
+    # ... on K~ it is only suppressed by sqrt(w_{n-1} w_0) and is caught
+    s = np.sqrt(w)
+    Kt = -(s[:, np.newaxis] * gamma * s[np.newaxis, :])
+    assert (np.linalg.norm(Kt - np.conj(Kt.T))
+            > max(atol, rtol * np.linalg.norm(Kt)))
+    with pytest.raises(ValueError, match="(?i)hermit") as exc:
+        bc.check_hermitian_preconditions(op, w, atol=atol, rtol=rtol)
+    # the message quotes the EXACT K~ residual, not a /w_min bound
+    assert "{:.3e}".format(
+        np.linalg.norm(Kt - np.conj(Kt.T))) in str(exc.value)
+
+    # the same kernel with a Hermitian vertex passes on the same metric
+    op_ok = LinearOperator(
+        (n, n), matvec=lambda v: (-np.eye(n) * w[np.newaxis, :]) @ v,
+        dtype=complex)
+    diag = bc.check_hermitian_preconditions(op_ok, w, atol=atol, rtol=rtol)
+    assert diag["kernel_hermiticity_residual_ktilde"] < 1e-12
+
+
+def test_precondition_criterion_is_ktilde_referred_on_both_sides():
+    """I1 (the real bug): the residual was referred to ``K~`` (divided by
+    ``w_min``) but the tolerance scale stayed ``||M||_F``, so the relative
+    criterion was ``w_min`` times stricter than requested -- i.e. it tightened
+    with beta.  A kernel that is Hermitian to 1e-12 RELATIVE in the ``K~``
+    metric must be accepted no matter how small ``min w`` is."""
+    from hwave.solver import bond_channels as bc
+
+    n = 12
+    rng = np.random.default_rng(20260726)
+    # a pair weight with the wide dynamic range w = GG acquires at large beta
+    w = np.geomspace(1.0, 1.0e-6, n)
+    G = rng.normal(size=(n, n)) + 1j * rng.normal(size=(n, n))
+    gamma = 0.5 * (G + np.conj(G.T))                    # Hermitian vertex
+    A = 0.5 * (G - np.conj(G.T))                        # anti-Hermitian
+    eps_rel = 1.0e-12                                   # negligible asymmetry
+    gamma_noisy = gamma + eps_rel * A
+    # K = -Gamma W (the factorization the bond kernel has by construction)
+    K = -gamma_noisy * w[np.newaxis, :]
+    op = LinearOperator((n, n), matvec=lambda v: K @ v, dtype=complex)
+
+    # the K~ asymmetry is ~1e-12 relative -- physically fine
+    s = np.sqrt(w)
+    Kt = -(s[:, np.newaxis] * gamma_noisy * s[np.newaxis, :])
+    assert (np.linalg.norm(Kt - np.conj(Kt.T))
+            < 1.0e-10 * np.linalg.norm(Kt))
+
+    # the OLD criterion (K~-referred residual vs an M-referred scale) refuses
+    M = w[:, np.newaxis] * K
+    resid_M = np.linalg.norm(M - np.conj(M.T))
+    assert resid_M / w.min() > max(1e-8, 1e-8 * np.linalg.norm(M))
+
+    diag = bc.check_hermitian_preconditions(op, w)      # must NOT raise
+    assert diag["kernel_hermiticity_relative_ktilde"] < 1.0e-10
+
+    # ... while a genuine violation on the SAME badly-conditioned metric is
+    # still caught (the fix must not just disable the check)
+    bad = gamma + 1.0e-4 * A
+    K_bad = -bad * w[np.newaxis, :]
+    op_bad = LinearOperator((n, n), matvec=lambda v: K_bad @ v, dtype=complex)
+    with pytest.raises(ValueError, match="(?i)hermit"):
+        bc.check_hermitian_preconditions(op_bad, w)
+
+
+def test_precondition_scaled_tolerance_still_passes_the_physical_kernel():
+    """I2 regression: tightening the criterion must not turn the physical
+    bond kernel into a false alarm."""
+    from hwave.solver import bond_channels as bc
+
+    f = _physical_single_band(V=1.0)
+    A, _, _, n = bc.make_bond_kernel_parts(
+        f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+        f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+    W = bc.pair_weight(f["green"], f["beta"])
+    diag = bc.check_hermitian_preconditions(A, W)
+    assert diag["weight_min_eigenvalue"] > 0.0
+    assert diag["kernel_hermiticity_residual_ktilde"] < 1e-9
+
+
+def test_precondition_dense_branch_checks_the_kernel_parts(caplog):
+    """M8: the S4.5 attribution needs EACH part Hermitian, not only the sum;
+    the dense branch reports the part-wise residual and warns when a
+    violation cancels between the parts."""
+    from hwave.solver import bond_channels as bc
+
+    f = _physical_single_band(V=1.0)
+    A, A_fl, A_pp, n = bc.make_bond_kernel_parts(
+        f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+        f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+    W = bc.pair_weight(f["green"], f["beta"])
+
+    diag = bc.check_hermitian_preconditions(A, W,
+                                            parts={"pp": A_pp, "fl": A_fl})
+    assert diag["part_hermiticity_residual_pp"] < 1e-9
+    assert diag["part_hermiticity_residual_fl"] < 1e-9
+
+    # a violation that CANCELS between the parts leaves the full kernel
+    # Hermitian -- only the part-wise check can see it
+    def _bad(op, sgn):
+        return LinearOperator(
+            (n, n), matvec=lambda v, op=op, sgn=sgn: (
+                op.matvec(v) + sgn * 0.5 * np.roll(v, 1)),
+            dtype=complex)
+
+    with caplog.at_level(logging.WARNING):
+        diag2 = bc.check_hermitian_preconditions(
+            A, W, parts={"pp": _bad(A_pp, +1.0), "fl": _bad(A_fl, -1.0)})
+    assert diag2["part_hermiticity_residual_pp"] > 1e-3
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "pp" in msgs and "hermit" in msgs.lower()
+
+    # the probe branch does not build the parts densely
+    diag3 = bc.check_hermitian_preconditions(A, W, dense_limit=0,
+                                             parts={"pp": A_pp, "fl": A_fl})
+    assert "part_hermiticity_residual_pp" not in diag3
+
+
+def test_precondition_options_are_threaded_from_the_eliashberg_config(tmpout,
+                                                                      caplog):
+    """M7: ``bond_precondition_atol/rtol/dense_limit`` reach
+    ``check_hermitian_preconditions`` so the acceptance run can tune them."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+
+    # dense_limit = 0 forces the randomized probe estimator
+    d_probe = os.path.join(tmpout, "probe")
+    with caplog.at_level(logging.INFO, logger="hwave_sc"):
+        sc.calc_eliashberg(_base_input(d_probe, coulomb_inter=ci,
+                                       bond_channels=True,
+                                       bond_precondition_dense_limit=0))
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "probe check" in msgs
+
+    # an impossible tolerance must actually reach the check and fail the run
+    d_tight = os.path.join(tmpout, "tight")
+    with pytest.raises(ValueError, match="(?i)hermit"):
+        sc.calc_eliashberg(_base_input(d_tight, coulomb_inter=ci,
+                                       bond_channels=True,
+                                       bond_precondition_atol=0.0,
+                                       bond_precondition_rtol=1.0e-30))
+
+
+def test_precondition_options_ignored_with_warning_when_flag_off(tmpout,
+                                                                 caplog):
+    """M7: like the other bond options, the precondition knobs are ignored
+    with a warning when ``bond_channels=false``."""
+    d = os.path.join(tmpout, "off")
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_base_input(d, bond_channels=False,
+                                       bond_precondition_atol=1e-3))
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "bond_precondition_atol" in msgs
+
+
+def test_cluster_eigenvalues_uses_the_complex_distance():
+    """M6: two eigenvalues with the same real part but different imaginary
+    parts are NOT degenerate; clustering must use |lambda_i - lambda_j|."""
+    from hwave.solver import bond_channels as bc
+
+    ev = np.array([1.0 + 0.0j, 1.0 + 0.5j])
+    assert [len(c) for c in bc.cluster_eigenvalues(ev, deg_tol=1e-3)] == [1, 1]
+    # genuinely degenerate complex pairs still group
+    ev2 = np.array([1.0 + 0.5j, 1.0 + 0.5j + 1e-6])
+    assert [len(c) for c in bc.cluster_eigenvalues(ev2, deg_tol=1e-3)] == [2]
+
+
+def test_subspace_similarity_tie_resolves_to_the_leading_cluster():
+    """M5: the documented tiebreak -- equal mean-cos^2 scores go to the FIRST
+    cluster in lambda-descending order."""
+    from hwave.solver import bond_channels as bc
+
+    n = 4
+    e0, e1 = _basis_vec(n, 0), _basis_vec(n, 1)
+    seed = (e0 + e1) / np.sqrt(2.0)          # exactly 0.5 with both clusters
+    pts = [(np.array([2.0, 1.0]), np.stack([e0, e1]))]
+    out = bc.track_subspace(pts, seed=seed, deg_tol=1e-3)
+    assert out[0]["overlap"] == pytest.approx(0.5, abs=1e-12)
+    assert out[0]["lambda"] == pytest.approx(2.0)
+
+
+def test_track_subspace_on_the_physical_kernel_with_the_pair_weight_metric():
+    """I3: exercise the tracker end-to-end on a REAL bond kernel with the 5-D
+    ``pair_weight`` metric (the Task-8 interface), at two ``V`` points.
+
+    ``scipy.sparse.linalg.eigs`` returns eigenvectors as COLUMNS while
+    ``track_subspace`` wants one per ROW -- hence the transpose."""
+    from hwave.solver import bond_channels as bc
+    from scipy.sparse.linalg import eigs
+
+    points = []
+    weight = seed = basis = None
+    for V in (0.0, 0.5):
+        f = _physical_single_band(V=V)
+        A, _, _, n = bc.make_bond_kernel_parts(
+            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
+            f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+        vals, vecs = eigs(A, k=6, which="LR", maxiter=20000, tol=0)
+        points.append((vals, vecs.T))          # ROWS, not columns
+        if weight is None:
+            kx, ky, kz = f["kgrid"]
+            weight = bc.pair_weight(f["green"], f["beta"])
+            basis = sc._odd_harmonic_basis(f["norb"], kx, ky, kz)
+            seed = sc._initialize_gap("f_x", f["norb"], kx, ky, kz).ravel()
+
+    # the metric really is the 5-D per-k orbital-pair form
+    assert weight.ndim == 5 and weight.shape[:3] == f["shape"]
+
+    recs = bc.track_subspace(points, seed=seed, weight=weight, basis=basis,
+                             deg_tol=1e-3)
+    assert len(recs) == 2
+
+    for rec in recs:
+        assert rec["captured"]
+        # well-formed harmonic decomposition: each fraction in [0, 1], and the
+        # total cannot exceed the dimension of the tracked subspace
+        for name, frac in rec["harmonics"].items():
+            assert -1e-10 <= frac <= 1.0 + 1e-10, name
+        assert sum(rec["harmonics"].values()) <= rec["dim"] + 1e-8
+        # W-orthonormal basis of the tracked subspace (5-D metric applied)
+        gram = bc._metric_inner(weight, rec["vectors"], rec["vectors"])
+        np.testing.assert_allclose(gram, np.eye(rec["dim"]), atol=1e-8)
+
+    # the tracked cluster is STABLE across the two V points: same dimension,
+    # dominantly f-wave at both, and a high principal-angle overlap
+    assert recs[0]["dim"] == recs[1]["dim"]
+    assert recs[1]["overlap"] > 0.5
+    for rec in recs:
+        f_wave = rec["harmonics"]["f_x"] + rec["harmonics"]["f_y"]
+        p_wave = rec["harmonics"]["p_x"] + rec["harmonics"]["p_y"]
+        assert f_wave > 10.0 * max(p_wave, 1e-12)
+
+
+# ---------------------------------------------------------------------------
+# [eliashberg] bond_green -- externally supplied Green function (spec Goal)
+# ---------------------------------------------------------------------------
+
+def _bare_green_npz(path, inp):
+    """Write the SAME bare Green function ``calc_eliashberg`` would build for
+    ``inp``, in the H-wave ``(nblock, nfreq, nvol, norb, norb)`` npz layout."""
+    mode_param = inp["mode"]["param"]
+    beta = 1.0 / mode_param["T"]
+    nmat = mode_param["Nmat"]
+    Lx, Ly, Lz = mode_param["CellShape"]
+    geom_info, hr, _ = sc._read_interaction_files(inp)
+    norb = geom_info["norb"]
+    kx = np.linspace(0, 2.0 * np.pi, Lx, endpoint=False)
+    ky = np.linspace(0, 2.0 * np.pi, Ly, endpoint=False)
+    kz = np.linspace(0, 2.0 * np.pi, Lz, endpoint=False)
+    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
+    evals, evecs = sc._calc_eigenvalues(eps)
+    mu = sc._determine_mu(evals, beta, mode_param["filling"], norb)
+    green = sc._calc_green(evals, evecs, mu, beta, nmat)
+    raw = green.transpose(5, 2, 3, 4, 0, 1).reshape(
+        1, nmat, Lx * Ly * Lz, norb, norb)
+    np.savez(path, green=raw)
+    return green
+
+
+def _numeric_rows(path):
+    rows = []
+    with open(path) as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                rows.append([float(x) for x in line.split()])
+    return rows
+
+
+def test_bond_green_is_actually_consumed(tmpout):
+    """``bond_green`` replaces the bare ``_calc_green``: feeding back exactly
+    the bare green reproduces the no-``bond_green`` run number for number
+    (proving the layout round-trip is right), while a different green gives a
+    different lambda (proving the file is really used)."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+
+    d_bare = os.path.join(tmpout, "bare")
+    inp_bare = _base_input(d_bare, coulomb_inter=ci, bond_channels=True,
+                           solver_mode="eigenvalue", num_eigenvalues=3)
+    sc.calc_eliashberg(inp_bare)
+
+    gpath = os.path.join(tmpout, "green.npz")
+    green = _bare_green_npz(gpath, inp_bare)
+
+    d_ext = os.path.join(tmpout, "ext")
+    sc.calc_eliashberg(_base_input(d_ext, coulomb_inter=ci,
+                                   bond_channels=True, bond_green=gpath,
+                                   solver_mode="eigenvalue",
+                                   num_eigenvalues=3))
+    got = _numeric_rows(os.path.join(d_ext, "eigenvalue.dat"))
+    ref = _numeric_rows(os.path.join(d_bare, "eigenvalue.dat"))
+    assert len(got) == len(ref)
+    for row_got, row_ref in zip(got, ref):
+        # ARPACK is not bit-reproducible; everything upstream of it is, so an
+        # agreement at 1e-10 pins the green (a different green moves lambda by
+        # O(1), see below)
+        assert row_got == pytest.approx(row_ref, abs=1e-10)
+
+    # a DIFFERENT green must move lambda (and must not be silently ignored)
+    gpath2 = os.path.join(tmpout, "green_scaled.npz")
+    raw = np.load(gpath)["green"]
+    np.savez(gpath2, green=0.8 * raw)
+    d_ext2 = os.path.join(tmpout, "ext2")
+    sc.calc_eliashberg(_base_input(d_ext2, coulomb_inter=ci,
+                                   bond_channels=True, bond_green=gpath2,
+                                   solver_mode="eigenvalue",
+                                   num_eigenvalues=3))
+    lam_ref = _numeric_rows(os.path.join(d_bare, "eigenvalue.dat"))[0][0]
+    lam_alt = _numeric_rows(os.path.join(d_ext2, "eigenvalue.dat"))[0][0]
+    assert abs(lam_alt - lam_ref) > 1e-6 * max(1.0, abs(lam_ref))
+    assert green.shape[-1] == inp_bare["mode"]["param"]["Nmat"]
+
+
+def test_bond_green_provenance_says_which_green_ran(tmpout):
+    """The recorded approximation level must distinguish the bare green from
+    an externally supplied one -- they are different approximations."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+
+    d_bare = os.path.join(tmpout, "bare")
+    inp_bare = _base_input(d_bare, coulomb_inter=ci, bond_channels=True,
+                           solver_mode="eigenvalue", num_eigenvalues=3)
+    sc.calc_eliashberg(inp_bare)
+    vals = _provenance_keys(os.path.join(d_bare, "eigenvalue.dat"))
+    assert "bond_green" not in vals
+    assert "bare" in vals["approximation"].lower()
+
+    gpath = os.path.join(tmpout, "green.npz")
+    _bare_green_npz(gpath, inp_bare)
+    d_ext = os.path.join(tmpout, "ext")
+    sc.calc_eliashberg(_base_input(d_ext, coulomb_inter=ci,
+                                   bond_channels=True, bond_green=gpath,
+                                   solver_mode="eigenvalue",
+                                   num_eigenvalues=3))
+    vals = _provenance_keys(os.path.join(d_ext, "eigenvalue.dat"))
+    assert vals["bond_green"] == gpath
+    assert "external" in vals["approximation"].lower()
+    assert "bare" not in vals["approximation"].lower()
+
+
+def test_bond_green_missing_or_mismatched_file_fails_fast(tmpout):
+    """A missing file, a file without a 'green' array, and a green whose grid
+    does not match the model all raise instead of being reshaped into silent
+    nonsense."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    inp = _base_input(os.path.join(tmpout, "o"), coulomb_inter=ci,
+                      bond_channels=True, solver_mode="eigenvalue",
+                      num_eigenvalues=3)
+
+    missing = os.path.join(tmpout, "nope.npz")
+    inp["eliashberg"]["bond_green"] = missing
+    with pytest.raises(FileNotFoundError, match="bond_green"):
+        sc.calc_eliashberg(inp)
+
+    empty = os.path.join(tmpout, "empty.npz")
+    np.savez(empty, something_else=np.zeros(3))
+    inp["eliashberg"]["bond_green"] = empty
+    with pytest.raises(ValueError, match="(?i)green"):
+        sc.calc_eliashberg(inp)
+
+    wrong = os.path.join(tmpout, "wrong.npz")
+    np.savez(wrong, green=np.zeros((1, 8, 9, 1, 1), dtype=complex))
+    inp["eliashberg"]["bond_green"] = wrong
+    with pytest.raises(ValueError, match="(?i)does not match the model"):
+        sc.calc_eliashberg(inp)
+
+
+def test_bond_green_ignored_with_warning_when_flag_off(tmpout, caplog):
+    """Like every other bond option, ``bond_green`` is ignored with a warning
+    when ``bond_channels=false`` (it must not silently swap the green of a
+    default-path run)."""
+    d = os.path.join(tmpout, "off")
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_base_input(d, bond_channels=False,
+                                       bond_green="/nonexistent/green.npz"))
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "bond_green" in msgs
+
+
+def test_flex_chi_guard_points_at_bond_green(tmpout):
+    """The ``chi0q_mode='flex'`` refusal is about FLEX *chi* ingestion; the
+    message must say so and point at ``bond_green`` for a FLEX *green*."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(1.0))
+    inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True,
+                      chi0q_mode="flex", bond_green="green.npz")
+    with pytest.raises(ValueError, match="bond_green") as exc:
+        sc.calc_eliashberg(inp)
+    assert "chi" in str(exc.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# [eliashberg] bond_diagnostics -- opt-in character analysis of the leading
+# state (odd-harmonic decomposition + degeneracy clustering + the lambda^pp /
+# lambda^fl attribution), emitted into the additive provenance channel.
+# ---------------------------------------------------------------------------
+
+def _read_provenance(outdir, name="eigenvalue.dat"):
+    """``# key = value`` comment lines of an eigenvalue file, as a dict."""
+    out = {}
+    with open(os.path.join(outdir, name)) as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                continue
+            key, sep, value = line.lstrip("# ").partition("=")
+            if sep:
+                out[key.strip()] = value.strip()
+    return out
+
+
+def _diagnostics_input(outdir, ci, **eli):
+    """Bond run in the odd (triplet) channel -- the sector the odd-harmonic
+    basis of ``sc._odd_harmonic_basis`` describes."""
+    return _base_input(outdir, coulomb_inter=ci, bond_channels=True,
+                       pairing_type="triplet", init_gap="f_x",
+                       solver_mode="eigenvalue", num_eigenvalues=6, **eli)
+
+
+def test_bond_diagnostics_emits_harmonics_and_clusters(tmpout):
+    """``bond_diagnostics = true`` reports the odd-harmonic content of the
+    leading (tracked) eigenvector and the degeneracy clustering of the computed
+    spectrum, alongside the existing lambda^pp / lambda^fl attribution."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d = os.path.join(tmpout, "diag")
+    sc.calc_eliashberg(_diagnostics_input(d, ci, bond_diagnostics=True))
+
+    prov = _read_provenance(d)
+    assert prov["bond_diagnostics"] == "True"
+
+    # (i) harmonic decomposition on the odd basis, one captured fraction per
+    #     harmonic, each in [0, 1]
+    harm = prov["bond_diagnostics_harmonics"]
+    fractions = {}
+    for item in harm.split(","):
+        name, _, value = item.partition("=")
+        fractions[name.strip()] = float(value)
+    assert set(fractions) == {"p_x", "p_y", "f_x", "f_y"}
+    for name, value in fractions.items():
+        assert 0.0 <= value <= 1.0 + 1e-8, (name, value)
+    # a genuinely odd leading state carries non-negligible odd-harmonic weight
+    assert sum(fractions.values()) > 1.0e-3
+
+    # (ii) degeneracy clustering of the computed eigenvalues; every eigenpair
+    #      is in exactly one cluster
+    clusters = eval(prov["bond_diagnostics_eigenvalue_clusters"])  # noqa: S307
+    assert sorted(i for c in clusters for i in c) == list(range(6))
+    # the reported "leading" cluster is the one containing ROW 0 -- the
+    # eigenpair the run actually returns after the channel-parity promotion --
+    # not simply the largest-Re-lambda cluster
+    leading = eval(prov["bond_diagnostics_leading_cluster"])        # noqa: S307
+    assert 0 in leading
+    assert leading in clusters
+    assert int(prov["bond_diagnostics_leading_cluster_size"]) == len(leading)
+    assert float(prov["bond_diagnostics_deg_tol"]) > 0.0
+
+    # (iii) the existing attribution is still there, next to the new keys
+    assert "lambda_pp" in prov and "lambda_fl" in prov
+
+    # ... and the numeric rows are UNCHANGED: only comment lines were added, so
+    # every downstream reader still sees exactly the same data block
+    from hwave import tsweep
+    re, im, match = tsweep.parse_leading_eig(
+        os.path.join(d, "eigenvalue.dat"))
+    assert np.isfinite(re) and np.isfinite(im)
+
+    d_off = os.path.join(tmpout, "off")
+    sc.calc_eliashberg(_diagnostics_input(d_off, ci))
+    rows_on = _numeric_rows(os.path.join(d, "eigenvalue.dat"))
+    rows_off = _numeric_rows(os.path.join(d_off, "eigenvalue.dat"))
+    assert len(rows_on) == len(rows_off)
+    assert [len(r) for r in rows_on] == [len(r) for r in rows_off]
+    assert len(rows_on[-1]) == 5              # index Re Im |ev| match
+
+
+def test_bond_diagnostics_leading_cluster_follows_row_zero_not_max_lambda():
+    """The reported degeneracy is that of the RETURNED state.
+
+    ``_reorder_eigenpairs_by_parity`` promotes the channel-parity eigenpair to
+    row 0, so an opposite-parity mode with a LARGER ``Re lambda`` can sit
+    further down the file while still being clustered. Reporting the
+    largest-``Re lambda`` cluster as "the leading state's degeneracy" would
+    then describe a different state than the one the run returns.
+    """
+    prov = {}
+    # rows: 0/1 are the returned (degenerate) pair at 0.02; row 2 is a larger
+    # eigenvalue that the parity promotion demoted below them
+    evals = np.array([0.02, 0.02 + 1e-9, 0.87])
+    kx = np.linspace(0, 2.0 * np.pi, 4, endpoint=False)
+    kz = np.linspace(0, 2.0 * np.pi, 1, endpoint=False)
+    sc._bond_diagnostics_record(prov, None, evals, None, 1, kx, kx, kz)
+
+    # the largest-Re-lambda cluster is row 2 alone ...
+    assert eval(prov["bond_diagnostics_eigenvalue_clusters"])[0] == [2]
+    # ... but the reported one is the doublet containing row 0 (indices are
+    # listed in the library's descending-Re-lambda order within the cluster)
+    assert sorted(eval(prov["bond_diagnostics_leading_cluster"])) == [0, 1]
+    assert prov["bond_diagnostics_leading_cluster_size"] == 2
+
+
+def test_bond_diagnostics_false_is_byte_identical(tmpout):
+    """With the flag off (explicitly false or absent) the bond run's output is
+    byte-for-byte what it was before the diagnostics existed.
+
+    Run on the (deterministic) shifted power iteration: ARPACK seeds itself
+    from a random start vector, so ``solver_mode='eigenvalue'`` is not
+    bit-reproducible run to run and cannot carry a byte-identity claim.
+    """
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    common = dict(coulomb_inter=ci, bond_channels=True,
+                  pairing_type="triplet", init_gap="f_x",
+                  solver_mode="iteration", max_iter=20,
+                  spectral_shift="auto")
+    d_absent = os.path.join(tmpout, "absent")
+    d_false = os.path.join(tmpout, "false")
+    sc.calc_eliashberg(_base_input(d_absent, **common))
+    sc.calc_eliashberg(_base_input(d_false, bond_diagnostics=False, **common))
+
+    _, eig_a, gap_a = _read_outputs(d_absent)
+    _, eig_f, gap_f = _read_outputs(d_false)
+    assert eig_a == eig_f
+    assert gap_a == gap_f
+    assert b"bond_diagnostics" not in eig_a
+
+
+def test_bond_diagnostics_ignored_with_warning_when_flag_off(tmpout, caplog):
+    """Like every other bond option, ``bond_diagnostics`` is ignored with a
+    warning when ``bond_channels=false``."""
+    d = os.path.join(tmpout, "off")
+    with caplog.at_level(logging.WARNING):
+        sc.calc_eliashberg(_base_input(d, bond_channels=False,
+                                       bond_diagnostics=True))
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "bond_diagnostics" in msgs
+    text = open(os.path.join(d, "eigenvalue.dat")).read()
+    assert "bond_diagnostics" not in text
+
+
+def test_bond_diagnostics_on_the_iteration_path_reports_harmonics_only(tmpout):
+    """``solver_mode='iteration'`` computes no eigenvalue spectrum, so the
+    cluster report is honestly absent (not faked from one number) while the
+    harmonic decomposition of the returned gap is still emitted."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d = os.path.join(tmpout, "iter")
+    sc.calc_eliashberg(_base_input(d, coulomb_inter=ci, bond_channels=True,
+                                   pairing_type="triplet", init_gap="f_x",
+                                   solver_mode="iteration", max_iter=5,
+                                   spectral_shift="auto",
+                                   bond_diagnostics=True))
+    prov = _read_provenance(d)
+    assert "bond_diagnostics_harmonics" in prov
+    assert "bond_diagnostics_eigenvalue_clusters" not in prov
+
+
+def test_bond_diagnostics_harmonics_match_the_library_helper(tmpout):
+    """The emitted numbers ARE ``bond_channels.harmonic_decomposition`` of the
+    leading eigenvector in the ``sqrt(GG)`` metric -- the diagnostics wire the
+    library helper, they do not re-derive it."""
+    from hwave.solver import bond_channels as bc
+
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    d = os.path.join(tmpout, "diag")
+    inp = _diagnostics_input(d, ci, bond_diagnostics=True)
+    sc.calc_eliashberg(inp)
+    prov = _read_provenance(d)
+    emitted = {}
+    for item in prov["bond_diagnostics_harmonics"].split(","):
+        name, _, value = item.partition("=")
+        emitted[name.strip()] = float(value)
+
+    # rebuild the SAME quantity: the written gap, the written k-grid, and the
+    # pair weight of the same bare green the run built for itself
+    Nx = Ny = 4
+    gap = np.loadtxt(os.path.join(d, "gap.dat"))
+    vec = (gap[:, 3] + 1j * gap[:, 4]).reshape(1, 1, Nx, Ny, 1)
+    kx = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2.0 * np.pi, 1, endpoint=False)
+    basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+
+    geom_info, hr, interactions = sc._read_interaction_files(inp)
+    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, 1)
+    ev, evec = sc._calc_eigenvalues(eps)
+    beta = 1.0 / inp["mode"]["param"]["T"]
+    mu = sc._determine_mu(ev, beta, inp["mode"]["param"]["filling"], 1)
+    green = sc._calc_green(ev, evec, mu, beta, inp["mode"]["param"]["Nmat"])
+    weight = bc.pair_weight(green, beta)
+
+    ref = bc.harmonic_decomposition([vec.ravel()], basis, weight)
+    assert set(emitted) == set(ref)
+    for name, value in ref.items():
+        assert emitted[name] == pytest.approx(value, abs=1e-6)
+
+
+def test_track_subspace_is_documented_as_the_sweep_driver_api():
+    """``track_subspace`` is inherently MULTI-POINT: a single
+    ``calc_eliashberg`` run has one point, so it stays a documented public
+    helper for sweep drivers rather than being called from the solver."""
+    from hwave.solver import bond_channels as bc
+
+    doc = bc.track_subspace.__doc__
+    assert doc is not None
+    lowered = doc.lower()
+    assert "sweep" in lowered
+    assert "bond_diagnostics" in doc
+    # the ROW convention (scipy eigs returns COLUMNS) must stay documented
+    assert "column" in lowered and "row" in lowered
