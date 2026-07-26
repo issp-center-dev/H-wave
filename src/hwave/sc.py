@@ -2490,7 +2490,7 @@ def _bond_diagnostics_record(provenance, gap, eigenvalues, weight, norb,
 
 def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
                      max_iter=1000, alpha=0.5, tol=1.0e-5, pairing_type=None,
-                     operator=None, spectral_shift=None):
+                     operator=None, spectral_shift=None, info_out=None):
     """Solve linearized Eliashberg equation by self-consistent iteration.
 
     Parameters
@@ -2539,6 +2539,13 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         (negative dominant eigenvalue), where the unshifted iterate flips sign
         every step and can never converge. When None (the default) the
         historical unshifted iteration runs unchanged.
+    info_out : dict, optional
+        When given, updated in place with ``_solve_leading``'s info dict --
+        including, on a shifted run, the Rayleigh validation record
+        (``eigenvalue_validated`` / ``rayleigh_residual`` / ...). The return
+        arity is deliberately unchanged (many call sites unpack exactly four
+        values), so this is the way a caller learns WHAT the returned number
+        is.
 
     Returns
     -------
@@ -2546,8 +2553,9 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         Converged gap function.
     eigenvalue : float
         Leading eigenvalue: without ``spectral_shift`` the (unsigned) norm of
-        sigma_new before normalization; with one, the SIGNED eigenvalue
-        ``||(K + sigma I) sigma|| - sigma``.
+        sigma_new before normalization; with one, the signed eigenvalue when
+        the Rayleigh check validates it, else the raw shifted iterate-norm
+        estimate (see ``_solve_leading`` / ``info_out``).
     converged : bool
         Whether convergence was achieved.
     n_iter : int
@@ -2637,6 +2645,8 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         alpha=alpha, project_fn=project_fn, spectral_shift=spectral_shift,
     )
 
+    if info_out is not None:
+        info_out.update(info)
     return sigma_flat.reshape(shape), eigenvalue, info["converged"], info["n_iter"]
 
 
@@ -3084,6 +3094,151 @@ def _resolve_iteration_shift(A, spectral_shift, vec_size, init_vec,
     return sig
 
 
+# ---------------------------------------------------------------------------
+# Rayleigh validation of a SHIFTED power iteration
+#
+# ``||(K + sigma I) v|| - sigma`` is a signed eigenvalue of K only once the
+# iteration has converged to a mode whose SHIFTED eigenvalue is positive real.
+# Neither an explicit sigma (which the user may set too small) nor
+# ``"auto"`` (a finite-step power estimate of the spectral radius, which
+# approaches it from below) guarantees that, and the NON-converged exit
+# returns the same quantity. Example: ``K = diag(-3, -8, -5)`` with
+# ``sigma = 1`` drives the iterate to the -8 mode, whose shifted eigenvalue is
+# -7, so the raw quantity is ``|-7| - 1 = +6`` -- not an eigenvalue of K at
+# all. The signed Rayleigh quotient below (one extra matvec on the UNSHIFTED
+# operator) plus its residual decide whether the run may call its number an
+# eigenvalue; nothing here touches the unshifted (default) path.
+# ---------------------------------------------------------------------------
+
+# Absolute floor of the Rayleigh residual tolerance, and the factor applied to
+# the caller's convergence_tol. The bound is scaled by (|lambda| + 1) so it is
+# relative for a large eigenvalue and absolute for a tiny one.
+_RAYLEIGH_RESIDUAL_ATOL = 1.0e-6
+_RAYLEIGH_RESIDUAL_TOL_FACTOR = 100.0
+
+
+def _signed_rayleigh(A, vec):
+    """Signed Rayleigh quotient and relative residual of ``vec`` under ``A``.
+
+    Returns ``(lambda, residual)`` with
+    ``lambda = <v|A|v> / <v|v>`` (complex; it carries the SIGN of the
+    eigenvalue, unlike a power-iterate norm) and
+    ``residual = ||A v - lambda v|| / ||v||``. Costs exactly one matvec. A
+    zero/non-finite vector or quotient yields ``residual = inf``, i.e. "not
+    an eigenvector".
+    """
+    vec = np.asarray(vec).ravel()
+    vnorm = float(np.linalg.norm(vec))
+    if vnorm == 0.0 or not np.isfinite(vnorm):
+        return complex(np.nan, np.nan), float("inf")
+    Av = np.asarray(A.matvec(vec)).ravel()
+    lam = complex(np.vdot(vec, Av) / (vnorm * vnorm))
+    if not (np.isfinite(lam.real) and np.isfinite(lam.imag)):
+        return lam, float("inf")
+    return lam, float(np.linalg.norm(Av - lam * vec) / vnorm)
+
+
+def _validate_shifted_eigenvalue(A_unshifted, vec, iterate_value, shift,
+                                 convergence_tol):
+    """Decide what a shifted power iteration is allowed to report.
+
+    Parameters
+    ----------
+    A_unshifted : LinearOperator
+        The ORIGINAL kernel K (not ``K + sigma*I``).
+    vec : ndarray
+        The vector the iteration returned.
+    iterate_value : float
+        ``||(K + sigma I) v|| - sigma``, the historical quantity.
+    shift : float
+        The sigma actually applied.
+    convergence_tol : float
+        The iteration's own tolerance; the residual bound is derived from it.
+
+    Returns
+    -------
+    value : float
+        ``lambda`` (the validated Rayleigh eigenvalue) when the residual check
+        passes, otherwise ``iterate_value`` unchanged.
+    record : dict
+        ``eigenvalue_validated`` / ``eigenvalue_kind`` (``"eigenvalue"`` vs
+        ``"shifted-iterate-norm-estimate"``) / ``rayleigh_eigenvalue`` /
+        ``rayleigh_residual`` / ``rayleigh_residual_tol`` /
+        ``shift_sufficient``. ``shift_sufficient`` is False when the mode the
+        iteration locked onto has a NEGATIVE shifted eigenvalue -- the
+        signature of a too-small sigma -- and None when nothing could be
+        validated.
+    """
+    lam, resid = _signed_rayleigh(A_unshifted, vec)
+    tol = max(_RAYLEIGH_RESIDUAL_ATOL,
+              _RAYLEIGH_RESIDUAL_TOL_FACTOR * float(convergence_tol))
+    scale = abs(lam)
+    bound = tol * ((scale if np.isfinite(scale) else 0.0) + 1.0)
+    validated = bool(np.isfinite(resid) and resid <= bound
+                     and abs(lam.imag) <= bound)
+    record = {
+        "eigenvalue_validated": validated,
+        "eigenvalue_kind": ("eigenvalue" if validated
+                            else "shifted-iterate-norm-estimate"),
+        "rayleigh_eigenvalue": (float(lam.real) if validated else None),
+        "rayleigh_residual": resid,
+        "rayleigh_residual_tol": bound,
+        "shift_sufficient": None,
+    }
+    if not validated:
+        return iterate_value, record
+    value = float(lam.real)
+    # A sufficient sigma puts the WHOLE spectrum in the right half-plane, so
+    # the mode the iteration locks onto satisfies lambda + sigma > 0. A
+    # negative implied shifted eigenvalue means the iterate was driven by
+    # |lambda + sigma| with lambda + sigma < 0: sigma was too small, and the
+    # mode found is the largest-MAGNITUDE one, not the algebraically largest.
+    record["shift_sufficient"] = bool(value + shift > 0.0)
+    return value, record
+
+
+def _shifted_eigenvalue_note(solver_mode, spectral_shift, converged, n_iter,
+                             iter_info, kernel_label="kernel"):
+    """The ``eigenvalue.dat`` comment describing a SHIFTED iteration's number.
+
+    Split out of ``calc_eliashberg`` so the static and dynamic entry points --
+    and the tests -- share one wording, and so the "this is NOT an eigenvalue"
+    case can never be silently dropped from the file.
+    """
+    info = iter_info or {}
+    resid = info.get("rayleigh_residual")
+    resid_txt = ("{:.3e}".format(resid) if isinstance(resid, float)
+                 and np.isfinite(resid) else str(resid))
+    tail = ("the iteration {} after {} steps."
+            .format("converged" if converged else "did NOT converge", n_iter))
+    if info.get("eigenvalue_validated"):
+        note = (
+            "solver_mode='{}' with spectral_shift={!r}: the power iteration "
+            "ran on the shifted {} K + sigma*I and the value below is the "
+            "SIGNED eigenvalue of K (the shift has been subtracted back), "
+            "VALIDATED by the Rayleigh quotient <v|K|v>/<v|v> with residual "
+            "||K v - lambda v||/||v|| = {}; {}"
+            .format(solver_mode, spectral_shift, kernel_label, resid_txt,
+                    tail))
+        if info.get("shift_sufficient") is False:
+            note += (" WARNING: spectral_shift appears INSUFFICIENT -- the "
+                     "mode found has lambda + sigma < 0, so it is the "
+                     "largest-MAGNITUDE eigenvalue of K + sigma*I, not the "
+                     "algebraically largest (physical) one; re-run with a "
+                     "larger spectral_shift or \"auto\".")
+        return note
+    return (
+        "solver_mode='{}' with spectral_shift={!r}: the value below is a "
+        "SHIFTED ITERATE-NORM ESTIMATE, ||(K + sigma*I) v|| - sigma. It is "
+        "NOT an eigenvalue of K: the Rayleigh check <v|K|v>/<v|v> left a "
+        "residual ||K v - lambda v||/||v|| = {} (tolerance {}), so no signed "
+        "eigenvalue could be validated for this run -- do not quote it as "
+        "lambda. {} Raise max_iter, raise spectral_shift, or use "
+        "solver_mode=\"eigenvalue\"."
+        .format(solver_mode, spectral_shift, resid_txt,
+                info.get("rayleigh_residual_tol"), tail))
+
+
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
                    sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
@@ -3148,9 +3303,13 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     -------
     leading_eigenvalue : complex or float
         The dominant eigenvalue (eigenvalue-family: largest real part, per
-        ``_order_eigenpairs``; iteration: the converged/last iterate norm,
-        un-shifted by ``spectral_shift`` when one is in use -- so it may be
-        negative, unlike the plain unsigned iterate norm).
+        ``_order_eigenpairs``). On the iteration path WITHOUT
+        ``spectral_shift`` it is the converged/last iterate norm (unsigned),
+        exactly as before. WITH a ``spectral_shift`` it is the signed Rayleigh
+        eigenvalue ``<v|K|v>/<v|v>`` when that passes the residual check
+        (``eig_analysis["eigenvalue_validated"]``), and otherwise the raw
+        ``||(K + sigma I) v|| - sigma``, which is NOT an eigenvalue and must be
+        reported as an estimate (see ``_validate_shifted_eigenvalue``).
     leading_eigenvector : ndarray
         Flat, shape ``(vec_size,)``.
     eig_analysis : dict
@@ -3158,7 +3317,11 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         "sigma_shift": sigma_shift}`` with ``vals`` ordered by descending real
         part (``_order_eigenpairs``) and ``vecs`` the matching eigenvectors as
         columns. "iteration" mode: ``{"converged": bool, "n_iter": int,
-        "spectral_shift": float or None}`` (the sigma actually applied).
+        "spectral_shift": float or None}`` (the sigma actually applied), plus
+        -- ONLY when a shift was applied, so the default path's dict is
+        unchanged -- ``eigenvalue_validated``, ``eigenvalue_kind``,
+        ``rayleigh_eigenvalue``, ``rayleigh_residual``,
+        ``rayleigh_residual_tol`` and ``shift_sufficient``.
     """
     # Validate spectral_shift up front -- before any branch, including the
     # iteration loop and the small-dense early return -- so an invalid value or
@@ -3200,6 +3363,57 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         # callers can report it; `shift` itself is the arithmetic value.
         shift_used = shift if spectral_shift is not None else None
 
+        def _finish(value, vec, converged, n_iter_done, rayleigh=True):
+            """Assemble the return triple, validating the SHIFTED value.
+
+            On the unshifted path this is exactly the historical dict and no
+            extra matvec is taken, so the default behaviour is bit-identical.
+            """
+            info = {"converged": converged, "n_iter": n_iter_done,
+                    "spectral_shift": shift_used}
+            if shift_used is None:
+                return value, vec, info
+            if not rayleigh:
+                # Nothing meaningful to validate (the zero-norm sentinel).
+                info.update({"eigenvalue_validated": False,
+                             "eigenvalue_kind": "not-computed",
+                             "rayleigh_eigenvalue": None,
+                             "rayleigh_residual": float("inf"),
+                             "rayleigh_residual_tol": float("nan"),
+                             "shift_sufficient": None})
+                return value, vec, info
+            value, record = _validate_shifted_eigenvalue(
+                A_unshifted, vec, value, shift, convergence_tol)
+            info.update(record)
+            if record["eigenvalue_validated"]:
+                logger.info(
+                    "Shifted power iteration: reporting the SIGNED Rayleigh "
+                    "eigenvalue lambda = %.8e of K (residual %.3e <= %.3e), "
+                    "not the raw shifted iterate norm.",
+                    value, record["rayleigh_residual"],
+                    record["rayleigh_residual_tol"])
+                if record["shift_sufficient"] is False:
+                    logger.warning(
+                        "spectral_shift = %.6f appears INSUFFICIENT: the "
+                        "iteration locked onto a mode with lambda = %.8e, so "
+                        "lambda + sigma = %.8e < 0 and the power iteration "
+                        "selected the largest-MAGNITUDE eigenvalue of "
+                        "K + sigma*I rather than the algebraically largest "
+                        "(physical) one. Re-run with a larger spectral_shift "
+                        "or spectral_shift=\"auto\".",
+                        shift, value, value + shift)
+            else:
+                logger.warning(
+                    "Shifted power iteration: the returned value %.8e is "
+                    "||(K + sigma*I) v|| - sigma and is NOT an eigenvalue of "
+                    "K -- the Rayleigh check <v|K|v>/<v|v> left a residual of "
+                    "%.3e (tolerance %.3e), so no signed eigenvalue could be "
+                    "validated. Do not quote it as lambda; raise max_iter, "
+                    "raise spectral_shift, or use solver_mode=\"eigenvalue\".",
+                    value, record["rayleigh_residual"],
+                    record["rayleigh_residual_tol"])
+            return value, vec, info
+
         sigma_old = init_vec
         eigenvalue = 0.0
 
@@ -3223,10 +3437,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     "iterate as non-converged.".format(iteration))
                 # 0.0 is the historical non-converged sentinel, NOT a shifted
                 # eigenvalue, so it is returned as-is (un-shifting it would
-                # dress a failure up as lambda = -sigma).
-                return 0.0, sigma_old, {"converged": False,
-                                        "n_iter": iteration + 1,
-                                        "spectral_shift": shift_used}
+                # dress a failure up as lambda = -sigma) and no Rayleigh
+                # validation is attempted on it.
+                return _finish(0.0, sigma_old, False, iteration + 1,
+                               rayleigh=False)
 
             # `norm` is the eigenvalue of the (possibly shifted) operator;
             # subtract the shift back so every reported/logged value belongs to
@@ -3239,9 +3453,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
 
             if diff < convergence_tol:
                 logger.info("Converged at iteration {}".format(iteration + 1))
-                return eigenvalue, sigma_new / norm, {
-                    "converged": True, "n_iter": iteration + 1,
-                    "spectral_shift": shift_used}
+                return _finish(eigenvalue, sigma_new / norm, True,
+                               iteration + 1)
 
             sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
 
@@ -3254,8 +3467,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 "negative -- try a larger spectral_shift, or \"auto\") or it is "
                 "so large that it compressed the relative eigenvalue gaps "
                 "(try a smaller one, or solver_mode=\"eigenvalue\").", shift)
-        return eigenvalue, sigma_old, {"converged": False, "n_iter": max_iter,
-                                       "spectral_shift": shift_used}
+        return _finish(eigenvalue, sigma_old, False, max_iter)
 
     # Eigenvalue family: ARPACK Arnoldi or shift-invert.
     A, _ = make_operator()
@@ -4301,6 +4513,11 @@ def calc_eliashberg(input_dict):
                                 if solver_mode in ("iteration", "both")
                                 else None)
 
+    # Rayleigh-validation record of a SHIFTED power iteration (empty on the
+    # unshifted default path); decides whether the number written to
+    # eigenvalue.dat may be called an eigenvalue at all.
+    iteration_info = {}
+
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
         sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
@@ -4308,6 +4525,7 @@ def calc_eliashberg(input_dict):
             max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type,
             operator=bond_operator,
             spectral_shift=iteration_spectral_shift,
+            info_out=iteration_info,
         )
         logger.info("Iteration result: eigenvalue = {:.6f}, converged = {}, n_iter = {}".format(
             eigenvalue_iter, converged, n_iter))
@@ -4445,16 +4663,13 @@ def calc_eliashberg(input_dict):
     if (solver_mode in ("iteration", "both") and eigenvalue_iter is not None
             and (iteration_spectral_shift is not None or use_bond_channels)):
         if iteration_spectral_shift is not None:
-            # Shifted power iteration: the value IS the signed eigenvalue of
-            # the original kernel (the shift was subtracted back).
-            eigenvalue_note = (
-                "solver_mode='{}' with spectral_shift={!r}: the power "
-                "iteration ran on the shifted kernel K + sigma*I and the value "
-                "below is the SIGNED eigenvalue of K (the shift has been "
-                "subtracted back); the iteration {} after {} steps."
-                .format(solver_mode, iteration_spectral_shift,
-                        "converged" if converged else "did NOT converge",
-                        n_iter))
+            # Shifted power iteration: the value is the SIGNED eigenvalue of
+            # the original kernel only when the Rayleigh check validated it;
+            # otherwise it is an iterate-norm ESTIMATE and must be labelled as
+            # not-an-eigenvalue (see _validate_shifted_eigenvalue).
+            eigenvalue_note = _shifted_eigenvalue_note(
+                solver_mode, iteration_spectral_shift, converged, n_iter,
+                iteration_info)
         else:
             note = ("solver_mode='{}': the value below is the UNSIGNED norm of "
                     "the power iterate (||A sigma||), not a signed eigenvalue; "

@@ -633,10 +633,15 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
 
 def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
     """Review fix I-2: on the dynamic solver_mode='iteration' path,
-    spectral_shift changes the reported eigenvalue.dat number from an
-    UNSIGNED power-iterate norm to the SIGNED eigenvalue of the kernel. That
-    meaning change must be labelled in the output file itself (mirroring
-    sc.calc_eliashberg's static eigenvalue_note), not left silent."""
+    spectral_shift changes what the eigenvalue.dat number MEANS, and that
+    change must be labelled in the output file itself (mirroring
+    sc.calc_eliashberg's static eigenvalue_note), not left silent.
+
+    ``||(K + sigma I) v|| - sigma`` is the SIGNED eigenvalue of K only once
+    the iterate is an eigenvector of K; this fixture stops at max_iter=50
+    without converging, so the honest label is the shifted iterate-norm
+    ESTIMATE -- claiming "the SIGNED eigenvalue" there is exactly the
+    mislabelling ``_validate_shifted_eigenvalue`` exists to prevent."""
     import os
     from hwave.solver import eliashberg_dynamic as ed
     input_dir = str(tmp_path / "input")
@@ -665,10 +670,11 @@ def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
         content_unshifted = f.read()
     assert "SIGNED eigenvalue" not in content_unshifted
 
-    # With spectral_shift active, the reported number's meaning changes to
-    # the SIGNED eigenvalue and that change must be labelled in the file
-    # itself (same output directory, so the run overwrites eigenvalue.dat;
-    # the FLEX fixture files it reads are untouched by the previous run).
+    # With spectral_shift active, the reported number's meaning changes and
+    # that change must be labelled in the file itself (same output directory,
+    # so the run overwrites eigenvalue.dat; the FLEX fixture files it reads
+    # are untouched by the previous run). This run does NOT converge, so the
+    # Rayleigh check cannot validate an eigenvalue and the label must say so.
     shifted_config = dict(base_config)
     shifted_config["eliashberg"] = dict(base_config["eliashberg"])
     shifted_config["eliashberg"]["spectral_shift"] = "auto"
@@ -676,7 +682,9 @@ def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
     with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
         content_shifted = f.read()
     assert "spectral_shift" in content_shifted
-    assert "SIGNED eigenvalue" in content_shifted
+    assert "NOT an eigenvalue" in content_shifted
+    assert "SHIFTED ITERATE-NORM ESTIMATE" in content_shifted
+    assert "VALIDATED" not in content_shifted
 
 
 def test_kernel_cupy_matches_numpy():

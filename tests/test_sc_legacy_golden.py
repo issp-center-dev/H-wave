@@ -139,3 +139,24 @@ def test_calc_g2_is_bit_identical_to_the_pre_branch_implementation(shape):
     assert got.dtype == ref.dtype
     assert got.shape == ref.shape
     assert np.array_equal(got, ref)
+
+
+# ---------------------------------------------------------------------------
+# a shifted run must say in the FILE whether its number is an eigenvalue
+# ---------------------------------------------------------------------------
+
+def test_unvalidated_shifted_run_is_labelled_in_eigenvalue_dat(tmp_path):
+    """Too few iterations to validate anything: eigenvalue.dat must say the
+    number is a shifted iterate-norm estimate, NOT an eigenvalue of K."""
+    got = _run_legacy(str(tmp_path / "run"), spectral_shift=1.0, max_iter=2)
+    text = got["eigenvalue.dat"].decode()
+    assert "NOT an eigenvalue" in text
+    assert "SHIFTED ITERATE-NORM ESTIMATE" in text
+
+
+def test_validated_shifted_run_is_labelled_as_a_signed_eigenvalue(tmp_path):
+    got = _run_legacy(str(tmp_path / "run"), spectral_shift="auto",
+                      max_iter=2000)
+    text = got["eigenvalue.dat"].decode()
+    assert "SIGNED eigenvalue" in text
+    assert "VALIDATED" in text

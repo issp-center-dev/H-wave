@@ -234,7 +234,27 @@ This section controls the Eliashberg solver. Key parameters:
   :math:`\sigma` is subtracted back afterwards, so the number written to
   ``eigenvalue.dat`` is the **signed** eigenvalue :math:`\lambda` of the
   original kernel (it may legitimately be negative) and the gap/eigenvector is
-  unchanged by the shift. As on the arnoldi path, the mode selected is the
+  unchanged by the shift.
+
+  That identification only holds once the iterate is an eigenvector of
+  :math:`K` whose *shifted* eigenvalue is positive real, which an explicit
+  (possibly too small) :math:`\sigma`, an ``"auto"`` estimate, or a run that
+  stopped at ``max_iter`` do **not** guarantee. The solver therefore validates
+  the result: it evaluates the signed Rayleigh quotient
+  :math:`\lambda = \langle v|K|v\rangle / \langle v|v\rangle` on the
+  **unshifted** kernel (one extra matrix-vector product) together with the
+  residual :math:`\|Kv-\lambda v\|/\|v\|`. If the residual is within tolerance,
+  that Rayleigh value is what is reported and ``eigenvalue.dat`` says the
+  number was ``VALIDATED``. If it is not, the file states explicitly that the
+  number is a **shifted iterate-norm estimate**
+  :math:`\|(K+\sigma I)v\| - \sigma`, **not** an eigenvalue of :math:`K`, and
+  the run warns — raise ``max_iter``, raise ``spectral_shift``, or use
+  ``solver_mode = "eigenvalue"``. A shift that turns out to be too small (the
+  selected mode has :math:`\lambda + \sigma < 0`, i.e. the iteration locked
+  onto the largest-*magnitude* rather than the algebraically largest mode) is
+  warned about separately, both in the log and in the output note.
+
+  As on the arnoldi path, the mode selected is the
   *algebraically largest* eigenvalue (the physical SC eigenvalue) of the sector
   the seed and the parity projection live in — not the largest-magnitude
   (repulsive) one. ``"auto"`` estimates the spectral radius
@@ -375,7 +395,9 @@ This section controls the Eliashberg solver. Key parameters:
    ``spectral_shift = "auto"`` removes that failure: the iteration then runs on
    :math:`K + \sigma I`, converges, and reports the signed :math:`\lambda` of
    the original kernel, which agrees with ``solver_mode = "eigenvalue"`` and
-   with ``lambda_rayleigh`` (see ``spectral_shift`` above).
+   with ``lambda_rayleigh`` -- but only when the shifted run's Rayleigh check
+   validates it; if it does not, the eigenvalue file says so explicitly and the
+   number must not be quoted as :math:`\lambda` (see ``spectral_shift`` above).
 - ``gpu``: ``true`` runs the kernel-apply (matvec/matmat, the FFT convolution)
   on the GPU (CuPy) for **both** ``frequency = "dynamic"`` and
   ``frequency = "static"`` (default ``false``). The eigensolver itself (ARPACK

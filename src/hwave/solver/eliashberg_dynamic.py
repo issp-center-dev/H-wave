@@ -1439,19 +1439,17 @@ def solve_dynamic(input_dict):
             spectral_shift=iteration_spectral_shift)
         eigenvalues_all = None
         if iteration_spectral_shift is not None:
-            # Shifted power iteration: the value IS the signed eigenvalue of
-            # the original dynamic kernel (the shift was subtracted back by
-            # sc._solve_leading), unlike the unshifted iteration's unsigned
-            # iterate norm -- label it so eigenvalue.dat cannot be misread.
-            dynamic_eigenvalue_note = (
-                "solver_mode='iteration' with spectral_shift={!r}: the power "
-                "iteration ran on the shifted dynamic kernel K + sigma*I and "
-                "the value below is the SIGNED eigenvalue of K (the shift has "
-                "been subtracted back); the iteration {} after {} steps."
-                .format(iteration_spectral_shift,
-                        "converged" if info.get("converged") else
-                        "did NOT converge",
-                        info.get("n_iter")))
+            # Shifted power iteration: the value is the SIGNED eigenvalue of
+            # the original dynamic kernel only when sc._solve_leading's
+            # Rayleigh check validated it (<v|K|v>/<v|v> with a small
+            # residual). Otherwise ||(K + sigma*I) v|| - sigma is NOT an
+            # eigenvalue at all -- e.g. an insufficient sigma leaves the
+            # dominant shifted eigenvalue negative -- and the shared note
+            # labels it as an estimate so eigenvalue.dat cannot be misread.
+            dynamic_eigenvalue_note = sc._shifted_eigenvalue_note(
+                "iteration", iteration_spectral_shift,
+                info.get("converged"), info.get("n_iter"), info,
+                kernel_label="dynamic kernel")
     else:
         # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
         # Note: "both" degrades to eigenvalue-only here (the static path also

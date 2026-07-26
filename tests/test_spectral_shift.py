@@ -272,3 +272,107 @@ def test_negative_leading_no_warn_for_roundoff_scale(caplog):
         sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=2)
     assert not any("negative" in r.message for r in caplog.records)
 
+
+
+# ---------------------------------------------------------------------------
+# The shifted power iteration must not claim "eigenvalue" for a number that
+# is not one.
+#
+# ``||(K + sigma I) v|| - sigma`` equals a signed eigenvalue of K only after
+# the iteration has converged to a mode whose SHIFTED eigenvalue is positive
+# real. An explicit spectral_shift is not required to be that large, and
+# "auto" is only a finite-step estimate of the spectral radius -- e.g.
+# diag(-3, -8, -5) with sigma = 1 drives the iterate toward the -8 mode, whose
+# shifted eigenvalue is -7, and the raw quantity is |-7| - 1 = +6, which is
+# not an eigenvalue of K at all.
+#
+# The solver therefore validates the returned vector with a signed Rayleigh
+# quotient on the UNSHIFTED operator and only reports an eigenvalue when the
+# residual says so; otherwise it labels the number as a shifted iterate-norm
+# ESTIMATE.
+# ---------------------------------------------------------------------------
+
+def test_shifted_run_reports_a_validated_rayleigh_eigenvalue():
+    """(b) A sufficient shift (sigma = 10 on ALL_NEGATIVE) still yields
+    lambda = -3, now backed by a small Rayleigh residual and flagged as a
+    genuine eigenvalue."""
+    lead, _, info = _iterate(ALL_NEGATIVE, spectral_shift=10.0)
+    assert info["converged"] is True
+    assert lead == pytest.approx(-3.0, abs=1e-6)
+    assert info["eigenvalue_validated"] is True
+    assert info["eigenvalue_kind"] == "eigenvalue"
+    assert info["rayleigh_eigenvalue"] == pytest.approx(-3.0, abs=1e-6)
+    assert info["rayleigh_residual"] < 1.0e-6
+    assert info["shift_sufficient"] is True
+
+
+def test_insufficient_shift_never_reports_the_artefact_as_an_eigenvalue():
+    """(a) diag(-3, -8, -5) with sigma = 1 and a short max_iter: the raw
+    quantity is the ~6 artefact, which is not an eigenvalue of K. It must be
+    labelled a shifted iterate-norm estimate, never an eigenvalue."""
+    lead, _, info = _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=3,
+                             alpha=0.0)
+    assert info["converged"] is False
+    # the artefact itself (documented, not endorsed)
+    assert 5.0 < lead < 6.5
+    assert info["eigenvalue_validated"] is False
+    assert info["eigenvalue_kind"] == "shifted-iterate-norm-estimate"
+    assert info["rayleigh_eigenvalue"] is None
+    assert info["rayleigh_residual"] > info["rayleigh_residual_tol"]
+    # ... and no eigenvalue of K is anywhere near the reported number
+    assert min(abs(lead - ev) for ev in ALL_NEGATIVE) > 1.0
+
+
+def test_insufficient_shift_that_does_lock_on_reports_the_true_eigenvalue():
+    """Run the same insufficient shift long enough for the iterate to lock
+    onto the -8 mode: the reported number must then be that TRUE eigenvalue
+    (-8), never the 6 artefact, and the run must warn that sigma was too
+    small (the mode's shifted eigenvalue -7 is negative)."""
+    lead, _, info = _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=200,
+                             alpha=0.0)
+    assert lead == pytest.approx(-8.0, abs=1e-6)
+    assert info["eigenvalue_validated"] is True
+    assert info["shift_sufficient"] is False
+
+
+def test_insufficient_shift_warns(caplog):
+    with caplog.at_level("WARNING", logger="hwave_sc"):
+        _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=200, alpha=0.0)
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "insufficient" in msgs.lower()
+
+
+def test_unvalidated_shifted_run_warns_that_it_is_not_an_eigenvalue(caplog):
+    with caplog.at_level("WARNING", logger="hwave_sc"):
+        _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=3, alpha=0.0)
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "not an eigenvalue" in msgs.lower()
+
+
+def test_unshifted_iteration_info_is_unchanged():
+    """The default (unshifted) path must be untouched: no Rayleigh matvec, no
+    extra keys, exactly the historical info dict."""
+    _, _, info = _iterate([2.0, 1.0, 0.5])
+    assert set(info) == {"converged", "n_iter", "spectral_shift"}
+    assert info["spectral_shift"] is None
+
+
+# --- the note that reaches eigenvalue.dat -----------------------------------
+
+def test_note_labels_a_validated_shifted_value_as_an_eigenvalue():
+    info = {"eigenvalue_validated": True, "rayleigh_residual": 1.2e-12,
+            "eigenvalue_kind": "eigenvalue"}
+    note = sc._shifted_eigenvalue_note("iteration", "auto", True, 12, info)
+    assert "SIGNED eigenvalue" in note
+    assert "converged" in note
+
+
+def test_note_labels_an_unvalidated_shifted_value_as_not_an_eigenvalue():
+    info = {"eigenvalue_validated": False, "rayleigh_residual": 0.55,
+            "eigenvalue_kind": "shifted-iterate-norm-estimate"}
+    note = sc._shifted_eigenvalue_note("iteration", 1.0, False, 3, info)
+    lower = note.lower()
+    assert "not an eigenvalue" in lower
+    assert "estimate" in lower
+    # (c) the non-converged status is stated too
+    assert "did not converge" in lower
