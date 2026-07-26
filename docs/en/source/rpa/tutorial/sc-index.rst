@@ -380,6 +380,17 @@ This section controls the Eliashberg solver. Key parameters:
   ``bond_precondition_dense_limit`` to switch to the cheaper randomized-probe
   estimator if this matters for your workflow.
 
+  **Off-instability guard.** Before the enlarged RPA dressing, the bond path
+  checks the conditioning of the two solve matrices
+  :math:`I - \bar\chi S` and :math:`I + \bar\chi C` at every :math:`q`, using
+  the relative criterion :math:`\sigma_\mathrm{min}/\sigma_\mathrm{max}` with a
+  floor of :math:`10^{-3}`. A run that has entered the magnetic/charge
+  instability region stops with an error naming the channel (spin or charge),
+  the :math:`q`-point and the ratio, instead of crashing with a bare
+  ``LinAlgError`` (exactly singular) or silently returning enormous,
+  meaningless vertices (nearly singular). This check exists on the bond path
+  only; ``bond_channels = false`` is unaffected.
+
   All bond options are ignored with a warning when ``bond_channels = false``.
 
 .. note::

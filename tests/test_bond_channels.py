@@ -1091,3 +1091,166 @@ def test_bond_kernel_rejects_unknown_pairing_type():
     Vpp = np.zeros((ND, ND), dtype=complex)
     with pytest.raises(ValueError):
         make_bond_kernel(z, z, z, z, Vpp, Vpp, green, bset, "nonsense", beta)
+
+
+# ---------------------------------------------------------------------------
+# Boundary coverage of the resolver and of the enlarged RPA denominators
+# (Codex phase-1 review: singular / near-singular I - chi_bar S and
+# I + chi_bar C, an empty declared CoulombInter, the multi-shell cutoff, and a
+# non-real on-site diagonal).
+# ---------------------------------------------------------------------------
+
+def _diag_denominator_fixture(bad_value, channel, Nx=2):
+    """``(chi_bar, S_bond, C_bond)`` at ND = 2 whose ``channel`` denominator is
+    ``diag(1, bad_value)`` at q = (1, 0, 0) and the identity everywhere else.
+
+    ND must be >= 2 for the relative sigma_min/sigma_max criterion to mean
+    anything: a 1x1 block always has ratio 1.
+    """
+    ND = 2
+    shape = (Nx, 1, 1, ND, ND)
+    chi_bar = np.zeros(shape, dtype=complex)
+    S_bond = np.zeros(shape, dtype=complex)
+    C_bond = np.zeros(shape, dtype=complex)
+    for ix in range(Nx):
+        chi_bar[ix, 0, 0] = np.eye(ND, dtype=complex)
+    if channel == "spin":
+        # I - chi_bar S: entry (1,1) becomes 1 - (1 - bad) = bad
+        S_bond[1, 0, 0, 1, 1] = 1.0 - bad_value
+    else:
+        # I + chi_bar C: entry (1,1) becomes 1 - (1 - bad) = bad
+        C_bond[1, 0, 0, 1, 1] = -(1.0 - bad_value)
+    return chi_bar, S_bond, C_bond
+
+
+@pytest.mark.parametrize("channel", ["spin", "charge"])
+def test_dress_bond_rejects_an_exactly_singular_denominator(channel):
+    """An exactly singular ``I -/+ chi_bar S/C`` must raise an ACTIONABLE
+    error naming the channel and the q-point, not a bare LinAlgError."""
+    from hwave.solver.bond_channels import dress_bond
+    chi_bar, S_bond, C_bond = _diag_denominator_fixture(0.0, channel)
+    with pytest.raises(ValueError) as exc:
+        dress_bond(chi_bar, S_bond, C_bond)
+    msg = str(exc.value)
+    assert channel in msg
+    assert "(1, 0, 0)" in msg
+    assert "Singular matrix" not in msg
+
+
+@pytest.mark.parametrize("channel", ["spin", "charge"])
+def test_dress_bond_rejects_a_nearly_singular_denominator(channel):
+    """A NEARLY singular denominator silently produces enormous, unreliable
+    vertices; it must be refused with the conditioning ratio in the message."""
+    from hwave.solver.bond_channels import dress_bond
+    chi_bar, S_bond, C_bond = _diag_denominator_fixture(1.0e-4, channel)
+    with pytest.raises(ValueError) as exc:
+        dress_bond(chi_bar, S_bond, C_bond)
+    msg = str(exc.value)
+    assert channel in msg
+    assert "1.000e-04" in msg or "1.0e-04" in msg
+
+
+@pytest.mark.parametrize("channel", ["spin", "charge"])
+def test_dress_bond_accepts_a_well_conditioned_denominator(channel):
+    from hwave.solver.bond_channels import dress_bond
+    chi_bar, S_bond, C_bond = _diag_denominator_fixture(0.5, channel)
+    chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
+    assert chi_s.shape == chi_bar.shape and chi_c.shape == chi_bar.shape
+
+
+def test_dress_bond_conditioning_floor_is_tunable():
+    """The floor is a knob, not a hard-coded refusal: an explicit lower
+    ``cond_tol`` lets a deliberately stiff study through."""
+    from hwave.solver.bond_channels import dress_bond
+    chi_bar, S_bond, C_bond = _diag_denominator_fixture(1.0e-4, "spin")
+    chi_s, _ = dress_bond(chi_bar, S_bond, C_bond, cond_tol=1.0e-8)
+    assert np.all(np.isfinite(chi_s))
+
+
+# --- the on-site (Delta r = 0) diagonal must be REAL -----------------------
+
+def test_resolve_interactions_rejects_a_complex_onsite_diagonal():
+    """Hermiticity requires V_aa(0) = conj(V_aa(0)), i.e. real. Accepting an
+    imaginary diagonal would break the function's Hermiticity-closed
+    contract silently."""
+    ci = {((0, 0, 0), (0, 0)): 0.5 + 0.2j}
+    with pytest.raises(ValueError, match=r"on-site"):
+        resolve_interactions(ci, np.eye(3), norb=1)
+
+
+def test_resolve_interactions_closes_a_roundoff_imaginary_onsite_diagonal():
+    """Within the reversal tolerance the imaginary part is round-off; the
+    closed value must come out EXACTLY real."""
+    ci = {((0, 0, 0), (0, 0)): 0.5 + 1.0e-14j}
+    r = resolve_interactions(ci, np.eye(3), norb=1)
+    assert r.v_onsite[0, 0].imag == 0.0
+    assert r.v_onsite[0, 0].real == pytest.approx(0.5)
+
+
+def test_resolve_interactions_keeps_a_complex_offdiagonal_onsite():
+    """Only the DIAGONAL has to be real; V_01(0) = conj(V_10(0)) may be
+    genuinely complex and must still be accepted."""
+    ci = {((0, 0, 0), (0, 1)): 0.3 + 0.1j}
+    r = resolve_interactions(ci, np.eye(3), norb=2)
+    assert r.v_onsite[0, 1] == pytest.approx(0.3 + 0.1j)
+    assert r.v_onsite[1, 0] == pytest.approx(0.3 - 0.1j)
+
+
+# --- an empty declared CoulombInter ----------------------------------------
+
+def test_resolve_interactions_on_an_empty_mapping():
+    """A DECLARED but empty CoulombInter is legal (spec S5: a
+    declared-but-zero V keeps the channel topology fixed across a V sweep);
+    it must resolve to the on-site channel alone."""
+    r = resolve_interactions({}, np.eye(3), norb=2)
+    assert r.n_channels == 1
+    assert r.delta_r == ((0, 0, 0),)
+    assert r.reverse == (0,)
+    assert np.array_equal(np.asarray(r.v_bond[0]), np.zeros((2, 2)))
+    assert np.array_equal(np.asarray(r.v_onsite), np.zeros((2, 2)))
+    assert r.dropped == ()
+
+
+def test_validate_bond_prereqs_accepts_a_declared_empty_coulomb_inter():
+    import hwave.sc as sc
+    sc._validate_bond_prereqs("calc", 1, {"CoulombInter": {}})
+
+
+# --- the shell cutoff across MULTIPLE shells -------------------------------
+
+def _two_shell_square(v1=0.3, v2=0.1):
+    """NN (length 1) and NNN (length sqrt(2)) bonds on a square lattice."""
+    ci = {}
+    for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+        ci[(R, (0, 0))] = v1
+    for R in ((1, 1, 0), (1, -1, 0), (-1, 1, 0), (-1, -1, 0)):
+        ci[(R, (0, 0))] = v2
+    return ci
+
+
+def test_bond_max_shells_cuts_whole_shells_and_records_them():
+    ci = _two_shell_square()
+    nn_only = {(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)}
+    nnn_only = {(1, 1, 0), (1, -1, 0), (-1, 1, 0), (-1, -1, 0)}
+
+    full = resolve_interactions(ci, np.eye(3), norb=1)
+    assert full.n_channels == 9                      # 1 + 4 + 4
+
+    nn = resolve_interactions(ci, np.eye(3), norb=1, bond_max_shells=1)
+    assert nn.n_channels == 5
+    assert set(nn.delta_r[1:]) == nn_only
+    # cut shells are RECORDED, never silently discarded
+    assert {d[0] for d in nn.dropped} == {"shell_cutoff"}
+    assert {d[1] for d in nn.dropped} == nnn_only
+    # reversal closure survives the cutoff
+    for m, dr in enumerate(nn.delta_r):
+        assert nn.delta_r[nn.reverse[m]] == tuple(-x for x in dr)
+
+    both = resolve_interactions(ci, np.eye(3), norb=1, bond_max_shells=2)
+    assert both.n_channels == 9
+    assert set(both.delta_r[1:]) == nn_only | nnn_only
+    assert both.dropped == ()
+
+    # asking for more shells than exist is a no-op, not an error
+    assert resolve_interactions(ci, np.eye(3), norb=1,
+                                bond_max_shells=5).n_channels == 9

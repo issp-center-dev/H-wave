@@ -366,6 +366,16 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   ``bond_precondition_dense_limit`` を下げて、より安価な確率的 probe 推定に
   切り替えてください。
 
+  **不安定性ガード。** 拡大 RPA のドレッシングを行う前に、ボンドパスは各
+  :math:`q` について 2 つの解行列 :math:`I - \bar\chi S` と
+  :math:`I + \bar\chi C` の条件数を、相対基準
+  :math:`\sigma_\mathrm{min}/\sigma_\mathrm{max}` （下限 :math:`10^{-3}` ）で
+  検査します。磁気・電荷不安定性領域に入った計算は、チャネル（spin か
+  charge）、 :math:`q` 点、比の値を明示したエラーで停止します。厳密に特異な
+  場合の素の ``LinAlgError`` や、ほぼ特異な場合に巨大で無意味な頂点関数を
+  黙って返す挙動を防ぐためです。この検査はボンドパス専用で、
+  ``bond_channels = false`` には影響しません。
+
   ``bond_channels = false`` のときは、これらボンドオプションはすべて
   警告付きで無視されます。
 

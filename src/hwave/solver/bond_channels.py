@@ -99,7 +99,25 @@ def _complete_onsite_hermitian(onsite, norb, reverse_atol, reverse_rtol):
         if a == b:
             v = onsite.get((a, b))
             if v is not None:
-                mat[a, b] = v
+                # R = -R = 0 makes the Hermiticity rule V_ab(0) = conj(V_ba(0))
+                # read V_aa(0) = conj(V_aa(0)) on the diagonal, i.e. REAL. An
+                # imaginary diagonal cannot be closed -- storing it verbatim
+                # would return a non-Hermitian block from a function that
+                # promises a Hermiticity-closed one -- so anything beyond the
+                # same scale-aware reversal tolerance used for the off-diagonal
+                # pairs is refused, and round-off below it is projected away so
+                # the result is EXACTLY real.
+                tol = reverse_atol + reverse_rtol * abs(v)
+                if abs(np.imag(v)) > tol:
+                    raise ValueError(
+                        "resolve_interactions: on-site V_{}{}(0) = {} has a "
+                        "nonzero imaginary part ({}); Hermiticity requires "
+                        "V_aa(0) = conj(V_aa(0)), i.e. a REAL diagonal "
+                        "(tolerance atol={}, rtol={})".format(
+                            a, a, v, np.imag(v), reverse_atol, reverse_rtol,
+                        )
+                    )
+                mat[a, b] = complex(np.real(v), 0.0)
             continue
         v_ab = onsite.get((a, b))
         v_ba = onsite.get((b, a))
@@ -513,7 +531,55 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
     return S_bond, C_bond, Vpp_s, Vpp_t
 
 
-def dress_bond(chi_bar, S_bond, C_bond):
+# Relative conditioning floor of the enlarged RPA denominators, applied by
+# dress_bond. Same criterion (min over q of sigma_min/sigma_max of the ACTUAL
+# solve matrices) and same value as the milestone off-instability guard,
+# tests/test_bond_onari_milestone.py::SIGMA_FLOOR.
+_BOND_COND_FLOOR = 1.0e-3
+
+
+def _check_bond_conditioning(name, mat, cond_tol):
+    """Refuse a singular / nearly singular enlarged RPA denominator.
+
+    ``np.linalg.solve`` raises a bare ``LinAlgError("Singular matrix")`` on an
+    exactly singular block -- with no indication of WHICH channel or WHICH
+    q-point diverged -- and returns enormous, unreliable numbers just short of
+    that, silently. Both are the RPA instability of the bond path, so they get
+    one actionable error naming the channel, the q-point and the conditioning
+    ratio.
+
+    The criterion is the RELATIVE ``sigma_min/sigma_max`` of the actual solve
+    matrix, minimized over q (identical to the milestone off-instability
+    guard), so it is scale-free.
+    """
+    if cond_tol is None:
+        return
+    Nx, Ny, Nz, ND, _ = mat.shape
+    sv = np.linalg.svd(mat.reshape(-1, ND, ND), compute_uv=False)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = sv[:, -1] / sv[:, 0]
+    # A zero (or non-finite) largest singular value means the block is the zero
+    # matrix -- as singular as it gets.
+    ratio = np.where(np.isfinite(ratio), ratio, 0.0)
+    iq = int(np.argmin(ratio))
+    worst = float(ratio[iq])
+    if worst > cond_tol:
+        return
+    qx, rem = divmod(iq, Ny * Nz)
+    qy, qz = divmod(rem, Nz)
+    raise ValueError(
+        "dress_bond: the {} RPA denominator is singular or nearly singular at "
+        "the q-point index ({}, {}, {}): sigma_min/sigma_max = {:.3e} <= "
+        "cond_tol = {:.3e} (sigma_min = {:.3e}, sigma_max = {:.3e}). The bond "
+        "path has entered the {} instability region, where the dressed "
+        "vertices are enormous and numerically meaningless. Reduce the "
+        "interaction strength, raise the temperature, refine/reduce the "
+        "q-grid, or -- if you deliberately want to study the stiff regime -- "
+        "lower cond_tol.".format(
+            name, qx, qy, qz, worst, cond_tol, sv[iq, -1], sv[iq, 0], name))
+
+
+def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     """Dress the enlarged bond bubble into the RPA spin/charge susceptibilities
     at the enlarged bond-major index (spec S4.4).
 
@@ -536,12 +602,26 @@ def dress_bond(chi_bar, S_bond, C_bond):
         The enlarged bond bubble (:func:`bond_bubble`).
     S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
         The enlarged bare vertices (:func:`bare_bond_vertices`).
+    cond_tol : float or None, optional
+        Relative conditioning floor of the two solve matrices, applied per
+        q-point as ``sigma_min/sigma_max`` (the same criterion and default,
+        ``1e-3``, as the milestone off-instability guard). A denominator at or
+        below it raises with the channel, the q-point and the ratio named --
+        an exactly singular block would otherwise raise a bare
+        ``LinAlgError`` and a nearly singular one would silently return
+        enormous, unreliable vertices. ``None`` disables the check. This is a
+        BOND-PATH guard only; the legacy ``sc.py`` dressing is untouched.
 
     Returns
     -------
     chi_s, chi_c : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
         The dressed spin (minus) and charge (plus) susceptibilities at the
         enlarged bond-major index.
+
+    Raises
+    ------
+    ValueError
+        If either RPA denominator fails the ``cond_tol`` conditioning check.
     """
     chi_bar = np.asarray(chi_bar)
     if chi_bar.ndim != 5 or chi_bar.shape[3] != chi_bar.shape[4]:
@@ -568,6 +648,12 @@ def dress_bond(chi_bar, S_bond, C_bond):
 
     mat_s = I_mat - chi_bar @ S_bond
     mat_c = I_mat + chi_bar @ C_bond
+
+    # Off-instability guard BEFORE the solve, so an unstable point is named
+    # rather than crashing (exactly singular) or silently producing garbage
+    # (nearly singular).
+    _check_bond_conditioning("spin", mat_s, cond_tol)
+    _check_bond_conditioning("charge", mat_c, cond_tol)
 
     chi_s = np.linalg.solve(mat_s, chi_bar)
     chi_c = np.linalg.solve(mat_c, chi_bar)
