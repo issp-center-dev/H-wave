@@ -4430,8 +4430,20 @@ def calc_eliashberg(input_dict):
     # Label the iteration number in the file itself, so it can never be
     # silently confused with the signed lambda_rayleigh sitting next to it
     # (review fix C1c).
+    #
+    # The note is written ONLY when it carries information, i.e. when the run
+    # opted into something that changes what the number means:
+    #   * an explicit spectral_shift -- the value is then the SIGNED eigenvalue
+    #     of K (or, if that could not be validated, a shifted iterate-norm
+    #     ESTIMATE, see below), not the historical unsigned iterate norm; or
+    #   * bond_channels -- eigenvalue.dat then also carries lambda_rayleigh,
+    #     and the two numbers must be told apart.
+    # With both inactive the meaning is exactly the historical one and there is
+    # nothing to say, so eigenvalue.dat stays byte-for-byte the legacy file
+    # (tests/test_sc_legacy_golden.py pins this against commit 712b1a0).
     eigenvalue_note = None
-    if solver_mode in ("iteration", "both") and eigenvalue_iter is not None:
+    if (solver_mode in ("iteration", "both") and eigenvalue_iter is not None
+            and (iteration_spectral_shift is not None or use_bond_channels)):
         if iteration_spectral_shift is not None:
             # Shifted power iteration: the value IS the signed eigenvalue of
             # the original kernel (the shift was subtracted back).
