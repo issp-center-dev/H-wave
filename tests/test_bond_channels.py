@@ -1254,3 +1254,185 @@ def test_bond_max_shells_cuts_whole_shells_and_records_them():
     # asking for more shells than exist is a no-op, not an error
     assert resolve_interactions(ci, np.eye(3), norb=1,
                                 bond_max_shells=5).n_channels == 9
+
+
+# ---------------------------------------------------------------------------
+# Phase-1 round-2 review fixes:
+#   R2-1  the conditioning guard must also measure the ABSOLUTE distance to the
+#         pole (a 1x1 or a uniformly-small denominator has ratio == 1);
+#   R2-2  a tolerance-ACCEPTED reverse pair must be projected onto an exactly
+#         conjugate pair (the contract promises Hermiticity-closed output);
+#   R2-3  bond_max_shells validation (non-negative integral; the zero-shell
+#         ambiguity guard keys on DECLARED nonzero V, not on tol_incl).
+# ---------------------------------------------------------------------------
+
+def _scalar_denominator_fixture(denom, channel, Nx=2):
+    """``(chi_bar, S_bond, C_bond)`` at ND = 1 whose ``channel`` denominator is
+    ``[[denom]]`` at q = (1, 0, 0) and ``[[1]]`` everywhere else.
+
+    A 1x1 block has sigma_min/sigma_max == 1 for ANY nonzero value, so only an
+    absolute pole-distance criterion can catch it.
+    """
+    ND = 1
+    shape = (Nx, 1, 1, ND, ND)
+    chi_bar = np.zeros(shape, dtype=complex)
+    S_bond = np.zeros(shape, dtype=complex)
+    C_bond = np.zeros(shape, dtype=complex)
+    for ix in range(Nx):
+        chi_bar[ix, 0, 0] = np.eye(ND, dtype=complex)
+    if channel == "spin":
+        S_bond[1, 0, 0, 0, 0] = 1.0 - denom
+    else:
+        C_bond[1, 0, 0, 0, 0] = -(1.0 - denom)
+    return chi_bar, S_bond, C_bond
+
+
+@pytest.mark.parametrize("channel", ["spin", "charge"])
+def test_dress_bond_rejects_a_near_singular_scalar_denominator(channel):
+    """B = 1, norb = 1 (empty/local interaction set) gives ND = 1, where the
+    relative sigma_min/sigma_max ratio is identically 1. A denominator of
+    1e-12 still divides the vertices by 1e-12 and must be refused."""
+    from hwave.solver.bond_channels import dress_bond
+    chi_bar, S_bond, C_bond = _scalar_denominator_fixture(1.0e-12, channel)
+    with pytest.raises(ValueError) as exc:
+        dress_bond(chi_bar, S_bond, C_bond)
+    msg = str(exc.value)
+    assert channel in msg
+    assert "(1, 0, 0)" in msg
+
+
+@pytest.mark.parametrize("channel", ["spin", "charge"])
+def test_dress_bond_accepts_a_well_conditioned_scalar_denominator(channel):
+    from hwave.solver.bond_channels import dress_bond
+    chi_bar, S_bond, C_bond = _scalar_denominator_fixture(0.5, channel)
+    chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
+    assert np.all(np.isfinite(chi_s)) and np.all(np.isfinite(chi_c))
+
+
+@pytest.mark.parametrize("channel", ["spin", "charge"])
+def test_dress_bond_rejects_a_uniformly_small_denominator(channel):
+    """``eps * I`` at ND > 1 has sigma_min/sigma_max == 1 as well, yet the
+    dressed vertices blow up by 1/eps; the guard must catch it."""
+    from hwave.solver.bond_channels import dress_bond
+    eps = 1.0e-9
+    ND, Nx = 3, 2
+    shape = (Nx, 1, 1, ND, ND)
+    chi_bar = np.zeros(shape, dtype=complex)
+    S_bond = np.zeros(shape, dtype=complex)
+    C_bond = np.zeros(shape, dtype=complex)
+    for ix in range(Nx):
+        chi_bar[ix, 0, 0] = np.eye(ND, dtype=complex)
+    if channel == "spin":
+        S_bond[1, 0, 0] = (1.0 - eps) * np.eye(ND, dtype=complex)
+    else:
+        C_bond[1, 0, 0] = -(1.0 - eps) * np.eye(ND, dtype=complex)
+    with pytest.raises(ValueError) as exc:
+        dress_bond(chi_bar, S_bond, C_bond)
+    assert channel in str(exc.value)
+
+
+def test_onsite_within_tolerance_pair_is_projected_to_exact_hermiticity():
+    """A declared forward/reverse pair that agrees only WITHIN the reversal
+    tolerance must still come back EXACTLY Hermiticity-closed -- keeping both
+    declared values verbatim leaves a residual asymmetry in an object whose
+    contract says it is closed."""
+    v = 0.3 + 0.1j
+    eps = 2.0e-9                     # inside atol + rtol*|v| for the defaults
+    ci = {((0, 0, 0), (0, 1)): v,
+          ((0, 0, 0), (1, 0)): np.conj(v) + eps}
+    r = resolve_interactions(ci, np.eye(3), norb=2)
+    vo = np.asarray(r.v_onsite)
+    assert np.array_equal(vo, vo.conj().T)
+
+
+def test_bond_within_tolerance_pair_is_projected_to_exact_hermiticity():
+    """Same for a genuine (Delta r != 0) bond: v_bond[m] must equal
+    conj(v_bond[reverse[m]].T) exactly."""
+    v = 0.5 + 0.1j
+    eps = 5.0e-9
+    ci = {((1, 0, 0), (0, 1)): v,
+          ((-1, 0, 0), (1, 0)): np.conj(v) + eps}
+    r = resolve_interactions(ci, np.eye(3), norb=2)
+    for m in range(r.n_channels):
+        a = np.asarray(r.v_bond[m])
+        b = np.asarray(r.v_bond[r.reverse[m]])
+        assert np.array_equal(a, b.conj().T), "channel {} not closed".format(m)
+
+
+def test_bond_max_shells_rejects_a_negative_value():
+    """A negative bond_max_shells used to be clamped to zero, silently dropping
+    every inter-site bond and bypassing the zero-shell ambiguity guard."""
+    with pytest.raises(ValueError, match=r"bond_max_shells"):
+        resolve_interactions(_nn_square(0.25), np.eye(3), norb=1,
+                             bond_max_shells=-1)
+
+
+def test_bond_max_shells_rejects_a_non_integral_value():
+    with pytest.raises(ValueError, match=r"bond_max_shells"):
+        resolve_interactions(_nn_square(0.25), np.eye(3), norb=1,
+                             bond_max_shells=1.5)
+
+
+def test_bond_max_shells_zero_rejects_a_tiny_declared_nonzero_v():
+    """The documented rule is "any DECLARED nonzero inter-site V"; a value
+    below tol_incl is still declared and nonzero, so bond_max_shells=0 stays
+    ambiguous rather than silently discarding it."""
+    with pytest.raises(ValueError, match=r"bond_max_shells=0"):
+        resolve_interactions(_nn_square(1.0e-15), np.eye(3), norb=1,
+                             bond_max_shells=0)
+
+
+# --- R2-4 (optional): validate the documented green layout / beta ----------
+
+def _tiny_kernel_args(Nx=2, nmat=2):
+    """Minimal well-formed arguments for make_bond_kernel at norb = 1, B = 1."""
+    from hwave.solver.bond_channels import bare_bond_vertices
+    bset = resolve_interactions({}, np.eye(3), norb=1)
+    ND = 1 * bset.n_channels
+    shape = (Nx, 1, 1, ND, ND)
+    chi = np.zeros(shape, dtype=complex)
+    S = np.zeros(shape, dtype=complex)
+    C = np.zeros(shape, dtype=complex)
+    Vpp = np.zeros((ND, ND), dtype=complex)
+    green = np.ones((1, 1, Nx, 1, 1, nmat), dtype=complex)
+    return dict(chi_s=chi, chi_c=chi, S_bond=S, C_bond=C, Vpp_s=Vpp,
+                Vpp_t=Vpp, green=green, bond_set=bset,
+                pairing_type="singlet", beta=1.0)
+
+
+def _call_kernel(fn, **over):
+    kw = _tiny_kernel_args()
+    kw.update(over)
+    return fn(kw["chi_s"], kw["chi_c"], kw["S_bond"], kw["C_bond"],
+              kw["Vpp_s"], kw["Vpp_t"], kw["green"], kw["bond_set"],
+              kw["pairing_type"], kw["beta"])
+
+
+@pytest.mark.parametrize("fn_name", ["make_bond_kernel", "make_bond_kernel_parts"])
+@pytest.mark.parametrize("bad", ["ndim", "orbital", "beta"])
+def test_bond_kernel_validates_green_and_beta(fn_name, bad):
+    import hwave.solver.bond_channels as bc
+    fn = getattr(bc, fn_name)
+    if bad == "ndim":
+        over = {"green": np.ones((1, 1, 2, 1, 1), dtype=complex)}
+    elif bad == "orbital":
+        over = {"green": np.ones((1, 2, 2, 1, 1, 2), dtype=complex)}
+    else:
+        over = {"beta": 0.0}
+    with pytest.raises(ValueError):
+        _call_kernel(fn, **over)
+
+
+@pytest.mark.parametrize("bad", ["ndim", "orbital", "beta"])
+def test_pair_weight_validates_green_and_beta(bad):
+    from hwave.solver.bond_channels import pair_weight
+    green = np.ones((1, 1, 2, 1, 1, 2), dtype=complex)
+    beta = 1.0
+    if bad == "ndim":
+        green = np.ones((1, 1, 2, 1, 1), dtype=complex)
+    elif bad == "orbital":
+        green = np.ones((1, 2, 2, 1, 1, 2), dtype=complex)
+    else:
+        beta = -1.0
+    with pytest.raises(ValueError):
+        pair_weight(green, beta)

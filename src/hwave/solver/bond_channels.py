@@ -132,7 +132,14 @@ def _complete_onsite_hermitian(onsite, norb, reverse_atol, reverse_rtol):
                         a, b, v_ab, b, a, v_synth, reverse_atol, reverse_rtol,
                     )
                 )
-            mat[a, b] = v_ab
+            # Accepted within tolerance: PROJECT onto the exactly conjugate
+            # pair instead of storing both declared values verbatim, which
+            # would leave an O(tol) asymmetry in a block this function promises
+            # is Hermiticity-closed (review fix R2-2). The symmetric average is
+            # taken independently for (a,b) and (b,a); IEEE addition is
+            # commutative and negation exact, so the two results are EXACT
+            # conjugates of one another.
+            mat[a, b] = 0.5 * (v_ab + v_synth)
         elif v_ab is not None:
             mat[a, b] = v_ab
         else:
@@ -167,8 +174,10 @@ def resolve_interactions(
     bond_max_shells : int or None, optional
         Keep shells ``0..bond_max_shells`` (shell 0 = Delta r = (0,0,0)).
         ``None`` keeps all declared shells. ``bond_max_shells=0`` while any
-        nonzero inter-site ``V`` is declared raises ``ValueError`` (see spec
-        S3.2 "Cutoff").
+        *declared* nonzero inter-site ``V`` is present raises ``ValueError``
+        (see spec S3.2 "Cutoff") -- "nonzero" here means literally ``!= 0``,
+        independent of ``tol_incl``. A negative, non-integral or non-finite
+        value also raises ``ValueError`` rather than being clamped/truncated.
     tol_incl : float, optional
         Magnitude tolerance below which a *synthesized* reverse partner is
         treated as negligible for provenance purposes. Declared entries are
@@ -177,7 +186,12 @@ def resolve_interactions(
     reverse_atol, reverse_rtol : float, optional
         Scale-aware tolerance for consistency of an explicitly-declared pair
         ``V_ab(R)`` and ``V_ba(-R)`` (Hermiticity check); disagreement beyond
-        ``atol + rtol * |value|`` raises ``ValueError``.
+        ``atol + rtol * |value|`` raises ``ValueError``. A pair that passes is
+        then PROJECTED onto its symmetric average, so the returned
+        ``v_bond``/``v_onsite`` satisfy the reversal/Hermiticity closure
+        ``v_bond[m] == v_bond[reverse[m]].conj().T`` and
+        ``v_onsite == v_onsite.conj().T`` EXACTLY (to the last bit), not merely
+        within the tolerance (review fix R2-2).
 
     Returns
     -------
@@ -251,7 +265,13 @@ def resolve_interactions(
                             reverse_atol, reverse_rtol,
                         )
                     )
-                fwd_mat[a, b] = v_declared
+                # Accepted within tolerance -> project onto the exactly
+                # conjugate pair (review fix R2-2); see the same step in
+                # _complete_onsite_hermitian. The (a,b)-of-R and (b,a)-of-(-R)
+                # averages below are exact conjugates of one another, so the
+                # returned set satisfies v_bond[m] == v_bond[reverse[m]].conj().T
+                # to the last bit rather than only within tolerance.
+                fwd_mat[a, b] = 0.5 * (v_declared + v_synth)
             elif v_declared is not None:
                 fwd_mat[a, b] = v_declared
             else:
@@ -277,7 +297,7 @@ def resolve_interactions(
                             reverse_atol, reverse_rtol,
                         )
                     )
-                bwd_mat[a, b] = v_declared
+                bwd_mat[a, b] = 0.5 * (v_declared + v_synth)
             elif v_declared is not None:
                 bwd_mat[a, b] = v_declared
             else:
@@ -311,11 +331,32 @@ def resolve_interactions(
     # --- Step 4: apply bond_max_shells cutoff ---
     # Shell 0 = Delta r = (0,0,0); shell n (n>=1) = nth nearest distinct
     # nonzero-shell length.
+    # The ambiguity guard keys on values that are ACTUALLY DECLARED nonzero,
+    # not on the tol_incl inclusion threshold (review fix R2-3): tol_incl only
+    # governs provenance bookkeeping for SYNTHESIZED partners, so using it here
+    # silently discarded a declared-but-tiny inter-site V that the documented
+    # rule ("any declared nonzero inter-site V") says is ambiguous.
     has_nonzero_inter_site_v = any(
-        np.any(np.abs(mat) > tol_incl) for mat in completed.values()
+        value != 0 for entries in by_irvec.values() for value in entries.values()
     )
     if bond_max_shells is not None:
-        if bond_max_shells == 0 and has_nonzero_inter_site_v:
+        # Validate BEFORE use (review fix R2-3): a negative value used to be
+        # clamped to zero -- silently dropping every inter-site bond AND
+        # bypassing the ambiguity guard below -- and a non-integral one used to
+        # be truncated by int() without a word.
+        try:
+            shells_f = float(bond_max_shells)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "resolve_interactions: bond_max_shells must be a non-negative "
+                "integer or None, got {!r}".format(bond_max_shells))
+        if (not np.isfinite(shells_f) or shells_f < 0
+                or shells_f != np.floor(shells_f)):
+            raise ValueError(
+                "resolve_interactions: bond_max_shells must be a non-negative "
+                "integral value (shell 0 = the on-site Delta r = 0 point) or "
+                "None, got {!r}".format(bond_max_shells))
+        if shells_f == 0 and has_nonzero_inter_site_v:
             raise ValueError(
                 "resolve_interactions: bond_max_shells=0 requested but nonzero "
                 "inter-site V is declared; this is ambiguous (asks for B=1 "
@@ -325,7 +366,7 @@ def resolve_interactions(
         # shells 1..bond_max_shells are kept (shell 0 is Delta r=0, always kept
         # separately below); bond_max_shells counts inter-site shells beyond
         # the on-site point, matching "shell 1 = 1st NN".
-        n_keep = max(int(bond_max_shells), 0)
+        n_keep = int(shells_f)
         kept_shells = shells[:n_keep]
         dropped_shells = shells[n_keep:]
         for length, irvecs in dropped_shells:
@@ -531,10 +572,13 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
     return S_bond, C_bond, Vpp_s, Vpp_t
 
 
-# Relative conditioning floor of the enlarged RPA denominators, applied by
-# dress_bond. Same criterion (min over q of sigma_min/sigma_max of the ACTUAL
-# solve matrices) and same value as the milestone off-instability guard,
-# tests/test_bond_onari_milestone.py::SIGMA_FLOOR.
+# Conditioning floor of the enlarged RPA denominators, applied by dress_bond to
+# BOTH the relative ratio sigma_min/sigma_max and the absolute pole distance
+# sigma_min/max(1, sigma_max) of the ACTUAL solve matrices, minimized over q
+# (see _check_bond_conditioning). Same value -- and, for the relative half, the
+# same criterion -- as the milestone off-instability guard,
+# tests/test_bond_onari_milestone.py::SIGMA_FLOOR, which pins BOTH the ratio and
+# sigma_min above this floor.
 _BOND_COND_FLOOR = 1.0e-3
 
 
@@ -545,12 +589,27 @@ def _check_bond_conditioning(name, mat, cond_tol):
     exactly singular block -- with no indication of WHICH channel or WHICH
     q-point diverged -- and returns enormous, unreliable numbers just short of
     that, silently. Both are the RPA instability of the bond path, so they get
-    one actionable error naming the channel, the q-point and the conditioning
-    ratio.
+    one actionable error naming the channel, the q-point and both conditioning
+    numbers.
 
-    The criterion is the RELATIVE ``sigma_min/sigma_max`` of the actual solve
-    matrix, minimized over q (identical to the milestone off-instability
-    guard), so it is scale-free.
+    TWO criteria are applied to each q-block of the ACTUAL solve matrix
+    ``I -/+ chi_bar V``; the block is refused when EITHER falls to ``cond_tol``
+    or below (the guard score is their minimum, minimized over q):
+
+    1. the RELATIVE ``sigma_min/sigma_max`` ("ratio"), the scale-free
+       conditioning number, identical to the milestone off-instability guard
+       (``tests/test_bond_onari_milestone.py::SIGMA_FLOOR``);
+    2. the ABSOLUTE distance to the pole measured on the natural ``O(1)`` scale
+       of ``I -/+ chi_bar V``, ``sigma_min / max(1, sigma_max)`` ("pole
+       distance"). Criterion 1 alone is blind whenever the singular values are
+       UNIFORMLY small: it is identically 1 for any nonzero ``1x1`` block (the
+       reachable ``B = 1, norb = 1`` case of an empty/local interaction set) and
+       for any ``eps * I``, so a denominator of ``1e-12`` would pass while the
+       dressed vertices came back of order ``1e12``. Normalizing by
+       ``max(1, sigma_max)`` rather than by ``sigma_max`` keeps this a genuine
+       absolute floor near the identity (where ``sigma_max ~ 1``) without
+       double-penalizing a block whose largest singular value is huge --
+       criterion 1 already covers that regime.
     """
     if cond_tol is None:
         return
@@ -561,22 +620,28 @@ def _check_bond_conditioning(name, mat, cond_tol):
     # A zero (or non-finite) largest singular value means the block is the zero
     # matrix -- as singular as it gets.
     ratio = np.where(np.isfinite(ratio), ratio, 0.0)
-    iq = int(np.argmin(ratio))
-    worst = float(ratio[iq])
+    # Absolute pole distance on the natural scale of I -/+ chi_bar V.
+    pole = sv[:, -1] / np.maximum(1.0, sv[:, 0])
+    pole = np.where(np.isfinite(pole), pole, 0.0)
+    score = np.minimum(ratio, pole)
+    iq = int(np.argmin(score))
+    worst = float(score[iq])
     if worst > cond_tol:
         return
     qx, rem = divmod(iq, Ny * Nz)
     qy, qz = divmod(rem, Nz)
     raise ValueError(
         "dress_bond: the {} RPA denominator is singular or nearly singular at "
-        "the q-point index ({}, {}, {}): sigma_min/sigma_max = {:.3e} <= "
-        "cond_tol = {:.3e} (sigma_min = {:.3e}, sigma_max = {:.3e}). The bond "
-        "path has entered the {} instability region, where the dressed "
+        "the q-point index ({}, {}, {}): sigma_min/sigma_max = {:.3e}, "
+        "sigma_min/max(1, sigma_max) = {:.3e}; the smaller of the two is "
+        "<= cond_tol = {:.3e} (sigma_min = {:.3e}, sigma_max = {:.3e}). The "
+        "bond path has entered the {} instability region, where the dressed "
         "vertices are enormous and numerically meaningless. Reduce the "
         "interaction strength, raise the temperature, refine/reduce the "
         "q-grid, or -- if you deliberately want to study the stiff regime -- "
         "lower cond_tol.".format(
-            name, qx, qy, qz, worst, cond_tol, sv[iq, -1], sv[iq, 0], name))
+            name, qx, qy, qz, float(ratio[iq]), float(pole[iq]), cond_tol,
+            sv[iq, -1], sv[iq, 0], name))
 
 
 def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
@@ -603,14 +668,21 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
         The enlarged bare vertices (:func:`bare_bond_vertices`).
     cond_tol : float or None, optional
-        Relative conditioning floor of the two solve matrices, applied per
-        q-point as ``sigma_min/sigma_max`` (the same criterion and default,
-        ``1e-3``, as the milestone off-instability guard). A denominator at or
-        below it raises with the channel, the q-point and the ratio named --
-        an exactly singular block would otherwise raise a bare
-        ``LinAlgError`` and a nearly singular one would silently return
-        enormous, unreliable vertices. ``None`` disables the check. This is a
-        BOND-PATH guard only; the legacy ``sc.py`` dressing is untouched.
+        Conditioning floor of the two solve matrices, applied per q-point to
+        BOTH the relative ratio ``sigma_min/sigma_max`` and the absolute pole
+        distance ``sigma_min/max(1, sigma_max)`` (default ``1e-3``, the
+        milestone off-instability floor). The relative ratio alone cannot see
+        a uniformly small denominator -- it is identically 1 for a ``1x1``
+        block (``B = 1, norb = 1``) and for any ``eps * I`` -- so the absolute
+        criterion, measured on the natural ``O(1)`` scale of
+        ``I -/+ chi_bar V``, is applied alongside it; see
+        :func:`_check_bond_conditioning`. A denominator at or below the floor
+        on EITHER criterion raises with the channel, the q-point and both
+        measured quantities named -- an exactly singular block would otherwise
+        raise a bare ``LinAlgError`` and a nearly singular one would silently
+        return enormous, unreliable vertices. ``None`` disables the check.
+        This is a BOND-PATH guard only; the legacy ``sc.py`` dressing is
+        untouched.
 
     Returns
     -------
@@ -659,6 +731,41 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     chi_c = np.linalg.solve(mat_c, chi_bar)
 
     return chi_s, chi_c
+
+
+def _validate_green_beta(green, beta, label):
+    """Validate the documented ``green``/``beta`` inputs of the kernel path.
+
+    ``green`` must have the 6-D ``sc.py`` layout ``(norb, norb, Nx, Ny, Nz,
+    nmat)`` with equal orbital axes, and ``beta`` must be positive and finite.
+    :func:`bond_bubble` already checked this; :func:`make_bond_kernel`,
+    :func:`make_bond_kernel_parts` and :func:`pair_weight` used to index
+    ``green.shape`` blind, turning a mis-shaped input into an ``IndexError``,
+    an opaque einsum/reshape failure, or (for ``beta = 0``) a silent array of
+    ``inf``/``nan`` (review fix R2-4).
+
+    Returns the array form of ``green``.
+    """
+    green = np.asarray(green)
+    if green.ndim != 6:
+        raise ValueError(
+            "{}: green must have shape (norb, norb, Nx, Ny, Nz, nmat); got "
+            "ndim={} shape={}".format(label, green.ndim, green.shape))
+    if green.shape[0] != green.shape[1]:
+        raise ValueError(
+            "{}: green's two orbital axes must both equal norb; got shape "
+            "{}".format(label, green.shape))
+    try:
+        beta_f = float(beta)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "{}: beta must be a positive finite number, got {!r}".format(
+                label, beta))
+    if not np.isfinite(beta_f) or beta_f <= 0.0:
+        raise ValueError(
+            "{}: beta must be a positive finite number, got {!r}".format(
+                label, beta))
+    return green
 
 
 def _g2_from_green(green, beta):
@@ -816,7 +923,7 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
             "make_bond_kernel: unknown pairing_type '{}'. Use 'singlet' or "
             "'triplet'.".format(pairing_type))
 
-    green = np.asarray(green)
+    green = _validate_green_beta(green, beta, "make_bond_kernel")
     norb = green.shape[0]
     nd = norb * norb
     B = int(bond_set.n_channels)
@@ -1094,7 +1201,7 @@ def pair_weight(green, beta):
         -- the v1 precondition checked by
         :func:`check_hermitian_preconditions`.
     """
-    green = np.asarray(green)
+    green = _validate_green_beta(green, beta, "pair_weight")
     norb = green.shape[0]
     nd = norb * norb
     Nx, Ny, Nz = green.shape[2], green.shape[3], green.shape[4]
