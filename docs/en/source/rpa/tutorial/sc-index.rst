@@ -1164,6 +1164,82 @@ with four-index vertex structure.
    instead of silently using the first.
 
 
+What each mode accepts
+----------------------------
+
+Consolidated from the constraints the solvers actually enforce. Every cell below
+was checked by running the combination.
+
+``calc_scheme`` (FLEX)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * - 
+     - ``reduced`` / ``squashed``
+     - ``general``
+     - note
+   * - two-body range
+     - on-site and **off-site**
+     - **on-site only**
+     - off-site raises ``ValueError`` on the general path
+   * - spin structure
+     - spin-free, spin-diag, spinful
+     - **spin-free only**
+     - general raises for a polarized one-body Hamiltonian
+   * - ``enable_spin_orbital``
+     - accepted by FLEX
+     - rejected
+     - see *Spin structure* below for what the Eliashberg step then does
+   * - susceptibility stored
+     - density-density only, ``chi_{(a,a),(b,b)}``
+     - full orbital-pair
+     - ``reduced`` and ``squashed`` store a byte-identical layout
+
+``calc_type``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * - 
+     - ``ring`` (default)
+     - ``ring+ladder``
+   * - RPA
+     - every ``calc_scheme``
+     - ``calc_scheme = "general"`` only; adds ``chiq_pm``, leaves ``chiq`` untouched
+   * - FLEX
+     - every ``calc_scheme``
+     - **not supported on any scheme**
+
+For a paramagnetic system this costs nothing: SU(2) symmetry makes the
+transverse and longitudinal spin susceptibilities equal, and the ``3/2 * chi_s``
+factor in the FLEX effective interaction is exactly the count of one
+longitudinal and two transverse components. The ladder channel becomes distinct
+only once the spins are split.
+
+Interactions reaching the Eliashberg vertex
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 34 36
+
+   * - susceptibility supplied
+     - ``CoulombIntra`` only
+     - with ``CoulombInter`` / ``Hund`` / ``Ising`` / ``Exchange`` / ``PairHop``
+   * - reduced / squashed
+     - exact
+     - approximate, and warned about: the off-density S/C blocks have no
+       susceptibility to dress them
+   * - general (four-index)
+     - exact
+     - exact
+
+``PairLift`` contributes ``S = C = 0`` to the particle-hole vertex and is inert
+on every route (ignored with a warning).
+
+
 Spin structure
 ----------------------------
 

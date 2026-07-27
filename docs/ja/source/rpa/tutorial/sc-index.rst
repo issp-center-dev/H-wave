@@ -1107,6 +1107,80 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    問題に対する制御された近似ではありません。
 
 
+各モードが受け付けるもの
+----------------------------
+
+ソルバーが実際に課している制約をまとめたものです。以下の各項目は、その組み合わせを
+実行して確認しています。
+
+``calc_scheme``\ （FLEX）
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * - 
+     - ``reduced`` / ``squashed``
+     - ``general``
+     - 備考
+   * - 2体項の距離
+     - オンサイト・\ **オフサイト**\ 両方
+     - **オンサイトのみ**
+     - general でオフサイトを与えると ``ValueError``
+   * - スピン構造
+     - spin-free / spin-diag / spinful
+     - **spin-free のみ**
+     - 偏極した一体ハミルトニアンでは general は例外
+   * - ``enable_spin_orbital``
+     - FLEX は受け付ける
+     - 拒否
+     - その後 Eliashberg で何が起きるかは下の「スピン構造の取り扱い」参照
+   * - 保存される感受率
+     - 密度‐密度成分のみ ``chi_{(a,a),(b,b)}``
+     - orbital-pair 全体
+     - ``reduced`` と ``squashed`` はバイト単位で同一レイアウト
+
+``calc_type``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * - 
+     - ``ring``\ （既定）
+     - ``ring+ladder``
+   * - RPA
+     - すべての ``calc_scheme``
+     - ``calc_scheme = "general"`` のみ。``chiq_pm`` を追加し ``chiq`` は変更しない
+   * - FLEX
+     - すべての ``calc_scheme``
+     - **どのスキームでも非対応**
+
+常磁性系ではこれによる欠落はありません。SU(2) 対称性から横成分と縦成分のスピン
+感受率は一致し、FLEX の有効相互作用の ``3/2 * chi_s`` という係数が縦1・横2の
+スピン3成分をちょうど数えているためです。ラダーチャネルが別物になるのは、
+スピンが分裂したときだけです。
+
+Eliashberg 頂点に入る相互作用
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 34 36
+
+   * - 与える感受率
+     - ``CoulombIntra`` のみ
+     - ``CoulombInter`` / ``Hund`` / ``Ising`` / ``Exchange`` / ``PairHop`` を含む
+   * - reduced / squashed
+     - 厳密
+     - 近似となり警告が出ます（非密度の S/C ブロックを dress する感受率が存在しない）
+   * - general（4インデックス）
+     - 厳密
+     - 厳密
+
+``PairLift`` は粒子‐正孔頂点に ``S = C = 0`` しか寄与しないため、どの経路でも
+無効です（警告のうえ無視されます）。
+
+
 スピン構造の取り扱い
 ----------------------------
 
