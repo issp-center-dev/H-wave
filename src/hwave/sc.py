@@ -1410,12 +1410,12 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s")
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c")
     chis_w = np.moveaxis(
-        _expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz, chi_convention,
-                         "chi_s"), 0, -1)
+        _expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
     chic_w = np.moveaxis(
-        _expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz, chi_convention,
-                         "chi_c"), 0, -1)
+        _expand_flex_chi(chi_c_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
 
     if not allow_ir:
         return chis_w, chic_w, green_w, chi_convention
@@ -1523,55 +1523,69 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     return chi_s_raw, chi_c_raw, chi_convention, ir_meta
 
 
-def _warn_if_spin_block_discarded(chi_full, norb, label="chi"):
-    """Warn when the spin-orbital content the embedding drops is not redundant.
+#: Relative size, against the kept spin-up block, above which discarded spin
+#: content is treated as physically real rather than round-off. The gap between
+#: the two regimes is enormous -- a paramagnetic run is bit-exact (ratio 0), a
+#: Zeeman-split one measured ratio ~1.6 -- so the exact value is not delicate.
+#: It exists only so that a hypothetical round-off asymmetry on some backend
+#: aborts nobody's run; anything above it is reported as an error.
+_SPIN_DISCARD_ABORT_RATIO = 1.0e-8
+
+
+def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
+    """Reject, or at minimum report, spin content the embedding would drop.
 
     The reduced spin-orbital index is spin-block ordered ``s*norb + a``, and the
     embedding below keeps ONLY the spin-up block ``[:norb, :norb]``. Everything
-    else -- the down-block and both cross-spin blocks -- is dropped, because
+    else -- the down block and both cross-spin blocks -- is dropped, because
     nothing downstream carries spin: the Kuroki S/C matrices and the
     singlet/triplet vertex formulas are norb^2-sized and paramagnetic.
 
-    Dropping it is lossless exactly when it is redundant, i.e. when the down
-    block equals the up block EXACTLY and the cross blocks are EXACTLY zero.
-    That holds bit-for-bit for a paramagnetic run: the inflation writes the same array into both spin
-    blocks and leaves the cross blocks at zero
+    Dropping it is lossless exactly when it is redundant: the down block equals
+    the up block and the cross blocks are zero. That holds bit-for-bit for a
+    paramagnetic run -- the inflation writes the same array into both spin
+    blocks and never touches the cross blocks
     (``FLEX._inflate_chi0q_and_ham``), and the channel vertices are spin-block
     diagonal, so the RPA solve preserves both properties.
 
-    The test is deliberately on the DISCARDED DATA, not on the run's spin mode.
-    Inferring "spin-polarized" from unequal diagonal blocks would be wrong in
-    both directions: a spinful/spin-orbit run can have unequal blocks while
-    still being time-reversal symmetric, and it can equally have equal diagonal
-    blocks with nonzero cross-spin blocks -- which are discarded just the same.
-    The stored npz records no ``spin_mode``, so the data is the only signal
-    available; report what is actually being thrown away and let the user judge.
+    When it does not hold the discarded data is real and the eigenvalue is not a
+    controlled approximation of anything, so this RAISES rather than warning:
+    a spin-polarized model is outside what this formulation can express, and
+    returning a number for it is worse than refusing.
+
+    The test is on the DISCARDED DATA, not on the run's spin mode. Inferring
+    "spin-polarized" from unequal diagonal blocks would be wrong in both
+    directions: a spinful/spin-orbit run can have unequal blocks while still
+    being time-reversal symmetric, and it can equally have equal diagonal blocks
+    with nonzero cross-spin blocks -- discarded just the same. The stored npz
+    records no ``spin_mode``, so the data is the only signal available.
+
+    Two severities, because a false positive costs very different amounts:
+    anything nonzero is reported, but only content above
+    ``_SPIN_DISCARD_ABORT_RATIO`` relative to the kept block aborts. Exact
+    bit-equality was confirmed on the uniform and IR axes, static and dynamic,
+    and on production multi-orbital output; the margin exists so that a
+    round-off asymmetry on an untested backend (e.g. a GPU batched solve)
+    degrades to a warning instead of killing a legitimate paramagnetic run.
     """
-    ns = 2
-    if chi_full.shape[-1] != norb * ns or norb <= 0:
+    if str(convention).lower() != "kuroki":
+        # Only the reduced/squashed layout has spin blocks to compare.
         return
-    up = chi_full[..., :norb, :norb]
+    ns = 2
+    chi = np.asarray(chi_raw)
+    if chi.ndim < 2 or chi.shape[-1] != norb * ns or norb <= 0:
+        return
+    up = chi[..., :norb, :norb]
     if up.size == 0:
         return
-    down = chi_full[..., norb:, norb:]
-    cross_ud = chi_full[..., :norb, norb:]
-    cross_du = chi_full[..., norb:, :norb]
+    down = chi[..., norb:, norb:]
+    cross_ud = chi[..., :norb, norb:]
+    cross_du = chi[..., norb:, :norb]
 
     scale = float(np.max(np.abs(up)))
     d_down = float(np.max(np.abs(up - down)))
     d_cross = max(float(np.max(np.abs(cross_ud))),
                   float(np.max(np.abs(cross_du))))
-    # Compared EXACTLY, with no tolerance. The redundancy of a paramagnetic run
-    # is structural, not numerical: the same array object is written into both
-    # spin blocks and the cross blocks are never touched, and every operation
-    # downstream is spin-block diagonal, so the equalities hold bit-for-bit
-    # (verified on uniform, IR, static and dynamic output, and on production
-    # multi-orbital data). A tolerance would therefore buy nothing real, while
-    # letting genuinely discarded content slip through whenever the up block is
-    # itself small -- with tol = 1e-12*max(scale, 1) and an all-zero up block,
-    # discarded values up to 1e-12 would have passed unreported. If some future
-    # path does perturb the equality at round-off level, warning is the correct
-    # conservative response rather than something to suppress.
     if d_down == 0.0 and d_cross == 0.0:
         return
 
@@ -1582,23 +1596,37 @@ def _warn_if_spin_block_discarded(chi_full, norb, label="chi"):
     if d_cross != 0.0:
         parts.append("the cross-spin blocks are nonzero "
                      "(max {:.3e})".format(d_cross))
-    logger.warning(
-        "The reduced FLEX susceptibility %s carries spin structure that the "
-        "Eliashberg step cannot represent: %s, against an up-block scale of "
-        "%.3e. The pairing vertex is paramagnetic (the Kuroki S/C matrices "
-        "carry no spin index), so ONLY the up-spin block is used and the rest "
-        "is discarded -- the resulting eigenvalue is not a controlled "
-        "approximation of the spin-resolved problem. This is exact only for a "
-        "paramagnetic FLEX run, where the discarded blocks are redundant. "
-        "This formulation cannot consume spin-resolved data at all -- it is "
-        "not a matter of configuration. If you meant to run a paramagnetic "
-        "calculation and a field such as coeff_extern is the only source of the "
-        "splitting, drop it and re-run FLEX; if the spin structure is intrinsic "
-        "to your model, the Eliashberg step here cannot describe it.",
-        label, " and ".join(parts), scale)
+    detail = " and ".join(parts)
+    ratio = max(d_down, d_cross) / max(scale, np.finfo(float).tiny)
+
+    if ratio <= _SPIN_DISCARD_ABORT_RATIO:
+        logger.warning(
+            "The reduced FLEX susceptibility %s is not exactly spin-redundant: "
+            "%s, against an up-block scale of %.3e. That is %.1e of the kept "
+            "block -- too small to be physical spin polarization, so it is "
+            "treated as round-off and the calculation continues using the "
+            "up-spin block. Please report it: every tested path produces "
+            "bit-identical spin blocks.", label, detail, scale, ratio)
+        return
+
+    raise ValueError(
+        "The reduced FLEX susceptibility {} is SPIN-RESOLVED: {}, against an "
+        "up-block scale of {:.3e}. The Eliashberg pairing vertex here is "
+        "paramagnetic -- the Kuroki S/C matrices carry no spin index and the "
+        "singlet/triplet decomposition assumes spin-rotational symmetry -- so "
+        "only the up-spin block could be used and the rest would be discarded. "
+        "That is not a controlled approximation of the spin-resolved problem, "
+        "so it is refused rather than silently returning a number. If you meant "
+        "to run a paramagnetic calculation and a field such as coeff_extern is "
+        "the only source of the splitting, drop it and re-run FLEX. If the spin "
+        "structure is intrinsic to your model, this solver cannot describe it: "
+        "a spin-resolved treatment needs an S_z-resolved vertex and the "
+        "transverse susceptibility chi^(+-), which FLEX does not compute at all "
+        "(calc_type='ring+ladder' is rejected on every FLEX scheme).".format(
+            label, detail, scale))
 
 
-def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention, label="chi"):
+def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     """Reshape H-wave chi ``(nfreq, nvol, nd, nd)`` to
     ``(nfreq, Nx, Ny, Nz, nd, nd)`` in the ``nd = norb^2`` Eliashberg space,
     resolving the spin-orbital-vs-orbital-pair layout from ``convention``.
@@ -1738,7 +1766,6 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention, label="chi"):
     # _compute_vertices_flex, which warns when the interaction actually needs
     # those missing components.
     chi_orb = chi_full[:, :, :, :, :norb, :norb]
-    _warn_if_spin_block_discarded(chi_full, norb, label)
     out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
     dens = np.arange(norb) * norb + np.arange(norb)   # flat index of (a,a)
     out[..., dens[:, None], dens[None, :]] = chi_orb
@@ -1827,10 +1854,12 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
     # Slice the static frequency FIRST, then expand only that single slice.
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s")
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c")
     chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
-                            norb, Nx, Ny, Nz, chi_convention, "chi_s")[0]
+                            norb, Nx, Ny, Nz, chi_convention)[0]
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
-                            norb, Nx, Ny, Nz, chi_convention, "chi_c")[0]
+                            norb, Nx, Ny, Nz, chi_convention)[0]
 
     green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     return chis, chic, green_dressed, chi_convention

@@ -641,12 +641,15 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         self.assertIn("Hund", warns[0])
 
 
-class TestDiscardedSpinContentIsFlagged(unittest.TestCase):
+class TestDiscardedSpinContentIsRefused(unittest.TestCase):
     """The embedding keeps only the spin-UP block. Dropping the rest is lossless
-    exactly when it is redundant (down block == up block, cross blocks zero),
-    which holds bit-for-bit for a paramagnetic run. The guard tests the
-    DISCARDED DATA, not the run's spin mode -- inferring "spin-polarized" from
-    unequal diagonal blocks would be wrong in both directions."""
+    exactly when it is redundant (down == up AND cross == 0), which holds
+    bit-for-bit for a paramagnetic run. Real discarded content is REFUSED, not
+    warned about: the eigenvalue would not approximate anything.
+
+    The guard tests the DISCARDED DATA, never the run's spin mode -- unequal
+    diagonal blocks do not imply polarization, and equal ones do not imply
+    redundancy when the cross blocks are nonzero."""
 
     @staticmethod
     def _capture(fn):
@@ -660,9 +663,7 @@ class TestDiscardedSpinContentIsFlagged(unittest.TestCase):
             fn()
         finally:
             lg.removeHandler(handler)
-        return [r.getMessage() for r in records
-                if r.levelno >= logging.WARNING
-                and "spin structure" in r.getMessage()]
+        return [r.getMessage() for r in records if r.levelno >= logging.WARNING]
 
     def _chi(self, norb, Nx, Ny, Nz, nfreq, down_factor=1.0, cross=0.0):
         nvol, nd_so = Nx * Ny * Nz, norb * 2
@@ -677,98 +678,72 @@ class TestDiscardedSpinContentIsFlagged(unittest.TestCase):
             chi[..., norb:, :norb] = block * cross
         return chi
 
-    def _run(self, **kw):
+    def _expand(self, **kw):
+        """Drive the guard where it lives: the loader boundary.
+
+        _expand_flex_chi itself stays a pure layout transform -- policy about
+        which data the solver accepts belongs where the data enters it, not in
+        the reshape, which is also exercised directly with arbitrary arrays.
+        """
         import hwave.sc as sc
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
         chi = self._chi(norb, Nx, Ny, Nz, nfreq, **kw)
-        return self._capture(
-            lambda: sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "kuroki"))
+        return lambda: sc._check_spin_block_discarded(chi, norb, "kuroki")
 
-    def test_paramagnetic_chi_is_silent(self):
-        """Redundant discarded blocks: nothing is lost, so say nothing."""
-        self.assertEqual(self._run(), [])
+    def test_paramagnetic_chi_passes_silently(self):
+        self.assertEqual(self._capture(self._expand()), [])
 
-    def test_unequal_down_block_warns(self):
-        warns = self._run(down_factor=0.5)
-        self.assertEqual(len(warns), 1)
-        self.assertIn("down-spin block differs", warns[0])
+    def test_unequal_down_block_is_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            self._expand(down_factor=0.5)()
+        self.assertIn("down-spin block differs", str(cm.exception))
 
-    def test_nonzero_cross_spin_blocks_warn(self):
-        """Equal diagonal blocks but nonzero cross blocks: the cross blocks are
-        discarded just the same, so this must NOT pass silently."""
-        warns = self._run(cross=0.3)
-        self.assertEqual(len(warns), 1)
-        self.assertIn("cross-spin blocks are nonzero", warns[0])
-
-    def test_both_defects_are_reported_together(self):
-        warns = self._run(down_factor=0.5, cross=0.3)
-        self.assertEqual(len(warns), 1)
-        self.assertIn("down-spin block differs", warns[0])
-        self.assertIn("cross-spin blocks are nonzero", warns[0])
+    def test_nonzero_cross_spin_blocks_are_refused(self):
+        """Equal diagonal blocks, nonzero cross blocks: discarded just the same,
+        so this must not slip through."""
+        with self.assertRaises(ValueError) as cm:
+            self._expand(cross=0.3)()
+        self.assertIn("cross-spin blocks are nonzero", str(cm.exception))
 
     def test_message_does_not_assert_a_spin_mode(self):
-        """The npz records no spin_mode, so the message must describe the
-        discarded data rather than classify the run (a time-reversal-symmetric
-        spinful run can have unequal diagonal blocks)."""
-        warns = self._run(down_factor=0.5)
-        low = warns[0].lower()
-        for claim in ("spin-polarized", "spin-diag", "spinful"):
-            self.assertNotIn(claim, low,
-                             "must not classify the run as '{}'".format(claim))
+        """The npz records no spin_mode, so the message must describe the data
+        rather than classify the run."""
+        with self.assertRaises(ValueError) as cm:
+            self._expand(down_factor=0.5)()
+        low = str(cm.exception).lower()
+        for claim in ("spin-diag", "spinful"):
+            self.assertNotIn(claim, low)
 
-    def test_message_tells_the_user_what_to_do(self):
-        """A warning that only describes the problem leaves the user stuck."""
-        warns = self._run(down_factor=0.5)
-        self.assertIn("coeff_extern", warns[0])
-        self.assertIn("re-run flex", warns[0].lower())
+    def test_message_says_what_the_user_can_do(self):
+        with self.assertRaises(ValueError) as cm:
+            self._expand(down_factor=0.5)()
+        msg = str(cm.exception)
+        self.assertIn("coeff_extern", msg)
+        self.assertIn("chi^(+-)", msg)
 
-    def test_warning_does_not_change_the_embedding(self):
-        """The guard reports; it must not alter the returned tensor."""
+    def test_roundoff_scale_asymmetry_only_warns(self):
+        """A difference far below any physical polarization must not abort a
+        legitimate paramagnetic run on an untested backend."""
         import hwave.sc as sc
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
-        chi = self._chi(norb, Nx, Ny, Nz, nfreq, down_factor=0.5, cross=0.3)
-        out = sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "kuroki")
-        X = chi.reshape(nfreq, Nx, Ny, Nz, norb * 2,
-                        norb * 2)[..., :norb, :norb]
-        for a in range(norb):
-            for b in range(norb):
-                np.testing.assert_allclose(
-                    out[..., a * norb + a, b * norb + b], X[..., a, b])
+        chi = self._chi(norb, Nx, Ny, Nz, nfreq)
+        scale = float(np.max(np.abs(chi[..., :norb, :norb])))
+        chi[..., norb, norb] += 1e-12 * scale        # ~1e-12 relative
+        warns = self._capture(
+            lambda: sc._check_spin_block_discarded(chi, norb, "kuroki"))
+        self.assertEqual(len(warns), 1)
+        self.assertIn("treated as round-off", warns[0])
 
     def test_myo_chi_is_never_checked(self):
-        """A general (myo) chi has no spin blocks; the guard must not fire."""
         import hwave.sc as sc
         norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 2
         nd = norb * norb
         rng = np.random.default_rng(13)
         chi = (rng.standard_normal((nfreq, Nx * Ny * Nz, nd, nd))
                + 1j * rng.standard_normal((nfreq, Nx * Ny * Nz, nd, nd)))
-        warns = self._capture(
-            lambda: sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "myo"))
-        self.assertEqual(warns, [])
-
-    def test_loader_labels_each_channel(self):
-        """One load expands chi_s and chi_c, so the two messages must identify
-        which channel they are about instead of reading as duplicates."""
-        import hwave.sc as sc
-        import tempfile as _tf
-        norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 4
-        nvol, nd_so = Nx * Ny * Nz, norb * 2
-        with _tf.TemporaryDirectory() as d:
-            for name, key, fac in (("chiq_s", "chiq_s", 0.5),
-                                   ("chiq_c", "chiq_c", 0.25)):
-                chi = self._chi(norb, Nx, Ny, Nz, nmat, down_factor=fac)
-                np.savez(os.path.join(d, name + ".npz"), **{key: chi},
-                         chi_convention="kuroki")
-            inp = {"mode": {"param": {"Nmat": nmat}},
-                   "file": {"output": {"path_to_output": d}},
-                   "eliashberg": {"chi0q_mode": "flex"}}
-            warns = self._capture(
-                lambda: sc._load_flex_susceptibilities_full(
-                    inp, norb, Nx, Ny, Nz))
-        self.assertEqual(len(warns), 2)
-        self.assertTrue(any("chi_s" in w for w in warns))
-        self.assertTrue(any("chi_c" in w for w in warns))
+        self.assertEqual(
+            self._capture(
+                lambda: sc._check_spin_block_discarded(chi, norb, "myo")), [])
 
 
 class TestStaticEntryPointWarnsOnce(unittest.TestCase):
@@ -800,12 +775,20 @@ class TestStaticEntryPointWarnsOnce(unittest.TestCase):
             return (rng.standard_normal(shape)
                     + 1j * rng.standard_normal(shape)) * 0.01
 
+        def paramagnetic_chi():
+            """Spin-redundant, as a real paramagnetic reduced run stores it:
+            identical spin blocks and zero cross blocks. A plain random array
+            would (correctly) be refused as spin-resolved."""
+            block = rc((self.nmat, nvol, self.norb, self.norb))
+            chi = np.zeros((self.nmat, nvol, nd_so, nd_so), dtype=complex)
+            chi[..., :self.norb, :self.norb] = block
+            chi[..., self.norb:, self.norb:] = block
+            return chi
+
         np.savez(os.path.join(self.dir, "chiq_s.npz"),
-                 chiq_s=rc((self.nmat, nvol, nd_so, nd_so)),
-                 chi_convention="kuroki")
+                 chiq_s=paramagnetic_chi(), chi_convention="kuroki")
         np.savez(os.path.join(self.dir, "chiq_c.npz"),
-                 chiq_c=rc((self.nmat, nvol, nd_so, nd_so)),
-                 chi_convention="kuroki")
+                 chiq_c=paramagnetic_chi(), chi_convention="kuroki")
         np.savez(os.path.join(self.dir, "green.npz"),
                  green=rc((1, self.nmat, nvol, self.norb, self.norb)))
 
@@ -929,7 +912,7 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
                     chi = np.asarray(green_info[key])
                     self._assert_exactly_redundant(chi, norb,
                                                    "{} {}".format(tag, key))
-                    sc._expand_flex_chi(chi, norb, 4, 4, 1, "kuroki", key)
+                    sc._check_spin_block_discarded(chi, norb, "kuroki", key)
             finally:
                 lg.removeHandler(handler)
             warns = [r.getMessage() for r in records

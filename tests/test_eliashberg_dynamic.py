@@ -165,8 +165,18 @@ def _write_flex_so_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
+    def paramagnetic():
+        """Spin-redundant, the way a paramagnetic reduced run really stores it:
+        identical spin blocks, zero cross blocks. The loader refuses anything
+        else, since only the up-spin block survives the embedding."""
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic())
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic())
     np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)))
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
@@ -326,9 +336,18 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
+    def paramagnetic():
+        # Spin-redundant, as a real paramagnetic reduced run stores it; the
+        # loader refuses anything else.
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
     # no chi_convention tag -> _read_flex_chi_raw defaults to "kuroki"
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic())
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic())
     inp = {"mode": {"param": {"Nmat": nmat}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}

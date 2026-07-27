@@ -1185,11 +1185,13 @@ accepts ``spin-free`` only and rejects the other two outright.
   cross-spin blocks, so keeping only the spin-up block is exact.
 
 - **Spin-polarized without spin mixing** (``spin_mode = "spin-diag"``; e.g. an
-  ``Extern`` field with ``coeff_extern``) -- **runs, but only the spin-up block
-  is used** and the down-spin block is discarded. The solver detects the
-  non-redundant content and warns, naming the channel and its magnitude. The
-  eigenvalue is not a controlled approximation of the spin-resolved problem.
-  Treat the warning as an error unless you have a specific reason not to.
+  ``Extern`` field with ``coeff_extern``) -- **refused.** Only the spin-up block
+  would survive the embedding, so the eigenvalue would not approximate the
+  spin-resolved problem at all; the loader raises rather than returning a
+  number. (Content far below any physical polarization -- more than eight orders
+  of magnitude smaller than the kept block -- is reported as round-off and
+  allowed through, so a backend rounding asymmetry cannot abort a genuinely
+  paramagnetic run.)
 
 - **Spin-mixing / spin-orbit** (``mode.enable_spin_orbital = true``, giving
   ``spin_mode = "spinful"``) -- **not supported.** FLEX itself runs, but
