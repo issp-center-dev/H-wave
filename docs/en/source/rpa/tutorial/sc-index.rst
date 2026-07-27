@@ -1156,10 +1156,12 @@ with four-index vertex structure.
    A spin-polarized run -- ``spin_mode`` is auto-detected, so an ``Extern``
    field with ``coeff_extern`` is enough -- generally does not satisfy it.
    The solver inspects the STORED DATA rather than classifying the run
-   (the file records no ``spin_mode``): whenever the discarded blocks are
-   not exactly redundant it warns, naming the channel and how large the
-   discarded part is. The eigenvalue it then returns is not a controlled
-   approximation of the spin-resolved problem.
+   (the file records no ``spin_mode``). Any non-redundancy is reported; if it
+   exceeds a few hundred ulp of double precision relative to the kept block,
+   the run is **refused** rather than returning an eigenvalue that would not
+   approximate the spin-resolved problem. The dressed Green function is checked
+   the same way: a two-block ``green.npz`` whose spin blocks differ is rejected
+   instead of silently using the first.
 
 
 Spin structure

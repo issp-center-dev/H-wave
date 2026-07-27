@@ -721,18 +721,38 @@ class TestDiscardedSpinContentIsRefused(unittest.TestCase):
         self.assertIn("coeff_extern", msg)
         self.assertIn("chi^(+-)", msg)
 
-    def test_roundoff_scale_asymmetry_only_warns(self):
-        """A difference far below any physical polarization must not abort a
-        legitimate paramagnetic run on an untested backend."""
+    def test_below_the_roundoff_threshold_only_warns(self):
+        """A difference within double-precision noise must not abort a
+        legitimate paramagnetic run on a backend whose solve is not
+        bit-symmetric."""
         import hwave.sc as sc
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
         chi = self._chi(norb, Nx, Ny, Nz, nfreq)
         scale = float(np.max(np.abs(chi[..., :norb, :norb])))
-        chi[..., norb, norb] += 1e-12 * scale        # ~1e-12 relative
+        chi[..., norb, norb] += 0.1 * sc._SPIN_DISCARD_ROUNDOFF_RATIO * scale
         warns = self._capture(
             lambda: sc._check_spin_block_discarded(chi, norb, "kuroki"))
         self.assertEqual(len(warns), 1)
-        self.assertIn("treated as round-off", warns[0])
+        self.assertIn("round-off", warns[0])
+
+    def test_above_the_roundoff_threshold_is_refused(self):
+        """...but only just below it. An order of magnitude above must raise, so
+        the allowance cannot be mistaken for a general tolerance."""
+        import hwave.sc as sc
+        norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
+        chi = self._chi(norb, Nx, Ny, Nz, nfreq)
+        scale = float(np.max(np.abs(chi[..., :norb, :norb])))
+        chi[..., norb, norb] += 10.0 * sc._SPIN_DISCARD_ROUNDOFF_RATIO * scale
+        with self.assertRaises(ValueError):
+            sc._check_spin_block_discarded(chi, norb, "kuroki")
+
+    def test_threshold_is_anchored_to_machine_precision(self):
+        """Pin the provenance of the constant: it is a few hundred ulp, not a
+        guess about how weak a physical field can be."""
+        import hwave.sc as sc
+        self.assertLess(sc._SPIN_DISCARD_ROUNDOFF_RATIO, 1e-12)
+        self.assertGreater(sc._SPIN_DISCARD_ROUNDOFF_RATIO,
+                           np.finfo(float).eps)
 
     def test_myo_chi_is_never_checked(self):
         import hwave.sc as sc
@@ -967,6 +987,94 @@ class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("matches neither", msg)
         self.assertNotIn("enable_spin_orbital", msg)
+
+
+class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
+    """The guard now lives at the loader boundary, so pin it THERE.
+
+    The helper-level tests above cannot catch the check being dropped from
+    _load_flex_susceptibilities / _load_flex_susceptibilities_full, which is
+    exactly the placement that matters. Cover the static and dynamic routes, and
+    the dressed Green function, which discards spin blocks independently of chi.
+    """
+
+    def _write(self, d, norb=2, nmat=4, Nx=2, Ny=2, Nz=1,
+               down_factor=1.0, cross=0.0, green_blocks=1,
+               green_down_factor=1.0):
+        nvol, nd_so = Nx * Ny * Nz, norb * 2
+        rng = np.random.default_rng(3)
+
+        def rc(shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape)) * 0.01
+
+        def chi():
+            block = rc((nmat, nvol, norb, norb))
+            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+            a[..., :norb, :norb] = block
+            a[..., norb:, norb:] = block * down_factor
+            if cross:
+                a[..., :norb, norb:] = block * cross
+                a[..., norb:, :norb] = block * cross
+            return a
+
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=chi(),
+                 chi_convention="kuroki")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=chi(),
+                 chi_convention="kuroki")
+        g0 = rc((nmat, nvol, norb, norb))
+        g = np.stack([g0] + [g0 * green_down_factor
+                             for _ in range(green_blocks - 1)])
+        np.savez(os.path.join(d, "green.npz"), green=g)
+        return {"mode": {"param": {"Nmat": nmat}},
+                "file": {"output": {"path_to_output": d}},
+                "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
+
+    def _run(self, loader, **kw):
+        import hwave.sc as sc
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, **kw)
+            return getattr(sc, loader)(inp, norb, Nx, Ny, Nz)
+
+    def test_static_loader_accepts_paramagnetic(self):
+        self._run("_load_flex_susceptibilities")
+
+    def test_dynamic_loader_accepts_paramagnetic(self):
+        self._run("_load_flex_susceptibilities_full")
+
+    def test_static_loader_refuses_unequal_spin_blocks(self):
+        with self.assertRaises(ValueError) as cm:
+            self._run("_load_flex_susceptibilities", down_factor=0.5)
+        self.assertIn("down-spin block differs", str(cm.exception))
+
+    def test_dynamic_loader_refuses_unequal_spin_blocks(self):
+        with self.assertRaises(ValueError) as cm:
+            self._run("_load_flex_susceptibilities_full", down_factor=0.5)
+        self.assertIn("down-spin block differs", str(cm.exception))
+
+    def test_static_loader_refuses_nonzero_cross_blocks(self):
+        with self.assertRaises(ValueError) as cm:
+            self._run("_load_flex_susceptibilities", cross=0.3)
+        self.assertIn("cross-spin blocks are nonzero", str(cm.exception))
+
+    def test_dynamic_loader_refuses_nonzero_cross_blocks(self):
+        with self.assertRaises(ValueError) as cm:
+            self._run("_load_flex_susceptibilities_full", cross=0.3)
+        self.assertIn("cross-spin blocks are nonzero", str(cm.exception))
+
+    def test_two_identical_green_blocks_are_accepted(self):
+        """A paramagnetic run may legitimately store two identical blocks."""
+        self._run("_load_flex_susceptibilities", green_blocks=2)
+
+    def test_unequal_green_spin_blocks_are_refused(self):
+        """chi can be redundant while the Green functions are not; the pair
+        bubble is built from a single propagator, so this must not pass."""
+        with self.assertRaises(ValueError) as cm:
+            self._run("_load_flex_susceptibilities", green_blocks=2,
+                      green_down_factor=0.5)
+        msg = str(cm.exception)
+        self.assertIn("spin blocks that are not identical", msg)
+        self.assertIn("paramagnetic", msg)
 
 
 if __name__ == "__main__":

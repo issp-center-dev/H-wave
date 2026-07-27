@@ -1523,13 +1523,22 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     return chi_s_raw, chi_c_raw, chi_convention, ir_meta
 
 
-#: Relative size, against the kept spin-up block, above which discarded spin
-#: content is treated as physically real rather than round-off. The gap between
-#: the two regimes is enormous -- a paramagnetic run is bit-exact (ratio 0), a
-#: Zeeman-split one measured ratio ~1.6 -- so the exact value is not delicate.
-#: It exists only so that a hypothetical round-off asymmetry on some backend
-#: aborts nobody's run; anything above it is reported as an error.
-_SPIN_DISCARD_ABORT_RATIO = 1.0e-8
+#: Relative size, against the kept spin-up block, below which discarded spin
+#: content is attributed to round-off rather than physics.
+#:
+#: Derived from double precision rather than picked: a few hundred ulp, which
+#: bounds the error a linear solve can accumulate between two blocks that
+#: entered it identical. Below it the asymmetry is not distinguishable from
+#: floating-point noise in the stored quantity, so calling it a physical spin
+#: polarization would be unjustifiable in either direction.
+#:
+#: It is NOT a claim about how weak a physical field can be: an earlier draft
+#: used 1e-8 on the grounds that a measured Zeeman case gave ratio ~1.6, which
+#: sets no lower bound at all. Anchoring on machine precision is the defensible
+#: choice, and it also keeps the window as narrow as it can be while still
+#: sparing a legitimate paramagnetic run on a backend whose solve is not
+#: bit-symmetric.
+_SPIN_DISCARD_ROUNDOFF_RATIO = 256 * np.finfo(float).eps
 
 
 def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
@@ -1562,11 +1571,13 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
 
     Two severities, because a false positive costs very different amounts:
     anything nonzero is reported, but only content above
-    ``_SPIN_DISCARD_ABORT_RATIO`` relative to the kept block aborts. Exact
-    bit-equality was confirmed on the uniform and IR axes, static and dynamic,
-    and on production multi-orbital output; the margin exists so that a
-    round-off asymmetry on an untested backend (e.g. a GPU batched solve)
-    degrades to a warning instead of killing a legitimate paramagnetic run.
+    ``_SPIN_DISCARD_ROUNDOFF_RATIO`` -- a few hundred ulp of double precision --
+    aborts. Exact bit-equality was confirmed on the uniform and IR axes, static
+    and dynamic, and on production multi-orbital output, so the window is there
+    purely so a backend whose solve is not bit-symmetric (a GPU batched solve,
+    say) degrades to a warning instead of killing a legitimate paramagnetic run.
+    It is deliberately anchored to machine precision and not to any assumption
+    about how weak a physical field can be.
     """
     if str(convention).lower() != "kuroki":
         # Only the reduced/squashed layout has spin blocks to compare.
@@ -1599,12 +1610,12 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
     detail = " and ".join(parts)
     ratio = max(d_down, d_cross) / max(scale, np.finfo(float).tiny)
 
-    if ratio <= _SPIN_DISCARD_ABORT_RATIO:
+    if ratio <= _SPIN_DISCARD_ROUNDOFF_RATIO:
         logger.warning(
             "The reduced FLEX susceptibility %s is not exactly spin-redundant: "
             "%s, against an up-block scale of %.3e. That is %.1e of the kept "
-            "block -- too small to be physical spin polarization, so it is "
-            "treated as round-off and the calculation continues using the "
+            "block -- within round-off of double precision, so it is "
+            "treated as noise and the calculation continues using the "
             "up-spin block. Please report it: every tested path produces "
             "bit-identical spin blocks.", label, detail, scale, ratio)
         return
@@ -1790,6 +1801,26 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     green_raw = data_g["green"]
     # H-wave format: (nblock, nfreq, nvol, norb, norb)
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    # A spin-diag FLEX run writes TWO blocks, G_up and G_down. Taking block 0
+    # would discard the down-spin propagator exactly as the reduced chi loader
+    # used to discard the down-spin susceptibility -- and the pair bubble built
+    # from it feeds the Eliashberg kernel directly. The susceptibility guard
+    # normally rejects such a run first, but relying on that is fragile: it is a
+    # different file, and a run whose chi happens to be redundant while its
+    # Green functions are not would slip straight through. Check here too.
+    if nblock > 1:
+        blocks = [green_raw[i] for i in range(nblock)]
+        if any(not np.array_equal(blocks[0], b) for b in blocks[1:]):
+            worst = max(float(np.max(np.abs(blocks[0] - b)))
+                        for b in blocks[1:])
+            raise ValueError(
+                "The FLEX dressed Green function in '{}' has {} spin blocks "
+                "that are not identical (max difference {:.3e}). Only the "
+                "first block would be used, discarding the rest: the "
+                "Eliashberg pair bubble is built from a single propagator "
+                "because the pairing vertex is paramagnetic. Use a "
+                "paramagnetic FLEX run for the Eliashberg step.".format(
+                    green_path, nblock, worst))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
