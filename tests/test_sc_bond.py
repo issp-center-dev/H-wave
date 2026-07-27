@@ -1278,6 +1278,29 @@ def test_iteration_mode_lambda_is_flagged_against_lambda_rayleigh(tmpout,
     lam_iter = _leading_eigenvalue(d_on)
     assert lam_rayleigh < 0.0 < lam_iter
 
+    # ... and an INDEPENDENT computation of the same kernel says which of the
+    # two is the physical eigenvalue: run the identical input through
+    # solver_mode="eigenvalue" and take its dominant (largest-|.|) eigenvalue.
+    d_ev = os.path.join(tmpout, "ev")
+    sc.calc_eliashberg(_base_input(d_ev, coulomb_inter=ci,
+                                   bond_channels=True,
+                                   solver_mode="eigenvalue",
+                                   num_eigenvalues=10))
+    # (the eigenvalue-mode file carries BOTH a single-column scalar row and the
+    # multi-column spectrum, so it is parsed row by row rather than by loadtxt)
+    spectrum = [[float(x) for x in l.split()]
+                for l in open(os.path.join(d_ev, "eigenvalue.dat"))
+                if l.strip() and not l.startswith("#")]
+    spectrum = np.array([r for r in spectrum if len(r) >= 4])
+    dominant = spectrum[np.argmax(spectrum[:, 3]), 1]      # Re at max |ev|
+    assert dominant < 0.0
+    # the SIGNED Rayleigh quotient reproduces it (the power iterate's DIRECTION
+    # does converge; only its reported norm is unsigned) ...
+    assert lam_rayleigh == pytest.approx(dominant, rel=1e-6)
+    # ... while the iteration-mode number in the file does not, in magnitude or
+    # in sign -- exactly the confusion the warning and the note exist for.
+    assert abs(lam_iter - abs(dominant)) > 1.0
+
     # (b) a warning names both quantities and recommends the eigenvalue mode
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "lambda_rayleigh" in msgs
@@ -1291,8 +1314,19 @@ def test_iteration_mode_lambda_is_flagged_against_lambda_rayleigh(tmpout,
     assert "unsigned" in note
     assert "lambda_rayleigh" in note
     assert "did not converge" in note
-    # ... and the numeric row is still the first non-comment line
-    assert lam_iter == pytest.approx(lam_iter)
+    # ... and the numeric row keeps its documented place and shape: the file
+    #     holds EXACTLY ONE non-comment line, it sits inside the
+    #     "# Iteration eigenvalue" block (after the note, with no further
+    #     numeric row), it has a single column, and that column is the value
+    #     `_leading_eigenvalue` (and every downstream reader) picks up.
+    numeric = [(i, l) for i, l in enumerate(lines)
+               if l.strip() and not l.startswith("#")]
+    assert len(numeric) == 1
+    row_idx, row = numeric[0]
+    assert row_idx > idx                      # after "# Iteration eigenvalue"
+    assert all(lines[j].startswith("#") for j in range(idx + 1, row_idx))
+    assert len(row.split()) == 1
+    assert float(row) == lam_iter
 
 
 def test_iteration_with_spectral_shift_converges_and_matches_eigenvalue_mode(

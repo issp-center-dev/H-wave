@@ -109,12 +109,12 @@ from hwave.solver import bond_channels as bc
 FIXTURE_DIR = os.path.join("tests", "sc", "onari_bond")
 
 FIXTURE_SHA256 = {
-    (16, 0.0):  "18e868b6df51e1a84064de8c38cdf652d7a04eacbf69a6d520e6b472e04d0b33",
-    (16, 0.05): "f773d472bac5fc0bfd23b7c6bd822f1e11f7c9c70f8c52a61d942a5183439bec",
-    (16, 0.4):  "c5911512eaad8f43b529b1d38f5700514b14c5a483bfc6bedbf728e8a69a41cf",
-    (16, 0.8):  "15b035404699c1c5fa04ae64712aa4fd0f0cd83b1c40d45f212a3f1722567b71",
-    (16, 1.0):  "3638458e4fa805fad8c5ef53dd848da3767b434dd15b2badc794e2d29160e0db",
-    (16, 1.2):  "6df1b5ef9e26d7eb4ba83c0c1e05785ff278d7cec9fc16bd74f1ff90e60accff",
+    (16, 0.0):  "8ee62f46ff40adab797e513cfc40ea6660374238d9c7d0ad460275c7e9b8a84a",
+    (16, 0.05): "afeab39305aacacf705ba28369b4a9e8b24f97dff1c2eff335cabd8ebdd59c46",
+    (16, 0.4):  "986020d723ef2741fcc759ecdd62e13d22a78dd660004a0ca6ee22ee60a5d1df",
+    (16, 0.8):  "7128a2c5cfe20ad616542c5faeafee0e3693a347be186ea41b57b3f13c89a8e7",
+    (16, 1.0):  "f45ad0dd67bac6fab070da3e7ac347016bedc88c7a7b89c2320e1f8822faeb51",
+    (16, 1.2):  "f112bcc2befcf6740534a38ac40020056247e1e8933ea0f41a61d6a490e06542",
 }
 
 # Where the uncommitted L=32 greens are regenerated to / cached.
@@ -244,10 +244,23 @@ def _check_fixture_metadata(path, L, V):
     assert float(data["symmetrization_residual"]) < 1e-8
     provenance = str(data["provenance"])
     assert provenance, "fixture {} has empty provenance".format(path)
-    if "scf_converged" in data.files:
-        assert bool(data["scf_converged"]) is True, (
-            "fixture {} was written from a non-converged FLEX SCF "
-            "(scf_iterations={})".format(path, int(data["scf_iterations"])))
+
+    # (I-1) the FLEX SCF that produced this green MUST be recorded as
+    # converged. This is unconditional: a fixture without the flag cannot be
+    # shown to be a fixed point, and the pinned lambda values rest entirely on
+    # these greens. Regenerate with tests/sc/onari_bond/generate_fixtures.py
+    # (which asserts convergence before writing and stores both fields).
+    for key in ("scf_converged", "scf_iterations"):
+        assert key in data.files, (
+            "fixture {} carries no {!r}: it cannot be shown to come from a "
+            "converged FLEX SCF. Regenerate it with "
+            "tests/sc/onari_bond/generate_fixtures.py".format(path, key))
+    assert bool(data["scf_converged"]) is True, (
+        "fixture {} was written from a non-converged FLEX SCF "
+        "(scf_iterations={})".format(path, int(data["scf_iterations"])))
+    assert int(data["scf_iterations"]) > 0, (
+        "fixture {} records scf_iterations={} -- no SCF iteration was "
+        "actually performed".format(path, int(data["scf_iterations"])))
 
 
 _GREEN_CACHE = {}
@@ -489,11 +502,15 @@ def test_fixtures_are_intact_and_carry_the_documented_setup():
 
     Spec S7.7 "convergence status" / "Reproducibility record": the fixture
     must also carry a tight symmetrization residual, a non-empty provenance
-    string, and (I-1) an explicit converged-FLEX flag.  Fixtures regenerated
-    before I-1 landed do not have the ``scf_converged``/``scf_iterations``
-    keys yet -- that is tolerated here (no regeneration of the green data
-    itself is required for the metadata fix), but any fixture that DOES carry
-    the key must say converged=True.
+    string, and (I-1) an explicit converged-FLEX flag.  The
+    ``scf_converged``/``scf_iterations`` requirement is UNCONDITIONAL -- the
+    pinned lambda values rest entirely on these greens, so a fixture that
+    merely *might* be converged proves nothing (FLEX with linear mixing can
+    even report false convergence near the CDW, which is why the generator
+    hardcodes Anderson mixing).  All six committed fixtures were regenerated
+    with ``generate_fixtures.py`` and carry the flag; the regenerated data
+    agreed with the previously committed bytes to 1.7e-11 relative, so every
+    pinned number below is unchanged.
 
     Only the COMMITTED (L=16) set is covered here; the regenerated L=32 set has
     no committed bytes to hash, and ``_load_green`` runs the same metadata
