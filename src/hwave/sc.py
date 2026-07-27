@@ -1085,12 +1085,31 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         if norb == 1:
             chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
         else:
-            # Expand: chi0_{l1*norb+l2, l3*norb+l2} = chi0_2d[l1, l3]
+            # A 2-index (reduced/squashed) chi0q is the density-density diagonal
+            # of the susceptibility: chi0_2d[a, b] IS chi0_{(a,a),(b,b)} (the
+            # matching interaction reduction is einsum('kaabb->kab', ...) in
+            # RPA._inflate_chi0q_and_ham).  With the orbital-pair flat index
+            # (l1,l2) -> l1*norb + l2 used by _build_sc_matrices_all_q, it
+            # therefore belongs at the density-pair positions:
+            #
+            #     chi0_{(a,a),(b,b)} = chi0_2d[a, b],  everything else zero.
+            #
+            # The historical placement chi0_{(l1,l2),(l3,l2)} = chi0_2d[l1,l3]
+            # (a delta_{l2,l4} scatter, i.e. kron(chi0_2d, I_norb)) read the
+            # density-pair index as an ordinary orbital index: it dropped the
+            # inter-orbital density coupling chi0_{(0,0),(1,1)} and scattered
+            # chi0_2d onto pair indices the reduced scheme never computed.  This
+            # is the same defect that _expand_flex_chi carried on the
+            # chi0q_mode="flex" route.
+            #
+            # Off-density rows/columns stay exactly zero.  For the interaction
+            # terms that put S/C weight there (CoulombInter, Hund, Ising,
+            # Exchange, PairHop) those channels are then undressed -- an honest
+            # reflection of what a reduced chi0q contains, rather than a
+            # fabricated dressing.
             chi0_static = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-            for l2 in range(norb):
-                chi0_static[:, :, :,
-                            l2::norb,
-                            l2::norb] = chi0_2d
+            dens = np.arange(norb) * norb + np.arange(norb)
+            chi0_static[..., dens[:, None], dens[None, :]] = chi0_2d
 
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0

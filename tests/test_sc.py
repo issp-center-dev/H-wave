@@ -2675,7 +2675,15 @@ class TestChi0q4Index(unittest.TestCase):
         self.assertEqual(Vs_q.shape, (norb, norb, norb, norb, Nx, Ny, Nz))
 
     def test_vertex_4index_vs_2index_differ(self):
-        """Test that 4-index chi0q gives different vertex than 2-index diagonal approx."""
+        """A 2-index (reduced) chi0q keeps only the density-density block, so it
+        agrees with the 4-index vertex exactly when the interaction lives on
+        that block (CoulombIntra only), and differs once a term reaches the
+        off-density blocks (here Hund).
+
+        Before the density-pair embedding fix, the reduced chi0q was scattered
+        as kron(chi0_2d, I_norb), which made even the CoulombIntra-only case
+        disagree with the 4-index reference -- the disagreement this test used
+        to assert."""
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             input_dir, output_dir = self._create_2orb_test_files(tmpdir)
@@ -2697,18 +2705,37 @@ class TestChi0q4Index(unittest.TestCase):
             U_k[1, 1] = 3.0
             inter_k = {"CoulombIntra": U_k}
 
-            # Compute vertex with 4-index (correct)
+            # CoulombIntra only: S and C are confined to the density-pair block
+            # (_build_sc_matrices_all_q case 1), so the off-density components
+            # of the 4-index chi0q never enter S @ chi @ S. The reduced chi0q
+            # loses nothing that the vertex reads, and the two must agree.
             Vs_4idx = _compute_vertices_general(
                 chi0q_gen_ref, inter_k, norb, Nx, Ny, Nz, nmat)
-
-            # Compute vertex with 2-index (approximate)
             Vs_2idx = _compute_vertices_general(
                 chi0q_red_ref, inter_k, norb, Nx, Ny, Nz, nmat)
+            np.testing.assert_allclose(
+                Vs_2idx, Vs_4idx, rtol=1e-9, atol=1e-11,
+                err_msg="for CoulombIntra only the reduced chi0q carries every "
+                        "component the vertex reads, so it must reproduce the "
+                        "4-index vertex exactly")
 
-            # They should differ because off-diagonal chi0q components matter
-            diff = np.max(np.abs(Vs_4idx - Vs_2idx))
-            self.assertGreater(diff, 1e-3,
-                               "4-index and 2-index vertices should differ for 2-orbital system")
+            # Add Hund: S/C now also populate the off-density blocks
+            # S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)], where the reduced chi0q has
+            # nothing. The 4-index vertex dresses those channels, the reduced
+            # one leaves them bare -- so now they genuinely differ.
+            J_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+            J_k[0, 1] = 0.7
+            J_k[1, 0] = 0.7
+            inter_k_J = dict(inter_k, Hund=J_k)
+            Vs_4idx_J = _compute_vertices_general(
+                chi0q_gen_ref, inter_k_J, norb, Nx, Ny, Nz, nmat)
+            Vs_2idx_J = _compute_vertices_general(
+                chi0q_red_ref, inter_k_J, norb, Nx, Ny, Nz, nmat)
+            diff = np.max(np.abs(Vs_4idx_J - Vs_2idx_J))
+            self.assertGreater(
+                diff, 1e-3,
+                "with Hund the reduced chi0q is missing the off-density "
+                "components the vertex reads, so the vertices must differ")
 
 
 class TestKanamoriInteraction(unittest.TestCase):
@@ -2899,9 +2926,21 @@ class TestKanamoriInteraction(unittest.TestCase):
         # exch: C = J'
         npt.assert_allclose(C_all[1, 2], Jp, atol=1e-10)
 
-        # Now verify RPA susceptibility computation
-        # Use a small chi0 so the series converges
-        chi0 = np.eye(nd, dtype=complex) * 0.05
+        # Now verify RPA susceptibility computation.
+        # Use a small chi0 so the series converges, and make it DENSITY-DIAGONAL
+        # (nonzero only at [(a,a),(b,b)]).  The code path below feeds
+        # _compute_vertices_general a 2-index (reduced) chi0q, which can only
+        # ever carry the density-density components chi0_{(a,a),(b,b)}; a chi0
+        # with weight on off-density pair indices (a,b), a != b -- e.g. the
+        # plain identity, whose [1,1] and [2,2] entries are off-density -- is
+        # not representable there, so the manual reference and the code would be
+        # comparing different physics.  Keeping chi0 density-diagonal makes the
+        # 2-index reduction lossless and the comparison exact.
+        chi0 = np.zeros((nd, nd), dtype=complex)
+        _dens_block = np.array([[0.05, 0.01], [0.01, 0.04]], dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                chi0[a * norb + a, b * norb + b] = _dens_block[a, b]
 
         # Manual computation
         I_mat = np.eye(nd, dtype=complex)

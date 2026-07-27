@@ -269,6 +269,67 @@ class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
         self.assertAlmostEqual(np.max(np.abs(Vs_flex[mask])), 0.0)
 
 
+class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
+    """The same density-pair embedding must hold on the ``load`` route.
+
+    ``_compute_vertices_general`` also accepts a 2-index (reduced) chi0q, which
+    it lifts into the norb^2 orbital-pair space itself.  That branch is reached
+    by the ordinary two-step workflow: RPA with ``calc_scheme="auto"`` resolves
+    to ``"reduced"`` for U + Hund/Ising/PairHop and writes a 2-index chi0q, and
+    ``hwave_sc`` then routes to the general S/C formulation because an
+    inter-orbital vertex term is present.
+
+    The reduced chi0q carries the same density-pair index as the reduced FLEX
+    chi, so it needs the same placement.  Pinning it with a chi0q that is
+    EXACTLY density-diagonal makes the 2-index reduction lossless, so the
+    4-index and 2-index vertices must agree exactly -- any difference is the
+    embedding's fault alone.
+    """
+
+    def _run(self, keys):
+        import hwave.sc as sc
+
+        norb, Nx, Ny, Nz, nmat = 2, 3, 2, 1, 4
+        si = nmat // 2
+        rng = np.random.default_rng(3)
+
+        X = (rng.standard_normal((norb, norb, Nx, Ny, Nz, nmat))
+             + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz, nmat))) * 0.1
+        X4 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                X4[a, a, b, b] = X[a, b]
+
+        inter_k = {}
+        for k in keys:
+            m = rng.standard_normal((norb, norb, Nx, Ny, Nz))
+            inter_k[k] = (m + m.transpose(1, 0, 2, 3, 4)).astype(complex)
+
+        out = {}
+        for pairing in ("singlet", "triplet"):
+            out[pairing] = (
+                sc._compute_vertices_general(X4, inter_k, norb, Nx, Ny, Nz,
+                                             nmat, pairing_type=pairing,
+                                             static_index=si),
+                sc._compute_vertices_general(X, inter_k, norb, Nx, Ny, Nz,
+                                             nmat, pairing_type=pairing,
+                                             static_index=si))
+        return out
+
+    def test_density_diagonal_chi0q_gives_identical_vertices(self):
+        for keys in (["CoulombIntra"],
+                     ["CoulombIntra", "Hund"],
+                     ["CoulombIntra", "CoulombInter", "Hund", "Ising"],
+                     ["CoulombIntra", "Exchange", "PairHop"]):
+            res = self._run(keys)
+            for pairing, (V4, V2) in res.items():
+                with self.subTest(interactions="+".join(keys), pairing=pairing):
+                    np.testing.assert_allclose(
+                        V2, V4, rtol=1e-9, atol=1e-11,
+                        err_msg="a density-diagonal chi0q loses nothing in the "
+                                "2-index reduction, so the vertices must match")
+
+
 class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     """A reduced FLEX chi cannot dress the off-density S/C blocks that
     inter-orbital interactions create, so consuming the two together must say
