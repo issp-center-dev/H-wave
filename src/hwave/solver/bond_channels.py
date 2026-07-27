@@ -1195,6 +1195,272 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 
 
 # ---------------------------------------------------------------------------
+# make_bond_kernel_dynamic's memory contract  --  read together with
+# sc._bond_memory_estimate (mirrors the BOND_BUBBLE_* contract below)
+# ---------------------------------------------------------------------------
+#
+# The dynamic bond kernel is the memory-dominant object of the dynamic path:
+# every array below carries the FULL fermionic/bosonic window ``nmat`` on top
+# of the ``(N_q, ND, ND)`` footprint the static kernel already had. The
+# resource preflight can only refuse an over-budget run if the counts here are
+# not an UNDERCOUNT, so the builder is written to a fixed, documented working
+# set (every temporary is released -- ``del`` -- as soon as it is consumed)
+# and the two counts are exported for ``sc._bond_memory_estimate`` to import.
+#
+# --- build phase, arrays of size (N_q * nmat * ND**2) complex ---------------
+# BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS = high-water number of such arrays alive
+# at once WHILE the vertex is being hoisted.  High-water mark: inside
+# ``_ms.boson_to_tau(F_q_w, axis=3)``:
+#   1. ``F_q_w``          -- the (q, i nu) fluctuation vertex being transformed
+#   2. ``fft(F_q_w)``     -- boson_to_tau's internal transform output
+#   3. ``fft * omg``      -- boson_to_tau's phase-multiplied result (-> F_tau)
+# The same count of 3 is reached earlier, in the S chi S / C chi C sandwich
+# (spin term + charge term + their difference), and is NOT exceeded by
+# ``spatial_ifftn`` afterwards (numpy's ifftn is an axis-by-axis pipeline that
+# holds input + one output = 2). The caller-owned inputs ``chi_s_w`` /
+# ``chi_c_w`` are the SAME size and are NOT counted here -- the preflight
+# budgets those separately, exactly as ``green_kw`` is excluded from
+# BOND_BUBBLE_N2_BUFFERS.
+#
+# BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT = arrays of that size that stay alive
+# for the whole lifetime of the returned LinearOperator:
+#   1. ``F_r6t``          -- the (r, tau) fluctuation vertex, hoisted out of
+#                            the per-matvec closure (it does not depend on phi)
+# (``G2p_w`` is also persistent but is a factor ``B**2`` smaller -- size
+# ``N_q * nmat * nd**2`` -- so it is accounted with the matvec buffers below.)
+#
+# --- per-matvec, arrays of size (N_q * nmat * ND) complex -------------------
+# BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS = high-water number of such arrays alive
+# during one ``matvec``.  High-water mark: inside
+# ``_ms.fermion_to_tau(Z, axis=-1)``:
+#   1. ``Z``              -- the phase-dressed pair bubble e^{i k.dr_m} X
+#   2. ``fft(Z)``         -- fermion_to_tau's internal transform output
+#   3. ``fft * omg``      -- its phase-multiplied result (-> Z_t)
+# The later stages do not exceed 3 either: ``spatial_ifftn`` holds 2, the
+# real-space MAC holds ``Z_rt`` + the einsum output ``W_rt`` = 2, and the
+# return path (``spatial_fftn`` then ``tau_to_fermion``) holds at most 3.
+# Sub-dominant by a factor ``B`` and not counted separately: ``phi`` / ``X_w``
+# (size ``N_q * nmat * nd``) and the persistent ``G2p_w``
+# (``N_q * nmat * nd**2``).
+BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS = 3
+BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT = 1
+BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS = 3
+
+
+def make_bond_kernel_dynamic(chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
+                             green, bond_set, pairing_type, beta):
+    r"""Frequency-resolved (dynamic) bond Eliashberg kernel on the UNIFORM
+    Matsubara axis (spec 2026-07-27-dynamic-bond-channels-design.md S3.3).
+
+    The frequency extension of :func:`make_bond_kernel`: the gap keeps its
+    fermionic Matsubara axis, ``phi_{l1l2}(k, i w_n)``, and the enlarged bond
+    vertex acquires a bosonic transfer axis, so the fluctuation part becomes a
+    convolution in ``(q, i nu) = (k - k', i w_n - i w_n')`` instead of a purely
+    spatial one::
+
+        Y^fl_{ab}(k, n) = -(T/N) sum_{k',n'} sum_{m,m'}
+              e^{i k.dr_m} e^{i k'.dr_m'}
+              F_eta[(m,ab),(m',cd)](k - k', n - n') X_{cd}(k', n')
+
+        X_{cd}(k', n') = sum_{ef} G2_{c,e,d,f}(k', n') phi_{ef}(k', n')
+
+    with the frequency-resolved pair bubble ``G2(k, n) = (T) G(k, i w_n)
+    G(-k, -i w_n)`` (:func:`eliashberg_dynamic.calc_g2_dynamic`, which already
+    carries the single ``T = 1/beta``) and the dressed fluctuation vertex,
+    now evaluated at every bosonic transfer::
+
+        F_s(q, i nu) = +1.5 S chi_s(q, i nu) S - 0.5 C chi_c(q, i nu) C
+        F_t(q, i nu) = -0.5 S chi_s(q, i nu) S - 0.5 C chi_c(q, i nu) C
+
+    The bosonic zero transfer sits at array index ``nmat // 2`` (the
+    :func:`bond_bubble_dynamic` map), and the fermionic difference ``n - n'``
+    is taken on the stored-window torus -- both are realized implicitly by the
+    imaginary-time product below, exactly as in the scalar dynamic kernel
+    ``eliashberg_dynamic.eliashberg_kernel_dynamic``.
+
+    The instantaneous (bare Cooper) part is FREQUENCY-INDEPENDENT: the bare
+    ``V^pp`` has no bosonic transfer, so the internal ``k', n'`` reduction
+    collapses to the window Matsubara sum of ``X`` and the result is flat in
+    the external frequency (spec S3.3, uniform normative definition)::
+
+        A_{m; cd}      = (T/N) sum_{k', n'} e^{-i k'.dr_m} X_{cd}(k', n')
+        Y^pp_{ab}(k)   = -1/2 sum_{m,m'} [V^pp_eta]_{(m,ab),(m',cd)}
+                              e^{i k.dr_m'} A_{m; cd}
+
+    Because ``sum_n calc_g2_dynamic(...) == _g2_from_green(...)`` exactly
+    (pinned by ``tests/test_eliashberg_dynamic.py::
+    test_g2_dynamic_sums_to_static``), this is literally the static
+    :func:`_bond_kernel_operators` instantaneous body applied to the
+    frequency-summed ``X`` and broadcast flat over the external frequency
+    axis -- no second definition of the Cooper term exists.
+
+    Normalization bookkeeping (same as the scalar dynamic kernel): the single
+    ``T = 1/beta`` lives inside ``G2``; the single spatial ``1/N`` comes from
+    the ``ifftn`` half of the FFT convolution (numpy's inverse transform
+    divides by ``N``, the forward one does not re-multiply); the frequency
+    transforms ``boson_to_tau`` / ``fermion_to_tau`` / ``tau_to_fermion`` are
+    normalization-free in the same pairing. No extra factors are applied.
+
+    Parameters
+    ----------
+    chi_s_w, chi_c_w : ndarray, shape (Nx, Ny, Nz, nmat, ND, ND), complex
+        Dressed spin/charge susceptibilities on the bosonic Matsubara axis
+        (:func:`dress_bond_dynamic`). ``ND = norb**2 * B``.
+    S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
+        Bare enlarged spin/charge vertices (:func:`bare_bond_vertices`); they
+        carry no frequency dependence and are broadcast over ``nmat``.
+    Vpp_s, Vpp_t : ndarray, shape (ND, ND), complex
+        q- and frequency-independent bare Cooper vertices.
+    green : ndarray, shape (norb, norb, Nx, Ny, Nz, nmat), complex
+        k-space Matsubara Green function in the ``sc.py`` layout.
+    bond_set : ResolvedInteractionSet
+        Bond-channel topology (``delta_r``, ``n_channels``).
+    pairing_type : {"singlet", "triplet"}
+    beta : float
+        Inverse temperature.
+
+    Returns
+    -------
+    A : scipy.sparse.linalg.LinearOperator
+        ``A.matvec(phi.ravel())`` returns ``(K phi).ravel()`` with ``phi``
+        shaped ``(norb, norb, Nx, Ny, Nz, nmat)``.
+    vec_size : int
+        ``norb**2 * Nx * Ny * Nz * nmat``.
+    """
+    from . import eliashberg_dynamic as _ed
+
+    green = _validate_green_beta(green, beta, "make_bond_kernel_dynamic")
+    norb = green.shape[0]
+    nd = norb * norb
+    B = int(bond_set.n_channels)
+    ND = nd * B
+    Nx, Ny, Nz, nmat = (green.shape[2], green.shape[3], green.shape[4],
+                        green.shape[5])
+    N = Nx * Ny * Nz
+    delta_r = bond_set.delta_r
+
+    chi_s_w = np.asarray(chi_s_w)
+    chi_c_w = np.asarray(chi_c_w)
+    expected = (Nx, Ny, Nz, nmat, ND, ND)
+    for name, arr in (("chi_s_w", chi_s_w), ("chi_c_w", chi_c_w)):
+        if arr.shape != expected:
+            raise ValueError(
+                "make_bond_kernel_dynamic: {} has shape {} but expected "
+                "(Nx, Ny, Nz, nmat, ND, ND) = {} (ND = norb**2 * "
+                "n_channels). The dynamic path needs the frequency-resolved "
+                "susceptibility from dress_bond_dynamic, not the static "
+                "dress_bond slice.".format(name, arr.shape, expected))
+    S_bond = np.asarray(S_bond)
+    C_bond = np.asarray(C_bond)
+    for name, arr in (("S_bond", S_bond), ("C_bond", C_bond)):
+        if arr.shape != (Nx, Ny, Nz, ND, ND):
+            raise ValueError(
+                "make_bond_kernel_dynamic: {} has shape {} but expected "
+                "(Nx, Ny, Nz, ND, ND) = {}.".format(
+                    name, arr.shape, (Nx, Ny, Nz, ND, ND)))
+
+    if pairing_type == "singlet":
+        Vpp = np.asarray(Vpp_s)
+    elif pairing_type == "triplet":
+        Vpp = np.asarray(Vpp_t)
+    else:
+        raise ValueError(
+            "make_bond_kernel_dynamic: unknown pairing_type '{}'. Use "
+            "'singlet' or 'triplet'.".format(pairing_type))
+    if Vpp.shape != (ND, ND):
+        raise ValueError(
+            "make_bond_kernel_dynamic: Vpp has shape {} but expected "
+            "(ND, ND) = {}.".format(Vpp.shape, (ND, ND)))
+
+    vec_size = nd * N * nmat
+
+    # --- hoisted invariants (see the memory contract above) ---------------
+    # F_eta(q, i nu): the SAME algebra as the static builder, broadcast over
+    # the bosonic axis (S/C are frequency-independent).
+    S_b = S_bond[:, :, :, None, :, :]
+    C_b = C_bond[:, :, :, None, :, :]
+    if pairing_type == "singlet":
+        F_q_w = 1.5 * (S_b @ chi_s_w @ S_b) - 0.5 * (C_b @ chi_c_w @ C_b)
+    else:
+        F_q_w = -0.5 * (S_b @ chi_s_w @ S_b) - 0.5 * (C_b @ chi_c_w @ C_b)
+
+    # (q, i nu) -> (r, tau): the vertex leg of the convolution. boson_to_tau
+    # puts the bosonic array on the tau nodes, where the product with the
+    # fermionic-tau gap leg IS the circular frequency convolution with the
+    # spec's transfer map -- the same pattern as
+    # eliashberg_dynamic.vertex_qw_to_rt. spatial_ifftn carries the 1/N.
+    F_tau = _ms.boson_to_tau(F_q_w, axis=3)
+    del F_q_w
+    F_r6t = _bk.spatial_ifftn(F_tau, axes=(0, 1, 2)).reshape(
+        Nx, Ny, Nz, nmat, B, nd, B, nd)
+    del F_tau
+
+    # Frequency-resolved pair bubble; carries the single T = 1/beta. REUSED
+    # from the scalar dynamic path -- no fourth roll+flip copy is introduced.
+    G2_w = _ed.calc_g2_dynamic(green, beta)      # (i,j,l,m,Nx,Ny,Nz,nmat)
+    G2p_w = G2_w.transpose(0, 2, 1, 3, 4, 5, 6, 7).reshape(nd, nd, N, nmat)
+    del G2_w
+
+    # Bond phases PH[m](k) = e^{i k.dr_m} -- purely spatial, broadcast over
+    # the frequency axis. Copied verbatim from _bond_kernel_operators.
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    ky = 2.0 * np.pi * np.arange(Ny) / Ny
+    kz = 2.0 * np.pi * np.arange(Nz) / Nz
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+    PH = np.empty((B, Nx, Ny, Nz), dtype=complex)
+    for m in range(B):
+        dm = delta_r[m]
+        PH[m] = np.exp(1j * (KX * dm[0] + KY * dm[1] + KZ * dm[2]))
+    PH_k = np.moveaxis(PH, 0, 3)                          # (Nx,Ny,Nz,B)
+    PHc = np.conj(PH)                                     # e^{-i k.dr_m}
+
+    Vpp6 = Vpp.reshape(B, nd, B, nd)                      # [m,ab,m',cd]
+
+    def _fluctuation(X_grid_w):
+        """Y^fl(k, n): spatial FFT convolution x imaginary-time product."""
+        # (B, nd, Nx, Ny, Nz, nmat)
+        Z = PH[:, None, :, :, :, None] * X_grid_w[None, ...]
+        Z_rt = _bk.spatial_ifftn(_ms.fermion_to_tau(Z, axis=-1),
+                                 axes=(2, 3, 4))
+        del Z
+        Z_rt = np.moveaxis(Z_rt, (0, 1), (4, 5))        # (Nx,Ny,Nz,nmat,B,nd)
+        # W_rt[x,y,z,t,m,ab] = sum_{m',cd} F_r6t[...,m,ab,m',cd] Z_rt[...]
+        W_rt = np.einsum('xyztaAbB,xyztbB->xyztaA', F_r6t, Z_rt)
+        del Z_rt
+        W_kw = _ms.tau_to_fermion(
+            _bk.spatial_fftn(W_rt, axes=(0, 1, 2)), axis=3)
+        del W_rt
+        # (Nx,Ny,Nz,nmat,nd)
+        return -np.einsum('xyzm,xyznma->xyzna', PH_k, W_kw)
+
+    def _instantaneous(X_sum):
+        """Y^pp(k): VERBATIM the static _bond_kernel_operators body, applied
+        to the frequency-summed X (spec S3.3). Returns (Nx,Ny,Nz,nd)."""
+        A_coef = (1.0 / N) * np.einsum('mxyz,cxyz->mc', PHc, X_sum)  # (B,nd)
+        Bcoef = np.einsum('aAbB,aB->bA', Vpp6, A_coef)               # (B,nd)
+        return -0.5 * np.einsum('mxyz,ma->xyza', PH, Bcoef)
+
+    def matvec(v):
+        phi = np.asarray(v).reshape(norb, norb, Nx, Ny, Nz, nmat)
+        phi_flat = phi.reshape(nd, N, nmat)              # [(e,f), k, n]
+        X = np.einsum('adkn,dkn->akn', G2p_w, phi_flat)  # (nd, N, nmat)
+        X_grid_w = X.reshape(nd, Nx, Ny, Nz, nmat)
+        del X
+
+        Y = _fluctuation(X_grid_w)                       # (Nx,Ny,Nz,nmat,nd)
+        # The bare Cooper term has no bosonic transfer: it sees only the
+        # window sum of X and is flat in the external frequency.
+        Y += _instantaneous(X_grid_w.sum(axis=-1))[:, :, :, None, :]
+
+        Y = Y.reshape(Nx, Ny, Nz, nmat, norb, norb)
+        Y = np.moveaxis(Y, (4, 5), (0, 1))   # (norb,norb,Nx,Ny,Nz,nmat)
+        return Y.ravel()
+
+    A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=complex)
+    return A, vec_size
+
+
+# ---------------------------------------------------------------------------
 # bond_bubble's memory contract  --  read together with sc._bond_memory_estimate
 # ---------------------------------------------------------------------------
 #
