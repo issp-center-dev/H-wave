@@ -141,14 +141,36 @@ RATIO_MIN = 1.3             # minimum ratio (baseline lambda_t(0) > 0.02)
 DEG_TOL = 1.0e-3            # degenerate-cluster tolerance
 
 # --- stored reference numbers (this branch, CPU/numpy) ---------------------
+# Recorded at 13 SIGNIFICANT DIGITS, straight from ``_sweep(L, grid, arm)`` --
+# i.e. from the same exact dense ``_odd_spectrum`` eigh the assertions below
+# call, on the committed L=16 greens and on regenerated L=32 greens
+# (``HWAVE_RUN_SLOW_FIXTURES=1 pytest tests/test_bond_onari_milestone.py``).
+#
+# Why 13 digits and not the 7 decimals these tables used to carry: the old
+# values were transcribed from the ARPACK-windowed spectrum this test used
+# BEFORE _odd_spectrum was switched to the exact dense eigh, so they sat up to
+# 6.5e-7 ABSOLUTE (9.8e-6 relative, at BASE_16[0.8]) away from what the test
+# actually computes -- a ~2 % margin under LAMBDA_RTOL, purely from a stale
+# read-out. They were never re-recorded; the computation itself never moved.
+# Verified: these lambdas are identical to 1e-12 across every commit of this
+# branch (d2aa3d3 .. HEAD, i.e. through all the review fixes), across the L=16
+# fixture regeneration, and across an INDEPENDENT FLEX regeneration of the L=32
+# greens (the originally committed L=32 bytes reproduce them to 1.8e-13).
+# So the reproducibility floor is ~1e-12 relative, ~7 orders below LAMBDA_RTOL:
+# the assertion margin is now set by the physics/BLAS, not by stored precision.
+#
 # tracked f-like triplet lambda of the BOND path
-LAMBDA_BOND_16 = {0.0: 0.0704950, 0.4: 0.0925329, 0.8: 0.1218159,
-                  1.0: 0.1644559, 1.2: 0.3101238}
-LAMBDA_BOND_32 = {0.0: 0.0739082, 0.8: 0.1570313, 1.2: 0.3358213}
+LAMBDA_BOND_16 = {0.0: 0.07049495327453, 0.4: 0.09253315369293,
+                  0.8: 0.1218158064989, 1.0: 0.1644562722141,
+                  1.2: 0.3101237324177}
+LAMBDA_BOND_32 = {0.0: 0.07390762209333, 0.8: 0.1570314921467,
+                  1.2: 0.3358209038935}
 # ... and of the 2-index collapsed-bond SCALAR baseline (stored observation)
-LAMBDA_BASE_16 = {0.0: 0.0704950, 0.4: 0.0699692, 0.8: 0.0637392,
-                  1.0: 0.0841373, 1.2: 0.1595172}
-LAMBDA_BASE_32 = {0.0: 0.0739082, 0.8: 0.0722234, 1.2: 0.1566309}
+LAMBDA_BASE_16 = {0.0: 0.07049495327453, 0.4: 0.06996932590301,
+                  0.8: 0.06373857412004, 1.0: 0.08413665414038,
+                  1.2: 0.1595169589723}
+LAMBDA_BASE_32 = {0.0: 0.07390762209333, 0.8: 0.07222327841858,
+                  1.2: 0.1566314687723}
 LAMBDA_RTOL = 1.0e-5
 
 
