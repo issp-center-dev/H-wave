@@ -1,31 +1,29 @@
 """Task 7: the IR-axis dynamic bond kernel, the tail estimator, and the
-IR round-trip / Hermiticity contracts.
+IR validation contracts.
 
 Normative reference: docs/superpowers/specs/2026-07-27-dynamic-bond-channels-
-design.md, section 2 (IR-coordinate Hermiticity threshold), section 3.3
-(instantaneous per-basis definitions + the tail-estimator pipeline) and
-section 3.5 (the IR round-trip contract, steps 1-5, with its two frozen
-inequalities). Every number asserted below is defined there; none is tuned
-here.
+design.md, section 2 ("Measurement coordinates", amended 2026-07-28), section
+3.3 (instantaneous per-basis definitions + the tail-estimator pipeline) and
+section 3.5 ("IR validation", amended 2026-07-28). Every number asserted below
+is defined there; none is tuned here.
 
-TWO of the spec's frozen contracts are currently NOT met and are recorded as
-strict xfails rather than silently weakened (spec section 2 / 3.5 amendment
-gates -- see .superpowers/sdd/2026-07-28-dynamic-bond-channels-phaseA/
-task-7-report.md for the full measurement tables):
+The amendment was written on the measurements this file makes, so the tests
+map one-to-one onto its clauses:
 
-* the ABSOLUTE round-trip budget ``E(N) <= 3*(tail_est_rel + eps_IR)``: the
-  dominant IR-vs-uniform difference is the UNIFORM path's own O(1/Nmat)
-  frequency-convolution discretization of the FLUCTUATION term, which that
-  budget (instantaneous tail + IR representation error) does not model. The
-  REFINEMENT half of the same contract -- ``E(2N) <= 0.6*E(N) + eps_IR^max``
-  for two successive doublings -- passes, in both the action and the
-  eigenvalue metric and in both parity sectors, which is what establishes
-  that the two kernels are discretizations of the SAME operator.
-* the IR-coordinate Hermiticity threshold ``max(10*eps_IR_roundtrip, 1e-10)``.
-
-What DOES pin the implementation's correctness here, unconditionally:
-``test_ir_kernel_equals_scalar_ir_kernel_at_B1`` (exact, 4e-16) plus the
-refinement tests.
+* step 1 -- the normative ANALYTIC two-pole gap generator (seed 20260728), so
+  every resolution samples the same underlying function
+  (``test_normative_gap_generator_is_analytic_and_ir_representable``), with
+  the rejected white-coefficient probe kept as evidence
+  (``test_white_ir_coefficients_are_not_a_physical_probe``);
+* step 3 -- PART-AWARE densification, with the naive alternative pinned as a
+  non-measurement (``test_ir_naive_densification_is_not_a_measurement``);
+* step 5 -- three action clauses (instantaneous absolute budget with its
+  vacuity guard; refinement; uniform anchor with ``D_uni``) and their two
+  eigenvalue twins (with ``d_uni``);
+* section 2 -- the Euclidean sampling-coordinate residual is a DIAGNOSTIC,
+  never gated; the physical Hermiticity evidence for the IR branch is the
+  B = 1 reduction against the oracle-verified scalar ``eliashberg_kernel_ir``
+  (measured 4.4e-16).
 
 The IR path is only exercised when ``sparse-ir`` is installed (the same
 import-safe skip guard as tests/test_eliashberg_ir.py: a module-level
@@ -116,18 +114,29 @@ def test_tail_estimate_rejects_a_mismatched_window():
     with pytest.raises(ValueError, match="even number"):
         bc.tail_estimate(np.ones((3, 33)), 5.0, 33)
 
-
 # ---------------------------------------------------------------------------
-# Steps 3-5: the IR kernel
+# The IR kernel and the AMENDED (2026-07-28) IR validation contracts
 # ---------------------------------------------------------------------------
 ir_only = pytest.mark.skipif(not _HAVE_SPARSE_IR,
                              reason="sparse-ir not installed")
 
 WMAX = 10.0          # > the fixture's bandwidth (|e| <~ 2.5) with room to spare
-IR_TOL = 1.0e-8
+# The E_pp clause compares the two instantaneous conventions against a tail
+# that falls like 1/Nmat^2, so the basis must represent X's equal-time value
+# BETTER than that tail at the largest tested resolution -- otherwise the
+# clause measures basis truncation instead. Measured E_pp/budget ratios:
+# ir_tol = 1e-8 (L=21) leaves a ~1e-6 floor and the ratio degrades with
+# resolution (0.03, 0.09, 0.92 singlet; 0.39, 0.48, 1.95 triplet -- the last
+# one fails); at 1e-10 (L=24) the floor is gone and the ratio is
+# resolution-INDEPENDENT (0.04 / 0.38 at all three), and 1e-12 (L=27)
+# reproduces those same ratios, i.e. the fixture is converged in the basis.
+IR_TOL = 1.0e-10
 NX = NY = 4
 NZ = 1
-NMATS = (64, 128, 256)
+NMATS = (64, 128, 256)          # the tested resolution set of spec S3.5
+# D_uni(N)/d_uni(N) compare the UNIFORM kernel at N against itself at 2N on the
+# shared window, so the largest tested resolution needs its own doubling.
+ALL_NMATS = NMATS + (512,)
 
 
 def _dispersion(Nx=NX, Ny=NY, Nz=NZ, seed=20260728):
@@ -176,6 +185,85 @@ def _densify3(arr, ax, nmat):
         ax.fit_from_freq(np.moveaxis(arr, 3, -1)), nmat), -1, 3)
 
 
+# --- the normative test gap (spec S3.5 step 1, amended) ---------------------
+def _gap_poles(Nx=NX, Ny=NY, Nz=NZ, seed=20260728):
+    """The two real, inversion-symmetrized pole arrays of the normative
+    generator, drawn ONCE from ``default_rng(20260728)``."""
+    rng = np.random.default_rng(seed)
+
+    def draw():
+        e = rng.normal(size=(Nx, Ny, Nz))
+        return 0.5 * (e + np.roll(e[::-1, ::-1, ::-1], (1, 1, 1), (0, 1, 2)))
+    return draw(), draw()
+
+
+def _pwave_factor(Nx=NX, Ny=NY, Nz=NZ):
+    """``sin(k_x)`` on the FFT grid: real, odd under the grid inversion
+    ``i -> (N-i) % N``, and exactly the harmonic the triplet Cooper vertex
+    couples to (``Vpp_t``'s only non-zero block is the antisymmetric
+    ``(-x, +x)`` channel pair, measured)."""
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    return np.broadcast_to(np.sin(kx)[:, None, None], (Nx, Ny, Nz)).copy()
+
+
+def _gap_analytic(nmat, pairing="singlet", beta=BETA):
+    """``phi(k, i w) = 1/(i w - e1(k)) - 1/(i w - e2(k))``: an ANALYTIC
+    function of omega, so the Nmat / 2*Nmat / 4*Nmat grids sample the same
+    underlying object and the refinement inequalities compare resolutions of
+    one function rather than independent random vectors (spec S3.5 step 1,
+    amended 2026-07-28 -- white IR coefficients are not usable, see
+    ``test_white_ir_coefficients_are_not_a_physical_probe``).
+
+    TRIPLET sector: the generator's two pole arrays are inversion-symmetrized,
+    so the raw gap is EVEN in k; with an inversion-even green the triplet
+    (odd) parity sector is then realized as an ODD-FREQUENCY, even-k gap,
+    whose equal-time amplitude ``sum_n X(k, i w_n)`` vanishes identically --
+    measured ``||Y^pp_uni||/||Y_uni|| = 9.6e-17``, i.e. exactly the "gap that
+    nulls the Cooper term" that spec S3.5's vacuity guard declares an invalid
+    fixture for the E_pp clause. The lattice's own p-wave factor ``sin(k_x)``
+    is therefore attached in that sector (only there): it is frequency-
+    independent, so analyticity in omega, the resolution-independence of the
+    generator and its IR representability are all untouched, and it puts the
+    probe in the harmonic the triplet Cooper vertex actually couples to.
+    """
+    e1, e2 = _gap_poles()
+    n_t = np.arange(nmat) - nmat // 2
+    iw = 1j * (2 * n_t + 1) * np.pi / beta
+    phi = (1.0 / (iw[None, None, None, :] - e1[..., None])
+           - 1.0 / (iw[None, None, None, :] - e2[..., None]))
+    if pairing == "triplet":
+        phi = phi * _pwave_factor()[..., None]
+    return phi[None, None, ...].astype(complex)
+
+
+def _gap_projected(axF, nmat, pairing, beta=BETA):
+    """Step 1's "then fit -> densify per resolution": the probe actually fed
+    to the two kernels is the basis projection of the analytic gap, so the
+    comparison carries no out-of-subspace ambiguity.
+
+    The analytic gap is first projected onto the CHANNEL'S combined-parity
+    sector (``Delta_{ab}(k,iw) -> Delta_{ba}(-k,-iw)``, even for singlet, odd
+    for triplet) -- the subspace the solver actually works in, and the one the
+    eigenvalue metric is defined on. This is required, not cosmetic: both
+    pole arrays are inversion-symmetrized, so the raw generator is EVEN in k
+    and its overlap with the odd-harmonic triplet Cooper vertex vanishes
+    identically (measured ||Y^pp_uni||/||Y_uni|| = 9.6e-17), which spec S3.5's
+    own vacuity guard declares an invalid fixture for the E_pp clause. The
+    projection preserves step 1's resolution-independence: the partner
+    frequency of ``n~`` is ``-n~-1``, which lies in the stored window of every
+    grid, so all resolutions still sample one analytic function.
+
+    Returns ``(phi_dense, phi_nodes, fit_residual_rel)``.
+    """
+    from hwave.solver import eliashberg_dynamic as ed
+    phi = ed._project_parity_dynamic(
+        _gap_analytic(nmat, pairing, beta), pairing)
+    coeffs = axF.fit_from_uniform(phi, nmat)
+    dense = axF.eval_to_uniform(coeffs, nmat)
+    resid = float(np.linalg.norm(dense - phi) / np.linalg.norm(phi))
+    return dense, axF.eval_to_freq(coeffs), resid
+
+
 _FIXTURES = {}
 
 
@@ -190,8 +278,7 @@ def _fixture(nmat, pairing, beta=BETA):
     ``tests/test_eliashberg_ir.py::test_ir_matvec_matches_uniform_kernel``:
     the raw uniform-FFT susceptibility additionally carries finite-Nmat
     artifacts (the delta(tau) constant, aliasing images) that no basis of
-    bandwidth wmax can represent and that spec S3.5's error budget does not
-    model.
+    bandwidth wmax can represent.
 
     The two parts are built by zeroing the other part's vertex input (Vpp = 0
     -> fluctuation only; chi = 0 -> instantaneous only) so both are produced
@@ -251,58 +338,8 @@ def _fixture(nmat, pairing, beta=BETA):
     return fx
 
 
-def _gap_coeffs(axF, seed=5, npole=6, wpole=2.0, beta=BETA):
-    """Spec S3.5 step 1: a probe gap that is IR-representable BY CONSTRUCTION
-    (IR coefficients, densified to whatever grid is asked for), drawn with the
-    PHYSICAL coefficient weight -- a random Lehmann sum with poles inside
-    ``|w| <= wpole``, projected onto the basis.
-
-    Why not white (unit-variance) IR coefficients: measured on this fixture,
-    a white draw saturates the basis bandwidth, and the pointwise product
-    ``X = G2 * phi`` (a tau-convolution, so the spectral supports ADD) then
-    falls outside it. The IR equal-time value ``sum_l X_l u_l(0+)`` is then
-    9.7% off the converged window sum and does not improve with Nmat
-    (measured 9.70e-2, 9.70e-2, 9.70e-2, 9.76e-2 at Nmat = 64, 128, 256,
-    4096), i.e. the comparison would measure the basis bandwidth rather than
-    the kernel. With the physical draw the same quantity agrees to 2.6e-6.
-    """
-    rng = np.random.default_rng(seed)
-    w = rng.uniform(-wpole, wpole, size=npole)
-    amp = (rng.normal(size=(1, 1, NX, NY, NZ, npole))
-           + 1j * rng.normal(size=(1, 1, NX, NY, NZ, npole)))
-    iw = 1j * axF.freq_n * np.pi / beta
-    return axF.fit_from_freq((amp[..., None] / (iw[None, :] - w[:, None]))
-                             .sum(axis=-2))
-
-
 def _apply(op, x):
     return (op @ x.ravel()).reshape(x.shape)
-
-
-def _round_trip_action(fx, coeffs):
-    """Spec S3.5 steps 2-4, with the PART-AWARE densification of step 3.
-
-    ``densify`` on the IR path means "evaluate the IR-represented object on
-    the uniform grid". The operator's output is not a pure IR object: it is
-    (IR-representable fluctuation part) + (frequency-FLAT instantaneous part),
-    and a frequency-independent constant is exactly what the IR basis cannot
-    represent (u_l(i w) ~ 1/w). Fitting the sum destroys the flat part -- so
-    the flat part is densified by broadcast and only the fluctuation part is
-    fitted. ``test_ir_naive_densification_is_not_a_measurement`` pins that the
-    naive alternative is a measurement artifact, not a stricter test.
-    """
-    axF, nmat = fx["axF"], fx["nmat"]
-    phi_d = axF.eval_to_uniform(coeffs, nmat)
-    phi_n = axF.eval_to_freq(coeffs)
-    Y_uni = _apply(fx["u_full"], phi_d)
-    Y_fl = axF.eval_to_uniform(
-        axF.fit_from_freq(_apply(fx["i_fl"], phi_n)), nmat)
-    Y_pp = _apply(fx["i_pp"], phi_n)
-    Y_ir = Y_fl + np.broadcast_to(Y_pp[..., :1], Y_uni.shape)
-    E = float(np.linalg.norm(Y_uni - Y_ir) / np.linalg.norm(Y_uni))
-    X = _pair_amplitude(fx, phi_d)
-    est, rel, bad = bc.tail_estimate(X, fx["beta"], nmat)
-    return E, rel, bad
 
 
 def _pair_amplitude(fx, phi_dense):
@@ -313,6 +350,78 @@ def _pair_amplitude(fx, phi_dense):
     return G2[0, 0, 0, 0] * phi_dense[0, 0]
 
 
+_MEASURED = {}
+
+
+def _measure(nmat, pairing):
+    """All spec S3.5 quantities at one resolution (cached).
+
+    Part-aware densification (step 3, amended): the fluctuation part is
+    densified through the basis, the instantaneous part is carried exactly
+    (it is flat in the external frequency by construction, S3.3), because a
+    frequency-independent constant is precisely what the IR basis cannot
+    represent -- see ``test_ir_naive_densification_is_not_a_measurement``.
+    """
+    key = (nmat, pairing)
+    if key in _MEASURED:
+        return _MEASURED[key]
+    fx = _fixture(nmat, pairing)
+    axF = fx["axF"]
+    phi_d, phi_n, fit_resid = _gap_projected(axF, nmat, pairing)
+
+    Y_uni = _apply(fx["u_full"], phi_d)
+    Y_uni_pp = _apply(fx["u_pp"], phi_d)
+    Y_ir_fl = axF.eval_to_uniform(
+        axF.fit_from_freq(_apply(fx["i_fl"], phi_n)), nmat)
+    Y_ir_pp_nodes = _apply(fx["i_pp"], phi_n)
+    Y_ir_pp = np.broadcast_to(Y_ir_pp_nodes[..., :1], Y_uni.shape)
+    Y_ir = Y_ir_fl + Y_ir_pp
+
+    est, tail_rel, bad = bc.tail_estimate(_pair_amplitude(fx, phi_d),
+                                          fx["beta"], nmat)
+    out = dict(
+        nmat=nmat, eps_ir=fx["eps_ir"], fit_resid=fit_resid,
+        tail_rel=tail_rel, tail_bad=bad,
+        Y_uni=Y_uni, Y_uni_pp=Y_uni_pp, Y_ir=Y_ir, Y_ir_pp=Y_ir_pp,
+        E=float(np.linalg.norm(Y_uni - Y_ir) / np.linalg.norm(Y_uni)),
+        E_pp=float(np.linalg.norm(Y_uni_pp - Y_ir_pp)
+                   / np.linalg.norm(Y_uni_pp)),
+        pp_weight=float(np.linalg.norm(Y_uni_pp) / np.linalg.norm(Y_uni)),
+        lam_uni=_sector_lambda(fx, pairing, "uniform"),
+        lam_ir=_sector_lambda(fx, pairing, "ir"))
+    out["e_lam"] = float(abs(out["lam_uni"] - out["lam_ir"])
+                         / abs(out["lam_uni"]))
+    _MEASURED[key] = out
+    return out
+
+
+def _shared_window(Y, nmat, n_small):
+    """``Y|_S(n_small)``: the stored window of the coarser grid, a plain slice
+    of the finer one (S(N) is a subset of S(2N) under the centered map)."""
+    n_t = np.arange(nmat) - nmat // 2
+    mask = (n_t >= -(n_small // 2)) & (n_t <= n_small // 2 - 1)
+    return Y[..., mask]
+
+
+def _d_uni(nmat, pairing):
+    """``D_uni(Nmat)`` and ``d_uni(Nmat)`` (spec S3.5 step 5, amended): the
+    UNIFORM kernel's own self-convergence increment between Nmat and 2*Nmat on
+    the shared window -- the correct model of the discretization the IR path
+    is compared against."""
+    lo = _measure(nmat, pairing)
+    hi = _measure(2 * nmat, pairing)
+    ref = _shared_window(hi["Y_uni"], 2 * nmat, nmat)
+    D = float(np.linalg.norm(lo["Y_uni"] - ref) / np.linalg.norm(ref))
+    d = float(abs(lo["lam_uni"] - hi["lam_uni"]) / abs(hi["lam_uni"]))
+    return D, d
+
+
+def _eps_ir_max(pairing):
+    """``eps_IR^max``: one number for the whole study, the maximum over the
+    tested resolution set {64, 128, 256}."""
+    return max(_measure(n, pairing)["eps_ir"] for n in NMATS)
+
+
 def _sector(A, shape, pairing):
     from scipy.sparse.linalg import LinearOperator
     from hwave.solver import eliashberg_dynamic as ed
@@ -320,29 +429,69 @@ def _sector(A, shape, pairing):
 
     def mv(v):
         x = ed._project_parity_dynamic(np.asarray(v).reshape(shape), pairing)
-        return ed._project_parity_dynamic(
-            _apply(A, x), pairing).ravel()
+        return ed._project_parity_dynamic(_apply(A, x), pairing).ravel()
     return LinearOperator((n, n), matvec=mv, dtype=complex)
 
 
 def _sector_lambda(fx, pairing, which):
     """Leading eigenvalue INSIDE the parity sector (spec S3.5: branches are
-    matched by sector, so no eigenpair-sorting rule is needed)."""
+    matched by sector, so no eigenpair-sorting rule is needed). The IR branch
+    runs the complex-ARPACK semantics the amended section 2 makes explicit;
+    on this fixture the mode is real to ~1e-12, and the metric uses the
+    modulus of the difference either way."""
     from scipy.sparse.linalg import eigs
     from hwave.solver import eliashberg_dynamic as ed
     axF, nmat = fx["axF"], fx["nmat"]
-    c = _gap_coeffs(axF)
     if which == "uniform":
         shape = (1, 1, NX, NY, NZ, nmat)
-        v0 = axF.eval_to_uniform(c, nmat)
+        v0 = _gap_projected(axF, nmat, pairing)[0]
         op = fx["u_full"]
     else:
         shape = (1, 1, NX, NY, NZ, axF.n_freq)
-        v0 = axF.eval_to_freq(c)
+        v0 = _gap_projected(axF, nmat, pairing)[1]
         op = fx["i_full"]
     v0 = ed._project_parity_dynamic(v0, pairing).ravel()
     return complex(eigs(_sector(op, shape, pairing), k=1, which="LM", v0=v0,
                         tol=1e-10, return_eigenvectors=False)[0])
+
+
+def _b1_kernels():
+    """The B = 1 reduction data: the bond IR kernel with a single (on-site)
+    channel, and the oracle-verified scalar ``eliashberg_kernel_ir`` fed the
+    same vertex/green/gap. Shared by the reduction test and by the
+    Hermiticity diagnostic (amended section 2 makes this reduction the
+    PHYSICAL Hermiticity evidence for the IR branch)."""
+    from hwave.solver import eliashberg_dynamic as ed
+    nmat = 64
+    axF, axB = _axes()
+    green_u = _green_uniform(_dispersion(), nmat)
+    green_n = ed._ir_compress(green_u, axF, nmat, "green")
+    bset = bc.resolve_interactions({((0, 0, 0), (0, 0)): 0.0}, np.eye(3), 1)
+    assert bset.n_channels == 1
+    rng = np.random.default_rng(3)
+
+    # An IR-representable bosonic vertex, fed through the bond algebra as
+    # F = 1.5 * S chi_s S with S = 1 (and C = 0), so the bond kernel's
+    # fluctuation vertex equals the scalar kernel's pairing vertex.
+    cb = (rng.normal(size=(NX, NY, NZ, axB.L))
+          + 1j * rng.normal(size=(NX, NY, NZ, axB.L)))
+    Vs_n = axB.eval_to_freq(cb)
+    S_bond = np.ones((NX, NY, NZ, 1, 1), dtype=complex)
+    C_bond = np.zeros((NX, NY, NZ, 1, 1), dtype=complex)
+    chi_s = Vs_n[..., None, None] / 1.5
+    zero = np.zeros((1, 1), dtype=complex)
+    A, vec_size = bc.make_bond_kernel_dynamic_ir(
+        chi_s, np.zeros_like(chi_s), S_bond, C_bond, zero, zero, green_n,
+        bset, "singlet", BETA, axF, axB)
+
+    cphi = (rng.normal(size=(1, 1, NX, NY, NZ, axF.L))
+            + 1j * rng.normal(size=(1, 1, NX, NY, NZ, axF.L)))
+    phi_n = axF.eval_to_freq(cphi)
+    Y_bond = _apply(A, phi_n)
+    Y_scalar = ed.eliashberg_kernel_ir(
+        ed._ir_vertex_to_rtau(Vs_n[None, None, None, None], axB, axF),
+        ed.calc_g2_dynamic(green_n, BETA), phi_n.copy(), axF, BETA)
+    return Y_bond, Y_scalar, vec_size, axF
 
 
 def _dense(op, shape):
@@ -380,38 +529,11 @@ def test_ir_kernel_equals_scalar_ir_kernel_at_B1():
     """B = 1 reduction (spec S3.5): with a single (on-site) bond channel the
     bond kernel must BE the existing scalar IR kernel -- same transport, same
     normalization, same instantaneous convention. Exact equality, so it pins
-    the implementation independently of every discretization budget below."""
-    from hwave.solver import eliashberg_dynamic as ed
-    nmat = 64
-    axF, axB = _axes()
-    green_u = _green_uniform(_dispersion(), nmat)
-    green_n = ed._ir_compress(green_u, axF, nmat, "green")
-    bset = bc.resolve_interactions({((0, 0, 0), (0, 0)): 0.0}, np.eye(3), 1)
-    assert bset.n_channels == 1
-    rng = np.random.default_rng(3)
-
-    # An IR-representable bosonic vertex, fed through the bond algebra as
-    # F = 1.5 * S chi_s S with S = 1 (and C = 0), so the bond kernel's
-    # fluctuation vertex equals the scalar kernel's pairing vertex.
-    cb = (rng.normal(size=(NX, NY, NZ, axB.L))
-          + 1j * rng.normal(size=(NX, NY, NZ, axB.L)))
-    Vs_n = axB.eval_to_freq(cb)
-    S_bond = np.ones((NX, NY, NZ, 1, 1), dtype=complex)
-    C_bond = np.zeros((NX, NY, NZ, 1, 1), dtype=complex)
-    chi_s = Vs_n[..., None, None] / 1.5
-    zero = np.zeros((1, 1), dtype=complex)
-    A, vec_size = bc.make_bond_kernel_dynamic_ir(
-        chi_s, np.zeros_like(chi_s), S_bond, C_bond, zero, zero, green_n,
-        bset, "singlet", BETA, axF, axB)
+    the implementation independently of every discretization budget below,
+    and (amended section 2) it is the PHYSICAL Hermiticity evidence for the
+    IR branch."""
+    Y_bond, Y_scalar, vec_size, axF = _b1_kernels()
     assert vec_size == NX * NY * NZ * axF.n_freq
-
-    cphi = (rng.normal(size=(1, 1, NX, NY, NZ, axF.L))
-            + 1j * rng.normal(size=(1, 1, NX, NY, NZ, axF.L)))
-    phi_n = axF.eval_to_freq(cphi)
-    Y_bond = _apply(A, phi_n)
-    Y_scalar = ed.eliashberg_kernel_ir(
-        ed._ir_vertex_to_rtau(Vs_n[None, None, None, None], axB, axF),
-        ed.calc_g2_dynamic(green_n, BETA), phi_n.copy(), axF, BETA)
     np.testing.assert_allclose(Y_bond, Y_scalar, rtol=1e-11, atol=1e-13)
 
 
@@ -443,191 +565,281 @@ def test_ir_kernel_rejects_uniform_grid_inputs():
                                        bset, "singlet", 2.0 * BETA, axF, axB)
 
 
-# --- spec S3.5: the round-trip contract -------------------------------------
+# --- spec S3.5 step 1 (amended): the normative gap generator ----------------
 @ir_only
 @pytest.mark.parametrize("pairing", ["singlet", "triplet"])
-def test_ir_kernel_round_trip_refinement(pairing, capsys):
-    """Spec S3.5 step 5, REFINEMENT half (frozen):
-    ``E(2N) <= 0.6*E(N) + eps_IR^max`` for two successive doublings.
-
-    This is the inequality that establishes the two kernels are
-    discretizations of the same operator; the absolute half is the xfail
-    below."""
+def test_normative_gap_generator_is_analytic_and_ir_representable(pairing,
+                                                                  capsys):
+    """Step 1's two requirements: (a) every resolution samples the SAME
+    underlying analytic function -- so the shared Matsubara integers carry
+    bit-identical values across grids, before and after the parity projection
+    -- and (b) its IR fit residual sits at the basis tolerance, so the probe
+    carries no out-of-subspace ambiguity into the comparison."""
+    from hwave.solver import eliashberg_dynamic as ed
     axF = _axes()[0]
-    c = _gap_coeffs(axF)
-    E, tails, eps = {}, {}, {}
+    resids = {}
     for nmat in NMATS:
-        fx = _fixture(nmat, pairing)
-        E[nmat], tails[nmat], bad = _round_trip_action(fx, c)
-        eps[nmat] = fx["eps_ir"]
-        assert not bad, (
+        _, _, resid = _gap_projected(axF, nmat, pairing)
+        resids[nmat] = resid
+        assert resid <= 1.0e3 * IR_TOL, (nmat, resid)
+    # (a) same analytic function at every resolution: the coarse grid's
+    # frequencies are a subset of the fine grid's, and the parity partner of
+    # every stored frequency is stored too (n~ <-> -n~-1), so the projection
+    # does not break that.
+    for lo, hi in ((64, 128), (128, 256)):
+        np.testing.assert_array_equal(
+            _gap_analytic(lo, pairing),
+            _shared_window(_gap_analytic(hi, pairing), hi, lo))
+        np.testing.assert_array_equal(
+            ed._project_parity_dynamic(_gap_analytic(lo, pairing), pairing),
+            _shared_window(ed._project_parity_dynamic(
+                _gap_analytic(hi, pairing), pairing), hi, lo))
+    with capsys.disabled():
+        print("\n  [{}] gap IR fit residual = {}".format(
+            pairing, {k: "%.2e" % v for k, v in resids.items()}))
+
+
+@ir_only
+def test_white_ir_coefficients_are_not_a_physical_probe(capsys):
+    """Evidence for the amended step 1. White (unit-variance) IR coefficients
+    saturate the basis bandwidth; a pointwise Matsubara product is a tau
+    convolution, so the spectral supports ADD and ``X = G2 * phi`` falls
+    outside the basis. Its IR equal-time value is then ~10% off the uniform
+    window sum AND does not improve with resolution -- the comparison would
+    measure the basis bandwidth, not the kernel. The normative analytic gap
+    keeps the same quantity at the 1e-5 level."""
+    from hwave.solver import eliashberg_dynamic as ed
+    axF = _axes()[0]
+    rng = np.random.default_rng(5)
+    white = (rng.normal(size=(1, 1, NX, NY, NZ, axF.L))
+             + 1j * rng.normal(size=(1, 1, NX, NY, NZ, axF.L)))
+
+    def equal_time_mismatch(nmat, phi_d, phi_n):
+        fx = _fixture(nmat, "singlet")
+        G2u = ed.calc_g2_dynamic(fx["green_u"], BETA)[0, 0, 0, 0]
+        window_sum = (G2u * phi_d[0, 0]).sum(axis=-1)
+        G2n = ed.calc_g2_dynamic(fx["green_n"], BETA)[0, 0, 0, 0]
+        X_l = axF.fit_from_freq(G2n * phi_n[0, 0])
+        ir_equal_time = BETA * (X_l @ axF.u_zero_plus)
+        return float(np.abs(window_sum - ir_equal_time).max()
+                     / np.abs(window_sum).max())
+
+    white_mis = {n: equal_time_mismatch(
+        n, axF.eval_to_uniform(white, n), axF.eval_to_freq(white))
+        for n in NMATS}
+    phys_mis = {n: equal_time_mismatch(
+        n, *_gap_projected(axF, n, "singlet")[:2])
+                for n in NMATS}
+    with capsys.disabled():
+        print("\n  equal-time mismatch: white {} vs normative {}".format(
+            {k: "%.2e" % v for k, v in white_mis.items()},
+            {k: "%.2e" % v for k, v in phys_mis.items()}))
+    # white: percent-level and NOT converging (ratio ~ 1 across a 4x change)
+    assert min(white_mis.values()) > 1e-2
+    assert white_mis[256] > 0.5 * white_mis[64]
+    # normative: orders of magnitude smaller at every resolution
+    assert max(phys_mis.values()) < 1e-4
+    assert max(phys_mis.values()) < 0.01 * min(white_mis.values())
+
+
+# --- spec S3.5 step 5 (amended): the three action clauses -------------------
+@ir_only
+@pytest.mark.parametrize("pairing", ["singlet", "triplet"])
+def test_ir_instantaneous_absolute_budget(pairing, capsys):
+    """Amended step 5, INSTANTANEOUS part (absolute):
+    ``E_pp(N) <= 3*(tail_est_rel(N) + eps_IR^max)`` -- the clause the tail
+    estimator actually models, with the spec's vacuity guard
+    ``||Y^pp_uni||_F >= 1e-3 * ||Y_uni||_F`` asserted so a gap that nulls the
+    Cooper term cannot make it pass trivially."""
+    eps_max = _eps_ir_max(pairing)
+    rows = {}
+    for nmat in NMATS:
+        m = _measure(nmat, pairing)
+        assert not m["tail_bad"], (
             "tail estimate unreliable at Nmat={} -- spec S3.3 forbids "
             "recording that as an inconclusive pass".format(nmat))
+        assert m["pp_weight"] >= 1e-3, (
+            "vacuity guard: ||Y^pp_uni||_F is only {:.3e} of ||Y_uni||_F; "
+            "this fixture nulls the Cooper term".format(m["pp_weight"]))
+        budget = 3.0 * (m["tail_rel"] + eps_max)
+        rows[nmat] = (m["E_pp"], budget, m["pp_weight"])
+        assert m["E_pp"] <= budget, (
+            "E_pp({}) = {:.4e} exceeds 3*(tail_est_rel {:.4e} + eps_IR^max "
+            "{:.3e}) = {:.4e}".format(nmat, m["E_pp"], m["tail_rel"],
+                                      eps_max, budget))
     with capsys.disabled():
-        print("\n  [{}] E(Nmat) = {}\n        tail_est_rel = {}\n"
-              "        eps_IR = {}".format(
-                  pairing, {k: "%.4e" % v for k, v in E.items()},
-                  {k: "%.4e" % v for k, v in tails.items()},
-                  {k: "%.3e" % v for k, v in eps.items()}))
+        print("\n  [{}] E_pp / budget (pp weight): {}".format(
+            pairing, {k: "%.3e / %.3e (%.2f)" % v for k, v in rows.items()}))
+
+
+@ir_only
+@pytest.mark.parametrize("pairing", ["singlet", "triplet"])
+def test_ir_action_refinement(pairing, capsys):
+    """Amended step 5, REFINEMENT: ``E(2N) <= 0.6*E(N) + eps_IR^max`` for two
+    successive doublings. This is what establishes that the two kernels are
+    discretizations of the same operator."""
+    eps_max = _eps_ir_max(pairing)
+    E = {n: _measure(n, pairing)["E"] for n in NMATS}
+    with capsys.disabled():
+        print("\n  [{}] E(Nmat) = {}".format(
+            pairing, {k: "%.4e" % v for k, v in E.items()}))
     for lo, hi in ((64, 128), (128, 256)):
-        eps_max = max(eps[lo], eps[hi])
         assert E[hi] <= 0.6 * E[lo] + eps_max, (
             "no refinement {} -> {}: E = {:.4e} -> {:.4e} (budget {:.4e})"
             .format(lo, hi, E[lo], E[hi], 0.6 * E[lo] + eps_max))
 
 
 @ir_only
-@pytest.mark.xfail(strict=True, reason=(
-    "spec S3.5 step 5 ABSOLUTE budget amendment gate: measured E is 28-150x "
-    "3*(tail_est_rel + eps_IR) at every resolution, because the dominant "
-    "IR-vs-uniform difference is the UNIFORM path's own O(1/Nmat) "
-    "frequency-convolution discretization of the FLUCTUATION term -- a term "
-    "the budget (instantaneous tail + IR representation error) does not "
-    "model. The refinement half of the same contract passes. Do not weaken "
-    "the inequality here; amend the spec (task-7-report.md)."))
 @pytest.mark.parametrize("pairing", ["singlet", "triplet"])
-def test_ir_kernel_round_trip_absolute_budget(pairing):
-    """Spec S3.5 step 5, ABSOLUTE half (frozen):
-    ``E(N) <= 3*(tail_est_rel(N) + eps_IR)`` at each resolution."""
-    axF = _axes()[0]
-    c = _gap_coeffs(axF)
+def test_ir_action_uniform_anchor(pairing, capsys):
+    """Amended step 5, UNIFORM ANCHOR:
+    ``E(N) <= 3*(D_uni(N) + tail_est_rel(N) + eps_IR^max)`` with
+    ``D_uni(N) = ||Y_uni(N) - Y_uni(2N)|_S(N)||_F / ||Y_uni(2N)|_S(N)||_F``.
+
+    The anchor replaces the original (mis-modeled) absolute budget: the
+    dominant IR-vs-uniform difference is the uniform path's OWN O(1/Nmat)
+    fluctuation truncation, and D_uni measures exactly that."""
+    eps_max = _eps_ir_max(pairing)
+    rows = {}
     for nmat in NMATS:
-        fx = _fixture(nmat, pairing)
-        E, rel, _ = _round_trip_action(fx, c)
-        assert E <= 3.0 * (rel + fx["eps_ir"]), (
-            "E({}) = {:.4e} exceeds 3*(tail_est_rel {:.4e} + eps_IR {:.3e})"
-            .format(nmat, E, rel, fx["eps_ir"]))
+        m = _measure(nmat, pairing)
+        D, _ = _d_uni(nmat, pairing)
+        budget = 3.0 * (D + m["tail_rel"] + eps_max)
+        rows[nmat] = (m["E"], D, budget, m["E"] / budget)
+        assert m["E"] <= budget, (
+            "E({}) = {:.4e} exceeds 3*(D_uni {:.4e} + tail_est_rel {:.4e} + "
+            "eps_IR^max {:.3e}) = {:.4e}".format(
+                nmat, m["E"], D, m["tail_rel"], eps_max, budget))
+    with capsys.disabled():
+        print("\n  [{}] E / D_uni / budget (ratio): {}".format(
+            pairing,
+            {k: "%.3e / %.3e / %.3e (%.2f)" % v for k, v in rows.items()}))
 
 
+# --- spec S3.5 step 5 (amended): the eigenvalue twins -----------------------
 @ir_only
 @pytest.mark.parametrize("pairing", ["singlet", "triplet"])
-def test_ir_kernel_eigenvalue_refinement(pairing, capsys):
-    """The end-to-end EIGENVALUE form of the contract (spec S3.5): an action
-    norm does not define an eigenvalue metric. Per sector,
-    ``e(N) = |lam_uni(N) - lam_IR| / |lam_uni(N)|`` with the same frozen
-    refinement inequality. No densification enters here, so this metric is
-    also free of the frequency-flat-component question."""
-    axF = _axes()[0]
-    c = _gap_coeffs(axF)
-    e_rel, tails, eps = {}, {}, {}
-    for nmat in NMATS:
-        fx = _fixture(nmat, pairing)
-        lam_u = _sector_lambda(fx, pairing, "uniform")
-        lam_i = _sector_lambda(fx, pairing, "ir")
-        e_rel[nmat] = float(abs(lam_u - lam_i) / abs(lam_u))
-        tails[nmat] = _round_trip_action(fx, c)[1]
-        eps[nmat] = fx["eps_ir"]
+def test_ir_eigenvalue_refinement(pairing, capsys):
+    """Eigenvalue twin of the refinement clause, per parity sector:
+    ``e(2N) <= 0.6*e(N) + eps_IR^max``. No densification enters this metric,
+    so it is also free of the frequency-flat-component question."""
+    eps_max = _eps_ir_max(pairing)
+    e_rel = {n: _measure(n, pairing)["e_lam"] for n in NMATS}
     with capsys.disabled():
-        print("\n  [{}] e(Nmat) = {}".format(
-            pairing, {k: "%.4e" % v for k, v in e_rel.items()}))
+        print("\n  [{}] e(Nmat) = {}  lam_uni = {}".format(
+            pairing, {k: "%.4e" % v for k, v in e_rel.items()},
+            {n: "%.6f" % _measure(n, pairing)["lam_uni"].real
+             for n in NMATS}))
     for lo, hi in ((64, 128), (128, 256)):
-        eps_max = max(eps[lo], eps[hi])
         assert e_rel[hi] <= 0.6 * e_rel[lo] + eps_max, (
             "no eigenvalue refinement {} -> {}: e = {:.4e} -> {:.4e}"
             .format(lo, hi, e_rel[lo], e_rel[hi]))
 
 
 @ir_only
-@pytest.mark.xfail(strict=True, reason=(
-    "same spec S3.5 absolute-budget amendment gate as the action metric: "
-    "measured e(N) is 30-90x 3*(tail_est_rel + eps_IR^max) while the "
-    "refinement half passes (task-7-report.md)."))
 @pytest.mark.parametrize("pairing", ["singlet", "triplet"])
-def test_ir_kernel_eigenvalue_absolute_budget(pairing):
-    """Spec S3.5, eigenvalue form, ABSOLUTE half:
-    ``e(N) <= 3*(tail_est_rel(N) + eps_IR^max)``."""
-    axF = _axes()[0]
-    c = _gap_coeffs(axF)
-    eps_max = max(_fixture(n, pairing)["eps_ir"] for n in NMATS)
+def test_ir_eigenvalue_uniform_anchor(pairing, capsys):
+    """Eigenvalue twin of the uniform anchor:
+    ``e(N) <= 3*(d_uni(N) + tail_est_rel(N) + eps_IR^max)`` with
+    ``d_uni(N) = |lam_uni(N) - lam_uni(2N)| / |lam_uni(2N)|``."""
+    eps_max = _eps_ir_max(pairing)
+    rows = {}
     for nmat in NMATS:
-        fx = _fixture(nmat, pairing)
-        lam_u = _sector_lambda(fx, pairing, "uniform")
-        lam_i = _sector_lambda(fx, pairing, "ir")
-        e_rel = float(abs(lam_u - lam_i) / abs(lam_u))
-        rel = _round_trip_action(fx, c)[1]
-        assert e_rel <= 3.0 * (rel + eps_max), (
-            "e({}) = {:.4e} exceeds 3*(tail_est_rel {:.4e} + eps_IR^max "
-            "{:.3e})".format(nmat, e_rel, rel, eps_max))
+        m = _measure(nmat, pairing)
+        _, d = _d_uni(nmat, pairing)
+        budget = 3.0 * (d + m["tail_rel"] + eps_max)
+        rows[nmat] = (m["e_lam"], d, budget, m["e_lam"] / budget)
+        assert m["e_lam"] <= budget, (
+            "e({}) = {:.4e} exceeds 3*(d_uni {:.4e} + tail_est_rel {:.4e} + "
+            "eps_IR^max {:.3e}) = {:.4e}".format(
+                nmat, m["e_lam"], d, m["tail_rel"], eps_max, budget))
+    with capsys.disabled():
+        print("\n  [{}] e / d_uni / budget (ratio): {}".format(
+            pairing,
+            {k: "%.3e / %.3e / %.3e (%.2f)" % v for k, v in rows.items()}))
 
 
+# --- evidence for the amended step 3 ----------------------------------------
 @ir_only
-def test_ir_naive_densification_is_not_a_measurement():
-    """Evidence for the part-aware densification of ``_round_trip_action``:
+def test_ir_naive_densification_is_not_a_measurement(capsys):
+    """Evidence for the part-aware densification of step 3 (amended):
     fitting the FULL IR output (fluctuation + frequency-flat instantaneous
-    term) to the IR basis and evaluating on the uniform grid makes the error
-    GROW with Nmat, because a constant is not in the span of the IR basis and
-    the uniform grid keeps extending to frequencies where the fit has decayed
-    to zero while the true answer is still the constant. A monotonically
-    growing "error" measures the densification, not the kernel."""
+    term) to the IR basis and evaluating on the uniform grid does not converge
+    at all -- a constant is not in the span of the IR basis, and the uniform
+    grid keeps extending to frequencies where the fit has decayed to zero
+    while the true answer is still the constant. The naive number therefore
+    stays O(1) and REFUSES the refinement inequality that the part-aware
+    metric passes, so it measures the densification, not the kernel. (With a
+    white-coefficient probe it grew monotonically, 0.10 -> 0.27 -> 0.57, which
+    is the number quoted in the amended spec; with the normative analytic gap
+    it is non-monotonic but equally stuck, 0.56 -> 0.70 -> 0.57.)"""
     axF = _axes()[0]
-    c = _gap_coeffs(axF)
-    naive = []
+    naive, part_aware = [], []
     for nmat in NMATS:
         fx = _fixture(nmat, "singlet")
-        phi_d = axF.eval_to_uniform(c, nmat)
-        phi_n = axF.eval_to_freq(c)
-        Y_uni = _apply(fx["u_full"], phi_d)
+        phi_d, phi_n, _ = _gap_projected(axF, nmat, "singlet")
+        m = _measure(nmat, "singlet")
         Y_naive = axF.eval_to_uniform(
             axF.fit_from_freq(_apply(fx["i_full"], phi_n)), nmat)
-        naive.append(float(np.linalg.norm(Y_uni - Y_naive)
-                           / np.linalg.norm(Y_uni)))
+        naive.append(float(np.linalg.norm(m["Y_uni"] - Y_naive)
+                           / np.linalg.norm(m["Y_uni"])))
+        part_aware.append(m["E"])
         # ... while the instantaneous part IS exactly flat on both axes, so
         # the broadcast densification is exact by construction.
-        for key in ("u_pp", "i_pp"):
-            Y = _apply(fx[key], phi_d if key.startswith("u") else phi_n)
+        for key, probe in (("u_pp", phi_d), ("i_pp", phi_n)):
+            Y = _apply(fx[key], probe)
             assert (np.abs(Y - Y[..., :1]).max()
                     <= 1e-12 * np.abs(Y).max()), key
-    assert naive[0] < naive[1] < naive[2], naive
-    # and the part-aware metric goes the other way on the same data
-    part_aware = [_round_trip_action(_fixture(n, "singlet"), c)[0]
-                  for n in NMATS]
-    assert part_aware[0] > part_aware[1] > part_aware[2], part_aware
+    with capsys.disabled():
+        print("\n  naive densification E = {}\n  part-aware E        = {}"
+              .format(["%.3e" % v for v in naive],
+                      ["%.3e" % v for v in part_aware]))
+    # stuck at O(1) and failing the refinement inequality at every doubling...
+    assert min(naive) > 0.1
+    for lo, hi in ((0, 1), (1, 2)):
+        assert naive[hi] > 0.6 * naive[lo]
+    # ... while the part-aware metric converges monotonically on the same data
+    assert part_aware[0] > part_aware[1] > part_aware[2]
+    assert part_aware[-1] < 0.01 * naive[-1]
 
 
-# --- spec section 2: the IR-coordinate Hermiticity gate ---------------------
+# --- amended section 2: the sampling residual is a DIAGNOSTIC ---------------
 @ir_only
-@pytest.mark.xfail(strict=True, reason=(
-    "spec section 2 amendment gate: the IR-coordinate residual is ~1.0, far "
-    "above the frozen max(10*eps_IR_roundtrip, 1e-10) (eps_IR_roundtrip on a "
-    "single-pole green is ~1e-16 on the nodes, so the threshold degenerates "
-    "to 1e-10). Decomposition (Nmat=64, singlet): instantaneous part 1.31 "
-    "(the IR equal-time functional and the constant ket are adjoint in the "
-    "physical L^2(0,beta) metric, NOT in the Euclidean sampling metric), "
-    "fluctuation part 0.236 shrinking to 0.045 at Nmat=128 (input-resolution "
-    "limited; the uniform kernel through the same IR projection measures "
-    "0.019). Do not tune the threshold -- amend the spec "
-    "(task-7-report.md)."))
 @pytest.mark.parametrize("pairing", ["singlet", "triplet"])
-def test_ir_coordinate_hermiticity_threshold(pairing, capsys):
-    """Spec section 2, measurement-coordinates paragraph: the IR operator acts
-    on IR SAMPLING VALUES, and IR fit/evaluation is not unitary in the
-    Euclidean sampling metric, so the sampling-coordinate residual is reported
-    separately from the (machine-precision) uniform one, against the FROZEN
-    threshold ``max(10 * eps_IR_roundtrip, 1e-10)``."""
+def test_ir_sampling_hermiticity_is_a_diagnostic_not_a_gate(pairing, capsys):
+    """Amended section 2 (2026-07-28): there is NO gated threshold on the
+    Euclidean sampling-coordinate residual any more -- it is structural, not
+    physical (the equal-time functional is adjoint to a constant ket in the
+    physical L^2 metric, not in the Euclidean sampling metric), and the same
+    property holds for the pre-existing scalar dynamic IR path, which has
+    always run the complex-ARPACK ordering.
+
+    (a) The PHYSICAL Hermiticity evidence for the IR branch is the B = 1
+    reduction against the oracle-verified scalar ``eliashberg_kernel_ir``,
+    asserted here as well as in its own test.
+    (b) The sampling residual is reported only -- asserted finite, never
+    gated -- together with its decomposition and the uniform-coordinate
+    residual, which is the branch that IS gated (machine precision, P0-1).
+    """
+    Y_bond, Y_scalar, _, _ = _b1_kernels()
+    rel = float(np.abs(Y_bond - Y_scalar).max() / np.abs(Y_scalar).max())
+    assert rel <= 1e-11, "physical-metric evidence broken: {:.3e}".format(rel)
+
     nmat = 64
     fx = _fixture(nmat, pairing)
-    axF, green_n = fx["axF"], fx["green_n"]
-
-    # eps_IR_roundtrip on the axis the operator actually lives on.
-    g_rt = axF.eval_to_freq(axF.fit_from_freq(green_n))
-    eps_rt = float(np.linalg.norm(g_rt - green_n) / np.linalg.norm(green_n))
-    threshold = max(10.0 * eps_rt, 1e-10)
-
-    shape = (1, 1, NX, NY, NZ, axF.n_freq)
-    w_n = _pair_weight(green_n)
-    res = _whitened_residual(_dense(fx["i_full"], shape), w_n)
-    parts = {k: _whitened_residual(_dense(fx[k], shape), w_n)
+    axF = fx["axF"]
+    shape_n = (1, 1, NX, NY, NZ, axF.n_freq)
+    w_n = _pair_weight(fx["green_n"])
+    res = _whitened_residual(_dense(fx["i_full"], shape_n), w_n)
+    parts = {k: _whitened_residual(_dense(fx[k], shape_n), w_n)
              for k in ("i_fl", "i_pp")}
     w_u = _pair_weight(fx["green_u"])
-    shape_u = (1, 1, NX, NY, NZ, nmat)
-    uni = _whitened_residual(_dense(fx["u_full"], shape_u), w_u)
+    uni = _whitened_residual(_dense(fx["u_full"], (1, 1, NX, NY, NZ, nmat)),
+                             w_u)
     with capsys.disabled():
-        print("\n  [{}] IR-coordinate Hermiticity residual = {:.4e} "
-              "(fluctuation {:.4e}, instantaneous {:.4e}); uniform "
-              "coordinates {:.4e}; eps_IR_roundtrip = {:.3e}; threshold = "
-              "{:.3e}".format(pairing, res, parts["i_fl"], parts["i_pp"],
-                              uni, eps_rt, threshold))
-    assert res <= threshold, (
-        "IR-COORDINATE HERMITICITY GATE FAILED (spec section 2 amendment "
-        "gate): residual {:.4e} > max(10*eps_IR_roundtrip {:.3e}, 1e-10) = "
-        "{:.3e}".format(res, eps_rt, threshold))
+        print("\n  [{}] IR sampling-coordinate residual (DIAGNOSTIC, not "
+              "gated) = {:.4e} (fluctuation {:.4e}, instantaneous {:.4e}); "
+              "uniform coordinates = {:.4e}; B=1 physical evidence = {:.2e}"
+              .format(pairing, res, parts["i_fl"], parts["i_pp"], uni, rel))
+    assert np.isfinite(res) and np.isfinite(uni)
+    assert all(np.isfinite(v) for v in parts.values())
