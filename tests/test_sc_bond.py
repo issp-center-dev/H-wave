@@ -1476,9 +1476,39 @@ def test_subspace_similarity_tie_resolves_to_the_leading_cluster():
     assert out[0]["lambda"] == pytest.approx(2.0)
 
 
-def test_track_subspace_on_the_physical_kernel_with_the_pair_weight_metric():
-    """I3: exercise the tracker end-to-end on a REAL bond kernel with the 5-D
-    ``pair_weight`` metric (the Task-8 interface), at two ``V`` points.
+# number of ARPACK eigenpairs used by the physical-kernel tracking tests.
+#
+# The kernel is 16 x 16 and its odd sector at V = 0 carries a THREE-fold
+# degenerate level at lambda = 0.4265276.  With k = 6 the window ends exactly
+# inside that multiplet, so ARPACK returns an arbitrary TWO-dimensional slice
+# of a three-dimensional eigenspace -- and which slice depends on the state of
+# ARPACK's process-global saved start-vector seed, i.e. on how many eigensolves
+# ran earlier in the same pytest process.  k = 8 puts the whole multiplet
+# inside the window at both V points (the next level, 0.2374 / 0.2444, is well
+# separated), so the tracked subspace is the true invariant subspace and the
+# result is reproducible.
+_PHYS_TRACK_NEV = 8
+
+# ARPACK's start vector is process-global state when ``v0`` is omitted, so the
+# tests pin it -- exactly as ``sc.py`` does for its eigenvector-producing
+# solves (``eigs(..., v0=seed_vec)``).  A pseudo-random vector (rather than
+# e.g. ones) is used so it is not accidentally orthogonal to the odd sector.
+_PHYS_TRACK_V0_SEED = 20260727
+
+# deg_tol for the physical two-point sweep.  Switching on V = 0.5 splits the
+# odd multiplet by only 4.3e-3 (0.4428830 / 0.4386173) while the nearest
+# unrelated gap is 1.8e-2, so the tracker must use a tolerance between the two
+# to follow the multiplet as ONE invariant subspace instead of picking an
+# arbitrary sub-branch of it.
+_PHYS_TRACK_DEG_TOL = 1.0e-2
+
+
+def _physical_tracked_records():
+    """Build the two-point physical bond sweep and track it.
+
+    Returns ``(records, weight, shape)``.  Every input is constructed from
+    scratch on each call and the eigensolver start vector is pinned, so two
+    calls must agree bit-for-bit regardless of what else ran in the process.
 
     ``scipy.sparse.linalg.eigs`` returns eigenvectors as COLUMNS while
     ``track_subspace`` wants one per ROW -- hence the transpose."""
@@ -1492,7 +1522,9 @@ def test_track_subspace_on_the_physical_kernel_with_the_pair_weight_metric():
         A, _, _, n = bc.make_bond_kernel_parts(
             f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
             f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
-        vals, vecs = eigs(A, k=6, which="LR", maxiter=20000, tol=0)
+        v0 = np.random.default_rng(_PHYS_TRACK_V0_SEED).standard_normal(n)
+        vals, vecs = eigs(A, k=_PHYS_TRACK_NEV, which="LR", maxiter=20000,
+                          tol=0, v0=v0)
         points.append((vals, vecs.T))          # ROWS, not columns
         if weight is None:
             kx, ky, kz = f["kgrid"]
@@ -1500,12 +1532,25 @@ def test_track_subspace_on_the_physical_kernel_with_the_pair_weight_metric():
             basis = sc._odd_harmonic_basis(f["norb"], kx, ky, kz)
             seed = sc._initialize_gap("f_x", f["norb"], kx, ky, kz).ravel()
 
-    # the metric really is the 5-D per-k orbital-pair form
-    assert weight.ndim == 5 and weight.shape[:3] == f["shape"]
-
     recs = bc.track_subspace(points, seed=seed, weight=weight, basis=basis,
-                             deg_tol=1e-3)
+                             deg_tol=_PHYS_TRACK_DEG_TOL)
+    return recs, weight, f["shape"]
+
+
+def test_track_subspace_on_the_physical_kernel_with_the_pair_weight_metric():
+    """I3: exercise the tracker end-to-end on a REAL bond kernel with the 5-D
+    ``pair_weight`` metric (the Task-8 interface), at two ``V`` points."""
+    from hwave.solver import bond_channels as bc
+
+    recs, weight, shape = _physical_tracked_records()
+
+    # the metric really is the 5-D per-k orbital-pair form
+    assert weight.ndim == 5 and weight.shape[:3] == shape
+
     assert len(recs) == 2
+    # the eigenvalue window contains the WHOLE tracked multiplet -- nothing is
+    # cut off by n_ev (which would make the tracked basis arbitrary)
+    assert not any(rec["truncated"] for rec in recs)
 
     for rec in recs:
         assert rec["captured"]
@@ -1526,6 +1571,97 @@ def test_track_subspace_on_the_physical_kernel_with_the_pair_weight_metric():
         f_wave = rec["harmonics"]["f_x"] + rec["harmonics"]["f_y"]
         p_wave = rec["harmonics"]["p_x"] + rec["harmonics"]["p_y"]
         assert f_wave > 10.0 * max(p_wave, 1e-12)
+
+
+def test_physical_tracking_is_independent_of_prior_eigensolves():
+    """REGRESSION: the physical tracked sweep must not depend on how many
+    eigensolves ran earlier in the process.
+
+    ``scipy.sparse.linalg.eigs`` keeps its Arnoldi start-vector seed in
+    process-global (Fortran ``SAVE``) state that EVERY call advances, so a
+    solve with no ``v0`` silently depends on test execution order.  Combined
+    with an ``n_ev`` window that cuts a degenerate multiplet, that used to move
+    the tracked subspace's seed overlap between 0.08 and 0.89 -- the same test
+    passed alone and failed after other files had run.  Here the whole
+    computation is rebuilt from scratch twice with unrelated ARPACK solves
+    churning the global seed in between; the tracked subspace and every number
+    derived from it must come back the same (ARPACK still jitters the returned
+    eigenpairs at the 1e-14 level, which only permutes members INSIDE a
+    degenerate cluster -- hence the sorted comparison of ``cluster``)."""
+    from scipy.sparse.linalg import eigs
+
+    first, _, _ = _physical_tracked_records()
+
+    # churn ARPACK's process-global start-vector state
+    for _ in range(3):
+        eigs(np.diag(np.arange(1.0, 12.0)), k=3, which="LR")
+
+    second, _, _ = _physical_tracked_records()
+
+    assert len(first) == len(second)
+    for a, b in zip(first, second):
+        assert a["dim"] == b["dim"]
+        assert sorted(a["cluster"]) == sorted(b["cluster"])
+        assert a["captured"] == b["captured"]
+        assert a["truncated"] == b["truncated"]
+        assert a["lambda"] == pytest.approx(b["lambda"], rel=1e-10)
+        # THE regression: this used to swing over 0.08 .. 0.89
+        assert a["overlap"] == pytest.approx(b["overlap"], rel=1e-8)
+        np.testing.assert_allclose(np.sort_complex(a["eigenvalues"]),
+                                   np.sort_complex(b["eigenvalues"]),
+                                   rtol=1e-10, atol=1e-12)
+        assert a["harmonics"].keys() == b["harmonics"].keys()
+        for name in a["harmonics"]:
+            assert a["harmonics"][name] == pytest.approx(
+                b["harmonics"][name], rel=1e-8, abs=1e-12), name
+
+
+def test_track_subspace_flags_a_multiplet_cut_by_the_eigenvalue_window():
+    """REGRESSION: a tracked cluster that reaches the low end of the supplied
+    eigenvalue window is only PART of the multiplet, so its basis (and hence
+    overlap / dim / harmonics) is an arbitrary slice.  ``track_subspace`` must
+    say so instead of reporting it as a clean capture."""
+    from hwave.solver import bond_channels as bc
+
+    n = 4
+    e = [_basis_vec(n, i) for i in range(n)]
+    # window cut inside a degenerate pair: only e[1] of the {e[1], e[2]}
+    # multiplet at lambda = 1.0 is inside
+    pts = [(np.array([2.0, 1.0]), np.stack([e[0], e[1]]))]
+    out = bc.track_subspace(pts, seed=e[1], deg_tol=1e-3)
+    assert out[0]["truncated"] is True
+    # widening the window to hold the whole multiplet clears the flag
+    pts2 = [(np.array([2.0, 1.0, 1.0, 0.1]),
+             np.stack([e[0], e[1], e[2], e[3]]))]
+    out2 = bc.track_subspace(pts2, seed=e[1], deg_tol=1e-3)
+    assert out2[0]["truncated"] is False
+    assert out2[0]["dim"] == 2
+
+
+def test_track_subspace_escalates_n_ev_on_a_window_truncated_cluster():
+    """A truncated cluster escalates ``n_ev`` for callable points even when its
+    overlap already clears ``capture_tol`` -- otherwise a multiplet cut in half
+    is reported as captured while its basis is solver-state dependent."""
+    from hwave.solver import bond_channels as bc
+
+    n = 5
+    e = [_basis_vec(n, i) for i in range(n)]
+    calls = []
+
+    def point(n_ev):
+        calls.append(n_ev)
+        vals = np.array([2.0, 1.0, 1.0, 0.1])[:n_ev]
+        vecs = np.stack([e[0], e[1], e[2], e[3]])[:n_ev]
+        return vals, vecs
+
+    out = bc.track_subspace([point], seed=e[1], deg_tol=1e-3, n_ev=2,
+                            max_n_ev=8, capture_tol=0.5)
+    # at n_ev = 2 the overlap with e[1] is a perfect 1.0 -- capture_tol alone
+    # would have stopped there and returned the truncated half-multiplet
+    assert calls[0] == 2 and max(calls) > 2
+    assert out[0]["dim"] == 2                  # the FULL multiplet
+    assert out[0]["truncated"] is False
+    assert out[0]["captured"]
 
 
 # ---------------------------------------------------------------------------

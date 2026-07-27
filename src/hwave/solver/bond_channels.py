@@ -1926,8 +1926,26 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
         One record per point: ``lambda`` (leading eigenvalue of the tracked
         subspace), ``eigenvalues``, ``dim``, ``cluster`` (indices), ``overlap``
         (subspace similarity with the previous point; with ``seed`` for the
-        first), ``principal_cosines``, ``captured``, ``n_ev``, ``harmonics``,
-        and ``vectors`` (the ``W``-orthonormal basis of the tracked subspace).
+        first), ``principal_cosines``, ``captured``, ``truncated``, ``n_ev``,
+        ``harmonics``, and ``vectors`` (the ``W``-orthonormal basis of the
+        tracked subspace).
+
+    Notes
+    -----
+    **Window truncation.** A cluster that reaches the LOW end of the supplied
+    eigenvalue window may be INCOMPLETE: the eigensolver was asked for
+    ``n_ev`` eigenpairs and a degenerate multiplet can straddle that cut, so
+    only part of the invariant subspace is returned. What comes back is then
+    an ARBITRARY slice of the true eigenspace -- and with an ARPACK window
+    started from an unpinned ``v0`` (``scipy.sparse.linalg.eigs`` reuses a
+    process-global saved seed that every earlier call advances) it is a slice
+    that depends on how many eigensolves the process happened to run before,
+    which makes ``overlap``, ``harmonics`` and ``dim`` non-reproducible. Such
+    a cluster is reported with ``truncated = True`` and, for CALLABLE points,
+    triggers the same ``n_ev`` escalation as a capture failure -- even when
+    the overlap happened to clear ``capture_tol``. Callers that pass fixed
+    eigenpairs (a sweep driver holding precomputed spectra) get the flag and
+    a warning, and should widen their own window.
     """
     if n_ev is None:
         n_ev = 6
@@ -1965,7 +1983,17 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
                     best_score, best_cos, best_cluster = score, cos, cl
 
             captured = bool(best_score >= capture_tol)
-            if (not captured and callable(point) and n_ev_cur < max_n_ev):
+            # A cluster that touches the LOW end of the returned window may
+            # have been cut in half by the eigensolver's n_ev truncation; see
+            # the "Window truncation" note in the docstring. Escalate on that
+            # too, not only on a capture failure -- a truncated multiplet can
+            # clear capture_tol by luck while its basis (hence overlap,
+            # harmonics and dim) is solver-state dependent.
+            truncated = bool(
+                best_cluster is not None and evals.size > 0
+                and int(np.argmin(evals.real)) in best_cluster)
+            if ((not captured or truncated) and callable(point)
+                    and n_ev_cur < max_n_ev):
                 n_ev_cur = min(2 * n_ev_cur, int(max_n_ev))
                 continue
             break
@@ -1986,6 +2014,7 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
             "overlap": float(best_score),
             "principal_cosines": best_cos,
             "captured": captured,
+            "truncated": truncated,
             "n_ev": int(n_ev_used),
             "vectors": Q,
         }
@@ -1998,6 +2027,16 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
                 "The tracked state may have left the computed eigenvalue "
                 "window; increase num_eigenvalues.",
                 t, best_score, capture_tol, n_ev_used, max_n_ev)
+        if truncated:
+            logger.warning(
+                "track_subspace: point %d -- the tracked cluster (lambda = "
+                "%.6g, dim %d) reaches the low end of the %d returned "
+                "eigenpairs, so the degenerate multiplet may be TRUNCATED by "
+                "the eigenvalue window. Its basis -- and therefore overlap, "
+                "dim and harmonics -- is then an arbitrary slice of the true "
+                "invariant subspace and is not reproducible; increase "
+                "num_eigenvalues.",
+                t, record["lambda"], record["dim"], n_ev_used)
         records.append(record)
         prev_basis = Q if Q.shape[0] > 0 else sub
 
