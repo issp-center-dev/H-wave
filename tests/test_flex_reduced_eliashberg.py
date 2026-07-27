@@ -716,6 +716,12 @@ class TestDiscardedSpinContentIsFlagged(unittest.TestCase):
             self.assertNotIn(claim, low,
                              "must not classify the run as '{}'".format(claim))
 
+    def test_message_tells_the_user_what_to_do(self):
+        """A warning that only describes the problem leaves the user stuck."""
+        warns = self._run(down_factor=0.5)
+        self.assertIn("coeff_extern", warns[0])
+        self.assertIn("re-run flex", warns[0].lower())
+
     def test_warning_does_not_change_the_embedding(self):
         """The guard reports; it must not alter the returned tensor."""
         import hwave.sc as sc

@@ -904,6 +904,16 @@ Eliashberg ソルバー）を実行します。各段では、直前の段の収
       warm_start     = true
       seed_gap       = true
 
+.. note::
+
+   この例は ``CoulombInter`` を含み ``calc_scheme`` を明示していないため、
+   既定の ``reduced`` スキームで実行されます。したがって Eliashberg ステップでは
+   :ref:`対応する相互作用 <sc_supported_inter>` に記載の近似に関する警告が
+   **出力されます**\ 。これは想定内であり設定の誤りではありません---このワークフローが
+   用いるオフサイトの ``CoulombInter`` を扱えるのは ``reduced`` の方で、
+   ``general`` はオンサイトの2体項しか受け付けません。相互作用が許すうえで
+   軌道間チャネルも dress したい場合に ``general`` をご利用ください。
+
 この例では :math:`T = 0.02` から :math:`T = 0.005` まで、対数間隔の6段を
 降順に計算します。各段で FLEX と動的 Eliashberg を実行し、``sigma_init`` と
 ``seed_eigenvector`` の両方を連鎖させ、``tsweep/lambda_vs_T.dat`` --

@@ -1570,7 +1570,10 @@ def _warn_if_spin_block_discarded(chi_full, norb, label="chi"):
         "carry no spin index), so ONLY the up-spin block is used and the rest "
         "is discarded -- the resulting eigenvalue is not a controlled "
         "approximation of the spin-resolved problem. This is exact only for a "
-        "paramagnetic FLEX run, where the discarded blocks are redundant.",
+        "paramagnetic FLEX run, where the discarded blocks are redundant. "
+        "Re-run FLEX without the spin-splitting field (e.g. coeff_extern = 0) "
+        "and feed that output to the Eliashberg step; the Kuroki S/C "
+        "formulation has no spin index and cannot represent this data.",
         label, " and ".join(parts), scale)
 
 
