@@ -1517,6 +1517,254 @@ def make_bond_kernel_dynamic(chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
     return A, vec_size
 
 
+def make_bond_kernel_dynamic_ir(chi_s_w, chi_c_w, S_bond, C_bond,
+                                Vpp_s, Vpp_t, green_ir, bond_set,
+                                pairing_type, beta, axF, axB):
+    r"""The IR-axis twin of :func:`make_bond_kernel_dynamic` (spec
+    ``2026-07-27-dynamic-bond-channels-design.md`` S3.3, "IR realization").
+
+    Same operator, same normative equations; only the frequency axis changes.
+    The gap lives on the fermionic IR SAMPLING frequencies
+    (``axF.freq_n``, ``axF.n_freq`` of them) instead of the centered uniform
+    window, and every Matsubara transform is an IRAxis matmul instead of a
+    phase-twisted FFT. The structure follows
+    ``eliashberg_dynamic.eliashberg_kernel_ir`` line by line -- it is the
+    scalar (B = 1) special case of this function.
+
+    INPUT CONTRACT (explicit, because both conventions are defensible and the
+    wiring must not have to guess): this function takes arrays ALREADY ON THE
+    IR SAMPLING NODES and never fits uniform data itself.
+
+    * ``chi_s_w``, ``chi_c_w``: ``(Nx, Ny, Nz, axB.n_freq, ND, ND)`` --
+      dressed susceptibilities on the BOSONIC IR sampling frequencies.
+    * ``green_ir``: ``(norb, norb, Nx, Ny, Nz, axF.n_freq)`` -- the Green
+      function on the FERMIONIC IR sampling frequencies.
+
+    Both are what ``eliashberg_dynamic._ir_compress`` produces from the
+    uniform-grid FLEX output, which is exactly how ``solve_dynamic`` already
+    prepares ``chis_w``/``green_w`` on the scalar IR path; the caller keeps
+    ownership of the fit (including the ``drop_constant`` / ``ir_keep_static_
+    chi`` policy for the susceptibilities, which is a data-quality decision,
+    not a kernel decision). The static vertices ``S_bond``/``C_bond``/``Vpp``
+    are frequency-independent and identical on both axes.
+
+    Normalization. The IR transforms are PHYSICAL (``freq -> tau`` carries the
+    1/beta Matsubara sum, ``tau -> freq`` is the integral over tau), while the
+    uniform-FFT chain of :func:`make_bond_kernel_dynamic` carries one net
+    factor beta; the explicit ``beta`` factor on the return restores the
+    identical operator normalization. It multiplies BOTH parts, exactly as in
+    ``eliashberg_kernel_ir``: the instantaneous term's equal-time value
+    ``X(tau=0+) = (1/beta) sum_n X(i w_n)`` becomes the uniform path's window
+    sum ``sum_n X`` after that factor.
+
+    Instantaneous term (spec S3.3, "IR (normative for the IR path)"): the
+    infinite-cutoff equal-time value ``sum_l X_l u_l(0+)`` via
+    ``axF.u_zero_plus``, NOT a truncated window sum. This is the existing
+    scalar IR convention (``eliashberg_kernel_ir`` :1067-1077); X is an
+    anomalous (pair) amplitude, hence continuous at tau = 0, so the equal-time
+    value needs no 0^+ regularization -- but it does differ from the uniform
+    path's window sum by the ordinary ~1/w^2 tail, whose size is what
+    :func:`tail_estimate` reports and what spec S3.5's inequalities budget.
+
+    Parameters
+    ----------
+    chi_s_w, chi_c_w : ndarray, shape (Nx, Ny, Nz, axB.n_freq, ND, ND)
+    S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND)
+    Vpp_s, Vpp_t : ndarray, shape (ND, ND)
+    green_ir : ndarray, shape (norb, norb, Nx, Ny, Nz, axF.n_freq)
+    bond_set : ResolvedInteractionSet
+    pairing_type : {"singlet", "triplet"}
+    beta : float
+    axF, axB : hwave.solver.ir_axis.IRAxis
+        Fermionic / bosonic axes of the run (same beta, wmax, tol); build them
+        with ``eliashberg_dynamic._ir_axes_for_run``.
+
+    Returns
+    -------
+    A : scipy.sparse.linalg.LinearOperator
+        ``A.matvec(phi.ravel())`` with ``phi`` shaped
+        ``(norb, norb, Nx, Ny, Nz, axF.n_freq)``.
+    vec_size : int
+        ``norb**2 * Nx * Ny * Nz * axF.n_freq``.
+    """
+    from . import eliashberg_dynamic as _ed
+
+    green_ir = _validate_green_beta(green_ir, beta,
+                                    "make_bond_kernel_dynamic_ir")
+    norb = green_ir.shape[0]
+    nd = norb * norb
+    B = int(bond_set.n_channels)
+    ND = nd * B
+    Nx, Ny, Nz, nfreq = (green_ir.shape[2], green_ir.shape[3],
+                         green_ir.shape[4], green_ir.shape[5])
+    N = Nx * Ny * Nz
+    delta_r = bond_set.delta_r
+
+    if float(axF.beta) != float(beta) or float(axB.beta) != float(beta):
+        raise ValueError(
+            "make_bond_kernel_dynamic_ir: the IR axes carry beta = ({}, {}) "
+            "but the kernel was given beta = {}. Build both axes for this "
+            "run's temperature (eliashberg_dynamic._ir_axes_for_run)."
+            .format(axF.beta, axB.beta, beta))
+    if nfreq != axF.n_freq:
+        raise ValueError(
+            "make_bond_kernel_dynamic_ir: green_ir's frequency axis has "
+            "length {} but the fermionic IR axis has {} sampling "
+            "frequencies. This function takes data ALREADY on the IR nodes "
+            "(eliashberg_dynamic._ir_compress), not a uniform grid."
+            .format(nfreq, axF.n_freq))
+
+    chi_s_w = np.asarray(chi_s_w)
+    chi_c_w = np.asarray(chi_c_w)
+    expected = (Nx, Ny, Nz, axB.n_freq, ND, ND)
+    for name, arr in (("chi_s_w", chi_s_w), ("chi_c_w", chi_c_w)):
+        if arr.shape != expected:
+            raise ValueError(
+                "make_bond_kernel_dynamic_ir: {} has shape {} but expected "
+                "(Nx, Ny, Nz, axB.n_freq, ND, ND) = {} (ND = norb**2 * "
+                "n_channels). The IR path needs the susceptibility on the "
+                "BOSONIC IR sampling frequencies, not on the uniform grid "
+                "and not on the fermionic axis.".format(
+                    name, arr.shape, expected))
+    S_bond = np.asarray(S_bond)
+    C_bond = np.asarray(C_bond)
+    for name, arr in (("S_bond", S_bond), ("C_bond", C_bond)):
+        if arr.shape != (Nx, Ny, Nz, ND, ND):
+            raise ValueError(
+                "make_bond_kernel_dynamic_ir: {} has shape {} but expected "
+                "(Nx, Ny, Nz, ND, ND) = {}.".format(
+                    name, arr.shape, (Nx, Ny, Nz, ND, ND)))
+
+    if pairing_type == "singlet":
+        Vpp = np.asarray(Vpp_s)
+    elif pairing_type == "triplet":
+        Vpp = np.asarray(Vpp_t)
+    else:
+        raise ValueError(
+            "make_bond_kernel_dynamic_ir: unknown pairing_type '{}'. Use "
+            "'singlet' or 'triplet'.".format(pairing_type))
+    if Vpp.shape != (ND, ND):
+        raise ValueError(
+            "make_bond_kernel_dynamic_ir: Vpp has shape {} but expected "
+            "(ND, ND) = {}.".format(Vpp.shape, (ND, ND)))
+
+    vec_size = nd * N * nfreq
+
+    # --- hoisted invariants -------------------------------------------------
+    # F_eta(q, i nu) on the bosonic nodes: the SAME algebra as the uniform
+    # builder (S/C are frequency-independent and broadcast over the axis).
+    S_b = S_bond[:, :, :, None, :, :]
+    C_b = C_bond[:, :, :, None, :, :]
+    if pairing_type == "singlet":
+        F_q_w = 1.5 * (S_b @ chi_s_w @ S_b) - 0.5 * (C_b @ chi_c_w @ C_b)
+    else:
+        F_q_w = -0.5 * (S_b @ chi_s_w @ S_b) - 0.5 * (C_b @ chi_c_w @ C_b)
+
+    # (q, bosonic nodes) -> (r, FERMIONIC tau nodes): the vertex leg. The
+    # product F*X is anti-periodic, so the tau product lives on the fermionic
+    # nodes and the bosonic coefficients are evaluated there exactly -- the
+    # _ir_vertex_to_rtau domain rule, which IS the normative treatment of the
+    # transfer frequency on the IR path (spec S3.1, "Frequency grids (IR)").
+    # IRAxis transforms contract the LAST axis, so the frequency axis is moved
+    # out of position 3 and back; the transforms are split (bound, then the
+    # input released) for the same memory reason as the uniform kernel.
+    F_l = axB.fit_from_freq(np.moveaxis(F_q_w, 3, -1))   # (...,ND,ND,L_B)
+    del F_q_w
+    F_tau = axB.eval_to_tau_points(F_l, axF.tau)         # (...,ND,ND,n_tau)
+    del F_l
+    F_tau = np.moveaxis(F_tau, -1, 3)                    # (...,n_tau,ND,ND)
+    F_rt = _bk.spatial_ifftn(F_tau, axes=(0, 1, 2))
+    del F_tau
+
+    # Frequency-resolved pair bubble ON THE IR NODES; carries the single
+    # T = 1/beta. calc_g2_dynamic's G(-k,-i w) is a reverse+roll in k and a
+    # plain reversal on the frequency axis -- valid here because the IR node
+    # set is EXACTLY symmetric under integer negation (ir_axis.IRAxis
+    # construction), which is the same property solve_dynamic's IR path
+    # relies on.
+    G2_w = _ed.calc_g2_dynamic(green_ir, beta)
+    G2p_w = G2_w.transpose(0, 2, 1, 3, 4, 5, 6, 7).reshape(nd, nd, N, nfreq)
+    del G2_w
+
+    # Bond phases PH[m](k) = e^{i k.dr_m}: purely spatial, identical to the
+    # uniform kernel (copied verbatim from _bond_kernel_operators).
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    ky = 2.0 * np.pi * np.arange(Ny) / Ny
+    kz = 2.0 * np.pi * np.arange(Nz) / Nz
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+    PH = np.empty((B, Nx, Ny, Nz), dtype=complex)
+    for m in range(B):
+        dm = delta_r[m]
+        PH[m] = np.exp(1j * (KX * dm[0] + KY * dm[1] + KZ * dm[2]))
+    PH_k = np.moveaxis(PH, 0, 3)                          # (Nx,Ny,Nz,B)
+    PHc = np.conj(PH)                                     # e^{-i k.dr_m}
+
+    Vpp6 = Vpp.reshape(B, nd, B, nd)                      # [m,ab,m',cd]
+    u0 = np.asarray(axF.u_zero_plus)                      # (L_F,)
+
+    def _fluctuation_from_coeffs(X_l):
+        """Y^fl on the fermionic IR nodes, from X's IR COEFFICIENTS.
+
+        The bond phase e^{i k.dr_m'} is frequency-independent, so the
+        coefficients of Z_{m'} = e^{i k.dr_m'} X are just the phase times X's
+        coefficients -- one fit serves both this leg and the instantaneous
+        term below (the uniform kernel needs no such sharing: there the
+        window sum is a plain reduction of X itself).
+        """
+        # X_l: (Nx,Ny,Nz,nd,L) -> Z_l: (Nx,Ny,Nz,B,nd,L)
+        Z_l = PH_k[:, :, :, :, None, None] * X_l[:, :, :, None, :, :]
+        Z_t = np.moveaxis(axF.eval_to_tau(Z_l), -1, 3)    # (...,n_tau,B,nd)
+        del Z_l
+        Z_rt = _bk.spatial_ifftn(Z_t, axes=(0, 1, 2))
+        del Z_t
+        n_tau = Z_rt.shape[3]
+        # W_I(r, tau) = sum_J F_IJ(r, tau) Z_J(r, tau), I = (m, ab): the same
+        # batched ND-space matmul as the uniform kernel (an einsum over the
+        # split [m,ab,m',cd] index costs ~4x the peak memory there).
+        W_rt = (F_rt @ Z_rt.reshape(Nx, Ny, Nz, n_tau, ND, 1))[..., 0]
+        del Z_rt
+        W_kr = _bk.spatial_fftn(W_rt, axes=(0, 1, 2))
+        del W_rt
+        W_kw = np.moveaxis(axF.tau_to_freq(np.moveaxis(W_kr, 3, -1)), -1, 3)
+        del W_kr
+        return -np.einsum('xyzm,xyztma->xyzta', PH_k,
+                          W_kw.reshape(Nx, Ny, Nz, nfreq, B, nd))
+
+    def _instantaneous(X0):
+        """Y^pp(k) from the equal-time X(tau=0+) (spec S3.3, IR definition).
+
+        Structurally the uniform kernel's ``_instantaneous`` body with the
+        window sum replaced by the infinite-cutoff equal-time value; the
+        overall ``beta`` factor on the return turns X(tau=0+) into the
+        uniform path's ``sum_n X``.
+        """
+        A_coef = (1.0 / N) * np.einsum('mxyz,xyzc->mc', PHc, X0)   # (B,nd)
+        Bcoef = np.einsum('aAbB,aB->bA', Vpp6, A_coef)             # (B,nd)
+        return -0.5 * np.einsum('mxyz,ma->xyza', PH, Bcoef)
+
+    def matvec(v):
+        phi = np.asarray(v).reshape(norb, norb, Nx, Ny, Nz, nfreq)
+        phi_flat = phi.reshape(nd, N, nfreq)             # [(e,f), k, n]
+        X = np.einsum('adkn,dkn->akn', G2p_w, phi_flat)  # (nd, N, n_freq)
+        # (Nx,Ny,Nz,nd,n_freq) -> IR coefficients on the last axis
+        X_l = axF.fit_from_freq(
+            np.moveaxis(X.reshape(nd, Nx, Ny, Nz, nfreq), 0, 3))
+        del X
+
+        Y = _fluctuation_from_coeffs(X_l)                # (Nx,Ny,Nz,nfreq,nd)
+        # The bare Cooper term has no bosonic transfer: it sees only the
+        # equal-time X and is flat in the external frequency.
+        Y += _instantaneous(X_l @ u0)[:, :, :, None, :]
+        del X_l
+
+        Y = Y.reshape(Nx, Ny, Nz, nfreq, norb, norb)
+        Y = np.moveaxis(Y, (4, 5), (0, 1))   # (norb,norb,Nx,Ny,Nz,n_freq)
+        return (beta * Y).ravel()
+
+    A = LinearOperator((vec_size, vec_size), matvec=matvec, dtype=complex)
+    return A, vec_size
+
+
 def tail_estimate(X_w, beta, nmat):
     r"""Estimate the Matsubara-window TRUNCATION of the instantaneous term.
 
