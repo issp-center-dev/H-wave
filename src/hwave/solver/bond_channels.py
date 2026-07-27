@@ -1517,6 +1517,122 @@ def make_bond_kernel_dynamic(chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
     return A, vec_size
 
 
+def tail_estimate(X_w, beta, nmat):
+    r"""Estimate the Matsubara-window TRUNCATION of the instantaneous term.
+
+    Spec ``2026-07-27-dynamic-bond-channels-design.md`` S3.3, "Cross-basis
+    validation", implemented verbatim. The uniform and IR paths use different
+    (each self-consistent) normative definitions of the instantaneous
+    (delta(tau)) Cooper term -- the uniform one sums the STORED window,
+    ``T sum_{n in S} X``, while the IR one evaluates the infinite-cutoff
+    equal-time value ``sum_l X_l u_l(0+)``. The difference is the ordinary
+    ``~1/w^2`` tail of the pair amplitude X (which is continuous at tau = 0,
+    so there is no delta-function/jump ambiguity, only this tail). This
+    function estimates its size so the two paths can be compared against a
+    quantitative budget instead of a hand-picked tolerance.
+
+    It is an ESTIMATOR, not a bound (spec's words): the returned numbers are
+    only as good as the ``|a|/w^2 + |b|/w^3`` asymptotic model on the outer
+    shell, which is exactly what ``unreliable`` reports.
+
+    Pipeline (each step is normative):
+
+    1. *Reduction first* -- one scalar profile ``x(n~) = max_{k, orbital
+       pairs} |X(k, i w_n~)|`` over every non-frequency axis. A single fit is
+       done on this profile; there are no per-k fits anywhere.
+    2. *Outer shell* -- the stored frequencies with ``|n~| > 3*nmat/8`` (the
+       outermost quarter of the window, both signs).
+    3. *Asymptotic fit* -- least squares of ``x(n~) ~ |a|/w^2 + |b|/w^3``
+       over the outer shell.
+    4. *Window sets* -- stored ``S = {n~: -nmat/2 <= n~ <= nmat/2 - 1}`` (the
+       S3.1 integer map) and tail ``T_bar = {n~: n~ not in S, |n~| <=
+       64*nmat}``; note the unstored ``n~ = +nmat/2`` belongs to the tail set.
+    5. *Estimator* -- ``tail_est = T * sum_{n~ in T_bar} (|a|/w^2 + |b|/w^3)``
+       by explicit summation of the fitted model over that closed window.
+    6. *Relative form* -- ``tail_est_rel = tail_est / (T * sum_{n~ in S}
+       x(n~))``: the denominator is the same-reduction sum over the stored
+       set, i.e. the very quantity the tail extends.
+    7. *Reliability* -- relative (Euclidean) fit residual over the outer shell
+       ``> 0.2`` sets ``unreliable``. The flag is evaluated for the SAME
+       ``|a|, |b|`` model that produced ``tail_est``, so it cannot report a
+       residual for a model the estimator does not use.
+
+    Parameters
+    ----------
+    X_w : ndarray
+        The pair amplitude ``X_{l3l4}(k', i w_n')`` (or any array whose LAST
+        axis is the fermionic Matsubara axis of the centered uniform grid --
+        every other axis is max-reduced away in step 1).
+    beta : float
+        Inverse temperature; ``T = 1/beta`` multiplies both sums.
+    nmat : int
+        Stored window size; must equal ``X_w.shape[-1]`` (the centered map
+        ``n~ = n - nmat//2`` is what defines S, so a mismatch would silently
+        shift every frequency).
+
+    Returns
+    -------
+    tail_est : float
+        The estimated ``T sum_{tail} X`` (same units as ``T sum_S X``).
+    tail_est_rel : float
+        ``tail_est`` relative to the stored-window sum of the profile.
+    unreliable : bool
+        True when the asymptotic model does not describe the outer shell.
+    """
+    X_w = np.asarray(X_w)
+    if X_w.ndim < 1 or X_w.shape[-1] != int(nmat):
+        raise ValueError(
+            "tail_estimate: X_w's last axis must be the fermionic Matsubara "
+            "axis of length nmat = {}; got shape {}.".format(nmat, X_w.shape))
+    nmat = int(nmat)
+    if nmat < 8 or nmat % 2 != 0:
+        raise ValueError(
+            "tail_estimate: nmat must be an even number >= 8 (the centered "
+            "grid map and the 3*nmat/8 outer shell both assume it); got {}."
+            .format(nmat))
+    beta = float(beta)
+    if not np.isfinite(beta) or beta <= 0.0:
+        raise ValueError(
+            "tail_estimate: beta must be a positive finite number, got {!r}"
+            .format(beta))
+    T = 1.0 / beta
+
+    # 1. reduction to the single scalar profile
+    x = np.abs(X_w).reshape(-1, nmat).max(axis=0)
+    n_t = np.arange(nmat) - nmat // 2
+    w = (2 * n_t + 1) * np.pi / beta
+
+    if not np.any(x > 0.0):
+        # No signal: the tail of zero is zero, but there is nothing to fit, so
+        # the number carries no information and is flagged as such.
+        return 0.0, 0.0, True
+
+    # 2./3. outer shell + asymptotic least squares
+    outer = np.abs(n_t) > 3.0 * nmat / 8.0
+    design = np.stack([1.0 / w[outer] ** 2, 1.0 / w[outer] ** 3], axis=1)
+    coef, _, _, _ = np.linalg.lstsq(design, x[outer], rcond=None)
+    a = abs(float(coef[0]))
+    b = abs(float(coef[1]))
+
+    # 7. reliability of the model actually used below
+    model = a / w[outer] ** 2 + b / w[outer] ** 3
+    scale = float(np.linalg.norm(x[outer]))
+    resid = float(np.linalg.norm(x[outer] - model))
+    unreliable = bool(scale == 0.0 or resid / scale > 0.2)
+
+    # 4./5. explicit summation of the fitted model over the closed tail window
+    n_all = np.arange(-64 * nmat, 64 * nmat + 1)
+    in_S = (n_all >= -(nmat // 2)) & (n_all <= nmat // 2 - 1)
+    n_tail = n_all[~in_S]
+    w_tail = (2 * n_tail + 1) * np.pi / beta
+    tail_est = float(T * np.sum(a / w_tail ** 2 + b / w_tail ** 3))
+
+    # 6. relative form
+    denom = float(T * np.sum(x))
+    tail_est_rel = tail_est / denom if denom > 0.0 else float("inf")
+    return tail_est, tail_est_rel, unreliable
+
+
 # ---------------------------------------------------------------------------
 # bond_bubble's memory contract  --  read together with sc._bond_memory_estimate
 # ---------------------------------------------------------------------------
