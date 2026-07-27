@@ -263,6 +263,18 @@ class FLEX(RPA):
                 .format(self.mixing_scheme))
         self.anderson_depth = int(self.param_mod.get("anderson_depth", 5))
 
+        # UNDOCUMENTED verification switch, off by default. On the paramagnetic
+        # general path it additionally solves the TRANSVERSE (spin-flip) channel
+        # and stores it as chiq_pm. For a paramagnetic system SU(2) symmetry
+        # forces chi^{+-} == chi^{zz}, and the two are built along genuinely
+        # different routes -- the longitudinal one from the Kuroki S matrix, the
+        # transverse one from the crossed (Fock-exchange) Hartree vertex -- so
+        # their agreement is a real cross-check of the vertex construction
+        # rather than a restatement. It is deliberately not in the manual: it
+        # adds a diagnostic output, not physics, and is redundant by symmetry.
+        self.output_chi_pm = _bk.as_bool(
+            self.param_mod.get("output_chi_pm", False))
+
         # Matsubara-axis representation (design: docs/design/ir-matsubara.md,
         # Stage 2): the default uniform grid, or the sparse-ir intermediate
         # representation. IR computes chi0/Sigma natively on sparse nodes (no
@@ -746,6 +758,10 @@ class FLEX(RPA):
         green_info["chi0q"] = chi0q_out
         green_info["chiq_s"] = chi_s
         green_info["chiq_c"] = chi_c
+        if self.output_chi_pm:
+            chi_pm = self._calc_chi_pm_check(chi0q_out, ham_orig)
+            if chi_pm is not None:
+                green_info["chiq_pm"] = chi_pm
         green_info["sigma"] = sigma
         green_info["green"] = green_kw
         green_info["physics"] = physics
@@ -1823,6 +1839,46 @@ class FLEX(RPA):
 
         return chi0q, ham
 
+    def _calc_chi_pm_check(self, chi0q_out, ham_orig):
+        """Transverse (spin-flip) susceptibility, as a verification output.
+
+        Enabled by the undocumented ``output_chi_pm`` switch. Solves the
+        transverse RPA channel with the crossed (Fock-exchange) Hartree vertex
+        -- ``RPA._build_transverse_channel`` -- from the converged FLEX chi0q,
+        and returns chi^{+-}.
+
+        For a paramagnetic system SU(2) symmetry forces chi^{+-} == chi^{zz},
+        so this must reproduce the longitudinal spin channel. Because the two
+        are assembled from different vertices, agreement is a genuine check on
+        the vertex construction rather than a tautology.
+
+        Returns ``None`` (with a warning) when the check is not applicable:
+        it needs the rank-4 orbital chi0q that only ``calc_scheme="general"``
+        produces, and the identity it verifies only holds for a paramagnetic
+        run.
+        """
+        if not self._flex_general:
+            logger.warning(
+                "output_chi_pm: skipped -- the transverse channel needs the "
+                "full rank-4 orbital chi0q, which only calc_scheme='general' "
+                "produces (got '%s'). On the reduced/squashed path the "
+                "transverse channel is not separately defined: chi_s already "
+                "IS the isotropic spin susceptibility.", self.calc_scheme)
+            return None
+        if self.spin_mode != "spin-free":
+            logger.warning(
+                "output_chi_pm: skipped -- chi^{+-} == chi^{zz} only for a "
+                "paramagnetic run, and this one is spin_mode='%s'.",
+                self.spin_mode)
+            return None
+        chi0q_pm, ham_pm = self._build_transverse_channel(
+            _bk.to_host(chi0q_out), ham_orig)
+        chi_pm = _bk.to_host(self._solve_rpa(chi0q_pm, ham_pm))
+        logger.info("output_chi_pm: transverse channel solved "
+                    "(shape %s); for a paramagnetic run it should equal the "
+                    "longitudinal spin susceptibility.", chi_pm.shape)
+        return chi_pm
+
     @do_profile
     def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
         """Convert chi0q to MYO convention; build full MYO S/C interaction matrices.
@@ -2612,6 +2668,15 @@ class FLEX(RPA):
                                      info_outputfile.get("chiq_c", "chiq_c"))
             np.savez(file_name, chiq_c=green_info["chiq_c"], **common_meta)
             logger.info("save_results: save chiq_c in file {}".format(file_name))
+
+        if "chiq_pm" in green_info:
+            # Verification output only (undocumented output_chi_pm switch); the
+            # Eliashberg loader never reads it.
+            file_name = os.path.join(path_to_output,
+                                     info_outputfile.get("chiq_pm", "chiq_pm"))
+            np.savez(file_name, chiq_pm=green_info["chiq_pm"], **common_meta)
+            logger.info(
+                "save_results: save chiq_pm in file {}".format(file_name))
 
         if "chiq" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
