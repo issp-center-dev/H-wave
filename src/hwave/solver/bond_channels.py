@@ -767,6 +767,147 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     return chi_s, chi_c
 
 
+def _bond_cond_scores(mat):
+    """Per-point conditioning score for a batch of ``(ND, ND)`` solve
+    matrices, ``mat`` shape ``(N, ND, ND)``.
+
+    Mirrors, point for point, the two criteria :func:`_check_bond_conditioning`
+    combines into its worst-point guard score (relative ``sigma_min/sigma_max``
+    and absolute pole distance ``sigma_min/max(1, sigma_max)``, minimized) --
+    see that function's docstring for the rationale. Unlike
+    ``_check_bond_conditioning``, which reports only the single worst point and
+    raises, this returns the score at every point so callers that need a full
+    conditioning MAP (:func:`dress_bond_dynamic`) are not stuck redoing the SVD
+    with a different formula.
+    """
+    sv = np.linalg.svd(mat, compute_uv=False)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = sv[..., -1] / sv[..., 0]
+    ratio = np.where(np.isfinite(ratio), ratio, 0.0)
+    pole = sv[..., -1] / np.maximum(1.0, sv[..., 0])
+    pole = np.where(np.isfinite(pole), pole, 0.0)
+    return np.minimum(ratio, pole)
+
+
+def dress_bond_dynamic(chi_bar_w, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
+    """Frequency-batched :func:`dress_bond`: dress the enlarged bond bubble at
+    every bosonic Matsubara frequency in one batched solve.
+
+    Identical algebra to :func:`dress_bond` -- ``chi_s = solve(I - chi_bar @
+    S_bond, chi_bar)``, ``chi_c = solve(I + chi_bar @ C_bond, chi_bar)`` --
+    applied independently at each ``(q, i nu)`` point: ``S_bond``/``C_bond``
+    are q-dependent but frequency-independent (spec S4.3), so they are
+    broadcast across the bosonic-frequency axis of ``chi_bar_w`` before the
+    solve. Every ``(q, i nu)`` slice of the result is exactly what
+    ``dress_bond(chi_bar_w[:, :, :, j], S_bond, C_bond)`` would produce for
+    that ``j`` (see the slice-equality test) -- this function differs from a
+    Python loop over ``dress_bond`` only in doing every ``j`` in one batched
+    ``np.linalg.solve`` call.
+
+    Parameters
+    ----------
+    chi_bar_w : ndarray, shape (Nx, Ny, Nz, nmat, ND, ND), complex
+        The frequency-resolved enlarged bond bubble (:func:`bond_bubble_dynamic`).
+    S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
+        The enlarged bare vertices (:func:`bare_bond_vertices`) -- q-dependent,
+        frequency-independent.
+    cond_tol : float or None, optional
+        Same conditioning floor and same two criteria as :func:`dress_bond`
+        (default :data:`_BOND_COND_FLOOR`), applied independently at every
+        ``(q, i nu)`` point rather than only at ``q``: the RPA denominator can
+        become ill-conditioned at a nonzero bosonic frequency even where its
+        static (``i nu_0``) slice is fine. ``None`` disables the check.
+
+    Returns
+    -------
+    chi_s_w, chi_c_w : ndarray, shape (Nx, Ny, Nz, nmat, ND, ND), complex
+        The dressed spin (minus) and charge (plus) susceptibilities at the
+        enlarged bond-major index, resolved over the bosonic-frequency axis.
+    cond_min_spin, cond_min_charge : ndarray, shape (Nx, Ny, Nz, nmat), float64
+        The per-``(q, i nu)`` conditioning score (the same
+        ``min(sigma_min/sigma_max, sigma_min/max(1, sigma_max))`` combination
+        :func:`_check_bond_conditioning` uses to decide pass/fail) of the spin
+        and charge RPA denominators, respectively. Returned regardless of
+        ``cond_tol`` (even ``None``) so callers can inspect the full map.
+
+    Raises
+    ------
+    ValueError
+        If either RPA denominator fails the ``cond_tol`` conditioning check at
+        any ``(q, i nu)`` point.
+    """
+    chi_bar_w = np.asarray(chi_bar_w)
+    if chi_bar_w.ndim != 6 or chi_bar_w.shape[4] != chi_bar_w.shape[5]:
+        raise ValueError(
+            "dress_bond_dynamic: chi_bar_w must have shape (Nx, Ny, Nz, nmat, "
+            "ND, ND); got {}".format(chi_bar_w.shape)
+        )
+    Nx, Ny, Nz, nmat, ND, _ = chi_bar_w.shape
+
+    S_bond = np.asarray(S_bond)
+    C_bond = np.asarray(C_bond)
+    q_shape = (Nx, Ny, Nz, ND, ND)
+    if S_bond.shape != q_shape:
+        raise ValueError(
+            "dress_bond_dynamic: S_bond shape {} must be (Nx, Ny, Nz, ND, ND)"
+            " = {} (matching chi_bar_w's q-grid and matrix size)".format(
+                S_bond.shape, q_shape))
+    if C_bond.shape != q_shape:
+        raise ValueError(
+            "dress_bond_dynamic: C_bond shape {} must be (Nx, Ny, Nz, ND, ND)"
+            " = {} (matching chi_bar_w's q-grid and matrix size)".format(
+                C_bond.shape, q_shape))
+
+    # Broadcast the q-dependent, frequency-independent bare vertices across
+    # the bosonic-frequency axis, then fold (q, i nu) into one batch axis for
+    # a single batched solve -- same solve expression as dress_bond, just
+    # over a longer batch.
+    S_full = np.broadcast_to(S_bond[:, :, :, None, :, :], chi_bar_w.shape)
+    C_full = np.broadcast_to(C_bond[:, :, :, None, :, :], chi_bar_w.shape)
+
+    N = Nx * Ny * Nz * nmat
+    chi_flat = chi_bar_w.reshape(N, ND, ND)
+    S_flat = S_full.reshape(N, ND, ND)
+    C_flat = C_full.reshape(N, ND, ND)
+
+    I_mat = np.broadcast_to(np.eye(ND, dtype=complex), (N, ND, ND)).copy()
+    mat_s = I_mat - chi_flat @ S_flat
+    mat_c = I_mat + chi_flat @ C_flat
+
+    cond_min_spin = _bond_cond_scores(mat_s).reshape(Nx, Ny, Nz, nmat)
+    cond_min_charge = _bond_cond_scores(mat_c).reshape(Nx, Ny, Nz, nmat)
+
+    if cond_tol is not None:
+        for name, cond_min in (("spin", cond_min_spin),
+                                ("charge", cond_min_charge)):
+            worst = float(cond_min.min())
+            if worst <= cond_tol:
+                iq = int(np.argmin(cond_min))
+                qx, rem = divmod(iq, Ny * Nz * nmat)
+                qy, rem = divmod(rem, Nz * nmat)
+                qz, j = divmod(rem, nmat)
+                raise ValueError(
+                    "dress_bond_dynamic: the {} RPA denominator is singular "
+                    "or nearly singular at q-point index ({}, {}, {}), "
+                    "bosonic Matsubara index {}: conditioning score = "
+                    "{:.3e} <= cond_tol = {:.3e}. The dynamic bond path has "
+                    "entered the {} instability region, where the dressed "
+                    "vertices are enormous and numerically meaningless. "
+                    "Reduce the interaction strength, raise the temperature, "
+                    "refine/reduce the q-grid, or -- if you deliberately "
+                    "want to study the stiff regime -- lower "
+                    "cond_tol.".format(
+                        name, qx, qy, qz, j, worst, cond_tol, name))
+
+    chi_s_flat = np.linalg.solve(mat_s, chi_flat)
+    chi_c_flat = np.linalg.solve(mat_c, chi_flat)
+
+    chi_s_w = chi_s_flat.reshape(Nx, Ny, Nz, nmat, ND, ND)
+    chi_c_w = chi_c_flat.reshape(Nx, Ny, Nz, nmat, ND, ND)
+
+    return chi_s_w, chi_c_w, cond_min_spin, cond_min_charge
+
+
 def _validate_green_beta(green, beta, label):
     """Validate the documented ``green``/``beta`` inputs of the kernel path.
 

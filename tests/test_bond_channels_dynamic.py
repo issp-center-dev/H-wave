@@ -95,3 +95,40 @@ def test_bond_memory_estimate_dynamic_scales_with_nmat():
     est_dyn = sc._bond_memory_estimate(
         norb=1, bond_set=bset, Nx=4, Ny=4, Nz=1, nmat=8, dynamic_nmat=8)
     assert est_dyn["peak"] > est_static["peak"]
+
+
+def _vertices_for(bset):
+    # Reuse the existing U=4/NN-V=1 single-band vertex construction from
+    # tests/test_bond_dynamic_hermiticity.py (_build_vertices) rather than
+    # writing a third copy of the S0_q/C0_q -> bare_bond_vertices plumbing.
+    # Only S_bond/C_bond are needed here; Vpp_s/Vpp_t are Task 6+ territory.
+    from tests.test_bond_dynamic_hermiticity import _build_vertices
+    S_bond, C_bond, _Vpp_s, _Vpp_t = _build_vertices(
+        bset, U=4.0, shape=(4, 4, 1))
+    return S_bond, C_bond
+
+
+def test_dress_bond_dynamic_slices_equal_static_dress():
+    green = _symmetric_green(1, 4, 4, 1, 8, BETA)
+    bset = _nn_bond_set()
+    S_bond, C_bond = _vertices_for(bset)
+    chi_w = bc.bond_bubble_dynamic(green, bset, BETA)
+    chi_s_w, chi_c_w, cs, cc = bc.dress_bond_dynamic(chi_w, S_bond, C_bond)
+    for j in (0, 4, 7):
+        s_ref, c_ref = bc.dress_bond(chi_w[:, :, :, j], S_bond, C_bond)
+        np.testing.assert_allclose(chi_s_w[:, :, :, j], s_ref,
+                                   rtol=1e-12, atol=1e-14)
+        np.testing.assert_allclose(chi_c_w[:, :, :, j], c_ref,
+                                   rtol=1e-12, atol=1e-14)
+    assert cs.shape == (4, 4, 1, 8) and cc.shape == (4, 4, 1, 8)
+    assert cs.min() > 0 and cc.min() > 0
+
+
+def test_bond_vertices_momentum_reversal_adjoint():
+    # spec 3.2: S(q)^dag = S(-q), C(q)^dag = C(-q)
+    bset = _nn_bond_set()
+    S_bond, C_bond = _vertices_for(bset)
+    for M in (S_bond, C_bond):
+        M_neg = np.roll(M[::-1, ::-1, ::-1], (1, 1, 1), (0, 1, 2))
+        np.testing.assert_allclose(
+            np.conj(np.swapaxes(M, -1, -2)), M_neg, rtol=1e-12, atol=1e-14)
