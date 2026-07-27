@@ -461,6 +461,100 @@ def test_preflight_bubble_budget_covers_the_measured_bond_bubble_peak():
     assert budget <= 3.0 * peak
 
 
+def _large_B_bond_set(norb, B):
+    """A reversal-closed ``ResolvedInteractionSet`` with ``B`` channels.
+
+    Built directly (bypassing ``resolve_interactions``' shell-cutoff/topology
+    logic) purely to exercise ``bare_bond_vertices`` at a large ``ND = nd*B``
+    -- the function only reads ``delta_r``/``v_bond``/``reverse``/
+    ``n_channels``, so a synthetic 1-D chain of channel pairs ``(+i,0,0)``/
+    ``(-i,0,0)`` satisfies its reversal-closure guard without needing a real
+    interaction fixture.
+    """
+    from hwave.solver import bond_channels as bc
+
+    rng = np.random.default_rng(1)
+    delta_r = [(0, 0, 0)]
+    v_bond = [np.zeros((norb, norb), dtype=complex)]
+    reverse = [0]
+    n_pairs = (B - 1) // 2
+    for i in range(1, n_pairs + 1):
+        v = (rng.normal(size=(norb, norb))
+             + 1j * rng.normal(size=(norb, norb)))
+        pos = len(delta_r)
+        delta_r.append((i, 0, 0))
+        v_bond.append(v)
+        neg = len(delta_r)
+        delta_r.append((-i, 0, 0))
+        v_bond.append(v.conj().T)
+        reverse.append(neg)
+        reverse.append(pos)
+    return bc.ResolvedInteractionSet(
+        delta_r=tuple(delta_r), v_bond=tuple(v_bond),
+        reverse=tuple(reverse), n_channels=len(delta_r))
+
+
+def test_preflight_vertex_budget_covers_the_measured_bare_bond_vertices_peak():
+    """The preflight must not UNDERCOUNT ``bare_bond_vertices``'s real
+    high-water mark either: the non-q-resolved ``ND x ND`` temporaries it
+    keeps alive (``P``, ``D``, ``Dh``, ``Id``, ``Q_s``, ``Q_t``, ``B_s``,
+    ``B_t``, ``Vpp_s``, ``Vpp_t``) were previously omitted from
+    ``_bond_memory_estimate`` entirely, so at ``N_q = 1`` with a large ``B``
+    a run the preflight waved through could still OOM building the vertices.
+
+    ``bare_bond_vertices`` itself also allocates the q-resolved ``S_bond``/
+    ``C_bond`` outputs (at ``N_q = 1`` the same per-array size as an ``ND x
+    ND`` temporary); those two are already budgeted elsewhere as 2 of the 9
+    ``sc._BOND_N_Q_ARRAYS`` (``est["chi_bar_bytes"]`` is the per-array size),
+    so the budget a measurement of THIS call alone must fit into is
+    ``vertex_bytes + 2 * chi_bar_bytes`` -- mirroring how the ``bond_bubble``
+    peak test above adds ``chi_bar_bytes`` to ``bubble_bytes`` for the same
+    reason.
+
+    Mirrors ``test_preflight_bubble_budget_covers_the_measured_bond_bubble_peak``
+    for the vertex-construction half of the pipeline.
+    """
+    from hwave.solver import bond_channels as bc
+
+    norb = 1
+    Nx, Ny, Nz = 1, 1, 1
+    nmat = 4  # unused by bare_bond_vertices; only shapes _bond_memory_estimate
+    B = 1001  # large enough that fixed per-array overhead is negligible
+
+    bond_set = _large_B_bond_set(norb, B)
+    nd = norb * norb
+    S0_q = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+    C0_q = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+    S0_q[0, 0, 0] = 1.0
+    C0_q[0, 0, 0] = 0.5
+
+    bc.bare_bond_vertices(bond_set, S0_q, C0_q, norb)  # warm up
+
+    peak = _measure_peak_bytes(
+        lambda: bc.bare_bond_vertices(bond_set, S0_q, C0_q, norb))
+    if peak is None:
+        pytest.skip("tracemalloc does not track numpy array data here")
+
+    est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat)
+    budget = est["vertex_bytes"] + 2 * est["chi_bar_bytes"]
+    # tracemalloc/numpy also attribute a small, ND-independent amount of
+    # measurement-harness bookkeeping (observed up to ~70 KB here, e.g. from
+    # ``_measure_peak_bytes``'s own probe allocation and numpy's internal
+    # ufunc buffer cache) that is not one of the counted ND x ND buffers; a
+    # fixed 1 MB slack comfortably absorbs that noise without masking an
+    # actual missing multi-MB buffer.
+    overhead_slack = 1 << 20  # 1 MB
+    assert budget + overhead_slack >= peak, (
+        "the preflight budgets {:.3f} MB for bare_bond_vertices's non-q-"
+        "resolved ND x ND temporaries (plus its S_bond/C_bond outputs) but "
+        "the measured peak is {:.3f} MB -- _bond_memory_estimate has "
+        "desynced from bare_bond_vertices".format(
+            budget / 1e6, peak / 1e6))
+    # ... and it must not be wildly conservative either, or the cap becomes
+    # useless in the other direction.
+    assert budget <= 3.0 * peak
+
+
 # ---------------------------------------------------------------------------
 # S4.3 star -- the Case-2 correction, and the V=0 reduction
 # ---------------------------------------------------------------------------

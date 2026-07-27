@@ -412,6 +412,40 @@ def resolve_interactions(
     )
 
 
+# ---------------------------------------------------------------------------
+# bare_bond_vertices's memory contract  --  read together with
+# sc._bond_memory_estimate
+# ---------------------------------------------------------------------------
+#
+# ``bare_bond_vertices`` allocates ``ND x ND`` (NOT q-resolved -- ``S_bond``/
+# ``C_bond`` are the q-resolved arrays and are already counted among
+# ``sc._BOND_N_Q_ARRAYS``) working buffers while assembling the Cooper
+# vertices ``Vpp_s``/``Vpp_t`` (spec S4.5). None of them are ``del``-ed or
+# reused today, so all ``BARE_VERTEX_ND2_BUFFERS`` of them are alive
+# simultaneously at the function's high-water mark (its very end, just before
+# it returns):
+#
+#   1. ``P``     -- the reversal+orbital-swap permutation matrix
+#   2. ``D``     -- diagonal bond-channel interaction (m != 0 only)
+#   3. ``Dh``    -- ``D + D^dag``
+#   4. ``Id``    -- the ``ND x ND`` identity
+#   5. ``Q_s``   -- ``(Id + P)/2`` singlet projector
+#   6. ``Q_t``   -- ``(Id - P)/2`` triplet projector
+#   7. ``B_s``   -- ``Q_s Dh Q_s``, the bond Cooper block (singlet)
+#   8. ``B_t``   -- ``Q_t Dh Q_t``, the bond Cooper block (triplet)
+#   9. ``Vpp_s`` -- the returned singlet Cooper vertex (local L_s + B_s)
+#   10. ``Vpp_t``-- the returned triplet Cooper vertex (local L_t + B_t)
+#
+# (The local block temporaries -- ``S0_loc``, ``C0_loc``, ``L_s``, ``L_t``
+# and ``_crossing``'s reshape views -- are ``nd x nd = norb**4``-sized, i.e.
+# a factor ``B**2`` smaller than ``ND x ND`` for ``B > 1``, so they are not
+# separately budgeted.) Imported by ``sc._bond_memory_estimate`` so the two
+# sides cannot silently desync; a new persistent ``ND x ND`` buffer here must
+# bump this count (and ``tests/test_sc_bond.py`` measures the real peak
+# against the budget).
+BARE_VERTEX_ND2_BUFFERS = 10
+
+
 def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
     """Build the bare enlarged vertices ``S_bond``, ``C_bond`` and the bare
     particle-particle (Cooper) vertices ``Vpp_s``, ``Vpp_t``.

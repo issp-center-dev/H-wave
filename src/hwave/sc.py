@@ -466,8 +466,20 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
         ``q_bytes``) because it is the one q-resolved array ``bond_bubble``
         itself allocates, so ``bubble_bytes + chi_bar_bytes`` is the budget a
         measurement of ``bond_bubble`` alone must fit into.
+    ``vertex_bytes``
+        ``bare_bond_vertices``'s non-q-resolved ``ND x ND`` working set --
+        ``BARE_VERTEX_ND2_BUFFERS`` buffers (``P``, ``D``, ``Dh``, ``Id``,
+        ``Q_s``, ``Q_t``, ``B_s``, ``B_t``, ``Vpp_s``, ``Vpp_t``), NOT
+        multiplied by ``N_q`` since none of them carry a q-axis (unlike
+        ``S_bond``/``C_bond``, which are already inside ``q_bytes``). This is
+        alive concurrently with ``q_bytes`` (``chi_bar`` from ``bond_bubble``
+        is still held) and ``green_bytes`` (``green_kw`` is still held), so it
+        is additive in ``peak``. The buffer-by-buffer list is documented
+        beside the constant in ``hwave.solver.bond_channels``; imported from
+        there so the two sides cannot silently desync.
     ``peak``
-        ``q_bytes + bubble_bytes + green_bytes`` -- what the cap is applied to.
+        ``q_bytes + bubble_bytes + vertex_bytes + green_bytes`` -- what the
+        cap is applied to.
     """
     nd = norb * norb
     B = int(bond_set.n_channels)
@@ -480,13 +492,15 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
     q_bytes = _BOND_N_Q_ARRAYS * chi_bar_bytes
     bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
                     + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
+    vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
     green_bytes = (norb ** 2) * unit
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
             "chi_bar_bytes": chi_bar_bytes,
             "q_bytes": q_bytes,
             "bubble_bytes": bubble_bytes,
+            "vertex_bytes": vertex_bytes,
             "green_bytes": green_bytes,
-            "peak": q_bytes + bubble_bytes + green_bytes}
+            "peak": q_bytes + bubble_bytes + vertex_bytes + green_bytes}
 
 
 def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
@@ -506,6 +520,7 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
     B, ND, Nq = est["B"], est["ND"], est["Nq"]
     q_bytes = est["q_bytes"]
     bubble_bytes = est["bubble_bytes"]
+    vertex_bytes = est["vertex_bytes"]
     green_bytes = est["green_bytes"]
     peak = est["peak"]
 
@@ -520,12 +535,13 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
             "exceeds bond_memory_cap_gb = {:.3f} GB. The cost is driven by "
             "B = {} bond channels (Delta r = {}) giving ND = nd*B = {} on "
             "N_q = {} q-points ({:.3f} GB of q-resolved ND x ND arrays) plus "
-            "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB for the "
-            "Green function itself. Reduce bond_max_shells (fewer "
-            "channels), reduce the k-grid/Nmat, or raise "
-            "bond_memory_cap_gb.".format(
+            "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB of bare-"
+            "vertex ND x ND temporaries plus {:.3f} GB for the Green "
+            "function itself. Reduce bond_max_shells (fewer channels), "
+            "reduce the k-grid/Nmat, or raise bond_memory_cap_gb.".format(
                 peak / 1.0e9, cap_gb, B, list(bond_set.delta_r), ND, Nq,
-                q_bytes / 1.0e9, bubble_bytes / 1.0e9, green_bytes / 1.0e9))
+                q_bytes / 1.0e9, bubble_bytes / 1.0e9, vertex_bytes / 1.0e9,
+                green_bytes / 1.0e9))
     return peak
 
 
