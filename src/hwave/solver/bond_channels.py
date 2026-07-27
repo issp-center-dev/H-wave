@@ -1010,6 +1010,48 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
     return ops, vec_size
 
 
+# ---------------------------------------------------------------------------
+# bond_bubble's memory contract  --  read together with sc._bond_memory_estimate
+# ---------------------------------------------------------------------------
+#
+# The resource preflight (``sc._bond_resource_preflight``) refuses a run whose
+# estimated peak exceeds ``bond_memory_cap_gb``. That guard is only worth
+# anything if the estimate is not an UNDERCOUNT, so :func:`bond_bubble` below
+# is written to a fixed, documented working set: every temporary is released
+# (``del`` / in-place rescaling) as soon as it is consumed, and the two counts
+# here are the number of buffers that may be alive at the high-water mark.
+# They are imported by ``sc._bond_memory_estimate`` so the two cannot silently
+# desync; a new buffer in ``bond_bubble`` must bump the matching count (and
+# ``tests/test_sc_bond.py`` measures the real peak against the budget).
+#
+# High-water mark: inside ``tau_to_boson(chi0_qt)`` in the channel-pair loop.
+#
+#   ``norb**4``-sized, on the ``(N_q, nmat)`` grid (BOND_BUBBLE_N4_BUFFERS):
+#     1. ``chi0_qt``            -- the q,tau bubble being transformed
+#     2. ``arr * omg``          -- tau_to_boson's internal phase-multiplied copy
+#     3. the ``ifft`` output    -- becomes ``chi0_qw`` (rescaled IN PLACE)
+#   (``chi0_rt`` is ``del``-ed right after ``spatial_fftn`` consumes it, and
+#   the previous iteration's ``chi0_qw`` right after its block is stored, so
+#   neither is alive here. ``spatial_fftn``'s own axis-by-axis pipeline holds
+#   at most the same three.)
+#
+#   ``norb**2``-sized, on the ``(N_q, nmat)`` grid (BOND_BUBBLE_N2_BUFFERS,
+#   the input ``green`` NOT included -- the preflight budgets that separately
+#   as ``green_kw``):
+#     1. ``green_rev``          -- G(-r,-tau) (an np.flip VIEW of one np.roll)
+#     2. ``G_fwd_sgn``          -- G(r,tau)*sgn(tau)
+#     3. one transient          -- covers ``green_rev_shifted`` in the loop and,
+#                                  in the setup phase (where no ``norb**4``
+#                                  buffer exists yet), the fft temporaries of
+#                                  ``fermion_to_tau``/``spatial_ifftn``
+#   (``green_kt`` and ``green_rt`` are ``del``-ed as soon as they are consumed.)
+#
+# The output ``chi_bar`` is ``(N_q, ND, ND)`` and is already one of the
+# ``sc._BOND_N_Q_ARRAYS`` q-resolved arrays, so it is not counted twice here.
+BOND_BUBBLE_N4_BUFFERS = 3
+BOND_BUBBLE_N2_BUFFERS = 3
+
+
 def bond_bubble(green, bond_set, beta):
     """Compute the enlarged bond-channel bubble ``chi_bar(q; Delta r, Delta r')``.
 
@@ -1081,9 +1123,15 @@ def bond_bubble(green, bond_set, beta):
     # backend.spatial_ifftn/spatial_fftn are the same functions rpa.py calls) ---
     green_kt = _ms.fermion_to_tau(green, axis=-1)
     green_rt = _bk.spatial_ifftn(green_kt, axes=(2, 3, 4))
+    # Released as soon as it is consumed: only the buffers listed in
+    # ``BOND_BUBBLE_N2_BUFFERS`` / ``BOND_BUBBLE_N4_BUFFERS`` (see the
+    # module constants) may be alive at the high-water mark, because
+    # ``sc._bond_memory_estimate``'s cap is computed from exactly that list.
+    del green_kt
 
     # G(-r,-tau): identical roll(-1)+flip trick to rpa.py, over both the
     # spatial axes (2,3,4) and the imaginary-time axis (5).
+    # (np.flip is a view of the np.roll result, so this is ONE buffer.)
     green_rev = np.flip(
         np.roll(green_rt, -1, axis=(2, 3, 4, 5)), axis=(2, 3, 4, 5)
     )
@@ -1093,6 +1141,7 @@ def bond_bubble(green, bond_set, beta):
     sgn = sgn.reshape(1, 1, 1, 1, 1, nmat)
     # G_fwd_sgn[l1,l3](r,tau) = G(r,tau)_{l1,l3} * sgn(tau)
     G_fwd_sgn = green_rt * sgn
+    del green_rt          # green_rev does not alias it (np.roll copied)
 
     chi_bar = np.zeros((Nx, Ny, Nz, nd_enlarged, nd_enlarged), dtype=complex)
 
@@ -1120,9 +1169,17 @@ def bond_bubble(green, bond_set, beta):
             chi0_rt = np.einsum(
                 'acxyzt,dbxyzt->abcdxyzt', G_fwd_sgn, green_rev_shifted
             )
+            del green_rev_shifted
 
             chi0_qt = _bk.spatial_fftn(chi0_rt, axes=(4, 5, 6))
-            chi0_qw = _ms.tau_to_boson(chi0_qt, axis=7) * (-1.0 / beta)
+            del chi0_rt
+            # tau_to_boson allocates one norb**4 temporary internally
+            # (``arr * omg``) plus its ifft output, so at this point exactly
+            # BOND_BUBBLE_N4_BUFFERS norb**4 arrays are alive; the final
+            # rescaling is done IN PLACE so it does not add a fourth.
+            chi0_qw = _ms.tau_to_boson(chi0_qt, axis=7)
+            del chi0_qt
+            chi0_qw *= (-1.0 / beta)
 
             # Static (zero bosonic frequency) slice only -- this function
             # does not carry a bosonic-frequency axis in its output.
@@ -1134,6 +1191,10 @@ def bond_bubble(green, bond_set, beta):
             chi_bar[:, :, :,
                     m * npair:(m + 1) * npair,
                     mp * npair:(mp + 1) * npair] = block
+            # Released before the NEXT iteration allocates its own norb**4
+            # buffers -- otherwise the previous chi0_qw would still be bound
+            # and the real peak would be one norb**4 array above the budget.
+            del chi0_static, block, chi0_qw
 
     return chi_bar
 

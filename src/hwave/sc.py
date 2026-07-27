@@ -431,6 +431,64 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
 _BOND_N_Q_ARRAYS = 9
 
 
+def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
+    """Byte budget for the bond path, broken down by buffer family.
+
+    Split out of :func:`_bond_resource_preflight` so the accounting can be
+    asserted directly against a MEASURED peak (``tests/test_sc_bond.py``):
+    a preflight that undercounts is worse than no preflight, because a run it
+    waves through then OOMs anyway.
+
+    Everything is complex128 (16 B). ``unit = N_q * nmat * 16`` is one
+    ``norb``-pair-free frequency-grid buffer.
+
+    ``q_bytes``
+        ``_BOND_N_Q_ARRAYS`` q-resolved ``(N_q, ND, ND)`` arrays alive
+        simultaneously in the vertex assembly -- ``chi_bar``, ``S_bond``,
+        ``C_bond``, ``chi_s``, ``chi_c``, the fluctuation vertex ``F_q``, its
+        two matrix-product temporaries, and ``Gamma_hat = ifftn(F_q)``.
+        ``bond_bubble``'s output ``chi_bar`` is the first of these, so it is
+        NOT counted again in ``bubble_bytes``.
+    ``bubble_bytes``
+        ``bond_bubble``'s simultaneous working set at its high-water mark, the
+        input ``green`` excluded (that is ``green_bytes``):
+        ``BOND_BUBBLE_N4_BUFFERS`` ``norb**4``-sized plus
+        ``BOND_BUBBLE_N2_BUFFERS`` ``norb**2``-sized frequency-grid buffers.
+        The buffer-by-buffer list, and the ``del``/in-place discipline in
+        ``bond_bubble`` that holds the real peak down to it, are documented
+        beside those two constants in ``hwave.solver.bond_channels``; they are
+        imported from there so the two sides cannot silently desync.
+    ``green_bytes``
+        the ``green_kw`` array itself, ``(norb, norb, Nx, Ny, Nz, nmat)`` --
+        i.e. ``bond_bubble``'s input, alive throughout.
+    ``chi_bar_bytes``
+        one ``(N_q, ND, ND)`` array; reported separately (it is already inside
+        ``q_bytes``) because it is the one q-resolved array ``bond_bubble``
+        itself allocates, so ``bubble_bytes + chi_bar_bytes`` is the budget a
+        measurement of ``bond_bubble`` alone must fit into.
+    ``peak``
+        ``q_bytes + bubble_bytes + green_bytes`` -- what the cap is applied to.
+    """
+    nd = norb * norb
+    B = int(bond_set.n_channels)
+    ND = nd * B
+    Nq = int(Nx) * int(Ny) * int(Nz)
+    itemsize = 16  # complex128
+    unit = Nq * int(nmat) * itemsize
+
+    chi_bar_bytes = Nq * ND * ND * itemsize
+    q_bytes = _BOND_N_Q_ARRAYS * chi_bar_bytes
+    bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
+                    + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
+    green_bytes = (norb ** 2) * unit
+    return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
+            "chi_bar_bytes": chi_bar_bytes,
+            "q_bytes": q_bytes,
+            "bubble_bytes": bubble_bytes,
+            "green_bytes": green_bytes,
+            "peak": q_bytes + bubble_bytes + green_bytes}
+
+
 def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
     """Estimate the peak memory of the bond path and refuse to exceed the cap.
 
@@ -439,30 +497,17 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
     never a silent runaway allocation. Called BEFORE ``green_kw`` is
     allocated (review fix I-2: previously the bond-channel dispatch branch
     called ``_calc_green`` first, so a large-Nmat run could OOM before the
-    cap was ever consulted); the estimate below includes the ``green_kw``
+    cap was ever consulted); the estimate includes the ``green_kw``
     allocation itself so the preflight is not blind to it.
 
-    The estimate counts, at complex128 (16 B):
-
-    * the q-resolved ``(N_q, ND, ND)`` arrays that are alive simultaneously --
-      ``chi_bar``, ``S_bond``, ``C_bond``, ``chi_s``, ``chi_c``, the
-      fluctuation vertex ``F_q`` and its two matrix-product temporaries, and
-      the real-space vertex ``Gamma_hat = ifftn(F_q)`` (``_BOND_N_Q_ARRAYS``);
-    * the bond bubble's per-channel-pair working set
-      (``norb**4`` orbital components on the ``(N_q, nmat)`` grid, plus the
-      ``norb**2`` Green/tau buffers it keeps live);
-    * the ``green_kw`` array itself, shape ``(norb, norb, Nx, Ny, Nz, nmat)``.
+    See :func:`_bond_memory_estimate` for the buffer-by-buffer accounting.
     """
-    nd = norb * norb
-    B = int(bond_set.n_channels)
-    ND = nd * B
-    Nq = int(Nx) * int(Ny) * int(Nz)
-    itemsize = 16  # complex128
-
-    q_bytes = _BOND_N_Q_ARRAYS * Nq * ND * ND * itemsize
-    bubble_bytes = (norb ** 4 + 3 * norb ** 2) * Nq * int(nmat) * itemsize
-    green_bytes = (norb ** 2) * Nq * int(nmat) * itemsize
-    peak = q_bytes + bubble_bytes + green_bytes
+    est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat)
+    B, ND, Nq = est["B"], est["ND"], est["Nq"]
+    q_bytes = est["q_bytes"]
+    bubble_bytes = est["bubble_bytes"]
+    green_bytes = est["green_bytes"]
+    peak = est["peak"]
 
     logger.info(
         "Bond-channel preflight: B = %d channels, ND = nd*B = %d, "
@@ -2231,6 +2276,35 @@ def _peek_green_npz_nfreq(green_path, label="Green"):
     return int(shape[1])
 
 
+def _validate_bond_green_nmat(nfreq, green_path, label="bond_green"):
+    """Reject a bond Green file whose frequency count cannot define a grid.
+
+    The file's ``nfreq`` OVERRIDES the configured ``Nmat`` on the bond path
+    (the Green function defines the grid the bubble is built on), so it has to
+    meet the same requirement the configured value does: POSITIVE and EVEN.
+    ``bond_bubble`` builds a CENTERED fermionic grid
+    ``iomega_n = (2n + 1 - nmat) pi/beta``; with an odd ``nmat`` the ``n =
+    (nmat-1)/2`` point sits exactly at ``iomega = 0``, which is not a fermionic
+    Matsubara frequency, and the bubble would process it silently -- an
+    invalid susceptibility with no error at all. Mirrors the dynamic path's
+    even-Nmat requirement (:func:`_validate_dynamic_prerequisites`).
+
+    Called BEFORE the resource preflight and before the array is materialised,
+    so a bad grid never sizes -- let alone allocates -- anything large.
+    """
+    nfreq = int(nfreq)
+    if nfreq <= 0 or nfreq % 2 != 0:
+        raise ValueError(
+            "[eliashberg] {} {} carries Nmat={} Matsubara frequencies, but "
+            "the bond path requires a POSITIVE EVEN count (the file's Nmat "
+            "overrides [mode.param] Nmat, and the bond bubble is built on the "
+            "centered fermionic grid iomega_n = (2n+1-Nmat)*pi/beta, which an "
+            "odd count would place a spurious zero frequency on). Regenerate "
+            "the Green function with an even Nmat.".format(
+                label, green_path, nfreq))
+    return nfreq
+
+
 def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
 
@@ -3530,12 +3604,13 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         Eigenvalue-family modes: ``{"eigenvalues": vals, "eigenvectors": vecs,
         "sigma_shift": sigma_shift}`` with ``vals`` ordered by descending real
         part (``_order_eigenpairs``) and ``vecs`` the matching eigenvectors as
-        columns. "iteration" mode: ``{"converged": bool, "n_iter": int,
-        "spectral_shift": float or None}`` (the sigma actually applied), plus
-        -- ONLY when a shift was applied, so the default path's dict is
-        unchanged -- ``eigenvalue_validated``, ``eigenvalue_kind``,
-        ``rayleigh_eigenvalue``, ``rayleigh_residual``,
-        ``rayleigh_residual_tol`` and ``shift_sufficient``.
+        columns. "iteration" mode: ``{"converged": bool, "n_iter": int}`` --
+        exactly the historical key set when no shift is requested -- plus,
+        ONLY when a shift was actually applied (so the default path's dict is
+        unchanged), ``spectral_shift`` (the sigma actually applied),
+        ``eigenvalue_validated``, ``eigenvalue_kind``, ``rayleigh_eigenvalue``,
+        ``rayleigh_residual``, ``rayleigh_residual_tol`` and
+        ``shift_sufficient``.
     """
     # Validate spectral_shift up front -- before any branch, including the
     # iteration loop and the small-dense early return -- so an invalid value or
@@ -3580,13 +3655,17 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         def _finish(value, vec, converged, n_iter_done, rayleigh=True):
             """Assemble the return triple, validating the SHIFTED value.
 
-            On the unshifted path this is exactly the historical dict and no
-            extra matvec is taken, so the default behaviour is bit-identical.
+            On the unshifted path this is exactly the historical dict --
+            ``{"converged", "n_iter"}`` and NOTHING else, as at commit
+            712b1a0; ``spectral_shift`` is added only when a shift was really
+            applied, so a caller that compares or serializes the default
+            dict sees the key set it always saw -- and no extra matvec is
+            taken, so the default behaviour is bit-identical.
             """
-            info = {"converged": converged, "n_iter": n_iter_done,
-                    "spectral_shift": shift_used}
+            info = {"converged": converged, "n_iter": n_iter_done}
             if shift_used is None:
                 return value, vec, info
+            info["spectral_shift"] = shift_used
             if not rayleigh:
                 # Nothing meaningful to validate (the zero-norm sentinel).
                 info.update({"eigenvalue_validated": False,
@@ -4618,7 +4697,10 @@ def calc_eliashberg(input_dict):
         if bond_green is not None:
             nmat_peek = _peek_green_npz_nfreq(bond_green, label="bond_green")
             if nmat_peek is not None:
-                nmat_bond = nmat_peek
+                # Validate the EFFECTIVE (file) Nmat before the preflight: an
+                # odd or non-positive grid is a silent-wrong-result, and it
+                # must not even be used to size the cap check.
+                nmat_bond = _validate_bond_green_nmat(nmat_peek, bond_green)
                 if nmat_peek != nmat:
                     logger.warning(
                         "[eliashberg] bond_green %s carries %d Matsubara "
@@ -4637,6 +4719,11 @@ def calc_eliashberg(input_dict):
             # chi file, so this is the only external input it takes.
             green_kw, nmat_green = _load_green_npz(
                 bond_green, norb, Nx, Ny, Nz, label="bond_green")
+            # Same requirement on the loaded count: when the header peek could
+            # not resolve nfreq, this is the first place the file's real Nmat
+            # is known, so the guard has to be repeated here rather than
+            # trusted from above.
+            _validate_bond_green_nmat(nmat_green, bond_green)
             if nmat_green != nmat_bond:
                 # The header peek could not resolve the count (unusual npz
                 # layout); the preflight above therefore ran with the

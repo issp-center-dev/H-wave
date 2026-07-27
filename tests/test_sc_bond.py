@@ -394,6 +394,73 @@ def test_resource_preflight_raises_before_green_allocation(tmpout, monkeypatch):
         sc.calc_eliashberg(inp)
 
 
+def _measure_peak_bytes(fn):
+    """Peak heap bytes (numpy arrays included) allocated while ``fn`` runs.
+
+    NumPy registers its data allocations with ``tracemalloc`` (the
+    ``numpy.core.multiarray`` domain), so ``get_traced_memory()`` sees the
+    big buffers.  Returns ``None`` when that tracking is unavailable, so the
+    caller can skip rather than assert on a meaningless zero.
+    """
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        probe = np.empty(1 << 20, dtype=np.complex128)   # 16 MB
+        _, probe_peak = tracemalloc.get_traced_memory()
+        del probe
+        if probe_peak < (1 << 20) * 16 * 0.9:
+            return None                                   # numpy not tracked
+        tracemalloc.reset_peak()
+        fn()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak
+
+
+def test_preflight_bubble_budget_covers_the_measured_bond_bubble_peak():
+    """The preflight must not UNDERCOUNT ``bond_bubble``'s real high-water
+    mark: a run it estimates to fit under ``bond_memory_cap_gb`` would then
+    OOM anyway, defeating the whole point of the guard.
+
+    Measure the actual peak of a small ``bond_bubble`` call and require the
+    preflight's own bubble+green+chi_bar budget for exactly that case to be
+    at least as large.  If ``bond_bubble`` grows a buffer without the
+    preflight's documented buffer list growing with it, this fails.
+    """
+    from hwave.solver import bond_channels as bc
+
+    norb, Nx, Ny, Nz, nmat, beta = 2, 4, 4, 4, 32, 10.0
+    bond_set = bc.resolve_interactions(
+        {((1, 0, 0), (0, 0)): 0.25, ((-1, 0, 0), (0, 0)): 0.25},
+        [(0, 0, 0), (1, 0, 0), (-1, 0, 0)], norb, bond_max_shells=1)
+
+    rng = np.random.default_rng(0)
+    shape = (norb, norb, Nx, Ny, Nz, nmat)
+    green = (rng.normal(size=shape) + 1j * rng.normal(size=shape))
+
+    bc.bond_bubble(green, bond_set, beta)     # warm up numpy's FFT caches
+    peak = _measure_peak_bytes(lambda: bc.bond_bubble(green, bond_set, beta))
+    if peak is None:
+        pytest.skip("tracemalloc does not track numpy array data here")
+
+    est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat)
+    # `green` itself is allocated outside the measured region and is budgeted
+    # separately (est["green_bytes"]), so the budget bond_bubble's own peak
+    # must fit into is its working set plus the chi_bar it returns.
+    budget = est["bubble_bytes"] + est["chi_bar_bytes"]
+    assert budget >= peak, (
+        "the preflight budgets {:.3f} MB for bond_bubble's work buffers but "
+        "the measured peak is {:.3f} MB -- the buffer list in "
+        "_bond_memory_estimate has desynced from bond_bubble".format(
+            budget / 1e6, peak / 1e6))
+    # ... and it must not be wildly conservative either, or the cap becomes
+    # useless in the other direction.
+    assert budget <= 3.0 * peak
+
+
 # ---------------------------------------------------------------------------
 # S4.3 star -- the Case-2 correction, and the V=0 reduction
 # ---------------------------------------------------------------------------
@@ -1746,6 +1813,45 @@ def test_bond_green_missing_or_mismatched_file_fails_fast(tmpout):
     inp["eliashberg"]["bond_green"] = wrong
     with pytest.raises(ValueError, match="(?i)does not match the model"):
         sc.calc_eliashberg(inp)
+
+
+@pytest.mark.parametrize("nfreq", [0, 1, 7, 129])
+def test_bond_green_rejects_non_positive_or_odd_nmat(tmpout, monkeypatch,
+                                                     nfreq):
+    """The FILE's Nmat overrides the configured one, so it must be validated
+    like the configured one: POSITIVE and EVEN.
+
+    ``bond_bubble`` builds its bubble on a CENTERED fermionic grid
+    (``iomega_n = (2n+1-nmat) pi/beta``); an odd count puts a fermionic
+    frequency exactly at zero, which the bubble then processes without
+    complaint -- a silent wrong susceptibility. Reject it up front, naming the
+    file and the offending value, and do so BEFORE the resource preflight so
+    nothing large is sized (let alone allocated) from a bad grid.
+    """
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    bad = os.path.join(tmpout, "bad_nmat_{}.npz".format(nfreq))
+    np.savez(bad, green=np.zeros((1, nfreq, 16, 1, 1), dtype=complex))
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(
+            "the bond_green Nmat must be validated BEFORE the resource "
+            "preflight / any large allocation")
+
+    monkeypatch.setattr(sc, "_bond_resource_preflight", _boom)
+    monkeypatch.setattr(sc, "_load_green_npz", _boom)
+
+    inp = _base_input(os.path.join(tmpout, "o_{}".format(nfreq)),
+                      coulomb_inter=ci, bond_channels=True,
+                      solver_mode="eigenvalue", num_eigenvalues=3,
+                      bond_green=bad)
+    with pytest.raises(ValueError) as exc:
+        sc.calc_eliashberg(inp)
+    msg = str(exc.value)
+    assert "bond_green" in msg
+    assert os.path.basename(bad) in msg
+    assert str(nfreq) in msg
+    assert "even" in msg.lower()
 
 
 def test_bond_green_ignored_with_warning_when_flag_off(tmpout, caplog):

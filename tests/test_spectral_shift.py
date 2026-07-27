@@ -379,10 +379,16 @@ def test_unvalidated_shifted_run_warns_that_it_is_not_an_eigenvalue(caplog):
 
 def test_unshifted_iteration_info_is_unchanged():
     """The default (unshifted) path must be untouched: no Rayleigh matvec, no
-    extra keys, exactly the historical info dict."""
+    extra keys, exactly the historical info dict.
+
+    The historical contract (commit 712b1a0, ``_solve_iteration``) is
+    ``{"converged": bool, "n_iter": int}`` and NOTHING else -- not even
+    ``spectral_shift: None``. Callers that compare or serialize this dict must
+    see the same key set they always saw when no shift was requested.
+    """
     _, _, info = _iterate([2.0, 1.0, 0.5])
-    assert set(info) == {"converged", "n_iter", "spectral_shift"}
-    assert info["spectral_shift"] is None
+    assert set(info) == {"converged", "n_iter"}
+    assert "spectral_shift" not in info
 
 
 # --- the note that reaches eigenvalue.dat -----------------------------------
