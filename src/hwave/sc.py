@@ -1116,7 +1116,8 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
             # on chi0q_mode="flex" and stayed silent on "load"/"calc", even
             # though the documentation says both are affected.
             _warn_reduced_flex_missing_components(
-                inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q")
+                inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q",
+                sc_matrices=(S_all, C_all))
 
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0
@@ -1168,7 +1169,7 @@ def _term_has_off_diagonal_weight(mat, norb):
     return bool(np.any(arr[~np.eye(norb, dtype=bool)] != 0))
 
 
-def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz):
+def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz, sc_matrices=None):
     """Largest |S| or |C| on the blocks a reduced chi cannot dress.
 
     The reduced susceptibility is zero on every pair index (a,b) with a != b, so
@@ -1181,7 +1182,13 @@ def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz):
     Hund, case 4 adds Exchange and PairHop. Terms can cancel there, and a
     per-term test would then announce missing dressing that does not exist.
     """
-    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    # Reuse the caller's matrices when it already has them: at the full grid
+    # these are O(Nq * norb^4) each, and building a second pair while the first
+    # is live doubles the allocation for what is only a diagnostic.
+    if sc_matrices is not None:
+        S_all, C_all = sc_matrices
+    else:
+        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
     nd = norb * norb
     density = np.zeros(nd, dtype=bool)
     density[np.arange(norb) * norb + np.arange(norb)] = True
@@ -1199,7 +1206,7 @@ def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz):
 
 def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
                                           convention="kuroki",
-                                          source=None):
+                                          source=None, sc_matrices=None):
     """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
 
     Call this ONCE per run, from the place that is about to build the pairing
@@ -1238,7 +1245,8 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     # blocks are sums and the configured terms can cancel there (e.g. Exchange
     # against PairHop in case 4). Only a nonzero combined block means dressing
     # is actually missing.
-    if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz) == 0.0:
+    if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz,
+                              sc_matrices) == 0.0:
         return
     # Decision above is on the assembled matrices; attribution here is per term,
     # so an inert term that happens to be configured is not named as a cause.
@@ -1613,6 +1621,26 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
     if d_down == 0.0 and d_cross == 0.0:
         return
 
+    # A file whose down and cross blocks are entirely zero while the up block is
+    # not is the LEGACY single-populated-block representation: the historical
+    # consumer only ever read [:norb, :norb], so an externally assembled or
+    # hand-written npz may simply never have filled the rest. That is absent
+    # data, not spin polarization -- no physical run has an identically
+    # vanishing down-spin susceptibility -- and refusing it would break files
+    # that worked before. Say so and continue.
+    if (scale > 0.0
+            and not np.any(down) and not np.any(cross_ud)
+            and not np.any(cross_du)):
+        logger.warning(
+            "The reduced FLEX susceptibility %s has an all-zero down-spin block "
+            "and all-zero cross-spin blocks while the up-spin block is not "
+            "zero. This is read as the legacy representation in which only the "
+            "block the Eliashberg step consumes was ever populated, not as a "
+            "spin-polarized run (no physical run has an identically vanishing "
+            "down-spin susceptibility). Continuing with the up-spin block.",
+            label)
+        return
+
     parts = []
     if d_down != 0.0:
         parts.append("the down-spin block differs from the up-spin block "
@@ -1828,7 +1856,8 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         # Same relative allowance as the susceptibility check, so the two really
         # are treated alike: a last-bit difference between blocks that entered
         # the solve identical must not reject a paramagnetic producer.
-        if worst > _SPIN_DISCARD_ROUNDOFF_RATIO * max(gscale, 1.0):
+        gratio = worst / max(gscale, np.finfo(float).tiny)
+        if gratio > _SPIN_DISCARD_ROUNDOFF_RATIO:
             raise ValueError(
                 "The FLEX dressed Green function in '{}' has {} spin blocks "
                 "that are not identical (max difference {:.3e}). Only the "
@@ -1836,7 +1865,7 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                 "Eliashberg pair bubble is built from a single propagator "
                 "because the pairing vertex is paramagnetic. Use a "
                 "paramagnetic FLEX run for the Eliashberg step.".format(
-                    green_path, nblock, worst))
+                    green_path, nblock, worst))  # noqa: E501
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
@@ -1901,8 +1930,15 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
     # Slice the static frequency FIRST, then expand only that single slice.
-    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s")
-    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c")
+    # Check ONLY the slices this route consumes. Validating the whole stored
+    # axis would abort a static run because of an unused frequency -- and for an
+    # externally assembled or frequency-restricted file, values that never enter
+    # the result should not decide whether it is usable. The dynamic loader,
+    # which does read every frequency, still checks all of them.
+    _check_spin_block_discarded(chi_s_raw[center_s:center_s + 1], norb,
+                                chi_convention, "chi_s")
+    _check_spin_block_discarded(chi_c_raw[center_c:center_c + 1], norb,
+                                chi_convention, "chi_c")
     chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
                             norb, Nx, Ny, Nz, chi_convention)[0]
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],

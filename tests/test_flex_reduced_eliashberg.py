@@ -1088,5 +1088,119 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
         self.assertIn("paramagnetic", msg)
 
 
+class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
+    """The refusals must not reject workflows that were fine before.
+
+    Each case here is one the guard could plausibly over-reject: data that is
+    absent rather than polarized, frequencies that never enter the result, and
+    round-off between Green blocks.
+    """
+
+    def _write(self, d, norb=2, nmat=4, Nx=2, Ny=2, Nz=1, build=None,
+               green=None):
+        nvol, nd_so = Nx * Ny * Nz, norb * 2
+        rng = np.random.default_rng(11)
+
+        def rc(shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape)) * 0.01
+
+        for name, key in (("chiq_s", "chiq_s"), ("chiq_c", "chiq_c")):
+            np.savez(os.path.join(d, name + ".npz"),
+                     **{key: build(rc, nmat, nvol, norb, nd_so)},
+                     chi_convention="kuroki")
+        g = green(rc, nmat, nvol, norb) if green else rc(
+            (1, nmat, nvol, norb, norb))
+        np.savez(os.path.join(d, "green.npz"), green=g)
+        return {"mode": {"param": {"Nmat": nmat}},
+                "file": {"output": {"path_to_output": d}},
+                "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
+
+    def test_legacy_file_with_only_the_up_block_is_accepted(self):
+        """A hand-made or legacy npz may leave the down and cross blocks at zero
+        because the historical consumer only read the up block. That is missing
+        data, not polarization, and must not abort."""
+        import hwave.sc as sc
+
+        def only_up(rc, nmat, nvol, norb, nd_so):
+            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+            a[..., :norb, :norb] = rc((nmat, nvol, norb, norb))
+            return a
+
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, build=only_up)
+            with self.assertLogs("hwave_sc", level="WARNING") as cm:
+                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+        self.assertIn("legacy representation", "\n".join(cm.output))
+
+    def test_static_route_ignores_frequencies_it_never_reads(self):
+        """The static loader consumes one slice. Non-redundancy elsewhere in the
+        stored axis must not decide whether that slice is usable."""
+        import hwave.sc as sc
+
+        def bad_tail(rc, nmat, nvol, norb, nd_so):
+            block = rc((nmat, nvol, norb, norb))
+            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+            a[..., :norb, :norb] = block
+            a[..., norb:, norb:] = block
+            a[0, ..., norb:, norb:] *= 0.5      # frequency 0 is NOT the static one
+            return a
+
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, build=bad_tail)
+            sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+
+    def test_dynamic_route_still_rejects_the_same_file(self):
+        """...but the dynamic route reads every frequency, so it must refuse."""
+        import hwave.sc as sc
+
+        def bad_tail(rc, nmat, nvol, norb, nd_so):
+            block = rc((nmat, nvol, norb, norb))
+            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+            a[..., :norb, :norb] = block
+            a[..., norb:, norb:] = block
+            a[0, ..., norb:, norb:] *= 0.5
+            return a
+
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, build=bad_tail)
+            with self.assertRaises(ValueError):
+                sc._load_flex_susceptibilities_full(inp, norb, Nx, Ny, Nz)
+
+    def _green_pair(self, factor):
+        def g(rc, nmat, nvol, norb):
+            g0 = rc((nmat, nvol, norb, norb))
+            return np.stack([g0, g0 * factor])
+        return g
+
+    def _para(self, rc, nmat, nvol, norb, nd_so):
+        block = rc((nmat, nvol, norb, norb))
+        a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        a[..., :norb, :norb] = block
+        a[..., norb:, norb:] = block
+        return a
+
+    def test_green_blocks_just_below_the_threshold_pass(self):
+        import hwave.sc as sc
+        f = 1.0 + 0.1 * sc._SPIN_DISCARD_ROUNDOFF_RATIO
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(
+                d, build=self._para, green=self._green_pair(f))
+            sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+
+    def test_green_blocks_just_above_the_threshold_are_refused(self):
+        """Pins that the allowance is relative to the block scale, not absolute:
+        the fixture amplitude is ~0.01, so an absolute test would let this pass.
+        """
+        import hwave.sc as sc
+        f = 1.0 + 10.0 * sc._SPIN_DISCARD_ROUNDOFF_RATIO
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(
+                d, build=self._para, green=self._green_pair(f))
+            with self.assertRaises(ValueError) as cm:
+                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+        self.assertIn("spin blocks that are not identical", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

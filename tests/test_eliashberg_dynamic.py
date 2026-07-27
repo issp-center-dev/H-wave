@@ -421,7 +421,10 @@ def test_full_loader_embeds_kuroki_chi_on_density_pairs(tmp_path):
     tests/test_flex_reduced_eliashberg.py for why the density-pair placement is
     the only faithful one."""
     import hwave.sc as sc
-    m = _write_flex_so_fixture(tmp_path, nmat=6)
+    # norb=2: with the default norb=1 the old and new embeddings coincide and
+    # the off-density assertion below iterates over an EMPTY index list, so this
+    # regression asserted nothing about the placement it advertises.
+    m = _write_flex_so_fixture(tmp_path, nmat=6, norb=2)
     inp = _flex_input(tmp_path, m["nmat"])
     norb, Nx, Ny, Nz = m["norb"], m["Nx"], m["Ny"], m["Nz"]
     nd, nd_so = norb * norb, norb * 2

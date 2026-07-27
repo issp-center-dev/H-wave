@@ -604,14 +604,22 @@ into the directory read by the Eliashberg step:
 
    Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
    for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"`` or
-   ``"squashed"`` -- specifically whenever the inter-orbital density
-   components :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b` are nonzero,
-   which is the generic case. Treat every such stored eigenvalue and gap
-   function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
+   ``"squashed"``. Two independent effects contribute, so a vanishing
+   inter-orbital density component is not enough to be safe: the old placement
+   both dropped :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b`, and -- when
+   the interaction reaches the off-density blocks -- fabricated dressing there
+   out of the diagonal :math:`\chi_{(a,a),(a,a)}`. Treat every such stored
+   eigenvalue and gap function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
    (both placements coincide), as are all general (myo) results. With the fix,
    a ``CoulombIntra``-only reduced run reproduces the equivalent
-   ``chi0q_mode = "load"`` and general-scheme results exactly for identical
-   physics; before the fix it did not.
+   ``chi0q_mode = "load"`` and general-scheme results exactly **for identical
+   :math:`\Sigma = 0` physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
+   before the fix it did not. This is a statement about the pairing vertex, not
+   about the schemes being interchangeable: at full self-consistency
+   ``reduced`` and ``general`` differ in the self-energy as well, and their
+   converged results do **not** coincide even for ``CoulombIntra`` alone
+   (measured on a 2-orbital model: converged self-energies differ by about
+   10%).
 
    As of this version, IR-native susceptibility files (``write_densified =
    false``) must carry this ``chi_convention`` tag, and the loader also
@@ -1195,7 +1203,7 @@ was checked by running the combination.
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
-     - ``reduced`` and ``squashed`` store a byte-identical layout
+     - ``reduced`` and ``squashed`` store the same shape and index layout
 
 ``calc_type``
 
@@ -1213,11 +1221,14 @@ was checked by running the combination.
      - every ``calc_scheme``
      - **not supported on any scheme**
 
-For a paramagnetic system this costs nothing: SU(2) symmetry makes the
-transverse and longitudinal spin susceptibilities equal, and the ``3/2 * chi_s``
-factor in the FLEX effective interaction is exactly the count of one
-longitudinal and two transverse components. The ladder channel becomes distinct
-only once the spins are split.
+For a paramagnetic system no susceptibility content is lost by omitting the
+separate transverse channel: SU(2) symmetry makes the transverse and
+longitudinal spin susceptibilities equal, and the ``3/2 * chi_s`` factor in the
+FLEX effective interaction is exactly the count of one longitudinal and two
+transverse components. (Running ``ring+ladder`` in RPA is not free -- it solves
+and stores an additional ``chiq_pm`` -- but it adds no information in the
+paramagnetic case.) The ladder channel becomes distinct only once the spins are
+split.
 
 Interactions reaching the Eliashberg vertex
 
