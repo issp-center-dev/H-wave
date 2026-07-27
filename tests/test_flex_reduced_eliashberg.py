@@ -75,12 +75,16 @@ def _write_2orb_intra_only_fixture(dirpath):
         f.write(coulombintra)
 
 
-def _make_reduced_flex():
-    """Build a spin-free ``calc_scheme="reduced"`` FLEX solver on the fixture."""
+def _make_reduced_flex(dirpath):
+    """Build a spin-free ``calc_scheme="reduced"`` FLEX solver on the fixture.
+
+    ``dirpath`` must be a directory owned by the caller (a per-test temporary
+    one), so parallel test processes never write and read the same fixture
+    files and nothing is left behind afterwards.
+    """
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
 
-    dirpath = os.path.join(tempfile.gettempdir(), "hwave_flex_2d_2orb_intra")
     _write_2orb_intra_only_fixture(dirpath)
     info_input = {
         'path_to_input': dirpath,
@@ -100,7 +104,7 @@ def _make_reduced_flex():
     }
     solver = solver_flex.FLEX(ham, {}, info_mode)
     solver.spin_mode = "spin-free"
-    return solver, dirpath
+    return solver
 
 
 class TestExpandFlexChiDensityPlacement(unittest.TestCase):
@@ -167,6 +171,60 @@ class TestExpandFlexChiDensityPlacement(unittest.TestCase):
         self.assertAlmostEqual(np.max(np.abs(out[..., :, off])), 0.0)
 
 
+class TestSingleOrbitalIsBitIdentical(unittest.TestCase):
+    """The release note claims norb=1 results are BIT-IDENTICAL across this
+    change. Substantiate it against the old placement itself, with exact
+    equality rather than a tolerance."""
+
+    @staticmethod
+    def _old_scatter(chi_full, norb, nfreq, Nx, Ny, Nz):
+        """The pre-fix embedding, reproduced verbatim as the reference."""
+        nd = norb * norb
+        chi_orb = chi_full[:, :, :, :, :norb, :norb]
+        out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
+        for l2 in range(norb):
+            out[:, :, :, :, l2::norb, l2::norb] = chi_orb
+        return out
+
+    def test_expand_flex_chi_norb1_matches_old_placement_exactly(self):
+        import hwave.sc as sc
+
+        norb, Nx, Ny, Nz, nfreq = 1, 3, 2, 1, 4
+        nvol, nd_so = Nx * Ny * Nz, norb * 2
+        rng = np.random.default_rng(77)
+        chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
+                   + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
+
+        new = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+                                  convention="kuroki")
+        old = self._old_scatter(
+            chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so),
+            norb, nfreq, Nx, Ny, Nz)
+
+        self.assertTrue(np.array_equal(new, old),
+                        "norb=1 must be bit-identical to the old placement")
+
+    def test_multi_orbital_genuinely_differs_from_old_placement(self):
+        """Guard against the bit-identity test passing vacuously: for norb >= 2
+        the two placements must NOT coincide."""
+        import hwave.sc as sc
+
+        for norb in (2, 3):
+            with self.subTest(norb=norb):
+                Nx, Ny, Nz, nfreq = 2, 1, 1, 2
+                nvol, nd_so = Nx * Ny * Nz, norb * 2
+                rng = np.random.default_rng(80 + norb)
+                chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
+                           + 1j * rng.standard_normal(
+                               (nfreq, nvol, nd_so, nd_so)))
+                new = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+                                          convention="kuroki")
+                old = self._old_scatter(
+                    chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so),
+                    norb, nfreq, Nx, Ny, Nz)
+                self.assertFalse(np.allclose(new, old))
+
+
 class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
     """Physical regression: for Sigma=0 the reduced-FLEX pairing vertex must
     equal the vertex the ``load`` path builds from the same chi0q.
@@ -181,10 +239,16 @@ class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
     off-density component.
     """
 
+    def setUp(self):
+        # Per-test fixture dir: parallel test processes must not share it.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
     def _build(self):
         import hwave.sc as sc
 
-        flex, dirpath = _make_reduced_flex()
+        dirpath = self._tmp.name
+        flex = _make_reduced_flex(dirpath)
         norb = flex.norb
         Nx, Ny, Nz = flex.lattice.shape
         nvol = flex.lattice.nvol
@@ -369,6 +433,78 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
                  if r.levelno >= logging.WARNING]
         self.assertEqual(warns, [])
 
+    def test_silent_when_interorbital_term_is_identically_zero(self):
+        """A configured term whose inter-orbital entries all vanish -- the V = 0
+        or J = 0 endpoint of a coupling/pressure scan -- contributes nothing to
+        the off-density S/C blocks, so warning about it would be a false
+        positive."""
+        import hwave.sc as sc
+        import logging
+
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        inter_k = {"CoulombIntra": np.ones((norb, norb, Nx, Ny, Nz),
+                                           dtype=complex)}
+        for k in ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop"):
+            inter_k[k] = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            sc._warn_reduced_flex_missing_components(inter_k, norb)
+        finally:
+            lg.removeHandler(handler)
+        warns = [r.getMessage() for r in records
+                 if r.levelno >= logging.WARNING]
+        self.assertEqual(warns, [])
+
+    def test_warns_only_for_terms_with_nonzero_interorbital_weight(self):
+        """Among several configured terms, only the ones actually carrying
+        inter-orbital weight may be named."""
+        import hwave.sc as sc
+
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        zero = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        live = zero.copy()
+        live[0, 1] = 0.5
+        live[1, 0] = 0.5
+        inter_k = {"CoulombIntra": np.ones((norb, norb, Nx, Ny, Nz),
+                                           dtype=complex),
+                   "Hund": live, "CoulombInter": zero, "Ising": zero}
+
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            sc._warn_reduced_flex_missing_components(inter_k, norb)
+        joined = "\n".join(cm.output)
+        self.assertIn("Hund", joined)
+        self.assertNotIn("CoulombInter", joined)
+        self.assertNotIn("Ising", joined)
+
+    def test_diagonal_only_interorbital_term_does_not_warn(self):
+        """Only the a != b entries build the off-density blocks, so a term whose
+        weight sits purely on the orbital diagonal must not warn."""
+        import hwave.sc as sc
+        import logging
+
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        diag = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        diag[0, 0] = 1.0
+        diag[1, 1] = 1.0
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            sc._warn_reduced_flex_missing_components({"Hund": diag}, norb)
+        finally:
+            lg.removeHandler(handler)
+        warns = [r.getMessage() for r in records
+                 if r.levelno >= logging.WARNING]
+        self.assertEqual(warns, [])
+
     def test_silent_for_single_orbital(self):
         """norb=1 has no off-density pair index, so nothing can be missing even
         with an inter-orbital term configured."""
@@ -473,6 +609,94 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
             "expected exactly 1 reduced-data warning for nmat={}, got {}".format(
                 nmat, len(warns)))
         self.assertIn("Hund", warns[0])
+
+
+class TestStaticEntryPointWarnsOnce(unittest.TestCase):
+    """End-to-end guard on the PUBLIC static route.
+
+    The helper-level and dynamic-builder tests above do not prove that
+    ``calc_eliashberg`` itself reaches the check: the call sits in the
+    ``chi0q_mode="flex"`` branch, and a future refactor could drop it without
+    failing any of them. Run the real entry point on a reduced (kuroki) chi with
+    an inter-orbital term and assert exactly one warning."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = self._tmp.name
+        _write_2orb_intra_only_fixture(self.dir)
+        # On-site inter-orbital V: reaches the off-density S/C blocks.
+        with open(os.path.join(self.dir, "coulombinter.dat"), "w") as f:
+            f.write("CoulombInter in wannier90-like format for uhfk\n"
+                    "2\n1\n 1\n"
+                    "   0    0    0    1    2   1.000000000000   0.000000000000\n"
+                    "   0    0    0    2    1   1.000000000000   0.000000000000\n")
+
+        self.norb, self.Nx, self.Ny, self.Nz, self.nmat = 2, 4, 4, 1, 8
+        nvol, nd_so = self.Nx * self.Ny * self.Nz, self.norb * 2
+        rng = np.random.default_rng(41)
+
+        def rc(shape):
+            return (rng.standard_normal(shape)
+                    + 1j * rng.standard_normal(shape)) * 0.01
+
+        np.savez(os.path.join(self.dir, "chiq_s.npz"),
+                 chiq_s=rc((self.nmat, nvol, nd_so, nd_so)),
+                 chi_convention="kuroki")
+        np.savez(os.path.join(self.dir, "chiq_c.npz"),
+                 chiq_c=rc((self.nmat, nvol, nd_so, nd_so)),
+                 chi_convention="kuroki")
+        np.savez(os.path.join(self.dir, "green.npz"),
+                 green=rc((1, self.nmat, nvol, self.norb, self.norb)))
+
+    def _input_dict(self):
+        return {
+            "mode": {"mode": "RPA", "calc_scheme": "reduced",
+                     "param": {"T": 2.0, "mu": 0.0,
+                               "CellShape": [self.Nx, self.Ny, self.Nz],
+                               "SubShape": [1, 1, 1], "Nmat": self.nmat,
+                               "filling": 0.5}},
+            "file": {
+                "input": {"path_to_input": self.dir,
+                          "path_to_flex_output": self.dir,
+                          "interaction": {
+                              "path_to_input": self.dir,
+                              "Geometry": "geom.dat",
+                              "Transfer": "transfer.dat",
+                              "CoulombIntra": "coulombintra.dat",
+                              "CoulombInter": "coulombinter.dat"}},
+                "output": {"path_to_output": os.path.join(self.dir, "out")}},
+            "eliashberg": {"chi0q_mode": "flex", "frequency": "static",
+                           "pairing_type": "singlet", "init_gap": "cos",
+                           "solver_mode": "eigenvalue",
+                           "eigenvalue_method": "arnoldi",
+                           "num_eigenvalues": 2,
+                           "output_eigenvalue": "eig.dat",
+                           "output_gap": "gap.dat"},
+        }
+
+    def test_calc_eliashberg_emits_exactly_one_reduced_warning(self):
+        import hwave.sc as sc
+        import logging
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            sc.calc_eliashberg(self._input_dict())
+        finally:
+            lg.removeHandler(handler)
+
+        warns = [r.getMessage() for r in records
+                 if r.levelno >= logging.WARNING
+                 and "REDUCED" in r.getMessage()]
+        self.assertEqual(
+            len(warns), 1,
+            "static calc_eliashberg must emit the reduced-data warning exactly "
+            "once, got {}".format(len(warns)))
+        self.assertIn("CoulombInter", warns[0])
 
 
 if __name__ == "__main__":

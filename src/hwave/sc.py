@@ -1148,6 +1148,30 @@ _REDUCED_FLEX_UNSUPPORTED = ("CoulombInter", "Hund", "Ising", "Exchange",
                              "PairHop")
 
 
+def _reaches_off_density(mat, norb):
+    """Whether an interaction actually populates the off-density S/C blocks.
+
+    Both blocks that a reduced chi cannot dress -- S/C[(a,b),(a,b)] (case 2) and
+    S/C[(a,b),(b,a)] (case 4) of :func:`_build_sc_matrices_all_q` -- are built
+    exclusively from the term's ``[a, b]`` entries with ``a != b``. A term whose
+    inter-orbital entries all vanish therefore contributes nothing there, and
+    warning about it would be a false positive: a pressure/coupling scan that
+    includes a V = 0 or J = 0 endpoint configures the file but carries no
+    inter-orbital weight.
+
+    Zero is tested exactly rather than against a tolerance. The question here is
+    "can this term contribute at all", and an exactly-zero array is the only
+    unambiguous "no"; a tiny-but-nonzero coupling does produce a correspondingly
+    tiny missing contribution, which the user should still be told about.
+    """
+    arr = np.asarray(mat)
+    if arr.ndim < 2 or arr.shape[0] != norb or arr.shape[1] != norb:
+        # Unexpected layout: warn rather than silently clear the flag.
+        return True
+    off_diag = ~np.eye(norb, dtype=bool)
+    return bool(np.any(arr[off_diag] != 0))
+
+
 def _warn_reduced_flex_missing_components(inter_k, norb, convention="kuroki"):
     """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
 
@@ -1180,7 +1204,8 @@ def _warn_reduced_flex_missing_components(inter_k, norb, convention="kuroki"):
     if norb <= 1:
         # norb == 1 has no off-density pair index, so nothing can be missing.
         return
-    missing = [k for k in _REDUCED_FLEX_UNSUPPORTED if k in inter_k]
+    missing = [k for k in _REDUCED_FLEX_UNSUPPORTED
+               if k in inter_k and _reaches_off_density(inter_k[k], norb)]
     if not missing:
         return
     logger.warning(
