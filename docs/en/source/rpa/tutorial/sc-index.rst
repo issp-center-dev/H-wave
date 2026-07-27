@@ -336,8 +336,11 @@ This section controls the Eliashberg solver. Key parameters:
   with ``chi0q_mode = "calc"`` or ``"load"`` (neither is used on this path);
   ``chi0q_mode = "flex"`` remains an error because it ingests a FLEX *chi*.
   The file's frequency count wins over ``Nmat`` (it defines the grid the bond
-  bubble is built on) and a mismatch is reported; a missing file, a file
-  without a ``green`` array, or a grid/orbital mismatch raises. The path
+  bubble is built on) and a mismatch is reported; the resource preflight below
+  is run with the FILE's frequency count -- read from the ``npz`` header
+  before the array itself is loaded -- so an over-large ``Nmat`` cannot refuse
+  a run that actually fits. A missing file, a file without a ``green`` array,
+  or a grid/orbital mismatch raises. The path
   actually used is recorded in the eigenvalue file as ``bond_green`` together
   with the matching ``approximation`` wording.
 - ``bond_max_shells`` (``bond_channels = true`` only): keep neighbour shells
@@ -392,6 +395,17 @@ This section controls the Eliashberg solver. Key parameters:
   only; ``bond_channels = false`` is unaffected.
 
   All bond options are ignored with a warning when ``bond_channels = false``.
+
+  Bond option VALUES are validated strictly. ``bond_channels`` and
+  ``bond_diagnostics`` accept only ``true``/``false`` (or the strings
+  ``true``/``yes``/``on``/``1`` and ``false``/``no``/``off``/``0``): a
+  misspelling such as ``"ture"`` raises naming the key, instead of being read
+  as ``false`` and silently switching off both the feature and its guards.
+  ``bond_max_shells`` and ``bond_precondition_dense_limit`` require an actual
+  non-negative integer -- a non-integral value such as ``1.5`` is refused
+  rather than truncated, and a boolean is refused rather than read as 0/1 --
+  and an unparsable numeric option raises naming the offending
+  ``[eliashberg]`` key.
 
 .. note::
 

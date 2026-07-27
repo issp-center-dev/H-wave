@@ -218,6 +218,92 @@ def test_compute_vertices_general_dressing_is_bit_identical():
     assert np.array_equal(got, ref)
 
 
+def _ill_conditioned_general_case(target=5.0e-3):
+    """Build a DEFAULT-path ``_compute_vertices_general`` input whose spin RPA
+    denominator ``I - chi0 @ S`` is invertible but badly conditioned
+    (``sigma_min/sigma_max <= 1e-3``).
+
+    ``chi0q`` is scaled so that the smallest eigenvalue of ``I - chi0 @ S`` at
+    one q-point is ``target``: the solve is perfectly well defined (the
+    dressed chi comes back of order 1e2) but the matrix sits in the region the
+    BOND guard refuses.
+    """
+    rng = np.random.default_rng(11)
+    norb, Nx, Ny, Nz, nmat = 2, 2, 1, 1, 2
+    nd = norb * norb
+    chi0q = rng.normal(
+        size=(norb, norb, norb, norb, Nx, Ny, Nz, nmat)).astype(complex)
+    inter_k = {
+        "CoulombIntra": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
+        "CoulombInter": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
+        "Hund": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
+    }
+    S_all, C_all = sc._build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    si = nmat // 2
+
+    def _static(arr):
+        return arr[:, :, :, :, :, :, :, si].reshape(
+            nd, nd, Nx, Ny, Nz).transpose(2, 3, 4, 0, 1).copy()
+
+    eig = np.linalg.eigvals(_static(chi0q)[0, 0, 0] @ S_all[0, 0, 0])
+    lam = float(sorted(x.real for x in eig if abs(x.imag) < 1e-12)[-1])
+    chi0q = chi0q * ((1.0 - target) / lam)
+    return chi0q, inter_k, norb, Nx, Ny, Nz, nmat, _static(chi0q), S_all, C_all
+
+
+def test_general_vertex_ill_conditioned_default_path_still_runs():
+    """BACKWARD COMPATIBILITY: the bond conditioning guard must NOT leak onto
+    the legacy (default, non-bond) ``_compute_vertices_general`` path.
+
+    Before 712b1a0 that path simply called ``np.linalg.solve``; an invertible
+    but poorly conditioned RPA denominator returned a (large but finite)
+    result. Sharing ``dress_bond`` must not turn such a configuration into a
+    ``ValueError``.
+    """
+    (chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
+     chi0_static, S_all, C_all) = _ill_conditioned_general_case()
+
+    # the case really is inside the bond guard's refusal region ...
+    I_mat = np.broadcast_to(np.eye(norb * norb, dtype=complex),
+                            (Nx, Ny, Nz, norb * norb, norb * norb)).copy()
+    mat_s = I_mat - chi0_static @ S_all
+    sv = np.linalg.svd(mat_s.reshape(-1, norb * norb, norb * norb),
+                       compute_uv=False)
+    assert float((sv[:, -1] / sv[:, 0]).min()) <= 1.0e-3
+    # ... and still perfectly invertible (no vanishing singular value)
+    assert float(sv[:, -1].min()) > 1.0e-8
+
+    got = sc._compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
+                                       pairing_type="singlet")
+
+    # historical inline computation (712b1a0 and earlier)
+    mat_c = I_mat + chi0_static @ C_all
+    chis = np.linalg.solve(mat_s, chi0_static)
+    chic = np.linalg.solve(mat_c, chi0_static)
+    Vs_all = (1.5 * (S_all @ chis @ S_all) - 0.5 * (C_all @ chic @ C_all)
+              + 0.5 * (S_all + C_all))
+    ref = Vs_all.reshape(Nx, Ny, Nz, norb, norb, norb, norb).transpose(
+        3, 4, 5, 6, 0, 1, 2)
+    assert np.all(np.isfinite(got))
+    assert np.array_equal(got, ref)
+
+
+def test_ill_conditioned_case_is_still_refused_on_the_bond_path():
+    """The other half of the contract: the guard stays where it belongs. The
+    very same conditioning must still raise through the opt-in bond entry
+    point (default ``cond_tol``)."""
+    from hwave.solver import bond_channels
+
+    (_, _, _, _, _, _, _, chi0_static, S_all,
+     C_all) = _ill_conditioned_general_case()
+    with pytest.raises(ValueError, match="(?i)singular|cond_tol"):
+        bond_channels.dress_bond(chi0_static, S_all, C_all)
+    # and cond_tol=None genuinely disables it (what the legacy path passes)
+    chis, chic = bond_channels.dress_bond(chi0_static, S_all, C_all,
+                                          cond_tol=None)
+    assert np.all(np.isfinite(chis)) and np.all(np.isfinite(chic))
+
+
 # ---------------------------------------------------------------------------
 # S5 guards
 # ---------------------------------------------------------------------------
@@ -1454,6 +1540,83 @@ def test_bond_green_is_actually_consumed(tmpout):
     assert green.shape[-1] == inp_bare["mode"]["param"]["Nmat"]
 
 
+def _green_file_with_nmat(tmpout, ci, nmat, name="green.npz"):
+    """Write a bare Green npz carrying exactly ``nmat`` Matsubara points."""
+    inp = _base_input(os.path.join(tmpout, "gen"), coulomb_inter=ci,
+                      bond_channels=True)
+    inp["mode"]["param"]["Nmat"] = nmat
+    gpath = os.path.join(tmpout, name)
+    _bare_green_npz(gpath, inp)
+    assert np.load(gpath)["green"].shape[1] == nmat
+    return gpath
+
+
+def test_bond_green_preflight_runs_once_with_the_files_nmat(tmpout, monkeypatch):
+    """The FILE's Nmat wins (it defines the bubble's frequency grid), so the
+    resource preflight must be run with it -- ONCE -- whether the configured
+    Nmat is larger or smaller. Previously the first preflight ran with the
+    CONFIGURED Nmat before the file was ever inspected, so an over-large
+    configured Nmat could refuse a run that fits comfortably."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    gpath = _green_file_with_nmat(tmpout, ci, 32)
+
+    orig = sc._bond_resource_preflight
+    for configured in (128, 16):
+        seen = []
+
+        def _record(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, _o=orig):
+            seen.append(int(nmat))
+            return _o(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb)
+
+        monkeypatch.setattr(sc, "_bond_resource_preflight", _record)
+        inp = _base_input(os.path.join(tmpout, "run%d" % configured),
+                          coulomb_inter=ci, bond_channels=True,
+                          bond_green=gpath)
+        inp["mode"]["param"]["Nmat"] = configured
+        sc.calc_eliashberg(inp)
+        assert seen == [32], (
+            "configured Nmat={}: preflight nmat sequence {} (expected exactly "
+            "one call with the file's 32)".format(configured, seen))
+
+
+def test_bond_green_preflight_cap_follows_the_file_not_the_config(tmpout,
+                                                                 monkeypatch):
+    """The memory cap must be judged against the FILE's Nmat alone.
+
+    (a) configured Nmat >> file's: a cap that fits the file must be accepted.
+    (b) configured Nmat << file's: a cap that fits only the configured Nmat
+        must be REFUSED, and refused BEFORE the Green array is materialised.
+    """
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+
+    # (a) file nmat=32 (peak 9.86e-5 GB) vs configured 128 (peak 2.21e-4 GB)
+    g32 = _green_file_with_nmat(tmpout, ci, 32, "g32.npz")
+    inp = _base_input(os.path.join(tmpout, "big_cfg"), coulomb_inter=ci,
+                      bond_channels=True, bond_green=g32,
+                      bond_memory_cap_gb=1.5e-4)
+    inp["mode"]["param"]["Nmat"] = 128
+    sc.calc_eliashberg(inp)  # must NOT raise
+    assert os.path.exists(os.path.join(tmpout, "big_cfg", "eigenvalue.dat"))
+
+    # (b) file nmat=128 vs configured 16 (peak 7.81e-5 GB)
+    g128 = _green_file_with_nmat(tmpout, ci, 128, "g128.npz")
+    inp = _base_input(os.path.join(tmpout, "small_cfg"), coulomb_inter=ci,
+                      bond_channels=True, bond_green=g128,
+                      bond_memory_cap_gb=1.0e-4)
+    inp["mode"]["param"]["Nmat"] = 16
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(
+            "the bond_green array must not be materialised before the "
+            "resource preflight has passed")
+
+    monkeypatch.setattr(sc, "_load_green_npz", _boom)
+    with pytest.raises(ValueError, match="(?i)bond_memory_cap_gb"):
+        sc.calc_eliashberg(inp)
+
+
 def test_bond_green_provenance_says_which_green_ran(tmpout):
     """The recorded approximation level must distinguish the bare green from
     an externally supplied one -- they are different approximations."""
@@ -1752,3 +1915,104 @@ def test_track_subspace_is_documented_as_the_sweep_driver_api():
     assert "bond_diagnostics" in doc
     # the ROW convention (scipy eigs returns COLUMNS) must stay documented
     assert "column" in lowered and "row" in lowered
+
+
+# ---------------------------------------------------------------------------
+# S5 config validation: a malformed value must be REFUSED, never silently
+# reinterpreted. A typo'd boolean used to be coerced to false -- silently
+# disabling the requested feature AND the five safety guards that come with
+# it -- and a malformed integer used to be truncated (int(1.5) -> 1).
+# ---------------------------------------------------------------------------
+
+_BOOL_KEYS = ("bond_channels", "bond_diagnostics")
+
+
+def _bond_cfg(**kw):
+    cfg = {"bond_channels": True}
+    cfg.update(kw)
+    return cfg
+
+
+@pytest.mark.parametrize("key", _BOOL_KEYS)
+@pytest.mark.parametrize("bad", ["ture", "flase", "maybe", "", "y e s", 2.5,
+                                 []])
+def test_bond_boolean_typo_is_rejected_by_key(key, bad):
+    """``bond_channels = "ture"`` must NOT quietly become false."""
+    cfg = _bond_cfg(**{key: bad})
+    with pytest.raises(ValueError) as exc:
+        sc._read_bond_config(cfg)
+    assert key in str(exc.value)
+    assert repr(bad) in str(exc.value) or str(bad) in str(exc.value)
+
+
+@pytest.mark.parametrize("spelling,expected",
+                         [(True, True), (False, False),
+                          ("true", True), ("True", True), ("yes", True),
+                          ("on", True), ("1", True),
+                          ("false", False), ("False", False), ("no", False),
+                          ("off", False), ("0", False)])
+def test_bond_boolean_supported_spellings_still_work(spelling, expected):
+    """Every spelling ``backend.as_bool`` documents keeps working."""
+    use_bond = sc._read_bond_config({"bond_channels": spelling})[0]
+    assert use_bond is expected
+    if expected:
+        diagnostics = sc._read_bond_config(
+            {"bond_channels": True, "bond_diagnostics": spelling})[5]
+        assert diagnostics is expected
+
+
+def test_bond_channels_typo_is_rejected_on_the_dynamic_entry_point():
+    """The dynamic refusal reads the same key, so a typo there must not slip
+    a bond_channels request past the guard either."""
+    with pytest.raises(ValueError) as exc:
+        sc._reject_bond_channels_dynamic({"bond_channels": "ture"})
+    assert "bond_channels" in str(exc.value)
+
+
+_INT_KEYS = ("bond_max_shells", "bond_precondition_dense_limit")
+
+
+@pytest.mark.parametrize("key", _INT_KEYS)
+@pytest.mark.parametrize("bad", [1.5, True, False, float("nan"),
+                                 float("inf"), -1, -2.0, "two", "1.5", []])
+def test_bond_integer_options_reject_malformed_values(key, bad):
+    """``int(1.5)`` used to silently truncate to 1 and TOML booleans were
+    accepted as 0/1; both CHANGE THE MEANING of a malformed config."""
+    with pytest.raises(ValueError) as exc:
+        sc._read_bond_config(_bond_cfg(**{key: bad}))
+    assert key in str(exc.value)
+
+
+@pytest.mark.parametrize("good,expected", [(0, 0), (2, 2), (3.0, 3)])
+def test_bond_integer_options_accept_integral_values(good, expected):
+    cfg = _bond_cfg(bond_max_shells=good, bond_precondition_dense_limit=good)
+    _, _, max_shells, _, pre_opts, _ = sc._read_bond_config(cfg)
+    assert max_shells == expected and isinstance(max_shells, int)
+    assert pre_opts["dense_limit"] == expected
+
+
+@pytest.mark.parametrize("key", ["bond_memory_cap_gb", "bond_precondition_atol",
+                                 "bond_precondition_rtol"])
+@pytest.mark.parametrize("bad", ["abc", [], True])
+def test_bond_float_options_name_the_key_on_a_bad_value(key, bad):
+    """A bare ``float()`` failure never said WHICH [eliashberg] key was
+    wrong."""
+    with pytest.raises(ValueError) as exc:
+        sc._read_bond_config(_bond_cfg(**{key: bad}))
+    assert key in str(exc.value)
+
+
+@pytest.mark.parametrize("key", _BOOL_KEYS + _INT_KEYS +
+                         ("bond_memory_cap_gb", "bond_precondition_atol",
+                          "bond_precondition_rtol", "bond_green"))
+def test_bond_option_set_to_none_means_unset(key):
+    """TOML cannot express a null, so a programmatic ``None`` keeps meaning
+    "not specified" (it must not become a validation error)."""
+    cfg = _bond_cfg(**{key: None})
+    if key == "bond_channels":
+        assert sc._read_bond_config(cfg)[0] is False
+        return
+    use_bond, green, max_shells, cap, pre_opts, diag = sc._read_bond_config(cfg)
+    assert use_bond is True
+    assert green is None and max_shells is None and diag is False
+    assert cap == sc._BOND_MEMORY_CAP_GB and pre_opts == {}

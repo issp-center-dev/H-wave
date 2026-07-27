@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import logging
+import zipfile
 
 import numpy as np
 from numpy.fft import fftn, ifftn
@@ -78,6 +79,86 @@ _BOND_OPTION_KEYS = (
 # ([eliashberg] bond_diagnostics; spec S7.7 default).
 _BOND_DIAGNOSTICS_DEG_TOL = 1.0e-3
 
+# Boolean spellings accepted for the bond-channel [eliashberg] keys -- exactly
+# the ones backend.as_bool documents. ANY other string/type is REFUSED (see
+# _bond_bool_option): as_bool's plain-truthiness fallback would read a typo
+# like "ture" as false, silently disabling the requested feature AND the
+# safety guards that only run with it.
+_BOND_BOOL_TRUE = ("true", "yes", "on", "1")
+_BOND_BOOL_FALSE = ("false", "no", "off", "0")
+
+
+def _bond_bool_option(eli_param, key, default=False):
+    """Read a bond-channel boolean option, refusing unrecognised spellings.
+
+    A key present with the value ``None`` counts as unset (TOML has no null,
+    so that can only come from a programmatic caller meaning "not
+    specified").
+    """
+    val = eli_param.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        spelling = val.strip().lower()
+        if spelling in _BOND_BOOL_TRUE:
+            return True
+        if spelling in _BOND_BOOL_FALSE:
+            return False
+    raise ValueError(
+        "[eliashberg] {} must be a boolean: true/false, or one of the strings "
+        "{} / {}; got {!r}. An unrecognised value is REFUSED rather than read "
+        "as false -- a typo would otherwise silently disable both the "
+        "requested feature and the guards that come with it.".format(
+            key, "/".join(_BOND_BOOL_TRUE), "/".join(_BOND_BOOL_FALSE), val))
+
+
+def _bond_float_option(eli_param, key, default=None):
+    """Read a bond-channel numeric option, naming the key on a bad value.
+
+    A bare ``float(...)`` raises a message that never says WHICH
+    ``[eliashberg]`` key was wrong; booleans are rejected outright (``True``
+    would silently become ``1.0``). ``None`` counts as unset.
+    """
+    val = eli_param.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        raise ValueError(
+            "[eliashberg] {} must be a number, not a boolean; got {!r}."
+            .format(key, val))
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "[eliashberg] {} must be a number; got {!r}.".format(key, val)
+        ) from None
+
+
+def _bond_int_option(eli_param, key, default=None):
+    """Read a bond-channel integer option WITHOUT silently truncating it.
+
+    ``int(1.5)`` used to turn a malformed value into a different, valid
+    configuration (``bond_max_shells = 1``), and TOML booleans were accepted
+    as 0/1. Both change the MEANING of a bad config, so they are refused here,
+    at the TOML boundary, with the key named. ``None`` counts as unset.
+    """
+    val = eli_param.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        raise ValueError(
+            "[eliashberg] {} must be an integer, not a boolean; got {!r}."
+            .format(key, val))
+    fval = _bond_float_option(eli_param, key)
+    if not np.isfinite(fval) or fval != np.floor(fval):
+        raise ValueError(
+            "[eliashberg] {} must be an integer; got {!r} (a non-integral or "
+            "non-finite value is refused rather than truncated).".format(
+                key, val))
+    return int(fval)
+
 
 # ---------------------------------------------------------------------------
 # Eliashberg frequency mode dispatch
@@ -116,8 +197,11 @@ def _reject_bond_channels_dynamic(eli_param):
     guard / non-goal S2): the dynamic kernel would need the bond channels
     carried through the frequency-resolved vertex, which is a separate spec.
     Fail loudly rather than silently running the scalar dynamic vertex.
+
+    The flag goes through the same validator as the static path, so a typo
+    ("ture") is refused here too instead of quietly reading as false.
     """
-    if backend.as_bool(eli_param.get("bond_channels", False)):
+    if _bond_bool_option(eli_param, "bond_channels", False):
         raise ValueError(
             "[eliashberg] bond_channels=true is not supported with "
             "frequency='dynamic': the bond-resolved pairing vertex is "
@@ -194,8 +278,14 @@ def _read_bond_config(eli_param):
     Every bond option set while ``bond_channels`` is off is IGNORED WITH A
     WARNING (they have no meaning on the default path) and never parsed, so a
     stale option cannot fail an otherwise valid run.
+
+    Every value is validated centrally (``_bond_bool_option`` /
+    ``_bond_float_option`` / ``_bond_int_option``): an unrecognised boolean
+    spelling, a non-integral integer or an unparsable number raises naming the
+    offending ``[eliashberg]`` key instead of being coerced into a DIFFERENT
+    valid configuration.
     """
-    use_bond = backend.as_bool(eli_param.get("bond_channels", False))
+    use_bond = _bond_bool_option(eli_param, "bond_channels", False)
     if not use_bond:
         stale = [name for name in _BOND_OPTION_KEYS if name in eli_param]
         if stale:
@@ -205,8 +295,7 @@ def _read_bond_config(eli_param):
                 "here.", ", ".join(stale))
         return False, None, None, None, {}, False
 
-    bond_diagnostics = backend.as_bool(eli_param.get("bond_diagnostics",
-                                                     False))
+    bond_diagnostics = _bond_bool_option(eli_param, "bond_diagnostics", False)
 
     bond_green = eli_param.get("bond_green")
     if bond_green is not None:
@@ -217,14 +306,13 @@ def _read_bond_config(eli_param):
                 "npz file; got an empty string. Omit the key to build the "
                 "bare Green function from the transfer Hamiltonian.")
 
-    max_shells = eli_param.get("bond_max_shells")
-    if max_shells is not None:
-        max_shells = int(max_shells)
-        if max_shells < 0:
-            raise ValueError(
-                "[eliashberg] bond_max_shells must be >= 0 (shell 0 = the "
-                "on-site Delta r = 0 point), got {}".format(max_shells))
-    cap_gb = float(eli_param.get("bond_memory_cap_gb", _BOND_MEMORY_CAP_GB))
+    max_shells = _bond_int_option(eli_param, "bond_max_shells")
+    if max_shells is not None and max_shells < 0:
+        raise ValueError(
+            "[eliashberg] bond_max_shells must be >= 0 (shell 0 = the "
+            "on-site Delta r = 0 point), got {}".format(max_shells))
+    cap_gb = _bond_float_option(eli_param, "bond_memory_cap_gb",
+                                _BOND_MEMORY_CAP_GB)
     if not np.isfinite(cap_gb) or cap_gb <= 0.0:
         raise ValueError(
             "[eliashberg] bond_memory_cap_gb must be a positive finite number, "
@@ -238,21 +326,21 @@ def _read_bond_config(eli_param):
     pre_opts = {}
     for key, opt in (("bond_precondition_atol", "atol"),
                      ("bond_precondition_rtol", "rtol")):
-        if key in eli_param:
-            val = float(eli_param[key])
+        val = _bond_float_option(eli_param, key)
+        if val is not None:
             if not np.isfinite(val) or val < 0.0:
                 raise ValueError(
                     "[eliashberg] {} must be a non-negative finite number, "
                     "got {!r}".format(key, eli_param[key]))
             pre_opts[opt] = val
-    if "bond_precondition_dense_limit" in eli_param:
-        val = int(eli_param["bond_precondition_dense_limit"])
-        if val < 0:
+    dense_limit = _bond_int_option(eli_param, "bond_precondition_dense_limit")
+    if dense_limit is not None:
+        if dense_limit < 0:
             raise ValueError(
                 "[eliashberg] bond_precondition_dense_limit must be >= 0 "
                 "(0 = always use the randomized probe estimator), got "
-                "{}".format(val))
-        pre_opts["dense_limit"] = val
+                "{}".format(dense_limit))
+        pre_opts["dense_limit"] = dense_limit
     return True, bond_green, max_shells, cap_gb, pre_opts, bond_diagnostics
 
 
@@ -1592,7 +1680,14 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     # test exercise the real production code path instead of a mirror copy.
     # dress_bond performs exactly the same operations in the same order, so
     # this call is bit-identical to the historical inline body.
-    chis, chic = bond_channels.dress_bond(chi0_static, S_all, C_all)
+    #
+    # cond_tol=None DISABLES dress_bond's near-singularity guard here: that
+    # guard is a BOND-PATH-ONLY policy. This is the legacy default path, which
+    # has always simply called np.linalg.solve; an invertible but poorly
+    # conditioned RPA denominator must keep returning its (large but finite)
+    # result rather than becoming a ValueError for existing users.
+    chis, chic = bond_channels.dress_bond(chi0_static, S_all, C_all,
+                                          cond_tol=None)
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -2023,6 +2118,50 @@ def _load_green_npz(green_path, norb, Nx, Ny, Nz, label="Green"):
     green = green_raw[0].reshape(
         nfreq, Nx, Ny, Nz, norb, norb).transpose(4, 5, 1, 2, 3, 0).copy()
     return green, nfreq
+
+
+def _peek_green_npz_nfreq(green_path, label="Green"):
+    """Return the ``nfreq`` axis of a Green npz WITHOUT materialising it.
+
+    The bond path's resource preflight must run with the frequency count the
+    run will really use -- and for an external ``bond_green`` that is the
+    FILE's, not the configured ``Nmat`` (review fix: the preflight used to run
+    with the configured value first, so an over-large ``Nmat`` could refuse a
+    run that fits). Reading the npz member's array header alone keeps the
+    preflight strictly ahead of the (possibly large) allocation.
+
+    Returns ``None`` when the frequency count cannot be determined from the
+    header alone (missing file, no ``green`` member, unexpected rank or an
+    unknown ``.npy`` format version); the caller then falls back to
+    :func:`_load_green_npz`, which raises the informative error.
+    """
+    try:
+        if not zipfile.is_zipfile(green_path):
+            return None
+        with zipfile.ZipFile(green_path) as zf:
+            member = None
+            for name in zf.namelist():
+                if name in ("green.npy", "green"):
+                    member = name
+                    break
+            if member is None:
+                return None
+            with zf.open(member) as fh:
+                version = np.lib.format.read_magic(fh)
+                if version == (1, 0):
+                    shape, _, _ = np.lib.format.read_array_header_1_0(fh)
+                elif version == (2, 0):
+                    shape, _, _ = np.lib.format.read_array_header_2_0(fh)
+                else:
+                    return None
+    except (OSError, ValueError):
+        # unreadable/corrupt: let the real loader produce the diagnostic
+        return None
+    if len(shape) != 5:
+        return None
+    logger.info("%s %s carries %d Matsubara frequencies (read from the npz "
+                "header)", label, green_path, int(shape[1]))
+    return int(shape[1])
 
 
 def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
@@ -4394,7 +4533,26 @@ def calc_eliashberg(input_dict):
         if bond_set.dropped:
             logger.info("Bond channel provenance (dropped): %s",
                         list(bond_set.dropped))
-        _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat,
+        # The frequency grid the bond bubble will really be built on: for an
+        # external bond_green that is the FILE's Nmat, which therefore has to
+        # be known BEFORE the cap is applied -- otherwise an over-large
+        # configured Nmat could refuse a run that fits comfortably (the file
+        # is never reached). The header peek reads the npz member's shape
+        # only, so the preflight still precedes every large allocation.
+        nmat_bond = nmat
+        if bond_green is not None:
+            nmat_peek = _peek_green_npz_nfreq(bond_green, label="bond_green")
+            if nmat_peek is not None:
+                nmat_bond = nmat_peek
+                if nmat_peek != nmat:
+                    logger.warning(
+                        "[eliashberg] bond_green %s carries %d Matsubara "
+                        "frequencies while [mode.param] Nmat = %d; the FILE "
+                        "wins (the Green function defines the frequency grid "
+                        "the bond bubble is built on). The resource preflight "
+                        "uses the file's Nmat.",
+                        bond_green, nmat_peek, nmat)
+        _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat_bond,
                                  bond_memory_cap_gb)
 
         if bond_green is not None:
@@ -4404,7 +4562,10 @@ def calc_eliashberg(input_dict):
             # chi file, so this is the only external input it takes.
             green_kw, nmat_green = _load_green_npz(
                 bond_green, norb, Nx, Ny, Nz, label="bond_green")
-            if nmat_green != nmat:
+            if nmat_green != nmat_bond:
+                # The header peek could not resolve the count (unusual npz
+                # layout); the preflight above therefore ran with the
+                # configured Nmat, so re-run it with the authoritative one.
                 logger.warning(
                     "[eliashberg] bond_green %s carries %d Matsubara "
                     "frequencies while [mode.param] Nmat = %d; the FILE wins "
