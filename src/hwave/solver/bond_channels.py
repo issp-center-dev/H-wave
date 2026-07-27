@@ -1233,6 +1233,177 @@ def bond_bubble(green, bond_set, beta):
     return chi_bar
 
 
+# ---------------------------------------------------------------------------
+# bond_bubble_dynamic's memory contract  --  read together with
+# sc._bond_memory_estimate(..., dynamic_nmat=...)
+# ---------------------------------------------------------------------------
+#
+# ``bond_bubble_dynamic`` is a code-motion copy of ``bond_bubble`` (see that
+# function's own buffer-accounting comment above) that keeps the full
+# bosonic-frequency axis in ``chi0_qw`` instead of slicing out the static
+# (zero-transfer) index. The per-iteration working set at the high-water
+# mark -- the norb**4 buffers alive inside ``tau_to_boson(chi0_qt)`` and the
+# norb**2 buffers alive across the channel-pair loop -- is therefore
+# UNCHANGED from ``bond_bubble``: each is still one ``(N_q, nmat)``-grid
+# array, because the frequency axis is already carried through the whole
+# pipeline (``fermion_to_tau`` / ``spatial_ifftn`` / ``tau_to_boson``) even
+# in the static function; only the STORED OUTPUT ``chi_bar`` grows, by a
+# factor of ``nmat`` (``(N_q, nmat, ND, ND)`` instead of ``(N_q, ND, ND)``),
+# because every bosonic-frequency slice is written into the output array
+# instead of only the ``static_index`` one. These two constants are kept
+# separate from ``BOND_BUBBLE_N4_BUFFERS`` / ``BOND_BUBBLE_N2_BUFFERS`` (even
+# though their values are identical) so ``sc._bond_memory_estimate``'s
+# dynamic branch cannot silently desync from this function's actual working
+# set the way a single shared constant could.
+BOND_BUBBLE_DYN_N4_BUFFERS = 3
+BOND_BUBBLE_DYN_N2_BUFFERS = 3
+
+
+def bond_bubble_dynamic(green, bond_set, beta):
+    """Compute the frequency-resolved enlarged bond-channel bubble
+    ``chi_bar(q, i nu_{j~}; Delta r, Delta r')``.
+
+    Identical to :func:`bond_bubble` (spec S4.2 / Onari Eq. 14; see that
+    function's docstring for the full derivation and normalization -- the
+    orbital contraction, ``G(r,tau)*G(-r,-tau)*sgn(tau)`` construction, bond
+    phase ``e^{i k.(Delta r_m - Delta r_m')}`` realized as a real-space
+    ``np.roll``, and the fermion->tau->boson pipeline are all mirrored
+    verbatim) except that this function does **not** collapse the bosonic
+    Matsubara axis to its zero-transfer (static) slice: the full ``nmat``
+    -length bosonic-frequency axis produced by ``matsubara.tau_to_boson`` is
+    kept in the output. Zero bosonic transfer (``i nu_{0}``) sits at array
+    index ``nmat // 2`` on that axis -- the same convention
+    :func:`bond_bubble` uses internally for its ``static_index`` slice, so
+    ``bond_bubble_dynamic(...)[..., nmat // 2, :, :]`` equals
+    ``bond_bubble(...)`` exactly.
+
+    Like :func:`bond_bubble`, this function does **not** apply the
+    ``green0_tail`` high-frequency Matsubara-tail correction -- that
+    correction is deferred to a later task (see spec S4.2 / Task 7's IR
+    tail estimator). The values returned here are therefore the raw
+    finite-``nmat`` sum only.
+
+    Parameters
+    ----------
+    green : ndarray, shape (norb, norb, Nx, Ny, Nz, nmat)
+        k-space, Matsubara-frequency Green's function in the ``sc.py``
+        layout/normalization (see ``hwave.sc._calc_green`` /
+        ``hwave.sc._load_flex_green``): ``iomega_n = (2n+1-nmat)*pi/beta``.
+    bond_set : ResolvedInteractionSet
+        Bond-channel topology (``delta_r``, ``n_channels``) as returned by
+        :func:`resolve_interactions`.
+    beta : float
+        Inverse temperature.
+
+    Returns
+    -------
+    chi_bar_w : ndarray, shape (Nx, Ny, Nz, nmat, ND, ND), complex
+        Frequency-resolved enlarged bubble; ``ND = norb**2 * B``. Bond-major
+        index ``I = m*nd + idx`` with ``nd = norb**2`` and
+        ``idx = l1*norb + l2`` (the existing ``sc.py`` orbital-pair
+        convention), same as :func:`bond_bubble`. The bosonic-frequency axis
+        (axis 3) has zero transfer at array index ``nmat // 2``; slicing
+        that index reproduces :func:`bond_bubble`'s static output.
+    """
+    green = np.asarray(green)
+    if green.ndim != 6:
+        raise ValueError(
+            "bond_bubble_dynamic: green must have shape (norb, norb, Nx, "
+            "Ny, Nz, nmat); got ndim={} shape={}".format(
+                green.ndim, green.shape)
+        )
+    norb, norb2, Nx, Ny, Nz, nmat = green.shape
+    if norb2 != norb:
+        raise ValueError(
+            "bond_bubble_dynamic: green's two orbital axes must both equal "
+            "norb; got shape {}".format(green.shape)
+        )
+
+    npair = norb * norb
+    n_channels = bond_set.n_channels
+    nd_enlarged = npair * n_channels
+
+    # --- mirror rpa.py._calc_chi0q exactly (single source of truth for the
+    # normalization / Matsubara convention: matsubara.fermion_to_tau and
+    # backend.spatial_ifftn/spatial_fftn are the same functions rpa.py calls) ---
+    green_kt = _ms.fermion_to_tau(green, axis=-1)
+    green_rt = _bk.spatial_ifftn(green_kt, axes=(2, 3, 4))
+    # Released as soon as it is consumed: only the buffers listed in
+    # ``BOND_BUBBLE_DYN_N2_BUFFERS`` / ``BOND_BUBBLE_DYN_N4_BUFFERS`` (see
+    # the module constants) may be alive at the high-water mark, because
+    # ``sc._bond_memory_estimate``'s dynamic branch is computed from exactly
+    # that list.
+    del green_kt
+
+    # G(-r,-tau): identical roll(-1)+flip trick to rpa.py, over both the
+    # spatial axes (2,3,4) and the imaginary-time axis (5).
+    # (np.flip is a view of the np.roll result, so this is ONE buffer.)
+    green_rev = np.flip(
+        np.roll(green_rt, -1, axis=(2, 3, 4, 5)), axis=(2, 3, 4, 5)
+    )
+
+    sgn = np.full(nmat, -1.0, dtype=complex)
+    sgn[0] = 1.0
+    sgn = sgn.reshape(1, 1, 1, 1, 1, nmat)
+    # G_fwd_sgn[l1,l3](r,tau) = G(r,tau)_{l1,l3} * sgn(tau)
+    G_fwd_sgn = green_rt * sgn
+    del green_rt          # green_rev does not alias it (np.roll copied)
+
+    chi_bar = np.zeros((Nx, Ny, Nz, nmat, nd_enlarged, nd_enlarged),
+                       dtype=complex)
+
+    delta_r = bond_set.delta_r
+    for m in range(n_channels):
+        dm = delta_r[m]
+        for mp in range(n_channels):
+            dmp = delta_r[mp]
+            shift = (dm[0] - dmp[0], dm[1] - dmp[1], dm[2] - dmp[2])
+
+            # Bond phase e^{i k.(Delta r_m - Delta r_m')} multiplying the
+            # bare-k Green's function is, by the Fourier shift theorem, a
+            # rigid shift of its real-space representation G(-r,-tau) by
+            # (Delta r_m - Delta r_m') (an np.roll of the array holding
+            # G(-r,-tau) -- see docstring).
+            green_rev_shifted = np.roll(green_rev, shift=shift, axis=(2, 3, 4))
+
+            # chi0_rt[l1,l2,l3,l4](r,tau)
+            #     = G_fwd[l1,l3](r,tau) * sgn(tau) * G_rev_shifted[l4,l2](r,tau)
+            # -- identical orbital contraction to rpa.py's general-mode chi0q
+            # (a=l1,b=l2,c=l3,d=l4; no axis is contracted, purely an outer
+            # product over orbital indices with an elementwise product over
+            # (r,tau)).
+            chi0_rt = np.einsum(
+                'acxyzt,dbxyzt->abcdxyzt', G_fwd_sgn, green_rev_shifted
+            )
+            del green_rev_shifted
+
+            chi0_qt = _bk.spatial_fftn(chi0_rt, axes=(4, 5, 6))
+            del chi0_rt
+            # tau_to_boson allocates one norb**4 temporary internally
+            # (``arr * omg``) plus its ifft output, so at this point exactly
+            # BOND_BUBBLE_DYN_N4_BUFFERS norb**4 arrays are alive; the final
+            # rescaling is done IN PLACE so it does not add a fourth.
+            chi0_qw = _ms.tau_to_boson(chi0_qt, axis=7)
+            del chi0_qt
+            chi0_qw *= (-1.0 / beta)
+
+            # Full bosonic-frequency axis -- unlike bond_bubble, no
+            # static_index slice: every transfer is kept in the output.
+            block = np.moveaxis(chi0_qw, (4, 5, 6, 7), (0, 1, 2, 3)).reshape(
+                Nx, Ny, Nz, nmat, npair, npair
+            )
+
+            chi_bar[:, :, :, :,
+                    m * npair:(m + 1) * npair,
+                    mp * npair:(mp + 1) * npair] = block
+            # Released before the NEXT iteration allocates its own norb**4
+            # buffers -- otherwise the previous chi0_qw would still be bound
+            # and the real peak would be one norb**4 array above the budget.
+            del block, chi0_qw
+
+    return chi_bar
+
+
 # ===========================================================================
 # lambda attribution on the symmetrized (Hermitian) kernel  --  spec S4.5
 # ===========================================================================

@@ -431,7 +431,7 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
 _BOND_N_Q_ARRAYS = 9
 
 
-def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
+def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
     """Byte budget for the bond path, broken down by buffer family.
 
     Split out of :func:`_bond_resource_preflight` so the accounting can be
@@ -480,6 +480,25 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
     ``peak``
         ``q_bytes + bubble_bytes + vertex_bytes + green_bytes`` -- what the
         cap is applied to.
+
+    ``dynamic_nmat``
+        ``None`` (default) reproduces the static estimate above byte-for-
+        byte -- IDENTICAL to omitting the keyword entirely, so every
+        existing call site is unaffected. When set to the dynamic path's
+        bosonic-frequency grid size, ``bond_bubble_dynamic``'s output
+        (``(N_q, nmat, ND, ND)`` instead of ``(N_q, ND, ND)`` -- see its
+        docstring in ``hwave.solver.bond_channels``) grows ``chi_bar``'s own
+        line of the budget by that factor; only the ``chi_bar`` line is
+        scaled (the other ``_BOND_N_Q_ARRAYS - 1`` q-resolved buffers --
+        ``S_bond``, ``C_bond``, ``chi_s``, ``chi_c``, etc. -- are not yet
+        frequency-resolved by any function that exists at this task, so
+        they are left at their static size), and ``bubble_bytes`` switches
+        to the ``BOND_BUBBLE_DYN_N4_BUFFERS`` / ``BOND_BUBBLE_DYN_N2_BUFFERS``
+        constants (``bond_bubble_dynamic``'s per-iteration working set is
+        the same shape as ``bond_bubble``'s -- only its stored output
+        differs -- so these currently equal the static constants, but are
+        tracked separately so a future change to either function's buffer
+        discipline cannot silently desync the other's estimate).
     """
     nd = norb * norb
     B = int(bond_set.n_channels)
@@ -488,10 +507,20 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
     itemsize = 16  # complex128
     unit = Nq * int(nmat) * itemsize
 
-    chi_bar_bytes = Nq * ND * ND * itemsize
-    q_bytes = _BOND_N_Q_ARRAYS * chi_bar_bytes
-    bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
-                    + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
+    chi_bar_bytes_static = Nq * ND * ND * itemsize
+    if dynamic_nmat is None:
+        chi_bar_bytes = chi_bar_bytes_static
+        n4_buffers = bond_channels.BOND_BUBBLE_N4_BUFFERS
+        n2_buffers = bond_channels.BOND_BUBBLE_N2_BUFFERS
+    else:
+        chi_bar_bytes = chi_bar_bytes_static * int(dynamic_nmat)
+        n4_buffers = bond_channels.BOND_BUBBLE_DYN_N4_BUFFERS
+        n2_buffers = bond_channels.BOND_BUBBLE_DYN_N2_BUFFERS
+    # Only chi_bar's own line grows with dynamic_nmat; the other
+    # (_BOND_N_Q_ARRAYS - 1) q-resolved buffers stay static-sized (see
+    # docstring above).
+    q_bytes = (_BOND_N_Q_ARRAYS - 1) * chi_bar_bytes_static + chi_bar_bytes
+    bubble_bytes = (n4_buffers * norb ** 4 + n2_buffers * norb ** 2) * unit
     vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
     green_bytes = (norb ** 2) * unit
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
