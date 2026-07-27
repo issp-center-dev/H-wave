@@ -935,9 +935,11 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
                     sc._check_spin_block_discarded(chi, norb, "kuroki", key)
             finally:
                 lg.removeHandler(handler)
+            # Filter on nothing: the guard has several messages and an earlier
+            # version of this test matched a phrase none of them contain, so the
+            # list was empty however the guard behaved.
             warns = [r.getMessage() for r in records
-                     if r.levelno >= logging.WARNING
-                     and "spin structure" in r.getMessage()]
+                     if r.levelno >= logging.WARNING]
             self.assertEqual(warns, [], "{}: unexpected warning".format(tag))
 
     def test_uniform_axis_with_tail_correction(self):
@@ -1088,6 +1090,16 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
         self.assertIn("paramagnetic", msg)
 
 
+def _bad_tail(rc, nmat, nvol, norb, nd_so):
+    """Redundant at the static slice, NOT redundant elsewhere on the axis."""
+    block = rc((nmat, nvol, norb, norb))
+    a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+    a[..., :norb, :norb] = block
+    a[..., norb:, norb:] = block
+    a[0, ..., norb:, norb:] *= 0.5
+    return a
+
+
 class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
     """The refusals must not reject workflows that were fine before.
 
@@ -1097,7 +1109,7 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
     """
 
     def _write(self, d, norb=2, nmat=4, Nx=2, Ny=2, Nz=1, build=None,
-               green=None):
+               green=None, tag_up_only=False):
         nvol, nd_so = Nx * Ny * Nz, norb * 2
         rng = np.random.default_rng(11)
 
@@ -1105,10 +1117,11 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
             return (rng.standard_normal(shape)
                     + 1j * rng.standard_normal(shape)) * 0.01
 
+        extra = {"chi_spin_blocks": "up_only"} if tag_up_only else {}
         for name, key in (("chiq_s", "chiq_s"), ("chiq_c", "chiq_c")):
             np.savez(os.path.join(d, name + ".npz"),
                      **{key: build(rc, nmat, nvol, norb, nd_so)},
-                     chi_convention="kuroki")
+                     chi_convention="kuroki", **extra)
         g = green(rc, nmat, nvol, norb) if green else rc(
             (1, nmat, nvol, norb, norb))
         np.savez(os.path.join(d, "green.npz"), green=g)
@@ -1116,56 +1129,70 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
                 "file": {"output": {"path_to_output": d}},
                 "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
 
-    def test_legacy_file_with_only_the_up_block_is_accepted(self):
-        """A hand-made or legacy npz may leave the down and cross blocks at zero
-        because the historical consumer only read the up block. That is missing
-        data, not polarization, and must not abort."""
+    @staticmethod
+    def _only_up(rc, nmat, nvol, norb, nd_so):
+        a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        a[..., :norb, :norb] = rc((nmat, nvol, norb, norb))
+        return a
+
+    def test_untagged_all_zero_down_block_is_refused(self):
+        """An all-zero down/cross block is NOT a reliable legacy marker: a
+        saturated or projected spin sector looks identical. The values alone
+        cannot tell them apart, so an untagged file must not be assumed benign
+        -- that was a hole in the first version of this guard."""
         import hwave.sc as sc
-
-        def only_up(rc, nmat, nvol, norb, nd_so):
-            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
-            a[..., :norb, :norb] = rc((nmat, nvol, norb, norb))
-            return a
-
         with tempfile.TemporaryDirectory() as d:
-            inp, norb, Nx, Ny, Nz = self._write(d, build=only_up)
+            inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up)
+            with self.assertRaises(ValueError) as cm:
+                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+        self.assertIn("chi_spin_blocks='up_only'", str(cm.exception))
+
+    def test_tagged_legacy_file_is_accepted(self):
+        """...but a file that declares the layout is read as intended."""
+        import hwave.sc as sc
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up,
+                                                tag_up_only=True)
             with self.assertLogs("hwave_sc", level="WARNING") as cm:
                 sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-        self.assertIn("legacy representation", "\n".join(cm.output))
+        self.assertIn("up_only", "\n".join(cm.output))
 
-    def test_static_route_ignores_frequencies_it_never_reads(self):
-        """The static loader consumes one slice. Non-redundancy elsewhere in the
-        stored axis must not decide whether that slice is usable."""
+    def test_static_route_also_validates_the_whole_axis(self):
+        """Paramagnetism is a property of the producing run, not only of the
+        slice consumed. Validating just the static slice let a file that the
+        dynamic route rejects through the static one -- and with a one-block
+        Green function it would then return a paramagnetic eigenvalue in
+        silence."""
         import hwave.sc as sc
-
-        def bad_tail(rc, nmat, nvol, norb, nd_so):
-            block = rc((nmat, nvol, norb, norb))
-            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
-            a[..., :norb, :norb] = block
-            a[..., norb:, norb:] = block
-            a[0, ..., norb:, norb:] *= 0.5      # frequency 0 is NOT the static one
-            return a
-
         with tempfile.TemporaryDirectory() as d:
-            inp, norb, Nx, Ny, Nz = self._write(d, build=bad_tail)
-            sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+            inp, norb, Nx, Ny, Nz = self._write(d, build=_bad_tail)
+            with self.assertRaises(ValueError):
+                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
 
-    def test_dynamic_route_still_rejects_the_same_file(self):
-        """...but the dynamic route reads every frequency, so it must refuse."""
+    def test_dynamic_route_rejects_it_too(self):
+        """The two routes must agree about whether a file is usable."""
         import hwave.sc as sc
-
-        def bad_tail(rc, nmat, nvol, norb, nd_so):
-            block = rc((nmat, nvol, norb, norb))
-            a = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
-            a[..., :norb, :norb] = block
-            a[..., norb:, norb:] = block
-            a[0, ..., norb:, norb:] *= 0.5
-            return a
-
         with tempfile.TemporaryDirectory() as d:
-            inp, norb, Nx, Ny, Nz = self._write(d, build=bad_tail)
+            inp, norb, Nx, Ny, Nz = self._write(d, build=_bad_tail)
             with self.assertRaises(ValueError):
                 sc._load_flex_susceptibilities_full(inp, norb, Nx, Ny, Nz)
+
+    def test_non_finite_green_is_refused(self):
+        """NaN fails every inequality, so without an explicit check a corrupt or
+        diverged Green function would slip past the block comparison and enter
+        the pair bubble."""
+        import hwave.sc as sc
+        for bad, where in ((np.nan, "kept"), (np.inf, "discarded")):
+            with self.subTest(value=bad, block=where):
+                with tempfile.TemporaryDirectory() as d:
+                    inp, norb, Nx, Ny, Nz = self._write(
+                        d, build=self._para, green=self._green_pair(1.0))
+                    g = np.load(os.path.join(d, "green.npz"))["green"]
+                    g[0 if where == "kept" else 1][0, 0, 0, 0] = bad
+                    np.savez(os.path.join(d, "green.npz"), green=g)
+                    with self.assertRaises(ValueError) as cm:
+                        sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+                self.assertIn("non-finite", str(cm.exception))
 
     def _green_pair(self, factor):
         def g(rc, nmat, nvol, norb):

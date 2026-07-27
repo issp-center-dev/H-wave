@@ -614,12 +614,9 @@ into the directory read by the Eliashberg step:
    a ``CoulombIntra``-only reduced run reproduces the equivalent
    ``chi0q_mode = "load"`` and general-scheme results exactly **for identical
    :math:`\Sigma = 0` physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
-   before the fix it did not. This is a statement about the pairing vertex, not
-   about the schemes being interchangeable: at full self-consistency
-   ``reduced`` and ``general`` differ in the self-energy as well, and their
-   converged results do **not** coincide even for ``CoulombIntra`` alone
-   (measured on a 2-orbital model: converged self-energies differ by about
-   10%).
+   before the fix it did not. This is a statement about the pairing vertex
+   only. It does not imply the two schemes are interchangeable at full
+   self-consistency, where they also differ in how the self-energy is built.
 
    As of this version, IR-native susceptibility files (``write_densified =
    false``) must carry this ``chi_convention`` tag, and the loader also
@@ -1168,8 +1165,11 @@ with four-index vertex structure.
    exceeds a few hundred ulp of double precision relative to the kept block,
    the run is **refused** rather than returning an eigenvalue that would not
    approximate the spin-resolved problem. The dressed Green function is checked
-   the same way: a two-block ``green.npz`` whose spin blocks differ is rejected
-   instead of silently using the first.
+   the same way, and non-finite values in it are rejected outright. A file whose
+   down-spin and cross-spin blocks are identically zero is ambiguous -- it may be
+   a legacy layout in which only the consumed block was ever populated, or a
+   fully polarized sector -- so it is refused unless it carries
+   ``chi_spin_blocks = "up_only"`` declaring the former.
 
 
 What each mode accepts

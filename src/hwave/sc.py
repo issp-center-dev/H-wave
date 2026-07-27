@@ -1427,8 +1427,11 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
-    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s")
-    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c")
+    legacy_s, legacy_c = _read_flex_legacy_tags(input_dict)
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
+                                legacy_s)
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
+                                legacy_c)
     chis_w = np.moveaxis(
         _expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
     chic_w = np.moveaxis(
@@ -1443,6 +1446,29 @@ _STATIC_IR_HINT = (
     "the static Eliashberg solver requires uniform-grid files. Re-run FLEX "
     "with [mode.param] write_densified = true, or switch to frequency = "
     "\"dynamic\" with [eliashberg] matsubara_basis = \"ir\".")
+
+
+def _read_flex_legacy_tags(input_dict):
+    """Read the opt-in ``chi_spin_blocks`` tag off the chi_s/chi_c files.
+
+    Kept apart from :func:`_read_flex_chi_raw` so that function's return arity
+    -- which tests and other callers depend on -- does not change. ``np.load``
+    on an npz is lazy, so checking for a key costs no array read.
+    """
+    chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
+    return (_legacy_up_block_only(np.load(chi_s_path)),
+            _legacy_up_block_only(np.load(chi_c_path)))
+
+
+def _legacy_up_block_only(data):
+    """Whether an npz declares the legacy single-populated-block layout.
+
+    Opt-in only: the values cannot distinguish "the other blocks were never
+    filled" from "this run is fully polarized", so the file has to say so.
+    """
+    if "chi_spin_blocks" not in data:
+        return False
+    return str(data["chi_spin_blocks"]).strip().lower() == "up_only"
 
 
 def _read_flex_chi_raw(input_dict, allow_ir=False):
@@ -1562,7 +1588,8 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
 _SPIN_DISCARD_ROUNDOFF_RATIO = 256 * np.finfo(float).eps
 
 
-def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
+def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
+                                legacy_up_block_only=False):
     """Reject, or at minimum report, spin content the embedding would drop.
 
     The reduced spin-orbital index is spin-block ordered ``s*norb + a``, and the
@@ -1621,25 +1648,31 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi"):
     if d_down == 0.0 and d_cross == 0.0:
         return
 
-    # A file whose down and cross blocks are entirely zero while the up block is
-    # not is the LEGACY single-populated-block representation: the historical
-    # consumer only ever read [:norb, :norb], so an externally assembled or
-    # hand-written npz may simply never have filled the rest. That is absent
-    # data, not spin polarization -- no physical run has an identically
-    # vanishing down-spin susceptibility -- and refusing it would break files
-    # that worked before. Say so and continue.
-    if (scale > 0.0
-            and not np.any(down) and not np.any(cross_ud)
+    # An all-zero down/cross block is NOT a reliable marker of the legacy
+    # single-populated representation: a saturated or projected spin sector, or
+    # externally produced spin-resolved data, can look exactly the same. Absent
+    # data and fully polarized data are indistinguishable from the values alone,
+    # so the file has to SAY which it is. Accept it only when it does.
+    if (scale > 0.0 and not np.any(down) and not np.any(cross_ud)
             and not np.any(cross_du)):
-        logger.warning(
-            "The reduced FLEX susceptibility %s has an all-zero down-spin block "
-            "and all-zero cross-spin blocks while the up-spin block is not "
-            "zero. This is read as the legacy representation in which only the "
-            "block the Eliashberg step consumes was ever populated, not as a "
-            "spin-polarized run (no physical run has an identically vanishing "
-            "down-spin susceptibility). Continuing with the up-spin block.",
-            label)
-        return
+        if legacy_up_block_only:
+            logger.warning(
+                "The reduced FLEX susceptibility %s has an all-zero down-spin "
+                "block and all-zero cross-spin blocks, and is tagged "
+                "chi_spin_blocks='up_only'. Reading it as the legacy "
+                "representation in which only the block the Eliashberg step "
+                "consumes was ever populated, and continuing with that block.",
+                label)
+            return
+        raise ValueError(
+            "The reduced FLEX susceptibility {} has a nonzero up-spin block "
+            "with an identically zero down-spin block and zero cross-spin "
+            "blocks. That is either a legacy file in which only the consumed "
+            "block was ever populated, or a fully spin-polarized/projected "
+            "susceptibility -- the values alone cannot tell them apart, and the "
+            "second is not something this paramagnetic formulation can use. Tag "
+            "the file with chi_spin_blocks='up_only' if it is the former; "
+            "otherwise supply a paramagnetic run.".format(label))
 
     parts = []
     if d_down != 0.0:
@@ -1849,6 +1882,13 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # normally rejects such a run first, but relying on that is fragile: it is a
     # different file, and a run whose chi happens to be redundant while its
     # Green functions are not would slip straight through. Check here too.
+    if not np.all(np.isfinite(green_raw)):
+        raise ValueError(
+            "The FLEX dressed Green function in '{}' contains non-finite "
+            "values (NaN or Inf). They would otherwise poison the spin-block "
+            "comparison below -- NaN fails every inequality, so a corrupt or "
+            "diverged file would be accepted -- and then enter the pair "
+            "bubble.".format(green_path))
     if nblock > 1:
         blocks = [green_raw[i] for i in range(nblock)]
         worst = max(float(np.max(np.abs(blocks[0] - b))) for b in blocks[1:])
@@ -1935,10 +1975,11 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     # externally assembled or frequency-restricted file, values that never enter
     # the result should not decide whether it is usable. The dynamic loader,
     # which does read every frequency, still checks all of them.
-    _check_spin_block_discarded(chi_s_raw[center_s:center_s + 1], norb,
-                                chi_convention, "chi_s")
-    _check_spin_block_discarded(chi_c_raw[center_c:center_c + 1], norb,
-                                chi_convention, "chi_c")
+    legacy_s, legacy_c = _read_flex_legacy_tags(input_dict)
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
+                                legacy_s)
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
+                                legacy_c)
     chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
                             norb, Nx, Ny, Nz, chi_convention)[0]
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
