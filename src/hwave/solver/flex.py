@@ -733,8 +733,18 @@ class FLEX(RPA):
         # frequency axis is densified back onto the run's uniform Nmat grid
         # so the output files keep their exact format (design OQ-1) and the
         # Stage-1 dynamic Eliashberg loader works unchanged.
+        # Solve the transverse channel BEFORE densification, on the same axis
+        # chi_s was dressed on. Densifying first and dressing after would apply
+        # the (nonlinear) RPA solve to interpolated data -- the two operations do
+        # not commute, so the check would report a mismatch that is an artifact
+        # of the axis, not of the vertices.
+        chi_pm = (self._calc_chi_pm_check(chi0q_out, ham_orig)
+                  if self.output_chi_pm else None)
+
         if self.use_ir and self.write_densified:
             axF, axB = self._ir_axF, self._ir_axB
+            if chi_pm is not None:
+                chi_pm = self._ir_densify(chi_pm, axB, 0)
             sigma = self._ir_densify(sigma, axF, 1)
             green_kw = self._ir_densify(green_kw, axF, 1)
             chi_s = self._ir_densify(chi_s, axB, 0)
@@ -749,6 +759,8 @@ class FLEX(RPA):
             chi_s = _bk.to_host(chi_s)
             chi_c = _bk.to_host(chi_c)
             chi0q_out = _bk.to_host(chi0q_out)
+            if chi_pm is not None:
+                chi_pm = _bk.to_host(chi_pm)
         self.sigma = sigma
         self.green_kw = green_kw
         self.chi_s = chi_s
@@ -758,10 +770,9 @@ class FLEX(RPA):
         green_info["chi0q"] = chi0q_out
         green_info["chiq_s"] = chi_s
         green_info["chiq_c"] = chi_c
-        if self.output_chi_pm:
-            chi_pm = self._calc_chi_pm_check(chi0q_out, ham_orig)
-            if chi_pm is not None:
-                green_info["chiq_pm"] = chi_pm
+        green_info.pop("chiq_pm", None)   # never inherit one from a prior solve
+        if chi_pm is not None:
+            green_info["chiq_pm"] = chi_pm
         green_info["sigma"] = sigma
         green_info["green"] = green_kw
         green_info["physics"] = physics
@@ -1844,8 +1855,10 @@ class FLEX(RPA):
 
         Enabled by the undocumented ``output_chi_pm`` switch. Solves the
         transverse RPA channel with the crossed (Fock-exchange) Hartree vertex
-        -- ``RPA._build_transverse_channel`` -- from the converged FLEX chi0q,
-        and returns chi^{+-}.
+        -- ``RPA._build_transverse_channel`` -- from the final-iteration FLEX
+        chi0q (the same one the stored chi_s was dressed from; note FLEX still
+        produces it when the SCF stops at IterationMax without converging), and
+        returns chi^{+-}.
 
         For a paramagnetic system SU(2) symmetry forces chi^{+-} == chi^{zz},
         so this must reproduce the longitudinal spin channel. Because the two
@@ -1871,8 +1884,28 @@ class FLEX(RPA):
                 "paramagnetic run, and this one is spin_mode='%s'.",
                 self.spin_mode)
             return None
+        # spin-free is about the ONE-BODY Hamiltonian; the identity also needs
+        # SU(2)-invariant interactions. Per the transverse builder's own table,
+        # Hund alone gives W_+- = -J and Ising alone W_+- = 2J, neither equal to
+        # the longitudinal vertex, so chi^{+-} != chi^{zz} legitimately and a
+        # mismatch would say nothing about the vertex construction. Only run the
+        # check on interaction sets where the identity actually holds.
+        not_su2 = [k for k in ("Hund", "Ising")
+                   if k in getattr(self.ham_info, "param_ham", {})]
+        if not_su2:
+            logger.warning(
+                "output_chi_pm: skipped -- %s present. spin-free constrains the "
+                "one-body Hamiltonian, not the interaction: these terms are not "
+                "SU(2)-invariant on their own (W_+- differs from the "
+                "longitudinal vertex), so chi^{+-} != chi^{zz} is expected and "
+                "the comparison would not test the vertex construction.",
+                ", ".join(not_su2))
+            return None
+        # Both operands on the host: ham_orig may still be the device copy the
+        # SCF loop used, and mixing it with a host chi0q inside _solve_rpa would
+        # fail after a GPU run had already completed.
         chi0q_pm, ham_pm = self._build_transverse_channel(
-            _bk.to_host(chi0q_out), ham_orig)
+            _bk.to_host(chi0q_out), _bk.to_host(ham_orig))
         chi_pm = _bk.to_host(self._solve_rpa(chi0q_pm, ham_pm))
         logger.info("output_chi_pm: transverse channel solved "
                     "(shape %s); for a paramagnetic run it should equal the "
@@ -2674,7 +2707,14 @@ class FLEX(RPA):
             # Eliashberg loader never reads it.
             file_name = os.path.join(path_to_output,
                                      info_outputfile.get("chiq_pm", "chiq_pm"))
-            np.savez(file_name, chiq_pm=green_info["chiq_pm"], **common_meta)
+            # chi_convention names which S/C matrices a LONGITUDINAL chi pairs
+            # with; it is meaningless for a transverse quantity and would let a
+            # generic reader treat this as a spin/charge channel. Drop it and
+            # tag the channel explicitly instead.
+            pm_meta = {k: v for k, v in common_meta.items()
+                       if k != "chi_convention"}
+            np.savez(file_name, chiq_pm=green_info["chiq_pm"],
+                     chi_channel="transverse_pm", **pm_meta)
             logger.info(
                 "save_results: save chiq_pm in file {}".format(file_name))
 

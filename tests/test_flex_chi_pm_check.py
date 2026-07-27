@@ -48,17 +48,18 @@ def _fixture(dirpath):
             f.write(body)
 
 
-def _solve(dirpath, scheme, switch, extra_param=None):
+def _solve_with(dirpath, scheme, switch, extra_inter=None, extra_param=None,
+                green_info=None, write_fixture=True):
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
 
-    _fixture(dirpath)
-    info_input = {
-        'path_to_input': dirpath,
-        'interaction': {'path_to_input': dirpath, 'Geometry': 'geom.dat',
-                        'Transfer': 'transfer.dat',
-                        'CoulombIntra': 'coulombintra.dat'},
-    }
+    if write_fixture:
+        _fixture(dirpath)
+    inter = {'path_to_input': dirpath, 'Geometry': 'geom.dat',
+             'Transfer': 'transfer.dat',
+             'CoulombIntra': 'coulombintra.dat'}
+    inter.update(extra_inter or {})
+    info_input = {'path_to_input': dirpath, 'interaction': inter}
     ham = read_input_k.QLMSkInput(info_input).get_param("ham")
     param = {'T': 0.05, 'CellShape': [4, 4, 1],
              'SubShape': [1, 1, 1], 'Nmat': 16, 'filling': 0.75,
@@ -67,9 +68,14 @@ def _solve(dirpath, scheme, switch, extra_param=None):
     param.update(extra_param or {})
     solver = solver_flex.FLEX(ham, {}, {'mode': 'FLEX', 'param': param,
                                         'calc_scheme': scheme})
-    green_info = read_input_k.QLMSkInput(info_input).get_param("green")
+    if green_info is None:
+        green_info = read_input_k.QLMSkInput(info_input).get_param("green")
     solver.solve(green_info, dirpath)
     return green_info
+
+
+def _solve(dirpath, scheme, switch, extra_param=None, green_info=None):
+    return _solve_with(dirpath, scheme, switch, None, extra_param, green_info)
 
 
 class TestChiPmCheck(unittest.TestCase):
@@ -117,6 +123,61 @@ class TestChiPmCheck(unittest.TestCase):
                 and "output_chi_pm" in r.getMessage()]
         self.assertEqual(len(msgs), 1)
         self.assertIn("calc_scheme='general'", msgs[0])
+
+
+
+    def test_ir_axis_agrees_too(self):
+        """The transverse solve must happen on the same frequency axis chi_s was
+        dressed on. Densifying first and dressing after would not commute, and
+        would show up here as a spurious mismatch."""
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            self.skipTest("sparse_ir not installed")
+        with tempfile.TemporaryDirectory() as d:
+            gi = _solve(d, "general", True,
+                        {'matsubara_basis': 'ir', 'ir_wmax': 20.0})
+        self.assertIn("chiq_pm", gi)
+        np.testing.assert_allclose(
+            np.asarray(gi["chiq_pm"]), np.asarray(gi["chiq_s"]),
+            rtol=1e-9, atol=1e-12,
+            err_msg="chi^{+-} must equal chi^{zz} on the IR axis as well")
+
+    def test_non_su2_interaction_is_skipped_with_a_reason(self):
+        """spin-free constrains the one-body Hamiltonian, not the interaction.
+        Ising is not SU(2)-invariant on its own, so the identity does not hold
+        and the comparison would not test anything."""
+        import logging
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave.solver.flex")
+        lg.addHandler(handler)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                _fixture(d)
+                with open(os.path.join(d, "ising.dat"), "w") as f:
+                    f.write("Ising\n2\n1\n 1\n"
+                            "   0    0    0    1    2   0.500000000000   0.000000000000\n"
+                            "   0    0    0    2    1   0.500000000000   0.000000000000\n")
+                gi = _solve_with(d, "general", True, {"Ising": "ising.dat"})
+        finally:
+            lg.removeHandler(handler)
+        self.assertNotIn("chiq_pm", gi)
+        msgs = [r.getMessage() for r in records
+                if r.levelno >= logging.WARNING
+                and "output_chi_pm" in r.getMessage()]
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("Ising", msgs[0])
+        self.assertIn("SU(2)", msgs[0])
+
+    def test_no_stale_key_when_the_switch_is_off(self):
+        """A reused green_info must not keep a chiq_pm from an earlier solve."""
+        with tempfile.TemporaryDirectory() as d:
+            gi = _solve(d, "general", True)
+            self.assertIn("chiq_pm", gi)
+            gi2 = _solve(d, "general", False, green_info=gi)
+        self.assertNotIn("chiq_pm", gi2)
 
 
 if __name__ == "__main__":
