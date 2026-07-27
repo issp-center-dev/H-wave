@@ -1,7 +1,7 @@
 """P0-1 gate: dense uniform Hermiticity check for the dynamic bond kernel.
 
-Normative reference: docs/superpowers/specs/2026-07-28-dynamic-bond-channels
-design, section 2 (the P0-1 amendment gate). This test decides whether the
+Normative reference: docs/superpowers/specs/2026-07-27-dynamic-bond-channels-design.md,
+section 2 (the P0-1 amendment gate). This test decides whether the
 Hermitian-solver design of the static bond kernel transfers to the dynamic
 (frequency-resolved) bond kernel BEFORE any production dynamic-kernel code
 (Task 6+) is written. Uses ONLY the independent oracle
@@ -13,12 +13,19 @@ Per the brief: if this gate fails, STOP. Do not tune, do not weaken the
 tolerance, do not modify the oracle. Report the measured residuals and any
 structure (instantaneous vs fluctuation) and let the spec-amendment gate
 decide next steps.
+
+SKIPPED BY DEFAULT (``@pytest.mark.slow``): densifying the oracle matvec
+over all 128 basis vectors, per parity, takes ~3-6 minutes total on this
+grid -- the same skip-guard pattern as
+``tests/test_bond_onari_milestone.py``'s slow grid-convergence test. Run
+with ``HWAVE_RUN_SLOW_FIXTURES=1`` or ``pytest -m slow``.
 """
 import numpy as np
 import pytest
 
 from hwave.solver import bond_channels as bc
 from tests.oracle_bond_dynamic import oracle_bond_bubble, oracle_bond_matvec
+from tests.test_bond_onari_milestone import _require_slow_fixtures
 from tests.test_oracle_bond_dynamic import _symmetric_green
 
 BETA = 5.0
@@ -71,8 +78,10 @@ def _build_vertices(bset, U, shape):
     return bc.bare_bond_vertices(bset, S0, C0, norb)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("pairing", ["singlet", "triplet"])
-def test_p0_1_uniform_hermiticity_gate(pairing):
+def test_p0_1_uniform_hermiticity_gate(pairing, request):
+    _require_slow_fixtures(request)
     Nx = Ny = 4; Nz = 1; nmat = 8
     green = _symmetric_green(1, Nx, Ny, Nz, nmat, BETA)
     # --- v1 symmetry-class preconditions (spec section 2) ---
@@ -80,8 +89,13 @@ def test_p0_1_uniform_hermiticity_gate(pairing):
     g_flip_k = np.roll(green[:, :, ::-1, ::-1, ::-1, :], (1, 1, 1), (2, 3, 4))
     assert np.abs(g_flip_k - green).max() <= 1e-10 * gmax
     assert np.abs(green[..., ::-1] - np.conj(green)).max() <= 1e-10 * gmax
-    w = (green * np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1],
-                         (1, 1, 1), (2, 3, 4))).real[0, 0]
+    w_complex = (green * np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1],
+                                 (1, 1, 1), (2, 3, 4)))[0, 0]
+    # w must be real (up to round-off) BEFORE the .real truncation below
+    # silently discards any imaginary part -- tol_sym = 1e-10 relative.
+    assert (np.abs(w_complex.imag).max()
+            <= 1e-10 * np.abs(w_complex).max())
+    w = w_complex.real
     assert w.min() >= 1e-12 * w.max()
     # --- bond topology + vertices (reuse the static machinery) ---
     # dict format is {(irvec, orbvec): value} per resolve_interactions'
