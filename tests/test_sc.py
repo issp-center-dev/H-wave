@@ -3315,11 +3315,16 @@ class TestKanamoriInteraction(unittest.TestCase):
 
             # chi0 at static limit
             chi0_static = chi0q_ref[:, :, :, :, :, nmat // 2]
-            # Expand 2-index to 4-index for matrix formulation
+            # Expand 2-index to 4-index for the matrix formulation, using the
+            # SAME density-pair placement as production: a reduced chi0 is the
+            # density-density diagonal, so chi0_2d[a,b] belongs at
+            # [(a,a),(b,b)]. (This mirrored the old kron(chi0_2d, I_norb)
+            # scatter, which modelled different susceptibility data than the
+            # solver actually builds.)
             chi0_2d = chi0_static.transpose(2, 3, 4, 0, 1).copy()
             chi0_expanded = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-            for l2 in range(norb):
-                chi0_expanded[:, :, :, l2::norb, l2::norb] = chi0_2d
+            _dens = np.arange(norb) * norb + np.arange(norb)
+            chi0_expanded[..., _dens[:, None], _dens[None, :]] = chi0_2d
 
             I_mat = np.eye(nd, dtype=complex)
 

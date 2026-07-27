@@ -603,8 +603,11 @@ into the directory read by the Eliashberg step:
    :math:`\text{out}[(a,a),(b,b)] = X[a,b]` with every other component zero.
 
    Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
-   for every run with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"``
-   or ``"squashed"``. Single-orbital (``norb = 1``) results are bit-identical
+   for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"`` or
+   ``"squashed"`` -- specifically whenever the inter-orbital density
+   components :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b` are nonzero,
+   which is the generic case. Treat every such stored eigenvalue and gap
+   function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
    (both placements coincide), as are all general (myo) results. With the fix,
    a ``CoulombIntra``-only reduced run reproduces the equivalent
    ``chi0q_mode = "load"`` and general-scheme results exactly for identical
@@ -1126,8 +1129,25 @@ with four-index vertex structure.
    This is a limitation of the stored data, not of the loader, and cannot be
    repaired on the Eliashberg side. Re-run FLEX with
    ``calc_scheme = "general"`` (which stores the full orbital-pair
-   susceptibility) for the complete vertex, or use ``chi0q_mode = "load"``.
+   susceptibility) for the complete vertex. Note that ``chi0q_mode =
+   "load"`` is **not** an escape unless the chi0q it reads is itself a
+   general (four-index) one: a reduced two-index chi0q is missing exactly
+   the same off-density components.
    Single-orbital models are unaffected -- there is no off-density pair index.
+
+.. note::
+
+   **The Eliashberg step assumes a paramagnetic background.** The Kuroki
+   :math:`S`/:math:`C` matrices carry no spin index, so a reduced FLEX
+   susceptibility is consumed by keeping only its spin-up block. That is
+   exact for a paramagnetic run, where the discarded blocks are redundant
+   (the down block equals the up block and the cross-spin blocks vanish).
+   A spin-polarized run -- ``spin_mode`` is auto-detected, so an ``Extern``
+   field with ``coeff_extern`` is enough -- does not satisfy this, and the
+   discarded components are real. The solver checks the stored data and
+   warns, naming the channel and how large the discarded part is; the
+   eigenvalue it then returns is not a controlled approximation of the
+   spin-resolved problem.
 
 
 Tips

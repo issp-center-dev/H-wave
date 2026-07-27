@@ -921,6 +921,8 @@ Tips
      ``Hund``、``Ising``、``Exchange``、``PairHop`` がある場合は非密度チャネルが
      裸のまま入り、ソルバーが警告を出します。完全な頂点を得るには
      ``calc_scheme = "general"`` を使用してください。
+     :ref:`Eliashberg の対応する相互作用に関する注意 <sc_supported_inter>`
+     も参照してください。
 
 
 実装の詳細と制限事項
