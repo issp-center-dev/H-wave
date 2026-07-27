@@ -274,6 +274,44 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   保存則を満たす FLEX の結果ではないので、 :math:`\lambda` の絶対値を
   FLEX／動的計算と直接比較することはできません。固有値ファイルの ``#``
   コメント行に近似レベルとチャネル一覧が記録されます。
+
+  静的・1軌道のボンド計算に対する最小限の有効な ``[eliashberg]`` 設定例
+  （ボンドカーネルは斥力優勢なので、``solver_mode = "iteration"`` と
+  併用する場合は ``spectral_shift = "auto"`` が必要です。上記の
+  ``spectral_shift`` の注記を参照）:
+
+  .. code-block:: toml
+
+     [mode]
+     mode = "RPA"
+
+     [mode.param]
+     T         = 0.02
+     CellShape = [16, 16, 1]
+     Nmat      = 256
+     filling   = 0.7
+
+     [file]
+     [file.input]
+     path_to_input = "."
+
+     [file.input.interaction]
+     path_to_input = "."
+     Geometry      = "geom.dat"       # norb = 1
+     Transfer      = "transfer.dat"
+     CoulombIntra  = "coulombintra.dat"
+     CoulombInter  = "coulombinter.dat"  # bond_channels に必須。値が 0 の
+                                          # 宣言のみでも可
+
+     [file.output]
+     path_to_output = "output"
+
+     [eliashberg]
+     frequency      = "static"        # bond_channels は static のみ
+     solver_mode    = "iteration"
+     spectral_shift = "auto"          # 斥力優勢なボンドカーネルのため
+     bond_channels  = true
+
 - ``bond_diagnostics``: ``true`` / ``false`` （デフォルト ``false`` 。
   ``bond_channels = true`` のときのみ有効）。主要状態の **キャラクター解析**
   をオプトインで出力します。出力は固有値ファイルへの ``#`` コメント行の
@@ -753,6 +791,57 @@ Arnoldi固有値解析は複数の固有値を検出します。
 - ``bond_diagnostics_clusters_note`` — クラスタリングの規約
   （:math:`|\lambda_i-\lambda_j|\le` ``deg_tol`` による単連結法）を
   説明する自由記述です。
+
+**科学的な留保事項（単一バンド Onari マイルストーン）。** 以下は
+``tests/test_bond_onari_milestone.py`` が検証する具体的な受け入れケース
+（単一バンド正方格子、C4v、:math:`U = 4`、:math:`n = 0.7`）について確立された
+事実です。``bond_channels = true`` の結果一般の読み方に影響するため、
+適切にヘッジした上でここに記載します:
+
+- 主要な三重項固有値 :math:`\lambda_t` が :math:`V` とともに上昇する現象のうち、
+  ボンドチャネル特有の寄与は **約 63%** に過ぎません。残りの **約 37%** は、
+  スカラー（非ボンド）パスがすでに持っている潰れた密度チャネル
+  （:math:`\Delta r = 0`）の寄与です。これは :math:`m \neq 0` のボンドブロックを
+  ゼロにする制御実験がスカラーパスの結果を厳密に再現することで確認しました。
+- :math:`V` を増やすと、追跡している状態だけでなく **奇パリティセクター全体が
+  膨張** します。同じ :math:`V` の範囲でサブリーディングな奇パリティ固有値も
+  同程度の比率で上昇します。したがってこれは選択的な f 波ペアリング不安定性の
+  証拠では **なく**\ 、より広い奇パリティセクター全体の増強を示すものです。
+- 追跡している状態の f 成分（``bond_diagnostics_harmonics``）は
+  :math:`V = 0` の :math:`\approx 21\%` から :math:`V = 1.2` の
+  :math:`\approx 68\%` へと **増大** する一方、p 成分は終始
+  :math:`\le 0.3\%` にとどまります。つまりこの状態は :math:`V` の増大とともに
+  f 成分を **獲得していく** 奇パリティ・非 p 状態であり、スキャン全体を通じて
+  f 波的であるわけではありません。
+- このパスは **静的で保存則を満たさない** RPA ラダー dressing であり、
+  保存則を満たす FLEX 計算ではないため、絶対的な :math:`\lambda` の値を
+  動的／FLEX の参照値と **定量的に比較することはできません**\ 。これには
+  Onari, Arita, Kuroki, Aoki の Fig. 3（cond-mat/0312314 / PRB 70, 094523
+  (2004)、完全に動的な計算）も含まれます。文献との定量比較は主張しておらず、
+  このマイルストーンが検証しているのは定性的な傾向
+  （:math:`V` とともに :math:`\lambda_t` が上昇すること）と、上記の
+  :math:`\lambda^{\rm pp} + \lambda^{\rm fl}` の内訳のみです。
+
+**開発者向け注記: L = 32 マイルストーンフィクスチャの再生成。** 上記の
+受け入れマイルストーンは ``tests/sc/onari_bond/`` 以下の FLEX ``green.npz``
+フィクスチャに支えられています。**L = 16** グリッドのみがリポジトリに
+コミットされており、単一のグリッド収束チェック
+（``test_grid_convergence_16_to_32``）が使う **L = 32** グリッドはコミット
+**されていません**\ （再生成コストが高いため）。これは
+``tests/sc/onari_bond/generate_fixtures.py`` によってオンデマンドで
+再生成されます。このテストは ``@pytest.mark.slow`` でマークされ、
+**デフォルトではスキップ** されます。すなわち、通常の ``pytest`` 実行では
+一切必要ありません。明示的に実行するには::
+
+    HWAVE_RUN_SLOW_FIXTURES=1 pytest tests/test_bond_onari_milestone.py -k grid_convergence
+    # あるいは、マーカーを指定（pytest.ini に登録済み）:
+    pytest -m slow tests/test_bond_onari_milestone.py
+
+再生成の詳細（出力先ディレクトリ、環境変数による上書き、再生成された
+ファイルが検証されるがハッシュ固定はされない理由など）は
+``tests/test_bond_onari_milestone.py`` と
+``tests/sc/onari_bond/generate_fixtures.py`` のモジュール docstring を
+参照してください。
 
 
 物理的解釈

@@ -285,6 +285,44 @@ This section controls the Eliashberg solver. Key parameters:
   conserving FLEX result, so absolute :math:`\lambda` values are not
   comparable with FLEX/dynamic references; the eigenvalue file records this
   approximation level and the channel list as ``#`` comment lines.
+
+  Minimal valid ``[eliashberg]`` example for a static, single-orbital bond
+  run (the bond kernel is repulsive-dominant, so ``spectral_shift = "auto"``
+  is needed with ``solver_mode = "iteration"``; see the ``spectral_shift``
+  note above):
+
+  .. code-block:: toml
+
+     [mode]
+     mode = "RPA"
+
+     [mode.param]
+     T         = 0.02
+     CellShape = [16, 16, 1]
+     Nmat      = 256
+     filling   = 0.7
+
+     [file]
+     [file.input]
+     path_to_input = "."
+
+     [file.input.interaction]
+     path_to_input = "."
+     Geometry      = "geom.dat"       # norb = 1
+     Transfer      = "transfer.dat"
+     CoulombIntra  = "coulombintra.dat"
+     CoulombInter  = "coulombinter.dat"  # required by bond_channels; a
+                                          # declared-but-zero V is allowed
+
+     [file.output]
+     path_to_output = "output"
+
+     [eliashberg]
+     frequency      = "static"        # bond_channels requires static
+     solver_mode    = "iteration"
+     spectral_shift = "auto"          # repulsive-dominant bond kernel
+     bond_channels  = true
+
 - ``bond_diagnostics``: ``true`` / ``false`` (default ``false``, and
   ``bond_channels = true`` only). Opt-in **character analysis of the leading
   state**, emitted as extra ``#`` comment lines in the eigenvalue file (purely
@@ -771,6 +809,57 @@ parameter description above for the full physics of each):
   ``"eigenvalue"``; the iteration path reports the harmonics only).
 - ``bond_diagnostics_clusters_note`` -- free text describing the clustering
   convention (single-linkage on :math:`|\lambda_i-\lambda_j|\le` ``deg_tol``).
+
+**Scientific caveats (single-band Onari milestone).** The following are
+established for the specific acceptance case exercised by
+``tests/test_bond_onari_milestone.py`` (single-band square lattice, C4v,
+:math:`U = 4`, :math:`n = 0.7`); they are reported here, hedged accordingly,
+because they affect how any ``bond_channels = true`` result should be read:
+
+- Only **about 63%** of the observed rise of the leading triplet eigenvalue
+  :math:`\lambda_t` with :math:`V` is bond-channel-specific; the remaining
+  **~37%** comes from the collapsed density (:math:`\Delta r = 0`)
+  contribution that the scalar (non-bond) path already carries. This was
+  established by a control that zeros the :math:`m \neq 0` bond blocks and
+  exactly reproduces the scalar-path result.
+- Increasing :math:`V` **inflates the entire odd-parity sector**, not only
+  the tracked state: sub-leading odd eigenvalues rise by comparable factors
+  over the same :math:`V` range. This is therefore **not** evidence of a
+  selective f-wave pairing instability, but of a broader odd-sector
+  enhancement.
+- The tracked state's f-character (``bond_diagnostics_harmonics``) **grows**
+  from :math:`\approx 21\%` at :math:`V = 0` to :math:`\approx 68\%` at
+  :math:`V = 1.2`, while its p-content stays :math:`\le 0.3\%` throughout.
+  In other words, the state is an odd, non-p state that *acquires* f
+  character as :math:`V` increases -- it is not f-like across the whole
+  sweep.
+- This path is a **static, non-conserving** RPA-ladder dressing, not a
+  conserving FLEX calculation, so its absolute :math:`\lambda` values are
+  **not quantitatively comparable** to dynamic/FLEX references -- including
+  Onari, Arita, Kuroki, and Aoki's Fig. 3 (cond-mat/0312314 / PRB 70, 094523
+  (2004)), which is fully dynamic. No quantitative comparison with the
+  literature is claimed; the milestone only checks the qualitative trend
+  (:math:`\lambda_t` rising with :math:`V`) and the internal
+  :math:`\lambda^{\rm pp} + \lambda^{\rm fl}` bookkeeping above.
+
+**Developer note: regenerating the milestone's L = 32 fixtures.** The
+acceptance milestone above is backed by FLEX ``green.npz`` fixtures under
+``tests/sc/onari_bond/``. Only the **L = 16** grid is committed to the
+repository; the **L = 32** grid used by the single grid-convergence check
+(``test_grid_convergence_16_to_32``) is *not* committed (regenerating it is
+expensive) and is regenerated on demand by
+``tests/sc/onari_bond/generate_fixtures.py``. That test is marked
+``@pytest.mark.slow`` and is **skipped by default** -- a plain ``pytest`` run
+never needs it. To run it explicitly::
+
+    HWAVE_RUN_SLOW_FIXTURES=1 pytest tests/test_bond_onari_milestone.py -k grid_convergence
+    # equivalently, select the marker (registered in pytest.ini):
+    pytest -m slow tests/test_bond_onari_milestone.py
+
+See the module docstrings of ``tests/test_bond_onari_milestone.py`` and
+``tests/sc/onari_bond/generate_fixtures.py`` for the regeneration details
+(output directory, environment override, and why the regenerated files are
+verified but not hash-pinned).
 
 
 Physical interpretation
