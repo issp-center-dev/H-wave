@@ -1162,6 +1162,40 @@ with four-index vertex structure.
    approximation of the spin-resolved problem.
 
 
+Spin structure
+----------------------------
+
+The Eliashberg pairing vertex is **paramagnetic**: the Kuroki :math:`S`/:math:`C`
+matrices are :math:`n_\text{orb}^2`-sized and carry no spin index, and the
+singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
+a spin-polarized or spin-mixing model is therefore not a matter of
+configuration:
+
+- **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
+  FLEX susceptibility stores its two spin blocks bit-identically with zero
+  cross-spin blocks, so keeping only the spin-up block is exact.
+
+- **Spin-polarized without spin mixing** (``spin_mode = "spin-diag"``; e.g. an
+  ``Extern`` field with ``coeff_extern``) -- **runs, but only the spin-up block
+  is used** and the down-spin block is discarded. The solver detects the
+  non-redundant content and warns, naming the channel and its magnitude. The
+  eigenvalue is not a controlled approximation of the spin-resolved problem.
+  Treat the warning as an error unless you have a specific reason not to.
+
+- **Spin-mixing / spin-orbit** (``mode.enable_spin_orbital = true``, giving
+  ``spin_mode = "spinful"``) -- **not supported.** FLEX itself runs, but
+  ``hwave_sc`` stops with a shape error: FLEX writes chi with the physical
+  orbital count while the Eliashberg step reads ``norb`` from ``geom.dat``,
+  where spin-orbital mode stores the spin-orbital count. The error message
+  identifies this case explicitly.
+
+Supporting either spin-polarized case would require an
+:math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
+gap function), together with the transverse susceptibility
+:math:`\chi^{+-}`, which the reduced scheme does not store. That is a feature
+addition rather than a configuration change.
+
+
 Tips
 ----------------------------
 

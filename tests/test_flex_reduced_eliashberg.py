@@ -859,5 +859,132 @@ class TestStaticEntryPointWarnsOnce(unittest.TestCase):
         self.assertIn("CoulombInter", warns[0])
 
 
+class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
+    """The exact (zero-tolerance) spin comparison rests on a claim about real
+    producers: a paramagnetic reduced FLEX run writes bit-identical spin blocks
+    and exactly-zero cross blocks.
+
+    The synthetic tests above construct redundant arrays by hand and so cannot
+    substantiate that. Run the actual solver -- with the high-frequency tail
+    correction active, and on both the uniform and IR frequency axes -- and
+    assert exact equality on the produced output before asserting silence.
+    """
+
+    def _run_flex(self, dirpath, extra_param=None):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+
+        _write_2orb_intra_only_fixture(dirpath)
+        info_input = {
+            'path_to_input': dirpath,
+            'interaction': {
+                'path_to_input': dirpath,
+                'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+            },
+        }
+        ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+        param = {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                 'SubShape': [1, 1, 1], 'Nmat': 8,
+                 'coeff_tail': 1.0,          # tail correction ACTIVE
+                 'IterationMax': 2, 'Mix': 0.5, 'EPS': 6}
+        param.update(extra_param or {})
+        solver = solver_flex.FLEX(ham, {}, {'mode': 'FLEX', 'param': param,
+                                            'calc_scheme': 'reduced'})
+        green_info = read_input_k.QLMSkInput(info_input).get_param("green")
+        solver.solve(green_info, dirpath)
+        return green_info
+
+    def _assert_exactly_redundant(self, chi, norb, what):
+        up = chi[..., :norb, :norb]
+        down = chi[..., norb:, norb:]
+        self.assertTrue(
+            np.array_equal(up, down),
+            "{}: spin blocks must be bit-identical for a paramagnetic run "
+            "(max|up-down| = {:.3e})".format(
+                what, float(np.max(np.abs(up - down)))))
+        for lo, hi, name in ((slice(None, norb), slice(norb, None), "up-down"),
+                             (slice(norb, None), slice(None, norb), "down-up")):
+            cross = chi[..., lo, hi]
+            self.assertTrue(
+                np.array_equal(cross, np.zeros_like(cross)),
+                "{}: {} cross block must be exactly zero (max {:.3e})".format(
+                    what, name, float(np.max(np.abs(cross)))))
+
+    def _check(self, extra_param, tag):
+        import hwave.sc as sc
+        import logging
+
+        with tempfile.TemporaryDirectory() as d:
+            green_info = self._run_flex(d, extra_param)
+            norb = 2
+            records = []
+            handler = logging.Handler()
+            handler.emit = records.append
+            lg = logging.getLogger("hwave_sc")
+            lg.addHandler(handler)
+            try:
+                for key in ("chiq_s", "chiq_c"):
+                    chi = np.asarray(green_info[key])
+                    self._assert_exactly_redundant(chi, norb,
+                                                   "{} {}".format(tag, key))
+                    sc._expand_flex_chi(chi, norb, 4, 4, 1, "kuroki", key)
+            finally:
+                lg.removeHandler(handler)
+            warns = [r.getMessage() for r in records
+                     if r.levelno >= logging.WARNING
+                     and "spin structure" in r.getMessage()]
+            self.assertEqual(warns, [], "{}: unexpected warning".format(tag))
+
+    def test_uniform_axis_with_tail_correction(self):
+        self._check(None, "uniform")
+
+    def test_ir_axis_densified(self):
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            self.skipTest("sparse_ir not installed")
+        self._check({'matsubara_basis': 'ir', 'ir_wmax': 20.0}, "ir-densified")
+
+
+class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
+    """A spin-orbital FLEX run reaches hwave_sc as a bare shape mismatch.
+
+    FLEX writes chi in its reduced spin-orbital space (nd = norb_phys * ns)
+    while hwave_sc reads norb from geom.dat, which in spin-orbital mode holds
+    the spin-orbital count -- so nd_chi lands on exactly norb. The dimensions
+    alone look like a corrupt file, and the user has no way to tell that the
+    real answer is "the Eliashberg vertex is paramagnetic and cannot take this
+    model at all". The message must say so.
+    """
+
+    def test_message_identifies_spin_orbital_mode(self):
+        import hwave.sc as sc
+
+        # geom norb = 4 spin-orbitals (2 physical); FLEX stores nd = 2*2 = 4.
+        norb, Nx, Ny, Nz, nfreq = 4, 2, 1, 1, 1
+        nd_chi = 4
+        chi_raw = np.zeros((nfreq, Nx * Ny * Nz, nd_chi, nd_chi), dtype=complex)
+
+        with self.assertRaises(ValueError) as cm:
+            sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, "kuroki")
+        msg = str(cm.exception)
+        self.assertIn("enable_spin_orbital", msg)
+        self.assertIn("does not support", msg)
+
+    def test_unrelated_shape_mismatch_keeps_the_plain_message(self):
+        """The hint must not be attached to every shape error."""
+        import hwave.sc as sc
+
+        norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 1
+        chi_raw = np.zeros((nfreq, Nx * Ny * Nz, 5, 5), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, "kuroki")
+        msg = str(cm.exception)
+        self.assertIn("matches neither", msg)
+        self.assertNotIn("enable_spin_orbital", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

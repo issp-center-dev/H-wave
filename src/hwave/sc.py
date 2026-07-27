@@ -1148,6 +1148,19 @@ _REDUCED_FLEX_UNSUPPORTED = ("CoulombInter", "Hund", "Ising", "Exchange",
                              "PairHop")
 
 
+def _term_has_off_diagonal_weight(mat, norb):
+    """Whether one interaction term has any ``[a, b]`` entry with ``a != b``.
+
+    Used ONLY to attribute a warning to the terms that plausibly caused it. The
+    decision to warn is made by :func:`_off_density_sc_weight` on the assembled
+    S/C matrices, because those blocks are sums and the terms can cancel there.
+    """
+    arr = np.asarray(mat)
+    if arr.ndim < 2 or arr.shape[0] != norb or arr.shape[1] != norb:
+        return True
+    return bool(np.any(arr[~np.eye(norb, dtype=bool)] != 0))
+
+
 def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz):
     """Largest |S| or |C| on the blocks a reduced chi cannot dress.
 
@@ -1219,7 +1232,10 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     # is actually missing.
     if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz) == 0.0:
         return
-    missing = configured
+    # Decision above is on the assembled matrices; attribution here is per term,
+    # so an inert term that happens to be configured is not named as a cause.
+    missing = [k for k in configured
+               if _term_has_off_diagonal_weight(inter_k[k], norb)] or configured
     logger.warning(
         "chi0q_mode='flex' is consuming a REDUCED (calc_scheme='reduced' or "
         "'squashed') FLEX susceptibility, which stores only the "
@@ -1229,8 +1245,11 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         "off-density components S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] (a != b) "
         "for which the reduced run computed no susceptibility, so those "
         "channels enter the pairing vertex undressed (bare 0.5*(S+C) only) and "
-        "the resulting lambda is an approximation. Re-run FLEX with "
-        "calc_scheme='general' to obtain the full orbital-pair chi.",
+        "the resulting lambda is an approximation. calc_scheme='general' stores "
+        "the full orbital-pair chi and removes this gap, but it accepts ON-SITE "
+        "two-body terms only -- for a model with off-site inter-orbital "
+        "interactions there is currently no FLEX-dressed vertex without this "
+        "approximation.",
         ", ".join(missing))
 
 
@@ -1571,9 +1590,11 @@ def _warn_if_spin_block_discarded(chi_full, norb, label="chi"):
         "is discarded -- the resulting eigenvalue is not a controlled "
         "approximation of the spin-resolved problem. This is exact only for a "
         "paramagnetic FLEX run, where the discarded blocks are redundant. "
-        "Re-run FLEX without the spin-splitting field (e.g. coeff_extern = 0) "
-        "and feed that output to the Eliashberg step; the Kuroki S/C "
-        "formulation has no spin index and cannot represent this data.",
+        "This formulation cannot consume spin-resolved data at all -- it is "
+        "not a matter of configuration. If you meant to run a paramagnetic "
+        "calculation and a field such as coeff_extern is the only source of the "
+        "splitting, drop it and re-run FLEX; if the spin structure is intrinsic "
+        "to your model, the Eliashberg step here cannot describe it.",
         label, " and ".join(parts), scale)
 
 
@@ -1667,10 +1688,25 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention, label="chi"):
                     nd_chi, norb, nd, nd_so, convention))
         is_spin_orbital = False
     else:
+        hint = ""
+        if nd_chi == norb and norb % 2 == 0:
+            # The spin-orbital case. FLEX writes chi in its reduced spin-orbital
+            # space, nd = norb_phys * ns; with geom.dat's norb being the
+            # spin-orbital count (= 2 * norb_phys) that lands on nd_chi == norb.
+            # Say so -- the bare dimensions look like a malformed file.
+            hint = (" nd_chi == norb, which is what a "
+                    "spin-orbital FLEX run (mode.enable_spin_orbital = true) "
+                    "produces: FLEX writes chi with the PHYSICAL orbital count "
+                    "while hwave_sc reads norb from geom.dat, where "
+                    "spin-orbital mode stores the spin-orbital count "
+                    "(= 2 x physical). The Eliashberg step does not support "
+                    "spin-orbital / spin-mixing models -- its pairing vertex is "
+                    "paramagnetic -- so this combination is not usable rather "
+                    "than merely misconfigured.")
         raise ValueError(
             "FLEX chi dimension nd_chi={} matches neither the orbital-pair "
-            "size norb^2={} nor the spin-orbital size norb*ns={}.".format(
-                nd_chi, nd, nd_so))
+            "size norb^2={} nor the spin-orbital size norb*ns={} (norb={})."
+            "{}".format(nd_chi, nd, nd_so, norb, hint))
 
     if not is_spin_orbital:
         return chi_full
