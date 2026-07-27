@@ -143,33 +143,38 @@ class TestChiPmCheck(unittest.TestCase):
             rtol=1e-9, atol=1e-12,
             err_msg="chi^{+-} must equal chi^{zz} on the IR axis as well")
 
-    def test_non_su2_interaction_is_skipped_with_a_reason(self):
-        """spin-free constrains the one-body Hamiltonian, not the interaction.
-        Ising is not SU(2)-invariant on its own, so the identity does not hold
-        and the comparison would not test anything."""
-        import logging
-        records = []
-        handler = logging.Handler()
-        handler.emit = records.append
-        lg = logging.getLogger("hwave.solver.flex")
-        lg.addHandler(handler)
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                _fixture(d)
-                with open(os.path.join(d, "ising.dat"), "w") as f:
-                    f.write("Ising\n2\n1\n 1\n"
-                            "   0    0    0    1    2   0.500000000000   0.000000000000\n"
-                            "   0    0    0    2    1   0.500000000000   0.000000000000\n")
-                gi = _solve_with(d, "general", True, {"Ising": "ising.dat"})
-        finally:
-            lg.removeHandler(handler)
-        self.assertNotIn("chiq_pm", gi)
-        msgs = [r.getMessage() for r in records
-                if r.levelno >= logging.WARNING
-                and "output_chi_pm" in r.getMessage()]
-        self.assertEqual(len(msgs), 1)
-        self.assertIn("Ising", msgs[0])
-        self.assertIn("SU(2)", msgs[0])
+    def test_non_su2_interaction_still_produces_output(self):
+        """No interaction-dependent filter: bare Ising is not SU(2)-invariant,
+        so chi^{+-} differs from the longitudinal channel legitimately -- and
+        that difference is the interesting quantity, not a reason to withhold
+        the output. Deciding applicability in the loader would mean encoding the
+        rotational-invariance relations between the anisotropic terms, which got
+        it wrong in both directions when tried."""
+        with tempfile.TemporaryDirectory() as d:
+            _fixture(d)
+            with open(os.path.join(d, "ising.dat"), "w") as f:
+                f.write("Ising\n2\n1\n 1\n"
+                        "   0    0    0    1    2   0.500000000000   0.000000000000\n"
+                        "   0    0    0    2    1   0.500000000000   0.000000000000\n")
+            gi = _solve_with(d, "general", True, {"Ising": "ising.dat"},
+                             write_fixture=False)
+        self.assertIn("chiq_pm", gi)
+        pm = np.asarray(gi["chiq_pm"])
+        cs = np.asarray(gi["chiq_s"])
+        self.assertFalse(
+            np.allclose(pm, cs),
+            "bare Ising is not SU(2)-invariant, so the transverse and "
+            "longitudinal channels must NOT coincide -- if they do, the "
+            "transverse vertex is not being built from the crossed vertex")
+
+    def test_stale_key_cleared_on_the_iterationmax_zero_path(self):
+        """The early return must not leave a previous run's chiq_pm behind."""
+        with tempfile.TemporaryDirectory() as d:
+            gi = _solve(d, "general", True)
+            self.assertIn("chiq_pm", gi)
+            gi2 = _solve(d, "general", True, {'IterationMax': 0},
+                         green_info=gi)
+        self.assertNotIn("chiq_pm", gi2)
 
     def test_no_stale_key_when_the_switch_is_off(self):
         """A reused green_info must not keep a chiq_pm from an earlier solve."""

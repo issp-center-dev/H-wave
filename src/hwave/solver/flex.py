@@ -700,6 +700,9 @@ class FLEX(RPA):
                 self.H0_eigenvector = _bk.to_host(self.H0_eigenvector)
             logger.warning("FLEX IterationMax=0: no SCF step performed; "
                            "no results stored.")
+            # Reachable with a reused green_info; do not leave a chiq_pm from
+            # an earlier solve behind for save_results to publish.
+            green_info.pop("chiq_pm", None)
             return
 
         # Final-output consistency: during the loop green_kw was built from the
@@ -738,7 +741,7 @@ class FLEX(RPA):
         # the (nonlinear) RPA solve to interpolated data -- the two operations do
         # not commute, so the check would report a mismatch that is an artifact
         # of the axis, not of the vertices.
-        chi_pm = (self._calc_chi_pm_check(chi0q_out, ham_orig)
+        chi_pm = (self._calc_chi_pm(chi0q_out, ham_orig)
                   if self.output_chi_pm else None)
 
         if self.use_ir and self.write_densified:
@@ -1850,56 +1853,48 @@ class FLEX(RPA):
 
         return chi0q, ham
 
-    def _calc_chi_pm_check(self, chi0q_out, ham_orig):
-        """Transverse (spin-flip) susceptibility, as a verification output.
+    def _calc_chi_pm(self, chi0q_out, ham_orig):
+        """Transverse (spin-flip) susceptibility chi^{+-}, as an extra output.
 
         Enabled by the undocumented ``output_chi_pm`` switch. Solves the
         transverse RPA channel with the crossed (Fock-exchange) Hartree vertex
         -- ``RPA._build_transverse_channel`` -- from the final-iteration FLEX
-        chi0q (the same one the stored chi_s was dressed from; note FLEX still
-        produces it when the SCF stops at IterationMax without converging), and
-        returns chi^{+-}.
+        chi0q, the same one the stored chi_s was dressed from. (FLEX still
+        produces that chi0q when the SCF stops at IterationMax without
+        converging.)
 
-        For a paramagnetic system SU(2) symmetry forces chi^{+-} == chi^{zz},
-        so this must reproduce the longitudinal spin channel. Because the two
-        are assembled from different vertices, agreement is a genuine check on
-        the vertex construction rather than a tautology.
+        This deliberately makes NO claim about what the result should equal, and
+        applies no interaction-dependent filter. Whether chi^{+-} coincides with
+        the longitudinal spin channel depends on the rotational invariance of
+        the interaction, which is a property of the user's model rather than
+        something this function should adjudicate:
 
-        Returns ``None`` (with a warning) when the check is not applicable:
-        it needs the rank-4 orbital chi0q that only ``calc_scheme="general"``
-        produces, and the identity it verifies only holds for a paramagnetic
-        run.
+        - For an SU(2)-invariant interaction (density-density terms such as
+          CoulombIntra/CoulombInter, or a coefficient-matched full Kanamori set)
+          it must equal the longitudinal spin susceptibility, and a mismatch
+          points at the vertex construction.
+        - Bare Hund gives W_+- = -J and bare Ising W_+- = 2J, neither equal to
+          the longitudinal vertex, so there the two differ legitimately -- and
+          that difference is itself the interesting quantity.
+
+        An earlier version tried to decide applicability from the configured
+        interaction names. That was wrong in both directions: it skipped a valid
+        rotationally invariant Kanamori set and accepted bare Exchange, and it
+        would have needed the parameter relations between the anisotropic terms
+        encoded in the loader. Emitting the number and leaving the comparison to
+        the reader is both simpler and more useful.
+
+        Returns ``None`` (with a warning) only for a genuine technical
+        obstruction: the transverse channel needs the rank-4 orbital chi0q that
+        only ``calc_scheme="general"`` produces.
         """
         if not self._flex_general:
             logger.warning(
                 "output_chi_pm: skipped -- the transverse channel needs the "
                 "full rank-4 orbital chi0q, which only calc_scheme='general' "
-                "produces (got '%s'). On the reduced/squashed path the "
-                "transverse channel is not separately defined: chi_s already "
-                "IS the isotropic spin susceptibility.", self.calc_scheme)
-            return None
-        if self.spin_mode != "spin-free":
-            logger.warning(
-                "output_chi_pm: skipped -- chi^{+-} == chi^{zz} only for a "
-                "paramagnetic run, and this one is spin_mode='%s'.",
-                self.spin_mode)
-            return None
-        # spin-free is about the ONE-BODY Hamiltonian; the identity also needs
-        # SU(2)-invariant interactions. Per the transverse builder's own table,
-        # Hund alone gives W_+- = -J and Ising alone W_+- = 2J, neither equal to
-        # the longitudinal vertex, so chi^{+-} != chi^{zz} legitimately and a
-        # mismatch would say nothing about the vertex construction. Only run the
-        # check on interaction sets where the identity actually holds.
-        not_su2 = [k for k in ("Hund", "Ising")
-                   if k in getattr(self.ham_info, "param_ham", {})]
-        if not_su2:
-            logger.warning(
-                "output_chi_pm: skipped -- %s present. spin-free constrains the "
-                "one-body Hamiltonian, not the interaction: these terms are not "
-                "SU(2)-invariant on their own (W_+- differs from the "
-                "longitudinal vertex), so chi^{+-} != chi^{zz} is expected and "
-                "the comparison would not test the vertex construction.",
-                ", ".join(not_su2))
+                "produces (got '%s'). On the reduced/squashed path there is "
+                "also nothing separate to output: chi_s already IS the "
+                "isotropic spin susceptibility.", self.calc_scheme)
             return None
         # Both operands on the host: ham_orig may still be the device copy the
         # SCF loop used, and mixing it with a host chi0q inside _solve_rpa would
@@ -1907,9 +1902,12 @@ class FLEX(RPA):
         chi0q_pm, ham_pm = self._build_transverse_channel(
             _bk.to_host(chi0q_out), _bk.to_host(ham_orig))
         chi_pm = _bk.to_host(self._solve_rpa(chi0q_pm, ham_pm))
-        logger.info("output_chi_pm: transverse channel solved "
-                    "(shape %s); for a paramagnetic run it should equal the "
-                    "longitudinal spin susceptibility.", chi_pm.shape)
+        logger.info(
+            "output_chi_pm: transverse channel solved (shape %s). For an "
+            "SU(2)-invariant interaction it should equal the longitudinal spin "
+            "susceptibility chiq_s; with anisotropic terms (bare Hund, bare "
+            "Ising, unmatched combinations) a difference is physical.",
+            chi_pm.shape)
         return chi_pm
 
     @do_profile
