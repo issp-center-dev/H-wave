@@ -611,6 +611,83 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         self.assertIn("Hund", warns[0])
 
 
+class TestSpinPolarizedChiIsFlagged(unittest.TestCase):
+    """The embedding keeps only the spin-UP block, which is exact only for a
+    paramagnetic run. A spin-diag/spinful FLEX chi has genuinely different
+    blocks and nothing downstream carries spin, so the down block is discarded
+    outright -- that must not happen silently."""
+
+    @staticmethod
+    def _capture(fn):
+        import logging
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            fn()
+        finally:
+            lg.removeHandler(handler)
+        return [r.getMessage() for r in records
+                if r.levelno >= logging.WARNING
+                and "SPIN-POLARIZED" in r.getMessage()]
+
+    def _chi(self, norb, Nx, Ny, Nz, nfreq, polarized):
+        nvol, nd_so = Nx * Ny * Nz, norb * 2
+        rng = np.random.default_rng(9)
+        block = (rng.standard_normal((nfreq, nvol, norb, norb))
+                 + 1j * rng.standard_normal((nfreq, nvol, norb, norb)))
+        chi = np.zeros((nfreq, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block * (0.5 if polarized else 1.0)
+        return chi
+
+    def test_paramagnetic_chi_is_silent(self):
+        import hwave.sc as sc
+        norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
+        chi = self._chi(norb, Nx, Ny, Nz, nfreq, polarized=False)
+        warns = self._capture(
+            lambda: sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "kuroki"))
+        self.assertEqual(warns, [])
+
+    def test_spin_polarized_chi_warns(self):
+        import hwave.sc as sc
+        norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
+        chi = self._chi(norb, Nx, Ny, Nz, nfreq, polarized=True)
+        warns = self._capture(
+            lambda: sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "kuroki"))
+        self.assertEqual(len(warns), 1)
+        self.assertIn("only the up-spin block is used".lower(),
+                      warns[0].lower())
+
+    def test_warning_does_not_change_the_embedding(self):
+        """The guard reports; it must not alter the returned tensor."""
+        import hwave.sc as sc
+        norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
+        chi = self._chi(norb, Nx, Ny, Nz, nfreq, polarized=True)
+        out = sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "kuroki")
+        X = chi.reshape(nfreq, Nx, Ny, Nz, norb * 2,
+                        norb * 2)[..., :norb, :norb]
+        for a in range(norb):
+            for b in range(norb):
+                np.testing.assert_allclose(
+                    out[..., a * norb + a, b * norb + b], X[..., a, b])
+
+    def test_myo_chi_is_never_checked(self):
+        """A general (myo) chi has no spin blocks to compare; the guard must not
+        fire on it."""
+        import hwave.sc as sc
+        norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 2
+        nd = norb * norb
+        rng = np.random.default_rng(13)
+        chi = (rng.standard_normal((nfreq, Nx * Ny * Nz, nd, nd))
+               + 1j * rng.standard_normal((nfreq, Nx * Ny * Nz, nd, nd)))
+        warns = self._capture(
+            lambda: sc._expand_flex_chi(chi, norb, Nx, Ny, Nz, "myo"))
+        self.assertEqual(warns, [])
+
+
 class TestStaticEntryPointWarnsOnce(unittest.TestCase):
     """End-to-end guard on the PUBLIC static route.
 

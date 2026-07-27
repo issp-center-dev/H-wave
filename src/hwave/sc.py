@@ -1489,6 +1489,44 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     return chi_s_raw, chi_c_raw, chi_convention, ir_meta
 
 
+def _warn_if_spin_polarized(chi_full, norb):
+    """Warn when a reduced FLEX chi carries unequal spin blocks.
+
+    The reduced spin-orbital index is spin-block ordered ``s*norb + a``, and the
+    embedding below keeps only the spin-UP block ``[:norb, :norb]``. That is
+    exact for a paramagnetic run, where the two blocks are bit-identical: the
+    inflation writes the same array into both (``FLEX._inflate_chi0q_and_ham``)
+    and the channel vertices are spin-block diagonal, so the RPA solve preserves
+    the equality.
+
+    A spin-polarized run (``spin_mode="spin-diag"``/``"spinful"`` -- reachable
+    from ordinary input via ``coeff_extern`` plus an ``Extern`` field file) has
+    genuinely different blocks. Nothing downstream carries spin: the Kuroki
+    S/C matrices and the singlet/triplet vertex formulas are norb^2-sized and
+    paramagnetic, so the down-spin block is discarded outright and the resulting
+    lambda is not a controlled approximation. The stored npz records no
+    ``spin_mode``, so the data itself is the only available signal -- compare
+    the blocks and say so.
+    """
+    ns = 2
+    if chi_full.shape[-1] != norb * ns:
+        return
+    up = chi_full[..., :norb, :norb]
+    down = chi_full[..., norb:, norb:]
+    scale = float(np.max(np.abs(up))) if up.size else 0.0
+    diff = float(np.max(np.abs(up - down))) if up.size else 0.0
+    if diff <= 1e-12 * max(scale, 1.0):
+        return
+    logger.warning(
+        "The reduced FLEX susceptibility is SPIN-POLARIZED: its up- and "
+        "down-spin blocks differ by %.3e (block scale %.3e), so the FLEX run "
+        "was spin-diag/spinful rather than paramagnetic. The Eliashberg pairing "
+        "vertex is paramagnetic (the Kuroki S/C matrices carry no spin index), "
+        "so ONLY the up-spin block is used and the down-spin block is "
+        "discarded; the resulting eigenvalue is not a controlled approximation. "
+        "Use a paramagnetic FLEX run for the Eliashberg step.", diff, scale)
+
+
 def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     """Reshape H-wave chi ``(nfreq, nvol, nd, nd)`` to
     ``(nfreq, Nx, Ny, Nz, nd, nd)`` in the ``nd = norb^2`` Eliashberg space,
@@ -1614,6 +1652,7 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     # _compute_vertices_flex, which warns when the interaction actually needs
     # those missing components.
     chi_orb = chi_full[:, :, :, :, :norb, :norb]
+    _warn_if_spin_polarized(chi_full, norb)
     out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
     dens = np.arange(norb) * norb + np.arange(norb)   # flat index of (a,a)
     out[..., dens[:, None], dens[None, :]] = chi_orb
