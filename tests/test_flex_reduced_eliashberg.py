@@ -1062,6 +1062,17 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
             self._run("_load_flex_susceptibilities_full", cross=0.3)
         self.assertIn("cross-spin blocks are nonzero", str(cm.exception))
 
+    def test_green_blocks_within_roundoff_are_accepted(self):
+        """The Green check uses the same relative allowance as the chi check, so
+        a last-bit difference does not reject a paramagnetic producer."""
+        import hwave.sc as sc
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, green_blocks=2)
+            g = np.load(os.path.join(d, "green.npz"))["green"]
+            g[1] = g[0] * (1.0 + 0.1 * sc._SPIN_DISCARD_ROUNDOFF_RATIO)
+            np.savez(os.path.join(d, "green.npz"), green=g)
+            sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+
     def test_two_identical_green_blocks_are_accepted(self):
         """A paramagnetic run may legitimately store two identical blocks."""
         self._run("_load_flex_susceptibilities", green_blocks=2)

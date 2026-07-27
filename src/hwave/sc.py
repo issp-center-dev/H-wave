@@ -1110,6 +1110,13 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
             chi0_static = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
             dens = np.arange(norb) * norb + np.arange(norb)
             chi0_static[..., dens[:, None], dens[None, :]] = chi0_2d
+            # A reduced chi0q reaching the general S/C formulation is missing
+            # exactly the same off-density components as a reduced FLEX chi, so
+            # report it here too. Without this the approximation was announced
+            # on chi0q_mode="flex" and stayed silent on "load"/"calc", even
+            # though the documentation says both are affected.
+            _warn_reduced_flex_missing_components(
+                inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q")
 
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0
@@ -1191,7 +1198,8 @@ def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz):
 
 
 def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
-                                          convention="kuroki"):
+                                          convention="kuroki",
+                                          source=None):
     """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
 
     Call this ONCE per run, from the place that is about to build the pairing
@@ -1237,8 +1245,7 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     missing = [k for k in configured
                if _term_has_off_diagonal_weight(inter_k[k], norb)] or configured
     logger.warning(
-        "chi0q_mode='flex' is consuming a REDUCED (calc_scheme='reduced' or "
-        "'squashed') FLEX susceptibility, which stores only the "
+        "The Eliashberg vertex is being built from %s, which carries only the "
         "density-density components chi_{(a,a),(b,b)}, together with "
         "inter-orbital interaction(s) %s. Together those terms give the S/C "
         "matrices nonzero "
@@ -1250,6 +1257,8 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         "two-body terms only -- for a model with off-site inter-orbital "
         "interactions there is currently no FLEX-dressed vertex without this "
         "approximation.",
+        source or ("a REDUCED (calc_scheme='reduced' or 'squashed') FLEX "
+                   "susceptibility"),
         ", ".join(missing))
 
 
@@ -1526,18 +1535,22 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
 #: Relative size, against the kept spin-up block, below which discarded spin
 #: content is attributed to round-off rather than physics.
 #:
-#: Derived from double precision rather than picked: a few hundred ulp, which
-#: bounds the error a linear solve can accumulate between two blocks that
-#: entered it identical. Below it the asymmetry is not distinguishable from
-#: floating-point noise in the stored quantity, so calling it a physical spin
-#: polarization would be unjustifiable in either direction.
+#: A few hundred ulp of double precision. This is a NARROW MARGIN, not a
+#: validated error bound: the error a linear solve can accumulate depends on
+#: dimension, conditioning, backend and operation order, and near a
+#: susceptibility pole a legitimate paramagnetic producer could exceed it. The
+#: claim it rests on is only the measured one -- every producer exercised here
+#: (CPU, uniform and IR axes, static and dynamic, plus production multi-orbital
+#: output) is bit-exact, so the margin is never used in practice and exists so
+#: that a backend whose solve is not bit-symmetric degrades to a warning rather
+#: than aborting.
 #:
-#: It is NOT a claim about how weak a physical field can be: an earlier draft
-#: used 1e-8 on the grounds that a measured Zeeman case gave ratio ~1.6, which
-#: sets no lower bound at all. Anchoring on machine precision is the defensible
-#: choice, and it also keeps the window as narrow as it can be while still
-#: sparing a legitimate paramagnetic run on a backend whose solve is not
-#: bit-symmetric.
+#: It is NOT a claim about how weak a physical field can be. An earlier draft
+#: used 1e-8, justified by a measured Zeeman case at ratio ~1.6 -- which sets no
+#: lower bound at all, and would have relabelled a genuinely weak field as
+#: round-off. If a supported backend is ever found to exceed this margin
+#: legitimately, widen it deliberately with that measurement in hand rather than
+#: treating the constant as already covering it.
 _SPIN_DISCARD_ROUNDOFF_RATIO = 256 * np.finfo(float).eps
 
 
@@ -1810,9 +1823,12 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # Green functions are not would slip straight through. Check here too.
     if nblock > 1:
         blocks = [green_raw[i] for i in range(nblock)]
-        if any(not np.array_equal(blocks[0], b) for b in blocks[1:]):
-            worst = max(float(np.max(np.abs(blocks[0] - b)))
-                        for b in blocks[1:])
+        worst = max(float(np.max(np.abs(blocks[0] - b))) for b in blocks[1:])
+        gscale = float(np.max(np.abs(blocks[0])))
+        # Same relative allowance as the susceptibility check, so the two really
+        # are treated alike: a last-bit difference between blocks that entered
+        # the solve identical must not reject a paramagnetic producer.
+        if worst > _SPIN_DISCARD_ROUNDOFF_RATIO * max(gscale, 1.0):
             raise ValueError(
                 "The FLEX dressed Green function in '{}' has {} spin blocks "
                 "that are not identical (max difference {:.3e}). Only the "
