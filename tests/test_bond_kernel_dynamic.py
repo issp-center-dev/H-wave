@@ -99,6 +99,61 @@ def test_dynamic_bond_kernel_equals_oracle(pairing):
 # ---------------------------------------------------------------------------
 # Step 5: B = 1 reduction and the instantaneous-term definition
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("pairing", ["singlet", "triplet"])
+def test_dynamic_bond_kernel_equals_oracle_multiorbital(pairing):
+    """Same acceptance comparison at norb=2, B=3 -- the small multi-orbital
+    case the norb=1 fixture structurally cannot observe.
+
+    At norb=1 the enlarged index ND = norb**2 * B degenerates to the channel
+    index alone, so nothing pins (a) the ``(m, ab)`` interleaving of the
+    enlarged index, (b) the orbital pairing ``X_{l3l4} = G_{l3l5} phi_{l5l6}
+    G_{l4l6}`` inside the pair bubble, or (c) the ``(m, m')`` block layout of
+    F/Vpp against a transposed alternative. All three become observable here.
+
+    The vertices are ARBITRARY random complex arrays of the right shapes, not
+    physical ones: this test is about index transport, and an unstructured
+    vertex is a strictly stronger probe than a physical one (no symmetry can
+    accidentally hide a wrong index). ``green`` is likewise unstructured --
+    the oracle imposes no symmetry class on it, and dropping the symmetry
+    means an error in the ``(-k, -n)`` leg cannot cancel against its partner.
+    """
+    Nx = Ny = 2
+    Nz = 1
+    nmat = 4
+    norb = 2
+    nd = norb * norb
+    rng = np.random.default_rng(2026)
+
+    bset = bc.resolve_interactions(
+        {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}, np.eye(3), norb)
+    B = bset.n_channels
+    assert B == 3
+    ND = nd * B
+
+    def _rand(*shape):
+        return rng.normal(size=shape) + 1j * rng.normal(size=shape)
+
+    green = _rand(norb, norb, Nx, Ny, Nz, nmat)
+    S_bond = _rand(Nx, Ny, Nz, ND, ND)
+    C_bond = _rand(Nx, Ny, Nz, ND, ND)
+    chi_s_w = _rand(Nx, Ny, Nz, nmat, ND, ND)
+    chi_c_w = _rand(Nx, Ny, Nz, nmat, ND, ND)
+    Vpp_s = _rand(ND, ND)
+    Vpp_t = _rand(ND, ND)
+
+    A, vec_size = bc.make_bond_kernel_dynamic(
+        chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
+        green, bset, pairing, BETA)
+    assert vec_size == nd * Nx * Ny * Nz * nmat
+
+    phi = _random_gap(rng, Nx, Ny, Nz, nmat, norb=norb)
+    F_w = _oracle_F_w(pairing, S_bond, C_bond, chi_s_w, chi_c_w)
+    Vpp = Vpp_s if pairing == "singlet" else Vpp_t
+    Y_oracle = oracle_bond_matvec(phi, green, F_w, Vpp, bset.delta_r, BETA)
+    Y_prod = (A @ phi.ravel()).reshape(phi.shape)
+    np.testing.assert_allclose(Y_prod, Y_oracle, rtol=1e-9, atol=1e-11)
+
+
 def test_dynamic_bond_kernel_B1_reduces_to_scalar_kernel():
     """With a single (on-site, Delta r = 0) bond channel the enlarged index
     collapses to ND = nd = 1, the bond phases are all 1, and the fluctuation
@@ -266,6 +321,14 @@ def test_mutations_break_oracle_equality(mutation):
     The two therefore probe the same degree of freedom here; both are kept
     because they stop being degenerate for a non-centrosymmetric or
     multi-orbital bond set.
+
+    That gap is closed by
+    ``test_dynamic_bond_kernel_equals_oracle_multiorbital``: at norb=2, B=3
+    with UNSTRUCTURED random vertices and green there is no centrosymmetry and
+    no chi_{rev(m),rev(m')} = chi_{m',m} identity to exploit, so the oracle
+    equality there independently pins the phase direction (e^{+i k.dr} vs its
+    conjugate) and the (m, ab) block layout. The battery below is the
+    norb=1 discriminating-power check, not the sole pin on those.
     """
     Nx = Ny = 4
     Nz = 1

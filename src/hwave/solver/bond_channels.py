@@ -1205,46 +1205,74 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 # resource preflight can only refuse an over-budget run if the counts here are
 # not an UNDERCOUNT, so the builder is written to a fixed, documented working
 # set (every temporary is released -- ``del`` -- as soon as it is consumed)
-# and the two counts are exported for ``sc._bond_memory_estimate`` to import.
+# and the counts are exported for ``sc._bond_memory_estimate`` to import.
+#
+# HOW THESE NUMBERS WERE OBTAINED. tracemalloc (which does trace numpy
+# buffers -- verified against a bare ``np.empty``), started BEFORE any
+# allocation so the live set is a true baseline, then ``reset_peak()`` and one
+# build / one matvec. The reported figure is the CUMULATIVE peak over the whole
+# phase, not a per-stage transient: a per-stage measurement resets between
+# stages and therefore misses arrays that stay live ACROSS a stage boundary,
+# which is exactly what dominates here (``Z`` is still alive while
+# ``fermion_to_tau`` allocates its own three). Per-stage measurement reports
+# ~3.1 units for the matvec; the true cumulative peak is ~4.3. Use the
+# cumulative method if these are ever re-derived.
+#
+# Measured (numpy 1.26), in units of the phase's own buffer size:
+#
+#   configuration                    build   matvec
+#   norb=1 B=5 ND=5   8x8x1 nmat=16   3.58     4.24
+#   norb=1 B=5 ND=5   6x6x1 nmat=32   3.29     4.24
+#   norb=2 B=3 ND=12  4x4x1 nmat=16   3.23     4.40
+#
+# The declared constants are the CEIL of the measured maxima, so the preflight
+# rounds against itself and can never undercount.
 #
 # --- build phase, arrays of size (N_q * nmat * ND**2) complex ---------------
-# BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS = high-water number of such arrays alive
-# at once WHILE the vertex is being hoisted.  High-water mark: inside
-# ``_ms.boson_to_tau(F_q_w, axis=3)``:
-#   1. ``F_q_w``          -- the (q, i nu) fluctuation vertex being transformed
-#   2. ``fft(F_q_w)``     -- boson_to_tau's internal transform output
-#   3. ``fft * omg``      -- boson_to_tau's phase-multiplied result (-> F_tau)
-# The same count of 3 is reached earlier, in the S chi S / C chi C sandwich
-# (spin term + charge term + their difference), and is NOT exceeded by
-# ``spatial_ifftn`` afterwards (numpy's ifftn is an axis-by-axis pipeline that
-# holds input + one output = 2). The caller-owned inputs ``chi_s_w`` /
-# ``chi_c_w`` are the SAME size and are NOT counted here -- the preflight
-# budgets those separately, exactly as ``green_kw`` is excluded from
-# BOND_BUBBLE_N2_BUFFERS.
+# BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS -- high-water while the vertex is hoisted.
+# Contributions: the ``S chi S`` / ``C chi C`` sandwich holds {spin term,
+# charge term, their difference}, and ``_ms.boson_to_tau(F_q_w, axis=3)`` holds
+# {``F_q_w``, its fft output, the phase-multiplied result}. ``spatial_ifftn``
+# afterwards holds only input + one output. Measured max 3.58 -> declared 4.
+# The caller-owned ``chi_s_w`` / ``chi_c_w`` are the SAME size and are NOT
+# counted here; the preflight budgets those separately, exactly as ``green_kw``
+# is excluded from BOND_BUBBLE_N2_BUFFERS.
 #
 # BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT = arrays of that size that stay alive
 # for the whole lifetime of the returned LinearOperator:
-#   1. ``F_r6t``          -- the (r, tau) fluctuation vertex, hoisted out of
-#                            the per-matvec closure (it does not depend on phi)
-# (``G2p_w`` is also persistent but is a factor ``B**2`` smaller -- size
-# ``N_q * nmat * nd**2`` -- so it is accounted with the matvec buffers below.)
+#   1. ``F_rt``  -- the (r, tau) fluctuation vertex, hoisted out of the
+#                   per-matvec closure (it does not depend on phi)
 #
 # --- per-matvec, arrays of size (N_q * nmat * ND) complex -------------------
-# BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS = high-water number of such arrays alive
-# during one ``matvec``.  High-water mark: inside
-# ``_ms.fermion_to_tau(Z, axis=-1)``:
-#   1. ``Z``              -- the phase-dressed pair bubble e^{i k.dr_m} X
-#   2. ``fft(Z)``         -- fermion_to_tau's internal transform output
-#   3. ``fft * omg``      -- its phase-multiplied result (-> Z_t)
-# The later stages do not exceed 3 either: ``spatial_ifftn`` holds 2, the
-# real-space MAC holds ``Z_rt`` + the einsum output ``W_rt`` = 2, and the
-# return path (``spatial_fftn`` then ``tau_to_fermion``) holds at most 3.
-# Sub-dominant by a factor ``B`` and not counted separately: ``phi`` / ``X_w``
-# (size ``N_q * nmat * nd``) and the persistent ``G2p_w``
-# (``N_q * nmat * nd**2``).
-BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS = 3
+# BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS -- high-water during one ``matvec``,
+# reached inside ``_ms.fermion_to_tau(Z, axis=3)`` while ``Z`` is still live:
+# {``Z``, the fft's internal axis-reordering copy, the fft output, the
+# phase-multiplied result}. Measured max 4.40 -> declared 5.
+#
+# Two structural choices in ``_fluctuation`` keep it at that level rather than
+# higher (both measured, see its docstring):
+#   * the transform calls are SPLIT, not nested -- nesting keeps the caller's
+#     argument alive across the inner call's temporaries and adds a unit;
+#   * the real-space multiply-accumulate is a batched MATMUL in the (ND, ND)
+#     matrix form, NOT an ``np.einsum`` over the split [m, ab, m', cd] index.
+#     einsum buffers the strided operands (4.24 units for that stage alone
+#     against the matmul's 1.01) and pushed the whole matvec to 5.45 units even
+#     with every transform already split. The MAC, not the transforms, is the
+#     stage that decides this constant.
+# Reverting either choice silently invalidates the constant and the preflight
+# built on it.
+#
+# NOT counted here, and NOT safely foldable into the count above:
+#   * ``phi`` / ``X_w`` (size ``N_q * nmat * nd``) -- smaller by a factor ``B``.
+#   * the persistent ``G2p_w`` (size ``N_q * nmat * nd**2``). Its ratio to one
+#     matvec unit is ``nd / B``, NOT ``1 / B**2``: it is sub-dominant only when
+#     ``B > nd``, and at ``B = 1`` (the single on-site channel) it is ``nd``
+#     TIMES a matvec unit. Task 8's preflight must budget ``G2p_w`` as its own
+#     explicit term rather than absorbing it into
+#     BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS.
+BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS = 4
 BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT = 1
-BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS = 3
+BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS = 5
 
 
 def make_bond_kernel_dynamic(chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
@@ -1391,8 +1419,11 @@ def make_bond_kernel_dynamic(chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
     # eliashberg_dynamic.vertex_qw_to_rt. spatial_ifftn carries the 1/N.
     F_tau = _ms.boson_to_tau(F_q_w, axis=3)
     del F_q_w
-    F_r6t = _bk.spatial_ifftn(F_tau, axes=(0, 1, 2)).reshape(
-        Nx, Ny, Nz, nmat, B, nd, B, nd)
+    # Kept in the (ND, ND) matrix form, NOT split into [m, ab, m', cd]: the
+    # real-space multiply-accumulate below is exactly the ND-space mat-vec
+    # W_I(r, tau) = sum_J F_IJ(r, tau) Z_J(r, tau), which numpy can do as one
+    # batched matmul (see _fluctuation for why that matters for memory).
+    F_rt = _bk.spatial_ifftn(F_tau, axes=(0, 1, 2))   # (Nx,Ny,Nz,nmat,ND,ND)
     del F_tau
 
     # Frequency-resolved pair bubble; carries the single T = 1/beta. REUSED
@@ -1417,21 +1448,47 @@ def make_bond_kernel_dynamic(chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t,
     Vpp6 = Vpp.reshape(B, nd, B, nd)                      # [m,ab,m',cd]
 
     def _fluctuation(X_grid_w):
-        """Y^fl(k, n): spatial FFT convolution x imaginary-time product."""
-        # (B, nd, Nx, Ny, Nz, nmat)
-        Z = PH[:, None, :, :, :, None] * X_grid_w[None, ...]
-        Z_rt = _bk.spatial_ifftn(_ms.fermion_to_tau(Z, axis=-1),
-                                 axes=(2, 3, 4))
+        """Y^fl(k, n): spatial FFT convolution x imaginary-time product.
+
+        Two structural choices here are load-bearing for the memory contract
+        declared above; both were measured, not guessed (numpy 1.26, in units
+        of one ``N_q * nmat * ND`` buffer):
+
+        * The transforms are NOT nested. Each stage is bound to a name and the
+          previous one ``del``-ed before the next allocates; nesting them
+          (``spatial_ifftn(fermion_to_tau(Z))``) keeps the caller's argument
+          alive across the inner call's own two temporaries and adds a unit.
+        * The real-space multiply-accumulate is a batched MATMUL in the
+          (ND, ND) matrix form, not an ``einsum`` over the split
+          ``[m, ab, m', cd]`` index. The two are mathematically identical
+          (agreement 3.6e-15) but ``np.einsum`` buffers the strided operands
+          and peaks at 4.24 units for that stage alone, where the matmul peaks
+          at 1.01 -- this single stage, not the transforms, is what would
+          otherwise dominate the whole matvec (measured 5.45 units with the
+          einsum, 4.24 with the matmul; every transform split in both).
+
+        Everything is carried in the ``(Nx, Ny, Nz, nmat, B, nd)`` layout so
+        the reshape to the ND matrix index is free (no ``moveaxis`` copy) and
+        the FFT axes stay leading.
+        """
+        # X_grid_w is (nd, Nx, Ny, Nz, nmat); the kernel wants (..., nmat, nd).
+        X_t = np.moveaxis(X_grid_w, 0, -1)
+        # Z_{m,ab}(k, n) = e^{i k.dr_m} X_{ab}(k, n)
+        Z = PH_k[:, :, :, None, :, None] * X_t[:, :, :, :, None, :]
+        Z_t = _ms.fermion_to_tau(Z, axis=3)
         del Z
-        Z_rt = np.moveaxis(Z_rt, (0, 1), (4, 5))        # (Nx,Ny,Nz,nmat,B,nd)
-        # W_rt[x,y,z,t,m,ab] = sum_{m',cd} F_r6t[...,m,ab,m',cd] Z_rt[...]
-        W_rt = np.einsum('xyztaAbB,xyztbB->xyztaA', F_r6t, Z_rt)
+        Z_rt = _bk.spatial_ifftn(Z_t, axes=(0, 1, 2))
+        del Z_t
+        # W_I(r, tau) = sum_J F_IJ(r, tau) Z_J(r, tau), I = (m, ab)
+        W_rt = (F_rt @ Z_rt.reshape(Nx, Ny, Nz, nmat, ND, 1))[..., 0]
         del Z_rt
-        W_kw = _ms.tau_to_fermion(
-            _bk.spatial_fftn(W_rt, axes=(0, 1, 2)), axis=3)
+        W_kr = _bk.spatial_fftn(W_rt, axes=(0, 1, 2))
         del W_rt
+        W_kw = _ms.tau_to_fermion(W_kr, axis=3)
+        del W_kr
         # (Nx,Ny,Nz,nmat,nd)
-        return -np.einsum('xyzm,xyznma->xyzna', PH_k, W_kw)
+        return -np.einsum('xyzm,xyztma->xyzta', PH_k,
+                          W_kw.reshape(Nx, Ny, Nz, nmat, B, nd))
 
     def _instantaneous(X_sum):
         """Y^pp(k): VERBATIM the static _bond_kernel_operators body, applied
