@@ -263,17 +263,27 @@ class FLEX(RPA):
                 .format(self.mixing_scheme))
         self.anderson_depth = int(self.param_mod.get("anderson_depth", 5))
 
-        # UNDOCUMENTED verification switch, off by default. On the paramagnetic
-        # general path it additionally solves the TRANSVERSE (spin-flip) channel
-        # and stores it as chiq_pm. For a paramagnetic system SU(2) symmetry
-        # forces chi^{+-} == chi^{zz}, and the two are built along genuinely
-        # different routes -- the longitudinal one from the Kuroki S matrix, the
-        # transverse one from the crossed (Fock-exchange) Hartree vertex -- so
-        # their agreement is a real cross-check of the vertex construction
-        # rather than a restatement. It is deliberately not in the manual: it
-        # adds a diagnostic output, not physics, and is redundant by symmetry.
-        self.output_chi_pm = _bk.as_bool(
-            self.param_mod.get("output_chi_pm", False))
+        # UNDOCUMENTED verification switch, off by default. On the general path
+        # it additionally solves the TRANSVERSE (spin-flip) channel from the
+        # crossed (Fock-exchange) Hartree vertex, which for an SU(2)-invariant
+        # interaction must reproduce the longitudinal spin channel built from
+        # the Kuroki S matrix -- a genuine cross-check, since the two come from
+        # different vertices. Deliberately not in the manual: a diagnostic, not
+        # physics.
+        #
+        # Three states, because the array is large -- at Nmat=5120 on a 48x48
+        # mesh it is about 3 GB, and the answer being sought is a single number:
+        #   false   (default) do nothing
+        #   "check"           solve it, report the comparison, discard the array
+        #   true              solve it, report, and store/save chiq_pm
+        _pm = self.param_mod.get("output_chi_pm", False)
+        if isinstance(_pm, str) and _pm.strip().lower() == "check":
+            self.chi_pm_mode = "check"
+        elif _bk.as_bool(_pm):
+            self.chi_pm_mode = "save"
+        else:
+            self.chi_pm_mode = "off"
+        self.output_chi_pm = self.chi_pm_mode != "off"
 
         # Matsubara-axis representation (design: docs/design/ir-matsubara.md,
         # Stage 2): the default uniform grid, or the sparse-ir intermediate
@@ -743,6 +753,20 @@ class FLEX(RPA):
         # of the axis, not of the vertices.
         chi_pm = (self._calc_chi_pm(chi0q_out, ham_orig)
                   if self.output_chi_pm else None)
+        if chi_pm is not None:
+            # Compare on the axis both were dressed on, before densification.
+            _pm_h, _s_h = _bk.to_host(chi_pm), _bk.to_host(chi_s)
+            _d = float(np.max(np.abs(_pm_h - _s_h)))
+            _sc = float(np.max(np.abs(_s_h)))
+            logger.info(
+                "output_chi_pm: max|chi_pm - chi_s| = %.6e (relative %.3e). "
+                "For an SU(2)-invariant interaction this should be at "
+                "round-off; a larger value with anisotropic terms (bare Hund, "
+                "bare Ising) is physical.",
+                _d, _d / max(_sc, np.finfo(float).tiny))
+            if self.chi_pm_mode == "check":
+                # The number above was the point; do not carry ~GB of array.
+                chi_pm = None
 
         if self.use_ir and self.write_densified:
             axF, axB = self._ir_axF, self._ir_axB

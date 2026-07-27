@@ -78,6 +78,25 @@ def _solve(dirpath, scheme, switch, extra_param=None, green_info=None):
     return _solve_with(dirpath, scheme, switch, None, extra_param, green_info)
 
 
+def _capture_flex_log(fn, level=None):
+    """Capture hwave.solver.flex records, forcing the level so INFO lines the
+    diagnostic emits are not filtered out by the ambient configuration."""
+    import logging
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    lg = logging.getLogger("hwave.solver.flex")
+    prev = lg.level
+    lg.addHandler(handler)
+    lg.setLevel(logging.INFO if level is None else level)
+    try:
+        result = fn()
+    finally:
+        lg.removeHandler(handler)
+        lg.setLevel(prev)
+    return result, [r.getMessage() for r in records]
+
+
 class TestChiPmCheck(unittest.TestCase):
 
     def test_off_by_default_produces_nothing(self):
@@ -183,6 +202,42 @@ class TestChiPmCheck(unittest.TestCase):
             self.assertIn("chiq_pm", gi)
             gi2 = _solve(d, "general", False, green_info=gi)
         self.assertNotIn("chiq_pm", gi2)
+
+
+class TestChiPmModes(unittest.TestCase):
+    """Three states, because the array is ~GB at production scale while the
+    answer being sought is one number."""
+
+    _CMP = "max|chi_pm - chi_s|"
+
+    def _run(self, switch):
+        with tempfile.TemporaryDirectory() as d:
+            return _capture_flex_log(lambda: _solve(d, "general", switch))
+
+    def test_check_mode_reports_but_stores_nothing(self):
+        gi, msgs = self._run("check")
+        self.assertNotIn("chiq_pm", gi, "check mode must not carry the array")
+        self.assertEqual(len([m for m in msgs if self._CMP in m]), 1,
+                         "check mode must still report the comparison")
+
+    def test_save_mode_reports_and_stores(self):
+        gi, msgs = self._run(True)
+        self.assertIn("chiq_pm", gi)
+        self.assertEqual(len([m for m in msgs if self._CMP in m]), 1)
+
+    def test_off_does_nothing_at_all(self):
+        gi, msgs = self._run(False)
+        self.assertNotIn("chiq_pm", gi)
+        self.assertEqual([m for m in msgs if self._CMP in m], [])
+
+    def test_check_mode_reports_roundoff_for_su2_interaction(self):
+        """The number the mode exists to deliver."""
+        _, msgs = self._run("check")
+        line = [m for m in msgs if self._CMP in m][0]
+        rel = float(line.split("relative ")[1].split(")")[0])
+        self.assertLess(rel, 1e-12,
+                        "CoulombIntra-only is SU(2)-invariant, so the two "
+                        "channels must agree to round-off")
 
 
 if __name__ == "__main__":
