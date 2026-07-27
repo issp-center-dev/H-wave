@@ -591,7 +591,7 @@ into the directory read by the Eliashberg step:
 
 .. warning::
 
-   **Results change for all multi-orbital reduced/squashed FLEX runs.**
+   **Results may change for multi-orbital reduced/squashed FLEX runs.**
    The matrix index of a reduced (kuroki) susceptibility is a *density pair*:
    the stored :math:`X[a,b]` is :math:`\chi_{(a,a),(b,b)}`. Earlier versions
    embedded it into the :math:`n_\text{orb}^2` orbital-pair space as
@@ -1143,11 +1143,12 @@ with four-index vertex structure.
    exact for a paramagnetic run, where the discarded blocks are redundant
    (the down block equals the up block and the cross-spin blocks vanish).
    A spin-polarized run -- ``spin_mode`` is auto-detected, so an ``Extern``
-   field with ``coeff_extern`` is enough -- does not satisfy this, and the
-   discarded components are real. The solver checks the stored data and
-   warns, naming the channel and how large the discarded part is; the
-   eigenvalue it then returns is not a controlled approximation of the
-   spin-resolved problem.
+   field with ``coeff_extern`` is enough -- generally does not satisfy it.
+   The solver inspects the STORED DATA rather than classifying the run
+   (the file records no ``spin_mode``): whenever the discarded blocks are
+   not exactly redundant it warns, naming the channel and how large the
+   discarded part is. The eigenvalue it then returns is not a controlled
+   approximation of the spin-resolved problem.
 
 
 Tips

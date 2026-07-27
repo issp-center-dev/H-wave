@@ -3197,12 +3197,18 @@ class TestKanamoriInteraction(unittest.TestCase):
         for ev in eigenvalues:
             self.assertTrue(np.isfinite(ev), "All eigenvalues should be finite")
 
-    def test_rpa_chi_vs_rpa_solver(self):
-        """Compare RPA susceptibility from sc.py S/C matrices vs rpa.py solver.
+    def test_rpa_chi_from_sc_matrices_is_finite_on_rpa_solver_chi0q(self):
+        """Smoke test: feed a REAL reduced chi0q from the RPA solver through
+        sc.py's S/C dressing and check both channels stay finite.
 
-        For a system with CoulombIntra + Hund, verify that the spin-channel
-        RPA susceptibility computed via S/C matrices matches the RPA solver.
-        """
+        NOTE: this does NOT compare against the RPA solver's own chi_s/chi_c --
+        it was previously named as if it did. It builds chi0q with the solver,
+        embeds it at the density-pair positions, and solves
+        [I -+ chi0 S/C]^{-1} chi0 here, asserting only that no q-point diverges
+        for a small U. A genuine cross-implementation comparison would be
+        valuable, but the reduced RPA solve and sc.py's general S/C formulation
+        do not treat Hund identically, so what the two should agree on has to be
+        established first rather than assumed."""
         import tempfile
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.rpa as sol_rpa

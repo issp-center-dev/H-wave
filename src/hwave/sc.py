@@ -1148,31 +1148,37 @@ _REDUCED_FLEX_UNSUPPORTED = ("CoulombInter", "Hund", "Ising", "Exchange",
                              "PairHop")
 
 
-def _reaches_off_density(mat, norb):
-    """Whether an interaction actually populates the off-density S/C blocks.
+def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz):
+    """Largest |S| or |C| on the blocks a reduced chi cannot dress.
 
-    Both blocks that a reduced chi cannot dress -- S/C[(a,b),(a,b)] (case 2) and
-    S/C[(a,b),(b,a)] (case 4) of :func:`_build_sc_matrices_all_q` -- are built
-    exclusively from the term's ``[a, b]`` entries with ``a != b``. A term whose
-    inter-orbital entries all vanish therefore contributes nothing there, and
-    warning about it would be a false positive: a pressure/coupling scan that
-    includes a V = 0 or J = 0 endpoint configures the file but carries no
-    inter-orbital weight.
+    The reduced susceptibility is zero on every pair index (a,b) with a != b, so
+    the vertex is undressed exactly where S or C is nonzero there --
+    S/C[(a,b),(a,b)] (case 2) and S/C[(a,b),(b,a)] (case 4) of
+    :func:`_build_sc_matrices_all_q`.
 
-    Zero is tested exactly rather than against a tolerance. The question here is
-    "can this term contribute at all", and an exactly-zero array is the only
-    unambiguous "no"; a tiny-but-nonzero coupling does produce a correspondingly
-    tiny missing contribution, which the user should still be told about.
+    This inspects the COMBINED matrices rather than testing each configured term
+    on its own. Those blocks are sums: case 2 mixes CoulombInter, Ising and
+    Hund, case 4 adds Exchange and PairHop. Terms can cancel there, and a
+    per-term test would then announce missing dressing that does not exist.
     """
-    arr = np.asarray(mat)
-    if arr.ndim < 2 or arr.shape[0] != norb or arr.shape[1] != norb:
-        # Unexpected layout: warn rather than silently clear the flag.
-        return True
-    off_diag = ~np.eye(norb, dtype=bool)
-    return bool(np.any(arr[off_diag] != 0))
+    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    nd = norb * norb
+    density = np.zeros(nd, dtype=bool)
+    density[np.arange(norb) * norb + np.arange(norb)] = True
+    off = ~density
+    if not off.any():
+        return 0.0
+    weight = 0.0
+    for M in (S_all, C_all):
+        # anything outside the density x density sub-block, over all q
+        weight = max(weight,
+                     float(np.max(np.abs(M[..., off, :]))),
+                     float(np.max(np.abs(M[..., :, off]))))
+    return weight
 
 
-def _warn_reduced_flex_missing_components(inter_k, norb, convention="kuroki"):
+def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki"):
     """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
 
     Call this ONCE per run, from the place that is about to build the pairing
@@ -1204,15 +1210,22 @@ def _warn_reduced_flex_missing_components(inter_k, norb, convention="kuroki"):
     if norb <= 1:
         # norb == 1 has no off-density pair index, so nothing can be missing.
         return
-    missing = [k for k in _REDUCED_FLEX_UNSUPPORTED
-               if k in inter_k and _reaches_off_density(inter_k[k], norb)]
-    if not missing:
+    configured = [k for k in _REDUCED_FLEX_UNSUPPORTED if k in inter_k]
+    if not configured:
         return
+    # Ask the assembled S/C matrices, not the individual terms: the off-density
+    # blocks are sums and the configured terms can cancel there (e.g. Exchange
+    # against PairHop in case 4). Only a nonzero combined block means dressing
+    # is actually missing.
+    if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz) == 0.0:
+        return
+    missing = configured
     logger.warning(
         "chi0q_mode='flex' is consuming a REDUCED (calc_scheme='reduced' or "
         "'squashed') FLEX susceptibility, which stores only the "
         "density-density components chi_{(a,a),(b,b)}, together with "
-        "inter-orbital interaction(s) %s. Those terms give the S/C matrices "
+        "inter-orbital interaction(s) %s. Together those terms give the S/C "
+        "matrices nonzero "
         "off-density components S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] (a != b) "
         "for which the reduced run computed no susceptibility, so those "
         "channels enter the pairing vertex undressed (bare 0.5*(S+C) only) and "
@@ -1501,8 +1514,8 @@ def _warn_if_spin_block_discarded(chi_full, norb, label="chi"):
     singlet/triplet vertex formulas are norb^2-sized and paramagnetic.
 
     Dropping it is lossless exactly when it is redundant, i.e. when the down
-    block equals the up block and the cross blocks vanish. That holds bit-for-bit
-    for a paramagnetic run: the inflation writes the same array into both spin
+    block equals the up block EXACTLY and the cross blocks are EXACTLY zero.
+    That holds bit-for-bit for a paramagnetic run: the inflation writes the same array into both spin
     blocks and leaves the cross blocks at zero
     (``FLEX._inflate_chi0q_and_ham``), and the channel vertices are spin-block
     diagonal, so the RPA solve preserves both properties.
@@ -1526,18 +1539,28 @@ def _warn_if_spin_block_discarded(chi_full, norb, label="chi"):
     cross_du = chi_full[..., norb:, :norb]
 
     scale = float(np.max(np.abs(up)))
-    tol = 1e-12 * max(scale, 1.0)
     d_down = float(np.max(np.abs(up - down)))
     d_cross = max(float(np.max(np.abs(cross_ud))),
                   float(np.max(np.abs(cross_du))))
-    if d_down <= tol and d_cross <= tol:
+    # Compared EXACTLY, with no tolerance. The redundancy of a paramagnetic run
+    # is structural, not numerical: the same array object is written into both
+    # spin blocks and the cross blocks are never touched, and every operation
+    # downstream is spin-block diagonal, so the equalities hold bit-for-bit
+    # (verified on uniform, IR, static and dynamic output, and on production
+    # multi-orbital data). A tolerance would therefore buy nothing real, while
+    # letting genuinely discarded content slip through whenever the up block is
+    # itself small -- with tol = 1e-12*max(scale, 1) and an all-zero up block,
+    # discarded values up to 1e-12 would have passed unreported. If some future
+    # path does perturb the equality at round-off level, warning is the correct
+    # conservative response rather than something to suppress.
+    if d_down == 0.0 and d_cross == 0.0:
         return
 
     parts = []
-    if d_down > tol:
+    if d_down != 0.0:
         parts.append("the down-spin block differs from the up-spin block "
                      "by {:.3e}".format(d_down))
-    if d_cross > tol:
+    if d_cross != 0.0:
         parts.append("the cross-spin blocks are nonzero "
                      "(max {:.3e})".format(d_cross))
     logger.warning(
@@ -3431,7 +3454,8 @@ def calc_eliashberg(input_dict):
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
-        _warn_reduced_flex_missing_components(inter_k, norb, chi_convention)
+        _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
+                                              chi_convention)
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type=pairing_type,
                                       convention=chi_convention)

@@ -410,7 +410,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
             with self.subTest(interaction=key):
                 with self.assertLogs("hwave_sc", level="WARNING") as cm:
                     sc._warn_reduced_flex_missing_components(
-                        self._inter_k(["CoulombIntra", key]), norb=2)
+                        self._inter_k(["CoulombIntra", key]), 2, 2, 2, 1)
                 joined = "\n".join(cm.output)
                 self.assertIn(key, joined)
                 self.assertIn("calc_scheme='general'", joined)
@@ -426,7 +426,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg.addHandler(handler)
         try:
             sc._warn_reduced_flex_missing_components(
-                self._inter_k(["CoulombIntra"]), norb=2)
+                self._inter_k(["CoulombIntra"]), 2, 2, 2, 1)
         finally:
             lg.removeHandler(handler)
         warns = [r.getMessage() for r in records
@@ -453,33 +453,62 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components(inter_k, norb)
+            sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
         finally:
             lg.removeHandler(handler)
         warns = [r.getMessage() for r in records
                  if r.levelno >= logging.WARNING]
         self.assertEqual(warns, [])
 
-    def test_warns_only_for_terms_with_nonzero_interorbital_weight(self):
-        """Among several configured terms, only the ones actually carrying
-        inter-orbital weight may be named."""
+    def test_no_warning_when_the_terms_cancel_in_the_combined_block(self):
+        """The decision is made on the ASSEMBLED S/C matrices, not term by term.
+
+        Case 4 of _build_sc_matrices_all_q builds S = C = Exchange + PairHop on
+        the off-density block, so Exchange = -PairHop cancels it exactly. A
+        per-term test would announce missing dressing that does not exist."""
+        import hwave.sc as sc
+        import logging
+
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        jp = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        jp[0, 1] = 0.6
+        jp[1, 0] = 0.6
+        inter_k = {"CoulombIntra": np.ones((norb, norb, Nx, Ny, Nz),
+                                           dtype=complex),
+                   "Exchange": jp, "PairHop": -jp}
+        self.assertEqual(
+            sc._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0,
+            "Exchange = -PairHop must cancel the case-4 off-density block")
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
+        finally:
+            lg.removeHandler(handler)
+        self.assertEqual([r.getMessage() for r in records
+                          if r.levelno >= logging.WARNING], [])
+
+    def test_warns_when_the_terms_do_not_cancel(self):
+        """Same fixture without the cancellation must still warn, so the test
+        above cannot pass for the wrong reason."""
         import hwave.sc as sc
 
         norb, Nx, Ny, Nz = 2, 2, 2, 1
-        zero = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
-        live = zero.copy()
-        live[0, 1] = 0.5
-        live[1, 0] = 0.5
+        jp = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+        jp[0, 1] = 0.6
+        jp[1, 0] = 0.6
         inter_k = {"CoulombIntra": np.ones((norb, norb, Nx, Ny, Nz),
                                            dtype=complex),
-                   "Hund": live, "CoulombInter": zero, "Ising": zero}
-
+                   "Exchange": jp, "PairHop": jp}
+        self.assertGreater(
+            sc._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0)
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            sc._warn_reduced_flex_missing_components(inter_k, norb)
-        joined = "\n".join(cm.output)
-        self.assertIn("Hund", joined)
-        self.assertNotIn("CoulombInter", joined)
-        self.assertNotIn("Ising", joined)
+            sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
+        self.assertIn("Exchange", "\n".join(cm.output))
 
     def test_diagonal_only_interorbital_term_does_not_warn(self):
         """Only the a != b entries build the off-density blocks, so a term whose
@@ -498,7 +527,8 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components({"Hund": diag}, norb)
+            sc._warn_reduced_flex_missing_components({"Hund": diag}, norb,
+                                                     Nx, Ny, Nz)
         finally:
             lg.removeHandler(handler)
         warns = [r.getMessage() for r in records
@@ -518,7 +548,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg.addHandler(handler)
         try:
             sc._warn_reduced_flex_missing_components(
-                self._inter_k(["CoulombIntra", "Hund"], norb=1), norb=1)
+                self._inter_k(["CoulombIntra", "Hund"], 1, 2, 2, 1), 1, 2, 2, 1)
         finally:
             lg.removeHandler(handler)
         warns = [r.getMessage() for r in records
@@ -538,7 +568,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg.addHandler(handler)
         try:
             sc._warn_reduced_flex_missing_components(
-                self._inter_k(["CoulombIntra", "Hund"]), norb=2,
+                self._inter_k(["CoulombIntra", "Hund"]), 2, 2, 2, 1,
                 convention="myo")
         finally:
             lg.removeHandler(handler)
