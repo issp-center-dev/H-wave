@@ -1169,7 +1169,16 @@ The Eliashberg pairing vertex is **paramagnetic**: the Kuroki :math:`S`/:math:`C
 matrices are :math:`n_\text{orb}^2`-sized and carry no spin index, and the
 singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
 a spin-polarized or spin-mixing model is therefore not a matter of
-configuration:
+configuration.
+
+``spin_mode`` below is **not an input parameter** -- there is no such key in the
+TOML file. It is determined internally from the Hamiltonian: from whether the
+transfer term has spin-off-diagonal blocks (in ``enable_spin_orbital`` mode) and
+from whether an external field is present. It is also **independent of**
+``calc_scheme``, which selects the orbital tensor rank rather than the spin
+structure; the one link between them is that ``calc_scheme = "general"`` FLEX
+accepts ``spin-free`` only and rejects the other two outright.
+
 
 - **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
   FLEX susceptibility stores its two spin blocks bit-identically with zero
