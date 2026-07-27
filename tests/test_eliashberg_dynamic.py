@@ -175,8 +175,13 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
     """A norb=2 reduced (kuroki) FLEX chi has nd_chi = norb*ns = 4 = norb^2, so
     the spin-orbital layout is INDISTINGUISHABLE from an orbital-pair layout by
     shape alone. _expand_flex_chi must use the 'kuroki' convention to extract
-    the spin-up orbital block and diagonally expand it -- not treat the raw 4x4
-    spin-orbital matrix as an orbital-pair susceptibility."""
+    the spin-up block and embed it at the DENSITY-PAIR positions -- not treat
+    the raw 4x4 spin-orbital matrix as an orbital-pair susceptibility.
+
+    The reduced index is a density pair, so the extracted X[a,b] is
+    chi_{(a,a),(b,b)} and belongs at flat position [a*norb+a, b*norb+b]. See
+    tests/test_flex_reduced_eliashberg.py for the placement rationale and the
+    physical regression that pins it."""
     import hwave.sc as sc
     norb, ns, Nx, Ny, Nz, nfreq = 2, 2, 2, 2, 1, 3
     nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
@@ -186,12 +191,13 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
 
     out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
-    # expected: extract up-spin orbital block [:norb, :norb], scatter diagonally
+    # expected: extract up-spin block [:norb, :norb], embed at density pairs
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
     expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     np.testing.assert_allclose(out, expected)
     # and it must NOT equal the raw 4x4 (the buggy orbital-pair interpretation)
     assert not np.allclose(out, chi6)
@@ -284,8 +290,9 @@ def test_expand_flex_chi_unambiguous_spin_orbital_tagged_kuroki_still_works(
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
     expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     assert out.shape == (nfreq, Nx, Ny, Nz, nd, nd)
     np.testing.assert_allclose(out, expected)
 
@@ -334,8 +341,9 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     chi6 = raw_s.reshape(nmat, Nx, Ny, Nz, nd_so, nd_so)[nmat // 2]
     orb = chi6[:, :, :, :norb, :norb]
     expected = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     np.testing.assert_allclose(chis, expected)
 
 
@@ -381,6 +389,57 @@ def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
 
     assert seen and max(seen) == 1, \
         "static loader expanded {} frequencies (want 1)".format(max(seen))
+
+
+def test_full_loader_embeds_kuroki_chi_on_density_pairs(tmp_path):
+    """The DYNAMIC loader must apply the same density-pair embedding as the
+    static one, on EVERY frequency.
+
+    The dynamic Eliashberg kernel reads chi through
+    _load_flex_susceptibilities_full, so a reduced (kuroki) chi mis-embedded
+    here corrupts the pairing vertex at all frequencies -- and unlike the static
+    case there is no 'load' route to cross-check it against. See
+    tests/test_flex_reduced_eliashberg.py for why the density-pair placement is
+    the only faithful one."""
+    import hwave.sc as sc
+    m = _write_flex_so_fixture(tmp_path, nmat=6)
+    inp = _flex_input(tmp_path, m["nmat"])
+    norb, Nx, Ny, Nz = m["norb"], m["Nx"], m["Ny"], m["Nz"]
+    nd, nd_so = norb * norb, norb * 2
+
+    chis_w, chic_w, _, conv = sc._load_flex_susceptibilities_full(
+        inp, norb, Nx, Ny, Nz)
+    assert conv == "kuroki"
+
+    raw = np.load(tmp_path / "chiq_s.npz")["chiq_s"]
+    chi6 = raw.reshape(m["nmat"], Nx, Ny, Nz, nd_so, nd_so)
+    for w in range(m["nmat"]):
+        X = chi6[w, :, :, :, :norb, :norb]
+        for a in range(norb):
+            for b in range(norb):
+                np.testing.assert_allclose(
+                    chis_w[..., a * norb + a, b * norb + b, w], X[..., a, b],
+                    err_msg="frequency {} density pair ({},{})".format(w, a, b))
+    # off-density components must be exactly zero at every frequency
+    density = [a * norb + a for a in range(norb)]
+    off = [i for i in range(nd) if i not in density]
+    if off:
+        assert np.max(np.abs(chis_w[..., off, :, :])) == 0.0
+        assert np.max(np.abs(chic_w[..., :, off, :])) == 0.0
+
+
+def test_expand_flex_chi_returns_host_numpy(tmp_path):
+    """GPU safety: the expansion is the SINGLE shared implementation and runs on
+    host numpy before anything is moved to the device (the static path builds
+    Vs_q first and transfers afterwards). Returning a host ndarray is what makes
+    the GPU and CPU runs bit-identical here, so pin it."""
+    import hwave.sc as sc
+    norb, Nx, Ny, Nz, nfreq = 2, 2, 1, 1, 2
+    nd_so = norb * 2
+    chi_raw = np.zeros((nfreq, Nx * Ny * Nz, nd_so, nd_so), dtype=complex)
+    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+    assert isinstance(out, np.ndarray)
+    assert type(out).__module__ == "numpy"
 
 
 def test_check_memory_aborts_over_limit():

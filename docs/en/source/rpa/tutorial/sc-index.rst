@@ -589,6 +589,27 @@ into the directory read by the Eliashberg step:
    gap functions for such runs are **corrected (and therefore change)** in this
    version. Single-orbital and general (myo) results are unaffected.
 
+.. warning::
+
+   **Results change for all multi-orbital reduced/squashed FLEX runs.**
+   The matrix index of a reduced (kuroki) susceptibility is a *density pair*:
+   the stored :math:`X[a,b]` is :math:`\chi_{(a,a),(b,b)}`. Earlier versions
+   embedded it into the :math:`n_\text{orb}^2` orbital-pair space as
+   :math:`\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]`, which dropped the
+   inter-orbital density coupling :math:`\chi_{(0,0),(1,1)}` -- a component the
+   pairing vertex :math:`S \chi S` genuinely references -- and scattered
+   :math:`X` onto pair indices the reduced scheme never computed. This version
+   embeds it correctly, as
+   :math:`\text{out}[(a,a),(b,b)] = X[a,b]` with every other component zero.
+
+   Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
+   for every run with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"``
+   or ``"squashed"``. Single-orbital (``norb = 1``) results are bit-identical
+   (both placements coincide), as are all general (myo) results. With the fix,
+   a ``CoulombIntra``-only reduced run reproduces the equivalent
+   ``chi0q_mode = "load"`` and general-scheme results exactly for identical
+   physics; before the fix it did not.
+
    As of this version, IR-native susceptibility files (``write_densified =
    false``) must carry this ``chi_convention`` tag, and the loader also
    rejects a ``chi_convention`` that contradicts the tensor's shape-inferred
@@ -1068,6 +1089,8 @@ transfers the gap vector. The result is numerically identical to the CPU run
   and :math:`N_{\mathrm{mat}}=2048` give roughly a 16x per-matvec speedup over
   the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).
 
+.. _sc_supported_inter:
+
 Supported interactions
 ----------------------------
 
@@ -1084,6 +1107,27 @@ For systems with ``Hund``, ``Exchange``, ``Ising``, or ``PairHop``
 interactions, the solver automatically uses the generalized
 :math:`S`/:math:`C` matrix formulation (Kuroki et al., PRB 79, 224511)
 with four-index vertex structure.
+
+.. note::
+
+   **Caveat for** ``chi0q_mode = "flex"`` **with a reduced/squashed FLEX run.**
+   A reduced (``calc_scheme = "reduced"`` or ``"squashed"``) FLEX run stores
+   only the density-density components :math:`\chi_{(a,a),(b,b)}`. For
+   ``CoulombIntra`` alone the :math:`S`/:math:`C` matrices live entirely on
+   that density-pair block, so the reduced route is exact. Every other
+   inter-orbital two-body term -- ``CoulombInter``, ``Hund``, ``Ising``,
+   ``Exchange``, ``PairHop`` -- also puts weight on the off-density blocks
+   :math:`S/C[(a,b),(a,b)]` and :math:`S/C[(a,b),(b,a)]` with :math:`a \neq b`,
+   where the reduced run computed no susceptibility at all. Those channels
+   then enter the pairing vertex **undressed** (the bare
+   :math:`\tfrac{1}{2}(S+C)` term only), so :math:`\lambda` is an
+   approximation. The solver emits a warning naming the offending terms.
+
+   This is a limitation of the stored data, not of the loader, and cannot be
+   repaired on the Eliashberg side. Re-run FLEX with
+   ``calc_scheme = "general"`` (which stores the full orbital-pair
+   susceptibility) for the complete vertex, or use ``chi0q_mode = "load"``.
+   Single-orbital models are unaffected -- there is no off-density pair index.
 
 
 Tips

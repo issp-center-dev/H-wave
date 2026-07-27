@@ -912,6 +912,16 @@ Tips
   これによりFLEXレベルのスピン・電荷ゆらぎを用いた超伝導不安定性の
   解析が可能になります。
 
+  .. note::
+
+     ``reduced``/``squashed`` 経路では密度‐密度感受率
+     :math:`\chi_{(a,a),(b,b)}` しか保存されないため、pairing vertex が
+     完全に FLEX で dress されるのは ``CoulombIntra`` のみのモデル
+     （または ``norb = 1``\ ）に\ **限られます**\ 。``CoulombInter``、
+     ``Hund``、``Ising``、``Exchange``、``PairHop`` がある場合は非密度チャネルが
+     裸のまま入り、ソルバーが警告を出します。完全な頂点を得るには
+     ``calc_scheme = "general"`` を使用してください。
+
 
 実装の詳細と制限事項
 ----------------------------

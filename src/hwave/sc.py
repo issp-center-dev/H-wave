@@ -1120,6 +1120,52 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     return Vs_q
 
 
+#: Interaction terms whose Kuroki S/C matrices have entries OUTSIDE the
+#: density-pair block, keyed by the _build_sc_matrices_all_q case that puts
+#: them there.  Case 2 is S/C[(a,b),(a,b)] and case 4 is S/C[(a,b),(b,a)], both
+#: with a != b; a reduced/squashed run never computes chi on those pair indices,
+#: so the corresponding fluctuation dressing is missing from the vertex.
+_REDUCED_FLEX_UNSUPPORTED = ("CoulombInter", "Hund", "Ising", "Exchange",
+                             "PairHop")
+
+
+def _warn_reduced_flex_missing_components(inter_k, norb):
+    """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
+
+    A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
+    density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
+    Kuroki S/C matrices built from CoulombIntra alone live entirely on that
+    density-pair block, so the reduced treatment is exact.  Any inter-orbital
+    two-body term, however, also populates the off-density blocks
+    S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] with a != b -- and there chi is
+    identically zero simply because the reduced run never computed it.  Those
+    channels then keep only the bare 0.5*(S+C) term with no fluctuation
+    dressing, which is a silent approximation rather than a solver error.
+
+    This is a genuine limitation of the stored data, not of the loader: it
+    cannot be repaired on the Eliashberg side.  Re-run FLEX with
+    ``calc_scheme="general"`` (which stores the full orbital-pair chi) to get
+    the complete vertex.
+    """
+    if norb <= 1:
+        # norb == 1 has no off-density pair index, so nothing can be missing.
+        return
+    missing = [k for k in _REDUCED_FLEX_UNSUPPORTED if k in inter_k]
+    if not missing:
+        return
+    logger.warning(
+        "chi0q_mode='flex' is consuming a REDUCED (calc_scheme='reduced' or "
+        "'squashed') FLEX susceptibility, which stores only the "
+        "density-density components chi_{(a,a),(b,b)}, together with "
+        "inter-orbital interaction(s) %s. Those terms give the S/C matrices "
+        "off-density components S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] (a != b) "
+        "for which the reduced run computed no susceptibility, so those "
+        "channels enter the pairing vertex undressed (bare 0.5*(S+C) only) and "
+        "the resulting lambda is an approximation. Re-run FLEX with "
+        "calc_scheme='general' to obtain the full orbital-pair chi.",
+        ", ".join(missing))
+
+
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                            pairing_type="singlet", convention="kuroki"):
     """Compute pairing vertex from pre-computed FLEX susceptibilities.
@@ -1173,6 +1219,7 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
         S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
     elif conv == "kuroki":
+        _warn_reduced_flex_missing_components(inter_k, norb)
         S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
     else:
         raise ValueError(
@@ -1399,9 +1446,12 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     - ``"myo"`` (general full-vertex FLEX) is already in orbital-pair space
       ``nd_chi = norb^2``; passed through unchanged.
     - ``"kuroki"`` (reduced / squashed FLEX) is in spin-orbital reduced space
-      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``); the spin-up
-      orbital block ``[:norb, :norb]`` is extracted and diagonally expanded to
-      ``norb^2 x norb^2``.
+      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``), and its matrix
+      index is a DENSITY PAIR: ``X[a, b]`` is ``chi_{(a,a),(b,b)}``.  The
+      spin-up block ``[:norb, :norb]`` is extracted and embedded at the
+      density-pair positions ``[a*norb + a, b*norb + b]`` of the
+      ``norb^2 x norb^2`` orbital-pair space, with every off-density component
+      left exactly zero (see the body for why any other placement is wrong).
 
     Whether the spin-orbital block must be extracted is decided by ``nd_chi``:
     ``nd_chi == norb*ns`` means spin-orbital (extract), ``nd_chi == norb^2``
@@ -1484,11 +1534,35 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
         return chi_full
 
     # Spin-orbital reduced (spin-block ordered s*norb+a): extract the spin-up
-    # orbital block and scatter it diagonally into norb^2 x norb^2.
+    # block and embed it at the DENSITY-PAIR positions of the orbital-pair
+    # space.
+    #
+    # The reduced/squashed scheme keeps only the density-density diagonal of the
+    # susceptibility: the stored X[a, b] IS chi_{(a,a),(b,b)} (its companion
+    # interaction reduction in FLEX._inflate_chi0q_and_ham is
+    # einsum('ksasatbtb->ksatb', ...), the density-density diagonal of the
+    # vertex).  With the orbital-pair flat index (l1,l2) -> l1*norb + l2 used by
+    # the S/C builders, the one faithful embedding is therefore
+    #
+    #     out[(a,a), (b,b)] = X[a, b],   every other component zero.
+    #
+    # The historical placement out[(l1,l2), (l3,l2)] = X[l1, l3] (a delta_{l2,l4}
+    # "spectator" scatter, i.e. kron(X, I_norb)) instead read the density-pair
+    # index as an ordinary orbital index.  That dropped the genuine
+    # inter-orbital density coupling chi_{(0,0),(1,1)} -- which S @ chi @ S does
+    # reference -- and scattered X into pair positions the reduced scheme never
+    # computed, so chi0q_mode="flex" on a reduced run disagreed with the
+    # equivalent "load" run for identical Sigma=0 physics.
+    #
+    # Off-density rows/columns stay exactly zero: a reduced run carries no
+    # information about pair indices (a,b) with a != b, and fabricating them
+    # from the density block is what caused the mismatch.  See
+    # _compute_vertices_flex, which warns when the interaction actually needs
+    # those missing components.
     chi_orb = chi_full[:, :, :, :, :norb, :norb]
     out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        out[:, :, :, :, l2::norb, l2::norb] = chi_orb
+    dens = np.arange(norb) * norb + np.arange(norb)   # flat index of (a,a)
+    out[..., dens[:, None], dens[None, :]] = chi_orb
     return out
 
 

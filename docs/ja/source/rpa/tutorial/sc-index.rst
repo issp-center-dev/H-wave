@@ -572,6 +572,27 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
    固有値・ギャップ関数は本バージョンで\ **修正されます（したがって変化します）**\ 。
    1軌道系および general (myo) の結果は影響を受けません。
 
+.. warning::
+
+   **多軌道の reduced/squashed FLEX を用いた計算結果はすべて変化します。**
+   reduced (kuroki) 感受率の行列添字は\ *密度対*\ であり、保存されている
+   :math:`X[a,b]` は :math:`\chi_{(a,a),(b,b)}` です。以前のバージョンはこれを
+   :math:`n_\text{orb}^2` の orbital-pair 空間へ
+   :math:`\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]` として埋め込んでいました。
+   この置き方では、pairing vertex :math:`S \chi S` が実際に参照する軌道間の密度結合
+   :math:`\chi_{(0,0),(1,1)}` が失われ、さらに reduced スキームが計算していない
+   軌道対の位置に :math:`X` が散布されます。本バージョンでは正しく
+   :math:`\text{out}[(a,a),(b,b)] = X[a,b]`\ （他の成分はすべてゼロ）と
+   埋め込みます。
+
+   したがって、``calc_scheme = "reduced"`` または ``"squashed"`` の FLEX を用いた
+   ``norb >= 2`` の計算では、\ **static・dynamic の双方**\ で
+   ``chi0q_mode = "flex"`` の結果が変化します。1軌道系（``norb = 1``\ ）は
+   両者の埋め込みが一致するためビット単位で不変であり、general (myo) の結果も
+   同様に不変です。本修正により、``CoulombIntra`` のみの reduced 計算は、
+   同一の物理に対して ``chi0q_mode = "load"`` および general スキームの結果と
+   厳密に一致するようになります（修正前は一致しませんでした）。
+
    このバージョンから、IRネイティブな感受率ファイル（``write_densified =
    false``）はこの ``chi_convention`` タグを必ず持つ必要があり、また
    ローダーはテンソルの形状から推定されるレイアウトと矛盾する
@@ -1032,6 +1053,25 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
 一般化 :math:`S`/:math:`C` 行列定式化
 （Kuroki et al., PRB 79, 224511）を使用し、
 4インデックスの頂点構造で計算します。
+
+.. note::
+
+   **reduced/squashed の FLEX を** ``chi0q_mode = "flex"`` **で読む場合の注意。**
+   reduced（``calc_scheme = "reduced"`` または ``"squashed"``\ ）の FLEX 計算は
+   密度‐密度成分 :math:`\chi_{(a,a),(b,b)}` しか保存しません。``CoulombIntra``
+   のみであれば :math:`S`/:math:`C` 行列はこの密度対ブロックに完全に収まるため、
+   reduced 経路は厳密です。一方、それ以外の軌道間2体項
+   ---``CoulombInter``、``Hund``、``Ising``、``Exchange``、``PairHop``---
+   は :math:`a \neq b` の非密度ブロック :math:`S/C[(a,b),(a,b)]`
+   および :math:`S/C[(a,b),(b,a)]` にも重みを持ちますが、そこでは reduced 計算が
+   感受率をまったく求めていません。これらのチャネルは pairing vertex に
+   **裸のまま**\ （\ :math:`\tfrac{1}{2}(S+C)` の項のみ）入るため、\ :math:`\lambda`
+   は近似値になります。ソルバーは該当する項名を挙げて警告を出力します。
+
+   これはローダーではなく保存データ側の制約であり、Eliashberg 側では修復できません。
+   完全な頂点を得るには ``calc_scheme = "general"``\ （orbital-pair 感受率を
+   すべて保存します）で FLEX を再実行するか、``chi0q_mode = "load"`` を
+   使用してください。1軌道系には非密度の軌道対添字が存在しないため影響ありません。
 
 
 Tips
