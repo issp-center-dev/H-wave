@@ -1216,6 +1216,57 @@ def test_validate_bond_prereqs_accepts_a_declared_empty_coulomb_inter():
     sc._validate_bond_prereqs("calc", 1, {"CoulombInter": {}})
 
 
+# --- FIX 3 (review round 3): non-finite CoulombInter values ----------------
+#
+# The real-interaction guard checked ``abs(complex(value).imag) > imag_tol``
+# to reject complex interactions -- but NaN comparisons are always False and
+# a real infinity has zero imaginary part, so NaN and +-inf entries used to
+# pass the guard and reach the bond machinery instead of being rejected.
+
+def test_validate_bond_prereqs_rejects_nan_coulomb_inter():
+    import hwave.sc as sc
+    ci = {((1, 0, 0), (0, 0)): float("nan")}
+    with pytest.raises(ValueError, match="(?i)finite"):
+        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+
+
+def test_validate_bond_prereqs_rejects_positive_infinity_coulomb_inter():
+    import hwave.sc as sc
+    ci = {((1, 0, 0), (0, 0)): float("inf")}
+    with pytest.raises(ValueError, match="(?i)finite"):
+        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+
+
+def test_validate_bond_prereqs_rejects_negative_infinity_coulomb_inter():
+    import hwave.sc as sc
+    ci = {((1, 0, 0), (0, 0)): float("-inf")}
+    with pytest.raises(ValueError, match="(?i)finite"):
+        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+
+
+def test_validate_bond_prereqs_rejects_nonfinite_imaginary_part():
+    """A NaN/inf imaginary part alone (real part finite) must also be caught,
+    not just a NaN/inf real part."""
+    import hwave.sc as sc
+    ci = {((1, 0, 0), (0, 0)): complex(0.3, float("nan"))}
+    with pytest.raises(ValueError, match="(?i)finite"):
+        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+
+    ci2 = {((1, 0, 0), (0, 0)): complex(0.3, float("inf"))}
+    with pytest.raises(ValueError, match="(?i)finite"):
+        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci2})
+
+
+def test_validate_bond_prereqs_error_names_offending_bond_and_value():
+    """The error must name the offending (irvec, orbvec) and value, matching
+    the style of the existing complex-value guard message."""
+    import hwave.sc as sc
+    ci = {((2, 0, 0), (0, 0)): float("nan")}
+    with pytest.raises(ValueError, match=r"\(2, 0, 0\)") as exc:
+        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+    assert "nan" in str(exc.value).lower()
+
+
 # --- the shell cutoff across MULTIPLE shells -------------------------------
 
 def _two_shell_square(v1=0.3, v2=0.1):

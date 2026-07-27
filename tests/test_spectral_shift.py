@@ -99,6 +99,27 @@ def test_spectral_shift_rejects_bad_string():
                           spectral_shift="invalid")
 
 
+def test_spectral_shift_rejects_bool_true_on_both_validation_paths():
+    """FIX 2 (review round 3): ``float(True) == 1.0`` succeeds, so a TOML
+    ``spectral_shift = true`` used to be silently accepted as sigma=1.0
+    instead of being rejected as a type error. Must be rejected for BOTH
+    solver_mode values ``_validate_spectral_shift`` otherwise accepts a
+    numeric shift for."""
+    with pytest.raises(ValueError, match="spectral_shift"):
+        sc._validate_spectral_shift(True, "arnoldi")
+    with pytest.raises(ValueError, match="spectral_shift"):
+        sc._validate_spectral_shift(False, "arnoldi")
+    with pytest.raises(ValueError, match="spectral_shift"):
+        sc._validate_spectral_shift(True, "iteration")
+
+
+def test_spectral_shift_rejects_bool_true_via_solve_leading_arnoldi():
+    mk, n = _make_operator_for(SPECTRUM)
+    with pytest.raises(ValueError, match="spectral_shift"):
+        sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                          spectral_shift=True)
+
+
 def test_spectral_shift_rejected_for_non_arnoldi():
     mk, n = _make_operator_for(SPECTRUM)
     with pytest.raises(ValueError, match="arnoldi"):
@@ -255,6 +276,13 @@ def test_iteration_rejects_bad_spectral_shift_values():
     for bad in (0.0, -1.0, float("nan"), float("inf"), "invalid"):
         with pytest.raises(ValueError, match="spectral_shift"):
             _iterate(NEG_DOMINANT, spectral_shift=bad)
+
+
+def test_iteration_rejects_bool_true_as_numeric_spectral_shift():
+    """FIX 2 (review round 3), iteration path: same bool-as-1.0 hole must be
+    closed on ``solver_mode='iteration'`` too, not just arnoldi."""
+    with pytest.raises(ValueError, match="spectral_shift"):
+        _iterate(NEG_DOMINANT, spectral_shift=True)
 
 
 def test_spectral_shift_still_rejected_for_shift_invert():

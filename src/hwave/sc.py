@@ -382,6 +382,21 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
             "a declared-but-zero V is allowed and keeps the channel "
             "topology fixed across a V sweep -- or use bond_channels=false.")
 
+    nonfinite = [(irvec, orbvec, value)
+                 for (irvec, orbvec), value in interactions["CoulombInter"].items()
+                 if not np.isfinite(complex(value).real)
+                 or not np.isfinite(complex(value).imag)]
+    if nonfinite:
+        irvec, orbvec, value = nonfinite[0]
+        raise ValueError(
+            "[eliashberg] bond_channels=true requires every CoulombInter "
+            "value to be finite, but V_{}{}({}) = {} is not (real or "
+            "imaginary part is NaN/inf; {} such entries). A NaN/inf "
+            "interaction value is a data/configuration error, not a "
+            "physical model, and must not silently reach the bond "
+            "machinery.".format(
+                orbvec[0], orbvec[1], tuple(irvec), value, len(nonfinite)))
+
     bad = [(irvec, orbvec, value)
            for (irvec, orbvec), value in interactions["CoulombInter"].items()
            if abs(complex(value).imag) > imag_tol]
@@ -2120,6 +2135,55 @@ def _load_green_npz(green_path, norb, Nx, Ny, Nz, label="Green"):
     return green, nfreq
 
 
+class _UnsupportedNpyHeaderVersion(Exception):
+    """Internal to :func:`_peek_green_npz_nfreq`: raised when a ``.npy``
+    header version is one neither numpy's public ``read_array_header_X_Y``
+    wrappers nor its internal version-generic dispatcher can parse.
+
+    This is deliberately NOT a plain ``ValueError`` catch target inside
+    :func:`_peek_green_npz_nfreq`'s own except clause: a genuinely unsupported
+    version must surface as a clear error (review fix), not be swallowed into
+    a silent ``None`` that reopens the double-preflight path the header peek
+    exists to close.
+    """
+
+
+def _read_npy_header_shape(fh):
+    """Read only the ``shape`` from a ``.npy`` header, for any format version
+    ``np.load`` itself accepts (1.0, 2.0, 3.0, and any future version numpy
+    grows a dedicated ``read_array_header_X_Y`` wrapper for).
+
+    Dispatches on the version tuple from ``np.lib.format.read_magic`` to the
+    matching public ``read_array_header_X_Y`` function when one exists (1.0,
+    2.0). Format 3.0 (and any future version numpy's public API has not grown
+    a dedicated wrapper for) has no such function, so this falls back to
+    ``numpy.lib.format``'s own internal version-generic dispatcher -- exactly
+    what ``np.load`` uses under the hood to parse ANY version it accepts, so
+    the fallback keeps every such version working here too instead of
+    silently giving up.
+
+    Raises :class:`_UnsupportedNpyHeaderVersion` if the version is genuinely
+    unknown even to that internal dispatcher.
+    """
+    version = np.lib.format.read_magic(fh)
+    reader = getattr(
+        np.lib.format, "read_array_header_{}_{}".format(*version), None)
+    if reader is not None:
+        shape, _, _ = reader(fh)
+        return shape
+    generic = getattr(np.lib.format, "_read_array_header", None)
+    if generic is None:
+        raise _UnsupportedNpyHeaderVersion(
+            "numpy.lib.format has no header reader for NPY format version "
+            "{!r}".format(version))
+    try:
+        shape, _, _ = generic(fh, version)
+    except ValueError as exc:
+        raise _UnsupportedNpyHeaderVersion(
+            "cannot parse NPY header version {!r}: {}".format(version, exc))
+    return shape
+
+
 def _peek_green_npz_nfreq(green_path, label="Green"):
     """Return the ``nfreq`` axis of a Green npz WITHOUT materialising it.
 
@@ -2130,10 +2194,16 @@ def _peek_green_npz_nfreq(green_path, label="Green"):
     run that fits). Reading the npz member's array header alone keeps the
     preflight strictly ahead of the (possibly large) allocation.
 
+    Supports every ``.npy`` header version ``np.load`` accepts (see
+    :func:`_read_npy_header_shape`); a genuinely unsupported version raises
+    rather than silently returning ``None``, since falling back to the
+    configured Nmat for the first preflight is exactly the double-preflight
+    behaviour this function exists to eliminate.
+
     Returns ``None`` when the frequency count cannot be determined from the
-    header alone (missing file, no ``green`` member, unexpected rank or an
-    unknown ``.npy`` format version); the caller then falls back to
-    :func:`_load_green_npz`, which raises the informative error.
+    header alone for an ordinary reason (missing file, no ``green`` member,
+    unexpected rank); the caller then falls back to :func:`_load_green_npz`,
+    which raises the informative error.
     """
     try:
         if not zipfile.is_zipfile(green_path):
@@ -2147,13 +2217,10 @@ def _peek_green_npz_nfreq(green_path, label="Green"):
             if member is None:
                 return None
             with zf.open(member) as fh:
-                version = np.lib.format.read_magic(fh)
-                if version == (1, 0):
-                    shape, _, _ = np.lib.format.read_array_header_1_0(fh)
-                elif version == (2, 0):
-                    shape, _, _ = np.lib.format.read_array_header_2_0(fh)
-                else:
-                    return None
+                shape = _read_npy_header_shape(fh)
+    except _UnsupportedNpyHeaderVersion as exc:
+        raise ValueError(
+            "{} file {}: {}".format(label, green_path, exc)) from exc
     except (OSError, ValueError):
         # unreadable/corrupt: let the real loader produce the diagnostic
         return None
@@ -3149,6 +3216,14 @@ def _validate_spectral_shift(spectral_shift, solver_mode):
             raise ValueError(
                 "[eliashberg] spectral_shift string must be \"auto\", got "
                 "{!r}".format(spectral_shift))
+    elif isinstance(spectral_shift, bool):
+        # bool is a subclass of int, and float(True) == 1.0 succeeds -- so
+        # without this explicit check a TOML `spectral_shift = true` would be
+        # silently accepted as a numeric shift of 1.0 instead of being
+        # rejected as the type error it is (review fix).
+        raise ValueError(
+            "[eliashberg] spectral_shift must be a positive finite number "
+            "or \"auto\", got a bool: {!r}".format(spectral_shift))
     else:
         try:
             sv = float(spectral_shift)

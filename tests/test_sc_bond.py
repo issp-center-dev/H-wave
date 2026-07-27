@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import tempfile
+import zipfile
 
 import numpy as np
 import pytest
@@ -1578,6 +1579,81 @@ def test_bond_green_preflight_runs_once_with_the_files_nmat(tmpout, monkeypatch)
         assert seen == [32], (
             "configured Nmat={}: preflight nmat sequence {} (expected exactly "
             "one call with the file's 32)".format(configured, seen))
+
+
+def _rewrite_green_npz_at_npy_version(gpath, version):
+    """Re-encode an existing bare-green npz's ``green`` member at the given
+    NPY format ``version`` (e.g. ``(3, 0)``).
+
+    ``np.savez`` always picks the lowest header version the data fits, so it
+    can never itself produce e.g. format 3.0 for a small plain array; this
+    bypasses that to exercise the header-peek's version handling directly, on
+    a file ``np.load`` still reads perfectly normally."""
+    green_raw = np.load(gpath)["green"]
+    with zipfile.ZipFile(gpath, mode="w") as zf:
+        with zf.open("green.npy", "w") as fh:
+            np.lib.format.write_array(fh, green_raw, version=version)
+    return green_raw
+
+
+def test_peek_green_npz_nfreq_reads_npy_format_3_0(tmpout):
+    """FIX 1 (review round 3): ``_peek_green_npz_nfreq`` supported only NPY
+    header versions 1.0/2.0. A ``green`` member written at format 3.0 -- a
+    version ``np.load`` accepts fine -- must still make the peek return the
+    real ``nfreq``, not ``None`` (which would silently reopen the double
+    preflight the header peek exists to close)."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    gpath = _green_file_with_nmat(tmpout, ci, 24, "g24_npy3.npz")
+    _rewrite_green_npz_at_npy_version(gpath, (3, 0))
+
+    # sanity: the file really is format 3.0, and np.load still reads it fine
+    with zipfile.ZipFile(gpath) as zf:
+        with zf.open("green.npy") as fh:
+            assert np.lib.format.read_magic(fh) == (3, 0)
+    assert np.load(gpath)["green"].shape[1] == 24
+
+    assert sc._peek_green_npz_nfreq(gpath) == 24
+
+
+def test_bond_green_preflight_runs_once_with_npy_format_3_0(tmpout,
+                                                            monkeypatch):
+    """FIX 1 (review round 3), end-to-end: with a format-3.0 ``green``
+    member, the resource preflight must still run exactly ONCE, with the
+    FILE's Nmat -- not the configured one. ``_load_green_npz`` is patched to
+    explode so that if the (buggy) code ever preflights with the wrong
+    (configured) Nmat first and only discovers the true Nmat by materialising
+    the array, that materialisation-before-the-correct-preflight is caught
+    red-handed rather than silently succeeding via a second preflight call."""
+    ci = os.path.join(tmpout, "ci.dat")
+    _write_w90(ci, 1, _nn_entries(0.5))
+    gpath = _green_file_with_nmat(tmpout, ci, 24, "g24_npy3.npz")
+    _rewrite_green_npz_at_npy_version(gpath, (3, 0))
+
+    orig_preflight = sc._bond_resource_preflight
+    seen = []
+
+    def _record(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, _o=orig_preflight):
+        seen.append(int(nmat))
+        return _o(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(
+            "_load_green_npz called -- checking that the preflight seen so "
+            "far already used the file's Nmat, not the configured one")
+
+    monkeypatch.setattr(sc, "_bond_resource_preflight", _record)
+    monkeypatch.setattr(sc, "_load_green_npz", _boom)
+
+    inp = _base_input(os.path.join(tmpout, "npy3_run"), coulomb_inter=ci,
+                      bond_channels=True, bond_green=gpath)
+    inp["mode"]["param"]["Nmat"] = 128
+    with pytest.raises(AssertionError, match="_load_green_npz called"):
+        sc.calc_eliashberg(inp)
+
+    assert seen == [24], (
+        "preflight nmat sequence {} by the time _load_green_npz was reached "
+        "(expected exactly one call, with the file's 24)".format(seen))
 
 
 def test_bond_green_preflight_cap_follows_the_file_not_the_config(tmpout,
