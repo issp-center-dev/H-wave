@@ -1148,8 +1148,15 @@ _REDUCED_FLEX_UNSUPPORTED = ("CoulombInter", "Hund", "Ising", "Exchange",
                              "PairHop")
 
 
-def _warn_reduced_flex_missing_components(inter_k, norb):
+def _warn_reduced_flex_missing_components(inter_k, norb, convention="kuroki"):
     """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
+
+    Call this ONCE per run, from the place that is about to build the pairing
+    vertex -- NOT from inside ``_compute_vertices_flex``. That function is
+    invoked once per bosonic Matsubara frequency by the dynamic kernel (so the
+    warning would repeat ``Nmat`` times, ~1000 in production runs), and again by
+    ``eliashberg_dynamic._zero_chi_vertex`` with chi = 0, where the message
+    would be doubly misleading.
 
     A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
     density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
@@ -1166,6 +1173,10 @@ def _warn_reduced_flex_missing_components(inter_k, norb):
     ``calc_scheme="general"`` (which stores the full orbital-pair chi) to get
     the complete vertex.
     """
+    if str(convention).lower() != "kuroki":
+        # Only the reduced/squashed route stores a density-only chi; the
+        # general (myo) path carries the full orbital-pair susceptibility.
+        return
     if norb <= 1:
         # norb == 1 has no off-density pair index, so nothing can be missing.
         return
@@ -1238,7 +1249,6 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
         S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
     elif conv == "kuroki":
-        _warn_reduced_flex_missing_components(inter_k, norb)
         S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
     else:
         raise ValueError(
@@ -3333,6 +3343,7 @@ def calc_eliashberg(input_dict):
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
+        _warn_reduced_flex_missing_components(inter_k, norb, chi_convention)
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type=pairing_type,
                                       convention=chi_convention)

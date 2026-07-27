@@ -395,6 +395,33 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         import hwave.sc as sc
         import logging
 
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            sc._warn_reduced_flex_missing_components(
+                self._inter_k(["CoulombIntra", "Hund"]), norb=2,
+                convention="myo")
+        finally:
+            lg.removeHandler(handler)
+        warns = [r.getMessage() for r in records
+                 if r.levelno >= logging.WARNING]
+        self.assertEqual(warns, [])
+
+    def test_compute_vertices_flex_itself_stays_silent(self):
+        """The warning must NOT live inside _compute_vertices_flex.
+
+        The dynamic kernel calls that function once per bosonic Matsubara
+        frequency (nmat ~ 1000 in production), and
+        eliashberg_dynamic._zero_chi_vertex calls it again with chi = 0 to
+        extract the bare 0.5*(S+C) term. Warning from inside would flood the log
+        and fire on a call where the message makes no sense, so the check is
+        hoisted to the two callers that run once per calculation."""
+        import hwave.sc as sc
+        import logging
+
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         nd = norb * norb
         inter_k = self._inter_k(["CoulombIntra", "Hund"], norb, Nx, Ny, Nz)
@@ -407,27 +434,45 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg.addHandler(handler)
         try:
             sc._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
-                                      pairing_type="singlet", convention="myo")
+                                      pairing_type="singlet",
+                                      convention="kuroki")
         finally:
             lg.removeHandler(handler)
         warns = [r.getMessage() for r in records
-                 if r.levelno >= logging.WARNING]
+                 if r.levelno >= logging.WARNING
+                 and "REDUCED" in r.getMessage()]
         self.assertEqual(warns, [])
 
-    def test_kuroki_convention_warns_through_compute_vertices_flex(self):
-        """The warning must reach a real caller, not just the helper."""
-        import hwave.sc as sc
+    def test_dynamic_vertex_builder_warns_exactly_once(self):
+        """The dynamic path must emit the reduced-data warning once for the
+        whole run, not once per frequency."""
+        from hwave.solver import eliashberg_dynamic as ed
+        import logging
 
-        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 6
         nd = norb * norb
         inter_k = self._inter_k(["CoulombIntra", "Hund"], norb, Nx, Ny, Nz)
-        chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        chi_w = np.zeros((Nx, Ny, Nz, nd, nd, nmat), dtype=complex)
 
-        with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            sc._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
-                                      pairing_type="singlet",
-                                      convention="kuroki")
-        self.assertIn("Hund", "\n".join(cm.output))
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            ed.compute_vertices_flex_dynamic(
+                chi_w, chi_w, inter_k, norb, Nx, Ny, Nz,
+                pairing_type="singlet", convention="kuroki")
+        finally:
+            lg.removeHandler(handler)
+        warns = [r.getMessage() for r in records
+                 if r.levelno >= logging.WARNING
+                 and "REDUCED" in r.getMessage()]
+        self.assertEqual(
+            len(warns), 1,
+            "expected exactly 1 reduced-data warning for nmat={}, got {}".format(
+                nmat, len(warns)))
+        self.assertIn("Hund", warns[0])
 
 
 if __name__ == "__main__":
