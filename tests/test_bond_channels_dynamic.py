@@ -132,3 +132,81 @@ def test_bond_vertices_momentum_reversal_adjoint():
         M_neg = np.roll(M[::-1, ::-1, ::-1], (1, 1, 1), (0, 1, 2))
         np.testing.assert_allclose(
             np.conj(np.swapaxes(M, -1, -2)), M_neg, rtol=1e-12, atol=1e-14)
+
+
+def test_bond_cond_scores_pins_check_bond_conditioning_decision_boundary():
+    """PINNING CONTRACT: ``_bond_cond_scores`` (used by ``dress_bond_dynamic``
+    to build the per-(q, i nu) conditioning maps) is a second, independent
+    copy of ``_check_bond_conditioning``'s ratio/pole scoring formula -- it
+    had to be, since ``_check_bond_conditioning`` only ever reports its single
+    worst point and raises, with no return path for a full per-point map, and
+    is itself under a byte-invariance requirement (Task 5). Two independent
+    copies of the same formula can silently desynchronize under a future edit
+    to either one. This test pins them together: for a range of matrices
+    (well-conditioned, near-singular at several scales, exactly singular, the
+    zero matrix, and an Inf-contaminated matrix -- all of which the ratio/pole
+    formula maps to a score of exactly 0 via its ``np.isfinite`` guard), the
+    score from ``_bond_cond_scores`` must predict ``_check_bond_conditioning``'s
+    raise/no-raise decision EXACTLY: raise iff ``score <= cond_tol``, checked
+    both on a coarse grid of ``cond_tol`` values spanning many orders of
+    magnitude and at the ULP-precise decision boundary (via
+    ``np.nextafter``) around each matrix's own computed score. If this test
+    ever fails, the two formulas have drifted apart -- fix
+    ``_bond_cond_scores`` to match ``_check_bond_conditioning`` (never the
+    reverse; ``_check_bond_conditioning`` is the byte-invariant static gate).
+
+    An explicit NaN entry is deliberately NOT included: ``np.linalg.svd``
+    itself raises ``LinAlgError`` on a NaN-contaminated matrix, in both
+    formulas identically, before either one's ratio/pole logic ever runs --
+    that is a different (also-identical) failure mode, not a case the
+    ``np.isfinite`` guard inside the scoring formula ever sees. The zero
+    matrix (0/0 -> nan ratio) and an Inf-contaminated matrix (inf arithmetic
+    -> nan singular values) both DO reach that guard and are included below.
+    """
+    rng = np.random.default_rng(0)
+    ND = 4
+
+    def _near_singular(sv_min):
+        # An ND x ND matrix with a prescribed smallest singular value, built
+        # by rescaling a random unitary SVD factorization.
+        U, _, Vh = np.linalg.svd(
+            rng.normal(size=(ND, ND)) + 1j * rng.normal(size=(ND, ND)))
+        sv = np.array([1.0, 1.0, 1.0, sv_min])
+        return (U * sv) @ Vh
+
+    mats = []
+    for _ in range(3):  # well-conditioned
+        mats.append(rng.normal(size=(ND, ND))
+                    + 1j * rng.normal(size=(ND, ND)))
+    for sv_min in (1e-6, 1e-3, 0.5):  # near-singular, several scales
+        mats.append(_near_singular(sv_min))
+    A_sing = rng.normal(size=(ND, ND)) + 1j * rng.normal(size=(ND, ND))
+    A_sing[0] = A_sing[1]  # exactly singular (duplicate row)
+    mats.append(A_sing)
+    mats.append(np.zeros((ND, ND), dtype=complex))  # 0/0 -> nan -> score 0
+    A_inf = rng.normal(size=(ND, ND)) + 1j * rng.normal(size=(ND, ND))
+    A_inf[1, 1] = np.inf  # inf arithmetic -> nan singular values -> score 0
+    mats.append(A_inf)
+
+    scores = bc._bond_cond_scores(np.stack(mats, axis=0))
+
+    cond_tols = [0.0, 1e-9, 1e-6, 1e-4, 1e-3, 1e-2, 0.5, 1.0, 10.0]
+
+    def _raises(mat5, tol):
+        try:
+            bc._check_bond_conditioning("pin-test", mat5, tol)
+        except ValueError:
+            return True
+        return False
+
+    for mat, score in zip(mats, scores):
+        mat5 = mat.reshape(1, 1, 1, ND, ND)
+        score = float(score)
+        for tol in cond_tols:
+            assert _raises(mat5, tol) == (score <= tol), (
+                "decision boundary mismatch: score={!r} cond_tol={!r}"
+                .format(score, tol))
+        # ULP-precise boundary: exactly at the score (must raise, <=) and the
+        # float immediately below it (must not raise).
+        assert _raises(mat5, score) is True
+        assert _raises(mat5, np.nextafter(score, -np.inf)) is False

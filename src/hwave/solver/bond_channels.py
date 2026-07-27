@@ -779,6 +779,15 @@ def _bond_cond_scores(mat):
     raises, this returns the score at every point so callers that need a full
     conditioning MAP (:func:`dress_bond_dynamic`) are not stuck redoing the SVD
     with a different formula.
+
+    PINNING CONTRACT: this is a second, independently-maintained copy of
+    ``_check_bond_conditioning``'s ratio/pole formula (unavoidable --
+    ``_check_bond_conditioning`` has no per-point return path and is
+    byte-invariant). ``tests/test_bond_channels_dynamic.py::
+    test_bond_cond_scores_pins_check_bond_conditioning_decision_boundary``
+    pins the two formulas together by asserting they agree on every
+    raise/no-raise decision; keep that test green if this formula ever
+    changes.
     """
     sv = np.linalg.svd(mat, compute_uv=False)
     with np.errstate(divide="ignore", invalid="ignore"):
