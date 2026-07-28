@@ -2444,13 +2444,13 @@ def test_bond_integer_options_reject_malformed_values(key, bad):
 @pytest.mark.parametrize("good,expected", [(0, 0), (2, 2), (3.0, 3)])
 def test_bond_integer_options_accept_integral_values(good, expected):
     cfg = _bond_cfg(bond_max_shells=good, bond_precondition_dense_limit=good)
-    _, _, max_shells, _, pre_opts, _ = sc._read_bond_config(cfg)
+    _, _, max_shells, _, pre_opts, _, _ = sc._read_bond_config(cfg)
     assert max_shells == expected and isinstance(max_shells, int)
     assert pre_opts["dense_limit"] == expected
 
 
 @pytest.mark.parametrize("key", ["bond_memory_cap_gb", "bond_precondition_atol",
-                                 "bond_precondition_rtol"])
+                                 "bond_precondition_rtol", "bond_cond_tol"])
 @pytest.mark.parametrize("bad", ["abc", [], True])
 def test_bond_float_options_name_the_key_on_a_bad_value(key, bad):
     """A bare ``float()`` failure never said WHICH [eliashberg] key was
@@ -2460,9 +2460,26 @@ def test_bond_float_options_name_the_key_on_a_bad_value(key, bad):
     assert key in str(exc.value)
 
 
+@pytest.mark.parametrize("bad", [0.0, -1.0e-4, float("nan"), float("inf")])
+def test_bond_cond_tol_rejects_non_positive_or_non_finite(bad):
+    """Unlike the other bond floats (which allow 0), ``bond_cond_tol`` is a
+    conditioning FLOOR: 0 or a non-finite value would disable or invert the
+    dress_bond_dynamic guard it configures."""
+    with pytest.raises(ValueError, match="bond_cond_tol"):
+        sc._read_bond_config(_bond_cfg(bond_cond_tol=bad))
+
+
+def test_bond_cond_tol_threads_through_when_set():
+    """A valid ``bond_cond_tol`` is returned verbatim (spec S3.6 hand-off:
+    the dynamic branch forwards it to ``dress_bond_dynamic`` unchanged)."""
+    cond_tol = sc._read_bond_config(_bond_cfg(bond_cond_tol=1.0e-4))[6]
+    assert cond_tol == pytest.approx(1.0e-4)
+
+
 @pytest.mark.parametrize("key", _BOOL_KEYS + _INT_KEYS +
                          ("bond_memory_cap_gb", "bond_precondition_atol",
-                          "bond_precondition_rtol", "bond_green"))
+                          "bond_precondition_rtol", "bond_green",
+                          "bond_cond_tol"))
 def test_bond_option_set_to_none_means_unset(key):
     """TOML cannot express a null, so a programmatic ``None`` keeps meaning
     "not specified" (it must not become a validation error)."""
@@ -2470,7 +2487,9 @@ def test_bond_option_set_to_none_means_unset(key):
     if key == "bond_channels":
         assert sc._read_bond_config(cfg)[0] is False
         return
-    use_bond, green, max_shells, cap, pre_opts, diag = sc._read_bond_config(cfg)
+    use_bond, green, max_shells, cap, pre_opts, diag, cond_tol = (
+        sc._read_bond_config(cfg))
     assert use_bond is True
     assert green is None and max_shells is None and diag is False
     assert cap == sc._BOND_MEMORY_CAP_GB and pre_opts == {}
+    assert cond_tol is None

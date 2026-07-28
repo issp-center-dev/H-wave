@@ -73,6 +73,7 @@ _BOND_OPTION_KEYS = (
     "bond_precondition_atol",
     "bond_precondition_rtol",
     "bond_precondition_dense_limit",
+    "bond_cond_tol",
 )
 
 # Degeneracy tolerance of the opt-in bond diagnostics' eigenvalue clustering
@@ -284,13 +285,18 @@ def _read_bond_config(eli_param):
     """Read the ``[eliashberg]`` bond-channel options (spec S5).
 
     Returns ``(use_bond_channels, bond_green, bond_max_shells,
-    bond_memory_cap_gb, precondition_opts, bond_diagnostics)``; ``bond_green``
-    is the path to an externally supplied Green function (``None`` = build the
-    bare one from the transfer Hamiltonian), ``precondition_opts`` a kwargs
-    dict for ``bond_channels.check_hermitian_preconditions`` holding only the
-    keys the user actually set (so the function's own defaults stay
-    authoritative), and ``bond_diagnostics`` the opt-in character analysis of
-    the leading state (default ``False``).
+    bond_memory_cap_gb, precondition_opts, bond_diagnostics, bond_cond_tol)``;
+    ``bond_green`` is the path to an externally supplied Green function
+    (``None`` = build the bare one from the transfer Hamiltonian),
+    ``precondition_opts`` a kwargs dict for
+    ``bond_channels.check_hermitian_preconditions`` holding only the keys the
+    user actually set (so the function's own defaults stay authoritative),
+    ``bond_diagnostics`` the opt-in character analysis of the leading state
+    (default ``False``), and ``bond_cond_tol`` the RPA-denominator
+    conditioning floor forwarded to ``bond_channels.dress_bond_dynamic`` by
+    the DYNAMIC bond branch only (``None`` = that function's own default
+    ``bond_channels._BOND_COND_FLOOR``; the static bond branch does not read
+    this key -- its own ``dress_bond`` call is unaffected).
     Every bond option set while ``bond_channels`` is off is IGNORED WITH A
     WARNING (they have no meaning on the default path) and never parsed, so a
     stale option cannot fail an otherwise valid run.
@@ -309,7 +315,7 @@ def _read_bond_config(eli_param):
                 "[eliashberg] %s set but bond_channels=false; the bond-channel "
                 "options only apply to bond_channels=true and are ignored "
                 "here.", ", ".join(stale))
-        return False, None, None, None, {}, False
+        return False, None, None, None, {}, False, None
 
     bond_diagnostics = _bond_bool_option(eli_param, "bond_diagnostics", False)
 
@@ -357,7 +363,23 @@ def _read_bond_config(eli_param):
                 "(0 = always use the randomized probe estimator), got "
                 "{}".format(dense_limit))
         pre_opts["dense_limit"] = dense_limit
-    return True, bond_green, max_shells, cap_gb, pre_opts, bond_diagnostics
+
+    # RPA-denominator conditioning floor for the DYNAMIC bond branch's
+    # dress_bond_dynamic (spec S3.6 hand-off: the default
+    # bond_channels._BOND_COND_FLOOR = 1e-3 can trip on an isolated
+    # near-edge-frequency point even when the physical (static, i-nu=0)
+    # conditioning is healthy -- see the Task 9 report). ``None`` here means
+    # "not set" -- dress_bond_dynamic's own default applies; the static bond
+    # branch does not consume this value at all.
+    bond_cond_tol = _bond_float_option(eli_param, "bond_cond_tol")
+    if bond_cond_tol is not None and (not np.isfinite(bond_cond_tol)
+                                      or bond_cond_tol <= 0.0):
+        raise ValueError(
+            "[eliashberg] bond_cond_tol must be a positive finite number, "
+            "got {!r}".format(eli_param.get("bond_cond_tol")))
+
+    return (True, bond_green, max_shells, cap_gb, pre_opts, bond_diagnostics,
+            bond_cond_tol)
 
 
 def _validate_bond_prereqs(chi0q_mode, norb, interactions,
@@ -4792,7 +4814,11 @@ def calc_eliashberg(input_dict):
     # right after the interaction files are read (below), before any
     # chi0q/FLEX data is touched.
     (use_bond_channels, bond_green, bond_max_shells, bond_memory_cap_gb,
-     bond_precondition_opts, bond_diagnostics) = _read_bond_config(eli_param)
+     bond_precondition_opts, bond_diagnostics, _bond_cond_tol_unused
+     ) = _read_bond_config(eli_param)
+    # bond_cond_tol only applies to the DYNAMIC bond branch (solve_dynamic);
+    # the static branch's dress_bond call is unaffected by it (docstring of
+    # _read_bond_config).
     gap_file = eli_param.get("output_gap", "gap.dat")
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
 

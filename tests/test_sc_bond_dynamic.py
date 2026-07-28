@@ -341,6 +341,39 @@ def test_dynamic_bond_ir_matches_the_uniform_operator(tmp_path):
     assert abs(lam_ir - lam_u) <= 5.0e-3 * abs(lam_u), (lam_u, lam_ir)
 
 
+def test_dynamic_bond_ir_is_catastrophically_broken_at_nmat_32(tmp_path):
+    """FAST (non-slow) regression pin, at toy scale, of the same
+    ``_ir_compress`` ``keep_constant`` ill-conditioning the Task 9 Phase A
+    milestone hit at production scale
+    (``tests/test_bond_onari_milestone_dynamic.py``'s DEVIATION 1 / the
+    single-root-cause writeup). Task 8's own measurement table already
+    recorded this exact number (Nmat=32: uniform=1.075495,
+    IR=-3.081435 -- even the SIGN is wrong) but nothing pinned it, so a
+    regression (or a fix) could pass unnoticed. The companion
+    Nmat=256/beta=50 pin in the Phase A milestone module is ``@slow``
+    (a real FLEX green); this one runs on the toy bare-green fixture every
+    default CI run, so a future ``_ir_compress`` fix is noticed immediately
+    rather than only when someone opts into the slow suite.
+    """
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    lam_u = ed.solve_dynamic(_bond_input(input_dir, str(tmp_path / "u32"),
+                                         nmat=32))
+    lam_ir = ed.solve_dynamic(_bond_input(input_dir, str(tmp_path / "i32"),
+                                          nmat=32, matsubara_basis="ir"))
+    assert lam_u == pytest.approx(1.0754946222558759, rel=1.0e-8)
+    assert lam_ir == pytest.approx(-3.0814352049450724, rel=1.0e-6)
+    # today's broken behaviour: wrong sign AND >2x the correct magnitude.
+    # When _ir_compress is fixed this assertion starts FAILING -- that is
+    # the point: flip it (and DEVIATION 1 upstream) rather than deleting it.
+    assert lam_ir < 0.0 < lam_u, (
+        "matsubara_basis='ir' no longer disagrees in SIGN with the uniform "
+        "reference at Nmat=32 (lam_u={}, lam_ir={}) -- the _ir_compress "
+        "keep_constant ill-conditioning may be fixed; if so, update this "
+        "test and the Phase A milestone's DEVIATION 1.".format(lam_u, lam_ir))
+
+
 def test_dynamic_bond_diagnostics_are_opt_in(tmp_path):
     """No bond_diagnostics key -> no diagnostics npz (and no provenance flag
     claiming one was written)."""
@@ -655,3 +688,143 @@ def test_dynamic_preflight_refuses_over_cap(tmp_path):
                       bond_memory_cap_gb=1.0e-7)
     with pytest.raises(ValueError, match="bond_memory_cap_gb"):
         ed.solve_dynamic(inp)
+
+
+def test_dynamic_bond_cond_tol_reaches_dress_bond_dynamic(tmp_path):
+    """Spec S3.6 hand-off: ``[eliashberg] bond_cond_tol`` must actually reach
+    ``dress_bond_dynamic`` (not just be parsed and dropped). Proven two ways
+    on the same well-conditioned toy fixture: (1) an absurdly strict
+    ``bond_cond_tol`` (0.99 -- above every real conditioning score) makes an
+    otherwise-passing run raise the charge-instability guard; (2) the
+    default (unset) run's provenance records the production floor
+    ``bond_channels._BOND_COND_FLOOR``, and an explicit value is recorded
+    verbatim."""
+    from hwave.solver import bond_channels as bc
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+
+    # (1) strict enough to trip the guard on data that otherwise passes.
+    inp_strict = _bond_input(input_dir, str(tmp_path / "out_strict"),
+                             nmat=16, bond_cond_tol=0.99)
+    with pytest.raises(ValueError, match="cond_tol = 9.900e-01"):
+        ed.solve_dynamic(inp_strict)
+
+    # (2) default vs. explicit provenance.
+    out_default = str(tmp_path / "out_default")
+    ed.solve_dynamic(_bond_input(input_dir, out_default, nmat=16))
+    meta_default = np.load(os.path.join(out_default, "gap_dynamic.npz"),
+                           allow_pickle=False)
+    assert float(meta_default["bond_cond_tol"]) == pytest.approx(
+        bc._BOND_COND_FLOOR)
+
+    out_explicit = str(tmp_path / "out_explicit")
+    ed.solve_dynamic(_bond_input(input_dir, out_explicit, nmat=16,
+                                 bond_cond_tol=1.0e-6))
+    meta_explicit = np.load(os.path.join(out_explicit, "gap_dynamic.npz"),
+                            allow_pickle=False)
+    assert float(meta_explicit["bond_cond_tol"]) == pytest.approx(1.0e-6)
+
+
+def test_bond_cond_tol_ignored_while_bond_channels_false(caplog):
+    """Matches the other bond_* options' warn-and-ignore contract (spec S5):
+    set with the master flag off, it is reported as stale, not silently
+    parsed."""
+    import hwave.sc as sc
+
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        result = sc._read_bond_config({"bond_cond_tol": 1.0e-4})
+    assert result == (False, None, None, None, {}, False, None)
+    assert any("bond_cond_tol" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# flat-chi collapse: make_bond_kernel_dynamic vs. the static
+# make_bond_kernel_parts (Task 9 review IMPORTANT-4)
+# ---------------------------------------------------------------------------
+
+def test_dynamic_kernel_with_frequency_flat_chi_collapses_onto_static():
+    """Discriminates the Task 9 milestone's two candidate explanations for
+    the static/dynamic ratio being outside spec S3.6's [1.5, 3.5] window: a
+    genuine physical effect of the FREQUENCY DEPENDENCE of the dressed bond
+    susceptibility (candidate a), vs. a normalization bug in
+    ``make_bond_kernel_dynamic`` itself relative to the static
+    ``bond_channels.make_bond_kernel_parts`` (candidate b).
+
+    Feed ``make_bond_kernel_dynamic`` a chi that is FLAT in bosonic
+    frequency -- the static ``dress_bond`` susceptibility broadcast onto
+    every ``i-nu`` -- so the two kernels see the identical vertex data and
+    differ only in the machinery (frequency convolution vs. none). If
+    ``make_bond_kernel_dynamic`` is normalization-consistent with the
+    static builder, its leading (parity-filtered) eigenvalue must equal the
+    static one.
+
+    Measured on a 4x4/Nmat=16/T=0.5/U=4/V=1 bare-green toy (same scale as
+    the other oracle-style tests in this module): static leading triplet
+    lambda = 0.8430885087941205, dynamic-flat-chi leading triplet lambda =
+    0.8430885087941191 -- relative difference 1.6e-15 (machine precision).
+    **They collapse**: candidate (b) is dead, so the milestone's measured
+    ratio inversion is attributable to the genuine frequency dependence of
+    chi_bar(q, i-nu) (candidate a), not a kernel-builder bug.
+    """
+    import hwave.sc as sc
+    from hwave.solver import bond_channels as bc
+    from hwave.solver import eliashberg_dynamic as ed
+
+    Nx, Ny, Nz, Nmat, T, U, V, filling, norb = 4, 4, 1, 16, 0.5, 4.0, 1.0, 0.5, 1
+    beta = 1.0 / T
+    kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+    ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+    kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+    NN = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))
+    hr = {(r, (0, 0)): 1.0 for r in NN}
+    it = {"CoulombIntra": {((0, 0, 0), (0, 0)): U},
+         "CoulombInter": {(r, (0, 0)): V for r in NN}}
+    inter_k = sc._build_interaction_k(kx, ky, kz, it, norb)
+    bond_set = bc.resolve_interactions(it["CoulombInter"], np.eye(3), norb)
+
+    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
+    evals, evecs = sc._calc_eigenvalues(eps)
+    mu = sc._determine_mu(evals, beta, filling, norb)
+    green = sc._calc_green(evals, evecs, mu, beta, Nmat)
+
+    # --- static leading triplet eigenvalue ---
+    chi_bar = bc.bond_bubble(green, bond_set, beta)
+    S0_q, C0_q = sc._build_bond_m0_blocks(bond_set, it, inter_k, norb,
+                                          kx, ky, kz)
+    S_bond, C_bond, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0_q,
+                                                         C0_q, norb)
+    chi_s, chi_c = bc.dress_bond(chi_bar, S_bond, C_bond)
+
+    A_full, _, _, vec_size = bc.make_bond_kernel_parts(
+        chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green, bond_set,
+        "triplet", beta)
+    _, _, info = sc._solve_leading(lambda: (A_full, vec_size), vec_size,
+                                   "arnoldi", num_eigenvalues=6)
+    gaps_all = np.asarray(info["eigenvectors"]).T.reshape(
+        -1, norb, norb, Nx, Ny, Nz)
+    vals2, _ = sc._reorder_eigenpairs_by_parity(info["eigenvalues"],
+                                                gaps_all, "triplet")
+    lam_static = complex(vals2[0])
+
+    # --- dynamic leading triplet eigenvalue, chi FLAT over i-nu ---
+    ND = chi_s.shape[-1]
+    chi_s_w_flat = np.broadcast_to(
+        chi_s[:, :, :, None, :, :], (Nx, Ny, Nz, Nmat, ND, ND)).copy()
+    chi_c_w_flat = np.broadcast_to(
+        chi_c[:, :, :, None, :, :], (Nx, Ny, Nz, Nmat, ND, ND)).copy()
+    A_dyn, vec_size_dyn = bc.make_bond_kernel_dynamic(
+        chi_s_w_flat, chi_c_w_flat, S_bond, C_bond, Vpp_s, Vpp_t, green,
+        bond_set, "triplet", beta)
+    _, _, info_d = sc._solve_leading(lambda: (A_dyn, vec_size_dyn),
+                                     vec_size_dyn, "arnoldi",
+                                     num_eigenvalues=6)
+    gap_shape = (norb, norb, Nx, Ny, Nz, Nmat)
+    vals_d, _, match_d = ed._reorder_eigenpairs_by_parity_dynamic(
+        info_d["eigenvalues"], info_d["eigenvectors"], gap_shape, "triplet")
+    lam_dyn_flat = complex(vals_d[0])
+
+    assert match_d[0]
+    assert lam_dyn_flat.real == pytest.approx(lam_static.real, rel=1.0e-8)
+    assert abs(lam_dyn_flat.imag) < 1.0e-10
+    assert abs(lam_static.imag) < 1.0e-10

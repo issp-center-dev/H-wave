@@ -1461,7 +1461,7 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
                                 pairing_type, use_ir, *, bond_green,
                                 bond_max_shells, bond_memory_cap_gb,
                                 bond_precondition_opts, bond_diagnostics,
-                                use_gpu):
+                                bond_cond_tol=None, use_gpu):
     """Build the dynamic bond-channel Eliashberg operator and its provenance.
 
     The whole opt-in branch of ``solve_dynamic`` (spec S3.4), in one place:
@@ -1542,8 +1542,16 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
                 "(nmat = %d)...", nmat)
     chi_bar_w = bond_channels.bond_bubble_dynamic(green_kw, bond_set, beta)
     logger.info("Dressing the bond bubble at every bosonic frequency...")
+    # [eliashberg] bond_cond_tol (spec S3.6 hand-off): the default
+    # bond_channels._BOND_COND_FLOOR can trip on an isolated near-edge-
+    # frequency point even when the physical (static) conditioning is
+    # healthy -- see the Task 9 report. None (unset) keeps
+    # dress_bond_dynamic's own default.
+    cond_tol_used = (bond_channels._BOND_COND_FLOOR if bond_cond_tol is None
+                     else float(bond_cond_tol))
     chi_s_w, chi_c_w, cond_min_spin, cond_min_charge = \
-        bond_channels.dress_bond_dynamic(chi_bar_w, S_bond, C_bond)
+        bond_channels.dress_bond_dynamic(chi_bar_w, S_bond, C_bond,
+                                         cond_tol=cond_tol_used)
     del chi_bar_w
     cond_spin_min = float(cond_min_spin.min())
     cond_charge_min = float(cond_min_charge.min())
@@ -1614,6 +1622,7 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
         "bond_cond_min_charge": cond_charge_min,
         "bond_cond_min_spin_at": np.asarray(cond_spin_at, dtype=int),
         "bond_cond_min_charge_at": np.asarray(cond_charge_at, dtype=int),
+        "bond_cond_tol": cond_tol_used,
         "bond_green_symmetry_residual_k": sym["green_sym_k"],
         "bond_green_symmetry_residual_w": sym["green_sym_w"],
         "bond_pair_weight_min": sym["weight_min"],
@@ -1826,7 +1835,8 @@ def solve_dynamic(input_dict):
     # on a direct solve_dynamic() call too (bypassing calc_eliashberg's
     # dispatch), so neither entry point can reach the kernel unvalidated.
     (use_bond, bond_green, bond_max_shells, bond_memory_cap_gb,
-     bond_precondition_opts, bond_diagnostics) = sc._read_bond_config(eli_param)
+     bond_precondition_opts, bond_diagnostics, bond_cond_tol
+     ) = sc._read_bond_config(eli_param)
     pairing_type = eli_param.get("pairing_type", "singlet")
     # Mirror calc_eliashberg's config -> _solve_leading string mapping.
     solver_mode = eli_param.get("solver_mode", "iteration")
@@ -1878,7 +1888,8 @@ def solve_dynamic(input_dict):
             bond_green=bond_green, bond_max_shells=bond_max_shells,
             bond_memory_cap_gb=bond_memory_cap_gb,
             bond_precondition_opts=bond_precondition_opts,
-            bond_diagnostics=bond_diagnostics, use_gpu=use_gpu)
+            bond_diagnostics=bond_diagnostics, bond_cond_tol=bond_cond_tol,
+            use_gpu=use_gpu)
         green_w = bond_ctx["green"]
         nmat = bond_ctx["nmat"]
         axF, axB = bond_ctx["axF"], bond_ctx["axB"]
