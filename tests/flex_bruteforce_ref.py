@@ -15,10 +15,10 @@ Conventions (a SIMPLE test layout, not the production memory layout):
   k-grid of ``Nk`` points, with periodic wrap on both the k index and the
   Matsubara index.
 
-* MYO Eq.(5) (irreducible susceptibility / bare bubble):
+* Irreducible susceptibility / bare bubble:
       chi0_{mn,mu nu}(q, i nu) =
-          -(T/N) Sum_{k, i omega} G_{mu m}(k+q, i omega + i nu)
-                                   G_{n nu}(k, i omega)
+          -(T/N) Sum_{k, i omega} G_{m mu}(k+q, i omega + i nu)
+                                   G_{nu n}(k, i omega)
 
 * MYO Eq.(3) (self-energy from a full vertex V):
       Sigma_{mn}(k, i omega) =
@@ -27,17 +27,28 @@ Conventions (a SIMPLE test layout, not the production memory layout):
 
 The index slots below match these formulas exactly; do not "optimize" the
 wiring.
+
+Note on the bubble's index slots (issue #91).  These two formulas are a
+*pair*: only one relative orbital-pair order of the bubble reproduces the
+exact second-order self-energy when the two are composed as V = U chi0 U.
+This file previously carried the bubble with both pairs transposed
+(``G_{mu m} G_{n nu}``).  Composed with Eq.(3) that gives, for a density-only
+U, ``Sigma_{mn} ~ chi0_{nm} G_{mn}`` instead of ``chi0_{mn} G_{mn}`` -- a
+transpose that is invisible on the orbital diagonal and wrong by ~40% off it.
+The order below is the one pinned against an exactly-diagonalized 3-orbital
+model in ``tests/test_flex_sopt_index_order.py``, which is independent of any
+convention choice made inside this codebase.
 """
 
 import numpy as np
 
 
 def chi0_bruteforce(G, T, Nk):
-    """chi0_{mn,mu nu}(q,i nu) by explicit direct summation (MYO Eq.5).
+    """chi0_{mn,mu nu}(q,i nu) by explicit direct summation.
 
     G: (norb, norb, Nk, nmat). Returns (norb,norb,norb,norb, Nk, nmat).
     chi0[m,n,mu,nu,q,iv] =
-        -(T/Nk) Sum_{k,iw} G[mu,m,(k+q)%Nk,(iw+iv)%nmat] G[n,nu,k,iw].
+        -(T/Nk) Sum_{k,iw} G[m,mu,(k+q)%Nk,(iw+iv)%nmat] G[nu,n,k,iw].
     """
     norb = G.shape[0]; nmat = G.shape[-1]
     chi0 = np.zeros((norb, norb, norb, norb, Nk, nmat), dtype=complex)
@@ -50,7 +61,7 @@ def chi0_bruteforce(G, T, Nk):
           s = 0j
           for k in range(Nk):
            for iw in range(nmat):
-            s += G[mu, m, (k + q) % Nk, (iw + iv) % nmat] * G[n, nu, k, iw]
+            s += G[m, mu, (k + q) % Nk, (iw + iv) % nmat] * G[nu, n, k, iw]
           chi0[m, n, mu, nu, q, iv] = -(T / Nk) * s
     return chi0
 
