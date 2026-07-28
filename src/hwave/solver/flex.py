@@ -1716,38 +1716,65 @@ class FLEX(RPA):
         -------
         chi0q_out : ndarray
             chi0q for public output, in the RPA ``[a,c,b,d]`` orbital convention
-            (rank-6), consistent with the reduced path -- NOT the internal MYO
-            layout used for the S/C math.
+            (rank-6), consistent with the reduced path; this is also the layout
+            used internally for the S/C math.
         v_eff : ndarray
             Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
         chi_s : ndarray
             Spin susceptibility for public output, in the RPA ``[a,c,b,d]``
             orbital convention (rank-6), consistent with chi0q_out and the
-            reduced path -- NOT the internal MYO layout used for the S/C math.
+            reduced path; this is also the layout used internally for the S/C
+            math.
         chi_c : ndarray
             Charge susceptibility for public output, in the RPA ``[a,c,b,d]``
             orbital convention (rank-6), consistent with chi0q_out and the
-            reduced path -- NOT the internal MYO layout used for the S/C math.
+            reduced path; this is also the layout used internally for the S/C
+            math.
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
         v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
-        # Expose chi0q AND chi_s/chi_c in the RPA [a,c,b,d] convention
-        # (consistent with the reduced path) for the public output. The MYO
-        # transpose is an internal detail of the S/C math; transposing back (the
-        # transpose is an involution) recovers the input convention. chi_s/chi_c
-        # MUST be back-converted too: the Eliashberg loader (_compute_vertices_flex)
-        # builds S @ chi @ S with S/C matrices in the native [a,c,b,d] orbital-pair
-        # index layout (build_sc_matrices_myo shares that layout with the Kuroki
-        # builder; convention='myo' only changes the C(ab,ab) charge value), so
-        # leaving chi_s/chi_c in the MYO index order builds a transposed pairing
-        # vertex and a wrong static lambda (issue #78). The "myo" chi_convention
-        # tag still marks these as general-path (orbital-pair shape + MYO S/C
-        # charge convention); only the orbital-pair index order is native here.
-        chi0q_out = chi0q.transpose(0, 1, 4, 5, 2, 3)
-        chi_s = chi_s.transpose(0, 1, 4, 5, 2, 3)
-        chi_c = chi_c.transpose(0, 1, 4, 5, 2, 3)
-        return chi0q_out, v_eff, chi_s, chi_c
+        # chi0q / chi_s / chi_c are already in the native RPA [a,c,b,d]
+        # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
+        # what the public output and the Eliashberg loader expect: the loader
+        # (_compute_vertices_flex) builds S @ chi @ S with S/C matrices in that
+        # native layout (build_sc_matrices_myo shares the layout with the Kuroki
+        # builder; convention='myo' only changes the C(ab,ab) charge value), so a
+        # transposed chi here would build a transposed pairing vertex and a wrong
+        # static lambda (issue #78).  The "myo" chi_convention tag still marks
+        # these as general-path (orbital-pair shape + MYO S/C charge convention).
+        #
+        # This used to transpose the pair axes on the way IN, which is what
+        # issue #91 was: the transpose reached V_eff, so Sigma was built from
+        # the transposed bubble -- Sigma_mn came out as chi0_nm G_mn instead of
+        # chi0_mn G_mn, i.e. right on the orbital diagonal and wrong off it.
+        # (Sigma itself is NOT simply transposed: G stays in its own slots.)  It is gone, so there is nothing left
+        # to undo here either.
+        #
+        # Effect on the SAVED output, relative to the previous behaviour:
+        #   chi0q  unchanged -- it was already transposed back at this boundary.
+        #   chi_s / chi_c  unchanged.  Issue #78 had been fixed at this same
+        #     boundary, by solving from the transposed chi0 and transposing the
+        #     channels back: transpose(solve(transpose(chi0), U)).  Removing the
+        #     transpose at its source gives solve(chi0, U) with no compensation,
+        #     and the push-through identity makes the two equal -- so this
+        #     retires the compensation rather than changing its result.  The
+        #     identity needs S/C symmetric under the orbital-pair transpose,
+        #     which holds whenever the on-site interaction parameters are
+        #     symmetric in their orbital indices (U'_ab = U'_ba, J_ab = J_ba,
+        #     ...): the physical case, and the only one the S/C construction is
+        #     meant for.
+        #   Sigma  changed off the orbital diagonal.  This is issue #91, and the
+        #     part the output-boundary fix could not reach: V_eff is built from
+        #     chi0 INSIDE this function, so a transposed chi0 reaches Sigma no
+        #     matter what the boundary does.
+        #
+        # Note that H-wave does not currently validate that the interaction
+        # files are orbital-symmetric (issue #93); for an asymmetric file the
+        # two forms differ, and solve(chi0, U) is the consistent value because
+        # it applies the S/C matrices in the same index order that RPA and the
+        # Eliashberg loader's S @ chi @ S use.
+        return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
     def _inflate_chi0q_and_ham(self, chi0q_raw, ham_orig):
@@ -1825,7 +1852,7 @@ class FLEX(RPA):
 
     @do_profile
     def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
-        """Convert chi0q to MYO convention; build full MYO S/C interaction matrices.
+        """Pass chi0q through; build the full MYO S/C interaction matrices.
 
         This is the paramagnetic (spin-free) full-vertex general-path analogue
         of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced/squashed path,
@@ -1836,19 +1863,24 @@ class FLEX(RPA):
         ``no = self.norb`` (NOT ``self.nd``): chi0q stays orbital-only and the
         S/C matrices are ``norb^2 x norb^2`` MYO Kanamori blocks.
 
-        This method ALSO converts chi0q from the RPA orbital-pair convention to
-        the MYO convention via an orbital-pair transpose.  ``RPA._calc_chi0q``
-        labels the rank-6 bare bubble as ``chi0[..., a, c, b, d]`` (rpa.py:
-        ``chi0[a,c,b,d] = G[a,b] . G_rev[d,c]``); viewed as a
-        ``(norb^2, norb^2)`` matrix with row ``(a,c)`` and column ``(b,d)`` this
-        is the MYO susceptibility ``chi0_{mn,mu nu}`` TRANSPOSED (RPA's row pair
-        ``(a,c)`` is MYO's COLUMN ``(mu,nu)``; RPA's column pair ``(b,d)`` is
-        MYO's ROW ``(m,n)``).  The whole downstream general-path machinery -- the
-        MYO S/C matrices, :meth:`_solve_channels_general`,
-        :meth:`_calc_veff_general`, and :meth:`_sigma_orbital_contract` -- is
-        written in the MYO convention, so we transpose the orbital-pair axes here
-        to convert RPA -> MYO.  Verified against the physical brute-force
-        pipeline (``tests/flex_bruteforce_ref``) to ~1e-13.
+        chi0q is passed through UNCHANGED in its orbital-pair index order.
+        ``RPA._calc_chi0q`` labels the rank-6 bare bubble as
+        ``chi0[..., a, c, b, d]`` (rpa.py: ``chi0[a,c,b,d] = G[a,b] . G_rev[d,c]``);
+        viewed as a ``(norb^2, norb^2)`` matrix with row ``(a,c)`` and column
+        ``(b,d)`` that is ``chi0_{(mn),(mu nu)}(q) = -(T/N) sum_k G_{m mu}(k+q)
+        G_{nu n}(k)``, which is exactly the order consumed by the downstream
+        general-path machinery -- the S/C matrices,
+        :meth:`_solve_channels_general`, :meth:`_calc_veff_general` and
+        :meth:`_sigma_orbital_contract`.
+
+        Earlier revisions applied an "RPA -> MYO" orbital-pair transpose here
+        (and undid it on the way out).  That was wrong (issue #91): the
+        round-trip left the public susceptibilities untouched but transposed
+        ``V_eff``, so Sigma was built from the transposed bubble and came out
+        wrong off the orbital diagonal.  The
+        index order is now pinned by a ground truth independent of this codebase
+        -- the O(U^2) self-energy of an exactly-diagonalized 3-orbital model, see
+        ``tests/test_flex_sopt_index_order.py``.
 
         Parameters
         ----------
@@ -1867,8 +1899,8 @@ class FLEX(RPA):
         Returns
         -------
         chi0q : ndarray
-            ``chi0q_raw`` with its orbital-pair axes transposed into MYO
-            convention (shape unchanged: 6-dim ``(nmat,nvol,m,n,mu,nu)``).
+            ``chi0q_raw`` unchanged (6-dim ``(nmat,nvol,m,n,mu,nu)``, i.e. the
+            native RPA ``[a,c,b,d]`` orbital-pair order).
         Us : ndarray
             MYO spin (S) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
@@ -1885,20 +1917,31 @@ class FLEX(RPA):
         The reshape yields the matrix-per-q form that the downstream
         channel-solver (``_solve_rpa``) consumes as ``ham``.  Because the S/C
         matrices are q-independent constants for on-site Kanamori, they are
-        cached across SCF iterations; only the (per-iteration) chi0 transpose is
-        recomputed each call.
+        cached across SCF iterations; chi0q itself is passed straight through
+        and so needs no per-iteration work here.
         """
         logger.debug(">>> FLEX._inflate_chi0q_and_ham_general")
 
         # RPA's _calc_chi0q labels the rank-6 bare bubble as chi0[..., a, c, b, d]
-        # (rpa.py: chi0[a,c,b,d] = G[a,b]·G_rev[d,c]); as a (norb^2, norb^2) matrix
-        # (row=(a,c), col=(b,d)) this is the MYO susceptibility χ⁰_{mn,μν} TRANSPOSED
-        # (RPA's (a,c) pair is MYO's column (μ,ν); (b,d) is MYO's row (m,n)). The whole
-        # downstream general-path machinery (MYO S/C matrices, _solve_channels_general,
-        # _calc_veff_general, _sigma_orbital_contract) is written in the MYO convention,
-        # so transpose the orbital-pair axes here to convert RPA→MYO. Verified against
-        # the physical brute-force pipeline (tests/flex_bruteforce_ref) to ~1e-13.
-        chi0q = chi0q_raw.transpose(0, 1, 4, 5, 2, 3)   # (nmat,nvol,a,c,b,d) -> (nmat,nvol,m,n,μ,ν)
+        # (rpa.py: chi0[a,c,b,d] = G[a,b]·G_rev[d,c]), i.e. as a (norb^2, norb^2)
+        # matrix with row=(a,c) and col=(b,d) it is
+        #     chi0_{(mn),(μν)}(q) = -(T/N) Σ_k G_{mμ}(k+q) G_{νn}(k),
+        # which is ALREADY the orbital-pair order that the downstream general-path
+        # machinery (MYO S/C matrices, _solve_channels_general, _calc_veff_general,
+        # _sigma_orbital_contract) consumes.  No orbital-pair transpose here.
+        #
+        # This used to apply a `.transpose(0, 1, 4, 5, 2, 3)` "RPA→MYO" conversion.
+        # That transpose was wrong (issue #91): it is invisible on the orbital
+        # DIAGONAL and it cancelled out of the public chi_s/chi_c (which were
+        # transposed back on the way out -- exactly so for symmetric S/C, see
+        # _flex_compute_veff_general), but it transposed V_eff and hence the
+        # orbital off-diagonal of Sigma.  For a density-only interaction
+        # (CoulombIntra) it made the general path disagree with the reduced path
+        # by ~20% of the diagonal scale while both susceptibilities still matched
+        # to machine precision.  The correct index order is pinned by an exact
+        # ground truth independent of this codebase: the O(U^2) self-energy of a
+        # 3-orbital exactly-diagonalized model (tests/test_flex_sopt_index_order.py).
+        chi0q = chi0q_raw
         assert chi0q.ndim == 6
 
         # MYO S/C matrices are q-independent constants for on-site Kanamori, so
@@ -2582,24 +2625,30 @@ class FLEX(RPA):
         # matrices to pair the susceptibilities with: "myo" (general full-vertex
         # path) selects build_sc_matrices_myo, "kuroki" (reduced path) the
         # default builder; the two differ only in the C(ab,ab) charge value.
-        # NOTE: the arrays themselves are stored in the public RPA [a,c,b,d]
-        # orbital-pair index order for BOTH paths (see _flex_compute_veff_general,
-        # issue #78) -- the tag selects the S/C charge convention, not the index
-        # layout. It also marks the general path's orbital-pair shape
-        # (nd = norb^2) vs the reduced path's spin-orbital shape (nd = norb*ns).
+        # It also marks the general path's orbital-pair shape (nd = norb^2) vs
+        # the reduced path's spin-orbital shape (nd = norb*ns).
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
-                           # Explicit self-describing index-order marker: both
-                           # paths store [a,c,b,d]. Lets the reader distinguish
-                           # these files from pre-#78 dev outputs (which stored
-                           # the general path's chi MYO-transposed under the
-                           # same "myo" tag) and fail fast on any future layout
-                           # change instead of silently misreading.
-                           chi_orbital_layout="acbd",
                            **_freq_meta("B"))
+        if self._flex_general:
+            # Self-describing index-order marker for the ORBITAL-PAIR files
+            # only: their axes are the pairs (a,c) and (b,d), stored in that
+            # order. It lets the reader tell these files from pre-fix general
+            # outputs, which stored the same arrays orbital-pair TRANSPOSED
+            # under the same "myo" tag and are otherwise indistinguishable, and
+            # makes any future layout change fail fast instead of being
+            # silently misread.
+            #
+            # Deliberately NOT stamped on reduced/squashed files: those axes are
+            # spin-orbital (s*norb + a), not four orbital legs -- the loader has
+            # to extract a spin block before the array becomes an orbital-pair
+            # object at all (see sc._to_orbital_pair). Calling them "acbd" would
+            # be false machine-readable metadata. The reader accepts
+            # marker-less "kuroki" files; only "myo" requires the marker.
+            common_meta["chi_orbital_layout"] = "acbd"
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
