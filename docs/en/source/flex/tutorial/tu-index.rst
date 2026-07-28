@@ -535,12 +535,24 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 - ``chiq_s`` / ``chiq_c``: Spin / charge susceptibility,
   same shape as ``chi0q``.
-- ``chi_convention``: orbital-layout tag, ``"kuroki"`` for the
-  reduced/squashed schemes (spin-orbital reduced layout) or ``"myo"`` for the
-  general full-vertex scheme (orbital-pair layout). The Eliashberg loader
-  (``hwave_sc``) uses this tag to interpret the orbital indices; it is
-  essential for two-orbital systems, where the spin-orbital and orbital-pair
-  dimensions coincide (both ``4``) and shape alone is ambiguous.
+- ``chi_convention``: which spin/charge vertex the susceptibilities are meant
+  to be paired with, and which shape family they have: ``"kuroki"`` for the
+  reduced/squashed schemes (spin-orbital shape, ``nd = norb * ns``) or
+  ``"myo"`` for the general full-vertex scheme (orbital-pair shape,
+  ``nd = norb^2``, and the MYO value of the ``C(ab,ab)`` charge vertex). The
+  Eliashberg loader (``hwave_sc``) uses this tag to interpret the orbital
+  indices; it is essential for two-orbital systems, where the spin-orbital and
+  orbital-pair dimensions coincide (both ``4``) and shape alone is ambiguous.
+- ``chi_orbital_layout``: the orbital-pair index ORDER, ``"acbd"`` — the row
+  index is the first pair and the column index the second, matching
+  ``chi0[a,c,b,d]``. Both schemes write this order, so both stamp the marker;
+  it is separate from ``chi_convention``, which selects the vertex and the
+  shape. The marker exists so that a file written by a pre-fix build of the
+  general path — which stored the arrays orbital-pair transposed under the same
+  ``"myo"`` tag, and is indistinguishable by tag alone — is rejected on load
+  with a regenerate message instead of silently producing a transposed pairing
+  vertex, and so that any future layout change fails fast rather than being
+  misread.
 
 ``sigma.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

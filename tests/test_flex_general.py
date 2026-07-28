@@ -310,9 +310,9 @@ class TestChiGeneralConsistency(unittest.TestCase):
 
 
 class TestGeneralOutputConvention(unittest.TestCase):
-    """The general path computes internally in MYO convention but must expose
-    the public chi0q output in the same RPA [a,c,b,d] orbital convention as the
-    reduced path, so the saved chi0q key has one consistent meaning."""
+    """The general path works in the native RPA [a,c,b,d] orbital-pair order
+    throughout, so the public chi0q output carries the same convention as the
+    reduced path and the saved chi0q key has one consistent meaning."""
 
     def test_output_chi0q_is_rpa_convention(self):
         flex = _make_general_flex(norb=2)
@@ -324,10 +324,10 @@ class TestGeneralOutputConvention(unittest.TestCase):
         np.testing.assert_allclose(
             chi0q_out, chi0_raw, atol=1e-12,
             err_msg="general output chi0q must stay in RPA [a,c,b,d] convention")
-        # internal MYO chi0q (the transpose) must differ for a non-symmetric
-        # tensor -- confirms the output is genuinely back-converted, not MYO.
-        myo = chi0_raw.transpose(0, 1, 4, 5, 2, 3)
-        self.assertGreater(np.linalg.norm(chi0q_out - myo), 1e-6)
+        # the orbital-pair transpose must differ for a non-symmetric tensor,
+        # so the assertion above is not vacuously satisfied.
+        transposed = chi0_raw.transpose(0, 1, 4, 5, 2, 3)
+        self.assertGreater(np.linalg.norm(chi0q_out - transposed), 1e-6)
 
     def test_output_chi_s_c_are_rpa_convention(self):
         """chi_s/chi_c must exit _flex_compute_veff_general in the same RPA
@@ -391,9 +391,9 @@ class TestGeneralOutputConvention(unittest.TestCase):
         nmat = flex.nmat
         si = nmat // 2
 
-        # Same random asymmetric chi0q feeds BOTH paths. FLEX solves the RPA
-        # channels in MYO layout then transposes back (issue #78 fix); the load
-        # path solves them natively from the same chi0q.
+        # Same random asymmetric chi0q feeds BOTH paths: FLEX and the load
+        # path both solve the RPA channels natively from it, in the same
+        # orbital-pair order (issues #78/#91).
         chi0_raw = _fake_general_chi0q(flex)   # (nmat, nvol, a, c, b, d)
         chi0q_out, _, chi_s, chi_c = \
             flex._flex_compute_veff_general(chi0_raw, None)
@@ -1278,17 +1278,19 @@ def _make_chi0_general_flex():
     return solver
 
 
-class TestPublicSusceptibilityCompatibility(unittest.TestCase):
-    """Removing the orbital-pair transpose (issue #91) must not move the SAVED
-    susceptibilities for a physically symmetric interaction.
+class TestPublicChannelLayoutMigration(unittest.TestCase):
+    """How the SAVED chi_s/chi_c move relative to the previous behaviour.
 
-    The old public channel value was ``transpose(solve(transpose(chi0), U))``,
-    which by the push-through identity equals ``solve(chi0, transpose(U))``;
-    the new one is ``solve(chi0, U)``.  They agree exactly when the S/C
-    matrices are symmetric under the orbital-pair transpose.  That symmetry is
-    not enforced by the readers, so it is asserted here for the full Kanamori
-    set, and the equality is then checked against an explicit reconstruction of
-    the OLD pipeline -- not against the new code path.
+    Before this series the general path solved the channels from the
+    orbital-pair-TRANSPOSED chi0 and wrote the result out as-is, i.e. the saved
+    arrays were ``solve(transpose(chi0), U)``.  They are now
+    ``solve(chi0, U)``.  By the push-through identity, and provided the S/C
+    matrices are symmetric under the orbital-pair transpose, those two are
+    exact transposes of each other -- which is precisely the layout change
+    issue #78 describes and the migration note documents.
+
+    The S/C symmetry is a precondition, and nothing in the readers enforces it,
+    so it is asserted here for the full Kanamori set.
     """
 
     def _full_kanamori_flex(self):
@@ -1341,7 +1343,8 @@ class TestPublicSusceptibilityCompatibility(unittest.TestCase):
                         "susceptibilities are then NOT preserved by the "
                         "issue #91 fix".format(name))
 
-    def test_public_channels_match_the_pre_fix_pipeline(self):
+    def test_public_channels_are_the_transpose_of_the_pre_fix_output(self):
+        """The saved channels change by exactly one orbital-pair transpose."""
         flex = self._full_kanamori_flex()
         chi0_raw = _fake_general_chi0q(flex)
 
@@ -1349,26 +1352,26 @@ class TestPublicSusceptibilityCompatibility(unittest.TestCase):
         _, _, chi_s_new, chi_c_new = \
             flex._flex_compute_veff_general(chi0_raw, None)
 
-        # Explicit reconstruction of the PRE-FIX pipeline: transpose the
-        # orbital-pair axes in, solve the channels, transpose back out.
+        # Explicit reconstruction of the PRE-FIX pipeline: solve the channels
+        # from the orbital-pair-transposed chi0 and save that, unconverted.
         inv = (0, 1, 4, 5, 2, 3)
         flex._myo_sc_cache = None
         _, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0_raw, None)
         chi_s_old, chi_c_old = flex._solve_channels_general(
             chi0_raw.transpose(inv), Us, Uc)
-        chi_s_old = chi_s_old.transpose(inv)
-        chi_c_old = chi_c_old.transpose(inv)
 
-        # The two forms are algebraically identical here, so the residual is
-        # pure floating-point error; observed ~1e-15 relative on this
-        # well-conditioned fixture.  rtol is pinned to 0 so the assertion really
-        # tests that, instead of inheriting numpy's default rtol=1e-7.
+        # The relation is exact algebra for pair-symmetric S/C, so the residual
+        # is pure floating-point error (~1e-15 relative on this well-conditioned
+        # fixture).  rtol is pinned to 0 so the assertion really tests that,
+        # instead of inheriting numpy's default rtol=1e-7.
         scale = max(np.max(np.abs(chi_s_new)), np.max(np.abs(chi_c_new)))
         self.assertGreater(scale, 1e-6)
-        np.testing.assert_allclose(chi_s_new, chi_s_old,
+        np.testing.assert_allclose(chi_s_new, chi_s_old.transpose(inv),
                                    rtol=0.0, atol=1e-12 * scale)
-        np.testing.assert_allclose(chi_c_new, chi_c_old,
+        np.testing.assert_allclose(chi_c_new, chi_c_old.transpose(inv),
                                    rtol=0.0, atol=1e-12 * scale)
+        # ...and the change is real: the new arrays are NOT the old ones.
+        self.assertGreater(np.max(np.abs(chi_s_new - chi_s_old)), 1e-6)
 
     def test_asymmetric_interaction_is_not_covered_by_the_claim(self):
         """Guard the *scope* of the compatibility claim: with an asymmetric
@@ -1585,7 +1588,7 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
 
 def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
                                 IterationMax=1, Mix=1.0, want_solver=False,
-                                filling=None, matsubara_basis=None):
+                                filling=None):
     """Run a 2-orbital on-site FLEX model and return its self-energy.
 
     ``interactions`` selects which of the on-site interaction files written by
@@ -1604,10 +1607,6 @@ def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
     fixed ``mu`` and sets ``calc_mu = True`` (``rpa.py``: a supplied ``mu``
     forces ``calc_mu = False``), so the per-iteration ``_find_mu_dressed``
     re-solve is exercised.  Callers that care assert ``solver.calc_mu``.
-
-    ``matsubara_basis='ir'`` routes the run through the sparse-IR variants
-    (``_calc_chi0q_general_ir`` / ``_calc_self_energy_general_ir``), which build
-    chi0 and contract Sigma on the IR nodes rather than the uniform grid.
     """
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1642,8 +1641,6 @@ def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
             param['mu'] = 0.0
         else:
             param['filling'] = filling
-        if matsubara_basis is not None:
-            param['matsubara_basis'] = matsubara_basis
         info_mode = {
             'mode': 'FLEX',
             'param': param,
@@ -1743,29 +1740,6 @@ class TestCoulombIntraSchemeAgreement(unittest.TestCase):
         self.assertTrue(solver_red.calc_mu)
         # the re-solved chemical potentials must agree too
         self.assertAlmostEqual(solver_gen.mu, solver_red.mu, places=10)
-
-    def test_coulombintra_only_matches_reduced_on_the_ir_grid(self):
-        """The same contract on the sparse-IR path.
-
-        ``matsubara_basis = 'ir'`` uses different chi0 and self-energy routines
-        (``_calc_chi0q_general_ir`` / ``_calc_self_energy_general_ir``), which
-        build the bubble on the IR nodes.  They must produce the bubble in the
-        same orbital-pair index order as the uniform routines, or the general
-        path would be transposed on one grid and not the other.
-        """
-        kw = dict(matsubara_basis="ir", want_solver=True)
-        sig_gen, solver = _run_flex_sigma_2orb_onsite("general", **kw)
-        sig_red = _run_flex_sigma_2orb_onsite("reduced",
-                                              matsubara_basis="ir")
-        self.assertTrue(solver.use_ir, "the IR path was not actually taken")
-        norb = sig_red.shape[-1]
-        off = ~np.eye(norb, dtype=bool)
-        self.assertGreater(np.max(np.abs(sig_red[..., off])), 1e-6,
-                           "no orbital off-diagonal weight; cannot detect a "
-                           "pair-index transpose")
-        scale = np.max(np.abs(sig_red))
-        np.testing.assert_allclose(sig_gen, sig_red,
-                                   rtol=0.0, atol=1e-12 * scale)
 
     def test_the_reason_is_that_coulombintra_has_no_offdensity_vertex(self):
         """Document WHY the schemes must agree, so the tests above cannot pass

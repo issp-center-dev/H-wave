@@ -1744,30 +1744,30 @@ class FLEX(RPA):
         # static lambda (issue #78).  The "myo" chi_convention tag still marks
         # these as general-path (orbital-pair shape + MYO S/C charge convention).
         #
-        # This used to transpose the pair axes on the way IN and transpose them
-        # back here on the way OUT (issue #91).  Both transposes are gone.
+        # This used to transpose the pair axes on the way IN, which is what
+        # issue #91 was: the transpose reached V_eff and hence transposed the
+        # orbital off-diagonal of Sigma.  It is gone, so there is nothing left
+        # to undo here either.
         #
-        # Effect on the PUBLIC output.  chi0q_out is unaffected (the round trip
-        # was exact).  For the channels the old public value was
-        #     transpose(solve(transpose(chi0), U)) = solve(chi0, transpose(U))
-        # (push-through identity), against solve(chi0, U) now.  These coincide
-        # exactly when the S/C matrices are symmetric under the orbital-pair
-        # transpose, which holds whenever the on-site interaction parameters are
-        # symmetric in their orbital indices (U'_ab = U'_ba, J_ab = J_ba, ...) --
-        # the physical case, and the only one the S/C construction is meant for.
-        # The two forms are then ALGEBRAICALLY identical and differ only by
-        # floating-point error of the matmuls and the channel linear solve
-        # (~1e-15 relative on the well-conditioned regression fixture; the solve
-        # error grows with the conditioning of 1 -/+ chi0.U, so expect more near
-        # an RPA instability).  Only V_eff (hence Sigma) genuinely changes.
+        # Effect on the SAVED output, relative to the previous behaviour:
+        #   chi0q  unchanged -- it was already transposed back at this boundary.
+        #   chi_s / chi_c  changed by one orbital-pair transpose.  They used to
+        #     be solve(transpose(chi0), U), saved as-is; they are solve(chi0, U)
+        #     now.  For S/C symmetric under the orbital-pair transpose -- which
+        #     holds whenever the on-site interaction parameters are symmetric in
+        #     their orbital indices (U'_ab = U'_ba, J_ab = J_ba, ...), the
+        #     physical case and the only one the S/C construction is meant for --
+        #     the push-through identity makes those two exact transposes of each
+        #     other.  That is the layout change of issue #78: consumers using
+        #     the native [a,c,b,d] S/C matrices were building a transposed
+        #     pairing vertex from the old files.
+        #   Sigma  changed off the orbital diagonal (issue #91).
         #
-        # For an ASYMMETRIC interaction file the public channels do change, and
-        # the new value is the consistent one: solve(chi0, U) applies the S/C
-        # matrices in the same native orbital-pair index order that RPA and the
-        # Eliashberg loader's S @ chi @ S use.  (Only the index ORDER is shared;
-        # build_sc_matrices_myo still differs from hwave.sc in the C(ab,ab)
-        # charge value.)  Note that H-wave does not currently validate that the
-        # interaction files are orbital-symmetric.
+        # Note that H-wave does not currently validate that the interaction
+        # files are orbital-symmetric (issue #93); for an asymmetric file the
+        # relation above is not a pure transpose, and solve(chi0, U) is the
+        # consistent value because it applies the S/C matrices in the same
+        # index order that RPA and the Eliashberg loader's S @ chi @ S use.
         return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
