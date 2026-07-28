@@ -296,6 +296,14 @@ By default FLEX starts the self-consistency loop from :math:`\Sigma = 0`.
 Setting ``sigma_init`` in ``[file.input]`` to a ``sigma.npz`` written by an
 earlier FLEX run instead seeds the loop from that self-energy:
 
+.. warning::
+
+   Do not seed from a multi-orbital ``sigma.npz`` produced by
+   ``calc_scheme = "general"`` before the orbital-pair transpose fix: such a
+   file is wrong off the orbital diagonal and the SCF loop will converge to the
+   same wrong solution. Regenerate the seed first -- see
+   :ref:`the migration warning <flex_general_transpose_fix>`.
+
 .. code-block:: toml
 
    [file.input]
@@ -541,6 +549,14 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   shape ``(nblock, nmat, nvol, nd_block, nd_block)``
   where ``nblock`` is the number of spin blocks (1 for spin-free mode).
 
+.. note::
+
+   Multi-orbital ``sigma.npz`` files written by ``calc_scheme = "general"``
+   *before* the orbital-pair transpose fix are wrong off the orbital diagonal
+   and must be regenerated -- including any that are still being consumed as
+   ``sigma_init`` seeds or by ``hwave_sc``. See
+   :ref:`the migration warning <flex_general_transpose_fix>`.
+
 ``green.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -742,6 +758,41 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    ``hwave_sc`` reads back automatically. In all schemes
    ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
    ``ValueError``).
+
+   .. _flex_general_transpose_fix:
+
+   .. warning::
+
+      **Result change for** ``calc_scheme = "general"``. Up to and including
+      the previous release, the general path applied a spurious orbital-pair
+      transpose when building its effective interaction. This transposed the
+      self-energy in the orbital indices, so ``sigma.npz`` — and everything
+      derived from it (occupations, energies, Eliashberg eigenvalues) — was
+      wrong **off the orbital diagonal**. Single-orbital runs are unaffected
+      (the transpose is the identity there); multi-orbital runs are affected
+      whenever the Green function has orbital off-diagonal weight. For a
+      density-only interaction (``CoulombIntra`` alone) the general and reduced
+      schemes now agree on the self-energy to machine precision, as they must.
+
+      The saved ``chiq_s``/``chiq_c`` are **unchanged** as long as the on-site
+      interaction parameters are symmetric in their orbital indices —
+      ``U'[a,b] = U'[b,a]``, ``J[a,b] = J[b,a]``, and likewise for
+      ``Exchange``, ``PairHop`` and ``Ising`` — which is the physical case.
+      The old and new expressions are then algebraically identical and differ
+      only by floating-point error of the matrix products and the channel
+      linear solve (~10⁻¹⁵ relative on the well-conditioned regression fixture;
+      expect more where ``1 ∓ χ⁰U`` is close to singular, i.e. near an RPA
+      instability). If an interaction file specifies an asymmetric orbital
+      matrix, the saved susceptibilities change too, and the new value is the
+      consistent one: it applies the interaction matrices in the same
+      orbital-pair index order that the RPA solver and ``hwave_sc`` use. (Only
+      that index order is shared — the general path deliberately keeps the MYO
+      value of the ``C(ab,ab)`` charge vertex, which differs from ``hwave_sc``.)
+      H-wave does not currently check interaction files for this symmetry.
+
+      Multi-orbital results produced with ``calc_scheme = "general"`` before
+      this fix should be recomputed. ``calc_scheme = "reduced"`` and
+      ``"squashed"`` were never affected.
 
    **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see
    above) works with ``calc_scheme = "general"``, but IR only compresses the
