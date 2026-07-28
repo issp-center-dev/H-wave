@@ -590,13 +590,40 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     )
 
     def _to_k(value_r):
-        # same solver-core convention as _build_hamiltonian_k:
-        # V[a,b](q) = sum_R V_R[a,b] e^{-iqR}
+        # Same Fourier phase as the solver core, e^{-iqR}, but the ORBITAL
+        # PAIR is stored transposed: an entry (R, (a, b)) lands at [b, a].
+        #
+        # The interaction is a four-index object, and its MATRIX form carries a
+        # pair-index transpose that the one-body Hamiltonian does not. H-wave's
+        # own paper (arXiv:2308.00324) makes this explicit: Eq.(12) defines the
+        # tensor W_ij^{aa'bb'} with the first pair at site i and the second at
+        # site j, Eq.(16) puts the first pair at momentum +q, and Eq.(21) then
+        # defines the matrix used in the RPA equation as
+        #     [W(q)]^{ab} = W_q^{ba}
+        # so for a density-density term W^{aabb} = V_ab(R) the matrix element is
+        # [W(q)]^{(aa),(bb)} = V_ba(q), i.e. the matrix is V(q)^T.
+        #
+        # `rpa.py::_make_ham_inter` has always built that (it stores the entry's
+        # first orbital in the SECOND pair slot); this builder did not, so the
+        # susceptibility was solved with one orientation and the pairing vertex
+        # assembled from the other (issue #96).
+        #
+        # Both consumers need the transpose, confirmed by exact
+        # diagonalization on a bond set with V_ab(R) != V_ba(R):
+        #   * the RPA ladder [I + chi0 W]^-1 chi0 -- solved here too, in
+        #     _compute_vertices_simple -- selects V^T with a residual that
+        #     scales linearly in V (pure O(V^2) truncation), against 98% for V;
+        #   * the bare pair-scattering amplitude
+        #     <k' a up, -k' b down| H_int |k a up, -k b down>, which is exact at
+        #     first order, matches V^T to 6e-16, against 99% for V.
+        #
+        # NOTE: `_build_hamiltonian_k` is a one-body object and correctly keeps
+        # the plain [a, b] placement. Do not "align" this builder to it.
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
-            val_k[orb1, orb2, :, :, :] += value * np.exp(
+            val_k[orb2, orb1, :, :, :] += value * np.exp(
                 -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
