@@ -214,6 +214,17 @@ can be poorly converged; production RPA/FLEX runs typically use
 <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code>. The chi0q file records the value it was produced
 with, and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> warns on a mismatch when loading.</p>
 </div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>Inputs from a pre-fix</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> <strong>FLEX run.</strong> That
+path built its self-energy from an orbital-pair-transposed bubble, so its
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> are wrong off the orbital diagonal for a
+multi-orbital model. <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> is not affected — it consumes
+the susceptibilities, which are not — but <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> is: it takes the
+FLEX <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>, so regenerate that from a fixed build. Single-orbital
+runs and the <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> schemes are unaffected. See
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-general-transpose-fix"><span class="std std-ref">the migration warning</span></a>.</p>
+</div>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: pairing-vertex frequency treatment. <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> (default)
 evaluates the pairing vertex at zero bosonic frequency (the Nakano–Kuroki

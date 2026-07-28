@@ -212,6 +212,18 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 chi0q ファイルには生成時の値が記録されており、読み込み時に設定と
 食い違う場合は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> が警告を出します。</p>
 </div>
+<div class="admonition warning">
+<p class="admonition-title">警告</p>
+<p><strong>修正前の</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> <strong>FLEX計算の出力を使う場合。</strong>
+このパスは軌道ペアを転置したバブルから自己エネルギーを構成していたため、
+多軌道模型では <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> の軌道非対角成分が誤って
+います。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> が読む感受率は影響を受けないので問題
+ありませんが、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> は FLEX の <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> を取るため対象です。
+修正済みのビルドで再生成してください。1軌道の計算および
+<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> スキームは影響を受けません。
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a> を参照して
+ください。</p>
+</div>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: ペアリング頂点の振動数の扱い。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> （デフォルト）は
 ボゾン振動数ゼロでペアリング頂点を評価する静的近似（Nakano--Kuroki 式(9)）で、

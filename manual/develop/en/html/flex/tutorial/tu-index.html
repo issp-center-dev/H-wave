@@ -344,6 +344,17 @@ spin-dependent (spin-diagonal / spinful) runs.</p>
 <p>By default FLEX starts the self-consistency loop from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span>.
 Setting <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> in <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> to a <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> written by an
 earlier FLEX run instead seeds the loop from that self-energy:</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>A multi-orbital <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> produced by <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
+before the orbital-pair transpose fix is wrong off the orbital diagonal.
+The corrected solver converges to the corrected fixed point regardless of
+the seed, so such a file does not poison the result, but it is a poor warm
+start – it can slow convergence or steer the iteration towards a different
+solution branch, which defeats the purpose of seeding. Prefer regenerating
+it, and note that the run’s other outputs must be regenerated in any case –
+see <a class="reference internal" href="#flex-general-transpose-fix"><span class="std std-ref">the migration warning</span></a>.</p>
+</div>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
 </pre></div>
@@ -618,12 +629,25 @@ shape <code class="docutils literal notranslate"><span class="pre">(nmat,</span>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: Spin / charge susceptibility,
 same shape as <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: orbital-layout tag, <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code> for the
-reduced/squashed schemes (spin-orbital reduced layout) or <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the
-general full-vertex scheme (orbital-pair layout). The Eliashberg loader
-(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) uses this tag to interpret the orbital indices; it is
-essential for two-orbital systems, where the spin-orbital and orbital-pair
-dimensions coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>) and shape alone is ambiguous.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: which spin/charge vertex the susceptibilities are meant
+to be paired with, and which shape family they have: <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code> for the
+reduced/squashed schemes (spin-orbital shape, <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>) or
+<code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex scheme (orbital-pair shape,
+<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>, and the MYO value of the <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> charge vertex). The
+Eliashberg loader (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) uses this tag to interpret the orbital
+indices; it is essential for two-orbital systems, where the spin-orbital and
+orbital-pair dimensions coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>) and shape alone is ambiguous.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>: written by the <strong>general</strong> scheme only, value
+<code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code> — the four orbital legs are stored as the pairs <code class="docutils literal notranslate"><span class="pre">(a,c)</span></code> (row)
+and <code class="docutils literal notranslate"><span class="pre">(b,d)</span></code> (column). Reduced/squashed files do not carry it: their axes
+are spin-orbital (<code class="docutils literal notranslate"><span class="pre">s*norb</span> <span class="pre">+</span> <span class="pre">a</span></code>), not four orbital legs, so the loader has
+to extract a spin block before the array is an orbital-pair object at all.
+The marker exists so that a file written by a pre-fix build of the
+general path — which stored the arrays orbital-pair transposed under the same
+<code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> tag, and is indistinguishable by tag alone — is rejected on load
+with a regenerate message instead of silently producing a transposed pairing
+vertex, and so that any future layout change fails fast rather than being
+misread.</p></li>
 </ul>
 </section>
 <section id="sigma-npz">
@@ -633,6 +657,15 @@ dimensions coincide (both <code class="docutils literal notranslate"><span class
 shape <code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
 where <code class="docutils literal notranslate"><span class="pre">nblock</span></code> is the number of spin blocks (1 for spin-free mode).</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Multi-orbital <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> files written by
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> <em>before</em> the orbital-pair transpose fix are wrong
+off the orbital diagonal and must be regenerated – including any that are
+still being consumed as <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seeds or fed to <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> via
+<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>. The <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> of such a run are unaffected. See
+<a class="reference internal" href="#flex-general-transpose-fix"><span class="std std-ref">the migration warning</span></a>.</p>
+</div>
 </section>
 <section id="green-npz">
 <h3><code class="docutils literal notranslate"><span class="pre">green.npz</span></code><a class="headerlink" href="#green-npz" title="Link to this heading">¶</a></h3>
@@ -850,6 +883,39 @@ must have <code class="docutils literal notranslate"><span class="pre">irvec</sp
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads back automatically. In all schemes
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> is <strong>not</strong> supported (the solver raises a
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>).</p>
+<div class="admonition warning" id="flex-general-transpose-fix">
+<p class="admonition-title">Warning</p>
+<p><strong>Result change for</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>. Until this fix the
+general path applied a spurious orbital-pair transpose when building its
+effective interaction, so the self-energy was built from the transposed
+bubble: <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> — and everything derived from it (occupations,
+energies, Eliashberg eigenvalues) — was correct on the orbital diagonal
+and wrong <strong>off</strong> it. The scheme has only ever existed in development
+builds, so this affects work done on <code class="docutils literal notranslate"><span class="pre">develop</span></code>, not any released
+version. Single-orbital runs are unaffected (the transpose is the
+identity there); multi-orbital runs are affected whenever the Green
+function has orbital off-diagonal weight. For a
+density-only interaction (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> alone) the general and reduced
+schemes now agree on the self-energy to machine precision, as they must.</p>
+<p>The saved susceptibilities do <strong>not</strong> change. <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> was already
+transposed back at the output boundary, and <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> were
+already corrected separately (the <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code> marker and the
+<code class="docutils literal notranslate"><span class="pre">[a,c,b,d]</span></code> write order). Removing the transpose at its source makes
+those output-boundary corrections unnecessary rather than changing their
+result: measured on a 2-orbital Kanamori model the saved <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> is
+bit-identical and <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> agree to ~10⁻¹⁴ relative, the
+residual being floating-point error of the matrix products and the
+channel linear solve. That equivalence is exact algebra only while the
+spin/charge interaction matrices are symmetric under the orbital-pair
+transpose, which holds whenever the on-site interaction parameters are
+symmetric in their orbital indices — the physical case. H-wave does not
+currently check interaction files for that symmetry.</p>
+<p><strong>What to regenerate.</strong> <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> from any
+multi-orbital <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> run made before this fix, plus
+anything derived from them. <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> do not need
+regenerating on this account. Single-orbital runs are unaffected, and
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> were never affected.</p>
+</div>
 <p><strong>Memory with</strong> <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> <strong>+ IR.</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> (see
 above) works with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, but IR only compresses the
 <em>frequency</em> axis, typically by <code class="docutils literal notranslate"><span class="pre">Nmat/L</span></code> (20-40x); it does not change the

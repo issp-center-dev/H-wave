@@ -326,6 +326,16 @@ FLEX converged after 64 iterations
 <p>FLEX はデフォルトで自己無撞着ループを <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> から始めます。
 <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> の <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> に、以前の FLEX 計算が出力した <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
 を指定すると、その自己エネルギーからループを開始します:</p>
+<div class="admonition warning">
+<p class="admonition-title">警告</p>
+<p>軌道ペア転置の修正以前に <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> で作成された多軌道の
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は軌道非対角成分が誤っています。修正後のソルバーは種によらず
+正しい不動点に収束するため結果が汚染されることはありませんが、ウォーム
+スタートとしては不適で、収束を遅らせたり別の解の分枝へ誘導したりする
+（＝種を与える意義を損なう）可能性があります。再生成を推奨します。なお
+その計算の他の出力はいずれにせよ再生成が必要です
+（<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a> を参照）。</p>
+</div>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
 </pre></div>
@@ -592,11 +602,22 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: スピン / 電荷感受率、
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と同じ形状</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: 軌道レイアウトのタグ。reduced/squashed スキームは
-<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道 reduced レイアウト）、general full-vertex スキームは
-<code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair レイアウト）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は
-このタグで軌道インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair
-次元が一致（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）し形状だけでは区別できないため、このタグが必須です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: 感受率をどのスピン/電荷頂点と組み合わせるべきか、および
+形状の系統を示すタグ。reduced/squashed スキームは <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道
+形状、<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>）、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair 形状 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>、および <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> 電荷頂点にMYOの値を
+用いること）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）はこのタグで軌道
+インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair 次元が
+一致（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）し形状だけでは区別できないため、このタグが必須です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>: <strong>general</strong> スキームのみが書き出します。値は
+<code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>で、4本の軌道脚を <code class="docutils literal notranslate"><span class="pre">(a,c)</span></code>（行）と <code class="docutils literal notranslate"><span class="pre">(b,d)</span></code>（列）の
+ペアとしてこの順序で格納していることを表します。reduced/squashed の
+ファイルには付きません。これらの軸はスピン軌道 <code class="docutils literal notranslate"><span class="pre">s*norb</span> <span class="pre">+</span> <span class="pre">a</span></code> であり4本の
+軌道脚ではないため、loader はスピンブロックを抽出して初めて軌道ペアの
+オブジェクトになるからです。このマーカーは、修正前のgeneralパスが
+同じ <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> タグのまま軌道ペアを転置して保存していた（タグだけでは区別
+できない）ファイルを、転置されたペアリング頂点を黙って構成する代わりに
+再生成を促して読み込み拒否するため、また将来レイアウトが変わった場合に
+誤読せず即座に失敗させるために存在します。</p></li>
 </ul>
 </section>
 <section id="sigma-npz">
@@ -606,6 +627,15 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 形状 <code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
 (<code class="docutils literal notranslate"><span class="pre">nblock</span></code> はスピンブロック数、spin-freeモードでは1)</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>軌道ペア転置の修正 <em>以前</em> に <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> で書き出された
+多軌道の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> および <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> は軌道非対角成分が誤っており、
+再生成が必要です。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> の種として、あるいは <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> 経由で
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> に渡しているファイルも対象です。同じ計算の
+<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は影響を受けません。
+<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a> を参照してください。</p>
+</div>
 </section>
 <section id="green-npz">
 <h3><code class="docutils literal notranslate"><span class="pre">green.npz</span></code><a class="headerlink" href="#green-npz" title="Link to this heading">¶</a></h3>
@@ -799,6 +829,36 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 ます。いずれのスキームでも
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> には対応していません（ソルバーは
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出します）。</p>
+<div class="admonition warning" id="flex-general-transpose-fix-ja">
+<p class="admonition-title">警告</p>
+<p><strong>``calc_scheme = &quot;general&quot;`` の結果が変わります。</strong> 本修正まで
+general パスは、有効相互作用を構築する際に軌道ペア添字の余分な転置を
+行っていました。このため自己エネルギーが転置されたバブルから構成され、
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> および そこから導かれる量（占有数、エネルギー、
+Eliashberg固有値）は軌道対角成分は正しく、<strong>軌道非対角成分が誤って
+いました</strong>。本スキームは開発版にしか存在したことがないため、影響を
+受けるのは <code class="docutils literal notranslate"><span class="pre">develop</span></code> 上での作業であり、リリース版ではありません。
+1軌道の計算は影響を受けません（転置が恒等写像になるため）。多軌道の
+計算は、Green関数が軌道非対角の重みを持つ場合に影響を受けます。密度成分のみの相互作用（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみ）では、general と
+reduced スキームの自己エネルギーが本来あるべき通り機械精度で一致する
+ようになりました。</p>
+<p>保存される感受率は <strong>変わりません</strong>。<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> は出力時点で既に
+転置し戻されており、<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> も別途修正済みです
+（<code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code> マーカーと <code class="docutils literal notranslate"><span class="pre">[a,c,b,d]</span></code> 順での書き出し）。
+転置を発生源で取り除くことは、それら出力側の補正の結果を変えるのでは
+なく、補正自体を不要にします。2軌道Kanamori模型で実測すると、保存
+される <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> はビット単位で一致し、<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は相対
+10⁻¹⁴ で一致します（残差は行列積とチャネル線形解の浮動小数点誤差）。
+この等価性が厳密な代数として成り立つのは、スピン/電荷相互作用行列が
+軌道ペア転置について対称である間に限られます。これはオンサイト相互
+作用パラメータが軌道添字について対称であれば成り立ち、物理的な場合が
+これに当たります。なおH-waveは現在この対称性を検査していません。</p>
+<p><strong>再生成が必要なもの。</strong> 本修正以前の多軌道 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
+計算の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>、およびそこから導かれた量です。
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は本件を理由とする再生成は不要です。
+1軌道の計算は影響を受けず、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> および
+<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> も影響を受けません。</p>
+</div>
 <p><strong>``&quot;general&quot;`` + IR のメモリ使用量。</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;``（上記）</span>
 <span class="pre">は</span> <span class="pre">``calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> でも利用できますが、IRが圧縮するのは
 <em>振動数</em> 軸のみで（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/L 倍、目安20〜40倍）、<span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span>

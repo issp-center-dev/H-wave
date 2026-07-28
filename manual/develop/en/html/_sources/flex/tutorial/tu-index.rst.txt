@@ -296,6 +296,17 @@ By default FLEX starts the self-consistency loop from :math:`\Sigma = 0`.
 Setting ``sigma_init`` in ``[file.input]`` to a ``sigma.npz`` written by an
 earlier FLEX run instead seeds the loop from that self-energy:
 
+.. warning::
+
+   A multi-orbital ``sigma.npz`` produced by ``calc_scheme = "general"``
+   before the orbital-pair transpose fix is wrong off the orbital diagonal.
+   The corrected solver converges to the corrected fixed point regardless of
+   the seed, so such a file does not poison the result, but it is a poor warm
+   start -- it can slow convergence or steer the iteration towards a different
+   solution branch, which defeats the purpose of seeding. Prefer regenerating
+   it, and note that the run's other outputs must be regenerated in any case --
+   see :ref:`the migration warning <flex_general_transpose_fix>`.
+
 .. code-block:: toml
 
    [file.input]
@@ -527,12 +538,25 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 - ``chiq_s`` / ``chiq_c``: Spin / charge susceptibility,
   same shape as ``chi0q``.
-- ``chi_convention``: orbital-layout tag, ``"kuroki"`` for the
-  reduced/squashed schemes (spin-orbital reduced layout) or ``"myo"`` for the
-  general full-vertex scheme (orbital-pair layout). The Eliashberg loader
-  (``hwave_sc``) uses this tag to interpret the orbital indices; it is
-  essential for two-orbital systems, where the spin-orbital and orbital-pair
-  dimensions coincide (both ``4``) and shape alone is ambiguous.
+- ``chi_convention``: which spin/charge vertex the susceptibilities are meant
+  to be paired with, and which shape family they have: ``"kuroki"`` for the
+  reduced/squashed schemes (spin-orbital shape, ``nd = norb * ns``) or
+  ``"myo"`` for the general full-vertex scheme (orbital-pair shape,
+  ``nd = norb^2``, and the MYO value of the ``C(ab,ab)`` charge vertex). The
+  Eliashberg loader (``hwave_sc``) uses this tag to interpret the orbital
+  indices; it is essential for two-orbital systems, where the spin-orbital and
+  orbital-pair dimensions coincide (both ``4``) and shape alone is ambiguous.
+- ``chi_orbital_layout``: written by the **general** scheme only, value
+  ``"acbd"`` — the four orbital legs are stored as the pairs ``(a,c)`` (row)
+  and ``(b,d)`` (column). Reduced/squashed files do not carry it: their axes
+  are spin-orbital (``s*norb + a``), not four orbital legs, so the loader has
+  to extract a spin block before the array is an orbital-pair object at all.
+  The marker exists so that a file written by a pre-fix build of the
+  general path — which stored the arrays orbital-pair transposed under the same
+  ``"myo"`` tag, and is indistinguishable by tag alone — is rejected on load
+  with a regenerate message instead of silently producing a transposed pairing
+  vertex, and so that any future layout change fails fast rather than being
+  misread.
 
 ``sigma.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -540,6 +564,15 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 - ``sigma``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`,
   shape ``(nblock, nmat, nvol, nd_block, nd_block)``
   where ``nblock`` is the number of spin blocks (1 for spin-free mode).
+
+.. note::
+
+   Multi-orbital ``sigma.npz`` and ``green.npz`` files written by
+   ``calc_scheme = "general"`` *before* the orbital-pair transpose fix are wrong
+   off the orbital diagonal and must be regenerated -- including any that are
+   still being consumed as ``sigma_init`` seeds or fed to ``hwave_sc`` via
+   ``bond_green``. The ``chiq_s``/``chiq_c`` of such a run are unaffected. See
+   :ref:`the migration warning <flex_general_transpose_fix>`.
 
 ``green.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -742,6 +775,43 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    ``hwave_sc`` reads back automatically. In all schemes
    ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
    ``ValueError``).
+
+   .. _flex_general_transpose_fix:
+
+   .. warning::
+
+      **Result change for** ``calc_scheme = "general"``. Until this fix the
+      general path applied a spurious orbital-pair transpose when building its
+      effective interaction, so the self-energy was built from the transposed
+      bubble: ``sigma.npz`` — and everything derived from it (occupations,
+      energies, Eliashberg eigenvalues) — was correct on the orbital diagonal
+      and wrong **off** it. The scheme has only ever existed in development
+      builds, so this affects work done on ``develop``, not any released
+      version. Single-orbital runs are unaffected (the transpose is the
+      identity there); multi-orbital runs are affected whenever the Green
+      function has orbital off-diagonal weight. For a
+      density-only interaction (``CoulombIntra`` alone) the general and reduced
+      schemes now agree on the self-energy to machine precision, as they must.
+
+      The saved susceptibilities do **not** change. ``chi0q.npz`` was already
+      transposed back at the output boundary, and ``chiq_s``/``chiq_c`` were
+      already corrected separately (the ``chi_orbital_layout`` marker and the
+      ``[a,c,b,d]`` write order). Removing the transpose at its source makes
+      those output-boundary corrections unnecessary rather than changing their
+      result: measured on a 2-orbital Kanamori model the saved ``chi0q`` is
+      bit-identical and ``chiq_s``/``chiq_c`` agree to ~10⁻¹⁴ relative, the
+      residual being floating-point error of the matrix products and the
+      channel linear solve. That equivalence is exact algebra only while the
+      spin/charge interaction matrices are symmetric under the orbital-pair
+      transpose, which holds whenever the on-site interaction parameters are
+      symmetric in their orbital indices — the physical case. H-wave does not
+      currently check interaction files for that symmetry.
+
+      **What to regenerate.** ``sigma.npz`` and ``green.npz`` from any
+      multi-orbital ``calc_scheme = "general"`` run made before this fix, plus
+      anything derived from them. ``chi0q``/``chiq_s``/``chiq_c`` do not need
+      regenerating on this account. Single-orbital runs are unaffected, and
+      ``calc_scheme = "reduced"`` and ``"squashed"`` were never affected.
 
    **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see
    above) works with ``calc_scheme = "general"``, but IR only compresses the
