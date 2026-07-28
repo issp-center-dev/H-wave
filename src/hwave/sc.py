@@ -620,12 +620,35 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         # NOTE: `_build_hamiltonian_k` is a one-body object and correctly keeps
         # the plain [a, b] placement. Do not "align" this builder to it.
         #
-        # PairHop is EXCLUDED (transpose=False below). It is the one type that
+        # PairHop is EXCLUDED (transpose=False below), and unlike the rest that
+        # is now a MEASURED result rather than a gap. It is the one type
         # `rpa.py` does not place through `_append_inter`: `_append_pairhop`
         # uses the slots (b, a, a, b) rather than the density-density
-        # (b, b, a, a), so the determination above -- which is for a
-        # density-density term -- does not carry over to it. Leaving it alone
-        # changes only what has been established; its orientation is still open.
+        # (b, b, a, a), and in the S/C matrices it lands in the pair-ANTIdiagonal
+        # Case 4 rather than Case 1/3, so the density-density determination
+        # above says nothing about it.
+        #
+        # Issue #100 settled it end to end (TestPairHopEndToEnd in
+        # tests/test_vertex_orientation.py), with no index reasoning anywhere
+        # between the input file and the answer: feed this builder an on-site
+        # PairHop matrix, build S from it, form the solver's own linear-order
+        # response -chi0 . S . chi0 with chi0 from `rpa.py`'s kernel and an
+        # EXACT Green function, and compare against the cross-spin response of
+        # the same Hamiltonian by exact diagonalization. The untransposed
+        # placement -- i.e. S[(a,b),(b,a)] = P[a,b] -- reproduces it, and the
+        # test locates the residual by checking chi0 against the exact bubble
+        # in the same run, so what is left is the imaginary-time grid. Refining
+        # that grid off-line, 192 -> 384 -> 768 points, takes the residual
+        # 2.3e-3 -> 1.1e-3 -> 5.5e-4 (the test itself runs only the first);
+        # transposing PairHop sits at 0.55 and does not move.
+        #
+        # Beware the plausible-looking derivation that says otherwise. The
+        # vertex sits BETWEEN two chi0 factors, so its row index lives in
+        # chi0's COLUMN convention and its column index in chi0's ROW
+        # convention. chi0's row pair is reversed relative to its bilinear and
+        # its column pair is not, so the reversal lands on the vertex's COLUMN
+        # side. Applying it to the row side instead gives the transpose, and is
+        # wrong.
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
