@@ -37,7 +37,20 @@ import unittest
 
 import numpy as np
 
-np.seterr(all="ignore")     # spurious Accelerate matmul warnings
+_ERRSTATE = None
+
+
+def setUpModule():
+    """numpy's Accelerate-backed complex matmul emits spurious FP warnings on
+    the +-1 operator matrices below.  Scope the suppression to this module so
+    it cannot mask warnings in tests that run later in the same process."""
+    global _ERRSTATE
+    _ERRSTATE = np.seterr(all="ignore")
+
+
+def tearDownModule():
+    if _ERRSTATE is not None:
+        np.seterr(**_ERRSTATE)
 
 NSITE = 3          # >= 3 so that q and -q are distinct
 NORB = 2
@@ -194,6 +207,14 @@ class TestRPAVertexOrientation(unittest.TestCase):
                              / np.max(np.abs(lead[iq])))
             self.assertLess(res["VT"], 1e-4, "q index {}".format(iq))
             self.assertGreater(res["V"], 1e-1, "q index {}".format(iq))
+            # ...and the coefficient itself, not just the orientation: with the
+            # unnormalised rho_a(q) = sum_i e^{-iq r_i} n_ia used here the chain
+            # is exactly -(1/N_site) chi0 V^T chi0.  A uniform double-count of
+            # the interaction would survive the free-scale fit above.
+            np.testing.assert_allclose(
+                lead[iq], -(1.0 / NSITE) * (c0 @ v.T @ c0),
+                rtol=0.0, atol=2e-4 * np.max(np.abs(lead[iq])),
+                err_msg="q index {}".format(iq))
 
 
 # --------------------------------------------------------------------------
@@ -249,6 +270,11 @@ class TestPairingVertexOrientation(unittest.TestCase):
                                  / np.max(np.abs(amp)))
                 self.assertLess(res["VT"], 1e-10)
                 self.assertGreater(res["V"], 1e-1)
+                # the coefficient too: (2/N_site) V(q)^T for this fixture --
+                # 2 because both (up,down) orderings of the density-density
+                # term contribute, 1/N_site from the plane-wave normalisation.
+                np.testing.assert_allclose(
+                    amp, (2.0 / NSITE) * Vq.T, rtol=0.0, atol=1e-12)
                 checked += 1
         self.assertGreater(checked, 0, "no discriminating (k, k') pair")
 
@@ -273,6 +299,68 @@ class TestBuildersAgree(unittest.TestCase):
         want = np.array([v_of_q(q).T for q in qs])
         self.assertGreater(np.max(np.abs(want - want.transpose(0, 2, 1))), 1e-6)
         np.testing.assert_allclose(built, want, rtol=0.0, atol=1e-12)
+
+
+
+class TestAllInteractionTypesTransposed(unittest.TestCase):
+    """`_to_k` is type-agnostic, so the transpose reaches every interaction it
+    converts -- CoulombIntra, CoulombInter, Hund, Exchange, Ising, PairLift and
+    PairHop -- but only CoulombInter is exercised above. The committed
+    Kanamori fixtures are all orbital-symmetric, so a wrong orientation for the
+    others would not show up anywhere.
+
+    Asymmetric input is reachable: the readers do not validate orbital symmetry
+    (#93), and while the FLEX general path rejects OFF-SITE two-body terms it
+    accepts an asymmetric ON-SITE orbital matrix, which then reaches the MYO
+    S/C builder.
+    """
+
+    TYPES = ("CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising",
+             "PairLift", "PairHop")
+
+    def test_every_type_is_stored_pair_transposed(self):
+        import hwave.sc as sc
+
+        qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
+        vr = {((R, 0, 0), (a, b)): v for (R, a, b), v in BONDS.items()}
+        want = np.array([v_of_q(q).T for q in qs])
+        self.assertGreater(np.max(np.abs(want - want.transpose(0, 2, 1))), 1e-6)
+
+        for itype in self.TYPES:
+            with self.subTest(interaction=itype):
+                ik = sc._build_interaction_k(
+                    qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
+                got = ik[itype].transpose(2, 3, 4, 0, 1).reshape(
+                    NSITE, NORB, NORB)
+                np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
+
+    def test_asymmetric_on_site_input_reaches_the_sc_builders(self):
+        """Guard the reachability claim rather than assuming it: an asymmetric
+        ON-SITE inter-orbital entry survives into the S/C matrices, and makes
+        the charge matrix non-symmetric under the orbital-pair transpose."""
+        import hwave.sc as sc
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+        kx = np.linspace(0, 2 * np.pi, 2, endpoint=False)
+        kz = np.array([0.0])
+        sym = {((0, 0, 0), (0, 1)): 1.0, ((0, 0, 0), (1, 0)): 1.0}
+        asym = {((0, 0, 0), (0, 1)): 1.0, ((0, 0, 0), (1, 0)): 0.4}
+
+        def charge(vr, builder):
+            ik = sc._build_interaction_k(kx, kx, kz, {"CoulombInter": vr}, NORB)
+            return builder(ik, NORB, 2, 2, 1)[1]
+
+        for builder in (sc._build_sc_matrices_all_q, build_sc_matrices_myo):
+            with self.subTest(builder=builder.__name__):
+                c_sym = charge(sym, builder)
+                c_asym = charge(asym, builder)
+                self.assertTrue(
+                    np.allclose(c_sym, np.swapaxes(c_sym, -1, -2)),
+                    "symmetric input must give a pair-symmetric charge matrix")
+                self.assertFalse(
+                    np.allclose(c_asym, np.swapaxes(c_asym, -1, -2)),
+                    "asymmetric on-site input does reach the S/C builders, so "
+                    "the orientation is observable there")
 
 
 if __name__ == "__main__":
