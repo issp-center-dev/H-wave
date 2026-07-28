@@ -1698,7 +1698,7 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
 
 def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
                                 IterationMax=1, Mix=1.0, want_solver=False,
-                                filling=None):
+                                filling=None, matsubara_basis=None):
     """Run a 2-orbital on-site FLEX model and return its self-energy.
 
     ``interactions`` selects which of the on-site interaction files written by
@@ -1717,6 +1717,10 @@ def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
     fixed ``mu`` and sets ``calc_mu = True`` (``rpa.py``: a supplied ``mu``
     forces ``calc_mu = False``), so the per-iteration ``_find_mu_dressed``
     re-solve is exercised.  Callers that care assert ``solver.calc_mu``.
+
+    ``matsubara_basis='ir'`` routes the run through the sparse-IR variants
+    (``_calc_chi0q_general_ir`` / ``_calc_self_energy_general_ir``), which build
+    chi0 and contract Sigma on the IR nodes rather than the uniform grid.
     """
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1751,6 +1755,8 @@ def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
             param['mu'] = 0.0
         else:
             param['filling'] = filling
+        if matsubara_basis is not None:
+            param['matsubara_basis'] = matsubara_basis
         info_mode = {
             'mode': 'FLEX',
             'param': param,
@@ -1850,6 +1856,28 @@ class TestCoulombIntraSchemeAgreement(unittest.TestCase):
         self.assertTrue(solver_red.calc_mu)
         # the re-solved chemical potentials must agree too
         self.assertAlmostEqual(solver_gen.mu, solver_red.mu, places=10)
+
+    def test_coulombintra_only_matches_reduced_on_the_ir_grid(self):
+        """The same contract on the sparse-IR path.
+
+        ``matsubara_basis = 'ir'`` uses different chi0 and self-energy routines
+        (``_calc_chi0q_general_ir`` / ``_calc_self_energy_general_ir``), which
+        build the bubble on the IR nodes.  They must produce it in the same
+        orbital-pair index order as the uniform routines, or the general path
+        would be corrected on one grid and not the other.
+        """
+        kw = dict(matsubara_basis="ir", want_solver=True)
+        sig_gen, solver = _run_flex_sigma_2orb_onsite("general", **kw)
+        sig_red = _run_flex_sigma_2orb_onsite("reduced", matsubara_basis="ir")
+        self.assertTrue(solver.use_ir, "the IR path was not actually taken")
+        norb = sig_red.shape[-1]
+        off = ~np.eye(norb, dtype=bool)
+        self.assertGreater(np.max(np.abs(sig_red[..., off])), 1e-6,
+                           "no orbital off-diagonal weight; cannot detect a "
+                           "pair-index transpose")
+        scale = np.max(np.abs(sig_red))
+        np.testing.assert_allclose(sig_gen, sig_red,
+                                   rtol=0.0, atol=1e-12 * scale)
 
     def test_the_reason_is_that_coulombintra_has_no_offdensity_vertex(self):
         """Document WHY the schemes must agree, so the tests above cannot pass
