@@ -169,15 +169,12 @@ This section controls the Eliashberg solver. Key parameters:
   .. warning::
 
      **Inputs from a pre-fix** ``calc_scheme = "general"`` **FLEX run.** That
-     path stored its susceptibilities in the MYO orbital-pair order instead of
-     ``[a,c,b,d]``, so ``chi0q_mode = "flex"`` built a transposed pairing vertex
-     and disagreed with ``"load"`` for identical physics; and its self-energy
-     was transposed in the orbital indices, so the ``green.npz`` fed to the bond
-     path via ``bond_green`` is wrong off the orbital diagonal. Both are fixed;
-     regenerate any multi-orbital general-path output produced before the fix.
-     Old ``chiq_s``/``chiq_c`` are rejected on load rather than silently
-     misread. Single-orbital runs and the ``"reduced"``/``"squashed"`` schemes
-     are unaffected. See
+     path built its self-energy from an orbital-pair-transposed bubble, so its
+     ``sigma.npz`` and ``green.npz`` are wrong off the orbital diagonal for a
+     multi-orbital model. ``chi0q_mode = "flex"`` is not affected — it consumes
+     the susceptibilities, which are not — but ``bond_green`` is: it takes the
+     FLEX ``green.npz``, so regenerate that from a fixed build. Single-orbital
+     runs and the ``"reduced"``/``"squashed"`` schemes are unaffected. See
      :ref:`the migration warning <flex_general_transpose_fix>`.
 - ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
   evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki

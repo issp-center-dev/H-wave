@@ -571,8 +571,7 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
    ``calc_scheme = "general"`` *before* the orbital-pair transpose fix are wrong
    off the orbital diagonal and must be regenerated -- including any that are
    still being consumed as ``sigma_init`` seeds or fed to ``hwave_sc`` via
-   ``bond_green``. The ``chiq_s``/``chiq_c`` of such a run are transposed and
-   are rejected on load. See
+   ``bond_green``. The ``chiq_s``/``chiq_c`` of such a run are unaffected. See
    :ref:`the migration warning <flex_general_transpose_fix>`.
 
 ``green.npz``
@@ -794,21 +793,25 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
       density-only interaction (``CoulombIntra`` alone) the general and reduced
       schemes now agree on the self-energy to machine precision, as they must.
 
-      The same transpose is why the saved ``chiq_s``/``chiq_c`` were written in
-      the MYO orbital-pair order rather than the ``[a,c,b,d]`` order used
-      everywhere else, which made ``hwave_sc``'s ``chi0q_mode = "flex"``
-      disagree with ``"load"`` for identical physics. They are now written in
-      ``[a,c,b,d]``, and carry an explicit ``chi_orbital_layout = "acbd"``
-      marker; a ``"myo"``-tagged file without that marker is a pre-fix output
-      and is rejected on load with a regenerate message rather than silently
-      misread. ``chi0q.npz`` is unaffected — it was already transposed back at
-      the output boundary.
+      The saved susceptibilities do **not** change. ``chi0q.npz`` was already
+      transposed back at the output boundary, and ``chiq_s``/``chiq_c`` were
+      already corrected separately (the ``chi_orbital_layout`` marker and the
+      ``[a,c,b,d]`` write order). Removing the transpose at its source makes
+      those output-boundary corrections unnecessary rather than changing their
+      result: measured on a 2-orbital Kanamori model the saved ``chi0q`` is
+      bit-identical and ``chiq_s``/``chiq_c`` agree to ~10⁻¹⁴ relative, the
+      residual being floating-point error of the matrix products and the
+      channel linear solve. That equivalence is exact algebra only while the
+      spin/charge interaction matrices are symmetric under the orbital-pair
+      transpose, which holds whenever the on-site interaction parameters are
+      symmetric in their orbital indices — the physical case. H-wave does not
+      currently check interaction files for that symmetry.
 
-      **What to regenerate.** Every multi-orbital output of a pre-fix
-      ``calc_scheme = "general"`` run: ``sigma.npz`` and ``green.npz`` (wrong
-      off the orbital diagonal) and ``chiq_s``/``chiq_c`` (transposed).
-      Single-orbital runs are unaffected, and ``calc_scheme = "reduced"`` and
-      ``"squashed"`` were never affected.
+      **What to regenerate.** ``sigma.npz`` and ``green.npz`` from any
+      multi-orbital ``calc_scheme = "general"`` run made before this fix, plus
+      anything derived from them. ``chi0q``/``chiq_s``/``chiq_c`` do not need
+      regenerating on this account. Single-orbital runs are unaffected, and
+      ``calc_scheme = "reduced"`` and ``"squashed"`` were never affected.
 
    **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see
    above) works with ``calc_scheme = "general"``, but IR only compresses the

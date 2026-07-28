@@ -1382,19 +1382,20 @@ def _make_chi0_general_flex():
     return solver
 
 
-class TestPublicChannelLayoutMigration(unittest.TestCase):
-    """How the SAVED chi_s/chi_c move relative to the previous behaviour.
+class TestPublicChannelsUnchangedByTransposeRemoval(unittest.TestCase):
+    """Removing the transpose at its source must not move the SAVED channels.
 
-    Before this series the general path solved the channels from the
-    orbital-pair-TRANSPOSED chi0 and wrote the result out as-is, i.e. the saved
-    arrays were ``solve(transpose(chi0), U)``.  They are now
-    ``solve(chi0, U)``.  By the push-through identity, and provided the S/C
-    matrices are symmetric under the orbital-pair transpose, those two are
-    exact transposes of each other -- which is precisely the layout change
-    issue #78 describes and the migration note documents.
+    Issue #78 was fixed at the output boundary: the channels were solved from
+    the orbital-pair-TRANSPOSED chi0 and transposed back on the way out, giving
+    ``transpose(solve(transpose(chi0), U))``.  Removing the transpose at its
+    source gives ``solve(chi0, U)`` with no compensation.  By the push-through
+    identity those coincide, so the saved files are unchanged and only V_eff
+    (hence Sigma) moves -- but ONLY while the S/C matrices are symmetric under
+    the orbital-pair transpose.
 
-    The S/C symmetry is a precondition, and nothing in the readers enforces it,
-    so it is asserted here for the full Kanamori set.
+    That symmetry holds for orbital-symmetric on-site parameters (the physical
+    case) and nothing in the readers enforces it, so it is asserted here for
+    the full Kanamori set before the equivalence is checked.
     """
 
     def _full_kanamori_flex(self):
@@ -1447,8 +1448,8 @@ class TestPublicChannelLayoutMigration(unittest.TestCase):
                         "susceptibilities are then NOT preserved by the "
                         "issue #91 fix".format(name))
 
-    def test_public_channels_are_the_transpose_of_the_pre_fix_output(self):
-        """The saved channels change by exactly one orbital-pair transpose."""
+    def test_public_channels_match_the_output_boundary_correction(self):
+        """The saved channels are the same either way."""
         flex = self._full_kanamori_flex()
         chi0_raw = _fake_general_chi0q(flex)
 
@@ -1456,13 +1457,15 @@ class TestPublicChannelLayoutMigration(unittest.TestCase):
         _, _, chi_s_new, chi_c_new = \
             flex._flex_compute_veff_general(chi0_raw, None)
 
-        # Explicit reconstruction of the PRE-FIX pipeline: solve the channels
-        # from the orbital-pair-transposed chi0 and save that, unconverted.
+        # Explicit reconstruction of the OUTPUT-BOUNDARY correction: solve the
+        # channels from the orbital-pair-transposed chi0, then transpose back.
         inv = (0, 1, 4, 5, 2, 3)
         flex._myo_sc_cache = None
         _, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0_raw, None)
         chi_s_old, chi_c_old = flex._solve_channels_general(
             chi0_raw.transpose(inv), Us, Uc)
+        chi_s_old = chi_s_old.transpose(inv)
+        chi_c_old = chi_c_old.transpose(inv)
 
         # The relation is exact algebra for pair-symmetric S/C, so the residual
         # is pure floating-point error (~1e-15 relative on this well-conditioned
@@ -1470,12 +1473,15 @@ class TestPublicChannelLayoutMigration(unittest.TestCase):
         # instead of inheriting numpy's default rtol=1e-7.
         scale = max(np.max(np.abs(chi_s_new)), np.max(np.abs(chi_c_new)))
         self.assertGreater(scale, 1e-6)
-        np.testing.assert_allclose(chi_s_new, chi_s_old.transpose(inv),
+        np.testing.assert_allclose(chi_s_new, chi_s_old,
                                    rtol=0.0, atol=1e-12 * scale)
-        np.testing.assert_allclose(chi_c_new, chi_c_old.transpose(inv),
+        np.testing.assert_allclose(chi_c_new, chi_c_old,
                                    rtol=0.0, atol=1e-12 * scale)
-        # ...and the change is real: the new arrays are NOT the old ones.
-        self.assertGreater(np.max(np.abs(chi_s_new - chi_s_old)), 1e-6)
+        # ...and not vacuously: the pair transpose really does move these
+        # arrays, so the agreement above is a statement about the algebra and
+        # not about a symmetric tensor.
+        self.assertGreater(
+            np.max(np.abs(chi_s_new - chi_s_new.transpose(inv))), 1e-6)
 
     def test_asymmetric_interaction_is_not_covered_by_the_claim(self):
         """Guard the *scope* of the compatibility claim: with an asymmetric

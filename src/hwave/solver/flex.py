@@ -1753,23 +1753,27 @@ class FLEX(RPA):
         #
         # Effect on the SAVED output, relative to the previous behaviour:
         #   chi0q  unchanged -- it was already transposed back at this boundary.
-        #   chi_s / chi_c  changed by one orbital-pair transpose.  They used to
-        #     be solve(transpose(chi0), U), saved as-is; they are solve(chi0, U)
-        #     now.  For S/C symmetric under the orbital-pair transpose -- which
-        #     holds whenever the on-site interaction parameters are symmetric in
-        #     their orbital indices (U'_ab = U'_ba, J_ab = J_ba, ...), the
-        #     physical case and the only one the S/C construction is meant for --
-        #     the push-through identity makes those two exact transposes of each
-        #     other.  That is the layout change of issue #78: consumers using
-        #     the native [a,c,b,d] S/C matrices were building a transposed
-        #     pairing vertex from the old files.
-        #   Sigma  changed off the orbital diagonal (issue #91).
+        #   chi_s / chi_c  unchanged.  Issue #78 had been fixed at this same
+        #     boundary, by solving from the transposed chi0 and transposing the
+        #     channels back: transpose(solve(transpose(chi0), U)).  Removing the
+        #     transpose at its source gives solve(chi0, U) with no compensation,
+        #     and the push-through identity makes the two equal -- so this
+        #     retires the compensation rather than changing its result.  The
+        #     identity needs S/C symmetric under the orbital-pair transpose,
+        #     which holds whenever the on-site interaction parameters are
+        #     symmetric in their orbital indices (U'_ab = U'_ba, J_ab = J_ba,
+        #     ...): the physical case, and the only one the S/C construction is
+        #     meant for.
+        #   Sigma  changed off the orbital diagonal.  This is issue #91, and the
+        #     part the output-boundary fix could not reach: V_eff is built from
+        #     chi0 INSIDE this function, so a transposed chi0 reaches Sigma no
+        #     matter what the boundary does.
         #
         # Note that H-wave does not currently validate that the interaction
         # files are orbital-symmetric (issue #93); for an asymmetric file the
-        # relation above is not a pure transpose, and solve(chi0, U) is the
-        # consistent value because it applies the S/C matrices in the same
-        # index order that RPA and the Eliashberg loader's S @ chi @ S use.
+        # two forms differ, and solve(chi0, U) is the consistent value because
+        # it applies the S/C matrices in the same index order that RPA and the
+        # Eliashberg loader's S @ chi @ S use.
         return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
