@@ -867,21 +867,26 @@ def dress_bond_dynamic(chi_bar_w, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
             " = {} (matching chi_bar_w's q-grid and matrix size)".format(
                 C_bond.shape, q_shape))
 
-    # Broadcast the q-dependent, frequency-independent bare vertices across
-    # the bosonic-frequency axis, then fold (q, i nu) into one batch axis for
-    # a single batched solve -- same solve expression as dress_bond, just
-    # over a longer batch.
-    S_full = np.broadcast_to(S_bond[:, :, :, None, :, :], chi_bar_w.shape)
-    C_full = np.broadcast_to(C_bond[:, :, :, None, :, :], chi_bar_w.shape)
-
+    # The q-dependent, frequency-independent bare vertices are broadcast
+    # across the bosonic axis BY THE MATMUL, not materialised.
+    #
+    # MEMORY (review fix): the previous form built
+    # ``np.broadcast_to(S_bond[..., None, :, :], chi_bar_w.shape)`` and then
+    # ``.reshape(N, ND, ND)`` it. That reshape CANNOT be a view -- the
+    # broadcast frequency axis has stride 0 -- so numpy silently copied, i.e.
+    # two extra FULL ``(N_q * nmat, ND, ND)`` arrays (two frequency-resolved
+    # units) that ``sc._bond_memory_estimate``'s dressing budget did not
+    # count. numpy's matmul broadcasts the leading batch axes itself, so
+    # keeping the 6-D form and reshaping only the RESULT (which is
+    # C-contiguous, hence a free view) gives a BIT-IDENTICAL answer at two
+    # units less peak. Verified array-wise (max |diff| = 0.0) against the
+    # previous form; the identity is likewise materialised only as the
+    # ``(ND, ND)`` matrix that broadcasts into the subtraction.
     N = Nx * Ny * Nz * nmat
     chi_flat = chi_bar_w.reshape(N, ND, ND)
-    S_flat = S_full.reshape(N, ND, ND)
-    C_flat = C_full.reshape(N, ND, ND)
-
-    I_mat = np.broadcast_to(np.eye(ND, dtype=complex), (N, ND, ND)).copy()
-    mat_s = I_mat - chi_flat @ S_flat
-    mat_c = I_mat + chi_flat @ C_flat
+    eye = np.eye(ND, dtype=complex)
+    mat_s = (eye - chi_bar_w @ S_bond[:, :, :, None, :, :]).reshape(N, ND, ND)
+    mat_c = (eye + chi_bar_w @ C_bond[:, :, :, None, :, :]).reshape(N, ND, ND)
 
     cond_min_spin = _bond_cond_scores(mat_s).reshape(Nx, Ny, Nz, nmat)
     cond_min_charge = _bond_cond_scores(mat_c).reshape(Nx, Ny, Nz, nmat)

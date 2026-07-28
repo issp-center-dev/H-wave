@@ -400,16 +400,21 @@ def test_dynamic_preflight_counts_every_frequency_resolved_buffer():
     unit_dyn = Nq * 32 * ND * ND * 16
     unit_mv = Nq * 32 * ND * 16
     assert est["g2_bytes"] == nd * nd * Nq * 32 * 16
-    # dressing: chi_bar + I + mat_s + mat_c + chi_s + chi_c
+    # dressing: chi_bar (caller-held) + mat_s + mat_c + chi_s + chi_c + the
+    # matmul temporary -- a MEASURED constant, pinned by
+    # test_preflight_dress_budget_covers_the_measured_dress_peak
     assert est["dress_bytes"] == sc._BOND_DRESS_DYN_ARRAYS * unit_dyn
     # kernel build: caller-held chi_s/chi_c + the hoist high-water + G2p_w
     assert est["kernel_build_bytes"] == (
         (2 + bc.BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS) * unit_dyn
         + est["g2_bytes"])
-    # matvec: chi_s/chi_c + persistent F_rt + matvec-class buffers + G2p_w
+    # matvec: persistent F_rt + matvec-class buffers + G2p_w + the ARPACK
+    # basis. chi_s/chi_c are NOT here -- the wiring releases both before any
+    # matvec runs.
     assert est["kernel_matvec_bytes"] == (
-        (2 + bc.BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT) * unit_dyn
-        + bc.BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS * unit_mv + est["g2_bytes"])
+        bc.BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT * unit_dyn
+        + bc.BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS * unit_mv + est["g2_bytes"]
+        + est["arpack_bytes"])
     # the peak is a phase MAXIMUM plus what lives across every phase
     assert est["peak"] == (est["green_bytes"] + est["q_bytes"]
                            + est["vertex_bytes"]
@@ -419,6 +424,225 @@ def test_dynamic_preflight_counts_every_frequency_resolved_buffer():
                                  est["kernel_matvec_bytes"]))
     # and it must dominate the static one at the same nmat
     assert est["peak"] > sc._bond_memory_estimate(**kw)["peak"] * 10
+
+
+def test_preflight_dress_budget_covers_the_measured_dress_peak():
+    """The dressing budget must not UNDERCOUNT ``dress_bond_dynamic``'s real
+    high-water mark -- the frequency-resolved sibling of
+    ``test_preflight_bubble_budget_covers_the_measured_bond_bubble_peak``,
+    and the test class that would have caught the (now fixed)
+    ``S_full``/``C_full`` reshape copies: a broadcast view cannot be reshaped
+    to a flat batch without materialising it, so the function really needed
+    8 units where the budget granted 6."""
+    from hwave.solver import bond_channels as bc
+    from tests.test_sc_bond import _measure_peak_bytes
+    import hwave.sc as sc
+
+    norb, Nx, Ny, Nz, nmat = 1, 4, 4, 1, 16
+    inter = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0,
+             ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
+    bond_set = bc.resolve_interactions(inter, np.eye(3), norb)
+    ND = norb * norb * bond_set.n_channels
+
+    rng = np.random.default_rng(0)
+
+    def rc(shape):
+        return 0.05 * (rng.normal(size=shape) + 1j * rng.normal(size=shape))
+
+    chi_bar = rc((Nx, Ny, Nz, nmat, ND, ND))
+    S_bond = 6.0 * rc((Nx, Ny, Nz, ND, ND))
+    C_bond = 6.0 * rc((Nx, Ny, Nz, ND, ND))
+
+    bc.dress_bond_dynamic(chi_bar, S_bond, C_bond, cond_tol=None)  # warm up
+    peak = _measure_peak_bytes(
+        lambda: bc.dress_bond_dynamic(chi_bar, S_bond, C_bond, cond_tol=None))
+    if peak is None:
+        pytest.skip("tracemalloc does not track numpy array data here")
+
+    est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+                                   dynamic_nmat=nmat)
+    # chi_bar is allocated outside the measured region but IS inside the
+    # dressing budget (the caller holds it across the call), so the budget
+    # the measured peak must fit into is the dressing line minus that array.
+    unit_dyn = Nx * Ny * Nz * nmat * ND * ND * 16
+    budget = est["dress_bytes"] - unit_dyn
+    assert budget >= peak, (
+        "the preflight budgets {:.3f} MB for dress_bond_dynamic's own "
+        "buffers but the measured peak is {:.3f} MB -- "
+        "_BOND_DRESS_DYN_ARRAYS has desynced from dress_bond_dynamic".format(
+            budget / 1e6, peak / 1e6))
+    assert budget <= 3.0 * peak
+
+
+def test_dress_bond_dynamic_matches_the_materialized_vertex_form():
+    """The broadcast-matmul memory fix must be BIT-identical to the explicit
+    ``S_full``/``C_full`` form it replaced (reproduced here, so the equality
+    is against the algebra rather than against the same code)."""
+    from hwave.solver import bond_channels as bc
+
+    rng = np.random.default_rng(3)
+    Nx, Ny, Nz, nmat, ND = 3, 2, 1, 8, 4
+
+    def rc(shape):
+        return 0.05 * (rng.normal(size=shape) + 1j * rng.normal(size=shape))
+
+    chi_bar = rc((Nx, Ny, Nz, nmat, ND, ND))
+    S_bond = 5.0 * rc((Nx, Ny, Nz, ND, ND))
+    C_bond = 5.0 * rc((Nx, Ny, Nz, ND, ND))
+
+    N = Nx * Ny * Nz * nmat
+    chi_flat = chi_bar.reshape(N, ND, ND)
+    S_flat = np.broadcast_to(S_bond[:, :, :, None, :, :],
+                             chi_bar.shape).reshape(N, ND, ND)
+    C_flat = np.broadcast_to(C_bond[:, :, :, None, :, :],
+                             chi_bar.shape).reshape(N, ND, ND)
+    I_mat = np.broadcast_to(np.eye(ND, dtype=complex), (N, ND, ND)).copy()
+    ref_s = np.linalg.solve(I_mat - chi_flat @ S_flat,
+                            chi_flat).reshape(chi_bar.shape)
+    ref_c = np.linalg.solve(I_mat + chi_flat @ C_flat,
+                            chi_flat).reshape(chi_bar.shape)
+
+    chi_s, chi_c, _, _ = bc.dress_bond_dynamic(chi_bar, S_bond, C_bond,
+                                               cond_tol=None)
+    assert np.abs(chi_s - ref_s).max() == 0.0
+    assert np.abs(chi_c - ref_c).max() == 0.0
+
+
+def test_dynamic_preflight_counts_the_eigensolver_basis():
+    """The ARPACK basis is its own budget line (spec S7): it scales with
+    num_eigenvalues and, at B = 1, is comparable to the whole matvec family
+    -- it was previously uncounted."""
+    import hwave.sc as sc
+    from hwave.solver import bond_channels as bc
+
+    inter = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}
+    bset = bc.resolve_interactions(inter, np.eye(3), 1)
+    kw = dict(norb=1, bond_set=bset, Nx=8, Ny=8, Nz=1, nmat=32,
+              dynamic_nmat=32)
+    vec_size_bytes = 1 * 64 * 32 * 16
+    est4 = sc._bond_memory_estimate(num_eigenvalues=4, **kw)
+    est16 = sc._bond_memory_estimate(num_eigenvalues=16, **kw)
+    assert est4["arpack_bytes"] == 9 * vec_size_bytes
+    assert est16["arpack_bytes"] == 33 * vec_size_bytes
+    assert (est16["kernel_matvec_bytes"] - est4["kernel_matvec_bytes"]
+            == est16["arpack_bytes"] - est4["arpack_bytes"])
+    assert sc._bond_memory_estimate(**kw)["arpack_bytes"] == (
+        (2 * sc._BOND_DEFAULT_NUM_EIGENVALUES + 1) * vec_size_bytes)
+
+
+def test_bond_memory_estimate_refuses_mixed_grids():
+    """``nmat`` and ``dynamic_nmat`` describe ONE grid on this path; two
+    different values would budget a run that does not exist."""
+    import hwave.sc as sc
+    from hwave.solver import bond_channels as bc
+
+    bset = bc.resolve_interactions({((1, 0, 0), (0, 0)): 1.0,
+                                    ((-1, 0, 0), (0, 0)): 1.0}, np.eye(3), 1)
+    with pytest.raises(ValueError, match="must equal nmat"):
+        sc._bond_memory_estimate(1, bset, 4, 4, 1, 16, dynamic_nmat=32)
+
+
+def test_dynamic_bond_rejects_ir_native_green(tmp_path):
+    """An IR-NATIVE (sparse-node) bond_green must be diagnosed as such, not
+    as a Matsubara-count mismatch: the header peek sees its NODE COUNT, so
+    before the fix the user was told to 'regenerate at Nmat = <node count>'."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    inp = _bond_input(input_dir, str(tmp_path / "output"), nmat=16)
+    green_path = str(tmp_path / "green_ir.npz")
+    _write_bare_green_npz(green_path, inp, nmat=16)
+    data = dict(np.load(green_path))
+    # the three markers ir_axis.is_ir_native requires, on a node count that
+    # is NOT the run's Nmat -- exactly the case that used to mis-report
+    data["green"] = data["green"][:, :7]
+    data["matsubara_basis"] = "ir"
+    data["frequency_grid"] = "sparse_ir_nodes"
+    data["ir_freq_n"] = np.arange(7)
+    np.savez(green_path, **data)
+    inp["eliashberg"]["bond_green"] = green_path
+    with pytest.raises(ValueError) as exc:
+        ed.solve_dynamic(inp)
+    msg = str(exc.value)
+    assert "sparse_ir_nodes" in msg and "write_densified" in msg
+    assert "Nmat = 7" not in msg
+
+
+@pytest.mark.parametrize("case", ["match", "mismatch"])
+def test_bond_green_metadata_temperature_check(tmp_path, case):
+    """``_bond_green_metadata_consistency`` compares the file's own beta/nmat
+    metadata with the run: equal passes silently, different is an ERROR (a
+    green at another temperature lives on another Matsubara grid entirely)."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    path = str(tmp_path / "g.npz")
+    beta_run = 2.0
+    np.savez(path, green=np.zeros((1, 16, 4, 1, 1), dtype=complex),
+             beta=(beta_run if case == "match" else 4.0), nmat=16)
+    if case == "match":
+        ed._bond_green_metadata_consistency(path, 16, beta_run)   # no raise
+    else:
+        with pytest.raises(ValueError, match="SAME temperature"):
+            ed._bond_green_metadata_consistency(path, 16, beta_run)
+
+    # the nmat metadata is checked independently of the temperature
+    np.savez(path, green=np.zeros((1, 16, 4, 1, 1), dtype=complex),
+             beta=beta_run, nmat=32)
+    with pytest.raises(ValueError, match="records nmat = 32"):
+        ed._bond_green_metadata_consistency(path, 16, beta_run)
+
+    # a file with no metadata at all is REPORTED, not refused
+    np.savez(path, green=np.zeros((1, 16, 4, 1, 1), dtype=complex))
+    ed._bond_green_metadata_consistency(path, 16, beta_run)
+
+
+def test_dynamic_bond_iteration_mode_warns_about_the_repulsive_kernel(
+        tmp_path, caplog):
+    """solver_mode='iteration' without spectral_shift is a silent-wrong-result
+    trap on a repulsion-dominated bond kernel; it must be named."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    inp = _bond_input(input_dir, str(tmp_path / "out"), nmat=16,
+                      solver_mode="iteration", max_iter=20)
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        lam_iter = ed.solve_dynamic(inp)
+    assert any("repulsion-" in rec.message and "spectral_shift" in rec.message
+               for rec in caplog.records)
+    # and the trap is real: the ARPACK leading value differs
+    lam_eig = ed.solve_dynamic(_bond_input(input_dir, str(tmp_path / "out2"),
+                                           nmat=16))
+    assert not np.isclose(lam_iter, lam_eig, rtol=1e-3)
+
+    # no warning once a shift is supplied
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        ed.solve_dynamic(_bond_input(input_dir, str(tmp_path / "out3"),
+                                     nmat=16, solver_mode="iteration",
+                                     max_iter=20, spectral_shift="auto"))
+    assert not any("repulsion-" in rec.message for rec in caplog.records)
+
+
+def test_dynamic_bond_does_not_claim_the_zero_chi_diagnostic(tmp_path, caplog):
+    """zero_chi_s/zero_chi_c are ignored on the bond branch, so neither
+    eigenvalue.dat nor the gap npz may record them: an output naming a
+    diagnostic that never ran is worse than no output."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    output_dir = str(tmp_path / "output")
+    inp = _bond_input(input_dir, output_dir, nmat=16, zero_chi_s=True,
+                      zero_chi_c=True)
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        ed.solve_dynamic(inp)
+    assert any("zero_chi_s/zero_chi_c are IGNORED" in rec.message
+               for rec in caplog.records)
+    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
+        assert "zero_chi_s" not in f.read()
+    meta = np.load(os.path.join(output_dir, "gap_dynamic.npz"),
+                   allow_pickle=False)
+    assert "zero_chi_s" not in meta.files
+    assert "zero_chi_c" not in meta.files
 
 
 def test_dynamic_preflight_refuses_over_cap(tmp_path):

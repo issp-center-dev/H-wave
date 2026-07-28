@@ -460,17 +460,41 @@ def _validate_bond_interactions(norb, interactions, imag_tol=_BOND_IMAG_TOL):
 _BOND_N_Q_ARRAYS = 9
 
 # Number of FREQUENCY-RESOLVED (N_q, nmat, ND, ND) arrays alive simultaneously
-# at ``bond_channels.dress_bond_dynamic``'s high-water mark, read off its body:
-# the input ``chi_bar_w``, the broadcast identity ``I_mat``, the two RPA
-# denominators ``mat_s``/``mat_c``, and the two solves' outputs
-# ``chi_s_w``/``chi_c_w``. (``S_full``/``C_full`` are broadcast VIEWS of the
-# static S_bond/C_bond and cost nothing; they are budgeted at their own static
-# size in ``q_bytes``.) Named here so the dynamic preflight and that function's
-# buffer discipline cannot silently drift apart.
+# at ``bond_channels.dress_bond_dynamic``'s high-water mark: the input
+# ``chi_bar_w`` (held by the caller across the call), the two RPA denominators
+# ``mat_s``/``mat_c``, the two solves' outputs ``chi_s_w``/``chi_c_w``, and the
+# transient matmul result each denominator is built from.
+#
+# MEASURED, not assumed (review fix: the first version of this constant was an
+# enumeration that claimed the broadcast bare vertices were free views -- they
+# were not, see the memory note in ``dress_bond_dynamic``). tracemalloc peak of
+# one ``dress_bond_dynamic`` call in units of one ``N_q * nmat * ND**2``
+# complex array, EXCLUDING the caller-held ``chi_bar_w``:
+#
+#   (Nx,Ny,Nz,nmat,ND)   own peak   + caller's chi_bar
+#   (4,4,1,16,5)           4.076          5.076
+#   (6,6,1,32,5)           4.047          5.047
+#   (4,4,1,16,12)          4.016          5.016
+#   (8,8,1,32,5)           4.044          5.044
+#   (2,2,1,64,5)           4.071          5.071
+#
+# Declared as the CEIL of the measured maximum, exactly as the
+# ``BOND_KERNEL_DYNAMIC_*`` constants are, so the preflight rounds against
+# itself and cannot undercount. (Before the broadcast-matmul fix in
+# ``dress_bond_dynamic`` the same measurement read 7.03 own / 8.03 total: the
+# pre-fix code needed 8 units where this budget granted 6 -- the undercount
+# ``tests/test_sc_bond_dynamic.py::
+# test_preflight_dress_budget_covers_the_measured_dress_peak`` now pins.)
 _BOND_DRESS_DYN_ARRAYS = 6
 
+# Default ``[eliashberg] num_eigenvalues`` (mirrors ``solve_dynamic``'s own
+# default); sizes the ARPACK-basis line of the dynamic preflight when the
+# caller does not pass the run's value.
+_BOND_DEFAULT_NUM_EIGENVALUES = 10
 
-def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
+
+def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None,
+                          num_eigenvalues=None):
     """Byte budget for the bond path, broken down by buffer family.
 
     Split out of :func:`_bond_resource_preflight` so the accounting can be
@@ -546,20 +570,31 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
         * ``bubble_phase`` -- ``bond_bubble_dynamic``'s working set
           (``BOND_BUBBLE_DYN_*`` buffers) plus its ``chi_bar_w`` output.
         * ``dress_phase`` -- ``dress_bond_dynamic``'s live set at its peak:
-          ``_BOND_DRESS_DYN_ARRAYS`` frequency-resolved q-arrays.
+          ``_BOND_DRESS_DYN_ARRAYS`` frequency-resolved q-arrays (a MEASURED
+          constant; see the note beside it).
         * ``build_phase`` -- the kernel builder's vertex hoist
           (``BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS``) while the caller still
           holds ``chi_s_w``/``chi_c_w``, plus the persistent ``G2p_w``.
         * ``matvec_phase`` -- the persistent ``F_rt``
           (``BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT``) and ``G2p_w``, plus
-          ``BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS`` matvec-class buffers, with
-          ``chi_s_w``/``chi_c_w`` still owned by the caller.
+          ``BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS`` matvec-class buffers and the
+          eigensolver's own basis (``arpack_bytes``). ``chi_s_w``/``chi_c_w``
+          are NOT counted here: the wiring releases both as soon as the
+          operator is built, before any matvec runs.
 
         ``g2_bytes`` (``G2p_w``, size ``nd**2 * N_q * dynamic_nmat``) is an
         EXPLICIT line rather than being folded into the matvec constant: its
         ratio to one matvec buffer is ``nd / B``, so at ``B = 1`` it is
         ``nd`` times a matvec buffer, not a rounding error (the note beside
         ``BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS`` in ``bond_channels``).
+
+        ``arpack_bytes`` is likewise explicit (spec S7 lists the eigensolver
+        basis as a budget line): ``(2*num_eigenvalues + 1)`` vectors of
+        ``vec_size = nd * N_q * dynamic_nmat`` -- ARPACK's ``ncv`` default is
+        ``2k+1`` -- which at ``B = 1`` is comparable to the whole matvec
+        family. ``num_eigenvalues`` defaults to
+        ``_BOND_DEFAULT_NUM_EIGENVALUES``; pass the run's value so the
+        estimate follows the configuration.
 
         **IR branch.** The IR kernel (``make_bond_kernel_dynamic_ir``) has no
         memory contract of its own yet, so it is deliberately preflighted
@@ -596,9 +631,24 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
                 "peak": q_bytes + bubble_bytes + vertex_bytes + green_bytes}
 
     nmat_dyn = int(dynamic_nmat)
+    if nmat_dyn != int(nmat):
+        # The dynamic chain runs on ONE grid: the wiring proves the file's and
+        # the config's Nmat equal before it gets here, and every line below
+        # mixes `nmat` (green/bubble working set) with `dynamic_nmat` (the
+        # q-resolved arrays). Two different values would silently produce a
+        # budget for a run that does not exist.
+        raise ValueError(
+            "_bond_memory_estimate: dynamic_nmat ({}) must equal nmat ({}) -- "
+            "the dynamic bond chain builds the green, the bubble and the "
+            "dressed susceptibilities on the SAME Matsubara grid."
+            .format(nmat_dyn, int(nmat)))
+    n_eig = (_BOND_DEFAULT_NUM_EIGENVALUES if num_eigenvalues is None
+             else int(num_eigenvalues))
     unit_dyn = chi_bar_bytes_static * nmat_dyn
     unit_mv = Nq * nmat_dyn * ND * itemsize
     g2_bytes = nd * nd * Nq * nmat_dyn * itemsize
+    vec_size_bytes = nd * Nq * nmat_dyn * itemsize
+    arpack_bytes = (2 * n_eig + 1) * vec_size_bytes
     bubble_bytes = (bond_channels.BOND_BUBBLE_DYN_N4_BUFFERS * norb ** 4
                     + bond_channels.BOND_BUBBLE_DYN_N2_BUFFERS
                     * norb ** 2) * unit
@@ -611,11 +661,10 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
     build_phase = (2 * unit_dyn
                    + bond_channels.BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS
                    * unit_dyn + g2_bytes)
-    matvec_phase = (2 * unit_dyn
-                    + bond_channels.BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT
+    matvec_phase = (bond_channels.BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT
                     * unit_dyn
                     + bond_channels.BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS
-                    * unit_mv + g2_bytes)
+                    * unit_mv + g2_bytes + arpack_bytes)
     phase_peak = max(bubble_phase, dress_phase, build_phase, matvec_phase)
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
             "chi_bar_bytes": unit_dyn,
@@ -624,6 +673,7 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
             "vertex_bytes": vertex_bytes,
             "green_bytes": green_bytes,
             "g2_bytes": g2_bytes,
+            "arpack_bytes": arpack_bytes,
             "dress_bytes": dress_phase,
             "kernel_build_bytes": build_phase,
             "kernel_matvec_bytes": matvec_phase,
@@ -631,7 +681,7 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
 
 
 def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb,
-                             dynamic_nmat=None):
+                             dynamic_nmat=None, num_eigenvalues=None):
     """Estimate the peak memory of the bond path and refuse to exceed the cap.
 
     Spec S3.2 "Resource guard": only here are ``nd``, ``N_q``, ``B`` and the
@@ -648,7 +698,8 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb,
     keeps the static budget byte-for-byte.
     """
     est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
-                                dynamic_nmat=dynamic_nmat)
+                                dynamic_nmat=dynamic_nmat,
+                                num_eigenvalues=num_eigenvalues)
     B, ND, Nq = est["B"], est["ND"], est["Nq"]
     q_bytes = est["q_bytes"]
     bubble_bytes = est["bubble_bytes"]
@@ -665,11 +716,12 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb,
     if dynamic_nmat is not None:
         logger.info(
             "Bond-channel preflight (dynamic) component budget: chi-bar/"
-            "dressing %.3f GB, kernel build %.3f GB, kernel matvec %.3f GB, "
-            "pair bubble G2 %.3f GB, green %.3f GB",
+            "dressing %.3f GB, kernel build %.3f GB, kernel matvec %.3f GB "
+            "(of which eigensolver basis %.3f GB), pair bubble G2 %.3f GB, "
+            "green %.3f GB",
             est["dress_bytes"] / 1.0e9, est["kernel_build_bytes"] / 1.0e9,
-            est["kernel_matvec_bytes"] / 1.0e9, est["g2_bytes"] / 1.0e9,
-            green_bytes / 1.0e9)
+            est["kernel_matvec_bytes"] / 1.0e9, est["arpack_bytes"] / 1.0e9,
+            est["g2_bytes"] / 1.0e9, green_bytes / 1.0e9)
 
     if peak > cap_gb * 1.0e9:
         detail = ("{:.3f} GB of q-resolved ND x ND arrays".format(

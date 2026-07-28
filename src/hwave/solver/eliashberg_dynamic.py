@@ -1109,6 +1109,15 @@ def _bond_dynamic_pair_weight(green):
     product IS the whole metric (no orbital-pair block structure); the
     frequency reversal is the plain ``[..., ::-1]`` of the CENTERED grid
     (``w_{nmat-1-n} = -w_n`` exactly), with no roll.
+
+    NOTE the normalization: this is the spec S2 metric ``G G`` with NO
+    ``1/beta``, whereas the static ``bond_channels.pair_weight`` carries the
+    ``T = 1/beta`` of its Matsubara sum. The whitening similarity and every
+    Hermiticity residual are invariant under a positive global scale, so the
+    reported residuals ARE comparable across the two paths -- but the
+    provenance entry ``pair_weight_min_eigenvalue`` is not: the dynamic
+    number is ``beta`` times the same quantity measured the static way (and
+    it is a per-(k, w_n) minimum rather than a per-k one).
     """
     green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1),
                         (2, 3, 4))
@@ -1225,6 +1234,20 @@ def _ir_compress_bond_chi(chi_w, axB, nmat, label):
     return np.ascontiguousarray(np.moveaxis(nodes, -1, 3))
 
 
+# Remedy named when an IR-NATIVE (sparse-node) npz is handed to the dynamic
+# bond branch: the branch builds its bubble and its dressing on the UNIFORM
+# grid (see _build_bond_dynamic_context's IR-flow note), so the green it reads
+# must be a uniform/densified file even when matsubara_basis = "ir".
+_BOND_GREEN_IR_HINT = (
+    "[eliashberg] bond_green must be a UNIFORM-grid green.npz. The dynamic "
+    "bond kernel builds its frequency-resolved bubble and dressing on the "
+    "uniform Matsubara grid and fits only the DRESSED susceptibilities onto "
+    "the IR nodes, so it cannot start from sparse-node values -- this is true "
+    "for matsubara_basis = \"ir\" runs as well. Re-run FLEX with "
+    "[mode.param] write_densified = true and point bond_green at the "
+    "densified file.")
+
+
 def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
     """Compare a ``bond_green`` npz's own metadata with the run configuration.
 
@@ -1236,22 +1259,33 @@ def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
     recorded only by files that carry an IR axis (``ir_beta``) or an explicit
     ``beta``/``T`` entry. Uniform ``green.npz`` files written by FLEX carry no
     temperature at all -- that is reported, not silently treated as a match.
+
+    **IR-native files are rejected FIRST** (review fix). ``sc._load_green_npz``
+    rejects them too, but the caller peeks the npz header for ``nfreq`` before
+    that, so a sparse-node green used to surface as "regenerate the green at
+    Nmat = 41" -- a nonsense instruction naming the file's NODE COUNT. The
+    real problem is the grid type, so it is diagnosed here, before any
+    frequency count is compared.
     """
+    import hwave.sc as sc
+
     try:
-        with np.load(green_path, allow_pickle=False) as data:
-            keys = set(data.files)
-            found = None
-            if "ir_beta" in keys:
-                found = ("ir_beta", float(np.asarray(data["ir_beta"])), beta)
-            elif "beta" in keys:
-                found = ("beta", float(np.asarray(data["beta"])), beta)
-            elif "T" in keys:
-                found = ("T", float(np.asarray(data["T"])), 1.0 / beta)
-            nmat_meta = int(np.asarray(data["nmat"])) if "nmat" in keys else None
-    except (OSError, ValueError, KeyError) as exc:
+        data = np.load(green_path, allow_pickle=False)
+    except (OSError, ValueError) as exc:
         logger.info("bond_green %s: metadata cross-check skipped (%s)",
                     green_path, exc)
         return
+    with data:
+        sc._reject_ir_native(data, green_path, _BOND_GREEN_IR_HINT)
+        keys = set(data.files)
+        found = None
+        if "ir_beta" in keys:
+            found = ("ir_beta", float(np.asarray(data["ir_beta"])), beta)
+        elif "beta" in keys:
+            found = ("beta", float(np.asarray(data["beta"])), beta)
+        elif "T" in keys:
+            found = ("T", float(np.asarray(data["T"])), 1.0 / beta)
+        nmat_meta = int(np.asarray(data["nmat"])) if "nmat" in keys else None
     if found is not None:
         key, file_value, run_value = found
         if not np.isclose(file_value, run_value, rtol=1.0e-8, atol=0.0):
@@ -1283,7 +1317,7 @@ def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
 
 def _bond_dynamic_green(bond_green, mode_param, hr, norb,
                         kx_array, ky_array, kz_array, beta, nmat_cfg,
-                        bond_set, bond_memory_cap_gb):
+                        bond_set, bond_memory_cap_gb, num_eigenvalues=None):
     """Resolve the Green function of the dynamic bond branch (spec S3.4).
 
     ``[eliashberg] bond_green`` (a full-omega ``green.npz``) is the intended
@@ -1319,7 +1353,8 @@ def _bond_dynamic_green(bond_green, mode_param, hr, norb,
     # header peek resolved it) has already been proven equal to the config's,
     # so nmat_cfg is the grid either way.
     sc._bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat_cfg,
-                                bond_memory_cap_gb, dynamic_nmat=nmat_cfg)
+                                bond_memory_cap_gb, dynamic_nmat=nmat_cfg,
+                                num_eigenvalues=num_eigenvalues)
 
     if bond_green is not None:
         green_kw, nmat_green = sc._load_green_npz(
@@ -1390,6 +1425,36 @@ def _write_bond_diagnostics_npz(output_dir, arrays, npz_file):
     return path
 
 
+def _warn_bond_dynamic_solver_mode(eli_param):
+    """Warn about the unshifted power iteration on a bond-resolved kernel.
+
+    The bond vertex is REPULSION-DOMINATED (the same lesson the static bond
+    path recorded when it had to un-defer ``spectral_shift``: with a
+    negative dominant eigenvalue the iterate flips sign every step, so the
+    unshifted power iteration cannot converge to it and instead settles on
+    whatever sub-dominant positive mode survives the projection). It does
+    not error -- it returns a WRONG number quietly. Measured on the 4x4
+    U = 4 / V = 1 / T = 0.5 / Nmat = 16 fixture: ``solver_mode="iteration"``
+    reports 1.2539 where the ARPACK leading eigenvalue is 0.9267.
+
+    So the default ``solver_mode = "iteration"`` is a trap on this branch
+    unless a ``spectral_shift`` is supplied, and it is named as one here.
+    """
+    if str(eli_param.get("solver_mode", "iteration")) != "iteration":
+        return
+    if eli_param.get("spectral_shift") is not None:
+        return
+    logger.warning(
+        "[eliashberg] solver_mode='iteration' with bond_channels=true and NO "
+        "spectral_shift: the bond-resolved pairing kernel is repulsion-"
+        "dominated, so the unshifted power iteration can converge to a "
+        "SUB-DOMINANT mode and report a wrong lambda WITHOUT any error (on "
+        "the 4x4 U=4/V=1 reference fixture it reports 1.2539 against the "
+        "ARPACK leading value 0.9267). Use solver_mode='eigenvalue' (the "
+        "ARPACK path, which orders by algebraically largest real part) or "
+        "set [eliashberg] spectral_shift.")
+
+
 def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
                                 interactions, inter_k, norb,
                                 kx_array, ky_array, kz_array, beta,
@@ -1445,6 +1510,7 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
             "[eliashberg] gpu=true is ignored for bond_channels=true: the "
             "bond-resolved dynamic kernel is CPU-only in v1 (GPU support is "
             "a deferred follow-up).")
+    _warn_bond_dynamic_solver_mode(eli_param)
 
     bond_set = bond_channels.resolve_interactions(
         interactions["CoulombInter"], geom_info["rvec"], norb,
@@ -1459,7 +1525,8 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
     green_kw, nmat, green_source = _bond_dynamic_green(
         bond_green, mode_param, hr, norb,
         kx_array, ky_array, kz_array, beta, nmat_cfg, bond_set,
-        bond_memory_cap_gb)
+        bond_memory_cap_gb,
+        num_eigenvalues=eli_param.get("num_eigenvalues", 10))
 
     # v1 input symmetry class (spec S2): checked on the green itself, before
     # any of it propagates into a kernel whose real spectrum depends on it.
@@ -2170,7 +2237,11 @@ def solve_dynamic(input_dict):
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
     with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
-        if zero_chi_s or zero_chi_c:
+        # `not use_bond`: the bond branch IGNORES these flags (it builds its
+        # own chi-bar and never assembles the scalar FLEX vertex they act on,
+        # see the warning above), so recording them here would claim a
+        # channel decomposition that did not run.
+        if (zero_chi_s or zero_chi_c) and not use_bond:
             fw.write(
                 "# zero_chi_s={}  zero_chi_c={}\n".format(
                     str(zero_chi_s).lower(), str(zero_chi_c).lower()
@@ -2208,7 +2279,9 @@ def solve_dynamic(input_dict):
                 "ir_L": axF.L,
             }
         )
-    if zero_chi_s or zero_chi_c:
+    if (zero_chi_s or zero_chi_c) and not use_bond:
+        # Same reason as the eigenvalue.dat header above: on the bond branch
+        # these flags were warned-and-ignored, so the npz must not carry them.
         extra_meta.update({"zero_chi_s": zero_chi_s, "zero_chi_c": zero_chi_c})
     if use_bond:
         # Provenance rides extra_meta (spec S3.4): the gap npz records WHICH
