@@ -1386,15 +1386,27 @@ class TestMalformedShapesAreRefused(unittest.TestCase):
     def test_the_two_supported_layouts_still_load(self):
         """The refusal must not catch either real layout: reduced is
         (nfreq, nvol, nd, nd) and general is
-        (nfreq, nvol, norb, norb, norb, norb)."""
+        (nfreq, nvol, norb, norb, norb, norb).
+
+        Distinct nonzero values, not zeros: the rank-6 branch flattens the pair
+        axes, and an all-zero array would agree on shape however that flattening
+        permuted the values."""
         import hwave.sc as sc
-        norb = 2
-        red = np.zeros((2, 1, norb * 2, norb * 2), dtype=complex)
-        out = sc._expand_flex_chi(red, norb, 1, 1, 1, "kuroki")
-        self.assertEqual(out.shape[-2:], (norb * norb, norb * norb))
-        gen = np.zeros((2, 1, norb, norb, norb, norb), dtype=complex)
-        out = sc._expand_flex_chi(gen, norb, 1, 1, 1, "myo")
-        self.assertEqual(out.shape[-2:], (norb * norb, norb * norb))
+        for norb in (1, 2, 3):
+            with self.subTest(norb=norb, layout="reduced"):
+                red = np.zeros((2, 1, norb * 2, norb * 2), dtype=complex)
+                out = sc._expand_flex_chi(red, norb, 1, 1, 1, "kuroki")
+                self.assertEqual(out.shape[-2:],
+                                 (norb * norb, norb * norb))
+            with self.subTest(norb=norb, layout="general"):
+                n = norb
+                gen = (np.arange(2 * 1 * n ** 4, dtype=float)
+                       + 1j * np.arange(2 * 1 * n ** 4, dtype=float)
+                       ).reshape(2, 1, n, n, n, n)
+                out = sc._expand_flex_chi(gen, norb, 1, 1, 1, "myo")
+                # pins the ORDER, not just the shape: row pair (a,c), col (b,d)
+                np.testing.assert_array_equal(
+                    out, gen.reshape(2, 1, 1, 1, n * n, n * n))
 
 
 if __name__ == "__main__":
