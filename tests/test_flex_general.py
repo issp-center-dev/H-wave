@@ -172,6 +172,48 @@ def _write_2d_2orb_full_kanamori_fixture(dirpath):
             f.write(body)
 
 
+def _write_2d_3orb_onsite_fixture(dirpath):
+    """A 3-orbital on-site CoulombIntra fixture.
+
+    Three orbitals are needed wherever a test has to tell the spin-orbital
+    dimension ``norb * ns`` from the orbital-pair dimension ``norb^2``: at
+    ``norb = 2`` both are 4 and the distinction is invisible.  Here they are 6
+    and 9.
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    norb = 3
+    geom = ("  1.000000000000   0.000000000000   0.000000000000\n"
+            "  0.000000000000   1.000000000000   0.000000000000\n"
+            "  0.000000000000   0.000000000000   1.000000000000\n"
+            "3\n"
+            "    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n"
+            "    0.500000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n"
+            "    0.000000000000000e+00     0.500000000000000e+00     0.000000000000000e+00\n")
+    rows = []
+    for a in range(1, norb + 1):
+        rows.append("   0    1    0    {0}    {0}  1.0 0.0".format(a))
+        rows.append("   0   -1    0    {0}    {0}  1.0 0.0".format(a))
+    # a little inter-orbital hopping so the Green function is not orbital block
+    # diagonal (otherwise the saved arrays are trivially structured)
+    rows.append("   0    0    0    1    2  0.4 0.0")
+    rows.append("   0    0    0    2    1  0.4 0.0")
+    rows.append("   0    0    0    2    3  0.3 0.0")
+    rows.append("   0    0    0    3    2  0.3 0.0")
+    transfer = ("Transfer in wannier90-like format for uhfk\n"
+                "3\n"
+                "9\n"
+                " 1 1 1 1 1 1 1 1 1\n" + "\n".join(rows) + "\n")
+    intra = ("CoulombIntra in wannier90-like format for uhfk\n"
+             "3\n1\n 1\n"
+             + "".join("   0    0    0    {0}    {0}   4.000000000000   "
+                       "0.000000000000\n".format(a)
+                       for a in range(1, norb + 1)))
+    for name, txt in (("geom.dat", geom), ("transfer.dat", transfer),
+                      ("coulombintra.dat", intra)):
+        with open(os.path.join(dirpath, name), "w") as fh:
+            fh.write(txt)
+
+
 def _make_general_flex(norb=2):
     """Build a spin-free general FLEX solver.
 
@@ -586,7 +628,7 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
         import hwave.solver.flex as solver_flex
 
         with tempfile.TemporaryDirectory(prefix="hwave_layout_") as d:
-            _write_2d_2orb_onsite_fixture(d)
+            _write_2d_3orb_onsite_fixture(d)
             info_input = {
                 'path_to_input': d,
                 'interaction': {
@@ -611,13 +653,18 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
                 green_info)
 
             norb, ns = solver.norb, solver.ns
-            self.assertEqual(norb, 2)
+            # norb = 3 on purpose: at norb = 2 the spin-orbital dimension
+            # norb*ns and the orbital-pair dimension norb^2 are both 4 and the
+            # assertion below could not tell them apart.
+            self.assertEqual((norb, ns), (3, 2))
+            self.assertNotEqual(norb * ns, norb * norb)
             for name, key in (("chiq_s.npz", "chiq_s"), ("chiq_c.npz", "chiq_c")):
                 with np.load(os.path.join(out, name)) as data:
                     self.assertEqual(str(data["chi_convention"]), "kuroki")
                     self.assertNotIn("chi_orbital_layout", data)
-                    # spin-orbital axes, not orbital-pair
+                    # spin-orbital axes (6), NOT orbital-pair (9)
                     self.assertEqual(data[key].shape[-1], norb * ns)
+                    self.assertNotEqual(data[key].shape[-1], norb * norb)
 
     def test_reader_rejects_myo_without_layout_marker(self):
         import tempfile
