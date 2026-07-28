@@ -551,10 +551,12 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 .. note::
 
-   Multi-orbital ``sigma.npz`` files written by ``calc_scheme = "general"``
-   *before* the orbital-pair transpose fix are wrong off the orbital diagonal
-   and must be regenerated -- including any that are still being consumed as
-   ``sigma_init`` seeds or by ``hwave_sc``. See
+   Multi-orbital ``sigma.npz`` and ``green.npz`` files written by
+   ``calc_scheme = "general"`` *before* the orbital-pair transpose fix are wrong
+   off the orbital diagonal and must be regenerated -- including any that are
+   still being consumed as ``sigma_init`` seeds or fed to ``hwave_sc`` via
+   ``bond_green``. The ``chiq_s``/``chiq_c`` of such a run are transposed and
+   are rejected on load. See
    :ref:`the migration warning <flex_general_transpose_fix>`.
 
 ``green.npz``
@@ -774,24 +776,20 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
       density-only interaction (``CoulombIntra`` alone) the general and reduced
       schemes now agree on the self-energy to machine precision, as they must.
 
-      The saved ``chiq_s``/``chiq_c`` are **unchanged** as long as the on-site
-      interaction parameters are symmetric in their orbital indices —
-      ``U'[a,b] = U'[b,a]``, ``J[a,b] = J[b,a]``, and likewise for
-      ``Exchange``, ``PairHop`` and ``Ising`` — which is the physical case.
-      The old and new expressions are then algebraically identical and differ
-      only by floating-point error of the matrix products and the channel
-      linear solve (~10⁻¹⁵ relative on the well-conditioned regression fixture;
-      expect more where ``1 ∓ χ⁰U`` is close to singular, i.e. near an RPA
-      instability). If an interaction file specifies an asymmetric orbital
-      matrix, the saved susceptibilities change too, and the new value is the
-      consistent one: it applies the interaction matrices in the same
-      orbital-pair index order that the RPA solver and ``hwave_sc`` use. (Only
-      that index order is shared — the general path deliberately keeps the MYO
-      value of the ``C(ab,ab)`` charge vertex, which differs from ``hwave_sc``.)
-      H-wave does not currently check interaction files for this symmetry.
+      The same transpose is why the saved ``chiq_s``/``chiq_c`` were written in
+      the MYO orbital-pair order rather than the ``[a,c,b,d]`` order used
+      everywhere else, which made ``hwave_sc``'s ``chi0q_mode = "flex"``
+      disagree with ``"load"`` for identical physics. They are now written in
+      ``[a,c,b,d]``, and carry an explicit ``chi_orbital_layout = "acbd"``
+      marker; a ``"myo"``-tagged file without that marker is a pre-fix output
+      and is rejected on load with a regenerate message rather than silently
+      misread. ``chi0q.npz`` is unaffected — it was already transposed back at
+      the output boundary.
 
-      Multi-orbital results produced with ``calc_scheme = "general"`` before
-      this fix should be recomputed. ``calc_scheme = "reduced"`` and
+      **What to regenerate.** Every multi-orbital output of a pre-fix
+      ``calc_scheme = "general"`` run: ``sigma.npz`` and ``green.npz`` (wrong
+      off the orbital diagonal) and ``chiq_s``/``chiq_c`` (transposed).
+      Single-orbital runs are unaffected, and ``calc_scheme = "reduced"`` and
       ``"squashed"`` were never affected.
 
    **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see

@@ -165,6 +165,20 @@ This section controls the Eliashberg solver. Key parameters:
      can be poorly converged; production RPA/FLEX runs typically use
      ``coeff_tail = 1.0``. The chi0q file records the value it was produced
      with, and ``hwave_sc`` warns on a mismatch when loading.
+
+  .. warning::
+
+     **Inputs from a pre-fix** ``calc_scheme = "general"`` **FLEX run.** That
+     path stored its susceptibilities in the MYO orbital-pair order instead of
+     ``[a,c,b,d]``, so ``chi0q_mode = "flex"`` built a transposed pairing vertex
+     and disagreed with ``"load"`` for identical physics; and its self-energy
+     was transposed in the orbital indices, so the ``green.npz`` fed to the bond
+     path via ``bond_green`` is wrong off the orbital diagonal. Both are fixed;
+     regenerate any multi-orbital general-path output produced before the fix.
+     Old ``chiq_s``/``chiq_c`` are rejected on load rather than silently
+     misread. Single-orbital runs and the ``"reduced"``/``"squashed"`` schemes
+     are unaffected. See
+     :ref:`the migration warning <flex_general_transpose_fix>`.
 - ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
   evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki
   Eq. 9 static approximation) and gives a frequency-independent gap.
