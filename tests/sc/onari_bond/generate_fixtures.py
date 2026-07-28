@@ -105,6 +105,33 @@ NN = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0)]
 POINTS = [(16, 0.0), (16, 0.05), (16, 0.4), (16, 0.8), (16, 1.0), (16, 1.2),
           (32, 0.0), (32, 0.8), (32, 1.2)]
 
+# ---------------------------------------------------------------------------
+# Task 9 (spec ``2026-07-27-dynamic-bond-channels-design.md`` S3.6): the
+# "Phase A milestone" dynamic ``lambda_t(V)`` sweep
+# (``tests/test_bond_onari_milestone_dynamic.py``) uses U=4, n=0.7, T=0.02,
+# 16x16, Nmat=256, V in {0, 0.4, 0.8, 1.0, 1.2} -- IDENTICAL to the L=16
+# subset of ``POINTS`` above (same reduced-FLEX scheme, "Hartree-only V" per
+# spec S3.6/S5.3, Anderson depth=8 / Mix=0.2 / IterationMax=1500).
+#
+# Generating a SECOND, independently self-consistent green at the exact same
+# parameters would only reproduce the same physics from a different
+# (non-bit-identical) SCF trajectory -- FLEX/Anderson mixing is not
+# bit-reproducible, see the module docstring's L=32 discussion. Worse, using
+# a DIFFERENT green for the static and the dynamic milestone would confound
+# the static/dynamic ratio indicator (spec S3.6) with independent FLEX-SCF
+# noise on top of the retardation effect it is meant to measure -- the ratio
+# is only an apples-to-apples comparison when both arms consume the SAME
+# green. The dynamic milestone therefore intentionally REUSES these exact
+# ``green_L16_V*.npz`` fixtures (loaded via
+# ``tests.test_bond_onari_milestone._load_green``); this constant documents
+# that decision at the point of fixture generation rather than forking a
+# parallel ``green_V*.npz`` set that ``generate()`` would have to keep in
+# sync with ``POINTS`` by hand.
+DYNAMIC_MILESTONE_POINTS = [(16, V) for V in (0.0, 0.4, 0.8, 1.0, 1.2)]
+assert set(DYNAMIC_MILESTONE_POINTS) <= set(POINTS), (
+    "DYNAMIC_MILESTONE_POINTS must be a subset of the committed L=16 POINTS "
+    "it reuses")
+
 
 def _write_inputs(dirname, V):
     os.makedirs(dirname, exist_ok=True)
