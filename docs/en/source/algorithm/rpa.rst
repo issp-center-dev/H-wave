@@ -245,16 +245,34 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 
    W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
 
-For the standard Kanamori interactions, the transverse vertex takes the form:
+The transverse vertex is built from the cross-spin and spin-flip blocks of
+the interaction tensor only. The same-spin block does not enter: a same-spin
+interaction cannot connect the up and down propagators of the transverse loop,
+so it contributes self-energy but no vertex.
+
+Each orbital pair is symmetrised with the mean of the two declarations, since
+an interaction file may write the same operator either way
+(:math:`n_a n_b = n_b n_a`, and :math:`X_{ab}^\dagger = X_{ba}` for Exchange).
+This matches the convention UHFk uses.
+
+The resulting vertex, for on-site interactions:
 
 - ``CoulombIntra`` :math:`U`: :math:`W_{+-} = -U`
-- ``CoulombInter`` :math:`V`: :math:`W_{+-} = 0`
-- ``Hund`` :math:`J`: :math:`W_{+-} = -J`
-- ``Ising`` :math:`I`: :math:`W_{+-} = 2I`
+- ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
+- ``Hund`` :math:`J`: :math:`W_{+-} = 0`
+- ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
+- ``Ising`` :math:`I`: :math:`W_{+-} = +I`
+- ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
+- ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
 
-The full Kanamori interaction (:math:`U, V = U-2J, J, J' = J`)
-satisfies :math:`W_{+-} = -(U - 2J) = W_{zz}` (SU(2) symmetry),
-which implies :math:`\chi_{+-} = \chi_{zz}` for paramagnetic systems.
+.. note::
+
+   These values differ from those published before H-wave's transverse channel
+   was checked against exact diagonalization; four of the earlier entries were
+   incorrect and one type was missing. Transverse susceptibilities produced by
+   earlier versions with ``CoulombInter``, ``Hund``, ``Ising`` or ``Exchange``
+   should be recomputed. Only ``chiq_pm`` is affected -- it does not feed
+   ``chiq``, the self-energy, or the Eliashberg vertex.
 
 The transverse RPA susceptibility is obtained as
 
@@ -288,6 +306,14 @@ in the input TOML file. In this mode:
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
   ``Ising``, ``PairLift``, ``PairHop``) are supported.
+- ``calc_type = "ring+ladder"`` additionally requires every two-body term whose
+  cross-spin part is non-zero to be **on-site**. The transverse pair
+  :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` is non-local for an
+  off-site term, so its vertex is not a function of :math:`q` alone and cannot
+  be represented. Off-site ``CoulombInter``, ``Ising`` and ``Exchange`` are
+  rejected; off-site ``Hund`` and ``PairLift`` are accepted because their
+  transverse vertex vanishes. The longitudinal (``ring``) channel is
+  unaffected.
 - Block-diagonal optimization is applied automatically when possible.
 - The ``squashed`` calculation scheme is also supported for spin-orbital systems.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital

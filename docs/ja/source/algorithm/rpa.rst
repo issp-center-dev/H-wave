@@ -227,16 +227,32 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 
    W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
 
-標準的なカナモリ相互作用に対して、横方向の頂点は以下の形を取ります:
+横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
+から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
+ループの上向き伝播関数と下向き伝播関数を結べないため、自己エネルギーは生じ
+ますが頂点は生じません。
+
+軌道ペアは2つの宣言の平均で対称化されます。相互作用ファイルでは同一の演算子
+を2通りに書けるためです （ :math:`n_a n_b = n_b n_a` 、Exchange では
+:math:`X_{ab}^\dagger = X_{ba}` ）。これは UHFk が用いている規約と同じです。
+
+オンサイト相互作用に対する頂点は以下のとおりです:
 
 - ``CoulombIntra`` :math:`U` : :math:`W_{+-} = -U`
-- ``CoulombInter`` :math:`V` : :math:`W_{+-} = 0`
-- ``Hund`` :math:`J` : :math:`W_{+-} = -J`
-- ``Ising`` :math:`I` : :math:`W_{+-} = 2I`
+- ``CoulombInter`` :math:`V` : :math:`W_{+-} = -V`
+- ``Hund`` :math:`J` : :math:`W_{+-} = 0`
+- ``Exchange`` :math:`J` : :math:`W_{+-} = -(J + J^{\rm T})/2`
+- ``Ising`` :math:`I` : :math:`W_{+-} = +I`
+- ``PairLift`` :math:`J` : :math:`W_{+-} = 0`
+- ``PairHop`` :math:`J` : :math:`W_{+-} = -J`
 
-完全なカナモリ相互作用 （ :math:`U, V = U-2J, J, J' = J` ）では
-:math:`W_{+-} = -(U - 2J) = W_{zz}` （SU(2)対称性）が成り立ち、
-常磁性系では :math:`\chi_{+-} = \chi_{zz}` となります。
+.. note::
+
+   これらの値は、横方向チャネルを厳密対角化と照合する前に公開されていた値とは
+   異なります。従来の記載は7種のうち4種が誤りで、1種が欠落していました。
+   ``CoulombInter`` 、 ``Hund`` 、 ``Ising`` 、 ``Exchange`` を含む計算で得られた
+   横方向帯磁率は再計算してください。影響を受けるのは ``chiq_pm`` のみで、
+   ``chiq`` 、自己エネルギー、Eliashberg 頂点には波及しません。
 
 横方向のRPA感受率は
 
@@ -271,6 +287,12 @@ H-waveはスピンと軌道のインデックスが
   完全な :math:`2n_{\rm orb} \times 2n_{\rm orb}` 空間で構成されます。
 - 全ての相互作用型（ ``CoulombIntra`` 、 ``CoulombInter`` 、 ``Hund`` 、 ``Exchange`` 、
   ``Ising`` 、 ``PairLift`` 、 ``PairHop`` ）がサポートされます。
+- ``calc_type = "ring+ladder"`` では、異スピン成分を持つ二体項は **オンサイト**
+  である必要があります。横方向のペア :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}`
+  はオフサイト項に対して非局所となり、その頂点は :math:`q` のみの関数では表現
+  できないためです。オフサイトの ``CoulombInter`` 、 ``Ising`` 、 ``Exchange`` は
+  拒否されます。オフサイトの ``Hund`` と ``PairLift`` は横方向頂点が消えるため
+  受理されます。縦方向（ ``ring`` ）チャネルは影響を受けません。
 - 可能な場合、ブロック対角化最適化が自動的に適用されます。
 - ``squashed`` 計算スキームもスピン軌道系で利用可能です。
 - 幾何情報ファイル（``geom.dat``）の ``Norbit`` はスピン軌道の総数

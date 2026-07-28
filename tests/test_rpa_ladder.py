@@ -286,13 +286,18 @@ class TestRPALadder(unittest.TestCase):
         The table that used to sit in `_build_transverse_channel` had four of
         these wrong and one missing:
 
-            CoulombIntra  -U          table said -U    correct
-            CoulombInter  -U'         table said 0     wrong
-            Hund           0          table said -J    wrong
-            Ising         +J          table said 2J    wrong
-            Exchange      -(J+J^T)    table said 0     wrong
-            PairLift       0          table said 0     correct
-            PairHop       -J          no entry
+            CoulombIntra  -U             table said -U    correct
+            CoulombInter  -U'            table said 0     wrong
+            Hund           0             table said -J    wrong
+            Ising         +J             table said 2J    wrong
+            Exchange      -(J+J^T)/2     table said 0     wrong
+            PairLift       0             table said 0     correct
+            PairHop       -J             no entry
+
+        The orbital pair is symmetrised with the MEAN, which is what an
+        interaction file already means here: `uhfk.py` builds every two-body
+        table as `(jab_r + jba)/2`, and the two solvers hold identical values
+        for symmetric input.
         """
         import hwave.solver.rpa as rpa_mod
 
@@ -302,7 +307,7 @@ class TestRPALadder(unittest.TestCase):
             "CoulombIntra": {(0, 0, 0, 0): -U0, (1, 1, 1, 1): -U1},
             "CoulombInter": {(0, 1, 0, 1): -V, (1, 0, 1, 0): -V},
             "Hund": {},
-            "Exchange": {(0, 0, 1, 1): -2 * V, (1, 1, 0, 0): -2 * V},
+            "Exchange": {(0, 0, 1, 1): -V, (1, 1, 0, 0): -V},
             "Ising": {(0, 1, 0, 1): +V, (1, 0, 1, 0): +V},
             "PairLift": {},
             "PairHop": {(0, 1, 1, 0): -V, (1, 0, 0, 1): -V},
@@ -343,6 +348,41 @@ class TestRPALadder(unittest.TestCase):
                     err_msg="{} vertex does not match exact "
                             "diagonalization".format(itype))
 
+    def test_a_redundant_declaration_of_zero_gives_a_zero_vertex(self):
+        """`V_01 = +1`, `V_10 = -1` denotes an identically zero Hamiltonian,
+        because `n_a n_b = n_b n_a`. The vertex must vanish.
+
+        Read unsymmetrised, this produced +1.00 and -1.00 at the two slots --
+        i.e. the response depended on how the coefficient was split between two
+        entries that denote the same operator. Interaction files are not checked
+        for orbital symmetry (#93), so such input is reachable.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        for itype in ("CoulombInter", "Ising"):
+            with self.subTest(interaction=itype):
+                rpa_mod.RPA._build_transverse_channel = spy
+                try:
+                    self._run_rpa(
+                        calc_type="ring+ladder", calc_scheme="general",
+                        input_path='tests/rpa/input_2orb',
+                        Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.5,
+                        interactions={itype: "onsite_inter_antisym.dat"})
+                finally:
+                    rpa_mod.RPA._build_transverse_channel = original
+                self.assertLess(
+                    float(np.max(np.abs(captured["ham_pm"]))), 1e-12,
+                    "a declaration denoting a zero Hamiltonian must give a "
+                    "zero vertex")
+
     def test_exchange_vertex_uses_only_the_symmetric_part(self):
         """Exchange depends only on J_ab + J_ba, and the vertex must too.
 
@@ -374,7 +414,7 @@ class TestRPALadder(unittest.TestCase):
 
         got = captured["ham_pm"][0]
         want = np.zeros_like(got)
-        want[0, 0, 1, 1] = want[1, 1, 0, 0] = -(1.0 + 0.35)
+        want[0, 0, 1, 1] = want[1, 1, 0, 0] = -(1.0 + 0.35) / 2
         np.testing.assert_allclose(got, want, atol=1e-10)
 
     def test_offsite_two_body_is_rejected(self):

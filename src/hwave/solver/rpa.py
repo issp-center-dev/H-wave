@@ -2330,9 +2330,29 @@ class RPA:
         # discretisation floor as the calibration itself -- for both a
         # symmetric and an asymmetric J, while a single ordering sits at 0.50
         # and 0.74 respectively.
-        ham_pm = (-cross_block.transpose(0, 2, 4, 1, 3)
-                  + spin_flip_block
-                  + spin_flip_block.transpose(0, 3, 4, 1, 2))
+        # BOTH blocks must be symmetrised over the orbital pair, and with the
+        # MEAN, because that is what an interaction file already means in this
+        # codebase. `uhfk.py` builds every two-body table as
+        # `(jab_r + jba)/2`, and measuring what the two solvers hold for the
+        # same file shows they agree exactly on symmetric input -- 0.70 and
+        # 0.70 -- and diverge only when the declaration is asymmetric, where
+        # uhfk gives the mean 0.675 and rpa kept 1.00 and 0.35 in separate
+        # slots. Averaging therefore changes nothing that currently works and
+        # removes the divergence.
+        #
+        # It is also required on its own terms. For a density-density term
+        # n_a n_b = n_b n_a, so an on-site CoulombInter with V_01 = +1 and
+        # V_10 = -1 is an identically ZERO Hamiltonian; read unsymmetrised it
+        # produced a vertex of +1 and -1. Exchange is the same story via
+        # X_ab^dagger = X_ba.
+        #
+        # The transpose is the pair swap. Measured: it is the only family that
+        # cancels the antisymmetric part while reproducing the symmetric one.
+        pair_swap = (0, 3, 4, 1, 2)
+        cross_sym = 0.5 * (cross_block + cross_block.transpose(*pair_swap))
+        flip_sym = 0.5 * (spin_flip_block
+                          + spin_flip_block.transpose(*pair_swap))
+        ham_pm = -cross_sym.transpose(0, 2, 4, 1, 3) + flip_sym
 
         logger.info("ring+ladder: built transverse channel "
                     "(chi0_pm shape={}, ham_pm shape={})".format(
