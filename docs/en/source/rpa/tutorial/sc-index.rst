@@ -1118,11 +1118,15 @@ bond path's own conditioning check is unaffected. Near the CDW/SDW boundary
 the default floor can trip on an isolated point at the **edge** of the
 finite Matsubara window rather than at the physical static
 (:math:`i\nu = 0`) point -- the Phase A milestone's :math:`V = 1.2` point
-needs ``bond_cond_tol = 1e-4`` to run to completion (the resulting leading
-eigenvalue was checked to be identical to 10 significant digits across
-``bond_cond_tol`` in ``{1e-4, 1e-5, 1e-6, 1e-8}``, i.e. the near-singular
-direction it relaxes carries negligible physical weight there -- a per-run,
-measured disposition, not a blanket recommendation to relax it everywhere).
+needs ``bond_cond_tol = 1e-4`` to run to completion. Note that relaxing
+``bond_cond_tol`` does not change the computed eigenvalue for points that
+pass the guard (the tolerance only gates the conditioning check, not the
+linear solve); at :math:`V = 1.2` the near-singular window-edge region in
+fact **dominates** the raw dynamic eigenvalue -- see the scientific caveats
+below (the ``green0_tail`` window-edge artifact, measured **86%** at this
+point). Relaxing the guard is therefore a decision to proceed with a value
+known to be artifact-dominated in absolute scale, not a statement that the
+region is negligible.
 The existing ``bond_max_shells``, ``bond_memory_cap_gb``,
 ``bond_diagnostics`` and ``bond_precondition_*`` keys apply to the dynamic
 path with identical semantics (``bond_precondition_*`` is uniform-axis only;
