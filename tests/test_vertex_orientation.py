@@ -283,17 +283,25 @@ class TestPairingVertexOrientation(unittest.TestCase):
 # 3. the two builders must agree
 # --------------------------------------------------------------------------
 
-class TestBuildersAgree(unittest.TestCase):
+class TestBuildersAgreeOnTheDensityBlock(unittest.TestCase):
     """`rpa._make_ham_inter` and `sc._build_interaction_k` must produce the
-    same matrix.
+    same matrix, checked on the CoulombInter density block.
 
     This compares against the RPA builder itself -- constructing a real
     `Interaction` and reducing its `ham_inter_q` -- rather than against a
     locally assumed orientation, so it tests the agreement the fix is about
     and not the assumption behind it.
+
+    SCOPE. The reduction ``einsum("ksasatbtb->ksatb", ...)`` keeps only the
+    elements whose two indices agree within each particle-hole pair, and the
+    ``[:, :NORB, :NORB]`` slice takes the up/up spin block. That is the block
+    a density-density interaction lives in, and it is what this series
+    determined. Exchange, PairLift and PairHop occupy other spin or
+    off-density slots and are NOT covered here -- their agreement with
+    `rpa.py` is not asserted anywhere in this file.
     """
 
-    def test_sc_builder_matches_the_rpa_builder(self):
+    def test_sc_builder_matches_the_rpa_builder_for_coulombinter(self):
         import os
         import tempfile
 
@@ -399,21 +407,37 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
                 np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
 
     def test_pairhop_is_deliberately_left_alone(self):
-        """PairHop's orientation is NOT established: rpa.py places it through
-        `_append_pairhop` with different slots, so the density-density
-        determination does not apply.  Pin the status quo so the exclusion is
-        a decision on the record rather than an oversight."""
+        """PairHop keeps the pre-#96 placement, and that is NOT a claim that it
+        is correct.
+
+        `rpa.py` places PairHop through `_append_pairhop`, with the slots
+        (b, a, a, b) instead of `_append_inter`'s density-density (b, b, a, a),
+        so the determination this series rests on does not transfer to it.  It
+        is left untouched because changing it would be a guess; whether it
+        should be transposed is open, and tracked separately.
+
+        This test therefore pins the STATUS QUO only.  It deliberately does not
+        assert agreement with `rpa.py` -- that is exactly what is unresolved.
+
+        The fixture is ON-SITE: `_append_pairhop` discards every ``irvec !=
+        (0,0,0)``, so an off-site PairHop fixture would be vacuous on the RPA
+        side and must not be used to reason about the two builders.
+        """
         import hwave.sc as sc
 
+        P = {(0, 1): 1.0, (1, 0): 0.35}          # on-site, asymmetric
+        vr = {((0, 0, 0), (a, b)): v for (a, b), v in P.items()}
+        want = np.zeros((NORB, NORB), dtype=complex)
+        for (a, b), v in P.items():
+            want[a, b] = v                        # NOT transposed
+        self.assertGreater(np.max(np.abs(want - want.T)), 1e-6)
+
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
-        vr = {((R, 0, 0), (a, b)): v for (R, a, b), v in BONDS.items()}
-        want = np.array([v_of_q(q) for q in qs])          # NOT transposed
         for itype in self.NOT_TRANSPOSED:
             with self.subTest(interaction=itype):
                 ik = sc._build_interaction_k(
                     qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
-                got = ik[itype].transpose(2, 3, 4, 0, 1).reshape(
-                    NSITE, NORB, NORB)
+                got = ik[itype][:, :, 0, 0, 0]    # on-site: q-independent
                 np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
 
     def test_asymmetric_on_site_input_reaches_the_sc_builders(self):
