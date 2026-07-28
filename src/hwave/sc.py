@@ -589,14 +589,49 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         kx_array, ky_array, kz_array, indexing='ij'
     )
 
-    def _to_k(value_r):
-        # same solver-core convention as _build_hamiltonian_k:
-        # V[a,b](q) = sum_R V_R[a,b] e^{-iqR}
+    def _to_k(value_r, transpose=True):
+        # Same Fourier phase as the solver core, e^{-iqR}, but the ORBITAL
+        # PAIR is stored transposed: an entry (R, (a, b)) lands at [b, a].
+        #
+        # The interaction is a four-index object, and its MATRIX form carries a
+        # pair-index transpose that the one-body Hamiltonian does not. H-wave's
+        # own paper (arXiv:2308.00324) makes this explicit: Eq.(12) defines the
+        # tensor W_ij^{aa'bb'} with the first pair at site i and the second at
+        # site j, Eq.(16) puts the first pair at momentum +q, and Eq.(21) then
+        # defines the matrix used in the RPA equation as
+        #     [W(q)]^{ab} = W_q^{ba}
+        # so for a density-density term W^{aabb} = V_ab(R) the matrix element is
+        # [W(q)]^{(aa),(bb)} = V_ba(q), i.e. the matrix is V(q)^T.
+        #
+        # `rpa.py::_make_ham_inter` has always built that (it stores the entry's
+        # first orbital in the SECOND pair slot); this builder did not, so the
+        # susceptibility was solved with one orientation and the pairing vertex
+        # assembled from the other (issue #96).
+        #
+        # Both consumers need the transpose, confirmed by exact
+        # diagonalization on a bond set with V_ab(R) != V_ba(R):
+        #   * the RPA ladder [I + chi0 W]^-1 chi0 -- solved here too, in
+        #     _compute_vertices_simple -- selects V^T with a residual that
+        #     scales linearly in V (pure O(V^2) truncation), against 98% for V;
+        #   * the bare pair-scattering amplitude
+        #     <k' a up, -k' b down| H_int |k a up, -k b down>, which is exact at
+        #     first order, matches V^T to 6e-16, against 99% for V.
+        #
+        # NOTE: `_build_hamiltonian_k` is a one-body object and correctly keeps
+        # the plain [a, b] placement. Do not "align" this builder to it.
+        #
+        # PairHop is EXCLUDED (transpose=False below). It is the one type that
+        # `rpa.py` does not place through `_append_inter`: `_append_pairhop`
+        # uses the slots (b, a, a, b) rather than the density-density
+        # (b, b, a, a), so the determination above -- which is for a
+        # density-density term -- does not carry over to it. Leaving it alone
+        # changes only what has been established; its orientation is still open.
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
-            val_k[orb1, orb2, :, :, :] += value * np.exp(
+            i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
+            val_k[i1, i2, :, :, :] += value * np.exp(
                 -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
@@ -605,7 +640,8 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     for itype in ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                   "Ising", "PairLift", "PairHop"]:
         if itype in interactions:
-            inter_k[itype] = _to_k(interactions[itype])
+            inter_k[itype] = _to_k(interactions[itype],
+                                   transpose=(itype != "PairHop"))
 
     return inter_k
 

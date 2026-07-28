@@ -99,7 +99,20 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
                                    self.norb)
         npt.assert_allclose(eps, self._expected(self.hr), atol=1e-12)
 
-    def test_interaction_k_matches_solver_convention(self):
+    def test_interaction_k_is_the_pair_transpose(self):
+        """The INTERACTION keeps the solver's e^{-iqR} phase but stores the
+        orbital pair TRANSPOSED, unlike the one-body Hamiltonian above.
+
+        It is a four-index object, and its matrix form carries a pair-index
+        transpose: H-wave's own paper (arXiv:2308.00324) Eq.(21) defines the
+        matrix entering the RPA equation as ``[W(q)]^{ab} = W_q^{ba}``, so a
+        density-density term ``W^{aabb} = V_ab(R)`` gives
+        ``[W(q)]^{(aa),(bb)} = V_ba(q)``.  ``rpa.py::_make_ham_inter`` builds
+        that; this builder must agree (issue #96).
+
+        An earlier revision aligned this builder to the one-body convention,
+        which is why the assertion below is the transpose of ``_expected``.
+        """
         # complex Hermitian off-site "CoulombInter" exercises both the
         # orbital-index order and the Fourier phase sign
         vr = {
@@ -110,8 +123,13 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         }
         inter_k = _build_interaction_k(self.kx, self.ky, self.kz,
                                        {"CoulombInter": vr}, self.norb)
-        npt.assert_allclose(inter_k["CoulombInter"], self._expected(vr),
-                            atol=1e-12)
+        expected = self._expected(vr)
+        npt.assert_allclose(inter_k["CoulombInter"],
+                            expected.transpose(1, 0, 2, 3, 4), atol=1e-12)
+        # ...and not vacuously: the fixture is orbital-asymmetric, so the
+        # transpose really is a different matrix
+        self.assertGreater(
+            np.max(np.abs(expected - expected.transpose(1, 0, 2, 3, 4))), 1e-6)
 
 
 class TestGreenFunction(unittest.TestCase):
