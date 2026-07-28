@@ -179,7 +179,15 @@ class RPATwoOrbital:
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [Vxq, 0, 0, U+Vyq, Vxq, 0, 0, Vyq]], dtype=np.complex128)
-                X = np.linalg.inv(I + X0 @ W.T) @ X0
+                # W enters UNTRANSPOSED: Mizuno-Kobayashi-Suzumura
+                # (arXiv:1010.1084) Eq.(12) solves
+                #   chi^C = (I + 2 chi0 V + chi0 U)^-1 chi0
+                # with "the hat denotes a matrix representation with an element
+                # (f)_ab = f_ab".  The `.T` here was added in edcf5cd together
+                # with a compensating transpose in the comparison below, when
+                # the fixture's bond directions were mirrored, instead of
+                # updating Vxq for the new geometry (issue #96).
+                X = np.linalg.inv(I + X0 @ W) @ X0
 
                 ham[idqx,idqy,:,:] = W
                 chi[idqx,idqy,:,:] = X
@@ -286,8 +294,6 @@ class TestRPATwoOrbital(unittest.TestCase):
                       ham_ref.reshape(Lx,Ly,*(2,2,2)*2),
                       np.identity(2),
                       np.identity(2)).reshape(Lx,Ly,16,16)
-        y = np.transpose(y, (0,1,3,2))
-
         self.assertTrue(np.allclose(x,y), "hamiltonian")
 
         # chiq

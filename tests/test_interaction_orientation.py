@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+
+"""The two paths that turn an interaction file into V(q) must agree on the
+orbital orientation.
+
+`rpa.py::Interaction._make_ham_inter` builds the vertex that the susceptibility
+is solved with; `sc.py::_build_interaction_k` builds the one the pairing vertex
+is assembled from. They read the same file, and they must produce the same
+matrix -- not its orbital transpose.
+
+The convention both must follow is fixed by Mizuno, Kobayashi and Suzumura,
+"Role of charge fluctuation in Q1D organic superconductor (TMTSF)2ClO4",
+arXiv:1010.1084 -- the multi-site extended-Hubbard RPA this code generalizes:
+
+  Eq. (4)   V_ab(q) a+_{k+q s a} a+_{k'-q s' b} a_{k' s' b} a_{k s a}
+            -> orbital a is the one carrying momentum transfer +q
+  Eq. (13)  chi0_ab(q) = -(T/N) sum_k G_ab(k+q) G_ba(k)
+            -> the chi0 convention this code already uses
+  Eq. (12)  chi^C = (I + 2 chi0 V + chi0 U)^-1 chi0, V untransposed
+
+The on-site-only sources cited elsewhere (MYO cond-mat/0407094, Kuroki-Aoki
+0902.3691) cannot pin this: their vertex matrices are symmetric in the orbital
+pair, so the orientation is invisible there.
+
+The fixture below has V_ab(R) != V_ba(R) -- an ordinary zigzag bond
+arrangement, with every bond declared from both ends so the Hamiltonian stays
+Hermitian. Without that asymmetry V(q) is symmetric and the test is vacuous,
+which is asserted.
+"""
+
+import os
+import tempfile
+import unittest
+
+import numpy as np
+
+NX = 4          # >= 3, so that some q differs from -q
+NORB = 2
+
+# the same physical bond declared from both ends, twice over, with different
+# strengths for the two orbital orderings
+BONDS = {(+1, 0, 1): 1.0, (-1, 1, 0): 1.0,
+         (+1, 1, 0): 0.3, (-1, 0, 1): 0.3}
+
+
+def _write_fixture(d):
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n2\n"
+                "   0.0 0.0 0.0\n   0.5 0.0 0.0\n")
+    rows = ["   0    0    0    1    1   0.0 0.0",
+            "   1    0    0    1    1  -1.0 0.0",
+            "  -1    0    0    1    1  -1.0 0.0",
+            "   1    0    0    2    2  -1.0 0.0",
+            "  -1    0    0    2    2  -1.0 0.0"]
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("t\n2\n9\n 1 1 1 1 1 1 1 1 1\n" + "\n".join(rows) + "\n")
+    ci = ["   {}    0    0    {}    {}   {:.12f}   0.0".format(
+              R, a + 1, b + 1, v)
+          for (R, a, b), v in sorted(BONDS.items())]
+    with open(os.path.join(d, "coulombinter.dat"), "w") as f:
+        f.write("CoulombInter\n2\n9\n 1 1 1 1 1 1 1 1 1\n"
+                + "\n".join(ci) + "\n")
+
+
+def _physical_v_of_q():
+    """V_ab(q) = sum_R V_ab(R) exp(-i q R), straight from the declared bonds."""
+    qs = 2.0 * np.pi * np.arange(NX) / NX
+    V = np.zeros((NX, NORB, NORB), dtype=complex)
+    for (R, a, b), v in BONDS.items():
+        V[:, a, b] += v * np.exp(-1j * qs * R)
+    return V
+
+
+class TestInteractionOrbitalOrientation(unittest.TestCase):
+
+    def _build_both(self, dirpath):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.sc as sc
+        from hwave.solver.rpa import Interaction, Lattice
+
+        interaction = {"path_to_input": dirpath,
+                       "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                       "CoulombInter": "coulombinter.dat"}
+        ham_param = read_input_k.QLMSkInput(
+            {"path_to_input": dirpath, "interaction": interaction}
+        ).get_param("ham")
+
+        info_mode = {"mode": "RPA",
+                     "param": {"T": 1.0, "mu": 0.0, "CellShape": [NX, 1, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 4},
+                     "calc_scheme": "reduced"}
+        lattice = Lattice(info_mode["param"])
+        inter = Interaction(lattice, ham_param, info_mode)
+
+        ns = 2
+        nd = NORB * ns
+        ham = np.einsum(
+            "ksasatbtb->ksatb",
+            inter.ham_inter_q.reshape(lattice.nvol, *(ns, NORB) * 4)
+        ).reshape(lattice.nvol, nd, nd)
+        rpa_V = ham[:, :NORB, :NORB]          # spin-up/up density block
+
+        qs = 2.0 * np.pi * np.arange(NX) / NX
+        _, _, interactions = sc._read_interaction_files(
+            {"file": {"input": {"path_to_input": dirpath,
+                                "interaction": interaction}}})
+        ik = sc._build_interaction_k(qs, np.array([0.0]), np.array([0.0]),
+                                     interactions, NORB)
+        sc_V = ik["CoulombInter"].transpose(2, 3, 4, 0, 1).reshape(
+            NX, NORB, NORB)
+        return rpa_V, sc_V
+
+    def test_the_fixture_can_tell_the_orientations_apart(self):
+        V = _physical_v_of_q()
+        self.assertFalse(np.allclose(V, V.transpose(0, 2, 1)),
+                         "V(q) is orbital-symmetric; the test would be vacuous")
+        self.assertTrue(np.allclose(V, V.conj().transpose(0, 2, 1)),
+                        "V(q) must still be Hermitian")
+
+    def test_both_paths_build_the_same_v_of_q(self):
+        phys = _physical_v_of_q()
+        with tempfile.TemporaryDirectory(prefix="hwave_i96_") as d:
+            _write_fixture(d)
+            rpa_V, sc_V = self._build_both(d)
+
+        scale = np.max(np.abs(phys))
+        np.testing.assert_allclose(
+            sc_V, phys, rtol=0.0, atol=1e-12 * scale,
+            err_msg="sc._build_interaction_k must build V_ab(q) with a at +q")
+        np.testing.assert_allclose(
+            rpa_V, phys, rtol=0.0, atol=1e-12 * scale,
+            err_msg="rpa._make_ham_inter must build V_ab(q) with a at +q, "
+                    "not its orbital transpose")
+
+
+if __name__ == "__main__":
+    unittest.main()

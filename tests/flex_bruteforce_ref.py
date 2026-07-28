@@ -29,15 +29,23 @@ The index slots below match these formulas exactly; do not "optimize" the
 wiring.
 
 Note on the bubble's index slots (issue #91).  These two formulas are a
-*pair*: only one relative orbital-pair order of the bubble reproduces the
-exact second-order self-energy when the two are composed as V = U chi0 U.
-This file previously carried the bubble with both pairs transposed
-(``G_{mu m} G_{n nu}``).  Composed with Eq.(3) that gives, for a density-only
-U, ``Sigma_{mn} ~ chi0_{nm} G_{mn}`` instead of ``chi0_{mn} G_{mn}`` -- a
-transpose that is invisible on the orbital diagonal and wrong by ~40% off it.
-The order below is the one pinned against an exactly-diagonalized 3-orbital
-model in ``tests/test_flex_sopt_index_order.py``, which is independent of any
-convention choice made inside this codebase.
+*pair*: only one relative orbital-pair order of the bubble reproduces the exact
+second-order self-energy when the two are composed as V = U chi0 U.
+
+The bubble is deliberately NOT the verbatim MYO Eq.(5), which reads
+``chi0_{mn,mu nu} = -(T/N) sum_k G_{mu m}(k+q) G_{n nu}(k)`` -- both orbital
+pairs the other way round from the form below.  This file used to carry that
+verbatim form.  Composed with Eq.(3) it gives, for a density-only U,
+``Sigma_{mn} ~ chi0_{nm} G_{mn}`` instead of ``chi0_{mn} G_{mn}``: a difference
+invisible on the orbital diagonal and ~40% off it, measured against an
+exactly-diagonalized 3-orbital model.
+
+That is a mapping problem, not an error in the paper: the paper's Green
+function index order is not the one this codebase uses, so transcribing its
+equations term by term does not carry the convention with them.  What is pinned
+here is the COMPOSITION -- the pair (bubble, Eq.(3)) must reproduce the exact
+O(U^2) self-energy -- and that is what ``tests/test_flex_sopt_index_order.py``
+checks, independently of any convention choice made inside this codebase.
 """
 
 import numpy as np

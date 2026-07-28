@@ -466,7 +466,31 @@ class Interaction:
                 for spinvec, w in spins.items():
                     s1,s2,s3,s4 = spinvec
                     # beta beta' alpha alpha'
-                    orb = (s4, b, s3, b, s1, a, s2, a)
+                    # Orbital a -- the FIRST index of the input entry, i.e. the
+                    # one carrying momentum transfer +q -- goes in the beta
+                    # slot, so that after the e^{-iqR} FFT the reduced vertex is
+                    # V_ab(q) and not its orbital transpose (issue #96).
+                    #
+                    # Fixed by Mizuno, Kobayashi and Suzumura, arXiv:1010.1084,
+                    # which is the multi-site extended-Hubbard RPA this code
+                    # generalizes (the on-site-only sources cited elsewhere
+                    # cannot settle it: their vertex matrices are symmetric in
+                    # the orbital pair, so the orientation is invisible there):
+                    #   Eq.(4)  V_ab(q) a+_{k+q s a} a+_{k'-q s' b} a_{k' s' b}
+                    #           a_{k s a}          -> index a sits at +q
+                    #   Eq.(13) chi0_ab(q) = -(T/N) sum_k G_ab(k+q) G_ba(k)
+                    #                              -> the convention used here
+                    #   Eq.(12) chi^C = (I + 2 chi0 V + chi0 U)^-1 chi0, with V
+                    #           UNTRANSPOSED ("the hat denotes a matrix
+                    #           representation with an element (f)_ab = f_ab")
+                    # Their Eq.(6) also shows V_ab(q) is genuinely complex, with
+                    # V_ba = conj(V_ab), whenever the bond geometry is not
+                    # symmetric under a <-> b -- which is exactly when the
+                    # orientation matters.
+                    # Every spin table above is symmetric under exchanging the
+                    # (s1,s2) and (s3,s4) pairs, so moving the orbitals alone
+                    # transposes the vertex exactly.
+                    orb = (s4, a, s3, a, s1, b, s2, b)
                     ham_r[(*irvec, *orb)] += v * w
 
         # pairhop-type interaction
