@@ -98,13 +98,17 @@ not defended.** ``dress_bond_dynamic``'s ``cond_tol`` argument only gates the
 ``cond_tol`` and re-solving cannot show anything about whether the
 near-singular block actually MATTERS -- the computation is bit-identical at
 every ``cond_tol`` that lets it run. That is why it "was stable": the test
-could not have failed. Replaced with a measurement that CAN fail: with the
-production ``chi_bar_w`` for ``V=1.2``, replacing (or, equivalently,
-zeroing) every ``(q, i-nu)`` block with charge-conditioning score ``< 0.01``
-by the SAME-q STATIC (``i-nu=0``) value, then re-dressing and re-solving,
-moves the leading triplet eigenvalue from ``1.855305`` to ``0.254`` -- an
-**86% shift**. The near-singular region does not carry negligible weight; it
-DOMINATES the reported ``V=1.2`` eigenvalue.
+could not have failed. Replaced with a measurement that CAN fail --
+implemented in ``_flatten_outer_shell`` / ``_dynamic_point`` and PINNED in
+``LAMBDA_SHELL_FLAT_16`` (point 3 below gives the exact method and the
+per-V numbers). The near-singular region does not carry negligible weight;
+it DOMINATES the reported ``V=1.2`` eigenvalue. (An earlier, unpinned,
+by-hand probe tried a DIFFERENT ablation -- zeroing only the individual
+``(q, i-nu)`` blocks with charge-conditioning score ``< 0.01``, rather than
+a frequency shell -- and got a similarly large shift; that probe is not
+implemented as a test and is not quoted here, to avoid describing two
+different ablations as though they were the same measurement. Point 3 below
+is the ONLY ablation this module actually runs and pins.)
 
 Three further measurements (this module's ``test_...`` functions and the
 Task 9 report) converge on a single explanation -- ``bond_bubble_dynamic``'s
@@ -130,15 +134,18 @@ here are the raw finite-``nmat`` sum only"):
    zero-frequency CDW instability would make the STATIC point the worst one,
    not a point 122 bosonic indices away from it.
 3. **The ablation shift itself is V-dependent and changes SIGN.** Flattening
-   the outer quarter-shell (``|n~| > 3*nmat/8`` -- ``bond_channels.
-   tail_estimate``'s own outer-shell definition) to the static value at
-   EVERY V (not just 1.2) shifts lambda by +17% (V=0.0), +19% (V=0.4), +17%
-   (V=0.8), **-59%** (V=1.0), **-86%** (V=1.2, see
-   ``LAMBDA_SHELL_FLAT_16``). The artifact is small and roughly V-independent
-   at weak coupling, then becomes the DOMINANT contribution once the charge
-   channel approaches its RPA instability (V >= 1.0) -- exactly what an
-   uncorrected high-frequency tail feeding back through a near-singular
-   denominator would do.
+   the TRUE outer quarter-shell (``|n~| > 3*nmat/8`` -- ``bond_channels.
+   tail_estimate``'s own outer-shell definition; at nmat=256 that is the
+   outer 32 indices on each side, ``[0,32)`` and ``[224,256)``, i.e. 64 of
+   256 points -- see ``_flatten_outer_shell``) to the static value at
+   EVERY V (not just 1.2) shifts lambda by +15.7% (V=0.0), +13.0% (V=0.4),
+   +10.8% (V=0.8), **-61.2%** (V=1.0), **-86.6%** (V=1.2, see
+   ``LAMBDA_SHELL_FLAT_16`` -- the ONLY ablation this module implements and
+   pins). The artifact is smaller-but-still-sizeable and roughly
+   V-independent at weak coupling, then becomes the DOMINANT contribution
+   once the charge channel approaches its RPA instability (V >= 1.0) --
+   exactly what an uncorrected high-frequency tail feeding back through a
+   near-singular denominator would do.
 
 **Disposition (recorded, not silently patched):** ``[eliashberg]
 bond_cond_tol=1e-4`` (spec S3.6 hand-off, review IMPORTANT-3) is still used
@@ -147,11 +154,11 @@ division by an exact/near-exact zero, and 6.819e-04 is not that -- but the
 resulting number must NOT be read as "the physically validated triplet
 lambda at V=1.2". **Phase B must not treat ``lambda_dyn``'s absolute scale
 as physical at ANY V until ``green0_tail`` lands**; V=1.0 and V=1.2 are the
-least trustworthy (largest ablation shift), V=0.0/0.4/0.8 the most (+17-19%,
-roughly constant, plausibly closer to the true small-``O(1/Nmat)``
-correction the static milestone's own fixtures already absorb via a
-different mechanism). This also resolves the ratio-indicator puzzle from the
-first round: the flat-chi collapse test (``test_dynamic_kernel_with_
+least trustworthy (largest ablation shift), V=0.0/0.4/0.8 the most
+(+11-16%, roughly constant, plausibly closer to the true small-
+``O(1/Nmat)`` correction the static milestone's own fixtures already absorb
+via a different mechanism). This also resolves the ratio-indicator puzzle
+from the first round: the flat-chi collapse test (``test_dynamic_kernel_with_
 frequency_flat_chi_collapses_onto_static``, ``tests/test_sc_bond_dynamic.
 py``) proves ``make_bond_kernel_dynamic`` reduces to the static
 ``make_bond_kernel_parts`` to machine precision (relative difference
@@ -231,15 +238,16 @@ LAMBDA_DYN_RTOL = 1.0e-6
 # bond_channels.tail_estimate's own outer-shell definition) replaced by the
 # SAME-q static (i-nu=0) value before dressing+solving. A REAL, falsifiable
 # sensitivity measurement (unlike the retracted cond_tol-variation claim):
-# it moves lambda by 17-86% depending on V. Looser rtol than the primary
-# pin -- it is a diagnostic on a hand-modified input, not the production
-# path.
+# it moves lambda by 11-87% depending on V (see the module docstring's
+# "SINGLE ROOT CAUSE" section, point 3, for the exact per-V numbers).
+# Looser rtol than the primary pin -- it is a diagnostic on a
+# hand-modified input, not the production path.
 LAMBDA_SHELL_FLAT_16 = {
-    0.0: 0.12763298481459254,
-    0.4: 0.15531005744268794,
-    0.8: 0.17871576498360847,
-    1.0: 0.1961645311051929,
-    1.2: 0.2686665272119033,
+    0.0: 0.1265623974658313,
+    0.4: 0.14810652088938253,
+    0.8: 0.16853942902662547,
+    1.0: 0.18471210374389507,
+    1.2: 0.24930920812621413,
 }
 LAMBDA_SHELL_FLAT_RTOL = 1.0e-3
 
@@ -303,11 +311,24 @@ def _solve_bond_dynamic(chi_bar_w, S_bond, C_bond, Vpp_s, Vpp_t, green,
 
 
 def _flatten_outer_shell(chi_bar_w, nmat):
-    """Replace the outer quarter-shell (``|n~| > 3*nmat/8``) with the
+    """Replace the outer quarter-shell (``|n~| > 3*nmat/8``, matching
+    ``bond_channels.tail_estimate``'s own outer-shell definition) with the
     SAME-q static (``i-nu = nmat//2``) value (module docstring point 3).
+
+    ``n~`` is the SIGNED distance from the zero-transfer index
+    (``i - nmat//2``), so ``|n~| > 3*nmat/8`` selects the frequencies whose
+    distance from the center exceeds 3/8 of the FULL window -- i.e. the
+    outer ``nmat/2 - 3*nmat/8 = nmat/8`` indices on each side (the outer
+    quarter of the half-window, hence "outer quarter-shell": at nmat=256
+    that is indices ``[0, 32)`` and ``[224, 256)``, 64 of 256 points total).
+    A previous version of this function used ``shell_cut = 3*nmat//8``
+    directly as the per-side flattened COUNT, which flattens the outer
+    THREE-QUARTERS of the window instead (a review-fix defect, corrected
+    here; re-measured to give an even slightly LARGER V=1.2 shift with the
+    correct quarter -- see the module docstring and the Task 9 report).
     """
     nb2 = nmat // 2
-    shell_cut = 3 * nmat // 8
+    shell_cut = nmat // 8
     out = chi_bar_w.copy()
     out[:, :, :, :shell_cut] = chi_bar_w[:, :, :, nb2:nb2 + 1]
     out[:, :, :, nmat - shell_cut:] = chi_bar_w[:, :, :, nb2:nb2 + 1]
