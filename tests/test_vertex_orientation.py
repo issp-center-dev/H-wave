@@ -387,10 +387,10 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
     TRANSPOSED = ("CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising",
                   "PairLift")
     # PairHop is placed by _append_pairhop with the slots (b, a, a, b) instead,
-    # so the density-density result does not carry over; it has its own
-    # determination in TestPairHopVertexPlacement below, which selects the same
-    # transpose for a different reason.
-    ALSO_TRANSPOSED = ("PairHop",)
+    # so the density-density result does not carry over. It has its own
+    # determination, TestPairHopEndToEnd below, which selects the UNtransposed
+    # placement.
+    NOT_TRANSPOSED = ("PairHop",)
 
     def test_density_types_are_stored_pair_transposed(self):
         import hwave.sc as sc
@@ -408,10 +408,9 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
                     NSITE, NORB, NORB)
                 np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
 
-    def test_pairhop_is_stored_pair_transposed_too(self):
-        """PairHop reaches ``_to_k`` like every other type; what is specific to
-        it is WHY the transpose is right, which is settled in
-        TestPairHopVertexPlacement rather than by the density-density argument.
+    def test_pairhop_is_not_stored_pair_transposed(self):
+        """PairHop keeps the plain ``[a, b]`` placement, which
+        TestPairHopEndToEnd measures against exact diagonalization.
 
         The fixture is ON-SITE: ``rpa.py::_append_pairhop`` discards every
         ``irvec != (0,0,0)``, so an off-site PairHop fixture would be vacuous on
@@ -423,11 +422,11 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         vr = {((0, 0, 0), (a, b)): v for (a, b), v in P.items()}
         want = np.zeros((NORB, NORB), dtype=complex)
         for (a, b), v in P.items():
-            want[b, a] = v                        # transposed
+            want[a, b] = v                        # NOT transposed
         self.assertGreater(np.max(np.abs(want - want.T)), 1e-6)
 
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
-        for itype in self.ALSO_TRANSPOSED:
+        for itype in self.NOT_TRANSPOSED:
             with self.subTest(interaction=itype):
                 ik = sc._build_interaction_k(
                     qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
@@ -477,7 +476,13 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
 #      so the vertex alone cannot answer the question;
 #   2. where the PairHop vertex sits when the pair index labels a bilinear.
 #
-# Both are done by exact diagonalization of an explicit Hamiltonian.
+# Both are done by exact diagonalization of an explicit Hamiltonian. They are
+# INPUTS to the answer, not the answer: combining them by hand is exactly where
+# this went wrong once (the vertex sits BETWEEN two chi0 factors, so chi0's
+# ROW-pair reversal lands on the vertex's COLUMN side, not its row side), and
+# two derivations of the same shape reached opposite conclusions. The placement
+# is therefore settled by TestPairHopEndToEnd, which measures the whole chain
+# and needs neither of them.
 
 PH_NSITE = 3
 PH_NORB = 2
@@ -694,7 +699,10 @@ class TestPairHopVertexPlacement(unittest.TestCase):
                         r = _hop(mask, mode(i, a, 1), mode(i, ap, 1))
                         if r:
                             dn[INDEX[r[0]], idx] += r[1]
-                    H += amp * v * (up @ dn + dn @ up)
+                    # up and dn commute (different species, even parity), so
+                    # up @ dn is the operator itself -- symmetrising would put
+                    # a spurious factor of 2 into the measured coefficient.
+                    H += amp * v * (up @ dn)
         assert np.allclose(H, H.conj().T), "H_PH is Hermitian only if P is"
         E, U = np.linalg.eigh(H)
 
@@ -729,15 +737,21 @@ class TestPairHopVertexPlacement(unittest.TestCase):
     def setUpClass(cls):
         q = 2.0 * np.pi / NSITE
         cls.X0, cls.ud0 = cls._measure(0.0, q)
-        # CENTRAL difference: the O(P^2) term cancels, leaving O(P^3) ~ 1e-12,
-        # so the tolerances below are set by the measurement and not by the
-        # truncation. (A forward difference at the same dP leaves ~1e-5.)
-        dP = 1.0e-4
-        _, up = cls._measure(dP, q)
-        _, dn = cls._measure(-dP, q)
+        # CENTRAL difference: the O(P^2) term cancels, so the remaining
+        # truncation is O(dP^2) rather than the O(dP) of a forward difference
+        # (which leaves ~1e-5 here). test_the_truncation_is_quadratic below
+        # measures that scaling instead of asserting it.
         inv = np.linalg.inv(cls.X0)
-        # chi^ud = -X0 Gamma X0  =>  Gamma = -X0^-1 chi^ud X0^-1
-        cls.gamma = -inv @ ((up - dn) / (2.0 * dP)) @ inv * NSITE
+        cls.cond_X0 = float(np.linalg.cond(cls.X0))
+
+        def gamma_at(dP):
+            _, up = cls._measure(dP, q)
+            _, dn = cls._measure(-dP, q)
+            # chi^ud = -X0 Gamma X0  =>  Gamma = -X0^-1 chi^ud X0^-1
+            return -inv @ ((up - dn) / (2.0 * dP)) @ inv * NSITE
+
+        cls.gamma = gamma_at(1.0e-4)
+        cls.gamma_coarse = gamma_at(2.0e-4)
 
     def test_cross_spin_response_vanishes_without_pairhop(self):
         """The premise: at P = 0 the leading term is the whole story."""
@@ -747,54 +761,314 @@ class TestPairHopVertexPlacement(unittest.TestCase):
         """Gamma connects A^up_{ab} to A^down_{ab} -- the SAME pair -- so it is
         diagonal in the bilinear pair index, not antidiagonal."""
         off = self.gamma - np.diag(np.diag(self.gamma))
-        # measured 2e-9 of the diagonal; the floor is the O(P^3) remainder of
-        # the central difference plus the conditioning of the X0 inversion.
+        # the floor is the O(dP^2) remainder of the central difference and the
+        # conditioning of the X0 inversion (cond(X0) is checked below)
         self.assertLess(float(np.max(np.abs(off))),
                         1e-7 * float(np.max(np.abs(self.gamma))))
 
-    def test_the_diagonal_carries_p_untransposed(self):
-        """Gamma[(a,b),(a,b)] is proportional to P[a,b], with one common real
-        factor. The complex fixture is what separates P from P^T = conj(P)."""
+    def test_the_truncation_is_quadratic_and_x0_is_well_conditioned(self):
+        """Halving dP cuts the off-diagonal leakage by about four, so the
+        tolerances above are set by a measured truncation and not chosen to
+        make the test pass."""
+        fine = float(np.max(np.abs(self.gamma - np.diag(np.diag(self.gamma)))))
+        coarse = float(np.max(np.abs(
+            self.gamma_coarse - np.diag(np.diag(self.gamma_coarse)))))
+        self.assertGreater(coarse / fine, 3.0)
+        self.assertLess(coarse / fine, 5.0)
+        self.assertLess(self.cond_X0, 1.0e3)
+
+    def test_the_diagonal_carries_p_untransposed_with_unit_coefficient(self):
+        """Gamma[(a,b),(a,b)] = P[a,b] exactly, sign and normalisation
+        included -- not merely proportional. The complex fixture is what
+        separates P from P^T = conj(P)."""
         got = np.array([self.gamma[a * NORB + b, a * NORB + b]
                         for (a, b) in self.P])
         want = np.array([self.P[(a, b)] for (a, b) in self.P])
-        scale = np.vdot(want, got) / np.vdot(want, want)
-        self.assertLess(abs(scale.imag), 1e-9 * abs(scale))
-        np.testing.assert_allclose(got, scale * want, rtol=0.0,
-                                   atol=1e-9 * float(np.max(np.abs(got))))
+        np.testing.assert_allclose(got, want, rtol=0.0,
+                                   atol=1e-7 * float(np.max(np.abs(want))))
         # and P^T is genuinely excluded
         wt = np.array([self.P[(b, a)] for (a, b) in self.P])
-        self.assertGreater(np.max(np.abs(got - scale * wt)),
+        self.assertGreater(np.max(np.abs(got - wt)),
                            1e-2 * float(np.max(np.abs(got))))
 
 
-class TestSCPlacesPairHopAsMeasured(unittest.TestCase):
-    """Compose the two measurements and check `sc.py` against the result.
 
-    chi0's row pair (l1, l2) labels the bilinear A_{l2 l1} and its column pair
-    (l3, l4) labels A_{l3 l4} (TestChi0PairIndexMeaning); the vertex is diagonal
-    in the bilinear pair, carrying P of that pair (TestPairHopVertexPlacement).
-    So in chi0's own labels it sits at row (l1, l2), column (l2, l1) -- the
-    Case 4 block, which was always right -- carrying P[l2, l1].
+class TestPairHopEndToEnd(unittest.TestCase):
+    """The determination that actually settles #100.
+
+    No index reasoning anywhere between the input file and the answer. The
+    chain under test is the one the solver runs:
+
+        interaction dict -> _build_interaction_k -> _build_sc_matrices_all_q
+                                                                     -> S
+        chi0 <- rpa.py's own kernel, fed with an EXACT Green function
+        prediction:  chi^ud = -chi0 . S . chi0        (linear order)
+
+    compared against the cross-spin response of the SAME Hamiltonian by exact
+    diagonalization. It is run for both orientations of the input matrix, and
+    whichever the chain needs in order to reproduce the exact answer is what
+    ``_to_k`` must store.
+
+    Why linear order is exactly one chain: H_PH couples an UP bilinear to a
+    DOWN one, so the cross-spin response vanishes identically at P = 0 and its
+    derivative is a single bubble-vertex-bubble term.
+
+    Why chi^ud: Case 4 sets S = C, and with the MYO signs
+    chi_s = [I - chi0 Us]^-1 chi0 and chi_c = [I + chi0 Uc]^-1 chi0, so
+    chi^ud = (chi_c - chi_s)/2 = -chi0 . S . chi0 + O(P^2).
+
+    Grand canonical throughout, because rpa.py's chi0 is. Every operator here
+    except the Green function conserves (N_up, N_down), so the trace splits
+    into sectors of dimension at most C(6,3)^2 = 400.
     """
 
-    def test_case4_carries_the_transposed_amplitude(self):
+    NTAU = 192
+    MU = 0.2
+    DP = 1.0e-4
+    # Hermitian-closed so that H_PH is Hermitian. P is then Hermitian as a
+    # matrix, so P^T = conj(P) is a DIFFERENT matrix and the fixture
+    # discriminates -- a real asymmetric P would make H non-Hermitian.
+    P_IN = {(0, 1): 1.0 + 0.3j, (1, 0): 1.0 - 0.3j}
+
+    @classmethod
+    def _h1(cls):
+        n = NSITE * NORB
+        m = lambda i, a: i * NORB + a
+        h = np.zeros((n, n), dtype=complex)
+        for i in range(NSITE):
+            for a in range(NORB):
+                h[m(i, a), m(i, a)] += ONSITE[a] - cls.MU
+                for d, t in ((+1, T_INTRA[a]), (-1, np.conj(T_INTRA[a]))):
+                    h[m((i + d) % NSITE, a), m(i, a)] += t
+            h[m(i, 1), m(i, 0)] += T_INTER
+            h[m(i, 0), m(i, 1)] += np.conj(T_INTER)
+        assert np.allclose(h, h.conj().T)
+        return h
+
+    @staticmethod
+    def _cdc(mask, p, q):
+        if not (mask >> q) & 1:
+            return None
+        sg = -1.0 if bin(mask & ((1 << q) - 1)).count("1") % 2 else 1.0
+        mm = mask & ~(1 << q)
+        if (mm >> p) & 1:
+            return None
+        sg *= -1.0 if bin(mm & ((1 << p) - 1)).count("1") % 2 else 1.0
+        return mm | (1 << p), sg
+
+    @classmethod
+    def _green(cls):
+        """G_{ab}(r, tau) = -<T c_{r a}(tau) c+_{0 b}(0)>.
+
+        One spin species suffices: at P = 0 the grand-canonical density matrix
+        factorises over spin.
+        """
+        nmode = NSITE * NORB
+        dim = 1 << nmode
+        C = []
+        for p in range(nmode):
+            op = np.zeros((dim, dim))
+            for st in range(dim):
+                if (st >> p) & 1:
+                    sg = (-1.0 if bin(st & ((1 << p) - 1)).count("1") % 2
+                          else 1.0)
+                    op[st & ~(1 << p), st] = sg
+            C.append(op)
+        CD = [c.T.conj() for c in C]
+        h = cls._h1()
+        H = np.zeros((dim, dim), dtype=complex)
+        for p in range(nmode):
+            for q in range(nmode):
+                if h[p, q]:
+                    H += h[p, q] * (CD[p] @ C[q])
+        E, U = np.linalg.eigh(H)
+        E -= E.min()
+        w = np.exp(-BETA * E)
+        taus = np.arange(cls.NTAU) * BETA / cls.NTAU
+        expo = np.exp(np.multiply.outer(taus, E[:, None] - E[None, :]))
+        m = lambda i, a: i * NORB + a
+        G = np.zeros((cls.NTAU, NSITE, NORB, NORB), dtype=complex)
+        for r in range(NSITE):
+            for a in range(NORB):
+                for b in range(NORB):
+                    A = U.conj().T @ C[m(r, a)] @ U
+                    B = U.conj().T @ CD[m(0, b)] @ U
+                    G[:, r, a, b] = -np.einsum(
+                        "m,tmn,mn,nm->t", w, expo, A, B) / w.sum()
+        return G
+
+    @classmethod
+    def _chi0_code(cls, G, qs):
+        """rpa.py::_calc_chi0q's general branch at zero bosonic frequency:
+        chi0[a,c,b,d] = G[a,b] * G_rev[d,c] * sgn, G_rev(l,r) = G(-l, -r)."""
+        nt = cls.NTAU
+        sgn = np.full(nt, -1.0)
+        sgn[0] = 1.0
+        Grev = G[np.ix_((-np.arange(nt)) % nt, (-np.arange(NSITE)) % NSITE)]
+        rt = (G[:, :, :, None, :, None]
+              * sgn[:, None, None, None, None, None]
+              * Grev[:, :, None, :, None, :])         # [l,r,a,d,b,c]
+        rt = rt.transpose(0, 1, 2, 5, 4, 3)           # -> [l,r,a,c,b,d]
+        phase = np.exp(-1j * np.multiply.outer(qs, np.arange(NSITE)))
+        out = -np.einsum("qr,lracbd->qacbd", phase, rt) * (BETA / nt)
+        return out.reshape(NSITE, NORB ** 2, NORB ** 2)
+
+    @classmethod
+    def _response(cls, amp, qs, same_spin=False):
+        """int dtau <A^u_{ab}(q,tau) A^s_{cd}(-q,0)>, grand canonical."""
+        nm = NSITE * NORB
+        mode = lambda i, a, s: (i * NORB + a) * 2 + s
+        h = cls._h1()
+        npair = NORB * NORB
+        num = np.zeros((NSITE, npair, npair), dtype=complex)
+        Z = 0.0
+        ups = [mode(i, a, 0) for i in range(NSITE) for a in range(NORB)]
+        dns = [mode(i, a, 1) for i in range(NSITE) for a in range(NORB)]
+        for nu in range(nm + 1):
+            for nd in range(nm + 1):
+                states = []
+                for su in itertools.combinations(ups, nu):
+                    for sd in itertools.combinations(dns, nd):
+                        m = 0
+                        for p in su + sd:
+                            m |= 1 << p
+                        states.append(m)
+                states.sort()
+                idx = {st: i for i, st in enumerate(states)}
+                D = len(states)
+
+                def bil(q, a, b, s):
+                    op = np.zeros((D, D), dtype=complex)
+                    for j, mask in enumerate(states):
+                        for i in range(NSITE):
+                            r = cls._cdc(mask, mode(i, a, s), mode(i, b, s))
+                            if r:
+                                op[idx[r[0]], j] += np.exp(-1j * q * i) * r[1]
+                    return op
+
+                H = np.zeros((D, D), dtype=complex)
+                for s in range(2):
+                    for p in range(nm):
+                        for q in range(nm):
+                            if not h[p, q]:
+                                continue
+                            for j, mask in enumerate(states):
+                                r = cls._cdc(mask,
+                                             mode(p // NORB, p % NORB, s),
+                                             mode(q // NORB, q % NORB, s))
+                                if r:
+                                    H[idx[r[0]], j] += h[p, q] * r[1]
+                if amp:
+                    # H_PH = sum_{aa'} P_{aa'} A^u_{aa'} A^d_{aa'}; the two
+                    # bilinears commute, so no symmetrisation and no stray 2.
+                    for (a, ap), v in cls.P_IN.items():
+                        for i in range(NSITE):
+                            u = np.zeros((D, D), dtype=complex)
+                            w_ = np.zeros((D, D), dtype=complex)
+                            for j, mask in enumerate(states):
+                                r = cls._cdc(mask, mode(i, a, 0),
+                                             mode(i, ap, 0))
+                                if r:
+                                    u[idx[r[0]], j] += r[1]
+                                r = cls._cdc(mask, mode(i, a, 1),
+                                             mode(i, ap, 1))
+                                if r:
+                                    w_[idx[r[0]], j] += r[1]
+                            H += amp * v * (u @ w_)
+                assert np.allclose(H, H.conj().T), "H must be Hermitian"
+                E, U = np.linalg.eigh(H)
+                # _h1 already carries -MU on the diagonal, so H is H0 - MU N
+                # and NO further fugacity factor may be applied here.
+                w = np.exp(-BETA * E)
+                dE = E[:, None] - E[None, :]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    kern = (w[None, :] - w[:, None]) / dE
+                deg = np.abs(dE) < 1e-10
+                kern[deg] = (BETA * w[:, None] * np.ones_like(dE))[deg]
+                sb = 0 if same_spin else 1
+                for iq, q in enumerate(qs):
+                    A = [U.conj().T @ bil(q, a, b, 0) @ U
+                         for a in range(NORB) for b in range(NORB)]
+                    B = [U.conj().T @ bil(-q, a, b, sb) @ U
+                         for a in range(NORB) for b in range(NORB)]
+                    for i, Ar in enumerate(A):
+                        for j, Br in enumerate(B):
+                            num[iq, i, j] += np.sum(Ar * Br.T * kern)
+                Z += w.sum()
+        return num / Z
+
+    @staticmethod
+    def _reverse_row_pair(arr):
+        rev = np.array([(x % NORB) * NORB + (x // NORB)
+                        for x in range(NORB ** 2)])
+        return arr[:, rev, :]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
+        cls.chi0 = cls._chi0_code(cls._green(), cls.qs)
+        cls.bubble = cls._reverse_row_pair(cls._response(0.0, cls.qs,
+                                                         same_spin=True))
+        cls.ud0 = cls._response(0.0, cls.qs)
+        cls.lead = cls._reverse_row_pair(
+            (cls._response(+cls.DP, cls.qs) - cls._response(-cls.DP, cls.qs))
+            / (2.0 * cls.DP))
+
+    @staticmethod
+    def _worst(pred, ref):
+        out = 0.0
+        for iq in range(1, NSITE):     # q = 0 carries a disconnected part
+            s = np.vdot(pred[iq], ref[iq]) / np.vdot(pred[iq], pred[iq])
+            out = max(out, np.max(np.abs(ref[iq] - s * pred[iq]))
+                      / np.max(np.abs(ref[iq])))
+        return out
+
+    def test_cross_spin_response_vanishes_without_pairhop(self):
+        """The premise: at P = 0 the leading term is the whole story. q = 0 is
+        excluded because it carries the disconnected part <A^u><A^d>."""
+        self.assertLess(float(np.max(np.abs(self.ud0[1:]))), 1e-12)
+
+    def test_the_code_kernel_reproduces_the_exact_bubble(self):
+        """Locate the residual before using it: chi0 built from rpa.py's own
+        kernel matches the exact same-spin bubble to the imaginary-time
+        discretisation, so any larger residual downstream is a real
+        disagreement and not the grid."""
+        self.assertLess(self._worst(self.chi0, self.bubble), 1e-2)
+
+    def _sc_matrix(self, mat):
         import hwave.sc as sc
 
-        P = {(0, 1): 1.0, (1, 0): 0.35}          # on-site, asymmetric
-        vr = {((0, 0, 0), (a, b)): v for (a, b), v in P.items()}
         k = np.array([0.0])
+        vr = {((0, 0, 0), ab): v for ab, v in mat.items()}
         ik = sc._build_interaction_k(k, k, k, {"PairHop": vr}, NORB)
-        S, Cm = sc._build_sc_matrices_all_q(ik, NORB, 1, 1, 1)
+        S, C = sc._build_sc_matrices_all_q(ik, NORB, 1, 1, 1)
+        np.testing.assert_allclose(S, C, rtol=0.0, atol=1e-14)
+        return S[0, 0, 0]
 
-        for (l1, l2), v in P.items():
-            row, col = l1 * NORB + l2, l2 * NORB + l1
-            for name, M in (("S", S), ("C", Cm)):
-                with self.subTest(matrix=name, l1=l1, l2=l2):
-                    self.assertAlmostEqual(
-                        complex(M[0, 0, 0, row, col]), P[(l2, l1)], places=12,
-                        msg="row ({},{}) col ({},{}) must carry P[{},{}]"
-                            .format(l1, l2, l2, l1, l2, l1))
+    def test_the_untransposed_placement_reproduces_exact_diagonalization(self):
+        P = self.P_IN
+        PT = {(b, a): v for (a, b), v in P.items()}
+        keep = self._sc_matrix(P)     # _to_k leaves PairHop alone -> S = P
+        flip = self._sc_matrix(PT)
+
+        # say out loud which placement each one is, so the test cannot silently
+        # invert if `_to_k` changes
+        self.assertAlmostEqual(complex(keep[0 * NORB + 1, 1 * NORB + 0]),
+                               P[(0, 1)], places=12)
+        self.assertAlmostEqual(complex(flip[0 * NORB + 1, 1 * NORB + 0]),
+                               P[(1, 0)], places=12)
+
+        r_keep = self._worst(
+            np.array([-self.chi0[i] @ keep @ self.chi0[i]
+                      for i in range(NSITE)]), self.lead)
+        r_flip = self._worst(
+            np.array([-self.chi0[i] @ flip @ self.chi0[i]
+                      for i in range(NSITE)]), self.lead)
+        self.assertLess(r_keep, 1e-2,
+                        "S[(a,b),(b,a)] = P[a,b] must reproduce the exact "
+                        "cross-spin response")
+        self.assertGreater(r_flip, 1e-1,
+                           "the transposed placement must be excluded")
 
 
 if __name__ == "__main__":
