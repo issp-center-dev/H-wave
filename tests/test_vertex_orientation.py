@@ -382,13 +382,15 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
     S/C builder.
     """
 
-    # every type that rpa.py places through _append_inter, i.e. with the
+    # the types rpa.py places through _append_inter, i.e. with the
     # density-density slots (b, b, a, a) the determination above is for
     TRANSPOSED = ("CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising",
                   "PairLift")
     # PairHop is placed by _append_pairhop with the slots (b, a, a, b) instead,
-    # so the density-density result does not carry over and it is left alone
-    NOT_TRANSPOSED = ("PairHop",)
+    # so the density-density result does not carry over; it has its own
+    # determination in TestPairHopVertexPlacement below, which selects the same
+    # transpose for a different reason.
+    ALSO_TRANSPOSED = ("PairHop",)
 
     def test_density_types_are_stored_pair_transposed(self):
         import hwave.sc as sc
@@ -406,22 +408,14 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
                     NSITE, NORB, NORB)
                 np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
 
-    def test_pairhop_is_deliberately_left_alone(self):
-        """PairHop keeps the pre-#96 placement, and that is NOT a claim that it
-        is correct.
+    def test_pairhop_is_stored_pair_transposed_too(self):
+        """PairHop reaches ``_to_k`` like every other type; what is specific to
+        it is WHY the transpose is right, which is settled in
+        TestPairHopVertexPlacement rather than by the density-density argument.
 
-        `rpa.py` places PairHop through `_append_pairhop`, with the slots
-        (b, a, a, b) instead of `_append_inter`'s density-density (b, b, a, a),
-        so the determination this series rests on does not transfer to it.  It
-        is left untouched because changing it would be a guess; whether it
-        should be transposed is open, and tracked separately.
-
-        This test therefore pins the STATUS QUO only.  It deliberately does not
-        assert agreement with `rpa.py` -- that is exactly what is unresolved.
-
-        The fixture is ON-SITE: `_append_pairhop` discards every ``irvec !=
-        (0,0,0)``, so an off-site PairHop fixture would be vacuous on the RPA
-        side and must not be used to reason about the two builders.
+        The fixture is ON-SITE: ``rpa.py::_append_pairhop`` discards every
+        ``irvec != (0,0,0)``, so an off-site PairHop fixture would be vacuous on
+        the RPA side and must not be used to reason about the two builders.
         """
         import hwave.sc as sc
 
@@ -429,11 +423,11 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         vr = {((0, 0, 0), (a, b)): v for (a, b), v in P.items()}
         want = np.zeros((NORB, NORB), dtype=complex)
         for (a, b), v in P.items():
-            want[a, b] = v                        # NOT transposed
+            want[b, a] = v                        # transposed
         self.assertGreater(np.max(np.abs(want - want.T)), 1e-6)
 
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
-        for itype in self.NOT_TRANSPOSED:
+        for itype in self.ALSO_TRANSPOSED:
             with self.subTest(interaction=itype):
                 ik = sc._build_interaction_k(
                     qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
@@ -467,6 +461,340 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
                     np.allclose(c_asym, np.swapaxes(c_asym, -1, -2)),
                     "asymmetric on-site input does reach the S/C builders, so "
                     "the orientation is observable there")
+
+
+# --------------------------------------------------------------------------
+# 5. PairHop: its own determination (issue #100)
+# --------------------------------------------------------------------------
+
+# PairHop is the one type `rpa.py` does not route through `_append_inter`, and
+# in the S/C matrices it lands in the pair-ANTIdiagonal Case 4 rather than the
+# density-density Case 1/3. The argument above therefore says nothing about it,
+# and it needs two separate measurements:
+#
+#   1. what chi0's pair index means -- because relabelling a pair (x,y)->(y,x)
+#      on one side turns a pair-diagonal vertex into a pair-antidiagonal one,
+#      so the vertex alone cannot answer the question;
+#   2. where the PairHop vertex sits when the pair index labels a bilinear.
+#
+# Both are done by exact diagonalization of an explicit Hamiltonian.
+
+PH_NSITE = 3
+PH_NORB = 2
+PH_BETA = 3.0
+PH_MU = 0.2
+PH_NTAU = 96
+
+PH_T_INTRA = {0: 0.9 * np.exp(0.35j), 1: 0.6 * np.exp(-0.55j)}
+PH_T_INTER = 0.45 * np.exp(0.8j)
+PH_ONSITE = {0: 0.15, 1: -0.25}
+
+
+class TestChi0PairIndexMeaning(unittest.TestCase):
+    """`rpa.py::_calc_chi0q` builds, in the general branch,
+
+        chi0[a,c,b,d] = G[a,b] * G_rev[d,c] * sgn
+
+    Which BILINEAR does each flattened pair stand for? Measure it: compute the
+    exact correlator of the generalised densities
+
+        A_{ab}(q) = sum_i e^{-i q r_i} c+_{i a} c_{i b}
+
+    by grand-canonical diagonalization, evaluate the kernel above with G from
+    the SAME diagonalization, and search all 24 index permutations. Only one
+    spin species is needed (the Hamiltonian does not couple spins and A acts
+    inside one Fock space), so the trace is 2**6 = 64 dimensional and exact.
+    """
+
+    NMODE = PH_NSITE * PH_NORB
+
+    @classmethod
+    def _fock(cls):
+        dim = 1 << cls.NMODE
+        c = []
+        for p in range(cls.NMODE):
+            op = np.zeros((dim, dim))
+            for m in range(dim):
+                if (m >> p) & 1:
+                    sg = -1.0 if bin(m & ((1 << p) - 1)).count("1") % 2 else 1.0
+                    op[m & ~(1 << p), m] = sg
+            c.append(op)
+        return c
+
+    @classmethod
+    def _run(cls, ntau):
+        mode = lambda i, a: i * PH_NORB + a
+        C = cls._fock()
+        CD = [op.T.conj() for op in C]
+        dim = 1 << cls.NMODE
+
+        h1 = np.zeros((cls.NMODE, cls.NMODE), dtype=complex)
+        for i in range(PH_NSITE):
+            for a in range(PH_NORB):
+                h1[mode(i, a), mode(i, a)] += PH_ONSITE[a] - PH_MU
+                for d, amp in ((+1, PH_T_INTRA[a]),
+                               (-1, np.conj(PH_T_INTRA[a]))):
+                    h1[mode((i + d) % PH_NSITE, a), mode(i, a)] += amp
+            h1[mode(i, 1), mode(i, 0)] += PH_T_INTER
+            h1[mode(i, 0), mode(i, 1)] += np.conj(PH_T_INTER)
+        assert np.allclose(h1, h1.conj().T)
+
+        H = np.zeros((dim, dim), dtype=complex)
+        for p in range(cls.NMODE):
+            for q in range(cls.NMODE):
+                if h1[p, q] != 0:
+                    H += h1[p, q] * (CD[p] @ C[q])
+        E, U = np.linalg.eigh(H)
+        E -= E.min()
+        w = np.exp(-PH_BETA * E)
+        Z = w.sum()
+        rot = lambda op: U.conj().T @ op @ U
+
+        taus = np.arange(ntau) * PH_BETA / ntau
+        expo = np.exp(np.multiply.outer(taus, E[:, None] - E[None, :]))
+
+        def corr(A, B):
+            """<A(tau) B(0)> on the tau grid."""
+            return np.einsum("m,tmn,mn,nm->t", w, expo, A, B) / Z
+
+        cr = [rot(op) for op in C]
+        cdr = [rot(op) for op in CD]
+
+        # G_{ab}(r, tau) = -<T c_{r a}(tau) c+_{0 b}(0)>
+        G = np.zeros((ntau, PH_NSITE, PH_NORB, PH_NORB), dtype=complex)
+        for r in range(PH_NSITE):
+            for a in range(PH_NORB):
+                for b in range(PH_NORB):
+                    G[:, r, a, b] = -corr(cr[mode(r, a)], cdr[mode(0, b)])
+
+        def bilinear(q, a, b):
+            op = np.zeros((dim, dim), dtype=complex)
+            for i in range(PH_NSITE):
+                op += np.exp(-1j * q * i) * (CD[mode(i, a)] @ C[mode(i, b)])
+            return op
+
+        qs = 2.0 * np.pi * np.arange(PH_NSITE) / PH_NSITE
+        ed = np.zeros((PH_NSITE,) + (PH_NORB,) * 4, dtype=complex)
+        for iq, q in enumerate(qs):
+            pl = {(a, b): rot(bilinear(q, a, b))
+                  for a in range(PH_NORB) for b in range(PH_NORB)}
+            mi = {(a, b): rot(bilinear(-q, a, b))
+                  for a in range(PH_NORB) for b in range(PH_NORB)}
+            for a in range(PH_NORB):
+                for b in range(PH_NORB):
+                    for c in range(PH_NORB):
+                        for d in range(PH_NORB):
+                            ed[iq, a, b, c, d] = corr(
+                                pl[(a, b)], mi[(c, d)]).sum() * PH_BETA / ntau
+
+        sgn = np.full(ntau, -1.0)
+        sgn[0] = 1.0
+        Grev = G[np.ix_((-np.arange(ntau)) % ntau,
+                        (-np.arange(PH_NSITE)) % PH_NSITE)]
+        rt = (G[:, :, :, None, :, None]
+              * sgn[:, None, None, None, None, None]
+              * Grev[:, :, None, :, None, :])           # [l,r,a,d,b,c]
+        rt = rt.transpose(0, 1, 2, 5, 4, 3)             # -> [l,r,a,c,b,d]
+        phase = np.exp(-1j * np.multiply.outer(qs, np.arange(PH_NSITE)))
+        code = -np.einsum("qr,lracbd->qacbd", phase, rt) * (PH_BETA / ntau)
+        return cls._ranked(ed, code)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.coarse = cls._run(PH_NTAU)
+        cls.fine = cls._run(2 * PH_NTAU)
+
+    @staticmethod
+    def _ranked(ed, code):
+        out = []
+        for perm in itertools.permutations(range(4)):
+            # q = 0 carries the disconnected part <A><A>, which the code's
+            # bubble kernel does not contain; it cannot be compared.
+            cand = np.transpose(code, (0,) + tuple(1 + p for p in perm))[1:]
+            ref = ed[1:]
+            den = np.vdot(cand, cand)
+            if abs(den) < 1e-30:
+                continue
+            s = np.vdot(cand, ref) / den
+            out.append((np.max(np.abs(ref - s * cand)) / np.max(np.abs(ref)),
+                        perm))
+        out.sort()
+        return out
+
+    def test_row_pair_is_reversed_and_column_pair_is_not(self):
+        ranked = self.coarse
+        best, runner_up = ranked[0], ranked[1]
+        # code[a,c,b,d] ~ ED[c,a,b,d] = <A_{ca}(q) A_{bd}(-q)>
+        self.assertEqual(best[1], (1, 0, 2, 3),
+                         "chi0's pair index does not mean what #100 measured")
+        self.assertLess(best[0], 1e-2)
+        self.assertGreater(runner_up[0], 20 * best[0],
+                           "the fixture does not separate the permutations")
+
+    def test_the_residual_is_discretisation_not_disagreement(self):
+        """Halving the tau spacing halves the winner's residual, so it is the
+        grid and not a mismatch. Without this the threshold above would be a
+        tolerance picked to make the test pass."""
+        coarse, fine = self.coarse[0], self.fine[0]
+        self.assertEqual(coarse[1], fine[1])
+        self.assertLess(fine[0], 0.6 * coarse[0])
+        self.assertGreater(fine[0], 0.4 * coarse[0])
+
+
+class TestPairHopVertexPlacement(unittest.TestCase):
+    """H_PH = sum_{aa'} P_{aa'} A^up_{aa'} A^down_{aa'} is a product of an UP
+    and a DOWN bilinear, so the opposite-spin construction of
+    TestRPAVertexOrientation applies once the densities are generalised to
+    orbital-off-diagonal ones: the cross-spin response vanishes at P = 0 and
+    its leading term is exactly one bubble-vertex-bubble chain,
+
+        chi^ud(q) = -P X0(q) . Gamma . X0(q) + O(P^2),
+
+    in the orbital-PAIR basis. Inverting it gives Gamma directly.
+
+    P must be Hermitian-closed (P_{a'a} = conj(P_{aa'})) for H to be Hermitian;
+    P is then Hermitian as a matrix, so P^T = conj(P) and the transpose is
+    still a different matrix whenever P is complex. That is what makes the
+    fixture discriminating.
+    """
+
+    P = {(0, 1): 1.0 + 0.3j, (1, 0): 1.0 - 0.3j}
+    NPAIR = PH_NORB * PH_NORB
+
+    @staticmethod
+    def _measure(amp, q):
+        """(X0, chi^ud) in the pair basis, at PairHop strength `amp`."""
+        mode = lambda i, a, s: (i * PH_NORB + a) * 2 + s
+        H = np.zeros((DIM, DIM), dtype=complex)
+        for idx, mask in enumerate(STATES):
+            for s in range(2):
+                for i in range(NSITE):
+                    for a in range(NORB):
+                        p = mode(i, a, s)
+                        if (mask >> p) & 1:
+                            H[idx, idx] += ONSITE[a]
+                        for d, t in ((+1, T_INTRA[a]),
+                                     (-1, np.conj(T_INTRA[a]))):
+                            r = _hop(mask, mode((i + d) % NSITE, a, s), p)
+                            if r:
+                                H[INDEX[r[0]], idx] += t * r[1]
+                        t = T_INTER if a == 0 else np.conj(T_INTER)
+                        r = _hop(mask, mode(i, 1 - a, s), p)
+                        if r:
+                            H[INDEX[r[0]], idx] += t * r[1]
+        if amp:
+            for (a, ap), v in TestPairHopVertexPlacement.P.items():
+                for i in range(NSITE):
+                    up = np.zeros((DIM, DIM), dtype=complex)
+                    dn = np.zeros((DIM, DIM), dtype=complex)
+                    for idx, mask in enumerate(STATES):
+                        r = _hop(mask, mode(i, a, 0), mode(i, ap, 0))
+                        if r:
+                            up[INDEX[r[0]], idx] += r[1]
+                        r = _hop(mask, mode(i, a, 1), mode(i, ap, 1))
+                        if r:
+                            dn[INDEX[r[0]], idx] += r[1]
+                    H += amp * v * (up @ dn + dn @ up)
+        assert np.allclose(H, H.conj().T), "H_PH is Hermitian only if P is"
+        E, U = np.linalg.eigh(H)
+
+        def bil(qq, a, b, s):
+            op = np.zeros((DIM, DIM), dtype=complex)
+            for idx, mask in enumerate(STATES):
+                for i in range(NSITE):
+                    r = _hop(mask, mode(i, a, s), mode(i, b, s))
+                    if r:
+                        op[INDEX[r[0]], idx] += np.exp(-1j * qq * i) * r[1]
+            return op
+
+        n = TestPairHopVertexPlacement.NPAIR
+        uu = np.zeros((n, n), dtype=complex)
+        ud = np.zeros((n, n), dtype=complex)
+        pl = {(a, b, s): bil(q, a, b, s)
+              for a in range(NORB) for b in range(NORB) for s in range(2)}
+        mi = {(a, b, s): bil(-q, a, b, s)
+              for a in range(NORB) for b in range(NORB) for s in range(2)}
+        for a in range(NORB):
+            for b in range(NORB):
+                for c in range(NORB):
+                    for d in range(NORB):
+                        i, j = a * NORB + b, c * NORB + d
+                        uu[i, j] = _static_chi(E, U, pl[(a, b, 0)],
+                                               mi[(c, d, 0)])
+                        ud[i, j] = _static_chi(E, U, pl[(a, b, 0)],
+                                               mi[(c, d, 1)])
+        return uu, ud
+
+    @classmethod
+    def setUpClass(cls):
+        q = 2.0 * np.pi / NSITE
+        cls.X0, cls.ud0 = cls._measure(0.0, q)
+        # CENTRAL difference: the O(P^2) term cancels, leaving O(P^3) ~ 1e-12,
+        # so the tolerances below are set by the measurement and not by the
+        # truncation. (A forward difference at the same dP leaves ~1e-5.)
+        dP = 1.0e-4
+        _, up = cls._measure(dP, q)
+        _, dn = cls._measure(-dP, q)
+        inv = np.linalg.inv(cls.X0)
+        # chi^ud = -X0 Gamma X0  =>  Gamma = -X0^-1 chi^ud X0^-1
+        cls.gamma = -inv @ ((up - dn) / (2.0 * dP)) @ inv * NSITE
+
+    def test_cross_spin_response_vanishes_without_pairhop(self):
+        """The premise: at P = 0 the leading term is the whole story."""
+        self.assertLess(float(np.max(np.abs(self.ud0))), 1e-12)
+
+    def test_vertex_is_diagonal_in_the_bilinear_pair(self):
+        """Gamma connects A^up_{ab} to A^down_{ab} -- the SAME pair -- so it is
+        diagonal in the bilinear pair index, not antidiagonal."""
+        off = self.gamma - np.diag(np.diag(self.gamma))
+        # measured 2e-9 of the diagonal; the floor is the O(P^3) remainder of
+        # the central difference plus the conditioning of the X0 inversion.
+        self.assertLess(float(np.max(np.abs(off))),
+                        1e-7 * float(np.max(np.abs(self.gamma))))
+
+    def test_the_diagonal_carries_p_untransposed(self):
+        """Gamma[(a,b),(a,b)] is proportional to P[a,b], with one common real
+        factor. The complex fixture is what separates P from P^T = conj(P)."""
+        got = np.array([self.gamma[a * NORB + b, a * NORB + b]
+                        for (a, b) in self.P])
+        want = np.array([self.P[(a, b)] for (a, b) in self.P])
+        scale = np.vdot(want, got) / np.vdot(want, want)
+        self.assertLess(abs(scale.imag), 1e-9 * abs(scale))
+        np.testing.assert_allclose(got, scale * want, rtol=0.0,
+                                   atol=1e-9 * float(np.max(np.abs(got))))
+        # and P^T is genuinely excluded
+        wt = np.array([self.P[(b, a)] for (a, b) in self.P])
+        self.assertGreater(np.max(np.abs(got - scale * wt)),
+                           1e-2 * float(np.max(np.abs(got))))
+
+
+class TestSCPlacesPairHopAsMeasured(unittest.TestCase):
+    """Compose the two measurements and check `sc.py` against the result.
+
+    chi0's row pair (l1, l2) labels the bilinear A_{l2 l1} and its column pair
+    (l3, l4) labels A_{l3 l4} (TestChi0PairIndexMeaning); the vertex is diagonal
+    in the bilinear pair, carrying P of that pair (TestPairHopVertexPlacement).
+    So in chi0's own labels it sits at row (l1, l2), column (l2, l1) -- the
+    Case 4 block, which was always right -- carrying P[l2, l1].
+    """
+
+    def test_case4_carries_the_transposed_amplitude(self):
+        import hwave.sc as sc
+
+        P = {(0, 1): 1.0, (1, 0): 0.35}          # on-site, asymmetric
+        vr = {((0, 0, 0), (a, b)): v for (a, b), v in P.items()}
+        k = np.array([0.0])
+        ik = sc._build_interaction_k(k, k, k, {"PairHop": vr}, NORB)
+        S, Cm = sc._build_sc_matrices_all_q(ik, NORB, 1, 1, 1)
+
+        for (l1, l2), v in P.items():
+            row, col = l1 * NORB + l2, l2 * NORB + l1
+            for name, M in (("S", S), ("C", Cm)):
+                with self.subTest(matrix=name, l1=l1, l2=l2):
+                    self.assertAlmostEqual(
+                        complex(M[0, 0, 0, row, col]), P[(l2, l1)], places=12,
+                        msg="row ({},{}) col ({},{}) must carry P[{},{}]"
+                            .format(l1, l2, l2, l1, l2, l1))
 
 
 if __name__ == "__main__":

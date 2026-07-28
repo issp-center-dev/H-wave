@@ -589,7 +589,7 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         kx_array, ky_array, kz_array, indexing='ij'
     )
 
-    def _to_k(value_r, transpose=True):
+    def _to_k(value_r):
         # Same Fourier phase as the solver core, e^{-iqR}, but the ORBITAL
         # PAIR is stored transposed: an entry (R, (a, b)) lands at [b, a].
         #
@@ -620,18 +620,39 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         # NOTE: `_build_hamiltonian_k` is a one-body object and correctly keeps
         # the plain [a, b] placement. Do not "align" this builder to it.
         #
-        # PairHop is EXCLUDED (transpose=False below). It is the one type that
-        # `rpa.py` does not place through `_append_inter`: `_append_pairhop`
-        # uses the slots (b, a, a, b) rather than the density-density
-        # (b, b, a, a), so the determination above -- which is for a
-        # density-density term -- does not carry over to it. Leaving it alone
-        # changes only what has been established; its orientation is still open.
+        # PairHop needs the transpose too, but NOT because the argument above
+        # carries over -- it does not. `rpa.py` places PairHop through
+        # `_append_pairhop`, whose slots are (b, a, a, b) rather than the
+        # density-density (b, b, a, a), and in the S/C matrices it lands in the
+        # pair-ANTIdiagonal Case 4 rather than Case 1/3. It was left untouched
+        # until it had its own determination (issue #100); it now has one, again
+        # by exact diagonalization, in two measured steps:
+        #
+        #   * What the pair index of chi0 means. `rpa.py::_calc_chi0q` builds
+        #     chi0[a,c,b,d] = G[a,b] G_rev[d,c]; comparing it against the exact
+        #     correlator of the generalised densities A_{ab}(q) = sum_i
+        #     e^{-iqr} c+_{ia} c_{ib}, with G from the same diagonalization,
+        #     singles out chi0[a,c,b,d] ~ <A_{ca}(q) A_{bd}(-q)>: the ROW pair
+        #     is reversed relative to its bilinear, the column pair is not.
+        #     (Residual 8.4e-3 -> 1.0e-3 as the tau grid is refined 96 -> 768,
+        #     i.e. pure discretisation; the next-best permutation sits at 0.20.)
+        #
+        #   * Where PairHop sits in that basis. H_PH = sum_{aa'} P_{aa'}
+        #     A^up_{aa'} A^down_{aa'} is a product of an UP and a DOWN
+        #     bilinear, so the opposite-spin construction used for #96 applies:
+        #     the cross-spin response vanishes at P = 0 and its leading term is
+        #     one bubble-vertex-bubble chain. Inverting it gives a vertex that
+        #     is DIAGONAL in the bilinear pair, carrying P_{aa'}.
+        #
+        # Composing the two: in chi0's own labels the vertex sits at row
+        # (l1, l2), column (l2, l1) -- which is exactly the Case 4 block, so
+        # that placement was right -- carrying P[l2, l1]. Case 4 reads
+        # PH_mat[l1, l2], so PH_mat must be the transpose.
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
-            i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
-            val_k[i1, i2, :, :, :] += value * np.exp(
+            val_k[orb2, orb1, :, :, :] += value * np.exp(
                 -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
@@ -640,8 +661,7 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     for itype in ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                   "Ising", "PairLift", "PairHop"]:
         if itype in interactions:
-            inter_k[itype] = _to_k(interactions[itype],
-                                   transpose=(itype != "PairHop"))
+            inter_k[itype] = _to_k(interactions[itype])
 
     return inter_k
 
