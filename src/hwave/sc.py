@@ -1428,6 +1428,8 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
     legacy_s, legacy_c = _read_flex_legacy_tags(input_dict)
+    if _accept_up_block_only(input_dict):
+        legacy_s = legacy_c = True
     _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
                                 legacy_s)
     _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
@@ -1448,16 +1450,39 @@ _STATIC_IR_HINT = (
     "\"dynamic\" with [eliashberg] matsubara_basis = \"ir\".")
 
 
-def _read_flex_legacy_tags(input_dict):
-    """Read the opt-in ``chi_spin_blocks`` tag off the chi_s/chi_c files.
+def _accept_up_block_only(input_dict):
+    """Whether ``[eliashberg] accept_up_block_only`` asserts the layout.
 
-    Kept apart from :func:`_read_flex_chi_raw` so that function's return arity
-    -- which tests and other callers depend on -- does not change. ``np.load``
-    on an npz is lazy, so checking for a key costs no array read.
+    The file tag is the better signal, but files written before this check
+    existed cannot carry one -- so without a configuration route the escape
+    hatch would be unreachable for exactly the files that need it. The user
+    takes responsibility here rather than the loader guessing from values it
+    cannot disambiguate.
+    """
+    eli = input_dict.get("eliashberg", {})
+    return bool(eli.get("accept_up_block_only", False))
+
+
+def _read_flex_legacy_tags(input_dict):
+    """Whether the chi_s/chi_c files declare the up-block-only layout.
+
+    Separate from :func:`_read_flex_chi_raw` so that function's return arity --
+    which tests and other callers unpack -- does not change. ``np.load`` on an
+    npz is lazy, so this reads metadata only; the handles are closed rather than
+    left to the garbage collector.
+
+    The result only ever RELAXES a refusal, so a file swapped between this read
+    and the array read cannot cause wrong data to be accepted silently: the
+    arrays are the ones already in hand, and the worst outcome of stale metadata
+    is that an ambiguous file is refused (tag lost) or accepted with the warning
+    (tag gained) -- never that a different file's values are used.
     """
     chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
-    return (_legacy_up_block_only(np.load(chi_s_path)),
-            _legacy_up_block_only(np.load(chi_c_path)))
+    flags = []
+    for path in (chi_s_path, chi_c_path):
+        with np.load(path) as data:
+            flags.append(_legacy_up_block_only(data))
+    return tuple(flags)
 
 
 def _legacy_up_block_only(data):
@@ -1667,12 +1692,14 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
         raise ValueError(
             "The reduced FLEX susceptibility {} has a nonzero up-spin block "
             "with an identically zero down-spin block and zero cross-spin "
-            "blocks. That is either a legacy file in which only the consumed "
-            "block was ever populated, or a fully spin-polarized/projected "
-            "susceptibility -- the values alone cannot tell them apart, and the "
-            "second is not something this paramagnetic formulation can use. Tag "
-            "the file with chi_spin_blocks='up_only' if it is the former; "
-            "otherwise supply a paramagnetic run.".format(label))
+            "blocks. That is either a file in which only the consumed block was "
+            "ever populated, or a fully spin-polarized/projected susceptibility "
+            "-- the values alone cannot tell them apart, and the second is not "
+            "something this paramagnetic formulation can use. If you know it is "
+            "the former, say so: set [eliashberg] accept_up_block_only = true, "
+            "or tag the file itself with chi_spin_blocks='up_only'. Files "
+            "written before this check existed carry no tag, so the "
+            "configuration flag is the route for them.".format(label))
 
     parts = []
     if d_down != 0.0:
@@ -1882,17 +1909,28 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # normally rejects such a run first, but relying on that is fragile: it is a
     # different file, and a run whose chi happens to be redundant while its
     # Green functions are not would slip straight through. Check here too.
-    if not np.all(np.isfinite(green_raw)):
-        raise ValueError(
-            "The FLEX dressed Green function in '{}' contains non-finite "
-            "values (NaN or Inf). They would otherwise poison the spin-block "
-            "comparison below -- NaN fails every inequality, so a corrupt or "
-            "diverged file would be accepted -- and then enter the pair "
-            "bubble.".format(green_path))
+    # Scan per block and per frequency rather than over the whole array: a
+    # production Green function is easily multi-GB, and np.isfinite or a
+    # full-size difference would add temporaries of the same order and could
+    # fail a perfectly valid file on memory alone.
+    for i in range(nblock):
+        for w in range(nmat_g):
+            if not np.all(np.isfinite(green_raw[i, w])):
+                raise ValueError(
+                    "The FLEX dressed Green function in '{}' contains "
+                    "non-finite values (NaN or Inf) in spin block {} at "
+                    "frequency index {}. NaN fails every inequality, so without "
+                    "this check a corrupt or diverged file would slip past the "
+                    "spin-block comparison below and enter the pair "
+                    "bubble.".format(green_path, i, w))
     if nblock > 1:
-        blocks = [green_raw[i] for i in range(nblock)]
-        worst = max(float(np.max(np.abs(blocks[0] - b))) for b in blocks[1:])
-        gscale = float(np.max(np.abs(blocks[0])))
+        gscale = 0.0
+        worst = 0.0
+        for w in range(nmat_g):
+            ref = green_raw[0, w]
+            gscale = max(gscale, float(np.max(np.abs(ref))))
+            for i in range(1, nblock):
+                worst = max(worst, float(np.max(np.abs(ref - green_raw[i, w]))))
         # Same relative allowance as the susceptibility check, so the two really
         # are treated alike: a last-bit difference between blocks that entered
         # the solve identical must not reject a paramagnetic producer.
@@ -1970,12 +2008,19 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
     # Slice the static frequency FIRST, then expand only that single slice.
-    # Check ONLY the slices this route consumes. Validating the whole stored
-    # axis would abort a static run because of an unused frequency -- and for an
-    # externally assembled or frequency-restricted file, values that never enter
-    # the result should not decide whether it is usable. The dynamic loader,
-    # which does read every frequency, still checks all of them.
+    # Check the WHOLE stored axis, not just the slice consumed here.
+    #
+    # Both choices have a failure mode and neither case is common: validating
+    # only the static slice lets through a run that is redundant at omega=0 and
+    # polarized elsewhere, which then returns a paramagnetic eigenvalue in
+    # silence; validating everything rejects a file whose unused frequencies are
+    # malformed. The first failure is silent and the second is loud and
+    # diagnosable, so the axis is checked in full. Paramagnetism is a property
+    # of the producing run rather than of one frequency, which is the same
+    # reason.
     legacy_s, legacy_c = _read_flex_legacy_tags(input_dict)
+    if _accept_up_block_only(input_dict):
+        legacy_s = legacy_c = True
     _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
                                 legacy_s)
     _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",

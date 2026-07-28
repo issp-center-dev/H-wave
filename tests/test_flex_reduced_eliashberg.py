@@ -1147,6 +1147,18 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
                 sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
         self.assertIn("chi_spin_blocks='up_only'", str(cm.exception))
 
+    def test_config_flag_accepts_an_untagged_legacy_file(self):
+        """Files written before this check existed cannot carry the tag, so the
+        configuration route must work for them -- otherwise the escape hatch is
+        unreachable for exactly the files that need it."""
+        import hwave.sc as sc
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up)
+            inp["eliashberg"]["accept_up_block_only"] = True
+            with self.assertLogs("hwave_sc", level="WARNING") as cm:
+                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+        self.assertIn("up_only", "\n".join(cm.output))
+
     def test_tagged_legacy_file_is_accepted(self):
         """...but a file that declares the layout is read as intended."""
         import hwave.sc as sc

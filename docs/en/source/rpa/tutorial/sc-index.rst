@@ -1168,8 +1168,11 @@ with four-index vertex structure.
    the same way, and non-finite values in it are rejected outright. A file whose
    down-spin and cross-spin blocks are identically zero is ambiguous -- it may be
    a legacy layout in which only the consumed block was ever populated, or a
-   fully polarized sector -- so it is refused unless it carries
-   ``chi_spin_blocks = "up_only"`` declaring the former.
+   fully polarized sector -- so it is refused unless it is
+   declared to be the former -- either by the file itself
+   (``chi_spin_blocks = "up_only"``) or, for files written before this check
+   existed and which therefore cannot carry a tag, by setting
+   ``[eliashberg] accept_up_block_only = true``.
 
 
 What each mode accepts
