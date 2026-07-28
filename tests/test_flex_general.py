@@ -1584,7 +1584,8 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
 
 
 def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
-                                IterationMax=1, Mix=1.0, want_solver=False):
+                                IterationMax=1, Mix=1.0, want_solver=False,
+                                filling=None):
     """Run a 2-orbital on-site FLEX model and return its self-energy.
 
     ``interactions`` selects which of the on-site interaction files written by
@@ -1598,6 +1599,11 @@ def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
     ``IterationMax=1`` / ``Mix=1.0`` (the default) is the sharpest probe: both
     schemes start from the identical bare Green function, so any difference is
     produced by that single step alone.
+
+    ``filling`` selects the fixed-particle-number mode: passing it replaces the
+    fixed ``mu`` and sets ``calc_mu = True`` (``rpa.py``: a supplied ``mu``
+    forces ``calc_mu = False``), so the per-iteration ``_find_mu_dressed``
+    re-solve is exercised.  Callers that care assert ``solver.calc_mu``.
     """
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1622,12 +1628,19 @@ def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
         info_input = {'path_to_input': dirpath, 'interaction': inter}
         ham = read_input_k.QLMSkInput(info_input).get_param('ham')
         green_info = read_input_k.QLMSkInput(info_input).get_param('green')
+        param = {'T': 0.5,
+                 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                 'Nmat': 32, 'IterationMax': IterationMax, 'Mix': Mix,
+                 'EPS': 8}
+        # mu and filling are mutually exclusive: supplying mu turns the
+        # chemical-potential re-solve OFF.
+        if filling is None:
+            param['mu'] = 0.0
+        else:
+            param['filling'] = filling
         info_mode = {
             'mode': 'FLEX',
-            'param': {'T': 0.5, 'mu': 0.0,
-                      'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
-                      'Nmat': 32, 'IterationMax': IterationMax, 'Mix': Mix,
-                      'EPS': 8},
+            'param': param,
             'calc_scheme': scheme,
         }
         solver = solver_flex.FLEX(ham, {}, info_mode)
@@ -1680,24 +1693,50 @@ class TestCoulombIntraSchemeAgreement(unittest.TestCase):
                                    rtol=0.0,
                                    atol=1e-12 * np.max(np.abs(sig_red)))
 
-    def test_coulombintra_only_matches_reduced_at_convergence(self):
-        """Agreement must survive the SCF loop, not just the first step.
-
-        The single-step tests above pin the kernel; this pins that nothing in
-        the mixing / mu-update / convergence path reintroduces a difference.
-        Both schemes should also need the same number of iterations, since they
-        see the same self-energy at every step.
-        """
-        kw = dict(IterationMax=200, Mix=0.3, want_solver=True)
-        sig_gen, solver_gen = _run_flex_sigma_2orb_onsite("general", **kw)
-        sig_red, solver_red = _run_flex_sigma_2orb_onsite("reduced", **kw)
+    def _assert_converged_agreement(self, **kw):
+        sig_gen, solver_gen = _run_flex_sigma_2orb_onsite(
+            "general", IterationMax=200, Mix=0.3, want_solver=True, **kw)
+        sig_red, solver_red = _run_flex_sigma_2orb_onsite(
+            "reduced", IterationMax=200, Mix=0.3, want_solver=True, **kw)
         self.assertTrue(solver_gen.scf_converged)
         self.assertTrue(solver_red.scf_converged)
-        self.assertEqual(solver_gen.scf_iterations, solver_red.scf_iterations)
+        # Both schemes see the same self-energy at every step, so they should
+        # trip the convergence threshold together.  Allow one iteration of slack
+        # rather than exact equality: the two paths reach the same values
+        # through different arithmetic (element-wise product vs. rank-4
+        # contraction), so a residual that lands within round-off of EPS could
+        # legitimately be crossed one step apart on another BLAS.
+        self.assertLessEqual(
+            abs(solver_gen.scf_iterations - solver_red.scf_iterations), 1)
         scale = np.max(np.abs(sig_red))
         self.assertGreater(scale, 1e-6)
         np.testing.assert_allclose(sig_gen, sig_red,
                                    rtol=0.0, atol=1e-12 * scale)
+        return solver_gen, solver_red
+
+    def test_coulombintra_only_matches_reduced_at_convergence(self):
+        """Agreement must survive the SCF loop, not just the first step.
+
+        The single-step tests above pin the kernel; this pins that nothing in
+        the mixing or convergence path reintroduces a difference.
+        """
+        solver_gen, _ = self._assert_converged_agreement()
+        # this variant fixes mu, so it does NOT exercise the mu re-solve
+        self.assertFalse(solver_gen.calc_mu)
+
+    def test_coulombintra_only_matches_reduced_at_fixed_filling(self):
+        """Same, with the chemical potential re-solved every iteration.
+
+        With ``filling`` instead of ``mu``, FLEX calls ``_find_mu_dressed`` from
+        the dressed Green function at each step, so mu itself becomes part of
+        the SCF trajectory.  The fixed-mu variant above cannot cover this: a
+        supplied ``mu`` sets ``calc_mu = False``.
+        """
+        solver_gen, solver_red = self._assert_converged_agreement(filling=0.4)
+        self.assertTrue(solver_gen.calc_mu)
+        self.assertTrue(solver_red.calc_mu)
+        # the re-solved chemical potentials must agree too
+        self.assertAlmostEqual(solver_gen.mu, solver_red.mu, places=10)
 
     def test_the_reason_is_that_coulombintra_has_no_offdensity_vertex(self):
         """Document WHY the schemes must agree, so the tests above cannot pass
@@ -1737,12 +1776,23 @@ class TestCoulombIntraSchemeAgreement(unittest.TestCase):
         norb = solver.norb
         mask = np.ones(norb * norb, dtype=bool)
         mask[[a * norb + a for a in range(norb)]] = False
-        self.assertGreater(
-            max(np.max(np.abs(Us[..., mask, mask])),
-                np.max(np.abs(Uc[..., mask, mask]))), 1e-6)
+        # NOTE: index the two axes in sequence.  `M[..., mask, mask]` would be
+        # a *pairwise* boolean selection -- the diagonal of the off-density
+        # block -- which happens to be where CoulombInter lands, so it would
+        # pass here while missing the (ab),(ba) weight of Exchange/PairHop.
+        off = max(np.max(np.abs(Us[..., mask, :])),
+                  np.max(np.abs(Us[..., :, mask])),
+                  np.max(np.abs(Uc[..., mask, :])),
+                  np.max(np.abs(Uc[..., :, mask])))
+        self.assertGreater(off, 1e-6)
 
         # ... and it shows up in the self-energy
+        self.assertTrue(np.all(np.isfinite(sig_gen)))
+        self.assertTrue(np.all(np.isfinite(sig_red)))
         scale = np.max(np.abs(sig_red))
+        self.assertGreater(scale, 1e-6,
+                           "reduced sigma is ~zero; the relative threshold "
+                           "below would then be vacuous")
         self.assertGreater(np.max(np.abs(sig_gen - sig_red)), 1e-3 * scale)
 
 
