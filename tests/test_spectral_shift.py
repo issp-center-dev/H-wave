@@ -61,6 +61,111 @@ def test_spectral_shift_complex_spectrum_picks_largest_real():
     assert abs(lead.imag) < 1e-6
 
 
+# --- Codex round-2 must-fix: the preliminary shift-estimation probe must not
+# retain an eigenvector array (sc._arpack_basis_vectors' max(probe, main)
+# preflight budget assumes the probe's own peak allocation is JUST the
+# ncv-sized Krylov basis; a retained N-by-k_pre eigenvector array pushes the
+# probe's real allocation above what max(probe, main) budgets for). Verified
+# by monkeypatching scipy.sparse.linalg.eigs (imported into hwave.sc as
+# `eigs`) to record every call's kwargs and return canned values, so this is
+# checked without depending on ARPACK's actual convergence behaviour.
+def _fake_eigs_recording(calls, canned_vals):
+    """A stand-in for ``hwave.sc.eigs`` that records call kwargs and returns
+    canned values shaped like the real function: an array when
+    ``return_eigenvectors=False``, a ``(vals, vecs)`` tuple otherwise."""
+    def fake_eigs(A, k=6, which='LM', v0=None, sigma=None,
+                  return_eigenvectors=True, **kwargs):
+        calls.append({"k": k, "which": which,
+                      "return_eigenvectors": return_eigenvectors})
+        vals = np.asarray(canned_vals[:k], dtype=complex)
+        if not return_eigenvectors:
+            return vals
+        n = A.shape[0]
+        vecs = np.zeros((n, k), dtype=complex)
+        vecs[np.arange(min(n, k)), np.arange(min(n, k))] = 1.0
+        return vals, vecs
+    return fake_eigs
+
+
+def test_arnoldi_auto_shift_probe_drops_eigenvectors(monkeypatch):
+    """arnoldi + spectral_shift='auto': the k_pre<=6 probe that estimates
+    sigma (sc.py ~4141) must call eigs with return_eigenvectors=False. The
+    Ritz VALUES it derives the shift from must be unaffected -- only the
+    eigenvector-extraction step is skipped.
+
+    The fake ``eigs`` returns the SAME canned spectrum regardless of which
+    operator it is called on (it does not simulate real ARPACK convergence
+    on the shifted operator), so ``lead`` is not checked against the
+    physical eigenvalue here -- that is already covered by the unmocked
+    tests above. What this test isolates is the CONTRACT: the sigma
+    computed from the probe's Ritz values (``sig = max(|vals_pre|)*1.5 +
+    1e-6``, sc.py ~4142) is bit-identical whether or not the probe retained
+    an eigenvector array, since ``_solve_leading`` un-shifts by exactly that
+    sigma before ordering -- so the FINAL reported lead is fully determined
+    by the canned values and reproducible in closed form."""
+    calls = []
+    canned = np.array([-0.5, -0.4, -0.3, -0.2, 0.05, 0.03], dtype=complex)
+    monkeypatch.setattr(sc, "eigs", _fake_eigs_recording(calls, canned))
+
+    mk, n = _make_operator_for(SPECTRUM)
+    lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                                   spectral_shift="auto")
+
+    probe_calls = [c for c in calls if c["which"] == "LM"]
+    assert len(probe_calls) == 1
+    assert probe_calls[0]["return_eigenvectors"] is False
+    main_calls = [c for c in calls if c["which"] == "LR"]
+    assert len(main_calls) == 1
+    assert main_calls[0]["return_eigenvectors"] is True  # default, unchanged
+
+    # closed-form reproduction of sc.py's own arithmetic (sig from the probe
+    # values, subtracted back after the main call) -- pins that dropping the
+    # probe's eigenvectors did not change the derived shift.
+    k_pre = min(6, n - 2)
+    max_ev = min(3, n - 2)
+    expected_sig = float(np.max(np.abs(canned[:k_pre]))) * 1.5 + 1.0e-6
+    shifted = canned[:max_ev] - expected_sig
+    expected_lead = shifted[np.argmax(shifted.real)]
+    assert lead == pytest.approx(expected_lead)
+
+
+def test_shift_invert_default_sigma_probe_drops_eigenvectors(monkeypatch):
+    """shift-invert with sigma_shift=None: the same k_pre<=6 probe (sc.py
+    ~4172) must also call eigs with return_eigenvectors=False and must still
+    derive the same sigma_shift as the eigenvector-retaining call would
+    have. ``_eigs_shift_invert`` itself (the main shift-invert solve, a
+    different code path with its own sigma= usage) is stubbed out -- it is
+    not what this fix touches."""
+    calls = []
+    canned = np.array([-0.5, -0.4, -0.3, -0.2, 0.05, 0.03], dtype=complex)
+    monkeypatch.setattr(sc, "eigs", _fake_eigs_recording(calls, canned))
+
+    captured_sigma = {}
+
+    def fake_shift_invert(A, vec_size, num_ev, method, sigma=0.0,
+                          seed_vec=None, **kwargs):
+        captured_sigma["sigma"] = sigma
+        vals = np.array([0.05, 0.03, -0.2], dtype=complex)
+        vecs = np.zeros((vec_size, 3), dtype=complex)
+        return vals, vecs
+
+    monkeypatch.setattr(sc, "_eigs_shift_invert", fake_shift_invert)
+
+    mk, n = _make_operator_for(SPECTRUM)
+    sc._solve_leading(mk, n, "shift-invert-bicgstab", num_eigenvalues=3)
+
+    probe_calls = [c for c in calls if c["which"] == "LM"]
+    assert len(probe_calls) == 1
+    assert probe_calls[0]["return_eigenvectors"] is False
+
+    # the shift the probe derived is exactly what _shift_from_eigenvalues
+    # gives on the SAME canned Ritz values via the eigenvector-carrying path
+    # -- i.e. dropping the eigenvectors did not change the estimate.
+    k_pre = min(6, n - 2)
+    expected_sigma = sc._shift_from_eigenvalues(canned[:k_pre])
+    assert captured_sigma["sigma"] == pytest.approx(expected_sigma)
+
+
 def _make_operator_dense(M):
     """make_operator() -> (A, None) wrapping a dense (possibly non-normal) matrix."""
     M = np.asarray(M, dtype=complex)

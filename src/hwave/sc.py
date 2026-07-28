@@ -4138,7 +4138,18 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             if isinstance(spectral_shift, str):  # "auto"
                 k_pre = min(6, vec_size - 2)
                 if k_pre >= 1:
-                    vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                    # return_eigenvectors=False: only the Ritz VALUES are
+                    # used below (the shift estimate), so skip extracting
+                    # and retaining the N-by-k_pre eigenvector array. This
+                    # cannot change which Ritz values ARPACK converges to --
+                    # it only skips the eigenvector-extraction step -- and
+                    # it keeps this probe's peak allocation at the ncv-sized
+                    # Krylov basis _arpack_basis_vectors already budgets for
+                    # (review fix: with the eigenvectors retained, the
+                    # preflight's max(probe, main) accounting undercounted
+                    # by one extra N-by-k_pre array live during the probe).
+                    vals_pre = eigs(A, k=k_pre, which='LM',
+                                    return_eigenvectors=False)
                     sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
                 else:
                     sig = 1.0
@@ -4169,7 +4180,11 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = 0.0
             else:
                 logger.info("Estimating shift with preliminary Arnoldi...")
-                vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                # return_eigenvectors=False -- see the matching comment on
+                # the arnoldi/spectral_shift="auto" probe above; only the
+                # Ritz values feed _shift_from_eigenvalues.
+                vals_pre = eigs(A, k=k_pre, which='LM',
+                                return_eigenvectors=False)
                 sigma_shift = _shift_from_eigenvalues(vals_pre)
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
         vals, vecs = _eigs_shift_invert(
