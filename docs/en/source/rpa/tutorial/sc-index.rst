@@ -392,6 +392,10 @@ This section controls the Eliashberg solver. Key parameters:
   :math:`N_q \times ND \times ND` arrays (:math:`ND = n_{\rm orb}^2 B`) and
   raises, naming the offending channel count, rather than allocating a runaway
   matrix.
+- ``bond_cond_tol`` (``bond_channels = true`` **and** ``frequency = "dynamic"``
+  only; accepted but ignored on the static path): the RPA-denominator
+  conditioning floor for the dynamic bond dressing (default ``1e-3``); see
+  :ref:`the bond-resolved dynamic kernel section <sc_dynamic_bond_en>` below.
 - ``bond_precondition_atol`` / ``bond_precondition_rtol`` /
   ``bond_precondition_dense_limit`` (``bond_channels = true`` only): tolerances
   and the dense/probe switch of the runtime Hermiticity precondition check
@@ -997,6 +1001,212 @@ back silently. The FLEX output directory can be selected with
 ``[file.input] path_to_flex_output`` (default: the ``[file.output]``
 directory), and the individual filenames overridden with the ``[eliashberg]``
 keys ``flex_chi_s`` / ``flex_chi_c`` / ``flex_green``.
+
+.. _sc_dynamic_bond_en:
+
+Bond-resolved dynamic kernel (``bond_channels = true``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Setting ``[eliashberg] bond_channels = true`` together with
+``frequency = "dynamic"`` extends the bond-resolved interaction machinery of
+the static solver (see the ``bond_channels`` key and the "Bond-channel
+provenance" subsection earlier in this document) to the full frequency-dependent
+kernel: the bond bubble :math:`\bar\chi_{(m,idx),(m',idx')}(\mathbf{q},
+i\nu)` and its RPA dressing are built at **every** bosonic Matsubara
+transfer, not only the static (:math:`i\nu = 0`) slice the static bond path
+uses. This is a separate code path from the "FLEX prerequisite" above: it
+never reads ``chiq_s.npz`` / ``chiq_c.npz`` -- it builds its own
+frequency-resolved :math:`\bar\chi` directly from a Green function.
+
+**State machine.** The dynamic solver's bond behaviour depends on
+``bond_channels``, ``frequency``, ``chi0q_mode`` and ``bond_green`` as
+follows:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 12 18 12 46
+
+   * - ``bond_channels``
+     - ``frequency``
+     - ``chi0q_mode``
+     - ``bond_green``
+     - behavior
+   * - ``false``
+     - ``dynamic``
+     - ``"flex"`` (required)
+     - --
+     - existing scalar dynamic path, byte-identical
+   * - ``true``
+     - ``dynamic``
+     - unset
+     - set
+     - bond dynamic kernel; no chi file is read
+   * - ``true``
+     - ``dynamic``
+     - set (any)
+     - set
+     - as above, plus a warning: "chi0q_mode ignored: bond kernel builds
+       chi-bar internally"
+   * - ``true``
+     - ``dynamic``
+     - --
+     - unset
+     - bond dynamic kernel on the bare :math:`H_0` Green function, plus a
+       prominent warning (provenance ``bond_green_source = "bare"``)
+   * - ``true``
+     - ``static``
+     - --
+     - --
+     - existing static bond path, unchanged
+
+Minimal opt-in example (the Phase A acceptance configuration -- the FLEX
+config that produces ``green.npz`` is shown too, since this path always
+needs a frequency-resolved Green function for a physically meaningful
+result):
+
+.. code-block:: toml
+
+   [mode]
+   mode = "FLEX"                 # produces green.npz (reduced, Hartree-only V)
+   calc_scheme = "reduced"
+   [mode.param]
+   CellShape = [32, 32, 1]
+   Nmat = 2048                   # = 2*N_c for the paper's N_c = 1024
+   T = 0.02
+   filling = 0.35                # n = 0.7 spin-summed, existing convention
+   mixing_scheme = "anderson"
+   anderson_depth = 8
+
+   # --- second config, hwave_sc ---
+   [eliashberg]
+   frequency = "dynamic"
+   bond_channels = true
+   bond_green = "output/green.npz"
+   matsubara_basis = "ir"
+   pairing_type = "triplet"
+   solver_mode = "eigenvalue"
+   bond_diagnostics = true
+
+**Input Green function (** ``bond_green`` **).**
+
+- ``bond_green`` must point to a **uniform**-grid, :math:`\omega`-resolved
+  ``green.npz`` -- i.e. a FLEX run with ``[mode.param] write_densified =
+  true`` (the default). The bond kernel builds its bubble and dressing on
+  the uniform Matsubara grid and only fits the DRESSED susceptibilities onto
+  IR nodes afterwards (see the IR caveats below), so it cannot start from an
+  IR-native (sparse-node) file even when this run itself uses
+  ``matsubara_basis = "ir"``; such a file is rejected with an explicit
+  error pointing at re-running FLEX with ``write_densified = true``.
+- Unlike the static bond path (where the file's own frequency count wins),
+  the dynamic path requires the file's Matsubara count to equal
+  ``[mode.param] Nmat`` exactly -- the gap vector, the IR axes and the
+  output grid are all sized from ``Nmat``, so a differing file grid would
+  silently mix two conventions.
+- If ``bond_green`` is omitted, the branch falls back to the bare Green
+  function built from the transfer Hamiltonian, with a prominent warning
+  that the resulting :math:`\lambda` is an unrenormalized, bare-bubble
+  RPA-ladder number, not comparable with FLEX/dynamic references; provenance
+  records ``bond_green_source = "bare"`` (vs. ``"file"``).
+- ``chi0q_mode`` (however set) is ignored on this path with a warning
+  naming the bypass -- see the state-machine table above.
+
+**New key:** ``bond_cond_tol`` (``[eliashberg]``, positive float, default
+``1e-3``): the RPA-denominator conditioning floor forwarded to the dynamic
+bond dressing's per-(:math:`\mathbf{q}, i\nu`) singular-value guard
+(``dress_bond_dynamic``). Only the dynamic bond branch reads it; the static
+bond path's own conditioning check is unaffected. Near the CDW/SDW boundary
+the default floor can trip on an isolated point at the **edge** of the
+finite Matsubara window rather than at the physical static
+(:math:`i\nu = 0`) point -- the Phase A milestone's :math:`V = 1.2` point
+needs ``bond_cond_tol = 1e-4`` to run to completion (the resulting leading
+eigenvalue was checked to be identical to 10 significant digits across
+``bond_cond_tol`` in ``{1e-4, 1e-5, 1e-6, 1e-8}``, i.e. the near-singular
+direction it relaxes carries negligible physical weight there -- a per-run,
+measured disposition, not a blanket recommendation to relax it everywhere).
+The existing ``bond_max_shells``, ``bond_memory_cap_gb``,
+``bond_diagnostics`` and ``bond_precondition_*`` keys apply to the dynamic
+path with identical semantics (``bond_precondition_*`` is uniform-axis only;
+see the IR caveats below).
+
+.. warning::
+
+   **Solver mode.** Use ``solver_mode = "eigenvalue"`` with the dynamic
+   bond kernel. Like the static bond kernel, it is **repulsion-dominated**:
+   with ``solver_mode = "iteration"`` and no ``spectral_shift``, the
+   unshifted power iteration can converge to a sub-dominant mode and report
+   a WRONG :math:`\lambda` with **no error** -- measured on a small
+   reference fixture, the iteration path reported :math:`1.2539` where the
+   ARPACK leading eigenvalue is :math:`0.9267`. The solver logs a warning to
+   this effect whenever ``solver_mode = "iteration"`` is combined with
+   ``bond_channels = true`` and no ``spectral_shift``. Either use
+   ``solver_mode = "eigenvalue"`` (the recommendation for this path) or set
+   ``[eliashberg] spectral_shift``.
+
+**IR caveats.** ``matsubara_basis = "ir"`` composes with the bond dynamic
+kernel (bubble and dressing run on the uniform grid; only the dressed
+:math:`\chi_{\rm s}/\chi_{\rm c}` and the Green function are fitted onto the
+IR nodes for the kernel itself), with two differences from the scalar
+dynamic IR path (see :ref:`the IR section <sc_dynamic_ir_en>` below):
+
+- The dressed bond susceptibility is **static-dominated by construction**
+  (the charge block carries the Hartree :math:`2V(\mathbf{q})` term, the
+  spin block the near-critical static peak the pairing lives on), so its
+  frequency-independent component is always **retained** regardless of
+  ``ir_keep_static_chi``. An explicit ``ir_keep_static_chi = false`` is
+  **refused with a warning** rather than honored -- dropping it was measured
+  to give a :math:`\lambda` off by about a factor of 2 (or to trip the
+  issue-#57 discretization-artifact guard outright).
+
+.. warning::
+
+   **Known issue.** At the production Matsubara scale (large
+   :math:`\Lambda = \beta\,\omega_{\max}`), the IR compression's
+   keep-constant least-squares fit (``IRAxis.uniform_matrices`` with
+   ``with_constant=True``) becomes ill-conditioned and produces a wildly
+   wrong :math:`\lambda` (orders of magnitude off, growing without bound as
+   ``ir_wmax`` is raised) -- this is a regularization defect in the fit's
+   pseudo-inverse, not a physics effect. It is pinned by a dedicated
+   regression test so a future fix is noticed rather than the milestone
+   silently reverting to ``"ir"`` unnoticed. **Use
+   ``matsubara_basis = "uniform"`` for the bond dynamic kernel until this is
+   fixed**; the Phase A milestone runs on the uniform basis for this reason.
+
+**Scientific caveats (Phase A dynamic bond milestone).** The following are
+established for the 16x16 Phase A milestone
+(``tests/test_bond_onari_milestone_dynamic.py``: single-band square
+lattice, :math:`U = 4`, :math:`n = 0.7`, :math:`T = 0.02`); they are
+reported here, hedged accordingly, because they affect how any dynamic
+``bond_channels = true`` result should be read:
+
+- **Phase A Green functions are Hartree-only in** :math:`V`: the FLEX runs
+  that produce ``bond_green`` do not yet dress the self-energy with the
+  bond-resolved fluctuation propagator (that is Phase B, "FLEX
+  :math:`\Sigma` bond-ization" -- not implemented by this branch), so a
+  quantitative comparison against Onari--Arita--Kuroki--Aoki's Fig. 3
+  (PRB 70, 094523 (2004) / cond-mat/0312314) is deferred to Phase B.
+- **Static and dynamic** :math:`\lambda` **values must never be
+  cross-compared**: the two solvers evaluate structurally different
+  equations (the static approximation collapses the pairing vertex to its
+  :math:`i\nu = 0` slice), and the Phase A milestone measured the
+  static/dynamic ratio to fall *outside*, and on the opposite side of, the
+  loose [1.5, 3.5] literature indicator window at every sweep point.
+- **The dynamic bond bubble currently lacks the** ``green0_tail``
+  **high-frequency tail correction** (``bond_bubble_dynamic``'s own
+  docstring flags this as deferred): near the CDW boundary this makes the
+  absolute :math:`\lambda` scale dominated by a window-edge artifact rather
+  than physics. Measured on the milestone: at :math:`V = 1.2`, flattening
+  only the outer quarter-shell of the bosonic window
+  (:math:`|\tilde n| > 3\,{\rm nmat}/8`) onto its own static value shifts
+  the reported :math:`\lambda_t` from :math:`1.855` to :math:`0.249` --
+  an **86%** change, i.e. the raw number at that point is dominated by the
+  artifact, not by the physical near-instability. The effect is much
+  smaller (roughly +11-16%, weakly :math:`V`-dependent) away from the CDW
+  boundary. **Treat absolute dynamic** :math:`\lambda` **values as
+  provisional** until the tail correction is implemented; the milestone's
+  REQUIRED criterion -- strict monotonic increase of :math:`\lambda_t(V)` --
+  holds independently in both the raw series and the artifact-suppressed
+  (outer-shell-flattened) series, so the qualitative trend is robust even
+  though the absolute scale is not yet.
 
 Outputs
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

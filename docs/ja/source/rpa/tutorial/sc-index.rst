@@ -376,6 +376,12 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   :math:`N_q \times ND \times ND` 配列（ :math:`ND = n_{\rm orb}^2 B` ）の
   サイズを評価し、超える場合は原因となるチャネル数を示してエラーにします
   （暴走した確保は行いません）。
+- ``bond_cond_tol`` （``bond_channels = true`` **かつ** ``frequency =
+  "dynamic"`` のときのみ有効。静的パスでは値は受け付けられますが
+  無視されます）: 動的ボンド dressing の RPA 分母 conditioning フロア
+  （デフォルト ``1e-3``）。下記の
+  :ref:`ボンド分解された動的カーネルの節 <sc_dynamic_bond_ja>` を参照して
+  ください。
 - ``bond_precondition_atol`` / ``bond_precondition_rtol`` /
   ``bond_precondition_dense_limit`` （ ``bond_channels = true`` のときのみ）:
   実行時エルミート性チェックの許容値と dense／probe 切り替え
@@ -972,6 +978,210 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 ディレクトリは ``[file.input] path_to_flex_output`` で指定でき（既定は
 ``[file.output]`` ディレクトリ）、個々のファイル名は ``[eliashberg]`` の
 ``flex_chi_s`` / ``flex_chi_c`` / ``flex_green`` で上書きできます。
+
+.. _sc_dynamic_bond_ja:
+
+ボンド分解された動的カーネル（``bond_channels = true``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``[eliashberg] bond_channels = true`` を ``frequency = "dynamic"`` と
+組み合わせると、静的ソルバーのボンド分解された相互作用機構（``bond_channels``
+キーと、本文書の前半にある「ボンドチャネルの provenance」小節を参照）が、完全に
+振動数に依存するカーネルへ拡張されます: ボンドバブル
+:math:`\bar\chi_{(m,idx),(m',idx')}(\mathbf{q}, i\nu)` とその RPA dressing
+が、静的ボンドパスが使う静的（:math:`i\nu = 0`）スライスだけでなく、
+**すべての** ボゾン松原振動数で構築されます。これは上記の「FLEX の前提条件」
+とは別のコードパスです: ``chiq_s.npz`` / ``chiq_c.npz`` は一切読み込まれず、
+Green 関数から直接、自前の振動数分解された :math:`\bar\chi` を構築します。
+
+**状態機械。** 動的ソルバーのボンド関連の挙動は、``bond_channels``、
+``frequency``、``chi0q_mode``、``bond_green`` の組み合わせで以下のように
+決まります:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 12 18 12 46
+
+   * - ``bond_channels``
+     - ``frequency``
+     - ``chi0q_mode``
+     - ``bond_green``
+     - 挙動
+   * - ``false``
+     - ``dynamic``
+     - ``"flex"``\ （必須）
+     - --
+     - 既存のスカラー動的パス、バイト単位で不変
+   * - ``true``
+     - ``dynamic``
+     - 未設定
+     - 設定あり
+     - ボンド動的カーネル。chi ファイルは読み込まれない
+   * - ``true``
+     - ``dynamic``
+     - 設定あり（任意の値）
+     - 設定あり
+     - 上と同じ、加えて警告: "chi0q_mode ignored: bond kernel builds
+       chi-bar internally"
+   * - ``true``
+     - ``dynamic``
+     - --
+     - 未設定
+     - 裸の :math:`H_0` Green 関数上でのボンド動的カーネル、加えて
+       目立つ警告（provenance ``bond_green_source = "bare"``）
+   * - ``true``
+     - ``static``
+     - --
+     - --
+     - 既存の静的ボンドパス、変更なし
+
+最小限のオプトイン例（Phase A の受け入れ設定 -- このパスは物理的に意味のある
+結果を得るために常に振動数分解された Green 関数を必要とするため、
+``green.npz`` を生成する FLEX 設定も併せて示します）:
+
+.. code-block:: toml
+
+   [mode]
+   mode = "FLEX"                 # produces green.npz (reduced, Hartree-only V)
+   calc_scheme = "reduced"
+   [mode.param]
+   CellShape = [32, 32, 1]
+   Nmat = 2048                   # = 2*N_c for the paper's N_c = 1024
+   T = 0.02
+   filling = 0.35                # n = 0.7 spin-summed, existing convention
+   mixing_scheme = "anderson"
+   anderson_depth = 8
+
+   # --- second config, hwave_sc ---
+   [eliashberg]
+   frequency = "dynamic"
+   bond_channels = true
+   bond_green = "output/green.npz"
+   matsubara_basis = "ir"
+   pairing_type = "triplet"
+   solver_mode = "eigenvalue"
+   bond_diagnostics = true
+
+**入力 Green 関数（** ``bond_green`` **）。**
+
+- ``bond_green`` は **一様グリッド** の、:math:`\omega` 分解済み
+  ``green.npz`` を指定しなければなりません -- すなわち ``[mode.param]
+  write_densified = true``\ （既定値）で実行した FLEX の出力です。ボンド
+  カーネルはバブルと dressing を一様松原グリッド上で構築し、その後 dressed
+  された感受率だけを IR ノードへフィットします（下記の IR に関する留保事項を
+  参照）。そのため、このソルバー自身が ``matsubara_basis = "ir"`` を使う
+  場合でも、IR ネイティブ（スパースノード）なファイルからは開始できません。
+  そのようなファイルは、``write_densified = true`` で FLEX を再実行するよう
+  明示的に指し示すエラーで拒否されます。
+- 静的ボンドパス（ファイル自身の振動数個数が優先される）とは異なり、動的
+  パスはファイルの松原振動数個数が ``[mode.param] Nmat`` と厳密に一致する
+  ことを要求します -- ギャップベクトル・IR 軸・出力グリッドはすべて
+  ``Nmat`` から決まるサイズであるため、異なるグリッドを持つファイルは
+  2つの規約を黙って混在させてしまうからです。
+- ``bond_green`` を省略した場合、このブランチはトランスファーハミルトニアン
+  から作った裸の Green 関数にフォールバックし、得られる :math:`\lambda` が
+  くりこまれていない裸のバブルによる RPA ラダーの数値であり FLEX／動的の
+  参照値と比較できないことを示す目立つ警告を出します。provenance には
+  ``bond_green_source = "bare"``\ （ファイルの場合は ``"file"``\ ）が
+  記録されます。
+- ``chi0q_mode``\ （どのような設定であっても）はこのパスでは無視され、
+  その旨の警告が出ます -- 上記の状態機械の表を参照してください。
+
+**新しいキー:** ``bond_cond_tol``\ （``[eliashberg]``、正の浮動小数点数、
+既定値 ``1e-3``\ ）: 動的ボンド dressing の各 (:math:`\mathbf{q}, i\nu`)
+点における特異値ガード（``dress_bond_dynamic``）に渡される RPA 分母の
+conditioning フロアです。動的ボンドブランチのみがこれを読み込みます。
+静的ボンドパス自身の conditioning チェックには影響しません。CDW/SDW
+境界付近では、既定のフロアが物理的な静的（:math:`i\nu = 0`）点ではなく、
+有限松原ウィンドウの **端** にある孤立点でトリップすることがあります --
+Phase A マイルストーンの :math:`V = 1.2` 点は最後まで実行するために
+``bond_cond_tol = 1e-4`` を必要とします（得られる主要固有値は
+``bond_cond_tol`` を ``{1e-4, 1e-5, 1e-6, 1e-8}`` の範囲で変えても有効数字
+10桁まで一致することを確認しており、つまりこの値が緩和する準特異方向は
+そこでは無視できる物理的重みしか持たないことを意味します -- これは実行
+ごとに測定された判断であり、あらゆる場合に緩和してよいという一般的な
+推奨ではありません）。既存の ``bond_max_shells``、``bond_memory_cap_gb``、
+``bond_diagnostics``、``bond_precondition_*`` キーは、動的パスに対しても
+同じ意味で適用されます（``bond_precondition_*`` は一様軸専用です。下記の
+IR に関する留保事項を参照）。
+
+.. warning::
+
+   **ソルバーモード。** ボンド動的カーネルでは ``solver_mode =
+   "eigenvalue"`` を使ってください。静的ボンドカーネルと同様、これは
+   **斥力優勢** です: ``solver_mode = "iteration"`` を ``spectral_shift``
+   なしで使うと、シフトなしのべき乗法が劣勢モードへ収束し、**エラーなしに**
+   **誤った** :math:`\lambda` を報告することがあります -- ある小さな
+   参照フィクスチャで測定したところ、iteration パスは :math:`1.2539` を
+   報告しましたが、ARPACK による主要固有値は :math:`0.9267` でした。
+   ``solver_mode = "iteration"`` が ``bond_channels = true`` と
+   ``spectral_shift`` 未設定で組み合わされると、ソルバーはその旨の警告を
+   出力します。このパスでは ``solver_mode = "eigenvalue"``\ （推奨）を
+   使うか、``[eliashberg] spectral_shift`` を設定してください。
+
+**IR に関する留保事項。** ``matsubara_basis = "ir"`` はボンド動的カーネル
+と組み合わせて使えます（バブルと dressing は一様グリッド上で走り、カーネル
+自体のために dressed された :math:`\chi_{\rm s}/\chi_{\rm c}` と Green
+関数だけが IR ノードへフィットされます）が、スカラー動的 IR パス
+（下記の :ref:`IR基底の節 <sc_dynamic_ir>` を参照）とは2点異なります:
+
+- dressed されたボンド感受率は **構造的に静的成分が支配的** です
+  （電荷ブロックには Hartree の :math:`2V(\mathbf{q})` 項が、スピン
+  ブロックにはペアリングが乗る臨界に近い静的ピークがあります）。そのため
+  その振動数に依存しない成分は ``ir_keep_static_chi`` の値によらず常に
+  **保持されます**。明示的な ``ir_keep_static_chi = false`` は尊重されず、
+  **警告付きで拒否されます** -- これを落とすと :math:`\lambda` がおよそ
+  2倍ずれる（あるいは issue-#57 の離散化アーティファクトガードに
+  トリップする）ことが測定されています。
+
+.. warning::
+
+   **既知の問題。** 実運用スケールの松原振動数（大きな
+   :math:`\Lambda = \beta\,\omega_{\max}`\ ）では、IR 圧縮の定数保持
+   最小二乗フィット（``with_constant=True`` の ``IRAxis.uniform_matrices``\ ）
+   の条件数が悪化し、著しく誤った :math:`\lambda`\ （``ir_wmax`` を
+   上げるにつれて際限なく大きくなる、桁違いの値）を生じます -- これは
+   フィットの擬似逆行列における正則化の欠陥であり、物理現象では
+   ありません。将来の修正が見過ごされることなく検知されるよう、専用の
+   回帰テストで固定されています。**この問題が修正されるまで、ボンド
+   動的カーネルには** ``matsubara_basis = "uniform"`` **を使ってください**\
+   ；Phase A マイルストーンもこの理由で一様基底上で実行しています。
+
+**科学的な留保事項（Phase A 動的ボンドマイルストーン）。** 以下は 16x16 の
+Phase A マイルストーン（``tests/test_bond_onari_milestone_dynamic.py``:
+単一バンド正方格子、:math:`U = 4`、:math:`n = 0.7`、:math:`T = 0.02`\ ）
+について確立された事実です。動的 ``bond_channels = true`` の結果一般の
+読み方に影響するため、適切にヘッジした上でここに記載します:
+
+- **Phase A の Green 関数は** :math:`V` **について Hartree のみ** です:
+  ``bond_green`` を生成する FLEX 計算はまだ、ボンド分解されたゆらぎ伝播
+  関数で自己エネルギーを dressing していません（それは Phase B、
+  「FLEX :math:`\Sigma` のボンド化」であり、このブランチでは実装されて
+  いません）。したがって Onari, Arita, Kuroki, Aoki の Fig. 3
+  （PRB 70, 094523 (2004) / cond-mat/0312314）との定量比較は Phase B に
+  持ち越されます。
+- **静的な** :math:`\lambda` **と動的な** :math:`\lambda` **は決して
+  相互比較してはいけません**: 両ソルバーは構造的に異なる方程式を評価して
+  おり（静的近似はペアリング頂点を :math:`i\nu = 0` スライスへ潰します）、
+  Phase A マイルストーンでは静的／動的比が、緩い [1.5, 3.5] という文献
+  指標のウィンドウの外側（しかも反対側）に、スイープの全点で収まることが
+  測定されています。
+- **動的ボンドバブルには現時点で** ``green0_tail`` **高振動数テール補正が
+  欠けています**\ （``bond_bubble_dynamic`` 自身の docstring がこれを
+  未実装として明記しています）: CDW 境界付近では、これにより絶対的な
+  :math:`\lambda` のスケールが物理ではなくウィンドウ端のアーティファクトに
+  支配されてしまいます。マイルストーンでの測定: :math:`V = 1.2` で、
+  ボゾンウィンドウの外側四分の一シェル（:math:`|\tilde n| > 3\,{\rm
+  nmat}/8`\ ）だけをその静的値へ平坦化すると、報告される :math:`\lambda_t`
+  は :math:`1.855` から :math:`0.249` へと変化します -- **86%** の変化
+  であり、この点での生の数値は物理的な準不安定性ではなくアーティファクトに
+  支配されていることを意味します。CDW 境界から離れるとこの効果はずっと
+  小さくなります（おおよそ +11〜16%、:math:`V` への依存も弱いです）。
+  テール補正が実装されるまで **絶対的な動的** :math:`\lambda` **の値は
+  暫定的なものとして扱ってください**。マイルストーンの必須基準である
+  :math:`\lambda_t(V)` の厳密な単調増加は、生の系列とアーティファクトを
+  抑制した（外側シェルを平坦化した）系列の両方で独立に成り立っており、
+  絶対スケールがまだ確立していない一方で、定性的な傾向は堅牢です。
 
 出力
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
