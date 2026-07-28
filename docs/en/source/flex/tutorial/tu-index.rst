@@ -298,11 +298,14 @@ earlier FLEX run instead seeds the loop from that self-energy:
 
 .. warning::
 
-   Do not seed from a multi-orbital ``sigma.npz`` produced by
-   ``calc_scheme = "general"`` before the orbital-pair transpose fix: such a
-   file is wrong off the orbital diagonal and the SCF loop will converge to the
-   same wrong solution. Regenerate the seed first -- see
-   :ref:`the migration warning <flex_general_transpose_fix>`.
+   A multi-orbital ``sigma.npz`` produced by ``calc_scheme = "general"``
+   before the orbital-pair transpose fix is wrong off the orbital diagonal.
+   The corrected solver converges to the corrected fixed point regardless of
+   the seed, so such a file does not poison the result, but it is a poor warm
+   start -- it can slow convergence or steer the iteration towards a different
+   solution branch, which defeats the purpose of seeding. Prefer regenerating
+   it, and note that the run's other outputs must be regenerated in any case --
+   see :ref:`the migration warning <flex_general_transpose_fix>`.
 
 .. code-block:: toml
 
@@ -543,11 +546,12 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   Eliashberg loader (``hwave_sc``) uses this tag to interpret the orbital
   indices; it is essential for two-orbital systems, where the spin-orbital and
   orbital-pair dimensions coincide (both ``4``) and shape alone is ambiguous.
-- ``chi_orbital_layout``: the orbital-pair index ORDER, ``"acbd"`` — the row
-  index is the first pair and the column index the second, matching
-  ``chi0[a,c,b,d]``. Both schemes write this order, so both stamp the marker;
-  it is separate from ``chi_convention``, which selects the vertex and the
-  shape. The marker exists so that a file written by a pre-fix build of the
+- ``chi_orbital_layout``: written by the **general** scheme only, value
+  ``"acbd"`` — the four orbital legs are stored as the pairs ``(a,c)`` (row)
+  and ``(b,d)`` (column). Reduced/squashed files do not carry it: their axes
+  are spin-orbital (``s*norb + a``), not four orbital legs, so the loader has
+  to extract a spin block before the array is an orbital-pair object at all.
+  The marker exists so that a file written by a pre-fix build of the
   general path — which stored the arrays orbital-pair transposed under the same
   ``"myo"`` tag, and is indistinguishable by tag alone — is rejected on load
   with a regenerate message instead of silently producing a transposed pairing
@@ -777,14 +781,16 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
    .. warning::
 
-      **Result change for** ``calc_scheme = "general"``. Up to and including
-      the previous release, the general path applied a spurious orbital-pair
-      transpose when building its effective interaction. This transposed the
-      self-energy in the orbital indices, so ``sigma.npz`` — and everything
-      derived from it (occupations, energies, Eliashberg eigenvalues) — was
-      wrong **off the orbital diagonal**. Single-orbital runs are unaffected
-      (the transpose is the identity there); multi-orbital runs are affected
-      whenever the Green function has orbital off-diagonal weight. For a
+      **Result change for** ``calc_scheme = "general"``. Until this fix the
+      general path applied a spurious orbital-pair transpose when building its
+      effective interaction, so the self-energy was built from the transposed
+      bubble: ``sigma.npz`` — and everything derived from it (occupations,
+      energies, Eliashberg eigenvalues) — was correct on the orbital diagonal
+      and wrong **off** it. The scheme has only ever existed in development
+      builds, so this affects work done on ``develop``, not any released
+      version. Single-orbital runs are unaffected (the transpose is the
+      identity there); multi-orbital runs are affected whenever the Green
+      function has orbital off-diagonal weight. For a
       density-only interaction (``CoulombIntra`` alone) the general and reduced
       schemes now agree on the self-energy to machine precision, as they must.
 

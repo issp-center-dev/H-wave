@@ -544,7 +544,13 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(meta_c or {}))
         return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
 
-    def test_writer_stamps_acbd_layout_both_paths(self):
+    def test_writer_stamps_acbd_layout_for_orbital_pair_files_only(self):
+        """The marker describes four orbital legs stored as the pairs (a,c),
+        (b,d).  Only the general path writes such a file: the reduced/squashed
+        arrays are indexed by spin-orbital ``s*norb + a`` and have to have a
+        spin block extracted before they are an orbital-pair object at all, so
+        stamping them "acbd" would be false metadata.  The reader accepts
+        marker-less "kuroki" files."""
         import tempfile
         flex = _make_general_flex(norb=2)
         nd = flex.norb * flex.norb
@@ -560,7 +566,58 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 with np.load(os.path.join(d, name)) as data:
                     self.assertEqual(str(data["chi_convention"]), conv)
-                    self.assertEqual(str(data["chi_orbital_layout"]), "acbd")
+                    if general:
+                        self.assertEqual(
+                            str(data["chi_orbital_layout"]), "acbd")
+                    else:
+                        self.assertNotIn("chi_orbital_layout", data)
+
+    def test_real_reduced_run_writes_spin_orbital_axes_and_no_marker(self):
+        """End-to-end counterpart of the writer test above.
+
+        The one above toggles a flag on a general solver and writes synthetic
+        norb^2 arrays, so it cannot show what a real reduced run puts on disk.
+        Run the reduced scheme for real and check the two facts the marker
+        contract rests on: the saved axes are spin-orbital (nd = norb * ns, not
+        norb^2) and no orbital-pair layout marker is claimed for them.
+        """
+        import tempfile
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+
+        with tempfile.TemporaryDirectory(prefix="hwave_layout_") as d:
+            _write_2d_2orb_onsite_fixture(d)
+            info_input = {
+                'path_to_input': d,
+                'interaction': {
+                    'path_to_input': d,
+                    'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                    'CoulombIntra': 'coulombintra.dat',
+                },
+            }
+            ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+            green_info = read_input_k.QLMSkInput(info_input).get_param('green')
+            solver = solver_flex.FLEX(ham, {}, {
+                'mode': 'FLEX',
+                'param': {'T': 0.5, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                          'SubShape': [1, 1, 1], 'Nmat': 8,
+                          'IterationMax': 1, 'Mix': 1.0},
+                'calc_scheme': 'reduced'})
+            out = os.path.join(d, "output")
+            os.makedirs(out, exist_ok=True)
+            solver.solve(green_info, out)
+            solver.save_results(
+                {"path_to_output": out, "chiq_s": "chiq_s", "chiq_c": "chiq_c"},
+                green_info)
+
+            norb, ns = solver.norb, solver.ns
+            self.assertEqual(norb, 2)
+            for name, key in (("chiq_s.npz", "chiq_s"), ("chiq_c.npz", "chiq_c")):
+                with np.load(os.path.join(out, name)) as data:
+                    self.assertEqual(str(data["chi_convention"]), "kuroki")
+                    self.assertNotIn("chi_orbital_layout", data)
+                    # spin-orbital axes, not orbital-pair
+                    self.assertEqual(data[key].shape[-1], norb * ns)
 
     def test_reader_rejects_myo_without_layout_marker(self):
         import tempfile

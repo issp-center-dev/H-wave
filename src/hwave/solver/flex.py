@@ -1745,8 +1745,10 @@ class FLEX(RPA):
         # these as general-path (orbital-pair shape + MYO S/C charge convention).
         #
         # This used to transpose the pair axes on the way IN, which is what
-        # issue #91 was: the transpose reached V_eff and hence transposed the
-        # orbital off-diagonal of Sigma.  It is gone, so there is nothing left
+        # issue #91 was: the transpose reached V_eff, so Sigma was built from
+        # the transposed bubble -- Sigma_mn came out as chi0_nm G_mn instead of
+        # chi0_mn G_mn, i.e. right on the orbital diagonal and wrong off it.
+        # (Sigma itself is NOT simply transposed: G stays in its own slots.)  It is gone, so there is nothing left
         # to undo here either.
         #
         # Effect on the SAVED output, relative to the previous behaviour:
@@ -1870,7 +1872,8 @@ class FLEX(RPA):
         Earlier revisions applied an "RPA -> MYO" orbital-pair transpose here
         (and undid it on the way out).  That was wrong (issue #91): the
         round-trip left the public susceptibilities untouched but transposed
-        ``V_eff``, so the orbital OFF-diagonal of Sigma came out transposed.  The
+        ``V_eff``, so Sigma was built from the transposed bubble and came out
+        wrong off the orbital diagonal.  The
         index order is now pinned by a ground truth independent of this codebase
         -- the O(U^2) self-energy of an exactly-diagonalized 3-orbital model, see
         ``tests/test_flex_sopt_index_order.py``.
@@ -2618,24 +2621,30 @@ class FLEX(RPA):
         # matrices to pair the susceptibilities with: "myo" (general full-vertex
         # path) selects build_sc_matrices_myo, "kuroki" (reduced path) the
         # default builder; the two differ only in the C(ab,ab) charge value.
-        # NOTE: the arrays themselves are stored in the public RPA [a,c,b,d]
-        # orbital-pair index order for BOTH paths (see _flex_compute_veff_general,
-        # issue #78) -- the tag selects the S/C charge convention, not the index
-        # layout. It also marks the general path's orbital-pair shape
-        # (nd = norb^2) vs the reduced path's spin-orbital shape (nd = norb*ns).
+        # It also marks the general path's orbital-pair shape (nd = norb^2) vs
+        # the reduced path's spin-orbital shape (nd = norb*ns).
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
-                           # Explicit self-describing index-order marker: both
-                           # paths store [a,c,b,d]. Lets the reader distinguish
-                           # these files from pre-#78 dev outputs (which stored
-                           # the general path's chi MYO-transposed under the
-                           # same "myo" tag) and fail fast on any future layout
-                           # change instead of silently misreading.
-                           chi_orbital_layout="acbd",
                            **_freq_meta("B"))
+        if self._flex_general:
+            # Self-describing index-order marker for the ORBITAL-PAIR files
+            # only: their axes are the pairs (a,c) and (b,d), stored in that
+            # order. It lets the reader tell these files from pre-fix general
+            # outputs, which stored the same arrays orbital-pair TRANSPOSED
+            # under the same "myo" tag and are otherwise indistinguishable, and
+            # makes any future layout change fail fast instead of being
+            # silently misread.
+            #
+            # Deliberately NOT stamped on reduced/squashed files: those axes are
+            # spin-orbital (s*norb + a), not four orbital legs -- the loader has
+            # to extract a spin block before the array becomes an orbital-pair
+            # object at all (see sc._to_orbital_pair). Calling them "acbd" would
+            # be false machine-readable metadata. The reader accepts
+            # marker-less "kuroki" files; only "myo" requires the marker.
+            common_meta["chi_orbital_layout"] = "acbd"
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
