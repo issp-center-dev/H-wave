@@ -1496,7 +1496,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     ``(nfreq, nvol, nd, nd)`` -- no reshape/expansion, so callers that only
     need one static frequency can slice before expanding.
 
-    With ``allow_ir=True`` (the dynamic Eliashberg caller) the return value
+    The tuple is ``(chi_s_raw, chi_c_raw, chi_convention, legacy_tags)``; with
+    ``allow_ir=True`` it is ``(chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+    legacy_tags)``. In that case the return value
     gains a fourth element ``ir_meta``: ``None`` for uniform files, or
     ``{"chis": meta, "chic": meta}`` for IR-native ones (each file carries
     its own node set; the caller refits both independently). The arity
@@ -1668,18 +1670,53 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     # TEMPORARIES: abs(up), up-down and abs(up-down) at full size are each of
     # the order of the stored array, which on a production file would add
     # multi-GB allocations and could fail a valid file on memory alone.
-    nfreq = chi.shape[0] if chi.ndim >= 3 else 1
+    if chi.ndim != 4:
+        # The loaders pass (nfreq, nvol, nd, nd). Anything else would make the
+        # per-frequency indexing below silently inspect one orbital row instead
+        # of the whole matrix, so refuse rather than guess.
+        raise ValueError(
+            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility, "
+            "got shape {}.".format(chi.shape))
+    nfreq = chi.shape[0]
+
+    # Per-frequency RATIOS, not a global difference over a global scale. The
+    # ratio decides acceptance, and a single global pair lets a large redundant
+    # frequency mask a small completely non-redundant one: with frequency 0
+    # redundant at scale 1e14 and frequency 1 holding up=1, down=0, the true
+    # mismatch is 100% while the global ratio is 1e-14 -- under the threshold.
+    #
+    # Non-finite values are rejected outright here rather than folded into the
+    # maxima: max(0.0, nan) is 0.0 in Python, so a NaN in a discarded block
+    # would leave the running maximum untouched and the array would be accepted
+    # as exactly redundant.
     scale = d_down = d_cross = 0.0
+    worst_ratio = 0.0
     any_down = any_cross = False
     for w in range(nfreq):
         u, dn = up[w], down[w]
         cu, cd = cross_ud[w], cross_du[w]
-        scale = max(scale, float(np.max(np.abs(u))))
-        d_down = max(d_down, float(np.max(np.abs(u - dn))))
-        d_cross = max(d_cross, float(np.max(np.abs(cu))),
-                      float(np.max(np.abs(cd))))
+        for name, blk in (("up", u), ("down", dn),
+                          ("up-down cross", cu), ("down-up cross", cd)):
+            if blk.size and not np.all(np.isfinite(blk)):
+                raise ValueError(
+                    "The reduced FLEX susceptibility {} has non-finite values "
+                    "(NaN or Inf) in its {} block at frequency index {}. NaN "
+                    "compares false against everything, so without this check "
+                    "it would leave the redundancy maxima untouched and the "
+                    "array would be accepted as exactly "
+                    "redundant.".format(label, name, w))
+        w_scale = float(np.max(np.abs(u)))
+        w_down = float(np.max(np.abs(u - dn)))
+        w_cross = max(float(np.max(np.abs(cu))), float(np.max(np.abs(cd))))
+        scale = max(scale, w_scale)
+        d_down = max(d_down, w_down)
+        d_cross = max(d_cross, w_cross)
+        worst_ratio = max(
+            worst_ratio,
+            max(w_down, w_cross) / max(w_scale, np.finfo(float).tiny))
         any_down = any_down or bool(np.any(dn))
         any_cross = any_cross or bool(np.any(cu)) or bool(np.any(cd))
+
     if d_down == 0.0 and d_cross == 0.0:
         return
 
@@ -1723,7 +1760,7 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
         parts.append("the cross-spin blocks are nonzero "
                      "(max {:.3e})".format(d_cross))
     detail = " and ".join(parts)
-    ratio = max(d_down, d_cross) / max(scale, np.finfo(float).tiny)
+    ratio = worst_ratio
 
     if ratio <= _SPIN_DISCARD_ROUNDOFF_RATIO:
         logger.warning(

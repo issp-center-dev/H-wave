@@ -1206,6 +1206,27 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sc._load_flex_susceptibilities_full(inp, norb, Nx, Ny, Nz)
 
+    def test_non_finite_susceptibility_is_refused(self):
+        """NaN in a DISCARDED block is the dangerous case: max(0.0, nan) is 0.0
+        in Python, so it would leave the redundancy maxima untouched and the
+        array would be accepted as exactly redundant."""
+        import hwave.sc as sc
+        for bad in (np.nan, np.inf):
+            for blk, sl in (("up", (slice(None), slice(None), 0, 0)),
+                            ("down", (slice(None), slice(None), 2, 2)),
+                            ("cross", (slice(None), slice(None), 0, 2))):
+                with self.subTest(value=bad, block=blk):
+                    with tempfile.TemporaryDirectory() as d:
+                        inp, norb, Nx, Ny, Nz = self._write(d, build=self._para)
+                        f = os.path.join(d, "chiq_s.npz")
+                        z = dict(np.load(f))
+                        z["chiq_s"][sl] = bad
+                        np.savez(f, **z)
+                        with self.assertRaises(ValueError) as cm:
+                            sc._load_flex_susceptibilities(inp, norb,
+                                                           Nx, Ny, Nz)
+                    self.assertIn("non-finite", str(cm.exception))
+
     def test_non_finite_green_is_refused(self):
         """NaN fails every inequality, so without an explicit check a corrupt or
         diverged Green function would slip past the block comparison and enter
@@ -1271,16 +1292,27 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
         n = self.NORB
         up, dn = chi[..., :n, :n], chi[..., n:, n:]
         cu, cd = chi[..., :n, n:], chi[..., n:, :n]
-        scale = float(np.max(np.abs(up)))
-        d_down = float(np.max(np.abs(up - dn)))
-        d_cross = max(float(np.max(np.abs(cu))), float(np.max(np.abs(cd))))
-        if d_down == 0.0 and d_cross == 0.0:
-            return False
-        if scale > 0.0 and not np.any(dn) and not np.any(cu) and not np.any(cd):
-            return False        # legacy layout, accepted when authorised
         import hwave.sc as sc
-        ratio = max(d_down, d_cross) / max(scale, np.finfo(float).tiny)
-        return ratio > sc._SPIN_DISCARD_ROUNDOFF_RATIO
+        if float(np.max(np.abs(up - dn))) == 0.0 and \
+                float(np.max(np.abs(cu))) == 0.0 and \
+                float(np.max(np.abs(cd))) == 0.0:
+            return False
+        if float(np.max(np.abs(up))) > 0.0 and not np.any(dn) \
+                and not np.any(cu) and not np.any(cd):
+            return False        # legacy layout, accepted when authorised
+        # PER-FREQUENCY ratios. An earlier version of this reference mirrored
+        # production's single global difference over global scale, so it agreed
+        # with the implementation by construction and could not detect a large
+        # redundant frequency masking a small non-redundant one.
+        worst = 0.0
+        for w in range(chi.shape[0]):
+            u, d = up[w], dn[w]
+            c1, c2 = cu[w], cd[w]
+            ws = float(np.max(np.abs(u)))
+            wd = max(float(np.max(np.abs(u - d))),
+                     float(np.max(np.abs(c1))), float(np.max(np.abs(c2))))
+            worst = max(worst, wd / max(ws, np.finfo(float).tiny))
+        return worst > sc._SPIN_DISCARD_ROUNDOFF_RATIO
 
     def _cases(self):
         import hwave.sc as sc
@@ -1311,6 +1343,18 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
                 c = mk()
                 c[0, ..., n:, n:] *= 0.5     # only an unused frequency differs
                 yield "n%d tail-only" % nfreq, c
+
+                # A huge redundant frequency next to a small, totally
+                # non-redundant one. Judged globally the mismatch looks like
+                # 1e-14 and slips under the threshold; judged per frequency it
+                # is 100%.
+                m = np.zeros((nfreq, 5, nd_so, nd_so), dtype=complex)
+                m[0, :, :n, :n] = 1e14
+                m[0, :, n:, n:] = 1e14
+                m[1, :, :n, :n] = 1.0        # down block left at zero
+                m[1, :, n:, n:] = 0.0
+                m[1, :, 0, n] = 1e-30        # keep it out of the legacy branch
+                yield "n%d masked-by-scale" % nfreq, m
 
     def test_every_case_decides_the_same_way(self):
         import hwave.sc as sc
