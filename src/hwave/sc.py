@@ -190,24 +190,24 @@ def _eliashberg_frequency(input_dict):
     return freq
 
 
-def _reject_bond_channels_dynamic(eli_param):
-    """Reject ``bond_channels=true`` on the dynamic Eliashberg entry point.
+def _warn_dynamic_bond_ignores_chi(eli_param):
+    """Warn that ``chi0q_mode`` is inert in the DYNAMIC bond branch.
 
-    The bond-resolved vertex is implemented for the STATIC path only (spec S5
-    guard / non-goal S2): the dynamic kernel would need the bond channels
-    carried through the frequency-resolved vertex, which is a separate spec.
-    Fail loudly rather than silently running the scalar dynamic vertex.
-
-    The flag goes through the same validator as the static path, so a typo
-    ("ture") is refused here too instead of quietly reading as false.
+    State-machine row 3 of the dynamic-bond spec (S5.2): with
+    ``bond_channels=true`` the frequency-resolved chi-bar is built from the
+    Green function inside the bond machinery, so no chi file is read or
+    computed -- ``chi0q_mode`` (whatever it says, including the ``'flex'``
+    the scalar dynamic path requires) is meaningless there. Warn-and-ignore
+    rather than silently accepting a setting that has no effect.
     """
-    if _bond_bool_option(eli_param, "bond_channels", False):
-        raise ValueError(
-            "[eliashberg] bond_channels=true is not supported with "
-            "frequency='dynamic': the bond-resolved pairing vertex is "
-            "implemented for the STATIC linearized Eliashberg path only. "
-            "Porting the bond kernel to eliashberg_dynamic.py is a deferred "
-            "follow-up; use frequency='static' (or bond_channels=false).")
+    mode = eli_param.get("chi0q_mode")
+    if mode is not None:
+        logger.warning(
+            "[eliashberg] chi0q_mode='%s' is IGNORED with bond_channels=true "
+            "and frequency='dynamic': the bond kernel builds its own "
+            "frequency-resolved chi-bar from the Green function "
+            "([eliashberg] bond_green, or the bare H0 green), so NO chi file "
+            "(chiq_s/chiq_c/chi0q) is read or computed on this path.", mode)
 
 
 def _validate_dynamic_prereqs(input_dict):
@@ -221,12 +221,28 @@ def _validate_dynamic_prereqs(input_dict):
     Raises
     ------
     ValueError
-        If bond_channels is requested, if chi0q_mode is not "flex", or if
-        Nmat is odd.
+        If chi0q_mode is not "flex" on the scalar dynamic path, or if Nmat is
+        odd.
+
+    Notes
+    -----
+    ``bond_channels=true`` is now SUPPORTED on the dynamic path (dynamic
+    bond-channel spec S3.4/S5.2). That branch bypasses the chi files
+    entirely, so the ``chi0q_mode='flex'`` requirement -- which exists only
+    because the scalar dynamic vertex INGESTS FLEX chiq_s/chiq_c -- does not
+    apply to it; ``chi0q_mode`` is instead warned-and-ignored inside
+    ``solve_dynamic`` (:func:`_warn_dynamic_bond_ignores_chi`). The remaining
+    bond guards (real V, CoulombInter present, norb = 1) need the interaction
+    files, so they run in ``solve_dynamic`` right after they are read
+    (:func:`_validate_bond_interactions`) -- the same place the static path
+    runs them.
     """
     eli = input_dict.get("eliashberg", {})
-    _reject_bond_channels_dynamic(eli)
-    if eli.get("chi0q_mode") != "flex":
+    # Goes through the strict validator, so a typo ("ture") is refused here
+    # rather than quietly reading as false and disabling both the feature and
+    # its guards.
+    use_bond = _bond_bool_option(eli, "bond_channels", False)
+    if not use_bond and eli.get("chi0q_mode") != "flex":
         raise ValueError(
             "eliashberg.frequency='dynamic' requires chi0q_mode='flex' "
             "(full-frequency chiq_s/chiq_c and a dressed green are only "
@@ -368,6 +384,19 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
             "with chi0q_mode='calc' or 'load' (which are then unused anyway) "
             "to feed an external/FLEX green.")
 
+    _validate_bond_interactions(norb, interactions, imag_tol=imag_tol)
+
+
+def _validate_bond_interactions(norb, interactions, imag_tol=_BOND_IMAG_TOL):
+    """The chi0q-mode-INDEPENDENT half of :func:`_validate_bond_prereqs`.
+
+    Split out so the DYNAMIC bond path can reuse the identical model guards
+    (real V, CoulombInter declared, norb = 1) without the static path's
+    ``chi0q_mode='flex'`` refusal: the dynamic bond branch never reads a chi
+    file at all (spec S3.4 "chi-file bypass"), so ``chi0q_mode`` is
+    warned-and-ignored there (:func:`_warn_dynamic_bond_ignores_chi`) instead
+    of being an error.
+    """
     # "Truly absent from the config" is the documented trigger (spec S5): a
     # DECLARED term whose values are all zero is explicitly allowed, so that a
     # V sweep keeps a constant channel topology (B does not jump 1 <-> 5) at
@@ -430,6 +459,16 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
 # byte estimate and this list can never silently drift apart.
 _BOND_N_Q_ARRAYS = 9
 
+# Number of FREQUENCY-RESOLVED (N_q, nmat, ND, ND) arrays alive simultaneously
+# at ``bond_channels.dress_bond_dynamic``'s high-water mark, read off its body:
+# the input ``chi_bar_w``, the broadcast identity ``I_mat``, the two RPA
+# denominators ``mat_s``/``mat_c``, and the two solves' outputs
+# ``chi_s_w``/``chi_c_w``. (``S_full``/``C_full`` are broadcast VIEWS of the
+# static S_bond/C_bond and cost nothing; they are budgeted at their own static
+# size in ``q_bytes``.) Named here so the dynamic preflight and that function's
+# buffer discipline cannot silently drift apart.
+_BOND_DRESS_DYN_ARRAYS = 6
+
 
 def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
     """Byte budget for the bond path, broken down by buffer family.
@@ -484,21 +523,51 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
     ``dynamic_nmat``
         ``None`` (default) reproduces the static estimate above byte-for-
         byte -- IDENTICAL to omitting the keyword entirely, so every
-        existing call site is unaffected. When set to the dynamic path's
-        bosonic-frequency grid size, ``bond_bubble_dynamic``'s output
-        (``(N_q, nmat, ND, ND)`` instead of ``(N_q, ND, ND)`` -- see its
-        docstring in ``hwave.solver.bond_channels``) grows ``chi_bar``'s own
-        line of the budget by that factor; only the ``chi_bar`` line is
-        scaled (the other ``_BOND_N_Q_ARRAYS - 1`` q-resolved buffers --
-        ``S_bond``, ``C_bond``, ``chi_s``, ``chi_c``, etc. -- are not yet
-        frequency-resolved by any function that exists at this task, so
-        they are left at their static size), and ``bubble_bytes`` switches
-        to the ``BOND_BUBBLE_DYN_N4_BUFFERS`` / ``BOND_BUBBLE_DYN_N2_BUFFERS``
-        constants (``bond_bubble_dynamic``'s per-iteration working set is
-        the same shape as ``bond_bubble``'s -- only its stored output
-        differs -- so these currently equal the static constants, but are
-        tracked separately so a future change to either function's buffer
-        discipline cannot silently desync the other's estimate).
+        existing call site is unaffected.
+
+        When set to the dynamic path's bosonic-frequency grid size, the
+        budget is rebuilt for the DYNAMIC chain
+        (``bond_bubble_dynamic -> dress_bond_dynamic ->
+        make_bond_kernel_dynamic``), whose every large array carries the
+        frequency axis. ``unit_dyn = N_q * dynamic_nmat * ND**2 * 16`` is one
+        frequency-resolved q-array (``chi_bar_w`` / ``chi_s_w`` / ``F_q_w``
+        / ``F_rt`` are all exactly this size); ``unit_mv = N_q *
+        dynamic_nmat * ND * 16`` is one matvec-class buffer.
+
+        The peak is a PHASE MAXIMUM, not a sum: the four phases below do not
+        coexist (each releases its temporaries before the next allocates --
+        that ``del`` discipline is the documented contract of the constants
+        imported here), so summing them would over-refuse legitimate runs by
+        roughly a factor two on the dominant term. What IS summed is what
+        lives across every phase: the Green function, the two static
+        ``(N_q, ND, ND)`` bare vertices ``S_bond``/``C_bond``, and
+        ``bare_bond_vertices``'s ``ND x ND`` scratch.
+
+        * ``bubble_phase`` -- ``bond_bubble_dynamic``'s working set
+          (``BOND_BUBBLE_DYN_*`` buffers) plus its ``chi_bar_w`` output.
+        * ``dress_phase`` -- ``dress_bond_dynamic``'s live set at its peak:
+          ``_BOND_DRESS_DYN_ARRAYS`` frequency-resolved q-arrays.
+        * ``build_phase`` -- the kernel builder's vertex hoist
+          (``BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS``) while the caller still
+          holds ``chi_s_w``/``chi_c_w``, plus the persistent ``G2p_w``.
+        * ``matvec_phase`` -- the persistent ``F_rt``
+          (``BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT``) and ``G2p_w``, plus
+          ``BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS`` matvec-class buffers, with
+          ``chi_s_w``/``chi_c_w`` still owned by the caller.
+
+        ``g2_bytes`` (``G2p_w``, size ``nd**2 * N_q * dynamic_nmat``) is an
+        EXPLICIT line rather than being folded into the matvec constant: its
+        ratio to one matvec buffer is ``nd / B``, so at ``B = 1`` it is
+        ``nd`` times a matvec buffer, not a rounding error (the note beside
+        ``BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS`` in ``bond_channels``).
+
+        **IR branch.** The IR kernel (``make_bond_kernel_dynamic_ir``) has no
+        memory contract of its own yet, so it is deliberately preflighted
+        with this same UNIFORM formula: its sampling-node axes are never
+        longer than the uniform window (``axB.n_freq``, ``axF.n_freq`` <=
+        ``nmat``) and its buffer structure mirrors the uniform builder's, so
+        the uniform figure is a conservative UPPER bound. A dedicated IR
+        contract (with its own measured constants) is a deferred follow-up.
     """
     nd = norb * norb
     B = int(bond_set.n_channels)
@@ -508,31 +577,61 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None):
     unit = Nq * int(nmat) * itemsize
 
     chi_bar_bytes_static = Nq * ND * ND * itemsize
+    vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
+    green_bytes = (norb ** 2) * unit
+
     if dynamic_nmat is None:
         chi_bar_bytes = chi_bar_bytes_static
         n4_buffers = bond_channels.BOND_BUBBLE_N4_BUFFERS
         n2_buffers = bond_channels.BOND_BUBBLE_N2_BUFFERS
-    else:
-        chi_bar_bytes = chi_bar_bytes_static * int(dynamic_nmat)
-        n4_buffers = bond_channels.BOND_BUBBLE_DYN_N4_BUFFERS
-        n2_buffers = bond_channels.BOND_BUBBLE_DYN_N2_BUFFERS
-    # Only chi_bar's own line grows with dynamic_nmat; the other
-    # (_BOND_N_Q_ARRAYS - 1) q-resolved buffers stay static-sized (see
-    # docstring above).
-    q_bytes = (_BOND_N_Q_ARRAYS - 1) * chi_bar_bytes_static + chi_bar_bytes
-    bubble_bytes = (n4_buffers * norb ** 4 + n2_buffers * norb ** 2) * unit
-    vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
-    green_bytes = (norb ** 2) * unit
+        q_bytes = _BOND_N_Q_ARRAYS * chi_bar_bytes_static
+        bubble_bytes = (n4_buffers * norb ** 4
+                        + n2_buffers * norb ** 2) * unit
+        return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
+                "chi_bar_bytes": chi_bar_bytes,
+                "q_bytes": q_bytes,
+                "bubble_bytes": bubble_bytes,
+                "vertex_bytes": vertex_bytes,
+                "green_bytes": green_bytes,
+                "peak": q_bytes + bubble_bytes + vertex_bytes + green_bytes}
+
+    nmat_dyn = int(dynamic_nmat)
+    unit_dyn = chi_bar_bytes_static * nmat_dyn
+    unit_mv = Nq * nmat_dyn * ND * itemsize
+    g2_bytes = nd * nd * Nq * nmat_dyn * itemsize
+    bubble_bytes = (bond_channels.BOND_BUBBLE_DYN_N4_BUFFERS * norb ** 4
+                    + bond_channels.BOND_BUBBLE_DYN_N2_BUFFERS
+                    * norb ** 2) * unit
+    # S_bond and C_bond -- the only q-resolved arrays that stay STATIC-sized
+    # on the dynamic path (they carry no frequency axis, spec S3.2).
+    q_bytes = 2 * chi_bar_bytes_static
+
+    bubble_phase = bubble_bytes + unit_dyn
+    dress_phase = _BOND_DRESS_DYN_ARRAYS * unit_dyn
+    build_phase = (2 * unit_dyn
+                   + bond_channels.BOND_KERNEL_DYNAMIC_VERTEX_BUFFERS
+                   * unit_dyn + g2_bytes)
+    matvec_phase = (2 * unit_dyn
+                    + bond_channels.BOND_KERNEL_DYNAMIC_VERTEX_PERSISTENT
+                    * unit_dyn
+                    + bond_channels.BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS
+                    * unit_mv + g2_bytes)
+    phase_peak = max(bubble_phase, dress_phase, build_phase, matvec_phase)
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
-            "chi_bar_bytes": chi_bar_bytes,
+            "chi_bar_bytes": unit_dyn,
             "q_bytes": q_bytes,
             "bubble_bytes": bubble_bytes,
             "vertex_bytes": vertex_bytes,
             "green_bytes": green_bytes,
-            "peak": q_bytes + bubble_bytes + vertex_bytes + green_bytes}
+            "g2_bytes": g2_bytes,
+            "dress_bytes": dress_phase,
+            "kernel_build_bytes": build_phase,
+            "kernel_matvec_bytes": matvec_phase,
+            "peak": (green_bytes + q_bytes + vertex_bytes + phase_peak)}
 
 
-def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
+def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb,
+                             dynamic_nmat=None):
     """Estimate the peak memory of the bond path and refuse to exceed the cap.
 
     Spec S3.2 "Resource guard": only here are ``nd``, ``N_q``, ``B`` and the
@@ -544,8 +643,12 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
     allocation itself so the preflight is not blind to it.
 
     See :func:`_bond_memory_estimate` for the buffer-by-buffer accounting.
+    ``dynamic_nmat`` selects the DYNAMIC (frequency-resolved) budget -- pass
+    the bosonic grid size the dynamic chain will really run on; ``None``
+    keeps the static budget byte-for-byte.
     """
-    est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat)
+    est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+                                dynamic_nmat=dynamic_nmat)
     B, ND, Nq = est["B"], est["ND"], est["Nq"]
     q_bytes = est["q_bytes"]
     bubble_bytes = est["bubble_bytes"]
@@ -554,22 +657,45 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
     peak = est["peak"]
 
     logger.info(
-        "Bond-channel preflight: B = %d channels, ND = nd*B = %d, "
+        "Bond-channel preflight%s: B = %d channels, ND = nd*B = %d, "
         "N_q = %d, estimated peak memory = %.3f GB (cap %.3f GB)",
+        "" if dynamic_nmat is None
+        else " (dynamic, nmat = {})".format(int(dynamic_nmat)),
         B, ND, Nq, peak / 1.0e9, cap_gb)
+    if dynamic_nmat is not None:
+        logger.info(
+            "Bond-channel preflight (dynamic) component budget: chi-bar/"
+            "dressing %.3f GB, kernel build %.3f GB, kernel matvec %.3f GB, "
+            "pair bubble G2 %.3f GB, green %.3f GB",
+            est["dress_bytes"] / 1.0e9, est["kernel_build_bytes"] / 1.0e9,
+            est["kernel_matvec_bytes"] / 1.0e9, est["g2_bytes"] / 1.0e9,
+            green_bytes / 1.0e9)
 
     if peak > cap_gb * 1.0e9:
+        detail = ("{:.3f} GB of q-resolved ND x ND arrays".format(
+            q_bytes / 1.0e9) if dynamic_nmat is None else
+            "{:.3f} GB of static q-resolved ND x ND vertices, a "
+            "frequency-resolved phase peak of {:.3f} GB (dressing {:.3f}, "
+            "kernel build {:.3f}, kernel matvec {:.3f}, pair bubble G2 "
+            "{:.3f})".format(
+                q_bytes / 1.0e9,
+                max(est["dress_bytes"], est["kernel_build_bytes"],
+                    est["kernel_matvec_bytes"]) / 1.0e9,
+                est["dress_bytes"] / 1.0e9,
+                est["kernel_build_bytes"] / 1.0e9,
+                est["kernel_matvec_bytes"] / 1.0e9,
+                est["g2_bytes"] / 1.0e9))
         raise ValueError(
             "[eliashberg] bond_channels: estimated peak memory {:.3f} GB "
             "exceeds bond_memory_cap_gb = {:.3f} GB. The cost is driven by "
             "B = {} bond channels (Delta r = {}) giving ND = nd*B = {} on "
-            "N_q = {} q-points ({:.3f} GB of q-resolved ND x ND arrays) plus "
+            "N_q = {} q-points ({}) plus "
             "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB of bare-"
             "vertex ND x ND temporaries plus {:.3f} GB for the Green "
             "function itself. Reduce bond_max_shells (fewer channels), "
             "reduce the k-grid/Nmat, or raise bond_memory_cap_gb.".format(
                 peak / 1.0e9, cap_gb, B, list(bond_set.delta_r), ND, Nq,
-                q_bytes / 1.0e9, bubble_bytes / 1.0e9, vertex_bytes / 1.0e9,
+                detail, bubble_bytes / 1.0e9, vertex_bytes / 1.0e9,
                 green_bytes / 1.0e9))
     return peak
 

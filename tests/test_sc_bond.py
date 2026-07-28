@@ -346,19 +346,27 @@ def test_guard_no_coulomb_inter(tmpout):
         sc.calc_eliashberg(inp)
 
 
-def test_guard_dynamic_entry_point(tmpout):
-    """(e) bond_channels=true on the dynamic entry point -> error, both via
-    calc_eliashberg's dispatch and via solve_dynamic directly."""
+def test_dynamic_entry_point_runs_the_bond_kernel(tmpout):
+    """(e) bond_channels=true on the DYNAMIC entry point is now supported
+    (dynamic bond spec S3.4): both routes -- calc_eliashberg's dispatch and a
+    direct solve_dynamic call -- run the bond kernel and agree.
+
+    This replaces the former refusal test: the guard was removed together
+    with its twin inside solve_dynamic, which is exactly why both routes are
+    exercised here (a direct call must not bypass the model guards either --
+    see tests/test_sc_bond_dynamic.py for the full state machine)."""
     ci = os.path.join(tmpout, "ci.dat")
     _write_w90(ci, 1, _nn_entries(1.0))
     inp = _base_input(tmpout, coulomb_inter=ci, bond_channels=True,
-                      frequency="dynamic", chi0q_mode="flex")
-    with pytest.raises(ValueError, match="(?i)dynamic"):
-        sc.calc_eliashberg(inp)
+                      frequency="dynamic", chi0q_mode="flex",
+                      solver_mode="eigenvalue", num_eigenvalues=2)
+    inp["mode"]["param"]["Nmat"] = 16
+    lam_dispatch = sc.calc_eliashberg(inp)
 
     from hwave.solver import eliashberg_dynamic
-    with pytest.raises(ValueError, match="(?i)dynamic"):
-        eliashberg_dynamic.solve_dynamic(inp)
+    lam_direct = eliashberg_dynamic.solve_dynamic(inp)
+    assert np.isfinite(lam_dispatch)
+    assert np.isclose(lam_dispatch, lam_direct, rtol=1e-12, atol=1e-14)
 
 
 def test_resource_preflight_errors_and_names_channels(tmpout):
@@ -2408,10 +2416,14 @@ def test_bond_boolean_supported_spellings_still_work(spelling, expected):
 
 
 def test_bond_channels_typo_is_rejected_on_the_dynamic_entry_point():
-    """The dynamic refusal reads the same key, so a typo there must not slip
-    a bond_channels request past the guard either."""
+    """The dynamic entry point reads the same key through the same strict
+    validator, so a typo must not silently read as false there either --
+    which would disable both the requested feature and its guards."""
+    inp = {"mode": {"param": {"Nmat": 8}},
+           "eliashberg": {"frequency": "dynamic", "chi0q_mode": "flex",
+                          "bond_channels": "ture"}}
     with pytest.raises(ValueError) as exc:
-        sc._reject_bond_channels_dynamic({"bond_channels": "ture"})
+        sc._validate_dynamic_prereqs(inp)
     assert "bond_channels" in str(exc.value)
 
 

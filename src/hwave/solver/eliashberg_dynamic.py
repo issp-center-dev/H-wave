@@ -1077,6 +1077,610 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
     return beta * out
 
 
+# ---------------------------------------------------------------------------
+# Bond-resolved dynamic branch (spec 2026-07-27-dynamic-bond-channels-design.md
+# S3.4 "Wiring into solve_dynamic", S5.2 state machine, S6 guards)
+# ---------------------------------------------------------------------------
+
+# Relative tolerance of the v1 symmetry-class preconditions checked directly on
+# the loaded Green function (spec S2, "Runtime precondition check"): the class
+# G(-k, iw) = G(k, iw) and G(k, -iw) = conj(G(k, iw)) is what makes the dynamic
+# pair weight w = G(k,iw) G(-k,-iw) real and positive, hence the whitening
+# metric -- and therefore the real-spectrum solver contract -- well defined.
+_BOND_GREEN_SYM_TOL = 1.0e-10
+# Floor on the pair weight, relative to its maximum (spec S2).
+_BOND_WEIGHT_FLOOR = 1.0e-12
+
+
+def _bond_green_reverse_k(green):
+    """``G(-k, iw_n)``: reverse the three k axes with the +1 roll that maps
+    index ``i -> (-i) mod N`` on the uniform grid (the same construction
+    ``calc_g2_dynamic`` and ``sc._calc_g2`` use)."""
+    return np.roll(green[:, :, ::-1, ::-1, ::-1, :], (1, 1, 1), (2, 3, 4))
+
+
+def _bond_dynamic_pair_weight(green):
+    """Dynamic pair weight ``w(k, iw_n) = G(k, iw_n) G(-k, -iw_n)`` (spec S2).
+
+    Returned in the GAP layout ``(norb, norb, Nx, Ny, Nz, nmat)`` so
+    ``w.ravel()`` is the 1-D diagonal metric of the gap vector space that
+    ``bond_channels.check_hermitian_preconditions`` /``_apply_metric`` accept.
+    v1 restricts the top-level bond path to ``norb = 1``, where this pointwise
+    product IS the whole metric (no orbital-pair block structure); the
+    frequency reversal is the plain ``[..., ::-1]`` of the CENTERED grid
+    (``w_{nmat-1-n} = -w_n`` exactly), with no roll.
+    """
+    green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1),
+                        (2, 3, 4))
+    return green * green_inv
+
+
+def _check_bond_dynamic_green_symmetry(green, tol=_BOND_GREEN_SYM_TOL):
+    """Verify the v1 input symmetry class of the bond dynamic path (spec S2).
+
+    Checked DIRECTLY on the loaded Green function, not inferred from the
+    product: ``max |G(-k,iw) - G(k,iw)|`` and ``max |G(k,-iw) - conj G(k,iw)|``
+    against ``tol * max|G|``, then ``max |Im w|`` and the positivity floor
+    ``min w >= _BOND_WEIGHT_FLOOR * max w`` on the resulting weight. A green
+    outside the class is REJECTED (static policy) rather than silently
+    whitened -- checking only ``Im w`` could pass accidental products.
+
+    Returns the four measured residuals (for provenance); raises ValueError on
+    any violation.
+    """
+    green = np.asarray(green)
+    gmax = float(np.abs(green).max())
+    if gmax == 0.0:
+        raise ValueError(
+            "[eliashberg] bond_channels (dynamic): the Green function is "
+            "identically zero; the pair weight w = GG then has no positive "
+            "entries and the whitening metric does not exist.")
+    resid_k = float(np.abs(_bond_green_reverse_k(green) - green).max()) / gmax
+    resid_w = float(
+        np.abs(green[..., ::-1] - np.conj(green)).max()) / gmax
+    if resid_k > tol or resid_w > tol:
+        raise ValueError(
+            "[eliashberg] bond_channels with frequency='dynamic' supports "
+            "only the v1 symmetry class -- real dispersion, inversion "
+            "symmetric, spin degenerate -- for which G(-k,iw) = G(k,iw) and "
+            "G(k,-iw) = conj(G(k,iw)). The supplied Green function violates "
+            "it: max|G(-k,iw) - G(k,iw)|/max|G| = {:.3e}, "
+            "max|G(k,-iw) - conj G(k,iw)|/max|G| = {:.3e} (tolerance {:.1e}). "
+            "Outside this class the pair weight w = G(k,iw)G(-k,-iw) is not "
+            "real-positive, the whitening K~ = -sqrt(w) Gamma sqrt(w) does "
+            "not exist, and the reported lambda would not be a real "
+            "eigenvalue. v1 does NOT fall back to a non-Hermitian "
+            "biorthogonal solve (deferred follow-up): supply a symmetric "
+            "green.npz (e.g. from a symmetric FLEX run) or use "
+            "bond_channels=false.".format(resid_k, resid_w, tol))
+    w = _bond_dynamic_pair_weight(green)
+    wabs = float(np.abs(w).max())
+    resid_imag = float(np.abs(w.imag).max()) / (wabs or 1.0)
+    wmin = float(w.real.min())
+    if resid_imag > tol:
+        raise ValueError(
+            "[eliashberg] bond_channels (dynamic): the pair weight "
+            "w = G(k,iw)G(-k,-iw) is not real (max|Im w|/max|w| = {:.3e} > "
+            "{:.1e}) even though the direct green symmetry checks passed; "
+            "the whitening metric would be complex.".format(resid_imag, tol))
+    if wmin < _BOND_WEIGHT_FLOOR * wabs:
+        raise ValueError(
+            "[eliashberg] bond_channels (dynamic): the pair weight "
+            "w = G(k,iw)G(-k,-iw) is not positive on the whole grid "
+            "(min w = {:.3e}, max|w| = {:.3e}, floor {:.1e} * max). "
+            "sqrt(w) -- the similarity that symmetrizes the Eliashberg "
+            "kernel -- does not exist there, so the reported lambda would "
+            "not be a real Rayleigh quotient.".format(
+                wmin, wabs, _BOND_WEIGHT_FLOOR))
+    return {"green_sym_k": resid_k, "green_sym_w": resid_w,
+            "weight_imag": resid_imag, "weight_min": wmin,
+            "weight_max": wabs}
+
+
+def _ir_compress_bond_chi(chi_w, axB, nmat, label):
+    """Fit a bond-resolved dressed susceptibility onto the BOSONIC IR nodes.
+
+    Thin layout adapter around :func:`_ir_compress` (which contracts the LAST
+    axis): the bond arrays carry the frequency at axis 3,
+    ``(Nx, Ny, Nz, nmat, ND, ND)``, which is what ``dress_bond_dynamic``
+    produces and what ``make_bond_kernel_dynamic_ir`` expects on the nodes.
+
+    **Fit policy: the frequency-independent component is RETAINED** (the
+    ``keep_constant`` branch of :func:`_ir_compress`), unlike the scalar
+    dynamic path's default. The DRESSED BOND susceptibility is
+    static-dominated by construction -- the charge block carries the Hartree
+    ``2V(q)`` and the spin block the near-critical static peak that pairing
+    lives on -- so the fitted constant is physical weight, not the small
+    ``O(beta/Nmat)`` delta(tau) artifact the drop rule was written for
+    (issue #57 is exactly this failure mode).
+
+    Measured on the 4x4 U = 4 / V = 1 fixture (T = 0.5, singlet, bare green),
+    IR vs the oracle-verified uniform operator:
+
+    ======  ==========  ================  ==================
+    Nmat    uniform     IR (retained)     IR (dropped)
+    ======  ==========  ================  ==================
+    16      0.926708    1.272852          1.826655
+    32      1.075495    -3.081435         issue-#57 error
+    64      1.185588    1.188888          issue-#57 error
+    128     1.252149    1.252213          issue-#57 error
+    256     1.288945    1.288949          issue-#57 error
+    ======  ==========  ================  ==================
+
+    i.e. retaining converges onto the uniform reference (3e-3 relative at
+    Nmat = 64, 5e-5 at 128, 3e-6 at 256 -- the two bases' remaining
+    difference is the instantaneous-term convention of spec S3.3, which
+    shrinks with the window), while dropping is either refused by the
+    guard or off by a factor ~2. The coarse ends of the table are NOT
+    converged for either basis and neither is a reference value; the
+    columns are comparable only to each other at the same Nmat.
+
+    This adapter deliberately lives here rather than in ``bond_channels``:
+    the kernel's input contract is "already on the IR nodes", and who owns
+    the fit (and its drop/keep policy) is a caller decision.
+    """
+    moved = np.moveaxis(chi_w, 3, -1)          # (Nx,Ny,Nz,ND,ND,nmat)
+    nodes = _ir_compress(moved, axB, nmat, label, drop_constant=True,
+                         keep_constant=True)
+    return np.ascontiguousarray(np.moveaxis(nodes, -1, 3))
+
+
+def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
+    """Compare a ``bond_green`` npz's own metadata with the run configuration.
+
+    Spec S3.4: "provenance checks compare (CellShape, Nmat or IR meta, T)
+    between the npz and the run config and ERROR on mismatch (no silent
+    mixed-convention runs)". CellShape/norb are enforced by
+    ``sc._load_green_npz`` (which refuses a file whose nvol/norb differ) and
+    the Matsubara count by the caller; this covers the TEMPERATURE, which is
+    recorded only by files that carry an IR axis (``ir_beta``) or an explicit
+    ``beta``/``T`` entry. Uniform ``green.npz`` files written by FLEX carry no
+    temperature at all -- that is reported, not silently treated as a match.
+    """
+    try:
+        with np.load(green_path, allow_pickle=False) as data:
+            keys = set(data.files)
+            found = None
+            if "ir_beta" in keys:
+                found = ("ir_beta", float(np.asarray(data["ir_beta"])), beta)
+            elif "beta" in keys:
+                found = ("beta", float(np.asarray(data["beta"])), beta)
+            elif "T" in keys:
+                found = ("T", float(np.asarray(data["T"])), 1.0 / beta)
+            nmat_meta = int(np.asarray(data["nmat"])) if "nmat" in keys else None
+    except (OSError, ValueError, KeyError) as exc:
+        logger.info("bond_green %s: metadata cross-check skipped (%s)",
+                    green_path, exc)
+        return
+    if found is not None:
+        key, file_value, run_value = found
+        if not np.isclose(file_value, run_value, rtol=1.0e-8, atol=0.0):
+            raise ValueError(
+                "[eliashberg] bond_green {} was produced at {} = {!r} but "
+                "this run uses {!r}. The Green function and the Eliashberg "
+                "kernel must be at the SAME temperature -- the Matsubara "
+                "grid iw_n = (2n+1-Nmat)*pi/beta is defined by it -- so a "
+                "mismatch is a silent-wrong-result, not a warning. Re-run "
+                "the producing calculation at this T (or set [mode.param] T "
+                "to the file's).".format(green_path, key, file_value,
+                                         run_value))
+    else:
+        logger.info(
+            "bond_green %s carries no temperature metadata (uniform FLEX "
+            "green.npz files do not record beta/T); the T consistency check "
+            "could not be performed -- the CellShape and Nmat checks did run.",
+            green_path)
+    if nmat_meta is not None and nmat_meta != int(nmat_cfg):
+        raise ValueError(
+            "[eliashberg] bond_green {} records nmat = {} in its own "
+            "metadata while this run uses Nmat = {}. The dynamic bond path "
+            "requires the SAME uniform Matsubara grid in the file and the "
+            "config (unlike the static path, where the file may legitimately "
+            "define a different grid): regenerate the green at Nmat = {} or "
+            "set [mode.param] Nmat = {}.".format(
+                green_path, nmat_meta, nmat_cfg, nmat_cfg, nmat_meta))
+
+
+def _bond_dynamic_green(bond_green, mode_param, hr, norb,
+                        kx_array, ky_array, kz_array, beta, nmat_cfg,
+                        bond_set, bond_memory_cap_gb):
+    """Resolve the Green function of the dynamic bond branch (spec S3.4).
+
+    ``[eliashberg] bond_green`` (a full-omega ``green.npz``) is the intended
+    production input -- Phase A greens come from a separate reduced-FLEX run.
+    When it is absent the branch falls back to the BARE green built from the
+    transfer Hamiltonian, with a prominent warning, exactly like the static
+    bond path; the difference is recorded in provenance as
+    ``bond_green_source``.
+
+    The resource preflight runs BEFORE the (possibly large) Green allocation,
+    sized with the frequency grid the run will really use.
+
+    Returns ``(green_kw, nmat, source)`` with ``source`` in ``{"file",
+    "bare"}``.
+    """
+    import hwave.sc as sc
+
+    Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
+    if int(nmat_cfg) % 2 != 0:
+        raise ValueError(
+            "[eliashberg] bond_channels with frequency='dynamic' requires an "
+            "even Nmat (centered Matsubara grid); got Nmat={}"
+            .format(nmat_cfg))
+
+    if bond_green is not None:
+        _bond_green_metadata_consistency(bond_green, nmat_cfg, beta)
+        nfreq_peek = sc._peek_green_npz_nfreq(bond_green, label="bond_green")
+        if nfreq_peek is not None:
+            sc._validate_bond_green_nmat(nfreq_peek, bond_green)
+            _require_bond_green_nmat_match(nfreq_peek, nmat_cfg, bond_green)
+
+    # Preflight before allocating anything large; the file's count (when the
+    # header peek resolved it) has already been proven equal to the config's,
+    # so nmat_cfg is the grid either way.
+    sc._bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat_cfg,
+                                bond_memory_cap_gb, dynamic_nmat=nmat_cfg)
+
+    if bond_green is not None:
+        green_kw, nmat_green = sc._load_green_npz(
+            bond_green, norb, Nx, Ny, Nz, label="bond_green")
+        sc._validate_bond_green_nmat(nmat_green, bond_green)
+        _require_bond_green_nmat_match(nmat_green, nmat_cfg, bond_green)
+        logger.info("Dynamic bond kernel: using the EXTERNAL Green function "
+                    "%s (%d Matsubara frequencies).", bond_green, nmat_green)
+        return green_kw, int(nmat_green), "file"
+
+    logger.warning(
+        "[eliashberg] bond_channels=true with frequency='dynamic' and NO "
+        "bond_green: the frequency-resolved bond bubble is being built from "
+        "the BARE Green function of the transfer Hamiltonian. That is an "
+        "unrenormalized, non-self-consistent input -- the Phase A production "
+        "workflow feeds a FLEX-dressed green through [eliashberg] "
+        "bond_green -- so the resulting lambda is a bare-bubble RPA-ladder "
+        "number, not comparable with FLEX/dynamic references.")
+    if "filling" not in mode_param:
+        raise ValueError(
+            "[eliashberg] bond_channels (dynamic) without bond_green builds "
+            "the bare Green function from the transfer Hamiltonian, which "
+            "needs the chemical potential: set [mode.param] filling (or "
+            "supply a green via [eliashberg] bond_green).")
+    epsilon_k = sc._build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
+    eigenvalues, eigenvectors = sc._calc_eigenvalues(epsilon_k)
+    mu = sc._determine_mu(eigenvalues, beta, mode_param["filling"], norb)
+    logger.info("Dynamic bond kernel: bare green from H0, mu = %.6f", mu)
+    green_kw = sc._calc_green(eigenvalues, eigenvectors, mu, beta, nmat_cfg)
+    return green_kw, int(nmat_cfg), "bare"
+
+
+def _require_bond_green_nmat_match(nfreq, nmat_cfg, green_path):
+    """The dynamic bond path requires file Nmat == config Nmat (spec S3.4).
+
+    The STATIC bond path lets the file win (the green defines the grid the
+    bubble is built on, and nothing else in that run is frequency-resolved).
+    The dynamic path cannot: the gap vector, the IR axes, the output grid and
+    the seed/continuation machinery are all sized from ``[mode.param] Nmat``,
+    so a file on a different grid would silently mix two conventions.
+    """
+    if int(nfreq) != int(nmat_cfg):
+        raise ValueError(
+            "[eliashberg] bond_green {} carries {} Matsubara frequencies "
+            "while [mode.param] Nmat = {}. The DYNAMIC bond path requires "
+            "them to be equal (the gap, the output grid and the IR axes are "
+            "all sized from Nmat, so a differing file grid would mix two "
+            "conventions silently); the static bond path's file-wins rule "
+            "does not apply here. Set Nmat = {} or regenerate the green at "
+            "Nmat = {}.".format(green_path, nfreq, nmat_cfg, nfreq,
+                                nmat_cfg))
+
+
+def _write_bond_diagnostics_npz(output_dir, arrays, npz_file):
+    """Write the opt-in ``bond_diagnostics`` npz (spec S3.2/S3.3).
+
+    The full per-(q, i nu) conditioning maps and the per-parity-branch tail
+    estimate go into a DEDICATED file rather than into the gap npz's
+    provenance metadata: they are arrays over the whole (q, nu) grid, and
+    stuffing them into metadata would bloat every output while hiding the
+    isolated near-pole points they exist to expose. Provenance keeps only the
+    scalar global minima and their locations.
+    """
+    path = os.path.join(output_dir, npz_file)
+    np.savez(path, **arrays)
+    logger.info("Bond diagnostics written to %s (keys: %s)",
+                path, ", ".join(sorted(arrays)))
+    return path
+
+
+def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
+                                interactions, inter_k, norb,
+                                kx_array, ky_array, kz_array, beta,
+                                pairing_type, use_ir, *, bond_green,
+                                bond_max_shells, bond_memory_cap_gb,
+                                bond_precondition_opts, bond_diagnostics,
+                                use_gpu):
+    """Build the dynamic bond-channel Eliashberg operator and its provenance.
+
+    The whole opt-in branch of ``solve_dynamic`` (spec S3.4), in one place:
+
+    guards -> bond topology -> resource preflight -> green (file or bare) ->
+    ``bond_bubble_dynamic`` -> ``dress_bond_dynamic`` ->
+    ``make_bond_kernel_dynamic[_ir]``.
+
+    NO chi file is read anywhere in it: the ``m = m' = 0`` block of the
+    frequency-resolved chi-bar IS the ordinary chi0q, and the ``m != 0``
+    blocks -- which no chi file carries -- are exactly what the bond channels
+    add. The returned operator acts on the SAME gap vector space as the
+    scalar dynamic kernel, so every downstream stage of ``solve_dynamic``
+    (parity family, ``_solve_leading``, ``_fix_gauge``,
+    ``write_dynamic_outputs``) runs unchanged.
+
+    **IR flow (v1, deliberate).** The bubble and the dressing run on the
+    UNIFORM grid of the supplied green, and only the DRESSED
+    susceptibilities and the green are then fitted onto the IR sampling
+    nodes (``_ir_compress_bond_chi`` / ``_ir_compress``) for
+    ``make_bond_kernel_dynamic_ir``, whose input contract is "already on the
+    nodes". Fitting before the dressing would put the RPA denominator
+    ``I - chi_bar S`` on fitted data, i.e. invert an interpolation error;
+    dressing first keeps the (cheap, per-(q,inu)) linear algebra exact and
+    fits only the final smooth object. The cost is that the uniform bubble
+    is built even on the IR path -- an IR-native bubble is a follow-up.
+
+    Returns a context dict with the keys ``operator`` ((A, vec_size)),
+    ``green`` (the uniform-grid green), ``nmat``, ``axF``/``axB`` (None off
+    the IR path), ``provenance`` (goes into the gap npz via ``extra_meta``)
+    and ``diagnostics`` (the arrays of the opt-in ``bond_diagnostics`` npz,
+    or None).
+    """
+    import hwave.sc as sc
+    from hwave.solver import bond_channels
+
+    Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
+
+    # --- guards (spec S6) -------------------------------------------------
+    # The model guards are the static path's, shared verbatim; the only one
+    # that does NOT apply is the chi0q_mode='flex' refusal (this branch reads
+    # no chi at all -- see _warn_dynamic_bond_ignores_chi).
+    sc._validate_bond_interactions(norb, interactions)
+    if use_gpu:
+        logger.warning(
+            "[eliashberg] gpu=true is ignored for bond_channels=true: the "
+            "bond-resolved dynamic kernel is CPU-only in v1 (GPU support is "
+            "a deferred follow-up).")
+
+    bond_set = bond_channels.resolve_interactions(
+        interactions["CoulombInter"], geom_info["rvec"], norb,
+        bond_max_shells=bond_max_shells)
+    logger.info("Dynamic bond channels: B = %d, Delta r = %s",
+                bond_set.n_channels, list(bond_set.delta_r))
+    if bond_set.dropped:
+        logger.info("Bond channel provenance (dropped): %s",
+                    list(bond_set.dropped))
+
+    nmat_cfg = int(mode_param.get("Nmat", 1024))
+    green_kw, nmat, green_source = _bond_dynamic_green(
+        bond_green, mode_param, hr, norb,
+        kx_array, ky_array, kz_array, beta, nmat_cfg, bond_set,
+        bond_memory_cap_gb)
+
+    # v1 input symmetry class (spec S2): checked on the green itself, before
+    # any of it propagates into a kernel whose real spectrum depends on it.
+    sym = _check_bond_dynamic_green_symmetry(green_kw)
+
+    # --- bare vertices + frequency-resolved bubble/dressing ---------------
+    S0_q, C0_q = sc._build_bond_m0_blocks(
+        bond_set, interactions, inter_k, norb, kx_array, ky_array, kz_array)
+    S_bond, C_bond, Vpp_s, Vpp_t = bond_channels.bare_bond_vertices(
+        bond_set, S0_q, C0_q, norb)
+
+    logger.info("Computing the frequency-resolved bond bubble chi-bar "
+                "(nmat = %d)...", nmat)
+    chi_bar_w = bond_channels.bond_bubble_dynamic(green_kw, bond_set, beta)
+    logger.info("Dressing the bond bubble at every bosonic frequency...")
+    chi_s_w, chi_c_w, cond_min_spin, cond_min_charge = \
+        bond_channels.dress_bond_dynamic(chi_bar_w, S_bond, C_bond)
+    del chi_bar_w
+    cond_spin_min = float(cond_min_spin.min())
+    cond_charge_min = float(cond_min_charge.min())
+    cond_spin_at = np.unravel_index(int(np.argmin(cond_min_spin)),
+                                    cond_min_spin.shape)
+    cond_charge_at = np.unravel_index(int(np.argmin(cond_min_charge)),
+                                      cond_min_charge.shape)
+    logger.info("Bond RPA denominators: worst conditioning score spin "
+                "%.3e at (qx,qy,qz,inu) = %s, charge %.3e at %s",
+                cond_spin_min, tuple(int(i) for i in cond_spin_at),
+                cond_charge_min, tuple(int(i) for i in cond_charge_at))
+
+    # --- kernel -----------------------------------------------------------
+    axF = axB = None
+    if use_ir:
+        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
+                                    mu=mode_param.get("mu"),
+                                    filling=mode_param.get("filling"))
+        # The bond branch RETAINS the frequency-independent component of the
+        # dressed susceptibility unconditionally (measurement table in
+        # _ir_compress_bond_chi): dropping it is either refused by the
+        # issue-#57 guard or off by a factor ~2, because the dressed bond chi
+        # is static-dominated by construction. ir_keep_static_chi therefore
+        # cannot select the drop behaviour here, and an explicit request for
+        # it is refused loudly rather than silently overridden.
+        if ("ir_keep_static_chi" in eli_param
+                and not _ir_keep_static_requested(eli_param)):
+            logger.warning(
+                "[eliashberg] ir_keep_static_chi=false is NOT honoured with "
+                "bond_channels=true: the dressed BOND susceptibility is "
+                "static-dominated (Hartree 2V(q) in the charge block, the "
+                "near-critical static peak in the spin block), so its "
+                "frequency-independent component is physical weight rather "
+                "than the O(beta/Nmat) delta(tau) artifact the drop rule "
+                "targets. Dropping it gives a lambda off by ~2x (or trips "
+                "the issue-#57 guard); the component is retained.")
+        chi_s_nodes = _ir_compress_bond_chi(chi_s_w, axB, nmat, "bond chi_s")
+        del chi_s_w
+        chi_c_nodes = _ir_compress_bond_chi(chi_c_w, axB, nmat, "bond chi_c")
+        del chi_c_w
+        green_ir = _ir_compress(green_kw, axF, nmat, "bond green")
+        logger.info("Building the IR-axis bond Eliashberg operator "
+                    "(pairing_type=%s, %d fermionic / %d bosonic nodes)...",
+                    pairing_type, axF.n_freq, axB.n_freq)
+        A, vec_size = bond_channels.make_bond_kernel_dynamic_ir(
+            chi_s_nodes, chi_c_nodes, S_bond, C_bond, Vpp_s, Vpp_t,
+            green_ir, bond_set, pairing_type, beta, axF, axB)
+        del chi_s_nodes, chi_c_nodes
+    else:
+        logger.info("Building the uniform-axis bond Eliashberg operator "
+                    "(pairing_type=%s)...", pairing_type)
+        A, vec_size = bond_channels.make_bond_kernel_dynamic(
+            chi_s_w, chi_c_w, S_bond, C_bond, Vpp_s, Vpp_t, green_kw,
+            bond_set, pairing_type, beta)
+        del chi_s_w, chi_c_w
+
+    provenance = {
+        "bond_channels": True,
+        "bond_n_channels": int(bond_set.n_channels),
+        "bond_delta_r": np.asarray(bond_set.delta_r, dtype=int),
+        "bond_max_shells": ("all" if bond_max_shells is None
+                            else str(int(bond_max_shells))),
+        "bond_memory_cap_gb": float(bond_memory_cap_gb),
+        "bond_green_source": green_source,
+        "bond_frequency_grid": ("ir" if use_ir else "uniform"),
+        "bond_nmat": int(nmat),
+        "bond_cond_min_spin": cond_spin_min,
+        "bond_cond_min_charge": cond_charge_min,
+        "bond_cond_min_spin_at": np.asarray(cond_spin_at, dtype=int),
+        "bond_cond_min_charge_at": np.asarray(cond_charge_at, dtype=int),
+        "bond_green_symmetry_residual_k": sym["green_sym_k"],
+        "bond_green_symmetry_residual_w": sym["green_sym_w"],
+        "bond_pair_weight_min": sym["weight_min"],
+        "approximation": (
+            "dynamic RPA-ladder bond dressing on "
+            + ("an EXTERNAL Green function supplied via [eliashberg] "
+               "bond_green (its own approximation level -- e.g. FLEX-dressed "
+               "and self-consistent -- is that of the file, not of this run); "
+               "the bond chi-bar is still built here from that green, so "
+               "this is NOT a conserving FLEX result"
+               if green_source == "file" else
+               "the BARE Green function built from the transfer Hamiltonian "
+               "(supply [eliashberg] bond_green to feed an external/FLEX "
+               "green instead); NOT a conserving FLEX result")
+            + " -- absolute lambda is not comparable to FLEX values"),
+    }
+    if green_source == "file":
+        provenance["bond_green"] = str(bond_green)
+    if bond_set.n_channels == 1:
+        provenance["collapsed_to_pure_hubbard"] = True
+
+    # --- Hermitian-metric features: UNIFORM AXIS ONLY (spec S2, amended) ---
+    # On the IR axis the Euclidean sampling-coordinate adjoint is structural,
+    # not physical (the equal-time functional is adjoint to a constant ket in
+    # the L2 metric, not in the sampling metric), so the whitened-kernel
+    # residual there measures the coordinate choice rather than the operator.
+    # v1 therefore does not compute it on that axis and says so in provenance
+    # instead of publishing a meaningless number; the IR branch's physical
+    # Hermiticity evidence is the B = 1 reduction against the oracle-verified
+    # scalar kernel plus the uniform round-trip convergence (spec S3.5).
+    if use_ir:
+        provenance["hermitian_metric_features"] = "uniform-only"
+        provenance["bond_ir_static_chi"] = "retained"
+        if bond_precondition_opts:
+            logger.warning(
+                "[eliashberg] bond_precondition_atol/rtol/dense_limit are "
+                "ignored with matsubara_basis='ir': the Hermitian-metric "
+                "feature set (the whitened-kernel residual they tune) is "
+                "uniform-axis only in v1 -- on IR sampling coordinates the "
+                "Euclidean adjoint residual is structural, not physical, so "
+                "no such check is run (provenance "
+                "hermitian_metric_features='uniform-only').")
+    else:
+        weight = _bond_dynamic_pair_weight(green_kw).real.ravel()
+        diagnostics = bond_channels.check_hermitian_preconditions(
+            A, weight, label="eliashberg bond_channels (dynamic)",
+            **(bond_precondition_opts or {}))
+        logger.info(
+            "Dynamic bond kernel Hermiticity preconditions OK (%s check): "
+            "||K~ - K~^dag||_F = %.3e (relative %.3e), min w = %.3e",
+            diagnostics["method"],
+            diagnostics["kernel_hermiticity_residual_ktilde"],
+            diagnostics["kernel_hermiticity_relative_ktilde"],
+            diagnostics["weight_min_eigenvalue"])
+        provenance["hermitian_metric_features"] = "uniform"
+        provenance["kernel_hermiticity_residual_ktilde"] = "{:.3e}".format(
+            diagnostics["kernel_hermiticity_residual_ktilde"])
+        provenance["kernel_hermiticity_relative_ktilde"] = "{:.3e}".format(
+            diagnostics["kernel_hermiticity_relative_ktilde"])
+        provenance["kernel_hermiticity_method"] = diagnostics["method"]
+        provenance["pair_weight_min_eigenvalue"] = "{:.6e}".format(
+            diagnostics["weight_min_eigenvalue"])
+
+    diag_arrays = None
+    if bond_diagnostics:
+        diag_arrays = {
+            "cond_min_spin": cond_min_spin,
+            "cond_min_charge": cond_min_charge,
+            "bond_diag_axes": (
+                "cond_min_spin/cond_min_charge: (qx, qy, qz, i_nu) on the "
+                "uniform bosonic Matsubara window of the bond DRESSING "
+                "(nbos = nmat = {}, zero transfer at index nmat//2 = {}); "
+                "the score is min(sigma_min/sigma_max, "
+                "sigma_min/max(1, sigma_max)) of the RPA denominator "
+                "(I -+ chi_bar S/C). tail_est/tail_est_unreliable are "
+                "scalars for the parity branch named by "
+                "tail_est_branch.".format(nmat, nmat // 2)),
+            "bond_delta_r": np.asarray(bond_set.delta_r, dtype=int),
+            "nmat": int(nmat),
+        }
+        provenance["bond_diagnostics"] = True
+
+    return {"operator": (A, vec_size), "green": green_kw, "nmat": int(nmat),
+            "axF": axF, "axB": axB, "provenance": provenance,
+            "diagnostics": diag_arrays, "green_source": green_source}
+
+
+def _bond_tail_diagnostic(green_kw, gap_uniform, beta, nmat, pairing_type):
+    """Production tail estimate on the converged gap (spec S3.3, last bullet).
+
+    ``tail_estimate`` quantifies how much of the instantaneous (Cooper) term
+    the STORED Matsubara window misses, on the pair amplitude the run
+    actually converged to::
+
+        X_{l3l4}(k, i w_n) = sum G_{l3l5}(k, i w_n) phi_{l5l6}(k, i w_n)
+                             G_{l4l6}(-k, -i w_n)
+
+    Scale matters here and is easy to get wrong: ``calc_g2_dynamic`` stores
+    ``G G / beta`` (a redistribution of constants inside the optimized
+    kernel chain, NOT part of the normative definition), so the ``beta``
+    factor below restores the spec's ``X = G phi G``. Without it every
+    serialized ABSOLUTE ``tail_est`` would be a factor beta too small --
+    ``tail_est_rel`` would be unaffected, which is exactly what makes the
+    mistake silent.
+
+    Evaluated on the UNIFORM grid for both bases (on the IR path, from the
+    densified output gap): the estimator's whole subject is the uniform
+    window's truncation, which is what the two bases' instantaneous
+    conventions differ by.
+    """
+    from hwave.solver import bond_channels
+
+    norb = green_kw.shape[0]
+    nd = norb * norb
+    Nx, Ny, Nz = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4]
+    N = Nx * Ny * Nz
+    G2_w = calc_g2_dynamic(green_kw, beta)
+    G2p = G2_w.transpose(0, 2, 1, 3, 4, 5, 6, 7).reshape(nd, nd, N, nmat)
+    del G2_w
+    phi_flat = np.asarray(gap_uniform).reshape(nd, N, nmat)
+    X = beta * np.einsum('adkn,dkn->akn', G2p, phi_flat)
+    del G2p
+    tail_est, tail_rel, unreliable = bond_channels.tail_estimate(X, beta, nmat)
+    logger.info(
+        "Bond tail diagnostic (%s branch): tail_est = %.6e (relative %.3e)%s",
+        pairing_type, tail_est, tail_rel,
+        " -- UNRELIABLE (the 1/w^2+1/w^3 model does not describe the outer "
+        "shell)" if unreliable else "")
+    return {"tail_est": float(tail_est),
+            "tail_est_rel": float(tail_rel),
+            "tail_est_unreliable": bool(unreliable),
+            "tail_est_branch": str(pairing_type)}
+
+
 def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     """Load an eigenvector-continuation seed from ``[eliashberg]
     seed_eigenvector`` (a ``gap_dynamic.npz`` written by a neighbouring run).
@@ -1147,11 +1751,15 @@ def solve_dynamic(input_dict):
     Nk = Nx * Ny * Nz
 
     eli_param = input_dict.get("eliashberg", {})
-    # The bond-resolved channels are a STATIC-path feature; reject them here
-    # too so a direct solve_dynamic() call (bypassing calc_eliashberg's
-    # dispatch, which validates the same thing) cannot silently fall back to
-    # the scalar dynamic vertex.
-    sc._reject_bond_channels_dynamic(eli_param)
+    # Bond-resolved dynamic channels (opt-in, spec S3.4 / state machine S5.2).
+    # Read FIRST: the flag decides whether the FLEX chi files are read at all.
+    # The reader is the SAME one the static path uses, so the strict boolean
+    # spellings, the aux-option validation and the warn-and-ignore of bond_*
+    # keys while the master flag is off all behave identically here. This runs
+    # on a direct solve_dynamic() call too (bypassing calc_eliashberg's
+    # dispatch), so neither entry point can reach the kernel unvalidated.
+    (use_bond, bond_green, bond_max_shells, bond_memory_cap_gb,
+     bond_precondition_opts, bond_diagnostics) = sc._read_bond_config(eli_param)
     pairing_type = eli_param.get("pairing_type", "singlet")
     # Mirror calc_eliashberg's config -> _solve_leading string mapping.
     solver_mode = eli_param.get("solver_mode", "iteration")
@@ -1184,127 +1792,160 @@ def solve_dynamic(input_dict):
     inter_k = sc._build_interaction_k(kx_array, ky_array, kz_array,
                                       interactions, norb)
 
-    # --- FLEX inputs (full frequency) ---
-    if use_ir:
-        chis_w, chic_w, green_w, chi_convention, ir_file_meta = \
-            load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz,
-                                  allow_ir=True)
+    # --- Bond-resolved dynamic branch (spec S3.4): NO chi file is read ----
+    # The bond kernel builds its own frequency-resolved chi-bar from the
+    # Green function, so load_flex_chi_dynamic is bypassed entirely here
+    # (state machine S5.2 rows 2-4); chi0q_mode, if set, is meaningless and
+    # warned about.  Everything this branch needs -- green, Matsubara grid,
+    # IR axes, the LinearOperator itself, provenance and the opt-in
+    # diagnostics -- comes back in one context dict, so the scalar path
+    # below is untouched.
+    bond_ctx = None
+    chis_w = chic_w = None
+    chi_convention = None
+    if use_bond:
+        sc._warn_dynamic_bond_ignores_chi(eli_param)
+        bond_ctx = _build_bond_dynamic_context(
+            eli_param, mode_param, geom_info, hr, interactions, inter_k,
+            norb, kx_array, ky_array, kz_array, beta, pairing_type, use_ir,
+            bond_green=bond_green, bond_max_shells=bond_max_shells,
+            bond_memory_cap_gb=bond_memory_cap_gb,
+            bond_precondition_opts=bond_precondition_opts,
+            bond_diagnostics=bond_diagnostics, use_gpu=use_gpu)
+        green_w = bond_ctx["green"]
+        nmat = bond_ctx["nmat"]
+        axF, axB = bond_ctx["axF"], bond_ctx["axB"]
     else:
-        chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
-            input_dict, norb, Nx, Ny, Nz)
-        ir_file_meta = None
-    if green_w is None:
-        raise ValueError(
-            "dynamic Eliashberg requires the dressed green.npz from the FLEX "
-            "run (the pair bubble G2 is built from it); none was found. Check "
-            "[file.input] path_to_flex_output / [eliashberg] flex_green.")
-    nmat = chis_w.shape[-1]
-
-    # --- IR frequency axis (design Sec. 3.2 / Stage-3 Sec. 4.1):
-    # everything downstream (vertex assembly, pair bubble, kernel, parity
-    # machinery) is per-frequency or reversal-based, so it operates on the
-    # sparse symmetric node axis unchanged. The full uniform tensors of the
-    # VERTEX and G2 are never built on the IR path.
-    axF = axB = None
-    if use_ir:
-        axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
-                                    mu=mode_param.get("mu"),
-                                    filling=mode_param.get("filling"))
-        if ir_file_meta is not None:
-            # IR-native inputs (Stage 3): the files already hold node
-            # values; refit each onto the run axes (pass-through when the
-            # node sets coincide). No drop_constant -- node values carry no
-            # uniform-FFT delta(tau) artifact.
-            if zero_chi_s:
-                _ir_validate_native_nodes(
-                    chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
-                )
-                chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
-            else:
-                chis_w = _ir_refit_nodes(
-                    chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
-                )
-            if zero_chi_c:
-                _ir_validate_native_nodes(
-                    chic_w, ir_file_meta["chic"], axB, "chiq_c", beta
-                )
-                chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
-            else:
-                chic_w = _ir_refit_nodes(
-                    chic_w, ir_file_meta["chic"], axB, "chiq_c", beta
-                )
-            green_w = _ir_refit_nodes(green_w, ir_file_meta["green"], axF,
-                                      "green", beta)
-            # the uniform grid exists only as the OUTPUT grid here
-            nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
+        # --- FLEX inputs (full frequency) ---
+        if use_ir:
+            chis_w, chic_w, green_w, chi_convention, ir_file_meta = \
+                load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz,
+                                      allow_ir=True)
         else:
-            keep_static = _ir_keep_static_requested(eli_param)
-            if zero_chi_s:
-                chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
+            chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
+                input_dict, norb, Nx, Ny, Nz)
+            ir_file_meta = None
+        if green_w is None:
+            raise ValueError(
+                "dynamic Eliashberg requires the dressed green.npz from the FLEX "
+                "run (the pair bubble G2 is built from it); none was found. Check "
+                "[file.input] path_to_flex_output / [eliashberg] flex_green.")
+        nmat = chis_w.shape[-1]
+
+        # --- IR frequency axis (design Sec. 3.2 / Stage-3 Sec. 4.1):
+        # everything downstream (vertex assembly, pair bubble, kernel, parity
+        # machinery) is per-frequency or reversal-based, so it operates on the
+        # sparse symmetric node axis unchanged. The full uniform tensors of the
+        # VERTEX and G2 are never built on the IR path.
+        axF = axB = None
+        if use_ir:
+            axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
+                                        mu=mode_param.get("mu"),
+                                        filling=mode_param.get("filling"))
+            if ir_file_meta is not None:
+                # IR-native inputs (Stage 3): the files already hold node
+                # values; refit each onto the run axes (pass-through when the
+                # node sets coincide). No drop_constant -- node values carry no
+                # uniform-FFT delta(tau) artifact.
+                if zero_chi_s:
+                    _ir_validate_native_nodes(
+                        chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
+                    )
+                    chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
+                else:
+                    chis_w = _ir_refit_nodes(
+                        chis_w, ir_file_meta["chis"], axB, "chiq_s", beta
+                    )
+                if zero_chi_c:
+                    _ir_validate_native_nodes(
+                        chic_w, ir_file_meta["chic"], axB, "chiq_c", beta
+                    )
+                    chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
+                else:
+                    chic_w = _ir_refit_nodes(
+                        chic_w, ir_file_meta["chic"], axB, "chiq_c", beta
+                    )
+                green_w = _ir_refit_nodes(green_w, ir_file_meta["green"], axF,
+                                          "green", beta)
+                # the uniform grid exists only as the OUTPUT grid here
+                nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
             else:
-                chis_w = _ir_compress(
-                    chis_w,
-                    axB,
-                    nmat,
-                    "chiq_s",
-                    drop_constant=True,
-                    keep_constant=keep_static,
-                )
-            if zero_chi_c:
-                chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
-            else:
-                chic_w = _ir_compress(
-                    chic_w,
-                    axB,
-                    nmat,
-                    "chiq_c",
-                    drop_constant=True,
-                    keep_constant=keep_static,
-                )
-            green_w = _ir_compress(green_w, axF, nmat, "green")
+                keep_static = _ir_keep_static_requested(eli_param)
+                if zero_chi_s:
+                    chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
+                else:
+                    chis_w = _ir_compress(
+                        chis_w,
+                        axB,
+                        nmat,
+                        "chiq_s",
+                        drop_constant=True,
+                        keep_constant=keep_static,
+                    )
+                if zero_chi_c:
+                    chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
+                else:
+                    chic_w = _ir_compress(
+                        chic_w,
+                        axB,
+                        nmat,
+                        "chiq_c",
+                        drop_constant=True,
+                        keep_constant=keep_static,
+                    )
+                green_w = _ir_compress(green_w, axF, nmat, "green")
     nfreq_axis = axF.n_freq if use_ir else nmat
 
-    # --- Diagnostic: optionally zero one fluctuation channel to decompose the
-    #     pairing vertex into its spin (chi_s) and charge (chi_c) contributions.
-    #     Both the singlet V = 1.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(S+C) and the
-    #     triplet V = -0.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(C-S) vertices are
-    #     linear in chi_s, chi_c, so this works for either pairing_type. Both
-    #     flags default off, so the production vertex is unchanged. NOTE: the
-    #     instantaneous bare term is retained in every case, and the linearized-gap
-    #     eigenvalue problem is nonlinear in the vertex, so eigenvalues from
-    #     separately zeroed runs are NOT additive
-    #     (lambda_spin + lambda_charge != lambda_full in general).
-    #     Booleans coerced via backend.as_bool (as for the gpu/ir flags) so a
-    #     programmatic string "false" does not silently enable the diagnostic.
-    if zero_chi_c and zero_chi_s:
-        logger.warning(
-            "zero_chi_c=zero_chi_s=True: both susceptibilities "
-            "zeroed; bare (instantaneous) vertex only (diagnostic)."
-        )
-        chic_w[...] = 0
-        chis_w[...] = 0
-    else:
-        if zero_chi_c:
+    if use_bond:
+        if zero_chi_s or zero_chi_c:
             logger.warning(
-                "zero_chi_c=True: charge susceptibility zeroed in "
-                "the pairing vertex (spin+bare channel; diagnostic)."
+                "[eliashberg] zero_chi_s/zero_chi_c are IGNORED with "
+                "bond_channels=true: they zero a channel of the SCALAR FLEX "
+                "pairing vertex, which this branch does not build (the bond "
+                "kernel dresses its own chi-bar). Use bond_channels=false "
+                "for the channel-decomposition diagnostic.")
+    else:
+        # --- Diagnostic: optionally zero one fluctuation channel to decompose the
+        #     pairing vertex into its spin (chi_s) and charge (chi_c) contributions.
+        #     Both the singlet V = 1.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(S+C) and the
+        #     triplet V = -0.5 S.chi_s.S - 0.5 C.chi_c.C + 0.5(C-S) vertices are
+        #     linear in chi_s, chi_c, so this works for either pairing_type. Both
+        #     flags default off, so the production vertex is unchanged. NOTE: the
+        #     instantaneous bare term is retained in every case, and the linearized-gap
+        #     eigenvalue problem is nonlinear in the vertex, so eigenvalues from
+        #     separately zeroed runs are NOT additive
+        #     (lambda_spin + lambda_charge != lambda_full in general).
+        #     Booleans coerced via backend.as_bool (as for the gpu/ir flags) so a
+        #     programmatic string "false" does not silently enable the diagnostic.
+        if zero_chi_c and zero_chi_s:
+            logger.warning(
+                "zero_chi_c=zero_chi_s=True: both susceptibilities "
+                "zeroed; bare (instantaneous) vertex only (diagnostic)."
             )
             chic_w[...] = 0
-        if zero_chi_s:
-            logger.warning(
-                "zero_chi_s=True: spin susceptibility zeroed in the "
-                "pairing vertex (charge+bare channel; diagnostic)."
-            )
             chis_w[...] = 0
+        else:
+            if zero_chi_c:
+                logger.warning(
+                    "zero_chi_c=True: charge susceptibility zeroed in "
+                    "the pairing vertex (spin+bare channel; diagnostic)."
+                )
+                chic_w[...] = 0
+            if zero_chi_s:
+                logger.warning(
+                    "zero_chi_s=True: spin susceptibility zeroed in the "
+                    "pairing vertex (charge+bare channel; diagnostic)."
+                )
+                chis_w[...] = 0
 
-    # --- Vertex and pair bubble on the frequency axis ---
-    logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
-                "convention=%s)...", pairing_type, chi_convention)
-    Vs_q_w = compute_vertices_flex_dynamic(
-        chis_w, chic_w, inter_k, norb, Nx, Ny, Nz,
-        pairing_type=pairing_type, convention=chi_convention)
-    logger.info("Computing frequency-resolved pair bubble G2...")
-    G2_w = calc_g2_dynamic(green_w, beta)
+        # --- Vertex and pair bubble on the frequency axis ---
+        logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
+                    "convention=%s)...", pairing_type, chi_convention)
+        Vs_q_w = compute_vertices_flex_dynamic(
+            chis_w, chic_w, inter_k, norb, Nx, Ny, Nz,
+            pairing_type=pairing_type, convention=chi_convention)
+        logger.info("Computing frequency-resolved pair bubble G2...")
+        G2_w = calc_g2_dynamic(green_w, beta)
 
     # --- Seed: static init_gap form factor, broadcast flat across omega ---
     gap_shape = (norb, norb, Nx, Ny, Nz, nfreq_axis)
@@ -1328,71 +1969,86 @@ def solve_dynamic(input_dict):
     # fermionic nodes so it lives in the same eigenvector space.
     seed_vec = _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat)
 
-    # GPU path: park the two large invariants (pair bubble and vertex) on the
-    # device once; every matvec then only moves the gap vector across PCIe.
-    if gpu_active:
-        logger.info("GPU backend active (CuPy): moving G2 and the pairing "
-                    "vertex to the device (%.2f GB each).", G2_w.nbytes / 1e9)
-        # Two resident tensors plus roughly one same-sized transform
-        # workspace per matvec (the gap-sized arrays are norb^2 smaller).
-        backend.warn_if_device_memory_short(
-            3 * G2_w.nbytes, logger, label="the dynamic Eliashberg kernel")
-        G2_w = xp.asarray(G2_w)
-        Vs_q_w = xp.asarray(Vs_q_w)
+    if use_bond:
+        # The bond operator was built in the context above; the gap vector
+        # space is identical to the scalar path's (spec S3.4: the enlarged
+        # bond index is INTERNAL to the kernel and never appears in the
+        # operator's in/out space), so _solve_leading, the parity family,
+        # _fix_gauge and write_dynamic_outputs all run unchanged.
+        bond_A, bond_vec_size = bond_ctx["operator"]
+        if bond_vec_size != vec_size:
+            raise AssertionError(
+                "bond dynamic kernel vec_size {} != gap vector size {}"
+                .format(bond_vec_size, vec_size))
 
-    # Spatial-FFT parallelism for the CPU kernel (scipy.fft workers): the
-    # default 1 keeps the serial numpy path (bit-compatible with previous
-    # releases); -1 uses all cores. Opt-in so existing runs are unchanged and
-    # concurrent solves do not oversubscribe against OMP/MKL threads. Ignored
-    # on the GPU backend (cuFFT already runs on the device).
-    fft_workers = eli_param.get("fft_workers", 1)
-
-    # The vertex's (q, i nu) -> (r, tau) transform is phi-independent and
-    # dominates the matvec cost, so do it once here; drop the (q, i nu) form
-    # to keep the resident vertex memory unchanged. On the IR path the tau
-    # grid is the fermionic node set (the product V*F is anti-periodic).
-    V_inst_rt = None
-    if use_ir:
-        # Issue #57: split off the frequency-INDEPENDENT (bare 0.5*(S+C))
-        # part of the vertex BEFORE the bosonic-basis fit -- in tau it is a
-        # delta(tau), out of any IR basis, and fitting it aliases it into
-        # an uncontrolled smooth function. The kernel handles it
-        # analytically (see eliashberg_kernel_ir).
-        V_inst = _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
-                                       pairing_type=pairing_type,
-                                       convention=chi_convention)
-        inst_scale = float(np.abs(V_inst).max())
-        if inst_scale > 0.0:
-            logger.info("IR: instantaneous vertex part split off "
-                        "analytically (max |V_inst| = %.6g).", inst_scale)
-            # xp.asarray: on the GPU path Vs_q_w is already a device array
-            # (moved above), while V_inst is host-built -- the subtraction
-            # must not mix backends. Plain no-op cast on numpy.
-            Vs_q_w = Vs_q_w - xp.asarray(V_inst)[..., np.newaxis]
-            V_inst_rt = _spatial_ifftn(V_inst.astype(complex),
-                                       axes=(4, 5, 6), workers=fft_workers)
-            if gpu_active:
-                V_inst_rt = xp.asarray(V_inst_rt)
-        Vs_rt = _ir_vertex_to_rtau(Vs_q_w, axB, axF, workers=fft_workers)
+        def make_operator():
+            return bond_A, vec_size
     else:
-        Vs_rt = vertex_qw_to_rt(Vs_q_w, workers=fft_workers)
-    del Vs_q_w
+        # GPU path: park the two large invariants (pair bubble and vertex) on the
+        # device once; every matvec then only moves the gap vector across PCIe.
+        if gpu_active:
+            logger.info("GPU backend active (CuPy): moving G2 and the pairing "
+                        "vertex to the device (%.2f GB each).", G2_w.nbytes / 1e9)
+            # Two resident tensors plus roughly one same-sized transform
+            # workspace per matvec (the gap-sized arrays are norb^2 smaller).
+            backend.warn_if_device_memory_short(
+                3 * G2_w.nbytes, logger, label="the dynamic Eliashberg kernel")
+            G2_w = xp.asarray(G2_w)
+            Vs_q_w = xp.asarray(Vs_q_w)
 
-    def _matvec(x):
+        # Spatial-FFT parallelism for the CPU kernel (scipy.fft workers): the
+        # default 1 keeps the serial numpy path (bit-compatible with previous
+        # releases); -1 uses all cores. Opt-in so existing runs are unchanged and
+        # concurrent solves do not oversubscribe against OMP/MKL threads. Ignored
+        # on the GPU backend (cuFFT already runs on the device).
+        fft_workers = eli_param.get("fft_workers", 1)
+
+        # The vertex's (q, i nu) -> (r, tau) transform is phi-independent and
+        # dominates the matvec cost, so do it once here; drop the (q, i nu) form
+        # to keep the resident vertex memory unchanged. On the IR path the tau
+        # grid is the fermionic node set (the product V*F is anti-periodic).
+        V_inst_rt = None
         if use_ir:
-            out = eliashberg_kernel_ir(
-                Vs_rt, G2_w, x.reshape(gap_shape), axF, beta,
-                V_inst_rt=V_inst_rt, workers=fft_workers)
+            # Issue #57: split off the frequency-INDEPENDENT (bare 0.5*(S+C))
+            # part of the vertex BEFORE the bosonic-basis fit -- in tau it is a
+            # delta(tau), out of any IR basis, and fitting it aliases it into
+            # an uncontrolled smooth function. The kernel handles it
+            # analytically (see eliashberg_kernel_ir).
+            V_inst = _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                           pairing_type=pairing_type,
+                                           convention=chi_convention)
+            inst_scale = float(np.abs(V_inst).max())
+            if inst_scale > 0.0:
+                logger.info("IR: instantaneous vertex part split off "
+                            "analytically (max |V_inst| = %.6g).", inst_scale)
+                # xp.asarray: on the GPU path Vs_q_w is already a device array
+                # (moved above), while V_inst is host-built -- the subtraction
+                # must not mix backends. Plain no-op cast on numpy.
+                Vs_q_w = Vs_q_w - xp.asarray(V_inst)[..., np.newaxis]
+                V_inst_rt = _spatial_ifftn(V_inst.astype(complex),
+                                           axes=(4, 5, 6), workers=fft_workers)
+                if gpu_active:
+                    V_inst_rt = xp.asarray(V_inst_rt)
+            Vs_rt = _ir_vertex_to_rtau(Vs_q_w, axB, axF, workers=fft_workers)
         else:
-            out = eliashberg_kernel_dynamic(
-                None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt,
-                workers=fft_workers)
-        return backend.to_host(out).ravel()
+            Vs_rt = vertex_qw_to_rt(Vs_q_w, workers=fft_workers)
+        del Vs_q_w
 
-    def make_operator():
-        op = LinearOperator((vec_size, vec_size), matvec=_matvec,
-                            dtype=complex)
-        return op, vec_size
+        def _matvec(x):
+            if use_ir:
+                out = eliashberg_kernel_ir(
+                    Vs_rt, G2_w, x.reshape(gap_shape), axF, beta,
+                    V_inst_rt=V_inst_rt, workers=fft_workers)
+            else:
+                out = eliashberg_kernel_dynamic(
+                    None, G2_w, x.reshape(gap_shape), norb, beta, Vs_rt=Vs_rt,
+                    workers=fft_workers)
+            return backend.to_host(out).ravel()
+
+        def make_operator():
+            op = LinearOperator((vec_size, vec_size), matvec=_matvec,
+                                dtype=complex)
+            return op, vec_size
 
     # Map [eliashberg] controls to the _solve_leading solver_mode string,
     # exactly as calc_eliashberg does for the static path.
@@ -1478,7 +2134,24 @@ def solve_dynamic(input_dict):
             sigma_flat = vecs_all[:, 0]
 
     lam = float(np.real(eigenvalue))
+    lam_imag = float(np.imag(eigenvalue))
     logger.info("Dynamic Eliashberg leading eigenvalue lambda = %.6f", lam)
+    if use_bond:
+        # Spec S2 (amended): the reported lambda is Re(lambda) -- the value
+        # every comparison, parity-branch identity and crossing
+        # interpolation uses -- and the imaginary part is RECORDED, with a
+        # warning when it is not negligible (at small Nmat the _calc_g2
+        # truncation produces exactly this signature; raising Nmat resolves
+        # it, issue #86).
+        bond_ctx["provenance"]["bond_lambda_imag"] = lam_imag
+        if abs(lam_imag) > max(1.0e-8, 1.0e-6 * abs(lam)):
+            logger.warning(
+                "Dynamic bond Eliashberg: the leading eigenvalue has a "
+                "non-negligible imaginary part (lambda = %.6e %+.3ej). The "
+                "reported lambda is its REAL part; a sizeable Im(lambda) "
+                "usually means the Matsubara window is too short (raise "
+                "[mode.param] Nmat) -- it is recorded in the gap npz as "
+                "bond_lambda_imag.", lam, lam_imag)
 
     # --- Outputs ---
     # Gauge-fix the eigenvector (deterministic phase/normalization) so the
@@ -1537,6 +2210,28 @@ def solve_dynamic(input_dict):
         )
     if zero_chi_s or zero_chi_c:
         extra_meta.update({"zero_chi_s": zero_chi_s, "zero_chi_c": zero_chi_c})
+    if use_bond:
+        # Provenance rides extra_meta (spec S3.4): the gap npz records WHICH
+        # approximation produced this lambda -- bond channels, which green,
+        # which frequency grid, the conditioning minima -- so a saved result
+        # can never be mistaken for a scalar dynamic / FLEX one.
+        extra_meta.update(bond_ctx["provenance"])
+        diag_arrays = bond_ctx["diagnostics"]
+        if diag_arrays is not None:
+            # gap_w is on the UNIFORM grid here for both bases (the IR path
+            # densified it above), which is the grid the tail estimator is
+            # defined on.
+            if nmat >= 8 and nmat % 2 == 0:
+                diag_arrays.update(_bond_tail_diagnostic(
+                    bond_ctx["green"], gap_w, beta, nmat, pairing_type))
+            else:
+                logger.warning(
+                    "[eliashberg] bond_diagnostics: the tail estimate needs "
+                    "an even Nmat >= 8 (the centered-grid map and the "
+                    "3*Nmat/8 outer shell both assume it); Nmat = %d, so "
+                    "only the conditioning maps are written.", nmat)
+            _write_bond_diagnostics_npz(output_dir, diag_arrays,
+                                        "bond_diagnostics.npz")
     write_dynamic_outputs(
         output_dir,
         gap_w,
