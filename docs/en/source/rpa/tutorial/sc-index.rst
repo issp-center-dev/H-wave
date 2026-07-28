@@ -1164,8 +1164,7 @@ with four-index vertex structure.
    (the file records no ``spin_mode``). Any non-redundancy is reported; if it
    exceeds a few hundred ulp of double precision relative to the kept block,
    the run is **refused** rather than returning an eigenvalue that would not
-   approximate the spin-resolved problem. The dressed Green function is checked
-   the same way, and non-finite values in it are rejected outright. A file whose
+   approximate the spin-resolved problem. A file whose
    down-spin and cross-spin blocks are identically zero is ambiguous -- it may be
    a legacy layout in which only the consumed block was ever populated, or a
    fully polarized sector -- so it is refused unless it is

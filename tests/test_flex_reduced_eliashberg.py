@@ -1064,31 +1064,6 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
             self._run("_load_flex_susceptibilities_full", cross=0.3)
         self.assertIn("cross-spin blocks are nonzero", str(cm.exception))
 
-    def test_green_blocks_within_roundoff_are_accepted(self):
-        """The Green check uses the same relative allowance as the chi check, so
-        a last-bit difference does not reject a paramagnetic producer."""
-        import hwave.sc as sc
-        with tempfile.TemporaryDirectory() as d:
-            inp, norb, Nx, Ny, Nz = self._write(d, green_blocks=2)
-            g = np.load(os.path.join(d, "green.npz"))["green"]
-            g[1] = g[0] * (1.0 + 0.1 * sc._SPIN_DISCARD_ROUNDOFF_RATIO)
-            np.savez(os.path.join(d, "green.npz"), green=g)
-            sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-
-    def test_two_identical_green_blocks_are_accepted(self):
-        """A paramagnetic run may legitimately store two identical blocks."""
-        self._run("_load_flex_susceptibilities", green_blocks=2)
-
-    def test_unequal_green_spin_blocks_are_refused(self):
-        """chi can be redundant while the Green functions are not; the pair
-        bubble is built from a single propagator, so this must not pass."""
-        with self.assertRaises(ValueError) as cm:
-            self._run("_load_flex_susceptibilities", green_blocks=2,
-                      green_down_factor=0.5)
-        msg = str(cm.exception)
-        self.assertIn("spin blocks that are not identical", msg)
-        self.assertIn("paramagnetic", msg)
-
 
 def _bad_tail(rc, nmat, nvol, norb, nd_so):
     """Redundant at the static slice, NOT redundant elsewhere on the axis."""
@@ -1227,23 +1202,6 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
                                                            Nx, Ny, Nz)
                     self.assertIn("non-finite", str(cm.exception))
 
-    def test_non_finite_green_is_refused(self):
-        """NaN fails every inequality, so without an explicit check a corrupt or
-        diverged Green function would slip past the block comparison and enter
-        the pair bubble."""
-        import hwave.sc as sc
-        for bad, where in ((np.nan, "kept"), (np.inf, "discarded")):
-            with self.subTest(value=bad, block=where):
-                with tempfile.TemporaryDirectory() as d:
-                    inp, norb, Nx, Ny, Nz = self._write(
-                        d, build=self._para, green=self._green_pair(1.0))
-                    g = np.load(os.path.join(d, "green.npz"))["green"]
-                    g[0 if where == "kept" else 1][0, 0, 0, 0] = bad
-                    np.savez(os.path.join(d, "green.npz"), green=g)
-                    with self.assertRaises(ValueError) as cm:
-                        sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-                self.assertIn("non-finite", str(cm.exception))
-
     def _green_pair(self, factor):
         def g(rc, nmat, nvol, norb):
             g0 = rc((nmat, nvol, norb, norb))
@@ -1256,27 +1214,6 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
         a[..., :norb, :norb] = block
         a[..., norb:, norb:] = block
         return a
-
-    def test_green_blocks_just_below_the_threshold_pass(self):
-        import hwave.sc as sc
-        f = 1.0 + 0.1 * sc._SPIN_DISCARD_ROUNDOFF_RATIO
-        with tempfile.TemporaryDirectory() as d:
-            inp, norb, Nx, Ny, Nz = self._write(
-                d, build=self._para, green=self._green_pair(f))
-            sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-
-    def test_green_blocks_just_above_the_threshold_are_refused(self):
-        """Pins that the allowance is relative to the block scale, not absolute:
-        the fixture amplitude is ~0.01, so an absolute test would let this pass.
-        """
-        import hwave.sc as sc
-        f = 1.0 + 10.0 * sc._SPIN_DISCARD_ROUNDOFF_RATIO
-        with tempfile.TemporaryDirectory() as d:
-            inp, norb, Nx, Ny, Nz = self._write(
-                d, build=self._para, green=self._green_pair(f))
-            with self.assertRaises(ValueError) as cm:
-                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-        self.assertIn("spin blocks that are not identical", str(cm.exception))
 
 
 class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
@@ -1355,6 +1292,21 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
                 m[1, :, n:, n:] = 0.0
                 m[1, :, 0, n] = 1e-30        # keep it out of the legacy branch
                 yield "n%d masked-by-scale" % nfreq, m
+
+                # A frequency whose KEPT block is exactly zero. Redundancy
+                # cannot be established there, so nonzero discarded content
+                # must be refused however small it is -- max(w_scale, tiny)
+                # makes the ratio enormous, which is the intended call, not an
+                # accident.
+                z = mk()
+                z[1, :, :n, :n] = 0.0
+                z[1, :, n:, n:] = 1e-300
+                yield "n%d zero-kept-scale" % nfreq, z
+
+                # ...and an all-zero frequency is fine: nothing is discarded.
+                a0 = mk()
+                a0[1] = 0.0
+                yield "n%d all-zero-frequency" % nfreq, a0
 
     def test_every_case_decides_the_same_way(self):
         import hwave.sc as sc

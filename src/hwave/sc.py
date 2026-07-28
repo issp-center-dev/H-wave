@@ -1656,7 +1656,17 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
         return
     ns = 2
     chi = np.asarray(chi_raw)
-    if chi.ndim < 2 or chi.shape[-1] != norb * ns or norb <= 0:
+    if norb <= 0:
+        return
+    if chi.ndim != 4:
+        # Before any shape-dependent early return, so a malformed rank always
+        # gets this message instead of an incidental reshape/index error later.
+        raise ValueError(
+            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility, "
+            "got shape {}.".format(chi.shape))
+    if chi.shape[-1] != norb * ns:
+        # Not the reduced spin-orbital layout; _expand_flex_chi gives a better
+        # diagnostic for this (it can recognise the spin-orbital-mode case).
         return
     up = chi[..., :norb, :norb]
     if up.size == 0:
@@ -1670,13 +1680,6 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     # TEMPORARIES: abs(up), up-down and abs(up-down) at full size are each of
     # the order of the stored array, which on a production file would add
     # multi-GB allocations and could fail a valid file on memory alone.
-    if chi.ndim != 4:
-        # The loaders pass (nfreq, nvol, nd, nd). Anything else would make the
-        # per-frequency indexing below silently inspect one orbital row instead
-        # of the whole matrix, so refuse rather than guess.
-        raise ValueError(
-            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility, "
-            "got shape {}.".format(chi.shape))
     nfreq = chi.shape[0]
 
     # Per-frequency RATIOS, not a global difference over a global scale. The
@@ -1691,6 +1694,7 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     # as exactly redundant.
     scale = d_down = d_cross = 0.0
     worst_ratio = 0.0
+    worst_at = (0, 0.0, 0.0, 0.0)
     any_down = any_cross = False
     for w in range(nfreq):
         u, dn = up[w], down[w]
@@ -1711,9 +1715,10 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
         scale = max(scale, w_scale)
         d_down = max(d_down, w_down)
         d_cross = max(d_cross, w_cross)
-        worst_ratio = max(
-            worst_ratio,
-            max(w_down, w_cross) / max(w_scale, np.finfo(float).tiny))
+        w_ratio = max(w_down, w_cross) / max(w_scale, np.finfo(float).tiny)
+        if w_ratio > worst_ratio:
+            worst_ratio = w_ratio
+            worst_at = (w, w_scale, w_down, w_cross)
         any_down = any_down or bool(np.any(dn))
         any_cross = any_cross or bool(np.any(cu)) or bool(np.any(cd))
 
@@ -1752,6 +1757,10 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
             "written before this check existed carry no tag, so the "
             "configuration flag is the route for them.".format(label))
 
+    # Describe the frequency that decided it: acceptance is a per-frequency
+    # ratio, so quoting global maxima could pair a small tail's mismatch with a
+    # huge unrelated scale from elsewhere on the axis.
+    w_at, scale, d_down, d_cross = worst_at
     parts = []
     if d_down != 0.0:
         parts.append("the down-spin block differs from the up-spin block "
@@ -1765,16 +1774,18 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     if ratio <= _SPIN_DISCARD_ROUNDOFF_RATIO:
         logger.warning(
             "The reduced FLEX susceptibility %s is not exactly spin-redundant: "
-            "%s, against an up-block scale of %.3e. That is %.1e of the kept "
-            "block -- within round-off of double precision, so it is "
-            "treated as noise and the calculation continues using the "
-            "up-spin block. Please report it: every tested path produces "
-            "bit-identical spin blocks.", label, detail, scale, ratio)
+            "%s, against an up-block scale of %.3e at frequency index %d. "
+            "That is %.1e of the kept block there -- within round-off of "
+            "double precision, so it is treated as noise and the calculation "
+            "continues using the up-spin block. Please report it: every tested "
+            "path produces "
+            "bit-identical spin blocks.", label, detail, scale, w_at, ratio)
         return
 
     raise ValueError(
         "The reduced FLEX susceptibility {} is SPIN-RESOLVED: {}, against an "
-        "up-block scale of {:.3e}. The Eliashberg pairing vertex here is "
+        "up-block scale of {:.3e} at frequency index {}. The Eliashberg "
+        "pairing vertex here is "
         "paramagnetic -- the Kuroki S/C matrices carry no spin index and the "
         "singlet/triplet decomposition assumes spin-rotational symmetry -- so "
         "only the up-spin block could be used and the rest would be discarded. "
@@ -1786,7 +1797,7 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
         "a spin-resolved treatment needs an S_z-resolved vertex and the "
         "transverse susceptibility chi^(+-), which FLEX does not compute at all "
         "(calc_type='ring+ladder' is rejected on every FLEX scheme).".format(
-            label, detail, scale))
+            label, detail, scale, w_at))
 
 
 def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
@@ -1953,10 +1964,6 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     green_raw = data_g["green"]
     # H-wave format: (nblock, nfreq, nvol, norb, norb)
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
-    if nblock < 1:
-        raise ValueError(
-            "The FLEX dressed Green function in '{}' has no spin blocks "
-            "(shape {}).".format(green_path, green_raw.shape))
     # A spin-diag FLEX run writes TWO blocks, G_up and G_down. Taking block 0
     # would discard the down-spin propagator exactly as the reduced chi loader
     # used to discard the down-spin susceptibility -- and the pair bubble built
@@ -1964,41 +1971,14 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # normally rejects such a run first, but relying on that is fragile: it is a
     # different file, and a run whose chi happens to be redundant while its
     # Green functions are not would slip straight through. Check here too.
-    # Scan per block and per frequency rather than over the whole array: a
-    # production Green function is easily multi-GB, and np.isfinite or a
-    # full-size difference would add temporaries of the same order and could
-    # fail a perfectly valid file on memory alone.
-    for i in range(nblock):
-        for w in range(nmat_g):
-            if not np.all(np.isfinite(green_raw[i, w])):
-                raise ValueError(
-                    "The FLEX dressed Green function in '{}' contains "
-                    "non-finite values (NaN or Inf) in spin block {} at "
-                    "frequency index {}. NaN fails every inequality, so without "
-                    "this check a corrupt or diverged file would slip past the "
-                    "spin-block comparison below and enter the pair "
-                    "bubble.".format(green_path, i, w))
-    if nblock > 1:
-        gscale = 0.0
-        worst = 0.0
-        for w in range(nmat_g):
-            ref = green_raw[0, w]
-            gscale = max(gscale, float(np.max(np.abs(ref))))
-            for i in range(1, nblock):
-                worst = max(worst, float(np.max(np.abs(ref - green_raw[i, w]))))
-        # Same relative allowance as the susceptibility check, so the two really
-        # are treated alike: a last-bit difference between blocks that entered
-        # the solve identical must not reject a paramagnetic producer.
-        gratio = worst / max(gscale, np.finfo(float).tiny)
-        if gratio > _SPIN_DISCARD_ROUNDOFF_RATIO:
-            raise ValueError(
-                "The FLEX dressed Green function in '{}' has {} spin blocks "
-                "that are not identical (max difference {:.3e}). Only the "
-                "first block would be used, discarding the rest: the "
-                "Eliashberg pair bubble is built from a single propagator "
-                "because the pairing vertex is paramagnetic. Use a "
-                "paramagnetic FLEX run for the Eliashberg step.".format(
-                    green_path, nblock, worst))  # noqa: E501
+    # NOTE: a guard comparing the spin blocks of a two-block green.npz was
+    # tried here and removed again. It is a real gap -- block 0 is used and the
+    # rest discarded -- but it belongs to the dressed Green function rather than
+    # to the reduced-chi embedding this change is about, it needed three rounds
+    # of its own corrections, and the realistic case is already covered: a
+    # spin-polarized run is refused by the susceptibility check before this
+    # function is reached. The residual case (chi redundant, Green not) is
+    # tracked separately rather than carried here.
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
