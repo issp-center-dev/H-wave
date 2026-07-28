@@ -589,7 +589,7 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         kx_array, ky_array, kz_array, indexing='ij'
     )
 
-    def _to_k(value_r):
+    def _to_k(value_r, transpose=True):
         # Same Fourier phase as the solver core, e^{-iqR}, but the ORBITAL
         # PAIR is stored transposed: an entry (R, (a, b)) lands at [b, a].
         #
@@ -619,11 +619,19 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         #
         # NOTE: `_build_hamiltonian_k` is a one-body object and correctly keeps
         # the plain [a, b] placement. Do not "align" this builder to it.
+        #
+        # PairHop is EXCLUDED (transpose=False below). It is the one type that
+        # `rpa.py` does not place through `_append_inter`: `_append_pairhop`
+        # uses the slots (b, a, a, b) rather than the density-density
+        # (b, b, a, a), so the determination above -- which is for a
+        # density-density term -- does not carry over to it. Leaving it alone
+        # changes only what has been established; its orientation is still open.
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
-            val_k[orb2, orb1, :, :, :] += value * np.exp(
+            i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
+            val_k[i1, i2, :, :, :] += value * np.exp(
                 -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
@@ -632,7 +640,8 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     for itype in ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                   "Ising", "PairLift", "PairHop"]:
         if itype in interactions:
-            inter_k[itype] = _to_k(interactions[itype])
+            inter_k[itype] = _to_k(interactions[itype],
+                                   transpose=(itype != "PairHop"))
 
     return inter_k
 

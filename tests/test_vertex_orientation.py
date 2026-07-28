@@ -285,21 +285,80 @@ class TestPairingVertexOrientation(unittest.TestCase):
 
 class TestBuildersAgree(unittest.TestCase):
     """`rpa._make_ham_inter` and `sc._build_interaction_k` must produce the
-    same matrix, in the orientation the two tests above selected."""
+    same matrix.
 
-    def test_sc_builder_matches_the_transposed_convention(self):
+    This compares against the RPA builder itself -- constructing a real
+    `Interaction` and reducing its `ham_inter_q` -- rather than against a
+    locally assumed orientation, so it tests the agreement the fix is about
+    and not the assumption behind it.
+    """
+
+    def test_sc_builder_matches_the_rpa_builder(self):
+        import os
+        import tempfile
+
+        import hwave.qlmsio.read_input_k as read_input_k
         import hwave.sc as sc
+        from hwave.solver.rpa import Interaction, Lattice
 
-        qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
-        vr = {((R, 0, 0), (a, b)): v for (R, a, b), v in BONDS.items()}
-        ik = sc._build_interaction_k(qs, np.array([0.0]), np.array([0.0]),
-                                     {"CoulombInter": vr}, NORB)
-        built = ik["CoulombInter"].transpose(2, 3, 4, 0, 1).reshape(
+        with tempfile.TemporaryDirectory(prefix="hwave_i96_") as d:
+            with open(os.path.join(d, "geom.dat"), "w") as fh:
+                fh.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n2\n"
+                         "   0.0 0.0 0.0\n   0.5 0.0 0.0\n")
+            rows = ["   0    0    0    1    1   0.0 0.0",
+                    "   1    0    0    1    1  -1.0 0.0",
+                    "  -1    0    0    1    1  -1.0 0.0",
+                    "   1    0    0    2    2  -1.0 0.0",
+                    "  -1    0    0    2    2  -1.0 0.0"]
+            with open(os.path.join(d, "transfer.dat"), "w") as fh:
+                fh.write("t\n2\n9\n 1 1 1 1 1 1 1 1 1\n"
+                         + "\n".join(rows) + "\n")
+            ci = ["   {}    0    0    {}    {}   {:.12f}   0.0".format(
+                      R, a + 1, b + 1, v)
+                  for (R, a, b), v in sorted(BONDS.items())]
+            with open(os.path.join(d, "coulombinter.dat"), "w") as fh:
+                fh.write("CoulombInter\n2\n9\n 1 1 1 1 1 1 1 1 1\n"
+                         + "\n".join(ci) + "\n")
+
+            interaction = {"path_to_input": d, "Geometry": "geom.dat",
+                           "Transfer": "transfer.dat",
+                           "CoulombInter": "coulombinter.dat"}
+            ham_param = read_input_k.QLMSkInput(
+                {"path_to_input": d, "interaction": interaction}
+            ).get_param("ham")
+            info_mode = {"mode": "RPA",
+                         "param": {"T": 1.0, "mu": 0.0,
+                                   "CellShape": [NSITE, 1, 1],
+                                   "SubShape": [1, 1, 1], "Nmat": 4},
+                         "calc_scheme": "reduced"}
+            lattice = Lattice(info_mode["param"])
+            inter = Interaction(lattice, ham_param, info_mode)
+
+            qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
+            _, _, interactions = sc._read_interaction_files(
+                {"file": {"input": {"path_to_input": d,
+                                    "interaction": interaction}}})
+            ik = sc._build_interaction_k(qs, np.array([0.0]), np.array([0.0]),
+                                         interactions, NORB)
+
+        ns = 2
+        nd = NORB * ns
+        rpa_V = np.einsum(
+            "ksasatbtb->ksatb",
+            inter.ham_inter_q.reshape(lattice.nvol, *(ns, NORB) * 4)
+        ).reshape(lattice.nvol, nd, nd)[:, :NORB, :NORB]
+        sc_V = ik["CoulombInter"].transpose(2, 3, 4, 0, 1).reshape(
             NSITE, NORB, NORB)
-        want = np.array([v_of_q(q).T for q in qs])
-        self.assertGreater(np.max(np.abs(want - want.transpose(0, 2, 1))), 1e-6)
-        np.testing.assert_allclose(built, want, rtol=0.0, atol=1e-12)
 
+        # non-vacuous: the fixture is orbital-asymmetric, so the two
+        # orientations really are different matrices
+        self.assertGreater(
+            np.max(np.abs(sc_V - sc_V.transpose(0, 2, 1))), 1e-6)
+        np.testing.assert_allclose(sc_V, rpa_V, rtol=0.0,
+                                   atol=1e-12 * np.max(np.abs(rpa_V)))
+        # ...and both are the orientation the exact tests above selected
+        want = np.array([v_of_q(q).T for q in qs])
+        np.testing.assert_allclose(sc_V, want, rtol=0.0, atol=1e-12)
 
 
 class TestAllInteractionTypesTransposed(unittest.TestCase):
@@ -315,10 +374,15 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
     S/C builder.
     """
 
-    TYPES = ("CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising",
-             "PairLift", "PairHop")
+    # every type that rpa.py places through _append_inter, i.e. with the
+    # density-density slots (b, b, a, a) the determination above is for
+    TRANSPOSED = ("CoulombIntra", "CoulombInter", "Hund", "Exchange", "Ising",
+                  "PairLift")
+    # PairHop is placed by _append_pairhop with the slots (b, a, a, b) instead,
+    # so the density-density result does not carry over and it is left alone
+    NOT_TRANSPOSED = ("PairHop",)
 
-    def test_every_type_is_stored_pair_transposed(self):
+    def test_density_types_are_stored_pair_transposed(self):
         import hwave.sc as sc
 
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
@@ -326,7 +390,25 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         want = np.array([v_of_q(q).T for q in qs])
         self.assertGreater(np.max(np.abs(want - want.transpose(0, 2, 1))), 1e-6)
 
-        for itype in self.TYPES:
+        for itype in self.TRANSPOSED:
+            with self.subTest(interaction=itype):
+                ik = sc._build_interaction_k(
+                    qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
+                got = ik[itype].transpose(2, 3, 4, 0, 1).reshape(
+                    NSITE, NORB, NORB)
+                np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
+
+    def test_pairhop_is_deliberately_left_alone(self):
+        """PairHop's orientation is NOT established: rpa.py places it through
+        `_append_pairhop` with different slots, so the density-density
+        determination does not apply.  Pin the status quo so the exclusion is
+        a decision on the record rather than an oversight."""
+        import hwave.sc as sc
+
+        qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
+        vr = {((R, 0, 0), (a, b)): v for (R, a, b), v in BONDS.items()}
+        want = np.array([v_of_q(q) for q in qs])          # NOT transposed
+        for itype in self.NOT_TRANSPOSED:
             with self.subTest(interaction=itype):
                 ik = sc._build_interaction_k(
                     qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
