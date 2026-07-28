@@ -992,17 +992,16 @@ class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
 
 
 class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
-    """The guard now lives at the loader boundary, so pin it THERE.
+    """The guard lives at the loader boundary, so pin it THERE.
 
     The helper-level tests above cannot catch the check being dropped from
     _load_flex_susceptibilities / _load_flex_susceptibilities_full, which is
-    exactly the placement that matters. Cover the static and dynamic routes, and
-    the dressed Green function, which discards spin blocks independently of chi.
+    exactly the placement that matters. Susceptibility only: the dressed Green
+    function is not guarded here (tracked separately).
     """
 
     def _write(self, d, norb=2, nmat=4, Nx=2, Ny=2, Nz=1,
-               down_factor=1.0, cross=0.0, green_blocks=1,
-               green_down_factor=1.0):
+               down_factor=1.0, cross=0.0):
         nvol, nd_so = Nx * Ny * Nz, norb * 2
         rng = np.random.default_rng(3)
 
@@ -1024,10 +1023,8 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
                  chi_convention="kuroki")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=chi(),
                  chi_convention="kuroki")
-        g0 = rc((nmat, nvol, norb, norb))
-        g = np.stack([g0] + [g0 * green_down_factor
-                             for _ in range(green_blocks - 1)])
-        np.savez(os.path.join(d, "green.npz"), green=g)
+        np.savez(os.path.join(d, "green.npz"),
+                 green=rc((1, nmat, nvol, norb, norb)))
         return {"mode": {"param": {"Nmat": nmat}},
                 "file": {"output": {"path_to_output": d}},
                 "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
@@ -1328,6 +1325,76 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
                 except ValueError:
                     got_raise = True
                 self.assertEqual(got_raise, want_raise)
+
+
+class TestSpinGuardDiagnostics(unittest.TestCase):
+    """Acceptance is a per-frequency ratio, so the message must name the
+    frequency that decided it -- quoting a global maximum could pair a small
+    tail's mismatch with a huge unrelated scale from elsewhere on the axis."""
+
+    NORB = 2
+
+    def _chi(self, nfreq, mismatch_at, scales):
+        n, nd_so = self.NORB, self.NORB * 2
+        a = np.zeros((nfreq, 3, nd_so, nd_so), dtype=complex)
+        for w in range(nfreq):
+            a[w, :, :n, :n] = scales[w]
+            a[w, :, n:, n:] = scales[w]
+        for w in mismatch_at:
+            a[w, :, n:, n:] = 0.0
+        return a
+
+    def _raise_message(self, chi):
+        import hwave.sc as sc
+        with self.assertRaises(ValueError) as cm:
+            sc._check_spin_block_discarded(chi, self.NORB, "kuroki", "chi_s")
+        return str(cm.exception)
+
+    def test_sole_mismatch_at_frequency_zero_is_named(self):
+        msg = self._raise_message(self._chi(3, [0], [1.0, 1e6, 1e6]))
+        self.assertIn("frequency index 0", msg)
+
+    def test_sole_mismatch_in_a_small_tail_reports_its_own_scale(self):
+        """The decisive frequency has scale 1.0 while the axis maximum is 1e6;
+        reporting the global scale would understate the mismatch by 1e6."""
+        msg = self._raise_message(self._chi(3, [2], [1e6, 1e6, 1.0]))
+        self.assertIn("frequency index 2", msg)
+        self.assertIn("1.000e+00", msg)
+        self.assertNotIn("1.000e+06", msg)
+
+    def test_tied_ratios_still_report_one_of_them(self):
+        msg = self._raise_message(self._chi(3, [1, 2], [1.0, 5.0, 5.0]))
+        self.assertTrue("frequency index 1" in msg or "frequency index 2" in msg)
+
+
+class TestMalformedShapesAreRefused(unittest.TestCase):
+    """A rectangle whose trailing elements happen to number a perfect square
+    used to be reshaped into a susceptibility without complaint."""
+
+    def test_rectangular_trailing_axes_are_refused(self):
+        import hwave.sc as sc
+        norb = 2
+        # 2*8 = 16 trailing elements; sqrt(16) = 4 = norb^2, so deriving nd_chi
+        # from the element count accepted this as a 4x4.
+        chi = np.arange(1 * 1 * 2 * 8, dtype=complex).reshape(1, 1, 2, 8)
+        with self.assertRaises(ValueError) as cm:
+            sc._expand_flex_chi(chi, norb, 1, 1, 1, "kuroki")
+        self.assertIn("shape", str(cm.exception))
+        with self.assertRaises(ValueError):
+            sc._check_spin_block_discarded(chi, norb, "kuroki", "chi_s")
+
+    def test_the_two_supported_layouts_still_load(self):
+        """The refusal must not catch either real layout: reduced is
+        (nfreq, nvol, nd, nd) and general is
+        (nfreq, nvol, norb, norb, norb, norb)."""
+        import hwave.sc as sc
+        norb = 2
+        red = np.zeros((2, 1, norb * 2, norb * 2), dtype=complex)
+        out = sc._expand_flex_chi(red, norb, 1, 1, 1, "kuroki")
+        self.assertEqual(out.shape[-2:], (norb * norb, norb * norb))
+        gen = np.zeros((2, 1, norb, norb, norb, norb), dtype=complex)
+        out = sc._expand_flex_chi(gen, norb, 1, 1, 1, "myo")
+        self.assertEqual(out.shape[-2:], (norb * norb, norb * norb))
 
 
 if __name__ == "__main__":

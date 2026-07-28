@@ -1658,12 +1658,15 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     chi = np.asarray(chi_raw)
     if norb <= 0:
         return
-    if chi.ndim != 4:
-        # Before any shape-dependent early return, so a malformed rank always
-        # gets this message instead of an incidental reshape/index error later.
+    if chi.ndim != 4 or chi.shape[-1] != chi.shape[-2]:
+        # Rank AND squareness, before any dimension-based early return. Checking
+        # only the last axis let a rectangular array such as (nfreq, nvol, 2, 8)
+        # slip past -- its last dimension is not norb*ns, so the check returned,
+        # and _expand_flex_chi then flattened 2*8 = 16, took sqrt, and
+        # reinterpreted the rectangle as a 4x4 susceptibility.
         raise ValueError(
-            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility, "
-            "got shape {}.".format(chi.shape))
+            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility "
+            "with a square trailing matrix, got shape {}.".format(chi.shape))
     if chi.shape[-1] != norb * ns:
         # Not the reduced spin-orbital layout; _expand_flex_chi gives a better
         # diagnostic for this (it can recognise the spin-orbital-mode case).
@@ -1841,9 +1844,25 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     nd = norb * norb          # orbital-pair dimension
     nd_so = norb * ns         # spin-orbital reduced dimension
     nfreq = chi_raw.shape[0]
-    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, -1)
-    nd_chi = int(np.sqrt(chi_full.shape[-1]))
-    chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
+    # Derive nd_chi from the trailing AXES, not from sqrt of the flattened
+    # element count: the latter accepts any rectangle whose product happens to
+    # be a perfect square -- (nfreq, nvol, 2, 8) has 16 trailing elements and
+    # was silently reshaped into a 4x4 susceptibility.
+    #
+    # Two layouts arrive here: the reduced/kuroki one is (nfreq, nvol, nd, nd),
+    # the general/myo one is (nfreq, nvol, norb, norb, norb, norb) -- an
+    # orbital-pair matrix stored with its pair indices unflattened.
+    tail = chi_raw.shape[2:]
+    if len(tail) == 2 and tail[0] == tail[1]:
+        nd_chi = tail[0]
+    elif len(tail) == 4 and len(set(tail)) == 1:
+        nd_chi = tail[0] * tail[1]
+    else:
+        raise ValueError(
+            "FLEX chi must be (nfreq, nvol, nd, nd) or "
+            "(nfreq, nvol, norb, norb, norb, norb); got shape {}.".format(
+                chi_raw.shape))
+    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
 
     if nd_chi == nd and nd_chi == nd_so:
         # ambiguous (norb == 2): the convention tag is the only disambiguator,
@@ -1971,14 +1990,10 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # normally rejects such a run first, but relying on that is fragile: it is a
     # different file, and a run whose chi happens to be redundant while its
     # Green functions are not would slip straight through. Check here too.
-    # NOTE: a guard comparing the spin blocks of a two-block green.npz was
-    # tried here and removed again. It is a real gap -- block 0 is used and the
-    # rest discarded -- but it belongs to the dressed Green function rather than
-    # to the reduced-chi embedding this change is about, it needed three rounds
-    # of its own corrections, and the realistic case is already covered: a
-    # spin-polarized run is refused by the susceptibility check before this
-    # function is reached. The residual case (chi redundant, Green not) is
-    # tracked separately rather than carried here.
+    # Known limitation: a two-block green.npz has only its first block used.
+    # Not guarded here -- tracked separately. (Note the dynamic loader reads the
+    # Green function BEFORE the susceptibility check, so that check cannot be
+    # relied on to reject a polarized run first.)
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
