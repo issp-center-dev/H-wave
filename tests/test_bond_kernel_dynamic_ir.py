@@ -71,15 +71,63 @@ def test_tail_estimate_on_exact_inverse_square():
     assert 0.0 < rel < 0.05
 
 
+def test_tail_estimate_uses_a_magnitude_consistent_cubic_basis():
+    """Codex round-1 should-fix: ``x(n)`` is a NONNEGATIVE magnitude profile
+    (``max_{k,pairs} |X|``), but the fit's second basis column used to be the
+    SIGNED ``1/w**3`` -- an ODD function of w -- then took ``abs()`` of the
+    resulting coefficient after the fact. On the outer shell's negative
+    frequencies the odd basis vector is negative while the target is not, so
+    an ODD basis cannot represent an EVEN target consistently; the fix is
+    ``1/|w|**3`` (even in w by construction, matching x's symmetry).
+
+    Verified on an exact synthetic profile with nonzero cubic content,
+    ``x(n) = A/w**2 + B/|w|**3`` (A, B > 0) sampled over BOTH frequency
+    signs: with the magnitude-consistent basis the 2-parameter fit is exact
+    (the model spans the data exactly), so ``tail_est`` must reproduce the
+    literal window-complement sum of that SAME model to within 1%. Before
+    the fix this measured ~1.2% off (just outside this bound) because the
+    signed column cannot represent the even |w|**-3 term coming from
+    negative-frequency points."""
+    beta, nmat = 5.0, 64
+    A, B = 2.3, 1.7
+    n_t = np.arange(nmat) - nmat // 2
+    w = (2 * n_t + 1) * np.pi / beta
+    X = (A / w ** 2 + B / np.abs(w) ** 3)[None, :]
+    est, rel, bad = bc.tail_estimate(X, beta, nmat)
+    assert not bad
+
+    n_all = np.arange(-64 * nmat, 64 * nmat + 1)
+    in_S = (n_all >= -(nmat // 2)) & (n_all <= nmat // 2 - 1)
+    n_tail = n_all[~in_S]
+    w_tail = (2 * n_tail + 1) * np.pi / beta
+    exact = (1.0 / beta) * np.sum(A / w_tail ** 2 + B / np.abs(w_tail) ** 3)
+    assert abs(est - exact) / abs(exact) < 0.01
+
+
 def test_tail_estimate_flags_an_unfittable_profile():
     """The reliability flag (relative outer-shell fit residual > 0.2) is the
     spec's guard against reporting a tail number for data the ``|a|/w^2 +
-    |b|/w^3`` model does not describe. A profile that oscillates between
+    |b|/|w|^3`` model does not describe. A profile that oscillates between
     neighbouring frequencies (an X nowhere near its asymptotic regime) is the
     canonical case; a merely noisy but smooth-on-average profile is NOT
     flagged, which is the estimator behaving as specified (the flag is a
     model-adequacy test at the 0.2 relative-residual level, not a noise
-    detector)."""
+    detector).
+
+    Codex round-1 should-fix context: the second basis column is now the
+    magnitude-consistent ``1/|w|^3`` (even in w), and the coefficients are
+    recovered with a nonnegative least-squares solve (``scipy.optimize.
+    nnls``) rather than unconstrained ``lstsq`` followed by ``abs()`` of
+    whatever sign came out. That matters here: the two columns (``1/w^2``,
+    ``1/|w|^3``) are both positive and close in shape over one outer shell,
+    so they are far more collinear than the old (odd, near-orthogonal-ish)
+    pair -- an unconstrained fit can return a genuinely negative coefficient
+    on real data (measured on the milestone U=4/V=1 fixture at Nmat=64), and
+    forcing ``abs()`` on that afterwards assembles a model that was never
+    actually fit, with a residual tens of times worse than the true
+    nonnegative optimum. NNLS solves the CONSTRAINED (a, b >= 0) problem
+    directly, so it is never worse than any nonnegative guess and this
+    profile's reliability verdict is unchanged from before the basis fix."""
     beta, nmat = 5.0, 64
     n_t = np.arange(nmat) - nmat // 2
     X = (1.0 + 0.9 * (-1.0) ** n_t)[None, :]

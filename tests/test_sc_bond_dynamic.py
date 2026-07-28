@@ -180,6 +180,40 @@ def test_dynamic_bond_green_mismatch_errors(tmp_path, mismatch):
         ed.solve_dynamic(inp)
 
 
+@pytest.mark.parametrize("bad_nmat", [0, -2])
+def test_dynamic_bond_rejects_nonpositive_nmat_direct(bad_nmat):
+    """Codex round-1 should-fix: ``_bond_dynamic_green`` only checked parity
+    (``nmat_cfg % 2 != 0``), and Python's modulo makes both 0 and negative
+    even numbers pass that check (``0 % 2 == 0``, ``-2 % 2 == 0``) -- so
+    Nmat=0 or Nmat=-2 used to sail through to the resource preflight. This
+    must be refused before the preflight, with the same message style as
+    ``sc._validate_bond_green_nmat``."""
+    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver import bond_channels as bc
+
+    bset = bc.resolve_interactions({((1, 0, 0), (0, 0)): 1.0,
+                                    ((-1, 0, 0), (0, 0)): 1.0}, np.eye(3), 1)
+    with pytest.raises(ValueError, match="POSITIVE EVEN"):
+        ed._bond_dynamic_green(
+            None, {"filling": 0.5}, None, 1,
+            np.zeros(4), np.zeros(4), np.zeros(1), 2.0, bad_nmat,
+            bset, None)
+
+
+@pytest.mark.parametrize("bad_nmat", [0, -2])
+def test_dynamic_bond_rejects_nonpositive_nmat_dispatched(tmp_path, bad_nmat):
+    """Same guard, reached through the ordinary ``solve_dynamic`` entry
+    point (bond_channels=true, no bond_green -> the bare-green branch, which
+    still must not reach the preflight with a nonsensical grid size)."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    output_dir = str(tmp_path / "output")
+    inp = _bond_input(input_dir, output_dir, nmat=bad_nmat)
+    with pytest.raises(ValueError, match="POSITIVE EVEN"):
+        ed.solve_dynamic(inp)
+
+
 def test_dynamic_bond_requires_coulomb_inter(tmp_path):
     """S6: the bond guards of the static path apply unchanged -- a run with
     no CoulombInter term declared is refused."""
@@ -569,7 +603,15 @@ def test_dress_bond_dynamic_matches_the_materialized_vertex_form():
 def test_dynamic_preflight_counts_the_eigensolver_basis():
     """The ARPACK basis is its own budget line (spec S7): it scales with
     num_eigenvalues and, at B = 1, is comparable to the whole matvec family
-    -- it was previously uncounted."""
+    -- it was previously uncounted.
+
+    Codex round-1 must-fix: the budget used to pin ``(2*k + 1)`` vectors,
+    but scipy's ``eigs`` actually allocates ``ncv = min(N, max(2*k+1, 20))``
+    -- for k < 10 that is 20, not ``2*k+1`` (e.g. k=4 -> 20, not 9). The
+    fixed formula also takes the MAX with the preliminary shift-estimation
+    probe's own basis (``k_pre = min(6, vec_size-2)``, so also 20 here):
+    the probe and the main solve run sequentially, one Krylov basis at a
+    time, so the peak is whichever is larger, not their sum."""
     import hwave.sc as sc
     from hwave.solver import bond_channels as bc
 
@@ -578,14 +620,64 @@ def test_dynamic_preflight_counts_the_eigensolver_basis():
     kw = dict(norb=1, bond_set=bset, Nx=8, Ny=8, Nz=1, nmat=32,
               dynamic_nmat=32)
     vec_size_bytes = 1 * 64 * 32 * 16
+
+    # k=1: scipy's ncv floor (20) dominates both the main call and the probe.
+    est1 = sc._bond_memory_estimate(num_eigenvalues=1, **kw)
+    assert est1["arpack_bytes"] == 20 * vec_size_bytes
+
+    # k=4: the old formula pinned 9*vec_size_bytes (2*4+1); scipy actually
+    # allocates ncv=20 (max(2*4+1, 20)) here -- the undercount this fix
+    # closes.
     est4 = sc._bond_memory_estimate(num_eigenvalues=4, **kw)
+    assert est4["arpack_bytes"] == 20 * vec_size_bytes
+
+    # k=12: 2*12+1=25 > 20, so the main call's own ncv dominates the probe's.
+    est12 = sc._bond_memory_estimate(num_eigenvalues=12, **kw)
+    assert est12["arpack_bytes"] == 25 * vec_size_bytes
+
     est16 = sc._bond_memory_estimate(num_eigenvalues=16, **kw)
-    assert est4["arpack_bytes"] == 9 * vec_size_bytes
     assert est16["arpack_bytes"] == 33 * vec_size_bytes
     assert (est16["kernel_matvec_bytes"] - est4["kernel_matvec_bytes"]
             == est16["arpack_bytes"] - est4["arpack_bytes"])
     assert sc._bond_memory_estimate(**kw)["arpack_bytes"] == (
         (2 * sc._BOND_DEFAULT_NUM_EIGENVALUES + 1) * vec_size_bytes)
+
+
+def test_dynamic_preflight_arpack_basis_never_goes_negative():
+    """A negative num_eigenvalues used to flow straight into
+    ``(2*num_eigenvalues + 1) * vec_size_bytes`` and produce a NEGATIVE byte
+    budget -- silently OK-ing a preflight it should refuse outright. The
+    fixed ncv-based formula clamps k to >= 1 internally, so it can never go
+    negative regardless of the input (config-level validation, added
+    separately, is the primary defense -- this is the belt-and-suspenders
+    check on the arithmetic itself)."""
+    import hwave.sc as sc
+    from hwave.solver import bond_channels as bc
+
+    inter = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}
+    bset = bc.resolve_interactions(inter, np.eye(3), 1)
+    est = sc._bond_memory_estimate(norb=1, bond_set=bset, Nx=8, Ny=8, Nz=1,
+                                   nmat=32, dynamic_nmat=32,
+                                   num_eigenvalues=-3)
+    assert est["arpack_bytes"] >= 0
+
+
+def test_num_eigenvalues_option_rejects_non_positive(tmp_path):
+    """``[eliashberg] num_eigenvalues`` must be validated >= 1 at config
+    read: a non-positive value has no ARPACK meaning (k >= 1) and used to
+    flow silently into a negative preflight byte budget instead of being
+    refused with the key named."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    output_dir = str(tmp_path / "output")
+    inp = _bond_input(input_dir, output_dir, nmat=16, num_eigenvalues=0)
+    with pytest.raises(ValueError, match="num_eigenvalues"):
+        ed.solve_dynamic(inp)
+
+    inp2 = _bond_input(input_dir, output_dir, nmat=16, num_eigenvalues=-2)
+    with pytest.raises(ValueError, match="num_eigenvalues"):
+        ed.solve_dynamic(inp2)
 
 
 def test_bond_memory_estimate_refuses_mixed_grids():
@@ -652,6 +744,63 @@ def test_bond_green_metadata_temperature_check(tmp_path, case):
     # a file with no metadata at all is REPORTED, not refused
     np.savez(path, green=np.zeros((1, 16, 4, 1, 1), dtype=complex))
     ed._bond_green_metadata_consistency(path, 16, beta_run)
+
+
+def test_bond_green_metadata_cell_shape_same_nvol_different_shape_errors(
+        tmp_path):
+    """Codex round-1 must-fix: nvol alone does not prove the momentum grid
+    matches -- an 8x2x1 file and a 4x4x1 run share nvol=16 but index
+    completely different k-points. Before the fix this npz-level check never
+    compared shapes at all (only ``sc._load_green_npz``'s nvol/norb check
+    ran, downstream), so it silently reshaped onto the wrong grid; now a file
+    that DOES carry cell_shape must be rejected with an informative error
+    naming both shapes."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    path = str(tmp_path / "g.npz")
+    np.savez(path, green=np.zeros((1, 16, 16, 1, 1), dtype=complex),
+             cell_shape=np.array([8, 2, 1]))
+    with pytest.raises(ValueError, match=r"\(8, 2, 1\).*\(4, 4, 1\)"):
+        ed._bond_green_metadata_consistency(path, 16, 2.0,
+                                            cell_shape=(4, 4, 1))
+    # the matching shape passes silently
+    ed._bond_green_metadata_consistency(path, 16, 2.0, cell_shape=(8, 2, 1))
+
+
+def test_bond_green_metadata_cell_shape_legacy_file_warns_not_errors(
+        tmp_path, caplog):
+    """A file with no ``cell_shape`` key (today's ordinary densified/uniform
+    FLEX green.npz -- see flex.save_results, which only writes cell_shape for
+    IR-native output) cannot be shape-verified; this must be an honest
+    warning naming that fact, not a false "checked" claim and not a hard
+    error that would block every real production file."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    path = str(tmp_path / "g.npz")
+    np.savez(path, green=np.zeros((1, 16, 16, 1, 1), dtype=complex))
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        ed._bond_green_metadata_consistency(path, 16, 2.0,
+                                            cell_shape=(4, 4, 1))   # no raise
+    assert any("unverifiable" in rec.message for rec in caplog.records)
+
+
+def test_dynamic_bond_green_cell_shape_mismatch_errors_end_to_end(tmp_path):
+    """Dispatched through solve_dynamic: a bond_green tagged with the WRONG
+    (same-nvol) cell_shape must fail the run rather than silently compute a
+    wrong lambda on a mis-mapped k-grid."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    output_dir = str(tmp_path / "output")
+    inp = _bond_input(input_dir, output_dir, nmat=16, cell=(4, 4, 1))
+    green_path = str(tmp_path / "green.npz")
+    _write_bare_green_npz(green_path, inp)
+    data = dict(np.load(green_path))
+    data["cell_shape"] = np.array([8, 2, 1])   # same nvol=16, wrong shape
+    np.savez(green_path, **data)
+    inp["eliashberg"]["bond_green"] = green_path
+    with pytest.raises(ValueError, match=r"\(8, 2, 1\).*\(4, 4, 1\)"):
+        ed.solve_dynamic(inp)
 
 
 def test_dynamic_bond_iteration_mode_warns_about_the_repulsive_kernel(

@@ -1057,7 +1057,7 @@ Green 関数から直接、自前の振動数分解された :math:`\bar\chi` �
    frequency = "dynamic"
    bond_channels = true
    bond_green = "output/green.npz"
-   matsubara_basis = "ir"
+   matsubara_basis = "uniform"
    pairing_type = "triplet"
    solver_mode = "eigenvalue"
    bond_diagnostics = true

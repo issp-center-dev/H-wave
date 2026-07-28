@@ -161,6 +161,26 @@ def _bond_int_option(eli_param, key, default=None):
     return int(fval)
 
 
+def _read_num_eigenvalues(eli_param, default=10):
+    """Read ``[eliashberg] num_eigenvalues`` with strict-int, ``>= 1``
+    validation (same TOML-boundary pattern as ``_bond_int_option``, applied
+    to the eigenvalue-family solvers generally rather than a bond-only key).
+
+    A non-positive value has no ARPACK meaning (``k >= 1``) and, on the
+    bond-channel dynamic path, used to flow silently into
+    ``_bond_memory_estimate``'s ARPACK budget line and produce a NEGATIVE
+    byte count -- an under-count so total it OK'd a preflight that should
+    have been refused outright. Refusing it here, at the config boundary,
+    with the key named, closes that off at the source rather than relying
+    on the arithmetic downstream to cope.
+    """
+    n = _bond_int_option(eli_param, "num_eigenvalues", default)
+    if n < 1:
+        raise ValueError(
+            "[eliashberg] num_eigenvalues must be >= 1; got {!r}.".format(n))
+    return n
+
+
 # ---------------------------------------------------------------------------
 # Eliashberg frequency mode dispatch
 # ---------------------------------------------------------------------------
@@ -515,6 +535,42 @@ _BOND_DRESS_DYN_ARRAYS = 6
 _BOND_DEFAULT_NUM_EIGENVALUES = 10
 
 
+def _arpack_basis_vectors(num_eigenvalues, vec_size):
+    """Number of Krylov basis vectors ARPACK allocates for a ``vec_size``-
+    dimensional operator, mirroring scipy's own ``eigs`` default (``ncv =
+    min(N, max(2*k+1, 20))``) and ``_solve_leading``'s k-clamping exactly --
+    so this preflight budget agrees with what the solver really allocates
+    (review fix: the previous ``2*num_eigenvalues + 1`` formula undercounts
+    for k < 10, e.g. k=4 -> 9 vectors budgeted vs. 20 actually allocated).
+
+    Also folds in the preliminary shift-estimation probe (``k_pre = min(6,
+    vec_size - 2)``, run by both the ``spectral_shift="auto"`` arnoldi path
+    and the default ``sigma_shift=None`` shift-invert path -- see
+    ``_solve_leading``) as the MAX of the two bases, not their sum: the probe
+    and the main solve run sequentially, one Krylov basis at a time, so only
+    one is ever live at once.
+
+    Returns 0 when ``vec_size <= 2``: ``_solve_leading`` bypasses ARPACK
+    entirely there (a dense ``np.linalg.eig`` on the whole tiny operator).
+
+    ``num_eigenvalues`` is clamped to >= 1 here regardless of its input sign
+    -- ARPACK's k has no meaning below 1 -- so this can never return a
+    budget that makes a caller's byte count go negative; config-level
+    validation (``[eliashberg] num_eigenvalues >= 1``) is the primary
+    defense, this is the arithmetic's own floor.
+    """
+    if vec_size <= 2:
+        return 0
+
+    def _ncv(k):
+        k = max(int(k), 1)
+        return min(vec_size, max(2 * k + 1, 20))
+
+    k_main = min(max(int(num_eigenvalues), 1), vec_size - 2)
+    k_pre = min(6, vec_size - 2)
+    return max(_ncv(k_main), _ncv(k_pre))
+
+
 def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None,
                           num_eigenvalues=None):
     """Byte budget for the bond path, broken down by buffer family.
@@ -611,10 +667,13 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None,
         ``BOND_KERNEL_DYNAMIC_MATVEC_BUFFERS`` in ``bond_channels``).
 
         ``arpack_bytes`` is likewise explicit (spec S7 lists the eigensolver
-        basis as a budget line): ``(2*num_eigenvalues + 1)`` vectors of
-        ``vec_size = nd * N_q * dynamic_nmat`` -- ARPACK's ``ncv`` default is
-        ``2k+1`` -- which at ``B = 1`` is comparable to the whole matvec
-        family. ``num_eigenvalues`` defaults to
+        basis as a budget line): ``_arpack_basis_vectors(num_eigenvalues,
+        vec_size)`` vectors of ``vec_size = nd * N_q * dynamic_nmat`` --
+        scipy's ``eigs`` actually allocates ``ncv = min(vec_size,
+        max(2*num_eigenvalues+1, 20))`` (NOT the naive ``2k+1``, which
+        undercounts for k < 10), maxed against the preliminary shift-
+        estimation probe's own basis -- which at ``B = 1`` is comparable to
+        the whole matvec family. ``num_eigenvalues`` defaults to
         ``_BOND_DEFAULT_NUM_EIGENVALUES``; pass the run's value so the
         estimate follows the configuration.
 
@@ -669,8 +728,9 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, dynamic_nmat=None,
     unit_dyn = chi_bar_bytes_static * nmat_dyn
     unit_mv = Nq * nmat_dyn * ND * itemsize
     g2_bytes = nd * nd * Nq * nmat_dyn * itemsize
-    vec_size_bytes = nd * Nq * nmat_dyn * itemsize
-    arpack_bytes = (2 * n_eig + 1) * vec_size_bytes
+    vec_size = nd * Nq * nmat_dyn
+    vec_size_bytes = vec_size * itemsize
+    arpack_bytes = _arpack_basis_vectors(n_eig, vec_size) * vec_size_bytes
     bubble_bytes = (bond_channels.BOND_BUBBLE_DYN_N4_BUFFERS * norb ** 4
                     + bond_channels.BOND_BUBBLE_DYN_N2_BUFFERS
                     * norb ** 2) * unit
@@ -4796,7 +4856,7 @@ def calc_eliashberg(input_dict):
     max_iter = eli_param.get("max_iter", 1000)
     alpha = eli_param.get("alpha", 0.5)
     tol = eli_param.get("convergence_tol", 1.0e-5)
-    num_eigenvalues = eli_param.get("num_eigenvalues", 10)
+    num_eigenvalues = _read_num_eigenvalues(eli_param)
     eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
     pairing_type = eli_param.get("pairing_type", "singlet")
     # Default the initial gap to the channel's parity (even for singlet, odd

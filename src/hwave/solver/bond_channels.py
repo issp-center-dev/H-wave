@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import logging
 
 import numpy as np
+from scipy.optimize import nnls
 from scipy.sparse.linalg import LinearOperator
 
 from . import backend as _bk
@@ -1785,8 +1786,21 @@ def tail_estimate(X_w, beta, nmat):
     quantitative budget instead of a hand-picked tolerance.
 
     It is an ESTIMATOR, not a bound (spec's words): the returned numbers are
-    only as good as the ``|a|/w^2 + |b|/w^3`` asymptotic model on the outer
-    shell, which is exactly what ``unreliable`` reports.
+    only as good as the ``|a|/w^2 + |b|/|w|^3`` asymptotic MAGNITUDE model on
+    the outer shell, which is exactly what ``unreliable`` reports. The
+    second term uses ``|w|``, not ``w``: ``x`` is a nonnegative magnitude
+    profile (step 1), so its model must be even in w by construction --
+    fitting a SIGNED ``1/w^3`` column against an even target is inconsistent
+    on the negative-frequency half of the outer shell (review fix). With
+    both columns even (and both strictly positive, so the design is far more
+    collinear than the old odd/even pair), the coefficients are recovered
+    with NONNEGATIVE least squares (``scipy.optimize.nnls``), not
+    unconstrained ``lstsq`` followed by ``abs()``: on real physical data the
+    unconstrained fit can return a genuinely negative coefficient (the two
+    columns nearly trade off against each other), and forcing ``abs()``
+    afterwards assembles a model that was never actually fit -- NNLS solves
+    the ``a, b >= 0``-constrained problem directly, so it is never worse
+    than any nonnegative guess.
 
     Pipeline (each step is normative):
 
@@ -1795,12 +1809,12 @@ def tail_estimate(X_w, beta, nmat):
        done on this profile; there are no per-k fits anywhere.
     2. *Outer shell* -- the stored frequencies with ``|n~| > 3*nmat/8`` (the
        outermost quarter of the window, both signs).
-    3. *Asymptotic fit* -- least squares of ``x(n~) ~ |a|/w^2 + |b|/w^3``
-       over the outer shell.
+    3. *Asymptotic fit* -- nonnegative least squares of ``x(n~) ~ a/w^2 +
+       b/|w|^3`` (``a, b >= 0``) over the outer shell.
     4. *Window sets* -- stored ``S = {n~: -nmat/2 <= n~ <= nmat/2 - 1}`` (the
        S3.1 integer map) and tail ``T_bar = {n~: n~ not in S, |n~| <=
        64*nmat}``; note the unstored ``n~ = +nmat/2`` belongs to the tail set.
-    5. *Estimator* -- ``tail_est = T * sum_{n~ in T_bar} (|a|/w^2 + |b|/w^3)``
+    5. *Estimator* -- ``tail_est = T * sum_{n~ in T_bar} (|a|/w^2 + |b|/|w|^3)``
        by explicit summation of the fitted model over that closed window.
     6. *Relative form* -- ``tail_est_rel = tail_est / (T * sum_{n~ in S}
        x(n~))``: the denominator is the same-reduction sum over the stored
@@ -1865,15 +1879,42 @@ def tail_estimate(X_w, beta, nmat):
         # the number carries no information and is flagged as such.
         return 0.0, 0.0, True
 
-    # 2./3. outer shell + asymptotic least squares
+    # 2./3. outer shell + asymptotic least squares.
+    # The SECOND basis column is 1/|w|**3, not the signed 1/w**3: x is a
+    # NONNEGATIVE magnitude profile (max_{k,pairs} |X|), even in w by
+    # construction (the centered grid's negative and positive frequencies
+    # both contribute magnitude, not signed values), while 1/w**3 is an ODD
+    # function of w -- an inconsistent basis for an even target (review fix).
+    # 1/|w|**3 matches x's even symmetry exactly.
+    #
+    # With BOTH columns now even (and strictly positive, and close in shape
+    # over one outer shell -- 1/w^2 and 1/|w|^3 differ only by a slowly
+    # varying extra 1/|w| factor there), the design is far more collinear
+    # than the old (odd, orthogonal-ish) one: an UNCONSTRAINED lstsq can and
+    # does return a NEGATIVE coefficient on real physical data even though
+    # the true minimum-norm-consistent model has both a, b >= 0 (measured:
+    # on the U=4/V=1 milestone fixture at Nmat=64, unconstrained lstsq gives
+    # a<0 with |a| comparable to b, and forcing abs(a) afterwards -- the
+    # previous code's move -- assembles a model that was never actually fit
+    # to the data, one whose residual is ~40x WORSE than the true
+    # nonnegative optimum). Since the model is only physically meaningful
+    # for a, b >= 0 (a magnitude decays, its coefficient does not flip
+    # sign), solve the constrained problem directly with nonnegative least
+    # squares instead of unconstrained lstsq + abs(): it minimises the same
+    # residual SUBJECT TO a, b >= 0, so it is never worse than any
+    # nonnegative choice (including the abs()-of-lstsq guess) and is exact
+    # for the normal case (an exact A/w**2 + B/|w|**3 profile with A, B > 0
+    # has a, b >= 0 as its unconstrained optimum too, so NNLS reproduces it
+    # exactly there as well).
     outer = np.abs(n_t) > 3.0 * nmat / 8.0
-    design = np.stack([1.0 / w[outer] ** 2, 1.0 / w[outer] ** 3], axis=1)
-    coef, _, _, _ = np.linalg.lstsq(design, x[outer], rcond=None)
-    a = abs(float(coef[0]))
-    b = abs(float(coef[1]))
+    design = np.stack([1.0 / w[outer] ** 2, 1.0 / np.abs(w[outer]) ** 3],
+                      axis=1)
+    coef, _ = nnls(design, x[outer])
+    a = float(coef[0])
+    b = float(coef[1])
 
     # 7. reliability of the model actually used below
-    model = a / w[outer] ** 2 + b / w[outer] ** 3
+    model = a / w[outer] ** 2 + b / np.abs(w[outer]) ** 3
     scale = float(np.linalg.norm(x[outer]))
     resid = float(np.linalg.norm(x[outer] - model))
     n_outer = int(np.count_nonzero(outer))
@@ -1884,7 +1925,7 @@ def tail_estimate(X_w, beta, nmat):
     in_S = (n_all >= -(nmat // 2)) & (n_all <= nmat // 2 - 1)
     n_tail = n_all[~in_S]
     w_tail = (2 * n_tail + 1) * np.pi / beta
-    tail_est = float(T * np.sum(a / w_tail ** 2 + b / w_tail ** 3))
+    tail_est = float(T * np.sum(a / w_tail ** 2 + b / np.abs(w_tail) ** 3))
 
     # 6. relative form
     denom = float(T * np.sum(x))

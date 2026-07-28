@@ -1248,17 +1248,32 @@ _BOND_GREEN_IR_HINT = (
     "densified file.")
 
 
-def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
+def _bond_green_metadata_consistency(green_path, nmat_cfg, beta,
+                                     cell_shape=None):
     """Compare a ``bond_green`` npz's own metadata with the run configuration.
 
     Spec S3.4: "provenance checks compare (CellShape, Nmat or IR meta, T)
     between the npz and the run config and ERROR on mismatch (no silent
-    mixed-convention runs)". CellShape/norb are enforced by
-    ``sc._load_green_npz`` (which refuses a file whose nvol/norb differ) and
-    the Matsubara count by the caller; this covers the TEMPERATURE, which is
-    recorded only by files that carry an IR axis (``ir_beta``) or an explicit
-    ``beta``/``T`` entry. Uniform ``green.npz`` files written by FLEX carry no
-    temperature at all -- that is reported, not silently treated as a match.
+    mixed-convention runs)". norb (and the total volume nvol) are enforced by
+    ``sc._load_green_npz``, but nvol alone does NOT prove the (Nx, Ny, Nz)
+    SHAPE agrees -- an 8x2x1 file and a 4x4x1 run both have nvol=16, and
+    reshaping the former's flat k-axis onto the latter's grid silently mixes
+    momenta together (review fix: this function used to claim "the CellShape
+    ... checks did run" without ever comparing one). ``cell_shape``, when
+    given, is this run's ``(Nx, Ny, Nz)``; it is compared against the file's
+    own ``cell_shape`` key WHEN THE FILE RECORDS ONE. FLEX only writes
+    ``cell_shape`` into ``green.npz`` for IR-NATIVE output (see
+    ``flex.save_results``) -- which is rejected below before this check runs
+    -- so on today's densified/uniform files this almost always falls back to
+    an explicit "unverifiable" warning; the check nonetheless picks up any
+    file (present or future) that does carry the key, and is honest about the
+    common case that cannot be verified instead of pretending it was.
+
+    The Matsubara count is checked by the caller; this covers the
+    TEMPERATURE, which is recorded only by files that carry an IR axis
+    (``ir_beta``) or an explicit ``beta``/``T`` entry. Uniform ``green.npz``
+    files written by FLEX carry no temperature at all -- that is reported,
+    not silently treated as a match.
 
     **IR-native files are rejected FIRST** (review fix). ``sc._load_green_npz``
     rejects them too, but the caller peeks the npz header for ``nfreq`` before
@@ -1286,6 +1301,8 @@ def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
         elif "T" in keys:
             found = ("T", float(np.asarray(data["T"])), 1.0 / beta)
         nmat_meta = int(np.asarray(data["nmat"])) if "nmat" in keys else None
+        shape_meta = (tuple(int(x) for x in np.asarray(data["cell_shape"]))
+                      if "cell_shape" in keys else None)
     if found is not None:
         key, file_value, run_value = found
         if not np.isclose(file_value, run_value, rtol=1.0e-8, atol=0.0):
@@ -1302,7 +1319,7 @@ def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
         logger.info(
             "bond_green %s carries no temperature metadata (uniform FLEX "
             "green.npz files do not record beta/T); the T consistency check "
-            "could not be performed -- the CellShape and Nmat checks did run.",
+            "could not be performed.",
             green_path)
     if nmat_meta is not None and nmat_meta != int(nmat_cfg):
         raise ValueError(
@@ -1313,6 +1330,29 @@ def _bond_green_metadata_consistency(green_path, nmat_cfg, beta):
             "define a different grid): regenerate the green at Nmat = {} or "
             "set [mode.param] Nmat = {}.".format(
                 green_path, nmat_meta, nmat_cfg, nmat_cfg, nmat_meta))
+    if cell_shape is not None:
+        run_shape = tuple(int(x) for x in cell_shape)
+        if shape_meta is not None:
+            if shape_meta != run_shape:
+                raise ValueError(
+                    "[eliashberg] bond_green {} was produced on a "
+                    "(Nx, Ny, Nz) = {} momentum grid but this run uses {}. "
+                    "Two grids can share the same total volume (nvol) while "
+                    "indexing completely different k-points -- reshaping "
+                    "this file's flat k-axis onto the run's grid would "
+                    "silently mix momenta together. Regenerate the green at "
+                    "this run's CellShape, or set [mode.param] CellShape to "
+                    "{}.".format(green_path, shape_meta, run_shape,
+                                shape_meta))
+        else:
+            logger.warning(
+                "bond_green %s: grid shape unverifiable (legacy file, only "
+                "nvol checked) -- it carries no cell_shape metadata, so a "
+                "same-volume different-shape mismatch (e.g. an 8x2x1 file "
+                "used for a 4x4x1 run, both nvol=16) cannot be detected "
+                "here; only nvol/norb agreement is enforced, by "
+                "sc._load_green_npz.",
+                green_path)
 
 
 def _bond_dynamic_green(bond_green, mode_param, hr, norb,
@@ -1336,14 +1376,21 @@ def _bond_dynamic_green(bond_green, mode_param, hr, norb,
     import hwave.sc as sc
 
     Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
-    if int(nmat_cfg) % 2 != 0:
+    nmat_cfg = int(nmat_cfg)
+    if nmat_cfg <= 0 or nmat_cfg % 2 != 0:
+        # Parity alone is not enough: Python's modulo makes 0 % 2 == 0 and
+        # (-2) % 2 == 0, so a bare parity check lets Nmat=0 or a negative
+        # even Nmat sail through to the preflight and on into a
+        # zero-size/negative-size array downstream (review fix -- mirrors
+        # sc._validate_bond_green_nmat's message style).
         raise ValueError(
-            "[eliashberg] bond_channels with frequency='dynamic' requires an "
-            "even Nmat (centered Matsubara grid); got Nmat={}"
+            "[eliashberg] bond_channels with frequency='dynamic' requires a "
+            "POSITIVE EVEN Nmat (centered Matsubara grid); got Nmat={}"
             .format(nmat_cfg))
 
     if bond_green is not None:
-        _bond_green_metadata_consistency(bond_green, nmat_cfg, beta)
+        _bond_green_metadata_consistency(bond_green, nmat_cfg, beta,
+                                         cell_shape=(Nx, Ny, Nz))
         nfreq_peek = sc._peek_green_npz_nfreq(bond_green, label="bond_green")
         if nfreq_peek is not None:
             sc._validate_bond_green_nmat(nfreq_peek, bond_green)
@@ -1526,7 +1573,7 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
         bond_green, mode_param, hr, norb,
         kx_array, ky_array, kz_array, beta, nmat_cfg, bond_set,
         bond_memory_cap_gb,
-        num_eigenvalues=eli_param.get("num_eigenvalues", 10))
+        num_eigenvalues=sc._read_num_eigenvalues(eli_param))
 
     # v1 input symmetry class (spec S2): checked on the green itself, before
     # any of it propagates into a kernel whose real spectrum depends on it.
@@ -1849,7 +1896,7 @@ def solve_dynamic(input_dict):
     # Mirror calc_eliashberg's config -> _solve_leading string mapping.
     solver_mode = eli_param.get("solver_mode", "iteration")
     eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
-    num_eigenvalues = eli_param.get("num_eigenvalues", 10)
+    num_eigenvalues = sc._read_num_eigenvalues(eli_param)
     max_iter = eli_param.get("max_iter", 1000)
     alpha = eli_param.get("alpha", 0.5)
     tol = eli_param.get("convergence_tol", 1.0e-5)
