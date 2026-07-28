@@ -1583,49 +1583,65 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
     return green_info["sigma"]
 
 
-def _run_flex_sigma_2orb_intra_only(scheme):
-    """One SCF step (Sigma = 0 start) of a 2-orbital CoulombIntra-ONLY model.
+def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
+                                IterationMax=1, Mix=1.0, want_solver=False):
+    """Run a 2-orbital on-site FLEX model and return its self-energy.
 
-    Uses the on-site 2-orbital fixture but wires up CoulombIntra alone, so the
-    MYO S/C matrices are nonzero only on the density-density pair block
-    ``(l,l),(m,m)``.  The vertex reduction that distinguishes the two schemes
-    then has nothing to discard, so ``reduced`` and ``general`` must agree on
-    the SELF-ENERGY, not merely on the susceptibility (issue #91).
+    ``interactions`` selects which of the on-site interaction files written by
+    ``_write_2d_2orb_full_kanamori_fixture`` are wired up.  With the default
+    (``CoulombIntra`` alone) the MYO S/C matrices are nonzero only on the
+    density-density pair block ``(l,l),(m,m)``, so the vertex reduction that
+    distinguishes the two schemes has nothing to discard and ``reduced`` and
+    ``general`` must agree on the SELF-ENERGY, not merely on the susceptibility
+    (issue #91).
 
-    ``IterationMax=1`` / ``Mix=1.0`` makes this the sharpest possible probe:
-    both schemes start from the identical bare Green function, so any
-    difference is produced by this single step alone.
+    ``IterationMax=1`` / ``Mix=1.0`` (the default) is the sharpest probe: both
+    schemes start from the identical bare Green function, so any difference is
+    produced by that single step alone.
     """
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
 
+    files = {"coulombintra": ('CoulombIntra', 'coulombintra.dat'),
+             "coulombinter": ('CoulombInter', 'coulombinter.dat'),
+             "hund": ('Hund', 'hund.dat'),
+             "exchange": ('Exchange', 'exchange.dat'),
+             "pairhop": ('PairHop', 'pairhop.dat'),
+             "ising": ('Ising', 'ising.dat')}
+
     # Own input AND output directory: the two schemes write the same output
     # file names, and other tests share tests/flex/output_2orb.
     with tempfile.TemporaryDirectory(prefix="hwave_i91_") as dirpath:
-        _write_2d_2orb_onsite_fixture(dirpath)
-        info_input = {
-            'path_to_input': dirpath,
-            'interaction': {
-                'path_to_input': dirpath,
-                'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-            },
-        }
+        _write_2d_2orb_full_kanamori_fixture(dirpath)
+        inter = {'path_to_input': dirpath,
+                 'Geometry': 'geom.dat', 'Transfer': 'transfer.dat'}
+        for name in interactions:
+            key, fname = files[name]
+            inter[key] = fname
+        info_input = {'path_to_input': dirpath, 'interaction': inter}
         ham = read_input_k.QLMSkInput(info_input).get_param('ham')
         green_info = read_input_k.QLMSkInput(info_input).get_param('green')
         info_mode = {
             'mode': 'FLEX',
             'param': {'T': 0.5, 'mu': 0.0,
                       'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
-                      'Nmat': 32, 'IterationMax': 1, 'Mix': 1.0},
+                      'Nmat': 32, 'IterationMax': IterationMax, 'Mix': Mix,
+                      'EPS': 8},
             'calc_scheme': scheme,
         }
         solver = solver_flex.FLEX(ham, {}, info_mode)
         outdir = os.path.join(dirpath, "output")
         os.makedirs(outdir, exist_ok=True)
         solver.solve(green_info, outdir)
+        if want_solver:
+            return green_info["sigma"], solver
         return green_info["sigma"]
+
+
+def _run_flex_sigma_2orb_intra_only(scheme):
+    """Backwards-compatible alias for the CoulombIntra-only single step."""
+    return _run_flex_sigma_2orb_onsite(scheme)
 
 
 class TestCoulombIntraSchemeAgreement(unittest.TestCase):
@@ -1663,6 +1679,71 @@ class TestCoulombIntraSchemeAgreement(unittest.TestCase):
         np.testing.assert_allclose(sig_gen[..., off], off_red,
                                    rtol=0.0,
                                    atol=1e-12 * np.max(np.abs(sig_red)))
+
+    def test_coulombintra_only_matches_reduced_at_convergence(self):
+        """Agreement must survive the SCF loop, not just the first step.
+
+        The single-step tests above pin the kernel; this pins that nothing in
+        the mixing / mu-update / convergence path reintroduces a difference.
+        Both schemes should also need the same number of iterations, since they
+        see the same self-energy at every step.
+        """
+        kw = dict(IterationMax=200, Mix=0.3, want_solver=True)
+        sig_gen, solver_gen = _run_flex_sigma_2orb_onsite("general", **kw)
+        sig_red, solver_red = _run_flex_sigma_2orb_onsite("reduced", **kw)
+        self.assertTrue(solver_gen.scf_converged)
+        self.assertTrue(solver_red.scf_converged)
+        self.assertEqual(solver_gen.scf_iterations, solver_red.scf_iterations)
+        scale = np.max(np.abs(sig_red))
+        self.assertGreater(scale, 1e-6)
+        np.testing.assert_allclose(sig_gen, sig_red,
+                                   rtol=0.0, atol=1e-12 * scale)
+
+    def test_the_reason_is_that_coulombintra_has_no_offdensity_vertex(self):
+        """Document WHY the schemes must agree, so the tests above cannot pass
+        for the wrong reason: for CoulombIntra the MYO S/C matrices live
+        entirely on the density-density pair block, which is exactly what the
+        reduced scheme keeps."""
+        _, solver = _run_flex_sigma_2orb_onsite("general", want_solver=True)
+        _, Us, Uc = solver._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(solver), None)
+        norb = solver.norb
+        dens = [a * norb + a for a in range(norb)]
+        mask = np.ones(norb * norb, dtype=bool)
+        mask[dens] = False
+        for name, M in (("Us", Us), ("Uc", Uc)):
+            self.assertLess(np.max(np.abs(M[..., mask, :])), 1e-12, name)
+            self.assertLess(np.max(np.abs(M[..., :, mask])), 1e-12, name)
+        self.assertGreater(np.max(np.abs(Us)), 1e-6, "S is identically zero")
+
+    def test_an_offdensity_vertex_does_make_the_schemes_differ(self):
+        """The boundary of the contract.
+
+        Adding an interaction that puts weight OFF the density-density pair
+        block (here CoulombInter, via the MYO ``(ab),(ab)`` case) is physics the
+        reduced scheme drops by construction, so the two schemes must then
+        disagree.  Without this, a future change that made the general path
+        silently discard its off-diagonal vertices would still satisfy every
+        agreement test above.
+        """
+        sets = ("coulombintra", "coulombinter")
+        sig_gen, solver = _run_flex_sigma_2orb_onsite(
+            "general", interactions=sets, want_solver=True)
+        sig_red = _run_flex_sigma_2orb_onsite("reduced", interactions=sets)
+
+        # the off-density weight is present ...
+        _, Us, Uc = solver._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(solver), None)
+        norb = solver.norb
+        mask = np.ones(norb * norb, dtype=bool)
+        mask[[a * norb + a for a in range(norb)]] = False
+        self.assertGreater(
+            max(np.max(np.abs(Us[..., mask, mask])),
+                np.max(np.abs(Uc[..., mask, mask]))), 1e-6)
+
+        # ... and it shows up in the self-energy
+        scale = np.max(np.abs(sig_red))
+        self.assertGreater(np.max(np.abs(sig_gen - sig_red)), 1e-3 * scale)
 
 
 class TestGeneralLimits(unittest.TestCase):
