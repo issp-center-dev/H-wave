@@ -914,6 +914,110 @@ class TestFLEXGeneralWarningGating(unittest.TestCase):
             self._construct('general')
 
 
+def _intersite_v_inter_k(norb=2, U=4.0, V_same=0.8, V_cross=0.3,
+                        Nx=2, Ny=2, Nz=1):
+    """``inter_k`` with an inter-site CoulombInter that has a SAME-ORBITAL part.
+
+    ``CoulombInter[a, a]`` is what an extended Hubbard ``V`` between the same
+    orbital on neighbouring sites produces after the R-sum; it is q-dependent
+    and it is NOT the on-site ``CoulombIntra``.  The Kanamori helper above never
+    populates it (it only fills ``a != b``), which is why the charge-diagonal
+    omission is invisible there.
+    """
+    shape = (norb, norb, Nx, Ny, Nz)
+    CoulombIntra = np.zeros(shape, dtype=complex)
+    CoulombInter = np.zeros(shape, dtype=complex)
+    # a q-dependent V so the test cannot pass by a constant coincidence
+    qramp = np.arange(Nx * Ny * Nz, dtype=float).reshape(Nx, Ny, Nz) + 1.0
+    for a in range(norb):
+        CoulombIntra[a, a, :] = U
+        CoulombInter[a, a, :] = V_same * qramp
+        for b in range(norb):
+            if a != b:
+                CoulombInter[a, b, :] = V_cross * qramp
+    return {"CoulombIntra": CoulombIntra, "CoulombInter": CoulombInter}
+
+
+class TestChargeDiagonalIntersiteV(unittest.TestCase):
+    """Issue #95: the charge matrix must carry 2 V_aa(q) on its diagonal.
+
+    ``C[(a,a),(a,a)]`` is the Hartree channel for orbital ``a``.  It gets ``U_a``
+    from the on-site interaction and ``2 V_aa(q)`` from an inter-site
+    CoulombInter between the same orbital on neighbouring sites.  The latter was
+    dropped, because the case that adds ``+2 U'`` to the charge channel excluded
+    ``a == b``.
+
+    The intended form is visible elsewhere in the same file: the simple
+    two-index formulation used by ``chi0q_mode="load"`` builds the charge
+    vertex as ``Wc = U_k + 2 V_k`` (``_compute_vertices_simple``), diagonal
+    included.
+    """
+
+    def _assert_charge_diagonal(self, builder, extra=None):
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        U, V_same = 4.0, 0.8
+        ik = _intersite_v_inter_k(norb=norb, U=U, V_same=V_same,
+                                  Nx=Nx, Ny=Ny, Nz=Nz)
+        if extra:
+            ik.update(extra)
+        S, C = builder(ik, norb, Nx, Ny, Nz)
+        V_aa = ik["CoulombInter"]
+        for a in range(norb):
+            idx = a * norb + a
+            np.testing.assert_allclose(
+                C[:, :, :, idx, idx], U + 2.0 * V_aa[a, a],
+                rtol=0.0, atol=1e-12,
+                err_msg="C[({0},{0}),({0},{0})] must be U + 2 V_{0}{0}(q)".format(a))
+            # the spin channel takes no Hartree term: S stays at U
+            np.testing.assert_allclose(
+                S[:, :, :, idx, idx], U, rtol=0.0, atol=1e-12,
+                err_msg="S[({0},{0}),({0},{0})] must stay U".format(a))
+        # guard against a vacuous fixture: V_aa really is nonzero and q-dependent
+        self.assertGreater(np.max(np.abs(V_aa[0, 0])), 1e-6)
+        self.assertGreater(np.ptp(np.abs(V_aa[0, 0])), 1e-6)
+
+    def test_kuroki_builder(self):
+        from hwave.sc import _build_sc_matrices_all_q
+        self._assert_charge_diagonal(_build_sc_matrices_all_q)
+
+    def test_myo_builder(self):
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        self._assert_charge_diagonal(build_sc_matrices_myo)
+
+    def test_diagonal_hund_and_ising_do_not_leak_onto_the_diagonal(self):
+        """Only CoulombInter may reach C[(a,a),(a,a)].
+
+        An orbital has no Hund or Ising coupling with itself, but the readers
+        accept such an entry (#93).  Widening the density case to include
+        ``a == b`` must not let those through -- they would move S as well.
+        """
+        from hwave.sc import _build_sc_matrices_all_q
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        shape = (2, 2, 2, 2, 1)
+        diag = np.zeros(shape, dtype=complex)
+        for a in range(2):
+            diag[a, a, :] = 1.0
+        extra = {"Hund": 0.3 * diag, "Ising": 0.2 * diag}
+        for builder in (_build_sc_matrices_all_q, build_sc_matrices_myo):
+            self._assert_charge_diagonal(builder, extra=extra)
+
+    def test_single_q_builder_agrees_with_the_all_q_builder(self):
+        """The private single-q sibling is used as a reference by other tests,
+        so it must not drift from the all-q builder."""
+        from hwave.sc import _build_sc_matrices_all_q, _build_sc_matrices
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        ik = _intersite_v_inter_k(norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
+        Sa, Ca = _build_sc_matrices_all_q(ik, norb, Nx, Ny, Nz)
+        for ix in range(Nx):
+            for iy in range(Ny):
+                for iz in range(Nz):
+                    S1, C1 = _build_sc_matrices(ik, norb, ix, iy, iz)
+                    np.testing.assert_allclose(S1, Sa[ix, iy, iz],
+                                               rtol=0.0, atol=1e-12)
+                    np.testing.assert_allclose(C1, Ca[ix, iy, iz],
+                                               rtol=0.0, atol=1e-12)
+
+
 def _kanamori_inter_k(norb=2, U=4.0, Up=2.0, J=0.5, Jp=0.5,
                       Nx=2, Ny=2, Nz=1, with_pairhop=False):
     """Build a constant Kanamori ``inter_k`` dict for the S/C matrix builders.
