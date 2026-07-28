@@ -1808,7 +1808,12 @@ def tail_estimate(X_w, beta, nmat):
     7. *Reliability* -- relative (Euclidean) fit residual over the outer shell
        ``> 0.2`` sets ``unreliable``. The flag is evaluated for the SAME
        ``|a|, |b|`` model that produced ``tail_est``, so it cannot report a
-       residual for a model the estimator does not use.
+       residual for a model the estimator does not use. In addition, an outer
+       shell with fewer than 4 points always sets ``unreliable`` -- with only
+       2 or 3 points the 2-parameter fit is under- or exactly-determined
+       (residual collapses to ~0 regardless of how well the model actually
+       describes the tail), so the residual criterion alone cannot be
+       trusted there.
 
     Parameters
     ----------
@@ -1871,7 +1876,8 @@ def tail_estimate(X_w, beta, nmat):
     model = a / w[outer] ** 2 + b / w[outer] ** 3
     scale = float(np.linalg.norm(x[outer]))
     resid = float(np.linalg.norm(x[outer] - model))
-    unreliable = bool(scale == 0.0 or resid / scale > 0.2)
+    n_outer = int(np.count_nonzero(outer))
+    unreliable = bool(scale == 0.0 or resid / scale > 0.2 or n_outer < 4)
 
     # 4./5. explicit summation of the fitted model over the closed tail window
     n_all = np.arange(-64 * nmat, 64 * nmat + 1)

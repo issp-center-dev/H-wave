@@ -374,6 +374,31 @@ def test_dynamic_bond_ir_is_catastrophically_broken_at_nmat_32(tmp_path):
         "test and the Phase A milestone's DEVIATION 1.".format(lam_u, lam_ir))
 
 
+def test_dynamic_bond_ir_warns_known_broken_uniform_does_not(tmp_path, caplog):
+    """The bond+IR combination is silently wrong today (see the
+    catastrophic-Nmat=32 pin above), so the code must say so loudly rather
+    than staying silent -- the project's "no silent wrong result" norm. The
+    warning must fire for bond_channels + matsubara_basis='ir' and must NOT
+    fire for the (correct) bond_channels + matsubara_basis='uniform' path."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    input_dir = _write_model(str(tmp_path / "input"))
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        lam_ir = ed.solve_dynamic(_bond_input(
+            input_dir, str(tmp_path / "ir"), nmat=32,
+            matsubara_basis="ir"))
+    assert np.isfinite(lam_ir)
+    assert any("KNOWN-BROKEN" in rec.message for rec in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="qlms"):
+        lam_u = ed.solve_dynamic(_bond_input(
+            input_dir, str(tmp_path / "u"), nmat=32,
+            matsubara_basis="uniform"))
+    assert np.isfinite(lam_u)
+    assert not any("KNOWN-BROKEN" in rec.message for rec in caplog.records)
+
+
 def test_dynamic_bond_diagnostics_are_opt_in(tmp_path):
     """No bond_diagnostics key -> no diagnostics npz (and no provenance flag
     claiming one was written)."""

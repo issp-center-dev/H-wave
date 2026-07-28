@@ -108,6 +108,24 @@ def test_tail_estimate_reduces_over_k_and_orbital_pairs():
     assert abs(rel_multi - rel_one) <= 1e-12 * rel_one
 
 
+def test_tail_estimate_flags_a_too_small_outer_shell():
+    """At ``nmat = 8`` the outer shell ``|ntilde| > 3*nmat/8 = 3`` holds
+    exactly one point (``ntilde = -4``), so the 2-parameter ``|a|/w^2 +
+    |b|/w^3`` least-squares fit interpolates it exactly: the residual
+    collapses to 0 regardless of whether the profile is anywhere near its
+    asymptotic regime, and the plain residual criterion would wrongly report
+    ``unreliable=False``. The estimator must instead flag ``unreliable=True``
+    whenever the outer shell has fewer than 4 points -- checked here on an
+    exact ``1/w^2`` profile (the best case for the residual criterion) so the
+    small-shell guard is the only thing that can be firing."""
+    beta, nmat = 5.0, 8
+    n_t = np.arange(nmat) - nmat // 2
+    w = (2 * n_t + 1) * np.pi / beta
+    X = (1.0 / w ** 2)[None, :]
+    _, _, bad = bc.tail_estimate(X, beta, nmat)
+    assert bad
+
+
 def test_tail_estimate_rejects_a_mismatched_window():
     with pytest.raises(ValueError, match="last axis"):
         bc.tail_estimate(np.ones((3, 16)), 5.0, 32)

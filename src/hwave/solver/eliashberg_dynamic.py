@@ -1567,6 +1567,14 @@ def _build_bond_dynamic_context(eli_param, mode_param, geom_info, hr,
     # --- kernel -----------------------------------------------------------
     axF = axB = None
     if use_ir:
+        logger.warning(
+            "[eliashberg] bond_channels with matsubara_basis='ir' is a "
+            "KNOWN-BROKEN configuration at production-scale IR windows (the "
+            "keep-constant IR fit of the bond susceptibility is "
+            "catastrophically ill-conditioned; see the regression pins in "
+            "tests/test_sc_bond_dynamic.py). Results may be silently wrong "
+            "at any scale. Use matsubara_basis='uniform' for the bond "
+            "kernel until the fix lands.")
         axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
                                     mu=mode_param.get("mu"),
                                     filling=mode_param.get("filling"))
