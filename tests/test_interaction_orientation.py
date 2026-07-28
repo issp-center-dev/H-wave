@@ -132,6 +132,151 @@ class TestInteractionOrbitalOrientation(unittest.TestCase):
             err_msg="rpa._make_ham_inter must build V_ab(q) with a at +q, "
                     "not its orbital transpose")
 
+    def test_flex_reduced_path_sees_the_same_orientation(self):
+        """The FLEX reduced/squashed path consumes the same ``ham_inter_q``.
+
+        ``_inflate_chi0q_and_ham`` contracts it down to the density block, so
+        the orientation propagates there too.  The existing exact FLEX
+        index-order tests all use on-site interactions, where the transpose is
+        invisible.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+
+        phys = _physical_v_of_q()
+        with tempfile.TemporaryDirectory(prefix="hwave_i96_flex_") as d:
+            _write_fixture(d)
+            interaction = {"path_to_input": d,
+                           "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                           "CoulombInter": "coulombinter.dat"}
+            ham_param = read_input_k.QLMSkInput(
+                {"path_to_input": d, "interaction": interaction}
+            ).get_param("ham")
+            flex = solver_flex.FLEX(ham_param, {}, {
+                "mode": "FLEX",
+                "param": {"T": 1.0, "mu": 0.0, "CellShape": [NX, 1, 1],
+                          "SubShape": [1, 1, 1], "Nmat": 4},
+                "calc_scheme": "reduced"})
+            flex.spin_mode = "spin-free"
+            nvol = flex.lattice.nvol
+            chi0_dummy = np.zeros((flex.nmat, nvol, NORB, NORB),
+                                  dtype=complex)
+            _, ham = flex._inflate_chi0q_and_ham(
+                chi0_dummy, flex.ham_info.ham_inter_q)
+
+        block = np.asarray(ham)[:, :NORB, :NORB]
+        scale = np.max(np.abs(phys))
+        np.testing.assert_allclose(
+            block, phys, rtol=0.0, atol=1e-12 * scale,
+            err_msg="the FLEX reduced vertex must carry V_ab(q), not V_ba(q)")
+
+    def test_trans_mod_hartree_term_is_unchanged_by_the_orientation(self):
+        """``ham_inter_r`` also feeds ``_calc_trans_mod`` (the ``green_init``
+        path).  That contraction sums over ALL r, i.e. it only sees q = 0, and
+        for a bond set declared from both ends ``sum_r V_ab(r) == sum_r
+        V_ba(r)``.  So this fix must leave ``trans_mod`` alone -- asserted here
+        rather than assumed, by running the same contraction on the interaction
+        and on its orbital-pair transpose.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        from hwave.solver.rpa import Interaction, Lattice
+
+        with tempfile.TemporaryDirectory(prefix="hwave_i96_tm_") as d:
+            _write_fixture(d)
+            interaction = {"path_to_input": d,
+                           "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                           "CoulombInter": "coulombinter.dat"}
+            ham_param = read_input_k.QLMSkInput(
+                {"path_to_input": d, "interaction": interaction}
+            ).get_param("ham")
+            info_mode = {"mode": "RPA",
+                         "param": {"T": 1.0, "mu": 0.0,
+                                   "CellShape": [NX, 1, 1],
+                                   "SubShape": [1, 1, 1], "Nmat": 4},
+                         "calc_scheme": "reduced"}
+            lattice = Lattice(info_mode["param"])
+            inter = Interaction(lattice, ham_param, info_mode)
+
+        ns, nvol = 2, lattice.nvol
+        nd = NORB * ns
+        ww = inter.ham_inter_r.reshape(nvol, nd, nd, nd, nd)
+        # the orientation this fix chose vs. the one it replaced
+        ww_swapped = ww.transpose(0, 3, 4, 1, 2)
+
+        rng = np.random.default_rng(96)
+        gg = (rng.standard_normal((nd, nd))
+              + 1j * rng.standard_normal((nd, nd)))
+        gg = gg + gg.conj().T          # a Hermitian Green function block
+
+        def hartree(w):
+            h1 = np.einsum('rbacd,cd->rab', w, gg)
+            h2 = np.einsum('rcdab,dc->rab', w, gg)
+            return np.sum(h1 + h2, axis=0) / 2
+
+        np.testing.assert_allclose(
+            hartree(ww), hartree(ww_swapped), rtol=0.0, atol=1e-12,
+            err_msg="trans_mod's Hartree term must not depend on the "
+                    "orbital orientation of the interaction")
+        # ...and not vacuously: the two tensors really do differ
+        self.assertGreater(np.max(np.abs(ww - ww_swapped)), 1e-6)
+
+    def test_every_density_type_uses_the_same_orientation(self):
+        """``_append_inter`` places CoulombIntra, CoulombInter, Hund, Ising,
+        PairLift and Exchange through one shared statement, so they must all
+        come out in the same orientation.  Checked per type on the same
+        asymmetric bond set: the density block must be proportional to V(q) and
+        not to its transpose.  The proportionality constant is left free
+        because each type enters the spin/charge decomposition with its own
+        weight -- only the orientation is under test here.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        from hwave.solver.rpa import Interaction, Lattice
+
+        phys = _physical_v_of_q()
+        for itype, fname in (("CoulombInter", "coulombinter.dat"),
+                             ("Hund", "hund.dat"),
+                             ("Ising", "ising.dat")):
+            with self.subTest(interaction=itype):
+                with tempfile.TemporaryDirectory(prefix="hwave_i96_t_") as d:
+                    _write_fixture(d)
+                    if fname != "coulombinter.dat":
+                        with open(os.path.join(d, fname), "w") as fh:
+                            fh.write(open(os.path.join(
+                                d, "coulombinter.dat")).read().replace(
+                                    "CoulombInter", itype, 1))
+                    interaction = {"path_to_input": d,
+                                   "Geometry": "geom.dat",
+                                   "Transfer": "transfer.dat",
+                                   itype: fname}
+                    ham_param = read_input_k.QLMSkInput(
+                        {"path_to_input": d, "interaction": interaction}
+                    ).get_param("ham")
+                    info_mode = {"mode": "RPA",
+                                 "param": {"T": 1.0, "mu": 0.0,
+                                           "CellShape": [NX, 1, 1],
+                                           "SubShape": [1, 1, 1], "Nmat": 4},
+                                 "calc_scheme": "reduced"}
+                    lattice = Lattice(info_mode["param"])
+                    inter = Interaction(lattice, ham_param, info_mode)
+
+                ns = 2
+                nd = NORB * ns
+                ham = np.einsum(
+                    "ksasatbtb->ksatb",
+                    inter.ham_inter_q.reshape(lattice.nvol, *(ns, NORB) * 4)
+                ).reshape(lattice.nvol, nd, nd)[:, :NORB, :NORB]
+
+                self.assertGreater(np.max(np.abs(ham)), 1e-9,
+                                   "{}: vertex is zero".format(itype))
+                c = (np.vdot(phys, ham) / np.vdot(phys, phys))
+                d_ok = np.max(np.abs(ham - c * phys))
+                d_bad = np.max(np.abs(ham - c * phys.transpose(0, 2, 1)))
+                self.assertLess(d_ok, 1e-10 * np.max(np.abs(ham)),
+                                "{}: not proportional to V(q)".format(itype))
+                self.assertGreater(d_bad, 1e-6,
+                                   "{}: V(q) and V(q)^T coincide; the check "
+                                   "is vacuous".format(itype))
+
 
 if __name__ == "__main__":
     unittest.main()
