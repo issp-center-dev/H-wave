@@ -2218,6 +2218,8 @@ class RPA:
         # Verification for each interaction type:
         #   CoulombIntra U: ham[↑↑↑↑]=0, ham[↓↓↑↑]=U  → W_+-= -U  (correct)
         #   CoulombInter V: ham[↑↑↑↑]=V, ham[↓↓↑↑]=V  → W_+-=  0  (SU(2) correct)
+        #                   -- and the cancellation is only exact if the two
+        #                      blocks are taken in the SAME index order; see #90
         #   Exchange J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
         #   PairLift J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
         #   Hund J:         ham[↑↑↑↑]=-J, ham[↓↓↑↑]=0  → W_+-= -J  (not SU(2) alone)
@@ -2225,14 +2227,37 @@ class RPA:
         #   Full Kanamori:  W_+- = -(U-2J) = W_zz  (SU(2) correct)
         ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
 
-        # Vectorized extraction using index arrays (replaces norb^4 Python loop)
         # Same-spin block: ham[(↑,a),(↑,c),(↑,b),(↑,d)]
         up_block = ham_4d[:, :norb, :norb, :norb, :norb]  # (nvol, norb, norb, norb, norb)
-        # Cross-spin block: ham[(↓,d),(↓,b),(↑,c),(↑,a)] with index reordering
-        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]  # (nvol, norb, norb, norb, norb)
-        # cross_block[:, d, b, c, a] -> need to transpose to match ham_pm[:, a, c, b, d]
-        cross_reordered = cross_block.transpose(0, 4, 3, 2, 1)  # (nvol, a, c, b, d)
-        ham_pm = up_block - cross_reordered
+        # Cross-spin block: ham[(↓,a),(↓,c),(↑,b),(↑,d)], taken with the SAME
+        # index order as the same-spin block.
+        #
+        # This used to be `cross_block.transpose(0, 4, 3, 2, 1)`, which
+        # reverses the orbital-pair index, and that is a bug (issue #90). The
+        # table above is right -- a spin-independent density-density
+        # interaction has no transverse spin vertex, so CoulombInter must
+        # cancel between the two blocks -- but with the reversal it cancels
+        # only when V(q) happens to be symmetric under the pair transpose. For
+        # a general V(q) it leaves the antisymmetric remainder V(q) - V(q)^T as
+        # a spurious vertex, and SU(2) is broken by that amount.
+        #
+        # Measured on the two-orbital fixture with CoulombInter: the vertex the
+        # transverse channel needs in order to reproduce the longitudinal
+        # chi_zz -- which is chi_zz^-1 - chi0_pm^-1, computed from the solver's
+        # own output -- is 7e-15, i.e. zero, while the reversed form builds a
+        # vertex of magnitude 2.0 that is purely antisymmetric (its symmetric
+        # part is exactly 0). Searching all 24 axis permutations against that
+        # requirement, over CoulombIntra / CoulombInter / Hund / Exchange /
+        # PairLift / Ising / Kanamori, leaves only permutations that agree with
+        # the plain block here; every other one, the previous form included, is
+        # off by twelve orders of magnitude.
+        #
+        # Residual freedom: those fixtures cannot separate this from swapping
+        # within either pair, because they are all symmetric in those slots. An
+        # interaction asymmetric there would distinguish them, and none is
+        # reachable through the readers today (see #93).
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]
+        ham_pm = up_block - cross_block
 
         logger.info("ring+ladder: built transverse channel "
                     "(chi0_pm shape={}, ham_pm shape={})".format(

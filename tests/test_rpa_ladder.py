@@ -236,24 +236,31 @@ class TestRPALadder(unittest.TestCase):
 
 
     def _assert_su2(self, green_info, norb=1, msg=""):
-        """Assert SU(2) symmetry: chi_zz = chi_+- at all q-points for iw0."""
+        """Assert SU(2) symmetry: chi_zz = chi_+- at all q-points for iw0.
+
+        Over the FULL norb^2 x norb^2 orbital-pair matrix. This used to sum
+        only the pair-DIAGONAL elements ``chiq[..., a,a,a,a]`` at norb > 1,
+        which are invariant under the orbital-pair transpose -- so it could not
+        see a transverse vertex built with that index reversed (issue #90).
+        """
         chiq = green_info["chiq"]
         chiq_pm = green_info["chiq_pm"]
 
         nfreq = chiq.shape[0]
         iw0 = nfreq // 2
+        npair = norb * norb
 
-        if norb == 1:
-            chi_zz = chiq[iw0, :, 0, 0, 0, 0] - chiq[iw0, :, 0, 0, 1, 1]
-            chi_pm = chiq_pm[iw0, :, 0, 0, 0, 0]
-        else:
-            nd = norb * 2
-            chi_zz = np.zeros(chiq.shape[1], dtype=complex)
-            chi_pm = np.zeros(chiq.shape[1], dtype=complex)
-            for a in range(norb):
-                chi_zz += (chiq[iw0, :, a, a, a, a]
-                           - chiq[iw0, :, a, a, norb + a, norb + a])
-                chi_pm += chiq_pm[iw0, :, a, a, a, a]
+        chi_zz = np.zeros((chiq.shape[1], npair, npair), dtype=complex)
+        chi_pm = np.zeros_like(chi_zz)
+        for a in range(norb):
+            for c in range(norb):
+                for b in range(norb):
+                    for d in range(norb):
+                        i, j = a * norb + c, b * norb + d
+                        chi_zz[:, i, j] = (
+                            chiq[iw0, :, a, c, b, d]
+                            - chiq[iw0, :, a, c, norb + b, norb + d])
+                        chi_pm[:, i, j] = chiq_pm[iw0, :, a, c, b, d]
 
         np.testing.assert_allclose(
             chi_zz, chi_pm,
@@ -302,6 +309,87 @@ class TestRPALadder(unittest.TestCase):
             },
         )
         self._assert_su2(green_info, msg="CoulombIntra + Hund")
+
+    def test_su2_coulombinter_2orb(self):
+        """CoulombInter at TWO orbitals: the case that separates the vertices.
+
+        `test_su2_coulombinter` and `_only` run on `tests/rpa/input`, which has
+        ONE orbital, so the orbital-pair index takes a single value and a
+        vertex built with that index reversed is indistinguishable from the
+        correct one. With two orbitals and an on-site inter-orbital entry V(q)
+        is not symmetric under the pair transpose at general q, and the
+        reversed form leaves the antisymmetric remainder V(q) - V(q)^T behind
+        as a spurious transverse vertex.
+
+        Before the #90 fix this failed by 2.9e-2 on a scale of 1.2e-1.
+        """
+        solver, green_info = self._run_rpa(
+            calc_type="ring+ladder",
+            calc_scheme="general",
+            input_path='tests/rpa/input_2orb',
+            Lx=4, Ly=4, Nmat=32,
+            T=2.0, filling=0.5,
+            interactions={'CoulombInter': 'coulombinter.dat'},
+        )
+        self._assert_su2(green_info, norb=2, msg="CoulombInter (2-orbital)")
+
+    def test_transverse_vertex_vanishes_for_a_spin_independent_interaction(self):
+        """A spin-independent density-density interaction has no transverse
+        spin vertex -- and the requirement is measured, not asserted.
+
+        From chi = [I + chi0 W]^-1 chi0, the vertex the transverse channel
+        would need in order to reproduce the longitudinal chi_zz is
+
+            W_needed = chi_zz^-1 - chi0_pm^-1
+
+        computed from the solver's own output. For CoulombInter it comes out
+        zero, so the vertex the builder produces must be zero too. Before #90
+        it was 2.0, and purely antisymmetric.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["chi0_pm"] = np.asarray(out[0])
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        rpa_mod.RPA._build_transverse_channel = spy
+        try:
+            _, green_info = self._run_rpa(
+                calc_type="ring+ladder", calc_scheme="general",
+                input_path='tests/rpa/input_2orb',
+                Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.5,
+                interactions={'CoulombInter': 'coulombinter.dat'},
+            )
+        finally:
+            rpa_mod.RPA._build_transverse_channel = original
+
+        norb = 2
+        npair = norb * norb
+        chiq = green_info["chiq"]
+        iw0 = chiq.shape[0] // 2
+        nq = chiq.shape[1]
+        zz = np.zeros((nq, npair, npair), dtype=complex)
+        for a in range(norb):
+            for c in range(norb):
+                for b in range(norb):
+                    for d in range(norb):
+                        zz[:, a * norb + c, b * norb + d] = (
+                            chiq[iw0, :, a, c, b, d]
+                            - chiq[iw0, :, a, c, norb + b, norb + d])
+        x0 = captured["chi0_pm"][iw0].reshape(nq, npair, npair)
+        needed = np.array([np.linalg.inv(zz[i]) - np.linalg.inv(x0[i])
+                           for i in range(nq)])
+        self.assertLess(
+            float(np.max(np.abs(needed))), 1e-10,
+            "CoulombInter must not enter the transverse spin vertex")
+        self.assertLess(
+            float(np.max(np.abs(captured["ham_pm"]))), 1e-12,
+            "so the vertex the builder produces must vanish as well")
 
     def test_su2_hund_2orb(self):
         """2-orbital Hund: chi_zz = chi_pm at the RPA level.
