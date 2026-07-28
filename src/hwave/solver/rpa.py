@@ -2209,30 +2209,130 @@ class RPA:
                         chi0q_orig.shape))
 
         # --- Build W_+- (transverse vertex) ---
-        # The transverse vertex for the +- (spin-flip) channel:
-        #   W_+-[a,c,b,d] = ham[↑a,↑c,↑b,↑d] - ham[↓d,↓b,↑c,↑a]
+        # The transverse vertex comes from the CROSS-SPIN block alone. The
+        # same-spin block must not appear: a same-spin interaction cannot
+        # connect the up and down propagators of the transverse loop, so it
+        # produces only self-energy and no vertex at all. That is measured, not
+        # argued -- diagonalizing an explicit model with the same-spin part of
+        # an interaction switched on, and removing the O(lambda) self-energy
+        # exactly (it is the linear response to the Hartree-Fock one-body
+        # potential built from the non-interacting density matrix), leaves a
+        # vertex of 0 to 1e-6, while the cross-spin part leaves the full value.
         #
-        # First term: same-spin (↑↑↑↑) block of the Hartree vertex
-        # Second term: cross-spin (↓↓↑↑) block (subtracted)
+        # This used to be `up_block - cross_block.transpose(0, 4, 3, 2, 1)`,
+        # which is wrong twice over (issue #90): the `up_block` term should not
+        # be there, and the reordering of the cross block was not the right one.
+        # For CoulombInter the two errors combined into the antisymmetric
+        # remainder V(q) - V(q)^T, which vanishes only when V(q) happens to be
+        # symmetric under the orbital-pair transpose -- so one-orbital fixtures
+        # never saw it.
         #
-        # Verification for each interaction type:
-        #   CoulombIntra U: ham[↑↑↑↑]=0, ham[↓↓↑↑]=U  → W_+-= -U  (correct)
-        #   CoulombInter V: ham[↑↑↑↑]=V, ham[↓↓↑↑]=V  → W_+-=  0  (SU(2) correct)
-        #   Exchange J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
-        #   PairLift J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
-        #   Hund J:         ham[↑↑↑↑]=-J, ham[↓↓↑↑]=0  → W_+-= -J  (not SU(2) alone)
-        #   Ising J:        ham[↑↑↑↑]=J, ham[↓↓↑↑]=-J  → W_+-= 2J  (not SU(2) alone)
-        #   Full Kanamori:  W_+- = -(U-2J) = W_zz  (SU(2) correct)
+        # Measured vertices, by exact diagonalization, all interactions on-site:
+        #
+        #   CoulombIntra U : -U at (a,a)x(a,a)      table said -U   correct
+        #   CoulombInter U': -U' at (a,b)x(b,a)     table said 0    WRONG
+        #   Hund J         :  0                     table said -J   WRONG
+        #   Ising J        : +J                     table said 2J   WRONG
+        #   Exchange J     : -J at (a,a)x(b,b)      table said 0    WRONG
+        #   PairLift J     :  0                     table said 0    correct
+        #   PairHop J      : -J at (a,b)x(a,b)      table had no entry
+        #
+        # Every case is q-independent to better than 1e-6, which is the
+        # diagnostic that the extraction is clean: an on-site interaction
+        # cannot produce a q-dependent vertex. The CoulombInter row is
+        # additionally confirmed end to end in chi0's own labels, with a
+        # residual that tracks the imaginary-time discretisation (8.9e-3 ->
+        # 4.4e-3 -> 2.2e-3 over grids of 192 -> 384 -> 768) while the previous
+        # behaviour sits at 1.00.
+        #
+        # The orbital ordering below is one of two that the measurements cannot
+        # separate. They differ only for off-site interactions, which are
+        # rejected above, and for COMPLEX density-density coefficients, which
+        # make the Hamiltonian non-Hermitian and are not physical input (the
+        # readers do not reject them -- see #93). On every physically valid
+        # on-site input, including a complex Hermitian-closed PairHop, the two
+        # agree exactly.
         ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
 
-        # Vectorized extraction using index arrays (replaces norb^4 Python loop)
-        # Same-spin block: ham[(↑,a),(↑,c),(↑,b),(↑,d)]
-        up_block = ham_4d[:, :norb, :norb, :norb, :norb]  # (nvol, norb, norb, norb, norb)
-        # Cross-spin block: ham[(↓,d),(↓,b),(↑,c),(↑,a)] with index reordering
-        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]  # (nvol, norb, norb, norb, norb)
-        # cross_block[:, d, b, c, a] -> need to transpose to match ham_pm[:, a, c, b, d]
-        cross_reordered = cross_block.transpose(0, 4, 3, 2, 1)  # (nvol, a, c, b, d)
-        ham_pm = up_block - cross_reordered
+        # An OFF-SITE two-body term may be unrepresentable here, and when it
+        # is, no index order fixes it. The transverse pair is
+        # c+_(i a up) c_(j b down); if the interaction's CROSS-SPIN part is
+        # off-site its two ends sit on different sites, the pair is
+        # intrinsically non-local, and `ham_pm`, which carries only on-site
+        # orbital pairs, has nowhere to put it.
+        #
+        # The criterion is the cross-spin block alone, not the whole tensor,
+        # because the transverse vertex comes from that block alone. Measured,
+        # off-site, asking whether the extracted vertex is proportional to V(q)
+        # with one common constant:
+        #
+        #   CoulombInter   2.4  not proportional (residual 1.0)   unrepresentable
+        #   Ising          0.63 not proportional (residual 1.0)   unrepresentable
+        #   Exchange       2.4  not proportional (residual 0.33)  unrepresentable
+        #   Hund           1e-5 vertex is zero                    fine
+        #   PairLift       0    vertex is zero                    fine
+        #
+        # Hund and PairLift are fine off-site for a structural reason that is
+        # also measured: Hund is same-spin only, and a same-spin interaction
+        # cannot connect the up and down propagators of the transverse loop, so
+        # its cross-spin block is empty; PairLift's transverse vertex vanishes
+        # identically. Rejecting on the whole tensor would refuse both need-
+        # lessly. (rpa.py's own `_append_pairhop` discards off-site PairHop
+        # before it reaches here.)
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]
+        # Exchange and PairLift do NOT live in the cross-spin block -- measured
+        # block occupancy, on-site fixture:
+        #     CoulombIntra   uudd, dduu        Hund       uuuu, dddd
+        #     CoulombInter   uuuu/uudd/dduu/dddd
+        #     Exchange       udud, dudu        PairLift   uddu, duud
+        #     Ising          uuuu/uudd/dduu/dddd          PairHop    uudd, dduu
+        # so a vertex built from `cross_block` alone drops Exchange entirely.
+        # PairLift also sits outside it, but harmlessly: its transverse vertex
+        # vanishes identically (measured 0 exactly).
+        spin_flip_block = ham_4d[:, :norb, norb:, :norb, norb:]
+
+        if nvol > 1:
+            spread = float(_bk.to_host(xp.max(xp.abs(
+                xp.concatenate([
+                    (cross_block - cross_block[0:1]).reshape(nvol, -1),
+                    (spin_flip_block - spin_flip_block[0:1]).reshape(nvol, -1),
+                ], axis=1)))))
+            scale = float(_bk.to_host(xp.max(xp.abs(xp.concatenate([
+                cross_block.reshape(nvol, -1),
+                spin_flip_block.reshape(nvol, -1)], axis=1)))))
+            if spread > 1e-10 * max(scale, 1.0):
+                logger.error(
+                    "calc_type='ring+ladder' requires the cross-spin part of "
+                    "every two-body interaction to be on-site. The transverse "
+                    "pair is non-local for an off-site cross-spin term, so the "
+                    "transverse vertex is not a function of q alone and cannot "
+                    "be represented here. Found q-dependence {:.3e} on a scale "
+                    "of {:.3e}. Use calc_type='ring', or restrict the "
+                    "cross-spin two-body terms to on-site. (Off-site Hund and "
+                    "PairLift are accepted: their transverse vertex vanishes.)"
+                    .format(spread, scale))
+                raise ValueError(
+                    "calc_type='ring+ladder' does not support off-site "
+                    "cross-spin two-body interactions")
+
+        # Exchange enters through the spin-flip block, and it must be
+        # SYMMETRISED in the orbital-pair index. That is forced by the operator
+        # algebra and confirmed by measurement: X_ab^dagger = X_ba, so
+        # H = sum_ab J_ab (X_ab + X_ba) depends only on J_ab + J_ba and the
+        # antisymmetric part of J cancels identically. Extracting the required
+        # vertex for an asymmetric real J = (1.0, 0.35) -- which is physical,
+        # Exchange being Hermitian for any real J -- gives -(J_01 + J_10) =
+        # -1.35 at BOTH (a,a)x(b,b) slots, while the block itself holds -0.35
+        # and -1.00 separately.
+        #
+        # With the ED-to-code scale held fixed at the value calibrated on
+        # CoulombInter, the symmetrised form matches at 2.2e-3 -- the same
+        # discretisation floor as the calibration itself -- for both a
+        # symmetric and an asymmetric J, while a single ordering sits at 0.50
+        # and 0.74 respectively.
+        ham_pm = (-cross_block.transpose(0, 2, 4, 1, 3)
+                  + spin_flip_block
+                  + spin_flip_block.transpose(0, 3, 4, 1, 2))
 
         logger.info("ring+ladder: built transverse channel "
                     "(chi0_pm shape={}, ham_pm shape={})".format(

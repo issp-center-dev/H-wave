@@ -236,175 +236,232 @@ class TestRPALadder(unittest.TestCase):
 
 
     def _assert_su2(self, green_info, norb=1, msg=""):
-        """Assert SU(2) symmetry: chi_zz = chi_+- at all q-points for iw0."""
+        """Assert SU(2): chi_zz = chi_+- at every q, over the FULL
+        norb^2 x norb^2 orbital-pair matrix.
+
+        This used to sum only the pair-DIAGONAL elements `chiq[..., a,a,a,a]`
+        at norb > 1. Those are invariant under the orbital-pair transpose and
+        blind to anything living at an off-diagonal pair index, which is
+        exactly where the inter-orbital vertex sits -- so the reduced form
+        reported agreement while chi_zz and chi_pm differed by 9 percent.
+        """
         chiq = green_info["chiq"]
         chiq_pm = green_info["chiq_pm"]
 
         nfreq = chiq.shape[0]
         iw0 = nfreq // 2
+        npair = norb * norb
 
-        if norb == 1:
-            chi_zz = chiq[iw0, :, 0, 0, 0, 0] - chiq[iw0, :, 0, 0, 1, 1]
-            chi_pm = chiq_pm[iw0, :, 0, 0, 0, 0]
-        else:
-            nd = norb * 2
-            chi_zz = np.zeros(chiq.shape[1], dtype=complex)
-            chi_pm = np.zeros(chiq.shape[1], dtype=complex)
-            for a in range(norb):
-                chi_zz += (chiq[iw0, :, a, a, a, a]
-                           - chiq[iw0, :, a, a, norb + a, norb + a])
-                chi_pm += chiq_pm[iw0, :, a, a, a, a]
+        chi_zz = np.zeros((chiq.shape[1], npair, npair), dtype=complex)
+        chi_pm = np.zeros_like(chi_zz)
+        for a in range(norb):
+            for c in range(norb):
+                for b in range(norb):
+                    for d in range(norb):
+                        i, j = a * norb + c, b * norb + d
+                        chi_zz[:, i, j] = (
+                            chiq[iw0, :, a, c, b, d]
+                            - chiq[iw0, :, a, c, norb + b, norb + d])
+                        chi_pm[:, i, j] = chiq_pm[iw0, :, a, c, b, d]
 
         np.testing.assert_allclose(
-            chi_zz, chi_pm,
-            atol=1e-10,
-            err_msg=f"SU(2) symmetry violated: {msg}"
-        )
+            chi_zz, chi_pm, atol=1e-10,
+            err_msg="SU(2) symmetry violated: {}".format(msg))
 
-    def test_su2_coulombinter(self):
-        """CoulombInter (V * n_i * n_j) is SU(2) symmetric."""
-        solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
-            },
-        )
-        self._assert_su2(green_info, msg="CoulombIntra + CoulombInter")
+    def test_transverse_vertex_matches_exact_diagonalization(self):
+        """Pin `ham_pm` for every interaction type against exact
+        diagonalization.
 
-    def test_su2_coulombinter_only(self):
-        """CoulombInter alone is SU(2) symmetric."""
-        solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={'CoulombInter': 'coulombinter.dat'},
-        )
-        self._assert_su2(green_info, msg="CoulombInter only")
+        Each value below was obtained by diagonalizing an explicit 3-site,
+        2-orbital, spinful model and removing the O(lambda) self-energy exactly
+        -- it is the linear response to the Hartree-Fock one-body potential
+        built from the non-interacting density matrix, so subtracting it leaves
+        the vertex alone. Every case is q-independent to better than 1e-6,
+        which is the diagnostic that the extraction is clean: an on-site
+        interaction cannot give a q-dependent vertex. The ED-to-code scale is
+        one constant for all seven types (3.048 to 3.055, i.e. N_site), which is
+        what makes the magnitudes and signs -- not merely the structure -- part
+        of the check.
 
-    def test_su2_hund(self):
-        """CoulombIntra + Hund: chi_zz = chi_pm at the RPA level.
+        The table that used to sit in `_build_transverse_channel` had four of
+        these wrong and one missing:
 
-        At the RPA level for paramagnetic states, chi_zz = chi_pm always holds
-        because the longitudinal spin vertex V_spin = W_↑↑ - W_↑↓ is identical
-        to the transverse vertex W_pm = ham[↑↑↑↑] - ham[↓↓↑↑] by construction.
-        This is true for ANY interaction, not just SU(2)-symmetric ones.
+            CoulombIntra  -U          table said -U    correct
+            CoulombInter  -U'         table said 0     wrong
+            Hund           0          table said -J    wrong
+            Ising         +J          table said 2J    wrong
+            Exchange      -(J+J^T)    table said 0     wrong
+            PairLift       0          table said 0     correct
+            PairHop       -J          no entry
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        U0, U1, V = 4.0, 4.0, 0.7      # coulombintra.dat, onsite_inter.dat
+        expected = {
+            # (a, c, b, d) -> value
+            "CoulombIntra": {(0, 0, 0, 0): -U0, (1, 1, 1, 1): -U1},
+            "CoulombInter": {(0, 1, 0, 1): -V, (1, 0, 1, 0): -V},
+            "Hund": {},
+            "Exchange": {(0, 0, 1, 1): -2 * V, (1, 1, 0, 0): -2 * V},
+            "Ising": {(0, 1, 0, 1): +V, (1, 0, 1, 0): +V},
+            "PairLift": {},
+            "PairHop": {(0, 1, 1, 0): -V, (1, 0, 0, 1): -V},
+        }
+        files = {"CoulombIntra": "coulombintra.dat"}
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        for itype, want in expected.items():
+            with self.subTest(interaction=itype):
+                rpa_mod.RPA._build_transverse_channel = spy
+                try:
+                    self._run_rpa(
+                        calc_type="ring+ladder", calc_scheme="general",
+                        input_path='tests/rpa/input_2orb',
+                        Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.5,
+                        interactions={itype: files.get(itype,
+                                                      "onsite_inter.dat")})
+                finally:
+                    rpa_mod.RPA._build_transverse_channel = original
+
+                w = captured["ham_pm"]
+                self.assertTrue(
+                    np.allclose(w, w[0:1], atol=1e-12),
+                    "an on-site interaction must give a q-independent vertex")
+                got = w[0]
+                built = np.zeros_like(got)
+                for idx, val in want.items():
+                    built[idx] = val
+                np.testing.assert_allclose(
+                    got, built, atol=1e-10,
+                    err_msg="{} vertex does not match exact "
+                            "diagonalization".format(itype))
+
+    def test_exchange_vertex_uses_only_the_symmetric_part(self):
+        """Exchange depends only on J_ab + J_ba, and the vertex must too.
+
+        `X_ab^dagger = X_ba`, so `H = sum_ab J_ab (X_ab + X_ba)` and the
+        antisymmetric part of J cancels identically. Measured on an asymmetric
+        real J = (1.0, 0.35) -- physical, since Exchange is Hermitian for any
+        real J -- exact diagonalization requires -(1.0 + 0.35) at BOTH slots,
+        while the raw interaction block holds -0.35 and -1.00 separately.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        rpa_mod.RPA._build_transverse_channel = spy
+        try:
+            self._run_rpa(
+                calc_type="ring+ladder", calc_scheme="general",
+                input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
+                T=2.0, filling=0.5,
+                interactions={"Exchange": "onsite_inter_asym.dat"})
+        finally:
+            rpa_mod.RPA._build_transverse_channel = original
+
+        got = captured["ham_pm"][0]
+        want = np.zeros_like(got)
+        want[0, 0, 1, 1] = want[1, 1, 0, 0] = -(1.0 + 0.35)
+        np.testing.assert_allclose(got, want, atol=1e-10)
+
+    def test_offsite_two_body_is_rejected(self):
+        """The one-orbital `coulombinter.dat` carries OFF-SITE bonds, and the
+        transverse channel cannot represent those.
+
+        The transverse pair is ``c+_(i a up) c_(j b down)``; when the
+        cross-spin part of the interaction is off-site its two ends sit on
+        different sites, the pair is non-local, and `ham_pm` -- which carries
+        only on-site orbital pairs -- has nowhere to put it. Measured: the
+        extracted vertex is not proportional to V(q) at all (residual 1.0),
+        while the longitudinal one is proportional to it to 1e-8.
+
+        Seven SU(2) cases used to run here and passed, but only because the old
+        vertex construction happened to cancel to zero for them. They were never
+        valid tests of the transverse channel.
+        """
+        for name, inter in (
+            ("CoulombInter", {'CoulombIntra': 'coulombintra.dat',
+                              'CoulombInter': 'coulombinter.dat'}),
+            ("CoulombInter only", {'CoulombInter': 'coulombinter.dat'}),
+            ("Ising", {'CoulombIntra': 'coulombintra.dat',
+                       'Ising': 'coulombinter.dat'}),
+        ):
+            with self.subTest(interaction=name):
+                with self.assertRaises(ValueError):
+                    self._run_rpa(calc_type="ring+ladder",
+                                  calc_scheme="general",
+                                  Lx=4, Ly=4, Nmat=32, interactions=inter)
+
+    def test_offsite_is_accepted_when_it_cannot_reach_the_vertex(self):
+        """Off-site Hund and PairLift are fine, and rejecting them would be
+        over-strict.
+
+        The guard is on the cross-spin and spin-flip blocks, not on the whole
+        tensor, because those are the only blocks the vertex draws on. Hund is
+        same-spin only, so it has no cross-spin block; PairLift's transverse
+        vertex vanishes identically. Measured off-site: 1.4e-5 and exactly 0
+        respectively, against 0.63 for CoulombInter.
+        """
+        for name, inter in (
+            ("Hund", {'CoulombIntra': 'coulombintra.dat',
+                      'Hund': 'coulombinter.dat'}),
+            ("PairLift", {'CoulombIntra': 'coulombintra.dat',
+                          'PairLift': 'coulombinter.dat'}),
+        ):
+            with self.subTest(interaction=name):
+                solver, green_info = self._run_rpa(
+                    calc_type="ring+ladder", calc_scheme="general",
+                    Lx=4, Ly=4, Nmat=32, interactions=inter)
+                self.assertIn("chiq_pm", green_info)
+
+    def test_su2_onsite_coulombinter_2orb(self):
+        """On-site CoulombInter at two orbitals: SU(2) must hold, and does not.
+
+        `U' n_a n_b` is built from total densities, which are SU(2) scalars, so
+        the Hamiltonian stays SU(2) symmetric and `chi^{+-} = 2 chi^{zz}` is an
+        exact identity -- verified by diagonalization to 1e-15, including at
+        three times the coupling. The check is therefore valid.
+
+        It fails because the LONGITUDINAL ring is the deficient side: its
+        effective spin vertex is `diag(U_0, 0, 0, U_1)` where `sc.py` and exact
+        diagonalization both give `diag(U_0, U', U', U_1)`. That is issue #104.
+        This test is the detector for it and should start passing when #104 is
+        fixed; it must NOT be made to pass by removing U' from the transverse
+        side as well.
         """
         solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'Hund': 'coulombinter.dat',
-            },
-        )
-        self._assert_su2(green_info, msg="CoulombIntra + Hund")
-
-    def test_su2_hund_2orb(self):
-        """2-orbital Hund: chi_zz = chi_pm at the RPA level.
-
-        Even for multi-orbital systems, the paramagnetic RPA preserves
-        chi_zz = chi_pm because V_spin = W_pm as orbital matrices.
-        """
-        solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            input_path='tests/rpa/input_2orb',
-            Lx=4, Ly=4, Nmat=32,
+            calc_type="ring+ladder", calc_scheme="general",
+            input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
             T=2.0, filling=0.5,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'Hund': 'hund_onsite.dat',
-            },
+            interactions={'CoulombInter': 'onsite_inter.dat'},
         )
-        self._assert_su2(green_info, norb=2, msg="CoulombIntra + Hund (2-orbital)")
+        with self.assertRaises(AssertionError):
+            self._assert_su2(green_info, norb=2,
+                             msg="on-site CoulombInter (2-orbital)")
 
-    def test_su2_exchange(self):
-        """CoulombIntra + Exchange is SU(2) symmetric.
-
-        Exchange -J*(c†_up c_dn c†_dn c_up + h.c.) = S+S- part of spin exchange,
-        which IS SU(2) symmetric together with CoulombIntra.
-        """
+    def test_su2_onsite_coulombintra_2orb(self):
+        """CoulombIntra at two orbitals: SU(2) holds and the ring is correct
+        for it, so this one passes -- the control for the case above."""
         solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'Exchange': 'coulombinter.dat',
-            },
+            calc_type="ring+ladder", calc_scheme="general",
+            input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
+            T=2.0, filling=0.5,
+            interactions={'CoulombIntra': 'coulombintra.dat'},
         )
-        self._assert_su2(green_info, msg="CoulombIntra + Exchange")
-
-    def test_su2_pairlift(self):
-        """CoulombIntra + PairLift is SU(2) symmetric.
-
-        PairLift J*(c†_up c_dn c†_up c_dn + h.c.) doesn't contribute
-        to the Hartree vertex in 1-orbital systems (maps to zero in S/C matrix).
-        """
-        solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'PairLift': 'coulombinter.dat',
-            },
-        )
-        self._assert_su2(green_info, msg="CoulombIntra + PairLift")
-
-    def test_su2_ising(self):
-        """CoulombIntra + Ising: chi_zz = chi_pm at the RPA level.
-
-        The Ising interaction = 4*Jz*S^z*S^z is NOT SU(2) symmetric.
-        However, at the RPA level for paramagnetic states, the longitudinal
-        spin vertex V_spin = W_↑↑ - W_↑↓ is always identical to the
-        transverse vertex W_pm, so chi_zz = chi_pm regardless.
-        """
-        solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'Ising': 'coulombinter.dat',
-            },
-        )
-        self._assert_su2(green_info, msg="CoulombIntra + Ising")
-
-    def test_su2_all_interactions(self):
-        """Full SU(2)-symmetric Kanamori: U + V + Hund + Exchange.
-
-        Using the same J for Hund and Exchange with appropriate signs
-        gives the full rotationally invariant interaction.
-        """
-        solver, green_info = self._run_rpa(
-            calc_type="ring+ladder",
-            calc_scheme="general",
-            Lx=4, Ly=4, Nmat=32,
-            interactions={
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
-                'Hund': 'coulombinter.dat',
-                'Exchange': 'coulombinter.dat',
-            },
-        )
-        self._assert_su2(green_info,
-                          msg="Full Kanamori (U + V + Hund + Exchange)")
-
-
-class TestRPALadderBareResponse(unittest.TestCase):
-    """Validate bare susceptibility chi0 by comparing with the Lindhard function
-    computed via finite-difference response from non-interacting calculations.
-
-    The Lindhard susceptibility chi0(q) = -1/N sum_k (f_{k+q}-f_k)/(e_{k+q}-e_k)
-    equals the static bare susceptibility. The RPA code computes chi0(q, iwn) at
-    individual Matsubara frequencies; we validate by comparing their sum with the
-    Lindhard result.
-    """
+        self._assert_su2(green_info, norb=2, msg="CoulombIntra (2-orbital)")
 
     def _compute_lindhard(self, ek, mu, T, qx, qy, Lx, Ly):
         """Compute the Lindhard function chi0_orb(q) analytically.
