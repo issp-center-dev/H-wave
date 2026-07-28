@@ -68,12 +68,15 @@ def build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz):
     idx34 = l3f * norb + l4f
 
     # Case 1: l1 == l2 == l3 == l4
+    # Accumulate rather than assign: this element is also reached by Case 3
+    # below (which now includes l1 == l3), where an inter-site same-orbital
+    # CoulombInter contributes 2 V_aa(q) to the charge channel.
     mask1 = (l1f == l2f) & (l2f == l3f) & (l3f == l4f)
     if U_mat is not None and np.any(mask1):
         for i in np.where(mask1)[0]:
             _l = l1f[i]
-            S_all[:, :, :, idx12[i], idx34[i]] = U_mat[_l, _l]
-            C_all[:, :, :, idx12[i], idx34[i]] = U_mat[_l, _l]
+            S_all[:, :, :, idx12[i], idx34[i]] += U_mat[_l, _l]
+            C_all[:, :, :, idx12[i], idx34[i]] += U_mat[_l, _l]
 
     # Case 2: l1==l3, l2==l4, l1!=l2
     mask2 = (l1f == l3f) & (l2f == l4f) & (l1f != l2f)
@@ -94,21 +97,30 @@ def build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz):
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
-    # Case 3: l1==l2, l3==l4, l1!=l3
-    mask3 = (l1f == l2f) & (l3f == l4f) & (l1f != l3f)
+    # Case 3: l1==l2, l3==l4 -- INCLUDING l1 == l3, but for CoulombInter ONLY.
+    # The l1 != l3 exclusion dropped the inter-site same-orbital CoulombInter
+    # from the charge diagonal C[(a,a),(a,a)], which must be U_a + 2 V_aa(q)
+    # (issue #95); the simple two-index formulation used by chi0q_mode="load"
+    # builds exactly that (`Wc = U_k + 2 V_k`, _compute_vertices_simple).
+    # Case 1 above writes U_a into the same element, so both accumulate.
+    # Hund and Ising stay restricted to l1 != l3: an orbital has no Hund or
+    # Ising coupling with itself, and letting a stray diagonal entry through
+    # here would silently move S as well.
+    mask3 = (l1f == l2f) & (l3f == l4f)
     for i in np.where(mask3)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l3 = l1f[i], l3f[i]
-        if J_mat is not None:
-            s_q += J_mat[_l1, _l3]
-            c_q -= J_mat[_l1, _l3]
-        if I_mat is not None:
-            s_q -= 2.0 * I_mat[_l1, _l3]
+        if _l1 != _l3:
+            if J_mat is not None:
+                s_q += J_mat[_l1, _l3]
+                c_q -= J_mat[_l1, _l3]
+            if I_mat is not None:
+                s_q -= 2.0 * I_mat[_l1, _l3]
         if Up_mat is not None:
             c_q += 2.0 * Up_mat[_l1, _l3]
-        S_all[:, :, :, idx12[i], idx34[i]] = s_q
-        C_all[:, :, :, idx12[i], idx34[i]] = c_q
+        S_all[:, :, :, idx12[i], idx34[i]] += s_q
+        C_all[:, :, :, idx12[i], idx34[i]] += c_q
 
     # Case 4: l1==l4, l2==l3, l1!=l2
     mask4 = (l1f == l4f) & (l2f == l3f) & (l1f != l2f)

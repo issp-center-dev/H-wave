@@ -409,12 +409,19 @@ def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
             # 0.5*(S+C) != 0 with off-site V -- the issue-#57 case
             assert np.abs(V_inst).max() > 1e-10
         else:
-            # 0.5*(C-S) vanishes identically on this 1-orbital fixture
-            # (S == C in the Kuroki construction here); the gate still runs
-            # the triplet channel end to end, and the channel-agnostic
-            # split+analytic-add-back algebra is covered for ARBITRARY
-            # V_inst tensors by test_ir_kernel_instantaneous_vertex_*.
-            assert np.abs(V_inst).max() == 0.0
+            # 0.5*(C-S) on this 1-orbital fixture is exactly V(q): the on-site
+            # U cancels between the two channels (Pauli -- two same-spin
+            # electrons cannot share a site, so U cannot drive triplet
+            # pairing), while the inter-site V survives, since it enters the
+            # charge channel only.  This used to assert the vertex was
+            # identically zero, which was the missing 2 V_aa(q) on the charge
+            # diagonal (issue #95) showing up as "an extended Hubbard model
+            # has no triplet pairing interaction".
+            V_q = np.squeeze(inter_k["CoulombInter"][0, 0])
+            assert np.abs(V_inst).max() > 1e-10
+            np.testing.assert_allclose(
+                np.squeeze(V_inst), V_q, rtol=0.0, atol=1e-12,
+                err_msg="triplet instantaneous vertex must equal V(q)")
         V_n = ed.compute_vertices_flex_dynamic(chis_n, chic_n, inter_k,
                                                norb, Nx, Ny, Nz,
                                                pairing_type=pairing,
