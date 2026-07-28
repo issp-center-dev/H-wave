@@ -1157,7 +1157,24 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
             inp["eliashberg"]["accept_up_block_only"] = True
             with self.assertLogs("hwave_sc", level="WARNING") as cm:
                 sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-        self.assertIn("up_only", "\n".join(cm.output))
+        msg = "\n".join(cm.output)
+        # Name the real authoriser: a user override and a file assertion carry
+        # different weight, and an earlier version reported the override as
+        # though the file had been tagged.
+        self.assertIn("accept_up_block_only", msg)
+        self.assertNotIn("chi_spin_blocks", msg)
+
+    def test_accept_up_block_only_rejects_non_boolean(self):
+        """A TOML typo like the string "false" is truthy in Python; silently
+        enabling an override that relaxes a correctness guard is the worst
+        reading of a malformed value."""
+        import hwave.sc as sc
+        with tempfile.TemporaryDirectory() as d:
+            inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up)
+            inp["eliashberg"]["accept_up_block_only"] = "false"
+            with self.assertRaises(ValueError) as cm:
+                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+        self.assertIn("must be a boolean", str(cm.exception))
 
     def test_tagged_legacy_file_is_accepted(self):
         """...but a file that declares the layout is read as intended."""
@@ -1167,7 +1184,7 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
                                                 tag_up_only=True)
             with self.assertLogs("hwave_sc", level="WARNING") as cm:
                 sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
-        self.assertIn("up_only", "\n".join(cm.output))
+        self.assertIn("chi_spin_blocks", "\n".join(cm.output))
 
     def test_static_route_also_validates_the_whole_axis(self):
         """Paramagnetism is a property of the producing run, not only of the
@@ -1239,6 +1256,82 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
         self.assertIn("spin blocks that are not identical", str(cm.exception))
+
+
+class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
+    """The guards accumulate per frequency to stay memory-bounded. That rewrite
+    must not change any decision, including at the boundaries where it would be
+    easiest to get wrong."""
+
+    NORB = 2
+
+    def _whole_array_verdict(self, chi):
+        """The decision a whole-array evaluation would reach, written out
+        independently of the implementation."""
+        n = self.NORB
+        up, dn = chi[..., :n, :n], chi[..., n:, n:]
+        cu, cd = chi[..., :n, n:], chi[..., n:, :n]
+        scale = float(np.max(np.abs(up)))
+        d_down = float(np.max(np.abs(up - dn)))
+        d_cross = max(float(np.max(np.abs(cu))), float(np.max(np.abs(cd))))
+        if d_down == 0.0 and d_cross == 0.0:
+            return False
+        if scale > 0.0 and not np.any(dn) and not np.any(cu) and not np.any(cd):
+            return False        # legacy layout, accepted when authorised
+        import hwave.sc as sc
+        ratio = max(d_down, d_cross) / max(scale, np.finfo(float).tiny)
+        return ratio > sc._SPIN_DISCARD_ROUNDOFF_RATIO
+
+    def _cases(self):
+        import hwave.sc as sc
+        n, nd_so = self.NORB, self.NORB * 2
+        R = sc._SPIN_DISCARD_ROUNDOFF_RATIO
+        rng = np.random.default_rng(0)
+        for nfreq in (1, 3, 8):
+            base = (rng.standard_normal((nfreq, 5, n, n))
+                    + 1j * rng.standard_normal((nfreq, 5, n, n)))
+
+            def mk(down=1.0, cross=0.0, zero_down=False):
+                a = np.zeros((nfreq, 5, nd_so, nd_so), dtype=complex)
+                a[..., :n, :n] = base
+                if not zero_down:
+                    a[..., n:, n:] = base * down
+                if cross:
+                    a[..., :n, n:] = base * cross
+                    a[..., n:, :n] = base * cross
+                return a
+
+            yield "n%d paramagnetic" % nfreq, mk()
+            yield "n%d polarized" % nfreq, mk(down=0.5)
+            yield "n%d cross" % nfreq, mk(cross=0.3)
+            yield "n%d zero-down" % nfreq, mk(zero_down=True)
+            yield "n%d just-below" % nfreq, mk(down=1.0 + 0.1 * R)
+            yield "n%d just-above" % nfreq, mk(down=1.0 + 10.0 * R)
+            if nfreq > 1:
+                c = mk()
+                c[0, ..., n:, n:] *= 0.5     # only an unused frequency differs
+                yield "n%d tail-only" % nfreq, c
+
+    def test_every_case_decides_the_same_way(self):
+        import hwave.sc as sc
+        import logging
+        # Silence the guard's warnings for this test only. Setting the level
+        # without restoring it leaks into every later test that asserts on
+        # warnings -- which is exactly what happened the first time.
+        lg = logging.getLogger("hwave_sc")
+        prev = lg.level
+        lg.setLevel(logging.CRITICAL)
+        self.addCleanup(lg.setLevel, prev)
+        for name, chi in self._cases():
+            with self.subTest(case=name):
+                want_raise = self._whole_array_verdict(chi)
+                try:
+                    sc._check_spin_block_discarded(chi, self.NORB, "kuroki",
+                                                   "x", True)
+                    got_raise = False
+                except ValueError:
+                    got_raise = True
+                self.assertEqual(got_raise, want_raise)
 
 
 if __name__ == "__main__":

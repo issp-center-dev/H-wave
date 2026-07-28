@@ -547,7 +547,7 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
         import hwave.sc as sc
         meta = {"chi_convention": "kuroki"}
         inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
-        _, _, conv = sc._read_flex_chi_raw(inp)
+        _, _, conv, _tags = sc._read_flex_chi_raw(inp)
         self.assertEqual(conv, "kuroki")
 
     def test_reader_accepts_myo_with_acbd_marker(self):
@@ -555,7 +555,7 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
         import hwave.sc as sc
         meta = {"chi_convention": "myo", "chi_orbital_layout": "acbd"}
         inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
-        _, _, conv = sc._read_flex_chi_raw(inp)
+        _, _, conv, _tags = sc._read_flex_chi_raw(inp)
         self.assertEqual(conv, "myo")
 
 

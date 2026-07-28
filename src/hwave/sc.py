@@ -1407,11 +1407,13 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         ("green" absent when there is no green file). Mixed encodings raise.
     """
     if not allow_ir:
-        chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+        (chi_s_raw, chi_c_raw, chi_convention,
+         legacy_tags) = _read_flex_chi_raw(input_dict)
         ir_meta = None
         green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     else:
-        chi_s_raw, chi_c_raw, chi_convention, ir_meta = _read_flex_chi_raw(
+        (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+         legacy_tags) = _read_flex_chi_raw(
             input_dict, allow_ir=True)
         green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
                                                allow_ir=True)
@@ -1427,9 +1429,9 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
-    legacy_s, legacy_c = _read_flex_legacy_tags(input_dict)
+    legacy_s, legacy_c = legacy_tags
     if _accept_up_block_only(input_dict):
-        legacy_s = legacy_c = True
+        legacy_s = legacy_c = "config_override"
     _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
                                 legacy_s)
     _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
@@ -1460,29 +1462,15 @@ def _accept_up_block_only(input_dict):
     cannot disambiguate.
     """
     eli = input_dict.get("eliashberg", {})
-    return bool(eli.get("accept_up_block_only", False))
-
-
-def _read_flex_legacy_tags(input_dict):
-    """Whether the chi_s/chi_c files declare the up-block-only layout.
-
-    Separate from :func:`_read_flex_chi_raw` so that function's return arity --
-    which tests and other callers unpack -- does not change. ``np.load`` on an
-    npz is lazy, so this reads metadata only; the handles are closed rather than
-    left to the garbage collector.
-
-    The result only ever RELAXES a refusal, so a file swapped between this read
-    and the array read cannot cause wrong data to be accepted silently: the
-    arrays are the ones already in hand, and the worst outcome of stale metadata
-    is that an ambiguous file is refused (tag lost) or accepted with the warning
-    (tag gained) -- never that a different file's values are used.
-    """
-    chi_s_path, chi_c_path, _ = _resolve_flex_paths(input_dict)
-    flags = []
-    for path in (chi_s_path, chi_c_path):
-        with np.load(path) as data:
-            flags.append(_legacy_up_block_only(data))
-    return tuple(flags)
+    value = eli.get("accept_up_block_only", False)
+    if isinstance(value, bool):
+        return value
+    # Not bool(value): a TOML typo like the string "false" is truthy in Python,
+    # and silently enabling an override that relaxes a correctness guard is the
+    # worst possible reading of a malformed value.
+    raise ValueError(
+        "[eliashberg] accept_up_block_only must be a boolean (true/false), "
+        "got {!r}.".format(value))
 
 
 def _legacy_up_block_only(data):
@@ -1499,7 +1487,12 @@ def _legacy_up_block_only(data):
 def _read_flex_chi_raw(input_dict, allow_ir=False):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
-    Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
+    Returns ``(chi_s_raw, chi_c_raw, chi_convention, legacy_tags)`` in the
+    H-wave layout. ``legacy_tags`` is the pair of ``chi_spin_blocks`` flags read
+    from the SAME open handles as the arrays: reopening the files afterwards
+    would let a tagged replacement authorize the untagged -- possibly polarized
+    -- array already in memory. No values from the replacement would be used,
+    but the wrong ones would be accepted in silence.
     ``(nfreq, nvol, nd, nd)`` -- no reshape/expansion, so callers that only
     need one static frequency can slice before expanding.
 
@@ -1569,7 +1562,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
                 "vertex. Re-run FLEX with the current build to regenerate "
                 "it.".format(path))
     if not allow_ir:
-        return chi_s_raw, chi_c_raw, chi_convention
+        return (chi_s_raw, chi_c_raw, chi_convention,
+                (_legacy_up_block_only(data_s),
+                 _legacy_up_block_only(data_c)))
 
     native_s, native_c = is_ir_native(data_s), is_ir_native(data_c)
     if native_s != native_c:
@@ -1588,7 +1583,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "tags chi_convention, or re-tag the npz explicitly.")
     ir_meta = ({"chis": ir_native_meta(data_s),
                 "chic": ir_native_meta(data_c)} if native_s else None)
-    return chi_s_raw, chi_c_raw, chi_convention, ir_meta
+    return (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+            (_legacy_up_block_only(data_s),
+             _legacy_up_block_only(data_c)))
 
 
 #: Relative size, against the kept spin-up block, below which discarded spin
@@ -1666,10 +1663,23 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     cross_ud = chi[..., :norb, norb:]
     cross_du = chi[..., norb:, :norb]
 
-    scale = float(np.max(np.abs(up)))
-    d_down = float(np.max(np.abs(up - down)))
-    d_cross = max(float(np.max(np.abs(cross_ud))),
-                  float(np.max(np.abs(cross_du))))
+    # Accumulate per frequency rather than over the whole axis. Keeping the
+    # whole-axis POLICY (see the loaders) does not require whole-axis
+    # TEMPORARIES: abs(up), up-down and abs(up-down) at full size are each of
+    # the order of the stored array, which on a production file would add
+    # multi-GB allocations and could fail a valid file on memory alone.
+    nfreq = chi.shape[0] if chi.ndim >= 3 else 1
+    scale = d_down = d_cross = 0.0
+    any_down = any_cross = False
+    for w in range(nfreq):
+        u, dn = up[w], down[w]
+        cu, cd = cross_ud[w], cross_du[w]
+        scale = max(scale, float(np.max(np.abs(u))))
+        d_down = max(d_down, float(np.max(np.abs(u - dn))))
+        d_cross = max(d_cross, float(np.max(np.abs(cu))),
+                      float(np.max(np.abs(cd))))
+        any_down = any_down or bool(np.any(dn))
+        any_cross = any_cross or bool(np.any(cu)) or bool(np.any(cd))
     if d_down == 0.0 and d_cross == 0.0:
         return
 
@@ -1678,16 +1688,20 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     # externally produced spin-resolved data, can look exactly the same. Absent
     # data and fully polarized data are indistinguishable from the values alone,
     # so the file has to SAY which it is. Accept it only when it does.
-    if (scale > 0.0 and not np.any(down) and not np.any(cross_ud)
-            and not np.any(cross_du)):
+    if scale > 0.0 and not any_down and not any_cross:
         if legacy_up_block_only:
+            # Name the actual source of the authorization: a file tag and a user
+            # override carry different weight, and reporting one as the other
+            # would misrepresent who vouched for the data.
+            via = ("the [eliashberg] accept_up_block_only setting"
+                   if legacy_up_block_only == "config_override"
+                   else "the file's chi_spin_blocks='up_only' tag")
             logger.warning(
                 "The reduced FLEX susceptibility %s has an all-zero down-spin "
-                "block and all-zero cross-spin blocks, and is tagged "
-                "chi_spin_blocks='up_only'. Reading it as the legacy "
-                "representation in which only the block the Eliashberg step "
-                "consumes was ever populated, and continuing with that block.",
-                label)
+                "block and all-zero cross-spin blocks. Per %s this is read as "
+                "the layout in which only the block the Eliashberg step "
+                "consumes was ever populated -- not as a spin-polarized run -- "
+                "and the up-spin block is used.", label, via)
             return
         raise ValueError(
             "The reduced FLEX susceptibility {} has a nonzero up-spin block "
@@ -1902,6 +1916,10 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     green_raw = data_g["green"]
     # H-wave format: (nblock, nfreq, nvol, norb, norb)
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    if nblock < 1:
+        raise ValueError(
+            "The FLEX dressed Green function in '{}' has no spin blocks "
+            "(shape {}).".format(green_path, green_raw.shape))
     # A spin-diag FLEX run writes TWO blocks, G_up and G_down. Taking block 0
     # would discard the down-spin propagator exactly as the reduced chi loader
     # used to discard the down-spin susceptibility -- and the pair bubble built
@@ -1984,7 +2002,8 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     # so the static slice is taken before the spin-orbital expansion -- the full
     # loader would otherwise allocate the whole Nmat-long expanded array only to
     # keep one frequency (a memory regression proportional to Nmat).
-    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+    (chi_s_raw, chi_c_raw, chi_convention,
+     legacy_tags) = _read_flex_chi_raw(input_dict)
 
     # The zero bosonic frequency is located via the freq_index/nmat metadata
     # (RPA chiq files can carry a restricted matsubara_frequency axis whose
@@ -2018,9 +2037,9 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     # diagnosable, so the axis is checked in full. Paramagnetism is a property
     # of the producing run rather than of one frequency, which is the same
     # reason.
-    legacy_s, legacy_c = _read_flex_legacy_tags(input_dict)
+    legacy_s, legacy_c = legacy_tags
     if _accept_up_block_only(input_dict):
-        legacy_s = legacy_c = True
+        legacy_s = legacy_c = "config_override"
     _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
                                 legacy_s)
     _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
