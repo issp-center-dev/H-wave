@@ -2,14 +2,24 @@
 """Tests for RPA ladder diagram (ring+ladder calc_type).
 
 Tests verify:
-1. chi_zz = chi_+- consistency: At the RPA level for paramagnetic states,
-   the longitudinal spin vertex V_spin = W_uu - W_ud is identical to the
-   transverse vertex W_pm = ham[↑↑↑↑] - ham[↓↓↑↑]. This holds for ANY
-   interaction, not just SU(2)-symmetric ones.
+1. chi_zz = chi_+- consistency: at the RPA level for paramagnetic states, the
+   longitudinal spin vertex W_uu - W_ud equals the transverse vertex
+   ham[↑↑↑↑] - ham[↓↓↑↑], PROVIDED both spin blocks are taken in the same
+   orbital-pair index order. Taking one of them reversed leaves the
+   antisymmetric remainder of the interaction behind as a spurious vertex; that
+   was the defect in issue #90, and it cancelled only for interactions whose
+   V(q) happens to be pair-symmetric.
 2. Ring-only regression: calc_type="ring" results unchanged
 3. Bare susceptibility validation: chi0 from RPA matches Lindhard function
 4. Multi-interaction consistency: CoulombIntra, CoulombInter, Hund, Exchange,
    Ising, PairLift, and full Kanamori all satisfy chi_zz = chi_pm.
+
+Discriminating power is the thing to protect here. Most of the cases below run
+on `tests/rpa/input`, which has ONE orbital, so the orbital-pair index takes a
+single value and any pair-index error is invisible; `_assert_su2` must
+therefore compare the full norb^2 x norb^2 matrix, not just its diagonal, and
+at least one case must run at two orbitals with an interaction that is not
+pair-symmetric.
 """
 
 import os
@@ -390,6 +400,73 @@ class TestRPALadder(unittest.TestCase):
         self.assertLess(
             float(np.max(np.abs(captured["ham_pm"]))), 1e-12,
             "so the vertex the builder produces must vanish as well")
+
+    def test_the_projected_spin_channel_obeys_a_pair_space_rpa_equation(self):
+        """Guard the premise behind reading `chi_zz^-1 - chi0_pm^-1` as a vertex.
+
+        The longitudinal solve is a norb^2*4 problem in spin-orbital space, and
+        chi_zz is a projection of it onto the spin sector. Treating
+        `chi_zz^-1 - chi0_pm^-1` as "the vertex the transverse channel needs"
+        assumes that projection CLOSES -- that chi_zz itself satisfies a
+        norb^2 x norb^2 equation chi = [I + chi0_pm W]^-1 chi0_pm.
+
+        Test it rather than assume it: for an ON-SITE interaction the vertex is
+        q-independent, so the extracted W must be q-independent too. If the
+        projection did not close, no single q-independent W could reproduce the
+        projected object and the extraction would vary with q.
+
+        Measured: spread over q of 2.7e-15 (CoulombIntra) and 5.2e-15 (Hund),
+        with |W| equal to the interaction strength itself (U = 4 -> 4.0).
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        for label, interactions in (
+            ("CoulombIntra", {'CoulombIntra': 'coulombintra.dat'}),
+            ("Hund", {'Hund': 'hund_onsite.dat'}),
+        ):
+            with self.subTest(interaction=label):
+                captured = {}
+                original = rpa_mod.RPA._build_transverse_channel
+
+                def spy(inner_self, chi0q_orig, ham_orig):
+                    out = original(inner_self, chi0q_orig, ham_orig)
+                    captured["chi0_pm"] = np.asarray(out[0])
+                    return out
+
+                rpa_mod.RPA._build_transverse_channel = spy
+                try:
+                    _, green_info = self._run_rpa(
+                        calc_type="ring+ladder", calc_scheme="general",
+                        input_path='tests/rpa/input_2orb',
+                        Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.5,
+                        interactions=interactions,
+                    )
+                finally:
+                    rpa_mod.RPA._build_transverse_channel = original
+
+                norb = 2
+                npair = norb * norb
+                chiq = green_info["chiq"]
+                iw0 = chiq.shape[0] // 2
+                nq = chiq.shape[1]
+                zz = np.zeros((nq, npair, npair), dtype=complex)
+                for a in range(norb):
+                    for c in range(norb):
+                        for b in range(norb):
+                            for d in range(norb):
+                                zz[:, a * norb + c, b * norb + d] = (
+                                    chiq[iw0, :, a, c, b, d]
+                                    - chiq[iw0, :, a, c, norb + b, norb + d])
+                x0 = captured["chi0_pm"][iw0].reshape(nq, npair, npair)
+                w = np.array([np.linalg.inv(zz[i]) - np.linalg.inv(x0[i])
+                              for i in range(nq)])
+                self.assertGreater(float(np.max(np.abs(w))), 0.5,
+                                   "this interaction must give a nonzero "
+                                   "vertex, or the test proves nothing")
+                self.assertLess(float(np.max(np.abs(w - w.mean(axis=0)))),
+                                1e-10,
+                                "an on-site interaction must give a "
+                                "q-independent vertex")
 
     def test_su2_hund_2orb(self):
         """2-orbital Hund: chi_zz = chi_pm at the RPA level.
