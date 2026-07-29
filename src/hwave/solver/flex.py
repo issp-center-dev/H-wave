@@ -1944,9 +1944,11 @@ class FLEX(RPA):
         chi0q = chi0q_raw
         assert chi0q.ndim == 6
 
-        # MYO S/C matrices are q-independent constants for on-site Kanamori, so
-        # build them once and cache across SCF iterations. The chi0 transpose
-        # above stays OUTSIDE the cache (chi0 changes every iteration).
+        # The MYO S/C matrices depend only on the interaction (q-resolved for
+        # off-site entries, constant over q for on-site Kanamori), never on the
+        # SCF state, so build them once and cache across iterations. The chi0
+        # transpose above stays OUTSIDE the cache (chi0 changes every
+        # iteration).
         cache = getattr(self, "_myo_sc_cache", None)
         if cache is None:
             from hwave.sc import _build_interaction_k
@@ -1964,24 +1966,41 @@ class FLEX(RPA):
                     "pairing vertex (S=C=0); it is ignored in the general FLEX "
                     "calculation.")
 
-            # Fail-fast: the general (full-vertex) path builds the MYO S/C
-            # matrices on a uniform k-grid that is NOT the FFT q-grid used by
-            # _calc_chi0q.  For ON-SITE Kanamori interactions the S/C matrices
-            # are q-independent constants so this is exact; but an OFF-SITE
-            # interaction entry (irvec != (0,0,0)) makes them genuinely
-            # q-dependent on the wrong grid -> silently wrong physics.  v1 of
-            # the general path is on-site-only, so reject off-site entries.
-            for itype in ("CoulombIntra", "CoulombInter", "Hund",
-                          "Exchange", "PairHop", "Ising"):
+            # OFF-SITE entries are allowed for the DENSITY-DENSITY family
+            # (CoulombInter, Hund, Ising): their vertex is simply V(q) at the
+            # density slots, `_build_interaction_k` already carries the
+            # e^{-iqR} phases, and the S/C q-grid matches chi0's FFT grid --
+            # an earlier comment here feared it did not, but the fear was
+            # unfounded: measured at one orbital (where no inter-orbital slot
+            # differences exist), FLEX at IterationMax=1 with an off-site
+            # CoulombInter reproduces the RPA ring exactly (chi_s to 5e-15,
+            # chi_c to 4e-14, on 4x4 and on a non-cubic lattice). This is
+            # ordinary extended-Hubbard RPA at one iteration, and the same
+            # V(q) machinery the reduced path has always used.
+            #
+            # Still rejected off-site:
+            #   * Exchange and PairHop -- their particle-hole pair is
+            #     non-local for an off-site term, so no q-only S/C matrix can
+            #     represent it (measured for the transverse channel in #90;
+            #     the same locality argument applies to the exchange-type
+            #     slots here);
+            #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component, so
+            #     accepting off-site entries here would create one more
+            #     cross-solver semantics divergence (#106).
+            for itype in ("CoulombIntra", "Exchange", "PairHop"):
                 if itype in self.ham_info.param_ham:
                     for (irvec, orbvec) in self.ham_info.param_ham[itype]:
                         if tuple(irvec) != (0, 0, 0):
                             raise ValueError(
-                                "FLEX calc_scheme='general' (v1) supports "
-                                "on-site interactions only; interaction '{}' "
-                                "has an off-site entry irvec={}. Off-site "
-                                "two-body interactions are not yet supported "
-                                "by the general full-vertex path.".format(
+                                "FLEX calc_scheme='general' does not support "
+                                "an off-site entry for interaction '{}' "
+                                "(irvec={}). Off-site CoulombInter, Hund and "
+                                "Ising are supported; off-site Exchange and "
+                                "PairHop have a non-local particle-hole pair "
+                                "that no q-only vertex can represent, and "
+                                "off-site CoulombIntra is read only at r = 0 "
+                                "by UHFk, so accepting it here would diverge "
+                                "across solvers.".format(
                                     itype, tuple(irvec)))
 
             no = self.norb
