@@ -507,6 +507,7 @@ class TestRPALadder(unittest.TestCase):
             # Exchange too: X_ab^dagger = X_ba are the same Hermitian operator
             # pair, so an antisymmetric J also denotes a zero Hamiltonian.
             with self.subTest(interaction=itype):
+                captured.clear()
                 rpa_mod.RPA._build_transverse_channel = spy
                 try:
                     self._run_rpa(
@@ -613,6 +614,7 @@ class TestRPALadder(unittest.TestCase):
             captured["ham_pm"] = np.asarray(out[1])
             return out
 
+        captured.clear()
         rpa_mod.RPA._build_transverse_channel = spy
         try:
             self._run_rpa(
@@ -622,7 +624,95 @@ class TestRPALadder(unittest.TestCase):
                 interactions={"CoulombInter": "offsite_redundant_zero.dat"})
         finally:
             rpa_mod.RPA._build_transverse_channel = original
+        self.assertIn("ham_pm", captured, "the spy must actually have run")
         self.assertLess(float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
+
+    def test_spin_diag_transverse_bubble_matches_the_longitudinal_kernel(self):
+        """With G_up == G_dn the transverse bubble must equal the longitudinal
+        general chi0 -- both are -G[a,b](r,t) G[d,c](-r,-t), and the
+        longitudinal kernel is the one verified against exact diagonalization
+        in this series.
+
+        The displacement reversal in `_calc_chi0q_transverse` used to be
+        applied AFTER flattening the lattice to nvol, and over the orbital
+        axes as well. Both errors are invisible for nd <= 2 (roll(-1)+flip is
+        the identity on an axis of length <= 2) and on effectively-1D
+        lattices, which is exactly what every existing fixture used. At
+        nd = 3 on a 3 x 2 lattice the disagreement was of order unity (2.8).
+        """
+        import types
+        import hwave.solver.rpa as rpa_mod
+
+        rng = np.random.RandomState(7)
+        nx, ny, nz, nd, nmat = 3, 2, 1, 3, 8
+        nvol = nx * ny * nz
+        stub = object.__new__(rpa_mod.RPA)
+        stub.lattice = types.SimpleNamespace(shape=(nx, ny, nz), nvol=nvol)
+        stub.enable_reduced = False
+        stub.fft_workers = 1
+        stub.nmat = nmat
+        g = (rng.randn(nmat, nvol, nd, nd)
+             + 1j * rng.randn(nmat, nvol, nd, nd))
+        gkw = np.stack([g, g])                    # G_up == G_dn
+        tail = np.zeros_like(gkw)
+        pm = stub._calc_chi0q_transverse(gkw, tail, beta=3.0)
+        lg = stub._calc_chi0q(gkw, tail, beta=3.0)
+        np.testing.assert_allclose(pm, lg[0], rtol=0.0, atol=1e-12)
+
+    def test_a_reused_green_info_does_not_leak_stale_results(self):
+        """chiq / chiq_pm must belong to the CURRENT solve.
+
+        save_results writes whatever `chiq_pm` key is present, so a ring-only
+        solve on a green_info that carries one from an earlier ring+ladder run
+        would silently label the stale transverse data as part of the new
+        result; and a solve that fails validation must not leave an earlier
+        chiq behind either. The stale keys are injected directly -- feeding
+        the previous run's full green_info back in also hands the solver its
+        stored chi0q, which exercises the (separately broken) external-chi0q
+        path and would test the wrong thing.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        def make(calc_type, interactions):
+            interaction_dict = {'path_to_input': 'tests/rpa/input_2orb',
+                                'Geometry': 'geom.dat',
+                                'Transfer': 'transfer.dat'}
+            interaction_dict.update(interactions)
+            read_io = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': interaction_dict})
+            solver = rpa_mod.RPA(
+                read_io.get_param("ham"), {},
+                {'mode': 'RPA',
+                 'param': {'T': 2.0, 'filling': 0.5,
+                           'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                           'Nmat': 32},
+                 'enable_spin_orbital': False,
+                 'calc_scheme': "general", 'calc_type': calc_type})
+            return solver, read_io
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        stale = np.zeros((1,), dtype=complex)
+
+        # ring-only: an injected stale chiq_pm must be cleared
+        solver, read_io = make("ring", {'CoulombInter': 'onsite_inter.dat'})
+        green_info = read_io.get_param("green")
+        green_info["chiq_pm"] = stale
+        solver.solve(green_info, 'tests/rpa/output')
+        self.assertNotIn("chiq_pm", green_info)
+        self.assertIn("chiq", green_info)
+
+        # failing validation: neither stale key may survive
+        solver2, read_io2 = make("ring+ladder",
+                                 {'CoulombInter': 'coulombinter.dat'})
+        green_info2 = read_io2.get_param("green")
+        green_info2["chiq"] = stale
+        green_info2["chiq_pm"] = stale
+        with self.assertRaises(ValueError):
+            solver2.solve(green_info2, 'tests/rpa/output')
+        self.assertNotIn("chiq", green_info2)
+        self.assertNotIn("chiq_pm", green_info2)
 
     def test_tiny_offsite_coupling_is_still_rejected(self):
         """The guard tolerance is relative with NO absolute floor.
@@ -686,6 +776,7 @@ class TestRPALadder(unittest.TestCase):
         for cell in ([4, 4, 1], [4, 6, 1]):
             with self.subTest(cell=cell):
                 # on-site: accepted, q-independent, correct magnitude
+                captured.clear()
                 rpa_mod.RPA._build_transverse_channel = spy
                 try:
                     run({'CoulombInter': 'onsite_inter.dat'}, cell, [2, 2, 1])
@@ -702,12 +793,15 @@ class TestRPALadder(unittest.TestCase):
                         cell, [2, 2, 1])
 
                 # identically zero: accepted with a zero vertex
+                captured.clear()
                 rpa_mod.RPA._build_transverse_channel = spy
                 try:
                     run({'CoulombInter': 'offsite_redundant_zero.dat'},
                         cell, [2, 2, 1])
                 finally:
                     rpa_mod.RPA._build_transverse_channel = original
+                self.assertIn("ham_pm", captured,
+                              "the spy must actually have run")
                 self.assertLess(
                     float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
 

@@ -1036,6 +1036,14 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_orig
 
+            # A reused green_info must not carry results from a previous
+            # solve: if this run fails validation, or computes ring-only after
+            # a ring+ladder run, a stale chiq / chiq_pm from the earlier call
+            # would otherwise survive into save_results and be labelled as
+            # part of this result.
+            green_info.pop("chiq", None)
+            green_info.pop("chiq_pm", None)
+
             # For ring+ladder, validate the transverse channel BEFORE the
             # longitudinal solve: an unrepresentable input should fail here,
             # not after the expensive solve has already populated chiq.
@@ -2055,11 +2063,18 @@ class RPA:
         # Fourier transform from k-space to real space
         green_rt = _bk.spatial_ifftn(
             green_kt.reshape(nblock, nmat, nx, ny, nz, nd*nd),
-            axes=(2, 3, 4), workers=workers).reshape(nblock, nmat, nvol, nd, nd)
+            axes=(2, 3, 4), workers=workers)
 
-        # G_↓(-r,-τ): flip r and τ, then shift
-        green_dn_rev = xp.flip(xp.roll(green_rt[1:2], -1, axis=(1, 2, 3, 4)),
-                               axis=(1, 2, 3, 4)).reshape(nmat, nvol, nd, nd)
+        # G_↓(-r,-τ): reverse τ and EACH spatial axis separately, exactly as
+        # the longitudinal _calc_chi0q does (flip∘roll(-1) per axis is
+        # negation indexing, i -> (-i) mod n). Reversing after flattening to
+        # nvol was wrong twice over: modular negation of the flat C-order
+        # index is not coordinate-wise negation on a multidimensional
+        # lattice, and the two orbital axes were being reversed as well --
+        # invisible for nd <= 2, where roll(-1)+flip is the identity, which
+        # is why the one- and two-orbital fixtures never saw it.
+        green_dn_rev = xp.flip(xp.roll(green_rt[1], -1, axis=(0, 1, 2, 3)),
+                               axis=(0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
 
         # G_↑(r,τ)
         green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)

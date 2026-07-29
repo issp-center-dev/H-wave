@@ -283,13 +283,20 @@ The resulting vertex, for on-site interactions:
    should be recomputed. Only ``chiq_pm`` is affected -- it does not feed
    ``chiq``, the self-energy, or the Eliashberg vertex.
 
-``calc_type = "ring+ladder"`` requires every two-body term whose cross-spin
-part is non-zero to be **on-site**, whatever the spin mode. The transverse pair
+``calc_type = "ring+ladder"`` validates, before the longitudinal solve, that
+the **assembled transverse vertex is independent of** :math:`q` on the
+(sublattice-folded) lattice, to a relative tolerance of :math:`10^{-10}`;
+input failing this is rejected. The transverse pair
 :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` is non-local for an
-off-site term, so its vertex is not a function of :math:`q` alone and cannot be
-represented; the input is rejected before the longitudinal solve. Off-site
-``CoulombInter``, ``Ising`` and ``Exchange`` are rejected; off-site ``Hund``
-and ``PairLift`` are accepted because their transverse vertex vanishes. The
+off-site term, so such a term's vertex is not a function of :math:`q` alone
+and cannot be represented. In practice this rejects off-site
+``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
+``PairLift`` are accepted because their transverse vertex vanishes. Two
+consequences of the criterion being the assembled vertex rather than the raw
+declarations: a set of off-site declarations whose contributions cancel
+exactly in the symmetrised vertex is accepted (what the channel then uses is
+well-defined), and an inter-site pair that folds into the supercell under
+``SubShape`` becomes an intra-cell orbital pair and is representable. The
 longitudinal (``ring``) channel is unaffected.
 
 .. warning::
