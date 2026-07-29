@@ -2119,19 +2119,31 @@ class RPA:
         on-site CoulombInter with V_01 = +1, V_10 = -1 -- an identically ZERO
         Hamiltonian, since n_a n_b = n_b n_a -- produced a vertex of +-1.
 
-        The two blocks need DIFFERENT partners, because the redundancy being
-        quotiented differs. On the cross block the occupied slots pair up as
-        ((a,b),(b,a)), where the pair swap coincides with reversal within each
-        pair, so the redundancy is the HERMITIAN closure and the average must
-        conjugate -- that keeps a complex Hermitian-closed PairHop (P, conj(P))
-        at its full complex value (issue #100); a plain mean collapsed it to
-        Re(P). On the spin-flip block the occupied slots pair up as
-        ((a,a),(b,b)), palindromic within each pair, so the redundancy is the
-        plain operator identity X_ab = X_ba (different-spin bilinears commute;
-        H = (J_01 + J_10) X with a REAL coefficient for Hermitian input) and
-        the average must NOT conjugate: a conjugated mean wrongly kept an
-        imaginary part for complex Hermitian-closed Exchange (measured
-        -0.7 +/- 0.4i where the coupling is -0.7).
+        The partner in the mean is decided PER SLOT FAMILY, not per block,
+        because the redundancy being quotiented is a property of the slots:
+
+        * PALINDROMIC pairs, ((a,a),(b,b)): the two declarations multiply the
+          SAME operator (n_a n_b = n_b n_a for the density types; X_ab = X_ba
+          for Exchange, since different-spin bilinears commute). The physical
+          coefficient is the sum, real for any Hermitian declaration, and the
+          declared imaginary parts multiply the null operator -- so the mean
+          must NOT conjugate, which is exactly what drops them. A conjugated
+          mean wrongly kept an imaginary part both for complex Hermitian-closed
+          Exchange (spin-flip block) and for complex Hermitian-closed
+          CoulombInter / Ising (cross block): measured -0.7 -/+ 0.4i in each
+          case where the physical coupling is -0.7 (or +0.7 for Ising).
+
+        * HETEROGENEOUS pairs, ((a,b),(b,a)) with a != b: the two declarations
+          are coefficients of HERMITIAN-PARTNER operators (PairHop:
+          Y_ab^dagger = Y_ba), the complex phase is physical, and the mean must
+          conjugate -- that keeps a complex Hermitian-closed PairHop
+          (P, conj(P)) at its full complex value (issue #100); a plain mean
+          collapsed it to Re(P).
+
+        A per-block rule looked sufficient at first because PairHop is the only
+        heterogeneous occupant, but density-density types live on the SAME
+        cross block in palindromic slots, so the block is not the right
+        granularity.
 
         Resulting vertices, verified against exact diagonalization end to end
         with one common scale across all seven types (residuals at the
@@ -2158,10 +2170,19 @@ class RPA:
         cross_block = ham_4d[:, norb:, norb:, :norb, :norb]
         spin_flip_block = ham_4d[:, :norb, norb:, :norb, norb:]
         pair_swap = (0, 3, 4, 1, 2)
-        cross_sym = 0.5 * (cross_block
-                           + xp.conj(cross_block.transpose(*pair_swap)))
-        flip_sym = 0.5 * (spin_flip_block
-                          + spin_flip_block.transpose(*pair_swap))
+
+        # slot-family mask over (i, j, k, l): True where both pairs are
+        # palindromic (i == j and k == l)
+        oi = xp.arange(norb)
+        palin = ((oi[:, None, None, None] == oi[None, :, None, None])
+                 & (oi[None, None, :, None] == oi[None, None, None, :]))[None]
+
+        def _mean(block):
+            swapped = block.transpose(*pair_swap)
+            return 0.5 * (block + xp.where(palin, swapped, xp.conj(swapped)))
+
+        cross_sym = _mean(cross_block)
+        flip_sym = _mean(spin_flip_block)
         return -cross_sym.transpose(0, 2, 4, 1, 3) + flip_sym
 
     def _check_transverse_representable(self, ham_orig):

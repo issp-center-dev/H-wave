@@ -6,9 +6,10 @@ What is covered, and why it looks the way it does:
 1. The transverse vertex is pinned per interaction type against values
    established by exact diagonalization (with the O(lambda) self-energy
    removed via the Hartree-Fock response), including the orbital-pair
-   symmetrisation convention shared with `uhfk.py` and its per-block
-   conjugation rules (plain mean on the spin-flip block, Hermitian mean on
-   the cross-spin block).
+   symmetrisation convention shared with `uhfk.py` and its per-slot-family
+   conjugation rule (plain mean on palindromic pairs, whose declarations
+   multiply the same operator; Hermitian mean on heterogeneous pairs, whose
+   declarations are Hermitian-partner coefficients -- PairHop).
 2. SU(2): `chi_zz = chi_pm` is asserted only where the Hamiltonian is
    genuinely SU(2) symmetric, over the FULL orbital-pair matrix. For on-site
    CoulombInter the identity is exact but currently VIOLATED, because the
@@ -383,7 +384,7 @@ class TestRPALadder(unittest.TestCase):
                 calc_type="ring+ladder", calc_scheme="general",
                 input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
                 T=2.0, filling=0.5,
-                interactions={"PairHop": "onsite_pairhop_cplx.dat"})
+                interactions={"PairHop": "onsite_cplx_hermitian.dat"})
         finally:
             rpa_mod.RPA._build_transverse_channel = original
 
@@ -394,6 +395,53 @@ class TestRPALadder(unittest.TestCase):
         np.testing.assert_allclose(got, want, atol=1e-10)
         # the load-bearing part: the imaginary component survives
         self.assertGreater(float(np.max(np.abs(got.imag))), 0.39)
+
+    def test_complex_density_density_coupling_is_real(self):
+        """Complex Hermitian-closed CoulombInter and Ising must yield REAL
+        vertices, exactly like Exchange.
+
+        n_a n_b = n_b n_a, so the two declarations multiply the same operator,
+        the physical coefficient is the (real) sum, and the declared imaginary
+        parts multiply the null operator -- in the many-body Hamiltonian they
+        cannot even enter, since a density-density term is diagonal in the
+        Fock basis and a complex diagonal would be non-Hermitian.
+
+        This is the case that showed the per-BLOCK conjugation rule was the
+        wrong abstraction: density-density types live on the same cross-spin
+        block as PairHop but in palindromic slots, and the conjugated mean
+        there kept a spurious -0.7 -/+ 0.4i. The rule is per slot family.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        for itype, val in (("CoulombInter", -0.7), ("Ising", +0.7)):
+            with self.subTest(interaction=itype):
+                rpa_mod.RPA._build_transverse_channel = spy
+                try:
+                    self._run_rpa(
+                        calc_type="ring+ladder", calc_scheme="general",
+                        input_path='tests/rpa/input_2orb',
+                        Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.5,
+                        interactions={itype: "onsite_cplx_hermitian.dat"})
+                finally:
+                    rpa_mod.RPA._build_transverse_channel = original
+
+                got = captured["ham_pm"][0]
+                want = np.zeros_like(got)
+                want[0, 1, 0, 1] = want[1, 0, 1, 0] = val
+                np.testing.assert_allclose(got, want, atol=1e-10)
+                self.assertLess(
+                    float(np.max(np.abs(got.imag))), 1e-12,
+                    "the density-density coupling (V_01 + V_10)/2 is real; an "
+                    "imaginary remnant means the conjugated mean was applied "
+                    "to a palindromic slot family")
 
     def test_complex_exchange_coupling_is_real(self):
         """A complex Hermitian-closed Exchange must yield a REAL vertex.
@@ -423,7 +471,7 @@ class TestRPALadder(unittest.TestCase):
                 calc_type="ring+ladder", calc_scheme="general",
                 input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
                 T=2.0, filling=0.5,
-                interactions={"Exchange": "onsite_exchange_cplx.dat"})
+                interactions={"Exchange": "onsite_cplx_hermitian.dat"})
         finally:
             rpa_mod.RPA._build_transverse_channel = original
 
