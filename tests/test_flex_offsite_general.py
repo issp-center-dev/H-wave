@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Off-site density-density interactions in the general (full-vertex) FLEX.
+"""Off-site interactions in the general (full-vertex) FLEX: the measured policy.
 
-The general path used to reject every off-site entry, citing a feared mismatch
-between the S/C construction's k-grid and chi0's FFT q-grid. The fear was
-unfounded -- both are the C-ordered 2*pi*i/n grid -- and the density-density
-family (CoulombInter, Hund, Ising) needs nothing beyond the e^{-iqR} phases
-that `_build_interaction_k` already carries: the vertex is V(q) at the density
-slots, ordinary extended-Hubbard RPA at one iteration.
+Accepted off-site: CoulombInter with SAME-orbital pairs (a == b), without
+sublattice folding. For exactly that class, FLEX at IterationMax=1 is
+element-complete equal to the RPA ring -- every spin-orbital component of chiq
+at every frequency and q, reconstructed from the FLEX channels, to ~1e-14 --
+because the vertex is V(q) on the density slots alone and the S/C k-grid is
+the same C-ordered 2*pi*i/n grid as chi0's FFT axis.
 
-The clean grid test is ONE orbital: there are no inter-orbital pair slots
-there, so FLEX at IterationMax=1 must reproduce the RPA ring exactly -- any
-grid misalignment would appear directly. Exchange and PairHop stay rejected
-off-site (their particle-hole pair is non-local, so no q-only vertex can
-represent it), as does CoulombIntra (UHFk reads only its r = 0 component, so
-accepting it here would create a cross-solver semantics divergence).
+Everything else stays rejected, each for a measured reason:
+
+* CoulombInter with a != b off-site, and Hund / Ising off-site: the MYO S/C
+  builder applies the full on-site Kanamori slot mapping, which feeds the
+  Fierz (Case 2) inter-orbital slots; off-site, the particle-hole pair behind
+  those slots is non-local and not representable by a q-only matrix. Off-site
+  Hund / Ising differ from the ring by 3e-2 / 7e-2 even at ONE orbital, where
+  no inter-orbital slot exists to blame.
+* Off-site combined with sublattice folding: folding turns part of an a == b
+  bond into intra-cell inter-orbital coupling and the solvers then differ by
+  2e-2 (the folded analogue of the #104 content); deferred to #107.
+* Exchange / PairHop off-site (non-local pair), CoulombIntra off-site (#106).
 """
 
 import os
@@ -22,7 +28,8 @@ import unittest
 import numpy as np
 
 
-def _run_pair(path, interactions, cell, filling, flex_iters=1):
+def _run_pair(path, interactions, cell, filling, flex_iters=1,
+              inject=None):
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.rpa as rpa_mod
     import hwave.solver.flex as flex_mod
@@ -34,22 +41,27 @@ def _run_pair(path, interactions, cell, filling, flex_iters=1):
         idict = {'path_to_input': path, 'Geometry': 'geom.dat',
                  'Transfer': 'transfer.dat'}
         idict.update(interactions)
-        return read_input_k.QLMSkInput({'path_to_input': path,
-                                        'interaction': idict})
+        r = read_input_k.QLMSkInput({'path_to_input': path,
+                                     'interaction': idict})
+        ham = r.get_param("ham")
+        if inject:
+            for itype, key, val in inject:
+                ham[itype][key] = val
+        return r, ham
 
     os.makedirs('tests/rpa/output', exist_ok=True)
-    i1 = io()
-    rpa = rpa_mod.RPA(i1.get_param("ham"), {},
+    i1, ham1 = io()
+    rpa = rpa_mod.RPA(ham1, {},
                       {'mode': 'RPA', 'param': dict(par),
                        'enable_spin_orbital': False,
                        'calc_scheme': 'general', 'calc_type': 'ring'})
     gr = i1.get_param("green")
     rpa.solve(gr, 'tests/rpa/output')
 
-    i2 = io()
+    i2, ham2 = io()
     pf = dict(par)
     pf.update({'IterationMax': flex_iters, 'Mix': 1.0, 'EPS': 1})
-    fx = flex_mod.FLEX(i2.get_param("ham"), {},
+    fx = flex_mod.FLEX(ham2, {},
                        {'mode': 'FLEX', 'param': pf,
                         'enable_spin_orbital': False,
                         'calc_scheme': 'general'})
@@ -58,96 +70,105 @@ def _run_pair(path, interactions, cell, filling, flex_iters=1):
     return gr, gf
 
 
+def _assert_element_complete_equal(test, gr, gf, norb, atol=1e-12):
+    """Reconstruct RPA's full spin-orbital chiq from the FLEX channels and
+    compare EVERY element -- including the spin-mixed pair blocks, which must
+    vanish for the reconstruction to be complete."""
+    np.testing.assert_allclose(np.asarray(gf['chi0q']),
+                               np.asarray(gr['chi0q']),
+                               rtol=0.0, atol=atol)
+    chiq = np.asarray(gr['chiq'])
+    cs = np.asarray(gf['chiq_s'])
+    cc = np.asarray(gf['chiq_c'])
+    recon = np.zeros_like(chiq)
+    same = 0.5 * (cc + cs)
+    diff = 0.5 * (cc - cs)
+    for s1 in (0, 1):
+        for s2 in (0, 1):
+            blk = same if s1 == s2 else diff
+            recon[:, :,
+                  s1*norb:(s1+1)*norb, s1*norb:(s1+1)*norb,
+                  s2*norb:(s2+1)*norb, s2*norb:(s2+1)*norb] = blk
+    np.testing.assert_allclose(chiq, recon, rtol=0.0, atol=atol)
+
+
 class TestOffsiteGeneralFLEX(unittest.TestCase):
 
     def test_one_orbital_offsite_v_matches_the_rpa_ring_exactly(self):
-        """At one orbital there are no inter-orbital slots, so any difference
-        from the ring would be a grid or phase error. Non-cubic included so
-        both spatial axes are exercised.
-
-        The comparison is ELEMENT-COMPLETE, not a projection: RPA's full
-        spin-orbital chiq is reconstructed from FLEX's channels under
-        spin-free symmetry -- same-spin blocks (chi_c + chi_s)/2, cross-spin
-        blocks (chi_c - chi_s)/2 -- and every nd^4 element at every frequency
-        and q is compared, INCLUDING the spin-mixed pair blocks, which must be
-        zero for the reconstruction to be complete. Nothing about RPA's spin
-        structure is assumed; a violation of uu == dd or a nonzero spin-mixed
-        block would fail here. (The in-loop chemical potential was also
-        checked bit-for-bit identical between the two solvers; the `mu`
-        attribute FLEX exposes afterwards belongs to its post-loop dressed
-        bookkeeping and has no RPA counterpart.)
-        """
+        """One orbital, off-site V, element-complete, on 4x4 and non-cubic
+        4x6. (The in-loop chemical potential was also checked bit-for-bit
+        identical between the two solvers; the `mu` attribute FLEX exposes
+        afterwards belongs to its post-loop dressed bookkeeping and has no
+        RPA counterpart.)"""
         for cell in ([4, 4, 1], [4, 6, 1]):
             with self.subTest(cell=cell):
                 gr, gf = _run_pair('tests/rpa/input',
                                    {'CoulombInter': 'coulombinter.dat'},
                                    cell, filling=0.75)
-                np.testing.assert_allclose(
-                    np.asarray(gf['chi0q']), np.asarray(gr['chi0q']),
-                    rtol=0.0, atol=1e-12)
-                chiq = np.asarray(gr['chiq'])
-                norb = 1
-                cs = np.asarray(gf['chiq_s'])
-                cc = np.asarray(gf['chiq_c'])
-                recon = np.zeros_like(chiq)
-                same = 0.5 * (cc + cs)
-                diff = 0.5 * (cc - cs)
-                for s1 in (0, 1):
-                    for s2 in (0, 1):
-                        blk = same if s1 == s2 else diff
-                        recon[:, :,
-                              s1*norb:(s1+1)*norb, s1*norb:(s1+1)*norb,
-                              s2*norb:(s2+1)*norb, s2*norb:(s2+1)*norb] = blk
-                np.testing.assert_allclose(chiq, recon, rtol=0.0, atol=1e-12)
+                _assert_element_complete_equal(self, gr, gf, norb=1)
 
-    def test_two_orbital_offsite_v_differs_only_at_interorbital_slots(self):
-        """chi0 must still be exact; the channel difference against the ring
-        must be confined to the inter-orbital pair slots -- the same
-        vertex-content difference as on-site U' (#104), where exact
-        diagonalization already showed the FLEX side to be the correct one.
-        Anything appearing elsewhere would be a genuine off-site defect."""
-        gr, gf = _run_pair('tests/rpa/input_2orb',
-                           {'CoulombInter': 'coulombinter.dat'},
-                           [4, 4, 1], filling=0.5)
-        np.testing.assert_allclose(
-            np.asarray(gf['chi0q']), np.asarray(gr['chi0q']),
-            rtol=0.0, atol=1e-12)
-        norb, npair = 2, 4
-        chiq = np.asarray(gr['chiq'])
-        nw, nq = chiq.shape[0], chiq.shape[1]
-        zz = np.zeros((nw, nq, npair, npair), dtype=complex)
-        for a in range(norb):
-            for c in range(norb):
-                for b in range(norb):
-                    for d in range(norb):
-                        zz[:, :, a*norb+c, b*norb+d] = (
-                            chiq[:, :, a, c, b, d]
-                            - chiq[:, :, a, c, norb+b, norb+d])
-        diff = np.abs(zz - np.asarray(gf['chiq_s']).reshape(
-            nw, nq, npair, npair))
-        mask = np.zeros((npair, npair), dtype=bool)
-        for i in (1, 2):
-            for j in (1, 2):
-                mask[i, j] = True
-        self.assertGreater(float(np.max(diff[:, :, mask])), 1e-3,
-                           "the inter-orbital slots must differ while #104 "
-                           "is open")
-        self.assertLess(float(np.max(diff[:, :, ~mask])), 1e-3,
-                        "any difference outside the inter-orbital slots "
-                        "would be an off-site defect, not #104")
+    def test_one_orbital_offsite_v_3d_with_a_z_bond(self):
+        """A bond along z on a 4x4x2 lattice pins the third axis of the grid
+        contract, which no committed fixture exercises."""
+        gr, gf = _run_pair(
+            'tests/rpa/input', {'CoulombInter': 'coulombinter.dat'},
+            [4, 4, 2], filling=0.75,
+            inject=[('CoulombInter', ((0, 0, 1), (0, 0)), 0.3),
+                    ('CoulombInter', ((0, 0, -1), (0, 0)), 0.3)])
+        _assert_element_complete_equal(self, gr, gf, norb=1)
 
-    def test_offsite_exchange_and_coulombintra_are_still_rejected(self):
-        for itype in ("Exchange", "CoulombIntra"):
-            with self.subTest(interaction=itype):
+    def test_two_orbital_sameorb_offsite_v_matches_exactly(self):
+        """TWO orbitals with same-orbital (a == b) off-site bonds: the
+        accepted class must agree with the ring in EVERY element -- there is
+        no masked region. This is what makes the acceptance class sharp: any
+        Fierz-slot contamination from the off-site entries would fail here,
+        where the earlier confinement-masked test could not see it."""
+        for cell in ([4, 4, 1], [4, 6, 1]):
+            with self.subTest(cell=cell):
+                gr, gf = _run_pair('tests/rpa/input_2orb',
+                                   {'CoulombInter': 'offsite_sameorb.dat'},
+                                   cell, filling=0.5)
+                _assert_element_complete_equal(self, gr, gf, norb=2)
+
+    def test_rejected_offsite_classes(self):
+        """Everything outside the measured-equal class must be rejected."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        cases = [
+            # a != b off-site CoulombInter (the 2orb fixture has such bonds)
+            ({'CoulombInter': 'coulombinter.dat'}, 'tests/rpa/input_2orb',
+             [1, 1, 1]),
+            ({'Hund': 'coulombinter.dat'}, 'tests/rpa/input', [1, 1, 1]),
+            ({'Ising': 'coulombinter.dat'}, 'tests/rpa/input', [1, 1, 1]),
+            ({'Exchange': 'coulombinter.dat'}, 'tests/rpa/input', [1, 1, 1]),
+            ({'CoulombIntra': 'coulombinter.dat'}, 'tests/rpa/input',
+             [1, 1, 1]),
+            # the accepted class, but with sublattice folding
+            ({'CoulombInter': 'offsite_sameorb.dat'}, 'tests/rpa/input_2orb',
+             [2, 1, 1]),
+        ]
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        for interactions, path, sub in cases:
+            with self.subTest(interactions=list(interactions)[0], sub=sub):
+                idict = {'path_to_input': path, 'Geometry': 'geom.dat',
+                         'Transfer': 'transfer.dat'}
+                idict.update(interactions)
+                r = read_input_k.QLMSkInput({'path_to_input': path,
+                                             'interaction': idict})
+                pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                      'SubShape': sub, 'Nmat': 32,
+                      'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+                fx = flex_mod.FLEX(r.get_param("ham"), {},
+                                   {'mode': 'FLEX', 'param': pf,
+                                    'enable_spin_orbital': False,
+                                    'calc_scheme': 'general'})
                 with self.assertRaises(ValueError):
-                    _run_pair('tests/rpa/input_2orb',
-                              {itype: 'coulombinter.dat'},
-                              [4, 4, 1], filling=0.5)
+                    fx.solve(r.get_param("green"), 'tests/rpa/output')
 
     def test_multi_iteration_offsite_v_runs_and_stays_finite(self):
-        """The self-energy path receives a q-dependent V_eff once off-site
-        entries are allowed; three iterations must run and produce finite
-        sigma and susceptibilities."""
+        """Three iterations exercise the q-dependent V_eff through the
+        self-energy path; the outputs must stay finite."""
         _, gf = _run_pair('tests/rpa/input',
                           {'CoulombInter': 'coulombinter.dat'},
                           [4, 4, 1], filling=0.75, flex_iters=3)

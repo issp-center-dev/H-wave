@@ -1966,49 +1966,69 @@ class FLEX(RPA):
                     "pairing vertex (S=C=0); it is ignored in the general FLEX "
                     "calculation.")
 
-            # OFF-SITE entries are allowed for the DENSITY-DENSITY family
-            # (CoulombInter, Hund, Ising): their vertex is simply V(q) at the
-            # density slots, `_build_interaction_k` already carries the
-            # e^{-iqR} phases, and the S/C q-grid matches chi0's FFT grid --
-            # an earlier comment here feared it did not, but the fear was
-            # unfounded: measured at one orbital (where no inter-orbital slot
-            # differences exist), FLEX at IterationMax=1 with an off-site
-            # CoulombInter reproduces the RPA ring exactly (chi_s to 5e-15,
-            # chi_c to 4e-14, on 4x4 and on a non-cubic lattice). This is
-            # ordinary extended-Hubbard RPA at one iteration, and the same
-            # V(q) machinery the reduced path has always used.
+            # OFF-SITE entries are allowed ONLY where FLEX at one iteration
+            # is MEASURED equal to the RPA ring, element-complete: CoulombInter
+            # with SAME-orbital pairs (a == b), without sublattice folding.
+            # For that class the vertex is V(q) on the density slots alone and
+            # the equivalence holds to 1e-16 at one and two orbitals, on 4x4,
+            # non-cubic 4x6 and 3D 4x4x2 lattices including a z-direction bond.
             #
-            # Still rejected off-site:
-            #   * Exchange and PairHop -- their particle-hole pair is
-            #     non-local for an off-site term, so no q-only S/C matrix can
-            #     represent it (measured for the transverse channel in #90;
-            #     the same locality argument applies to the exchange-type
-            #     slots here);
-            #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component, so
-            #     accepting off-site entries here would create one more
-            #     cross-solver semantics divergence (#106).
-            for itype in ("CoulombIntra", "Exchange", "PairHop"):
-                if itype in self.ham_info.param_ham:
-                    for (irvec, orbvec) in self.ham_info.param_ham[itype]:
-                        if tuple(irvec) != (0, 0, 0):
-                            raise ValueError(
-                                "FLEX calc_scheme='general' does not support "
-                                "an off-site entry for interaction '{}' "
-                                "(irvec={}). Off-site CoulombInter, Hund and "
-                                "Ising are supported; off-site Exchange and "
-                                "PairHop have a non-local particle-hole pair "
-                                "that no q-only vertex can represent, and "
-                                "off-site CoulombIntra is read only at r = 0 "
-                                "by UHFk, so accepting it here would diverge "
-                                "across solvers.".format(
-                                    itype, tuple(irvec)))
+            # Everything else stays rejected, each for a measured reason:
+            #
+            #   * CoulombInter with a != b off-site, Hund, Ising -- the MYO
+            #     S/C builder applies the full on-site Kanamori slot mapping,
+            #     which places q-dependent values into the Fierz (Case 2)
+            #     inter-orbital slots; for R != 0 the particle-hole pair
+            #     behind those slots is NON-LOCAL and not representable by a
+            #     q-only matrix (the locality argument measured for the
+            #     transverse channel). Off-site Hund / Ising differ from the
+            #     ring by 3e-2 / 7e-2 even at ONE orbital, where no
+            #     inter-orbital slot exists to blame -- an unadjudicated
+            #     vertex-content disagreement, not a grid issue.
+            #   * off-site combined with sublattice folding -- folding turns
+            #     part of an a == b bond into intra-cell inter-orbital
+            #     coupling, and the two solvers then differ by 2e-2 (the
+            #     folded analogue of the #104 content); the equivalence claim
+            #     no longer holds, so it is deferred to the #107 unification.
+            #   * Exchange, PairHop -- non-local particle-hole pair off-site.
+            #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component
+            #     (#106).
+            has_fold = tuple(getattr(self.lattice, "subshape",
+                                     (1, 1, 1))) != (1, 1, 1)
+            for itype in ("CoulombIntra", "CoulombInter", "Hund",
+                          "Exchange", "PairHop", "Ising"):
+                if itype not in self.ham_info.param_ham:
+                    continue
+                for (irvec, orbvec) in self.ham_info.param_ham[itype]:
+                    if tuple(irvec) == (0, 0, 0):
+                        continue
+                    ok = (itype == "CoulombInter"
+                          and orbvec[0] == orbvec[1]
+                          and not has_fold)
+                    if not ok:
+                        raise ValueError(
+                            "FLEX calc_scheme='general' accepts off-site "
+                            "entries only for CoulombInter with equal "
+                            "orbitals (a == b) and without sublattice "
+                            "folding; interaction '{}' has an off-site "
+                            "entry irvec={}, orbvec={}{}. For that entry "
+                            "class the general path is measured equal to "
+                            "the RPA ring; other off-site classes are not "
+                            "representable by a q-only vertex or carry "
+                            "unadjudicated vertex content.".format(
+                                itype, tuple(irvec), tuple(orbvec),
+                                ", with sublattice folding" if has_fold
+                                else ""))
 
             no = self.norb
             nx, ny, nz = self.lattice.shape
 
-            # Build k-space interactions from the raw real-space param_ham. The
-            # k-array ordering is irrelevant for on-site Kanamori terms (constant
-            # over q), so a simple uniform grid suffices for v1.
+            # Build k-space interactions from the raw real-space param_ham.
+            # The grid contract: linspace(0, 2pi, n, endpoint=False) per axis,
+            # C-order flattened -- the same points, order and flattening as
+            # chi0's spatial FFT axis, verified by the element-complete
+            # equivalence with the RPA ring for off-site (q-dependent)
+            # entries. On-site terms are constant over q.
             kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
             ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
             kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)

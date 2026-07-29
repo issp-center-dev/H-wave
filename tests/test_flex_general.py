@@ -812,26 +812,29 @@ class TestFLEXGeneralGuards(unittest.TestCase):
             solver.solve(green_info, info_file['output']['path_to_output'])
 
     def test_general_offsite_policy_per_type(self):
-        """Off-site entries are allowed for the density-density family
-        (CoulombInter here) -- their vertex is V(q) at the density slots, and
-        the one-orbital equivalence against the RPA ring is pinned in
-        tests/test_flex_offsite_general.py -- while Exchange and PairHop stay
-        rejected (non-local particle-hole pair, not representable by a q-only
-        vertex) and CoulombIntra stays rejected (UHFk reads only its r = 0
-        component, #106)."""
-        # density-density off-site: accepted, and the S/C matrices build
+        """Off-site entries are allowed only for CoulombInter with EQUAL
+        orbitals (a == b) and no sublattice folding -- the class measured
+        element-complete equal to the RPA ring (see
+        tests/test_flex_offsite_general.py). Everything else is rejected:
+        a != b CoulombInter, Hund and Ising feed non-local Fierz slots (and
+        Hund / Ising differ from the ring even at one orbital), Exchange and
+        PairHop have a non-local pair, CoulombIntra is read only at r = 0 by
+        UHFk (#106)."""
+        # accepted: a == b off-site CoulombInter
         flex = _make_general_flex(norb=2)
-        pham = flex.ham_info.param_ham
-        pham.setdefault("CoulombInter", {})[((1, 0, 0), (0, 1))] = 1.0
+        flex.ham_info.param_ham.setdefault("CoulombInter", {})[
+            ((1, 0, 0), (0, 0))] = 1.0
         flex._myo_sc_cache = None
         chi0_raw = _fake_general_chi0q(flex)
         flex._inflate_chi0q_and_ham_general(chi0_raw, None)   # must not raise
 
-        # exchange-family / CoulombIntra off-site: rejected with the guard
-        for itype in ("Exchange", "PairHop", "CoulombIntra"):
+        # rejected: a != b CoulombInter, and every other type
+        for itype, orbvec in (("CoulombInter", (0, 1)), ("Hund", (0, 0)),
+                              ("Ising", (0, 0)), ("Exchange", (0, 1)),
+                              ("PairHop", (0, 1)), ("CoulombIntra", (0, 0))):
             flex = _make_general_flex(norb=2)
-            pham = flex.ham_info.param_ham
-            pham.setdefault(itype, {})[((1, 0, 0), (0, 1))] = 1.0
+            flex.ham_info.param_ham.setdefault(itype, {})[
+                ((1, 0, 0), orbvec)] = 1.0
             flex._myo_sc_cache = None
             chi0_raw = _fake_general_chi0q(flex)
             with self.assertRaises(ValueError) as cm:
