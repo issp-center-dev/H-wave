@@ -228,16 +228,68 @@ H-wave can compute the transverse susceptibility
 Hartree (Fock exchange) vertex from the longitudinal channel:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
 <span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}\]</div>
-<p>For the standard Kanamori interactions, the transverse vertex takes the form:</p>
+<p>The transverse vertex is built from the cross-spin and spin-flip blocks of
+the interaction tensor only. The same-spin block does not enter: a same-spin
+interaction cannot connect the up and down propagators of the transverse loop,
+so it contributes self-energy but no vertex.</p>
+<p>Each orbital pair is symmetrised with the mean of the two declarations, since
+an interaction file may write the same operator either way
+(<span class="math notranslate nohighlight">\(n_a n_b = n_b n_a\)</span>, and <span class="math notranslate nohighlight">\(X_{ab} = X_{ba}\)</span> for Exchange).
+This matches the convention UHFk uses. The partner in the mean depends on the
+interaction type (equivalently, on the slot family the type occupies):
+density-density types and Exchange average with the plain transpose,
+while PairHop averages with the conjugated transpose, because its two
+declarations are Hermitian partners (<span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span>) rather than
+the same coefficient. For a complex Hermitian-closed Exchange the physical
+coupling <span class="math notranslate nohighlight">\((J_{01} + J_{10})/2\)</span> is therefore real, while a complex
+Hermitian-closed PairHop keeps its full complex value.</p>
+<p>The resulting vertex, for on-site interactions:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> <span class="math notranslate nohighlight">\(U\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -U\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -J\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = 2I\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -V\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -(J + J^{\rm T})/2\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = +I\)</span> (in RPA’s current normalization of the
+Ising file; UHFk applies an additional factor <span class="math notranslate nohighlight">\(1/4\)</span> to the same file –
+the discrepancy is tracked separately)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -J\)</span></p></li>
 </ul>
-<p>The full Kanamori interaction (<span class="math notranslate nohighlight">\(U, V = U-2J, J, J' = J\)</span>)
-satisfies <span class="math notranslate nohighlight">\(W_{+-} = -(U - 2J) = W_{zz}\)</span> (SU(2) symmetry),
-which implies <span class="math notranslate nohighlight">\(\chi_{+-} = \chi_{zz}\)</span> for paramagnetic systems.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>These values differ from those published before H-wave’s transverse channel
+was checked against exact diagonalization; four of the earlier entries were
+incorrect and one type was missing. Transverse susceptibilities produced by
+earlier versions with <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> or <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+should be recomputed. Only <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> is affected – it does not feed
+<code class="docutils literal notranslate"><span class="pre">chiq</span></code>, the self-energy, or the Eliashberg vertex.</p>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> validates, before the longitudinal solve, that
+the <strong>assembled transverse vertex is independent of</strong> <span class="math notranslate nohighlight">\(q\)</span> on the
+(sublattice-folded) lattice, to a relative tolerance of <span class="math notranslate nohighlight">\(10^{-10}\)</span>;
+input failing this is rejected. The transverse pair
+<span class="math notranslate nohighlight">\(c^\dagger_{i a \uparrow} c_{j b \downarrow}\)</span> is non-local for an
+off-site term, so such a term’s vertex is not a function of <span class="math notranslate nohighlight">\(q\)</span> alone
+and cannot be represented. In practice this rejects off-site
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, while off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> are accepted because their transverse vertex vanishes. Two
+consequences of the criterion being the assembled vertex rather than the raw
+declarations: a set of off-site declarations whose contributions cancel
+exactly in the symmetrised vertex is accepted (what the channel then uses is
+well-defined), and an inter-site pair that folds into the supercell under
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code> becomes an intra-cell orbital pair and is representable. The
+longitudinal (<code class="docutils literal notranslate"><span class="pre">ring</span></code>) channel is unaffected.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> entries are silently discarded when the interaction is
+read, before this check runs, so they are neither rejected nor included.
+Do not rely on off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> in any RPA calculation. A DIAGONAL
+PairHop entry (equal orbitals) denotes the density term
+<span class="math notranslate nohighlight">\(2P\, n_\uparrow n_\downarrow\)</span>; the interaction reader stores it
+with coefficient <span class="math notranslate nohighlight">\(P\)</span> rather than <span class="math notranslate nohighlight">\(2P\)</span>, consistently in both the
+longitudinal and transverse channels. Validation of such degenerate entries
+is tracked separately.</p>
+</div>
 <p>The transverse RPA susceptibility is obtained as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
 <span class="eqno">(7.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
