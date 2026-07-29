@@ -862,10 +862,30 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
             s_q += Up_mat[_l1, _l2]
             c_q -= Up_mat[_l1, _l2]
         if I_mat is not None:
-            s_q -= I_mat[_l1, _l2]
+            # SIGN adjudicated by exact diagonalization (issue #113): the
+            # exact spin vertex carries -I at this slot in the
+            # [I + chi0 W]^-1 convention, i.e. +I here (S enters as -S).
+            # The previous -I produced the wrong sign end to end.
+            s_q += I_mat[_l1, _l2]
             c_q -= I_mat[_l1, _l2]
         if J_mat is not None:
+            # Hund contributes to BOTH channels at this slot (issue #113):
+            # the exact vertices are W_zz = +J and W_cc = +J, i.e. S -= J and
+            # C += J. The S term was missing entirely.
+            s_q -= J_mat[_l1, _l2]
             c_q += J_mat[_l1, _l2]
+        if Jp_mat is not None:
+            # Exchange lives HERE, not in the pair-antidiagonal Case 4 where
+            # it sat before (issue #113): exact diagonalization puts its
+            # vertex at this slot family in both channels, W_zz = -J and
+            # W_cc = +J, i.e. S += J and C += J. Consistency check that this
+            # split is right: for the SU(2) Kanamori combination
+            # (Hund + Exchange at equal J) the channel matrices become
+            # S(ab,ab) with no J at all and C(ab,ab) = -U' + 2J -- exactly
+            # the standard literature result, which the previous bookkeeping
+            # reproduced in neither channel per type.
+            s_q += Jp_mat[_l1, _l2]
+            c_q += Jp_mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
@@ -899,8 +919,10 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     for i in np.where(mask4)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l2 = l1f[i], l2f[i]
-        if Jp_mat is not None:
-            s_q += Jp_mat[_l1, _l2]
+        # Exchange used to sit here; exact diagonalization (issue #113) puts
+        # its vertex on the pair-DIAGONAL slot family (Case 2), and end to end
+        # the antidiagonal placement produced the right magnitude at the wrong
+        # slots in both channels. Only PairHop belongs here (#100/#102).
         if PH_mat is not None:
             s_q += PH_mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
@@ -910,85 +932,23 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
 
 
 def _build_sc_matrices(inter_k, norb, ix, iy, iz):
-    """Build spin (S) and charge (C) interaction matrices at a given q-point.
+    """Spin (S) and charge (C) matrices at a single q-point.
 
-    Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
-        S_{l1l2,l3l4}, C_{l1l2,l3l4} for multi-orbital systems.
-
-    The composite index maps as (l1,l2) -> l1*norb + l2,
-    giving norb^2 x norb^2 matrices.
-
-    Parameters
-    ----------
-    inter_k : dict
-        Interactions in k-space from _build_interaction_k.
-    norb : int
-        Number of orbitals.
-    ix, iy, iz : int
-        q-point indices.
-
-    Returns
-    -------
-    S_mat : ndarray
-        Spin interaction matrix, shape (norb^2, norb^2).
-    C_mat : ndarray
-        Charge interaction matrix, shape (norb^2, norb^2).
+    Delegates to :func:`_build_sc_matrices_all_q` and slices, so there is ONE
+    implementation of the S/C content. The previous hand-maintained copy had
+    already drifted from the all-q builder once; after the issue #113 vertex
+    corrections a second parallel copy would be a liability.
     """
-    nd = norb * norb
-    S_mat = np.zeros((nd, nd), dtype=complex)
-    C_mat = np.zeros((nd, nd), dtype=complex)
-
-    # Extract interaction values at this q-point
-    def _get(itype):
-        if itype in inter_k:
-            return inter_k[itype][:, :, ix, iy, iz]
-        return np.zeros((norb, norb), dtype=complex)
-
-    U_mat = _get("CoulombIntra")    # U_mm (intra-orbital)
-    Up_mat = _get("CoulombInter")   # U'_mm' (inter-orbital)
-    J_mat = _get("Hund")            # J_mm' (Hund's coupling)
-    Jp_mat = _get("Exchange")       # J'_mm' (pair-hopping)
-    I_mat = _get("Ising")           # I_mm' (Ising S^z S^z)
-    PH_mat = _get("PairHop")        # P_mm' (pair hopping)
-
-    for l1 in range(norb):
-        for l2 in range(norb):
-            idx12 = l1 * norb + l2
-            for l3 in range(norb):
-                for l4 in range(norb):
-                    idx34 = l3 * norb + l4
-
-                    s_val = 0.0 + 0.0j
-                    c_val = 0.0 + 0.0j
-
-                    if l1 == l2 == l3 == l4:
-                        # Same orbital: S = U, C = U + 2 V_aa(q).  The charge
-                        # (Hartree) diagonal also carries the INTER-SITE
-                        # same-orbital CoulombInter (issue #95); the simple
-                        # two-index formulation builds the same thing as
-                        # `Wc = U_k + 2 V_k`.  Hund/Ising are deliberately not
-                        # included: an orbital has no such coupling with itself.
-                        s_val = U_mat[l1, l1]
-                        c_val = U_mat[l1, l1] + 2.0 * Up_mat[l1, l1]
-                    elif l1 == l3 and l2 == l4 and l1 != l2:
-                        # l1=l3 != l2=l4 (cross): S = U' - I, C = -U' + J - I
-                        s_val = Up_mat[l1, l2] - I_mat[l1, l2]
-                        c_val = (-Up_mat[l1, l2] + J_mat[l1, l2]
-                                 - I_mat[l1, l2])
-                    elif l1 == l2 and l3 == l4 and l1 != l3:
-                        # l1=l2 != l3=l4 (dens): S = J - 2I, C = 2U' - J
-                        s_val = J_mat[l1, l3] - 2.0 * I_mat[l1, l3]
-                        c_val = 2.0 * Up_mat[l1, l3] - J_mat[l1, l3]
-                    elif l1 == l4 and l2 == l3 and l1 != l2:
-                        # l1=l4 != l2=l3 (exch): S = J' + P, C = J' + P
-                        s_val = Jp_mat[l1, l2] + PH_mat[l1, l2]
-                        c_val = Jp_mat[l1, l2] + PH_mat[l1, l2]
-
-                    S_mat[idx12, idx34] = s_val
-                    C_mat[idx12, idx34] = c_val
-
-    return S_mat, C_mat
-
+    Nx = Ny = Nz = None
+    for v in inter_k.values():
+        Nx, Ny, Nz = v.shape[2], v.shape[3], v.shape[4]
+        break
+    if Nx is None:
+        nd = norb * norb
+        return (np.zeros((nd, nd), dtype=complex),
+                np.zeros((nd, nd), dtype=complex))
+    S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    return S_all[ix, iy, iz], C_all[ix, iy, iz]
 
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                       pairing_type="singlet", static_index=None):
