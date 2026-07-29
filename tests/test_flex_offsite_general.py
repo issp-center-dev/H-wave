@@ -63,7 +63,20 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
     def test_one_orbital_offsite_v_matches_the_rpa_ring_exactly(self):
         """At one orbital there are no inter-orbital slots, so any difference
         from the ring would be a grid or phase error. Non-cubic included so
-        both spatial axes are exercised."""
+        both spatial axes are exercised.
+
+        The comparison is ELEMENT-COMPLETE, not a projection: RPA's full
+        spin-orbital chiq is reconstructed from FLEX's channels under
+        spin-free symmetry -- same-spin blocks (chi_c + chi_s)/2, cross-spin
+        blocks (chi_c - chi_s)/2 -- and every nd^4 element at every frequency
+        and q is compared, INCLUDING the spin-mixed pair blocks, which must be
+        zero for the reconstruction to be complete. Nothing about RPA's spin
+        structure is assumed; a violation of uu == dd or a nonzero spin-mixed
+        block would fail here. (The in-loop chemical potential was also
+        checked bit-for-bit identical between the two solvers; the `mu`
+        attribute FLEX exposes afterwards belongs to its post-loop dressed
+        bookkeeping and has no RPA counterpart.)
+        """
         for cell in ([4, 4, 1], [4, 6, 1]):
             with self.subTest(cell=cell):
                 gr, gf = _run_pair('tests/rpa/input',
@@ -73,14 +86,19 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                     np.asarray(gf['chi0q']), np.asarray(gr['chi0q']),
                     rtol=0.0, atol=1e-12)
                 chiq = np.asarray(gr['chiq'])
-                zz = chiq[:, :, 0, 0, 0, 0] - chiq[:, :, 0, 0, 1, 1]
-                cc = chiq[:, :, 0, 0, 0, 0] + chiq[:, :, 0, 0, 1, 1]
-                np.testing.assert_allclose(
-                    np.asarray(gf['chiq_s'])[:, :, 0, 0, 0, 0], zz,
-                    rtol=0.0, atol=1e-12)
-                np.testing.assert_allclose(
-                    np.asarray(gf['chiq_c'])[:, :, 0, 0, 0, 0], cc,
-                    rtol=0.0, atol=1e-12)
+                norb = 1
+                cs = np.asarray(gf['chiq_s'])
+                cc = np.asarray(gf['chiq_c'])
+                recon = np.zeros_like(chiq)
+                same = 0.5 * (cc + cs)
+                diff = 0.5 * (cc - cs)
+                for s1 in (0, 1):
+                    for s2 in (0, 1):
+                        blk = same if s1 == s2 else diff
+                        recon[:, :,
+                              s1*norb:(s1+1)*norb, s1*norb:(s1+1)*norb,
+                              s2*norb:(s2+1)*norb, s2*norb:(s2+1)*norb] = blk
+                np.testing.assert_allclose(chiq, recon, rtol=0.0, atol=1e-12)
 
     def test_two_orbital_offsite_v_differs_only_at_interorbital_slots(self):
         """chi0 must still be exact; the channel difference against the ring
