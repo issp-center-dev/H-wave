@@ -252,8 +252,14 @@ so it contributes self-energy but no vertex.
 
 Each orbital pair is symmetrised with the mean of the two declarations, since
 an interaction file may write the same operator either way
-(:math:`n_a n_b = n_b n_a`, and :math:`X_{ab}^\dagger = X_{ba}` for Exchange).
-This matches the convention UHFk uses.
+(:math:`n_a n_b = n_b n_a`, and :math:`X_{ab} = X_{ba}` for Exchange).
+This matches the convention UHFk uses. The partner in the mean depends on the
+block: density-density types and Exchange average with the plain transpose,
+while PairHop averages with the conjugated transpose, because its two
+declarations are Hermitian partners (:math:`P_{ba} = P_{ab}^{*}`) rather than
+the same coefficient. For a complex Hermitian-closed Exchange the physical
+coupling :math:`(J_{01} + J_{10})/2` is therefore real, while a complex
+Hermitian-closed PairHop keeps its full complex value.
 
 The resulting vertex, for on-site interactions:
 

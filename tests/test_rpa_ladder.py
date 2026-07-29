@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Tests for RPA ladder diagram (ring+ladder calc_type).
+"""Tests for the RPA transverse (ladder) channel, calc_type="ring+ladder".
 
-Tests verify:
-1. chi_zz = chi_+- consistency: At the RPA level for paramagnetic states,
-   the longitudinal spin vertex V_spin = W_uu - W_ud is identical to the
-   transverse vertex W_pm = ham[↑↑↑↑] - ham[↓↓↑↑]. This holds for ANY
-   interaction, not just SU(2)-symmetric ones.
-2. Ring-only regression: calc_type="ring" results unchanged
-3. Bare susceptibility validation: chi0 from RPA matches Lindhard function
-4. Multi-interaction consistency: CoulombIntra, CoulombInter, Hund, Exchange,
-   Ising, PairLift, and full Kanamori all satisfy chi_zz = chi_pm.
+What is covered, and why it looks the way it does:
+
+1. The transverse vertex is pinned per interaction type against values
+   established by exact diagonalization (with the O(lambda) self-energy
+   removed via the Hartree-Fock response), including the orbital-pair
+   symmetrisation convention shared with `uhfk.py` and its per-block
+   conjugation rules (plain mean on the spin-flip block, Hermitian mean on
+   the cross-spin block).
+2. SU(2): `chi_zz = chi_pm` is asserted only where the Hamiltonian is
+   genuinely SU(2) symmetric, over the FULL orbital-pair matrix. For on-site
+   CoulombInter the identity is exact but currently VIOLATED, because the
+   longitudinal ring drops the inter-orbital spin vertex -- that test pins
+   the specific #104 signature and must not be "fixed" from the transverse
+   side.
+3. Off-site input: interactions whose assembled transverse vertex would be
+   q-dependent are rejected before the longitudinal solve; off-site Hund and
+   PairLift are accepted because their transverse vertex vanishes.
+4. Ring-only behaviour and the bare-bubble (Lindhard) checks are unchanged.
 """
 
 import os
@@ -386,6 +395,47 @@ class TestRPALadder(unittest.TestCase):
         # the load-bearing part: the imaginary component survives
         self.assertGreater(float(np.max(np.abs(got.imag))), 0.39)
 
+    def test_complex_exchange_coupling_is_real(self):
+        """A complex Hermitian-closed Exchange must yield a REAL vertex.
+
+        The two declarations multiply the SAME operator: X_ab^dagger = X_ba
+        and the different-spin bilinears commute, so X_ab = X_ba and
+        H = (J_01 + J_10) X. Hermiticity requires that sum to be real, so for
+        J = (j, conj(j)) the physical coupling is Re(j) -- here 0.7 -- and any
+        surviving imaginary part is an artifact. A conjugated mean on the
+        spin-flip block produced exactly that artifact (-0.7 +/- 0.4i); the
+        plain mean is correct on this block, in contrast to the cross-spin
+        block where PairHop requires the conjugated one.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        rpa_mod.RPA._build_transverse_channel = spy
+        try:
+            self._run_rpa(
+                calc_type="ring+ladder", calc_scheme="general",
+                input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
+                T=2.0, filling=0.5,
+                interactions={"Exchange": "onsite_exchange_cplx.dat"})
+        finally:
+            rpa_mod.RPA._build_transverse_channel = original
+
+        got = captured["ham_pm"][0]
+        want = np.zeros_like(got)
+        want[0, 0, 1, 1] = want[1, 1, 0, 0] = -0.7
+        np.testing.assert_allclose(got, want, atol=1e-10)
+        self.assertLess(float(np.max(np.abs(got.imag))), 1e-12,
+                        "the Exchange coupling (J_01 + J_10)/2 is real; an "
+                        "imaginary remnant means the wrong Hermitian partner "
+                        "was used on the spin-flip block")
+
     def test_a_redundant_declaration_of_zero_gives_a_zero_vertex(self):
         """`V_01 = +1`, `V_10 = -1` denotes an identically zero Hamiltonian,
         because `n_a n_b = n_b n_a`. The vertex must vanish.
@@ -548,14 +598,18 @@ class TestRPALadder(unittest.TestCase):
         # NOWHERE else. A generic assertRaises would also pass for unrelated
         # regressions; this pins the specific #104 signature.
         offs = [0 * norb + 1, 1 * norb + 0]
-        ons = [0 * norb + 0, 1 * norb + 1]
         diff = np.abs(zz - pm)
-        off_max = float(np.max(diff[:, offs][:, :, offs]))
+        mask = np.zeros((npair, npair), dtype=bool)
+        for i in offs:
+            for j in offs:
+                mask[i, j] = True
+        off_max = float(np.max(diff[:, mask]))
         self.assertGreater(off_max, 3e-3,
                            "the U' slots must disagree while #104 is open")
         self.assertLess(off_max, 5e-2, "magnitude far off the measured 1e-2")
-        self.assertLess(float(np.max(diff[:, ons][:, :, ons])), 1e-10,
-                        "the density-diagonal block must still agree")
+        # and NOWHERE else: every element outside the expected slots agrees
+        self.assertLess(float(np.max(diff[:, ~mask])), 1e-10,
+                        "the mismatch must be confined to the U' slots")
 
     def test_su2_onsite_coulombintra_2orb(self):
         """CoulombIntra at two orbitals: SU(2) holds and the ring is correct
