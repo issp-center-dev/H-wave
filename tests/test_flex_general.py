@@ -811,24 +811,32 @@ class TestFLEXGeneralGuards(unittest.TestCase):
         with self.assertRaises(ValueError):
             solver.solve(green_info, info_file['output']['path_to_output'])
 
-    def test_general_rejects_offsite_interaction(self):
-        """The general (v1) path supports on-site interactions only; an off-site
-        interaction entry (irvec != (0,0,0)) must fail-fast with a ValueError
-        when the MYO S/C matrices are built in _inflate_chi0q_and_ham_general."""
+    def test_general_offsite_policy_per_type(self):
+        """Off-site entries are allowed for the density-density family
+        (CoulombInter here) -- their vertex is V(q) at the density slots, and
+        the one-orbital equivalence against the RPA ring is pinned in
+        tests/test_flex_offsite_general.py -- while Exchange and PairHop stay
+        rejected (non-local particle-hole pair, not representable by a q-only
+        vertex) and CoulombIntra stays rejected (UHFk reads only its r = 0
+        component, #106)."""
+        # density-density off-site: accepted, and the S/C matrices build
         flex = _make_general_flex(norb=2)
         pham = flex.ham_info.param_ham
-        # param_ham[itype] is a dict {(irvec, orbvec): value}; inject an off-site
-        # CoulombInter entry mirroring that real key structure.  irvec=(1,0,0) is
-        # off-site; orbvec=(0,1) is a valid orbital pair.
-        key = ((1, 0, 0), (0, 1))
-        pham.setdefault("CoulombInter", {})[key] = 1.0
-        # ensure a clean cache so the guard (cache-MISS branch) actually runs:
+        pham.setdefault("CoulombInter", {})[((1, 0, 0), (0, 1))] = 1.0
         flex._myo_sc_cache = None
         chi0_raw = _fake_general_chi0q(flex)
-        with self.assertRaises(ValueError) as cm:
-            flex._inflate_chi0q_and_ham_general(chi0_raw, None)
-        # confirm we hit the off-site guard specifically (not some other error)
-        self.assertIn("off-site", str(cm.exception).lower())
+        flex._inflate_chi0q_and_ham_general(chi0_raw, None)   # must not raise
+
+        # exchange-family / CoulombIntra off-site: rejected with the guard
+        for itype in ("Exchange", "PairHop", "CoulombIntra"):
+            flex = _make_general_flex(norb=2)
+            pham = flex.ham_info.param_ham
+            pham.setdefault(itype, {})[((1, 0, 0), (0, 1))] = 1.0
+            flex._myo_sc_cache = None
+            chi0_raw = _fake_general_chi0q(flex)
+            with self.assertRaises(ValueError) as cm:
+                flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+            self.assertIn("off-site", str(cm.exception).lower())
 
     def test_general_pairlift_is_inert_and_warns(self):
         """PairLift contributes S=C=0 to the particle-hole spin/charge vertex
