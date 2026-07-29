@@ -624,6 +624,112 @@ class TestRPALadder(unittest.TestCase):
             rpa_mod.RPA._build_transverse_channel = original
         self.assertLess(float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
 
+    def test_tiny_offsite_coupling_is_still_rejected(self):
+        """The guard tolerance is relative with NO absolute floor.
+
+        A floor of ``max(scale, 1)`` accepted a purely q-dependent off-site
+        vertex whenever its amplitude sat below 1e-10 -- 100 percent q
+        variation, silently used by the unsupported calculation. Fourier
+        roundoff is ~1e-16 relative, so a relative 1e-10 separates it from
+        genuine q-dependence at any amplitude.
+        """
+        with self.assertRaises(ValueError):
+            self._run_rpa(
+                calc_type="ring+ladder", calc_scheme="general",
+                input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
+                T=2.0, filling=0.5,
+                interactions={"CoulombInter": "offsite_tiny.dat"})
+
+    def test_sublattice_folding_keeps_the_verdicts(self):
+        """SubShape != [1,1,1]: the vertex, the guard and the q-reversal all
+        act on the FOLDED lattice, so they must keep working when the shape,
+        the orbital count and the qrev map all change.
+
+        The pathological off-site declaration stays rejected -- folding turns
+        part of the bond intra-cell, but an inter-cell remainder survives at
+        any SubShape < CellShape -- and the identically-zero declaration stays
+        accepted, because the operator it denotes is zero on any folding.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        def run(interactions, cell, sub):
+            info_mode = {
+                'mode': 'RPA',
+                'param': {'T': 2.0, 'filling': 0.5, 'CellShape': cell,
+                          'SubShape': sub, 'Nmat': 32},
+                'enable_spin_orbital': False,
+                'calc_scheme': "general", 'calc_type': "ring+ladder",
+            }
+            interaction_dict = {'path_to_input': 'tests/rpa/input_2orb',
+                                'Geometry': 'geom.dat',
+                                'Transfer': 'transfer.dat'}
+            interaction_dict.update(interactions)
+            info_file = {'input': {'path_to_input': 'tests/rpa/input_2orb',
+                                   'interaction': interaction_dict},
+                         'output': {'path_to_output': 'tests/rpa/output',
+                                    'chi0q': 'chi0q.npz'}}
+            os.makedirs('tests/rpa/output', exist_ok=True)
+            import hwave.qlmsio.read_input_k as read_input_k
+            read_io = read_input_k.QLMSkInput(info_file['input'])
+            solver = rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+            solver.solve(read_io.get_param("green"),
+                         info_file['output']['path_to_output'])
+
+        for cell in ([4, 4, 1], [4, 6, 1]):
+            with self.subTest(cell=cell):
+                # on-site: accepted, q-independent, correct magnitude
+                rpa_mod.RPA._build_transverse_channel = spy
+                try:
+                    run({'CoulombInter': 'onsite_inter.dat'}, cell, [2, 2, 1])
+                finally:
+                    rpa_mod.RPA._build_transverse_channel = original
+                w = captured["ham_pm"]
+                self.assertLess(float(np.max(np.abs(w - w[0:1]))), 1e-12)
+                self.assertAlmostEqual(float(np.max(np.abs(w))), 0.7,
+                                       places=10)
+
+                # nonzero off-site: rejected
+                with self.assertRaises(ValueError):
+                    run({'CoulombInter': 'offsite_asym_nonzero.dat'},
+                        cell, [2, 2, 1])
+
+                # identically zero: accepted with a zero vertex
+                rpa_mod.RPA._build_transverse_channel = spy
+                try:
+                    run({'CoulombInter': 'offsite_redundant_zero.dat'},
+                        cell, [2, 2, 1])
+                finally:
+                    rpa_mod.RPA._build_transverse_channel = original
+                self.assertLess(
+                    float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
+
+    @unittest.expectedFailure
+    def test_su2_onsite_coulombinter_2orb_equality(self):
+        """The CORRECT physics, stated as such: SU(2) holds exactly for
+        on-site CoulombInter, so chi_zz must equal chi_pm.
+
+        Expected to fail while #104 is open (the longitudinal ring drops the
+        inter-orbital spin vertex). When #104 is fixed this flips to an
+        unexpected success, which unittest reports as a failure -- remove the
+        decorator then, and retire the signature test below.
+        """
+        solver, green_info = self._run_rpa(
+            calc_type="ring+ladder", calc_scheme="general",
+            input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
+            T=2.0, filling=0.5,
+            interactions={'CoulombInter': 'onsite_inter.dat'},
+        )
+        self._assert_su2(green_info, norb=2,
+                         msg="on-site CoulombInter (2-orbital)")
+
     def test_combined_types_superpose(self):
         """The vertex of a combined declaration is the sum of the individual
         vertices -- block extraction and symmetrisation are linear, so mixed

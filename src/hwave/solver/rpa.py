@@ -2231,7 +2231,14 @@ class RPA:
         ham_pm = self._assemble_transverse_vertex(ham_orig)
         spread = float(_bk.to_host(xp.max(xp.abs(ham_pm - ham_pm[0:1]))))
         scale = float(_bk.to_host(xp.max(xp.abs(ham_pm))))
-        if spread > 1e-10 * max(scale, 1.0):
+        # RELATIVE tolerance, with no absolute floor: a floor of max(scale, 1)
+        # let a purely q-dependent vertex of small amplitude (< 1e-10) through,
+        # and it would then be used by the unsupported calculation. Roundoff
+        # from the Fourier transform sits at ~1e-16 relative, so 1e-10 relative
+        # separates it cleanly from genuine q-dependence at ANY amplitude.
+        # scale == 0 (no interaction reaching these blocks) implies spread == 0
+        # and passes.
+        if spread > 1e-10 * scale:
             logger.error(
                 "calc_type='ring+ladder' requires the transverse vertex to be "
                 "independent of q, which fails when a two-body interaction "
