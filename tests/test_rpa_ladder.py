@@ -348,6 +348,44 @@ class TestRPALadder(unittest.TestCase):
                     err_msg="{} vertex does not match exact "
                             "diagonalization".format(itype))
 
+    def test_complex_pairhop_keeps_its_full_complex_value(self):
+        """A complex Hermitian-closed PairHop must not lose its imaginary part.
+
+        Hermiticity of H requires P_10 = conj(P_01); the exact vertex (#100)
+        carries the FULL complex value. The symmetrisation must therefore
+        average with the CONJUGATE of the pair swap -- as `uhfk.py` does
+        (`jba = conjugate(transpose(...))`). A plain transpose average
+        collapses both slots to Re(P), which was measured on an earlier
+        revision of this branch: ham_pm = -0.700 + 0.000i for P = 0.7 + 0.4i.
+        """
+        import hwave.solver.rpa as rpa_mod
+
+        captured = {}
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(inner_self, chi0q_orig, ham_orig):
+            out = original(inner_self, chi0q_orig, ham_orig)
+            captured["ham_pm"] = np.asarray(out[1])
+            return out
+
+        rpa_mod.RPA._build_transverse_channel = spy
+        try:
+            self._run_rpa(
+                calc_type="ring+ladder", calc_scheme="general",
+                input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
+                T=2.0, filling=0.5,
+                interactions={"PairHop": "onsite_pairhop_cplx.dat"})
+        finally:
+            rpa_mod.RPA._build_transverse_channel = original
+
+        got = captured["ham_pm"][0]
+        want = np.zeros_like(got)
+        want[0, 1, 1, 0] = -(0.7 + 0.4j)
+        want[1, 0, 0, 1] = -(0.7 - 0.4j)
+        np.testing.assert_allclose(got, want, atol=1e-10)
+        # the load-bearing part: the imaginary component survives
+        self.assertGreater(float(np.max(np.abs(got.imag))), 0.39)
+
     def test_a_redundant_declaration_of_zero_gives_a_zero_vertex(self):
         """`V_01 = +1`, `V_10 = -1` denotes an identically zero Hamiltonian,
         because `n_a n_b = n_b n_a`. The vertex must vanish.
@@ -367,7 +405,9 @@ class TestRPALadder(unittest.TestCase):
             captured["ham_pm"] = np.asarray(out[1])
             return out
 
-        for itype in ("CoulombInter", "Ising"):
+        for itype in ("CoulombInter", "Ising", "Exchange"):
+            # Exchange too: X_ab^dagger = X_ba are the same Hermitian operator
+            # pair, so an antisymmetric J also denotes a zero Hamiltonian.
             with self.subTest(interaction=itype):
                 rpa_mod.RPA._build_transverse_channel = spy
                 try:
@@ -488,9 +528,34 @@ class TestRPALadder(unittest.TestCase):
             T=2.0, filling=0.5,
             interactions={'CoulombInter': 'onsite_inter.dat'},
         )
-        with self.assertRaises(AssertionError):
-            self._assert_su2(green_info, norb=2,
-                             msg="on-site CoulombInter (2-orbital)")
+        norb = 2
+        npair = norb * norb
+        chiq = green_info["chiq"]
+        chiq_pm = green_info["chiq_pm"]
+        iw0 = chiq.shape[0] // 2
+        zz = np.zeros((chiq.shape[1], npair, npair), dtype=complex)
+        pm = np.zeros_like(zz)
+        for a in range(norb):
+            for c in range(norb):
+                for b in range(norb):
+                    for d in range(norb):
+                        i, j = a * norb + c, b * norb + d
+                        zz[:, i, j] = (chiq[iw0, :, a, c, b, d]
+                                       - chiq[iw0, :, a, c, norb + b, norb + d])
+                        pm[:, i, j] = chiq_pm[iw0, :, a, c, b, d]
+        # The mismatch must sit where the U' vertex acts -- the off-orbital
+        # pair slots (0,1) and (1,0) -- with the measured magnitude, and
+        # NOWHERE else. A generic assertRaises would also pass for unrelated
+        # regressions; this pins the specific #104 signature.
+        offs = [0 * norb + 1, 1 * norb + 0]
+        ons = [0 * norb + 0, 1 * norb + 1]
+        diff = np.abs(zz - pm)
+        off_max = float(np.max(diff[:, offs][:, :, offs]))
+        self.assertGreater(off_max, 3e-3,
+                           "the U' slots must disagree while #104 is open")
+        self.assertLess(off_max, 5e-2, "magnitude far off the measured 1e-2")
+        self.assertLess(float(np.max(diff[:, ons][:, :, ons])), 1e-10,
+                        "the density-diagonal block must still agree")
 
     def test_su2_onsite_coulombintra_2orb(self):
         """CoulombIntra at two orbitals: SU(2) holds and the ring is correct

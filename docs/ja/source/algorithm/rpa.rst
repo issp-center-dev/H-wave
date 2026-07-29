@@ -242,7 +242,9 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 - ``CoulombInter`` :math:`V` : :math:`W_{+-} = -V`
 - ``Hund`` :math:`J` : :math:`W_{+-} = 0`
 - ``Exchange`` :math:`J` : :math:`W_{+-} = -(J + J^{\rm T})/2`
-- ``Ising`` :math:`I` : :math:`W_{+-} = +I`
+- ``Ising`` :math:`I` : :math:`W_{+-} = +I` （RPA が現在 Ising ファイルに用いて
+  いる規格化での値。UHFk は同じファイルにさらに :math:`1/4` を掛けており、この
+  不一致は別途追跡されています）
 - ``PairLift`` :math:`J` : :math:`W_{+-} = 0`
 - ``PairHop`` :math:`J` : :math:`W_{+-} = -J`
 
@@ -253,6 +255,21 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
    ``CoulombInter`` 、 ``Hund`` 、 ``Ising`` 、 ``Exchange`` を含む計算で得られた
    横方向帯磁率は再計算してください。影響を受けるのは ``chiq_pm`` のみで、
    ``chiq`` 、自己エネルギー、Eliashberg 頂点には波及しません。
+
+``calc_type = "ring+ladder"`` では、スピンモードによらず、異スピン成分を持つ
+二体項は **オンサイト** である必要があります。横方向のペア
+:math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` はオフサイト項に対して
+非局所となり、その頂点は :math:`q` のみの関数では表現できないためです。該当
+する入力は縦方向の計算より前に拒否されます。オフサイトの ``CoulombInter`` 、
+``Ising`` 、 ``Exchange`` は拒否されます。オフサイトの ``Hund`` と
+``PairLift`` は横方向頂点が消えるため受理されます。縦方向（ ``ring`` ）
+チャネルは影響を受けません。
+
+.. warning::
+
+   オフサイトの ``PairHop`` は相互作用の読み込み時にこの検査より前に暗黙に
+   破棄されるため、拒否も反映もされません。RPA 計算でオフサイトの
+   ``PairHop`` に依存しないでください。
 
 横方向のRPA感受率は
 
@@ -287,12 +304,6 @@ H-waveはスピンと軌道のインデックスが
   完全な :math:`2n_{\rm orb} \times 2n_{\rm orb}` 空間で構成されます。
 - 全ての相互作用型（ ``CoulombIntra`` 、 ``CoulombInter`` 、 ``Hund`` 、 ``Exchange`` 、
   ``Ising`` 、 ``PairLift`` 、 ``PairHop`` ）がサポートされます。
-- ``calc_type = "ring+ladder"`` では、異スピン成分を持つ二体項は **オンサイト**
-  である必要があります。横方向のペア :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}`
-  はオフサイト項に対して非局所となり、その頂点は :math:`q` のみの関数では表現
-  できないためです。オフサイトの ``CoulombInter`` 、 ``Ising`` 、 ``Exchange`` は
-  拒否されます。オフサイトの ``Hund`` と ``PairLift`` は横方向頂点が消えるため
-  受理されます。縦方向（ ``ring`` ）チャネルは影響を受けません。
 - 可能な場合、ブロック対角化最適化が自動的に適用されます。
 - ``squashed`` 計算スキームもスピン軌道系で利用可能です。
 - 幾何情報ファイル（``geom.dat``）の ``Norbit`` はスピン軌道の総数

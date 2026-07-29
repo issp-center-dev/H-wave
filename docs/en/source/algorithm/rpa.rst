@@ -261,7 +261,9 @@ The resulting vertex, for on-site interactions:
 - ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
 - ``Hund`` :math:`J`: :math:`W_{+-} = 0`
 - ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
-- ``Ising`` :math:`I`: :math:`W_{+-} = +I`
+- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (in RPA's current normalization of the
+  Ising file; UHFk applies an additional factor :math:`1/4` to the same file --
+  the discrepancy is tracked separately)
 - ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
 - ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
 
@@ -273,6 +275,21 @@ The resulting vertex, for on-site interactions:
    earlier versions with ``CoulombInter``, ``Hund``, ``Ising`` or ``Exchange``
    should be recomputed. Only ``chiq_pm`` is affected -- it does not feed
    ``chiq``, the self-energy, or the Eliashberg vertex.
+
+``calc_type = "ring+ladder"`` requires every two-body term whose cross-spin
+part is non-zero to be **on-site**, whatever the spin mode. The transverse pair
+:math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` is non-local for an
+off-site term, so its vertex is not a function of :math:`q` alone and cannot be
+represented; the input is rejected before the longitudinal solve. Off-site
+``CoulombInter``, ``Ising`` and ``Exchange`` are rejected; off-site ``Hund``
+and ``PairLift`` are accepted because their transverse vertex vanishes. The
+longitudinal (``ring``) channel is unaffected.
+
+.. warning::
+
+   Off-site ``PairHop`` entries are silently discarded when the interaction is
+   read, before this check runs, so they are neither rejected nor included.
+   Do not rely on off-site ``PairHop`` in any RPA calculation.
 
 The transverse RPA susceptibility is obtained as
 
@@ -306,14 +323,6 @@ in the input TOML file. In this mode:
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
   ``Ising``, ``PairLift``, ``PairHop``) are supported.
-- ``calc_type = "ring+ladder"`` additionally requires every two-body term whose
-  cross-spin part is non-zero to be **on-site**. The transverse pair
-  :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` is non-local for an
-  off-site term, so its vertex is not a function of :math:`q` alone and cannot
-  be represented. Off-site ``CoulombInter``, ``Ising`` and ``Exchange`` are
-  rejected; off-site ``Hund`` and ``PairLift`` are accepted because their
-  transverse vertex vanishes. The longitudinal (``ring``) channel is
-  unaffected.
 - Block-diagonal optimization is applied automatically when possible.
 - The ``squashed`` calculation scheme is also supported for spin-orbital systems.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital

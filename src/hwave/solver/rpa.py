@@ -1036,6 +1036,12 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_orig
 
+            # For ring+ladder, validate the transverse channel BEFORE the
+            # longitudinal solve: an unrepresentable input should fail here,
+            # not after the expensive solve has already populated chiq.
+            if self.calc_type == "ring+ladder":
+                self._check_transverse_representable(ham_orig)
+
             # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
 
@@ -2088,6 +2094,47 @@ class RPA:
 
         return chi0_qw
 
+    def _check_transverse_representable(self, ham_orig):
+        """Reject off-site cross-spin/spin-flip two-body terms for ring+ladder.
+
+        Called BEFORE the longitudinal solve, so invalid input fails without
+        burning the full solve or leaving a partially populated green_info.
+        The criterion and its measurement basis are documented at the guard in
+        :meth:`_build_transverse_channel`, whose block layout this mirrors.
+        """
+        xp = _bk.array_module_of(ham_orig)
+        norb = self.norb
+        nd = self.norb * self.ns
+        nvol = self.lattice.nvol
+        ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]
+        spin_flip_block = ham_4d[:, :norb, norb:, :norb, norb:]
+        if nvol > 1:
+            spread = float(_bk.to_host(xp.max(xp.abs(
+                xp.concatenate([
+                    (cross_block - cross_block[0:1]).reshape(nvol, -1),
+                    (spin_flip_block - spin_flip_block[0:1]).reshape(nvol, -1),
+                ], axis=1)))))
+            scale = float(_bk.to_host(xp.max(xp.abs(xp.concatenate([
+                cross_block.reshape(nvol, -1),
+                spin_flip_block.reshape(nvol, -1)], axis=1)))))
+            if spread > 1e-10 * max(scale, 1.0):
+                logger.error(
+                    "calc_type='ring+ladder' requires the cross-spin part of "
+                    "every two-body interaction to be on-site. The transverse "
+                    "pair is non-local for an off-site cross-spin term, so the "
+                    "transverse vertex is not a function of q alone and cannot "
+                    "be represented here. Found q-dependence {:.3e} on a scale "
+                    "of {:.3e}. Use calc_type='ring', or restrict the "
+                    "cross-spin two-body terms to on-site. (Off-site Hund and "
+                    "PairLift are accepted: their transverse vertex vanishes.)"
+                    .format(spread, scale))
+                raise ValueError(
+                    "calc_type='ring+ladder' does not support off-site "
+                    "cross-spin two-body interactions")
+
+        # Exchange enters through the spin-flip block, and it must be
+
     def _build_transverse_channel(self, chi0q_orig, ham_orig):
         """Build transverse (ladder) channel for RPA.
 
@@ -2291,31 +2338,8 @@ class RPA:
         # vanishes identically (measured 0 exactly).
         spin_flip_block = ham_4d[:, :norb, norb:, :norb, norb:]
 
-        if nvol > 1:
-            spread = float(_bk.to_host(xp.max(xp.abs(
-                xp.concatenate([
-                    (cross_block - cross_block[0:1]).reshape(nvol, -1),
-                    (spin_flip_block - spin_flip_block[0:1]).reshape(nvol, -1),
-                ], axis=1)))))
-            scale = float(_bk.to_host(xp.max(xp.abs(xp.concatenate([
-                cross_block.reshape(nvol, -1),
-                spin_flip_block.reshape(nvol, -1)], axis=1)))))
-            if spread > 1e-10 * max(scale, 1.0):
-                logger.error(
-                    "calc_type='ring+ladder' requires the cross-spin part of "
-                    "every two-body interaction to be on-site. The transverse "
-                    "pair is non-local for an off-site cross-spin term, so the "
-                    "transverse vertex is not a function of q alone and cannot "
-                    "be represented here. Found q-dependence {:.3e} on a scale "
-                    "of {:.3e}. Use calc_type='ring', or restrict the "
-                    "cross-spin two-body terms to on-site. (Off-site Hund and "
-                    "PairLift are accepted: their transverse vertex vanishes.)"
-                    .format(spread, scale))
-                raise ValueError(
-                    "calc_type='ring+ladder' does not support off-site "
-                    "cross-spin two-body interactions")
+        self._check_transverse_representable(ham_orig)
 
-        # Exchange enters through the spin-flip block, and it must be
         # SYMMETRISED in the orbital-pair index. That is forced by the operator
         # algebra and confirmed by measurement: X_ab^dagger = X_ba, so
         # H = sum_ab J_ab (X_ab + X_ba) depends only on J_ab + J_ba and the
@@ -2346,12 +2370,25 @@ class RPA:
         # produced a vertex of +1 and -1. Exchange is the same story via
         # X_ab^dagger = X_ba.
         #
-        # The transpose is the pair swap. Measured: it is the only family that
-        # cancels the antisymmetric part while reproducing the symmetric one.
+        # The averaging must be with the CONJUGATE of the pair swap -- the
+        # Hermitian partner -- exactly as `uhfk.py` does it
+        # (`jba = conjugate(transpose(...))`, then `(jab_r + jba)/2`). A plain
+        # transpose average coincides for real input but destroys the imaginary
+        # part of a complex Hermitian-closed PairHop: for P_01 = p, P_10 =
+        # conj(p) the two slots hold conj(p) and p, and a plain mean collapses
+        # both to Re(p), where the exact vertex (issue #100) carries the full
+        # complex value. Measured before this fix: ham_pm = -0.700 + 0.000i for
+        # p = 0.7 + 0.4i. With the conjugate the mean is (conj(p) +
+        # conj(p))/2 and the complex value survives.
+        #
+        # A declaration that is NOT Hermitian-closed (e.g. a real antisymmetric
+        # PairHop, which makes H itself non-Hermitian) is hereby projected onto
+        # its Hermitian part rather than rejected; input validation is #93.
         pair_swap = (0, 3, 4, 1, 2)
-        cross_sym = 0.5 * (cross_block + cross_block.transpose(*pair_swap))
+        cross_sym = 0.5 * (cross_block
+                           + xp.conj(cross_block.transpose(*pair_swap)))
         flip_sym = 0.5 * (spin_flip_block
-                          + spin_flip_block.transpose(*pair_swap))
+                          + xp.conj(spin_flip_block.transpose(*pair_swap)))
         ham_pm = -cross_sym.transpose(0, 2, 4, 1, 3) + flip_sym
 
         logger.info("ring+ladder: built transverse channel "
