@@ -793,7 +793,48 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 # RPA vertices
 # ---------------------------------------------------------------------------
 
-def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
+def _symmetrise_interactions_k(inter_k):
+    """Reduce each interaction to its physical symmetric coefficient.
+
+    An interaction file may declare the same term from both ends, and the two
+    declarations of a bond are (R, a, b) and (-R, b, a). In momentum space
+    (arrays carry e^{-iqR} phases) the same-operator partner of M[b,a](q) is
+    therefore the ORBITAL-TRANSPOSED entry AT -q -- averaging with the same-q
+    transpose instead corrupted every off-site interaction, collapsing a
+    one-direction bond's V(q) = v e^{-iqR} to v cos(qR) (measured: the S/C
+    entry vanished outright at q = pi/2). The mean used here:
+
+      * every type except PairHop: 0.5 * (M(q) + M(-q)^T). The two entries
+        multiply the SAME operator (n_a n_b = n_b n_a; X_ab = X_ba for
+        Exchange), with the same coefficient at the reversed displacement.
+        For a both-ends declaration this mean is an identity; for an on-site
+        complex Hermitian-closed declaration it drops the inert imaginary
+        part; for an antisymmetric declaration -- an identically zero
+        Hamiltonian -- it gives zero.
+      * PairHop: 0.5 * (M(q) + conj(M(q)^T)) at the SAME q. Its partner entry
+        carries the conjugated coefficient at the reversed displacement, and
+        conjugation at fixed q is the Fourier image of {conjugate, R -> -R}
+        (the #105 derivation), so this is an identity for Hermitian-closed
+        input on-site and off-site, and preserves the physical complex phase.
+
+    Idempotent, so it is safe that both the all-q and per-q builders apply it.
+    This matches `uhfk.py`'s reading of the files ((jab + jba)/2) and the
+    transverse channel's slot-family rule (#105/#106/#113).
+    """
+    out = {}
+    for itype, M in inter_k.items():
+        if itype == "PairHop":
+            out[itype] = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
+            continue
+        nx, ny, nz = M.shape[2], M.shape[3], M.shape[4]
+        Mrev = M[:, :, (-np.arange(nx)) % nx][:, :, :, (-np.arange(ny)) % ny][
+            :, :, :, :, (-np.arange(nz)) % nz]
+        out[itype] = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
+    return out
+
+
+def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
+                             _presymmetrised=False):
     """Build spin (S) and charge (C) interaction matrices for all q-points at once.
 
     Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
@@ -819,26 +860,17 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     S_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
     C_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
 
+    # _presymmetrised is set by the per-q wrapper, which has already
+    # symmetrised on the FULL grid: the -q partner of an off-site entry is
+    # unreachable from a single-point slice, so re-symmetrising here would
+    # average with the wrong (same-q) partner and corrupt off-site input.
+    if not _presymmetrised:
+        inter_k = _symmetrise_interactions_k(inter_k)
+
     def _get(itype):
-        if itype not in inter_k:
-            return None
-        M = inter_k[itype]  # (norb, norb, Nx, Ny, Nz)
-        # Symmetrise the two redundant declarations of each orbital pair with
-        # the MEAN, which is what an interaction file means in this codebase
-        # (`uhfk.py` builds every table as `(jab + jba)/2`; adjudicated for the
-        # transverse channel in #105/#106). For every type except PairHop the
-        # two entries are coefficients of the SAME operator (n_a n_b = n_b n_a;
-        # X_ab = X_ba for Exchange since different-spin bilinears commute), so
-        # the partner is the plain transpose and a declared imaginary
-        # antisymmetry is inert. PairHop's entries are HERMITIAN-PARTNER
-        # coefficients (P_ba = conj(P_ab)) and its complex phase is physical
-        # (#100/#102), so its partner conjugates. Without this, an asymmetric
-        # declaration J_01 != J_10 put unequal values at the two (ab,ab) slots
-        # and an antisymmetric declaration -- an identically zero Hamiltonian
-        # -- produced a nonzero vertex.
-        if itype == "PairHop":
-            return 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
-        return 0.5 * (M + M.transpose(1, 0, 2, 3, 4))
+        if itype in inter_k:
+            return inter_k[itype]  # (norb, norb, Nx, Ny, Nz)
+        return None
 
     U_mat = _get("CoulombIntra")
     Up_mat = _get("CoulombInter")
@@ -955,12 +987,23 @@ def _build_sc_matrices(inter_k, norb, ix, iy, iz):
     already drifted from the all-q builder once; after the issue #113 vertex
     corrections a second parallel copy would be a liability.
     """
-    # Slice each interaction down to the requested q-point FIRST, then
-    # delegate on a 1x1x1 grid: delegating on the full grid would turn a
-    # single-point request into O(Nq) work and memory.
-    inter_1 = {t: np.ascontiguousarray(M[:, :, ix:ix+1, iy:iy+1, iz:iz+1])
-               for t, M in inter_k.items()}
-    S_all, C_all = _build_sc_matrices_all_q(inter_1, norb, 1, 1, 1)
+    # Symmetrise on the FULL grid first -- the same-operator partner of an
+    # off-site entry lives at -q, so slicing before symmetrising would discard
+    # it -- then slice the (small, norb^2 per point) interaction arrays down to
+    # the requested q and delegate on a 1x1x1 grid, so the (nd^2 per point) S/C
+    # matrices are never built for the whole grid. Indexing goes through
+    # np.arange so numpy negative indices keep their usual meaning and
+    # out-of-range indices raise instead of returning empty slices.
+    inter_sym = _symmetrise_interactions_k(inter_k)
+    inter_1 = {}
+    for t, M in inter_sym.items():
+        jx = np.arange(M.shape[2])[ix]
+        jy = np.arange(M.shape[3])[iy]
+        jz = np.arange(M.shape[4])[iz]
+        inter_1[t] = np.ascontiguousarray(
+            M[:, :, jx:jx+1, jy:jy+1, jz:jz+1])
+    S_all, C_all = _build_sc_matrices_all_q(inter_1, norb, 1, 1, 1,
+                                            _presymmetrised=True)
     return S_all[0, 0, 0], C_all[0, 0, 0]
 
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
@@ -1401,9 +1444,12 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     # kernel would silently mix two different interactions. U/V-only inputs
     # are provably unchanged, so legacy files stay usable there.
     if interactions is not None:
+        # activation requires actual CONTENT, not key presence: an explicitly
+        # configured but empty Hund/Exchange/Ising file contributes nothing
         affected = [t for t in ("Hund", "Exchange", "Ising")
-                    if t in interactions]
+                    if interactions.get(t)]
         if affected:
+            versions = {}
             for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
                 if "sc_vertex_version" not in data:
                     raise ValueError(
@@ -1415,6 +1461,26 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                         "silently mix two different interactions -- "
                         "regenerate the susceptibilities with the current "
                         "code.".format(path, ", ".join(affected)))
+                try:
+                    versions[path] = int(np.asarray(
+                        data["sc_vertex_version"]).item())
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "FLEX susceptibility file '{}' carries a malformed "
+                        "sc_vertex_version field ({!r}).".format(
+                            path, data["sc_vertex_version"]))
+            if len(set(versions.values())) != 1:
+                raise ValueError(
+                    "FLEX chi_s and chi_c carry different sc_vertex_version "
+                    "values ({}); they must come from the same run.".format(
+                        versions))
+            ver = next(iter(versions.values()))
+            if ver != 2:
+                raise ValueError(
+                    "FLEX susceptibility files carry sc_vertex_version = {} "
+                    "but this code supports version 2 (the #113 exact-"
+                    "diagonalization vertex content); regenerate the "
+                    "susceptibilities with the current code.".format(ver))
     # Self-describing index-order marker (issue #78 follow-up). Current files
     # always store [a,c,b,d]; the marker exists so a pre-#78 dev output (the
     # general path stored MYO-transposed arrays under the SAME "myo" tag,

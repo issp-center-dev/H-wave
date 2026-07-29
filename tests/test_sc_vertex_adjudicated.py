@@ -141,50 +141,168 @@ class TestDeclarationSymmetrisation(unittest.TestCase):
         self.assertGreater(float(np.max(np.abs(S.imag))), 0.39)
 
 
+class TestOffsiteVqPreservation(unittest.TestCase):
+    """The declaration symmetrisation must not touch off-site structure.
+
+    The partner of an off-site entry (R, (a, b)) is (-R, (b, a)), which in
+    momentum space is the orbital transpose AT -q. Averaging with the same-q
+    transpose instead collapses V(q) = v e^{-iqR} to v cos(qR) -- at q = pi/2
+    the S/C entry vanished outright. Checked at a q with sin(q) != 0 so any
+    cos-collapse or conjugation error changes the answer.
+    """
+
+    def _sc(self):
+        import hwave.sc as sc
+
+        return sc
+
+    def _interactions(self):
+        # one-dimensional bond declared from both ends, as an interaction
+        # file does; V(q) = 0.7 e^{-iq} must survive verbatim
+        return {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7,
+                                 ((-1, 0, 0), (1, 0)): 0.7}}
+
+    def test_offsite_vq_is_preserved_with_full_complex_phase(self):
+        sc = self._sc()
+        kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        kz = np.array([0.0])
+        ik = sc._build_interaction_k(kx, kx, kz, self._interactions(), 2)
+        S, C = sc._build_sc_matrices_all_q(ik, 2, 4, 4, 1)
+        q1 = kx[1]                          # pi/2: sin(q) = 1, maximal test
+        # builder stores entry (R, (a, b)) at [b, a] with e^{-iqR}: the two
+        # cross slots carry 0.7 e^{+iq} (from [0,1]) and 0.7 e^{-iq} ([1,0])
+        want = {(1, 1): 0.7 * np.exp(+1j * q1),
+                (2, 2): 0.7 * np.exp(-1j * q1)}
+        for (i, j), w in want.items():
+            for name, M in (("S", S), ("C", C)):
+                got = M[1, 0, 0, i, j]
+                mag = abs(got)
+                self.assertAlmostEqual(mag, 0.7, places=12,
+                                       msg="%s[%d,%d] magnitude" % (name, i, j))
+                self.assertAlmostEqual(
+                    abs(got - (w if name == "S" else -w)), 0.0, places=12,
+                    msg="%s[%d,%d] phase" % (name, i, j))
+
+    def test_per_q_builder_matches_all_q_including_negative_index(self):
+        sc = self._sc()
+        kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        kz = np.array([0.0])
+        ik = sc._build_interaction_k(kx, kx, kz, self._interactions(), 2)
+        S, C = sc._build_sc_matrices_all_q(ik, 2, 4, 4, 1)
+        for i in range(4):
+            Sp, Cp = sc._build_sc_matrices(ik, 2, i, 0, 0)
+            np.testing.assert_allclose(Sp, S[i, 0, 0], atol=1e-13)
+            np.testing.assert_allclose(Cp, C[i, 0, 0], atol=1e-13)
+        Sm, Cm = sc._build_sc_matrices(ik, 2, -1, 0, 0)   # numpy semantics
+        np.testing.assert_allclose(Sm, S[3, 0, 0], atol=1e-13)
+        with self.assertRaises(IndexError):
+            sc._build_sc_matrices(ik, 2, 7, 0, 0)
+
+    def test_one_sided_offsite_declaration_gets_the_mean(self):
+        # a single-direction declaration means (jab + jba)/2 in this codebase:
+        # half the weight at e^{-iq}, half at e^{+iq} on the transposed slot
+        sc = self._sc()
+        kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        kz = np.array([0.0])
+        ik = sc._build_interaction_k(
+            kx, kx, kz, {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7}}, 2)
+        sym = sc._symmetrise_interactions_k(ik)["CoulombInter"]
+        q1 = kx[1]
+        self.assertAlmostEqual(
+            abs(sym[1, 0, 1, 0, 0] - 0.35 * np.exp(-1j * q1)), 0.0, places=12)
+        self.assertAlmostEqual(
+            abs(sym[0, 1, 1, 0, 0] - 0.35 * np.exp(+1j * q1)), 0.0, places=12)
+
+
 class TestLegacyFlexFileGuard(unittest.TestCase):
     """Susceptibility files that predate the #113 vertex corrections must not
     be silently paired with the corrected S/C matrices when the interaction
     set contains an affected type (Hund / Exchange / Ising). U/V-only inputs
-    are provably unchanged, so legacy files stay usable there.
+    are provably unchanged, so legacy files stay usable there. The guard
+    requires the version to DECODE to exactly 2 in BOTH files -- a version-1
+    tag, a mismatched pair, or a malformed field is as wrong as no tag.
+    Activation is by interaction CONTENT: an explicitly configured but empty
+    Hund file contributes nothing and must not trip the guard.
     """
 
-    def _write(self, d, **extra):
+    HUND = {((0, 0, 0), (0, 1)): 0.5}
+
+    def _write(self, d, extra_s=None, extra_c=None):
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **extra)
-        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **extra)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(extra_s or {}))
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(extra_c or {}))
         return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
+
+    def _load(self, inp, interactions):
+        import hwave.sc as sc
+
+        return sc._load_flex_susceptibilities(
+            inp, 2, 2, 2, 1, interactions=interactions)
 
     def test_legacy_file_with_affected_type_is_rejected(self):
         import tempfile
-        import hwave.sc as sc
 
         d = tempfile.mkdtemp()
         inp = self._write(d)               # no sc_vertex_version
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_susceptibilities(
-                inp, 2, 2, 2, 1, interactions={"Hund": {}})
+            self._load(inp, {"Hund": self.HUND})
         self.assertIn("sc_vertex_version", str(cm.exception))
 
     def test_legacy_file_with_uv_only_is_accepted(self):
         import tempfile
-        import hwave.sc as sc
 
         d = tempfile.mkdtemp()
         inp = self._write(d)
-        sc._load_flex_susceptibilities(
-            inp, 2, 2, 2, 1,
-            interactions={"CoulombIntra": {}, "CoulombInter": {}})
+        self._load(inp, {"CoulombIntra": {(0, 0): 4.0},
+                         "CoulombInter": {((0, 0, 0), (0, 1)): 0.7}})
+
+    def test_legacy_file_with_empty_affected_type_is_accepted(self):
+        # a configured-but-empty Hund file contributes no interaction, so the
+        # vertex content cannot differ; key PRESENCE must not trip the guard
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)
+        self._load(inp, {"Hund": {}, "Exchange": {}, "Ising": {}})
 
     def test_tagged_file_with_affected_type_is_accepted(self):
         import tempfile
-        import hwave.sc as sc
 
         d = tempfile.mkdtemp()
-        inp = self._write(d, sc_vertex_version=2)
-        sc._load_flex_susceptibilities(
-            inp, 2, 2, 2, 1, interactions={"Exchange": {}})
+        v = {"sc_vertex_version": 2}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        self._load(inp, {"Exchange": self.HUND})
 
+    def test_version_1_is_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 1}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"Hund": self.HUND})
+        self.assertIn("version 2", str(cm.exception))
+
+    def test_mismatched_versions_are_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s={"sc_vertex_version": 2},
+                          extra_c={"sc_vertex_version": 1})
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"Ising": self.HUND})
+        self.assertIn("different", str(cm.exception))
+
+    def test_malformed_version_is_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": np.array(["two"])}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"Hund": self.HUND})
+        self.assertIn("malformed", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()
