@@ -254,7 +254,8 @@ Each orbital pair is symmetrised with the mean of the two declarations, since
 an interaction file may write the same operator either way
 (:math:`n_a n_b = n_b n_a`, and :math:`X_{ab} = X_{ba}` for Exchange).
 This matches the convention UHFk uses. The partner in the mean depends on the
-block: density-density types and Exchange average with the plain transpose,
+interaction type (equivalently, on the slot family the type occupies):
+density-density types and Exchange average with the plain transpose,
 while PairHop averages with the conjugated transpose, because its two
 declarations are Hermitian partners (:math:`P_{ba} = P_{ab}^{*}`) rather than
 the same coefficient. For a complex Hermitian-closed Exchange the physical
@@ -295,7 +296,12 @@ longitudinal (``ring``) channel is unaffected.
 
    Off-site ``PairHop`` entries are silently discarded when the interaction is
    read, before this check runs, so they are neither rejected nor included.
-   Do not rely on off-site ``PairHop`` in any RPA calculation.
+   Do not rely on off-site ``PairHop`` in any RPA calculation. A DIAGONAL
+   PairHop entry (equal orbitals) denotes the density term
+   :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
+   with coefficient :math:`P` rather than :math:`2P`, consistently in both the
+   longitudinal and transverse channels. Validation of such degenerate entries
+   is tracked separately.
 
 The transverse RPA susceptibility is obtained as
 

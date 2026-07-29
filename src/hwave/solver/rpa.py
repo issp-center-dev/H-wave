@@ -2177,9 +2177,30 @@ class RPA:
         palin = ((oi[:, None, None, None] == oi[None, :, None, None])
                  & (oi[None, None, :, None] == oi[None, None, None, :]))[None]
 
+        # Swapping the two bilinears of an OFF-SITE term also reverses the
+        # displacement, r -> -r, so the same-operator partner lives at -q. At
+        # fixed q the plain swap manufactured false cancellations: the
+        # off-site declaration V_ab(+r) = +1, V_ba(+r) = -1 -- a genuinely
+        # NONZERO Hamiltonian, since its redundancy partner would be
+        # V_ba(-r) -- assembled to an identically zero vertex, slipped
+        # through the guard, and its physics was silently dropped, while the
+        # truly redundant pair (+r, a, b) / (-r, b, a) was rejected. The
+        # heterogeneous (Hermitian-partner) family needs no q reversal:
+        # conj at fixed q is the Fourier image of {conjugate, r -> -r}, which
+        # is exactly the h.c. redundancy. On-site input is q-independent and
+        # unaffected either way.
+        nx, ny, nz = self.lattice.shape
+        _ix = (-np.arange(nx)) % nx
+        _iy = (-np.arange(ny)) % ny
+        _iz = (-np.arange(nz)) % nz
+        qrev = xp.asarray(
+            ((_ix[:, None, None] * ny + _iy[None, :, None]) * nz
+             + _iz[None, None, :]).reshape(-1))
+
         def _mean(block):
             swapped = block.transpose(*pair_swap)
-            return 0.5 * (block + xp.where(palin, swapped, xp.conj(swapped)))
+            return 0.5 * (block
+                          + xp.where(palin, swapped[qrev], xp.conj(swapped)))
 
         cross_sym = _mean(cross_block)
         flip_sym = _mean(spin_flip_block)
