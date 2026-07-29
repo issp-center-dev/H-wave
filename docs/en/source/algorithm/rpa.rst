@@ -245,16 +245,70 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 
    W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
 
-For the standard Kanamori interactions, the transverse vertex takes the form:
+The transverse vertex is built from the cross-spin and spin-flip blocks of
+the interaction tensor only. The same-spin block does not enter: a same-spin
+interaction cannot connect the up and down propagators of the transverse loop,
+so it contributes self-energy but no vertex.
+
+Each orbital pair is symmetrised with the mean of the two declarations, since
+an interaction file may write the same operator either way
+(:math:`n_a n_b = n_b n_a`, and :math:`X_{ab} = X_{ba}` for Exchange).
+This matches the convention UHFk uses. The partner in the mean depends on the
+interaction type (equivalently, on the slot family the type occupies):
+density-density types and Exchange average with the plain transpose,
+while PairHop averages with the conjugated transpose, because its two
+declarations are Hermitian partners (:math:`P_{ba} = P_{ab}^{*}`) rather than
+the same coefficient. For a complex Hermitian-closed Exchange the physical
+coupling :math:`(J_{01} + J_{10})/2` is therefore real, while a complex
+Hermitian-closed PairHop keeps its full complex value.
+
+The resulting vertex, for on-site interactions:
 
 - ``CoulombIntra`` :math:`U`: :math:`W_{+-} = -U`
-- ``CoulombInter`` :math:`V`: :math:`W_{+-} = 0`
-- ``Hund`` :math:`J`: :math:`W_{+-} = -J`
-- ``Ising`` :math:`I`: :math:`W_{+-} = 2I`
+- ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
+- ``Hund`` :math:`J`: :math:`W_{+-} = 0`
+- ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
+- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (in RPA's current normalization of the
+  Ising file; UHFk applies an additional factor :math:`1/4` to the same file --
+  the discrepancy is tracked separately)
+- ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
+- ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
 
-The full Kanamori interaction (:math:`U, V = U-2J, J, J' = J`)
-satisfies :math:`W_{+-} = -(U - 2J) = W_{zz}` (SU(2) symmetry),
-which implies :math:`\chi_{+-} = \chi_{zz}` for paramagnetic systems.
+.. note::
+
+   These values differ from those published before H-wave's transverse channel
+   was checked against exact diagonalization; four of the earlier entries were
+   incorrect and one type was missing. Transverse susceptibilities produced by
+   earlier versions with ``CoulombInter``, ``Hund``, ``Ising`` or ``Exchange``
+   should be recomputed. Only ``chiq_pm`` is affected -- it does not feed
+   ``chiq``, the self-energy, or the Eliashberg vertex.
+
+``calc_type = "ring+ladder"`` validates, before the longitudinal solve, that
+the **assembled transverse vertex is independent of** :math:`q` on the
+(sublattice-folded) lattice, to a relative tolerance of :math:`10^{-10}`;
+input failing this is rejected. The transverse pair
+:math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` is non-local for an
+off-site term, so such a term's vertex is not a function of :math:`q` alone
+and cannot be represented. In practice this rejects off-site
+``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
+``PairLift`` are accepted because their transverse vertex vanishes. Two
+consequences of the criterion being the assembled vertex rather than the raw
+declarations: a set of off-site declarations whose contributions cancel
+exactly in the symmetrised vertex is accepted (what the channel then uses is
+well-defined), and an inter-site pair that folds into the supercell under
+``SubShape`` becomes an intra-cell orbital pair and is representable. The
+longitudinal (``ring``) channel is unaffected.
+
+.. warning::
+
+   Off-site ``PairHop`` entries are silently discarded when the interaction is
+   read, before this check runs, so they are neither rejected nor included.
+   Do not rely on off-site ``PairHop`` in any RPA calculation. A DIAGONAL
+   PairHop entry (equal orbitals) denotes the density term
+   :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
+   with coefficient :math:`P` rather than :math:`2P`, consistently in both the
+   longitudinal and transverse channels. Validation of such degenerate entries
+   is tracked separately.
 
 The transverse RPA susceptibility is obtained as
 
