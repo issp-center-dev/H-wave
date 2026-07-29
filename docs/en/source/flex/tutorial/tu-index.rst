@@ -542,7 +542,10 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   to be paired with, and which shape family they have: ``"kuroki"`` for the
   reduced/squashed schemes (spin-orbital shape, ``nd = norb * ns``) or
   ``"myo"`` for the general full-vertex scheme (orbital-pair shape,
-  ``nd = norb^2``, and the MYO value of the ``C(ab,ab)`` charge vertex). The
+  ``nd = norb^2``; the historical MYO-vs-Kuroki difference in the
+  ``C(ab,ab)`` charge vertex was resolved by the exact-diagonalization
+  adjudication of the per-type vertex content, so the two builders now
+  coincide). The
   Eliashberg loader (``hwave_sc``) uses this tag to interpret the orbital
   indices; it is essential for two-orbital systems, where the spin-orbital and
   orbital-pair dimensions coincide (both ``4``) and shape alone is ambiguous.

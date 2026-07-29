@@ -381,7 +381,8 @@ def _npz_is_ir_native(path):
         return False
 
 
-def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
+def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
+                          interactions=None):
     import hwave.sc as sc
     cfg_nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
     if cfg_nmat % 2 != 0:
@@ -449,10 +450,12 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     if allow_ir:
         chis_w, chic_w, green_w, chi_convention, ir_meta = \
             sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
-                                                allow_ir=True)
+                                                allow_ir=True,
+                                                interactions=interactions)
     else:
         chis_w, chic_w, green_w, chi_convention = \
-            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
+            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
+                                                interactions=interactions)
         ir_meta = None
     # Belt-and-suspenders: the header check above already rejected a mismatch,
     # but keep a post-load assertion in case the loader reshapes unexpectedly.
@@ -1183,10 +1186,10 @@ def solve_dynamic(input_dict):
     if use_ir:
         chis_w, chic_w, green_w, chi_convention, ir_file_meta = \
             load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz,
-                                  allow_ir=True)
+                                  allow_ir=True, interactions=interactions)
     else:
         chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
-            input_dict, norb, Nx, Ny, Nz)
+            input_dict, norb, Nx, Ny, Nz, interactions=interactions)
         ir_file_meta = None
     if green_w is None:
         raise ValueError(

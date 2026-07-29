@@ -1738,11 +1738,10 @@ class FLEX(RPA):
         # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
         # what the public output and the Eliashberg loader expect: the loader
         # (_compute_vertices_flex) builds S @ chi @ S with S/C matrices in that
-        # native layout (build_sc_matrices_myo shares the layout with the Kuroki
-        # builder; convention='myo' only changes the C(ab,ab) charge value), so a
-        # transposed chi here would build a transposed pairing vertex and a wrong
-        # static lambda (issue #78).  The "myo" chi_convention tag still marks
-        # these as general-path (orbital-pair shape + MYO S/C charge convention).
+        # native layout (the two builders are one implementation since the #113
+        # adjudication), so a transposed chi here would build a transposed
+        # pairing vertex and a wrong static lambda (issue #78).  The "myo"
+        # chi_convention tag marks these as general-path (orbital-pair shape).
         #
         # This used to transpose the pair axes on the way IN, which is what
         # issue #91 was: the transpose reached V_eff, so Sigma was built from
@@ -2621,17 +2620,24 @@ class FLEX(RPA):
 
         # Save susceptibilities (spin and charge channels separately for
         # Eliashberg). The chi_convention tag tells the downstream consumer
-        # (_load_flex_susceptibilities / _compute_vertices_flex) which S/C
-        # matrices to pair the susceptibilities with: "myo" (general full-vertex
-        # path) selects build_sc_matrices_myo, "kuroki" (reduced path) the
-        # default builder; the two differ only in the C(ab,ab) charge value.
-        # It also marks the general path's orbital-pair shape (nd = norb^2) vs
-        # the reduced path's spin-orbital shape (nd = norb*ns).
+        # (_load_flex_susceptibilities / _compute_vertices_flex) how to
+        # interpret the array layout: "myo" marks the general full-vertex
+        # path's orbital-pair shape (nd = norb^2), "kuroki" the reduced path's
+        # spin-orbital shape (nd = norb*ns). (The two builders' S/C VALUES
+        # were unified by the #113 adjudication; the tag remains a layout /
+        # provenance discriminator.)
+        #
+        # sc_vertex_version records which S/C vertex content the run used, so
+        # a downstream Eliashberg run cannot silently pair these
+        # susceptibilities with vertices from a different adjudication.
+        # Version 2 = the #113 exact-diagonalization values (Hund / Exchange /
+        # Ising corrected); files without the field predate #113.
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
+                           sc_vertex_version=2,
                            **_freq_meta("B"))
         if self._flex_general:
             # Self-describing index-order marker for the ORBITAL-PAIR files

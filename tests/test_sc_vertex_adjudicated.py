@@ -22,6 +22,7 @@ Internal consistency checks carried by the table itself:
     this table through the SU(2) identity for the same combination.
 """
 
+import os
 import unittest
 
 import numpy as np
@@ -90,6 +91,99 @@ class TestAdjudicatedVertexTable(unittest.TestCase):
         S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
         self.assertAlmostEqual(S[0, 0, 0, 1, 1].real, 0.0, places=12)
         self.assertAlmostEqual(C[0, 0, 0, 1, 1].real, 2 * J, places=12)
+
+
+
+
+class TestDeclarationSymmetrisation(unittest.TestCase):
+    """The S/C builders symmetrise the two redundant declarations of each
+    orbital pair with the mean (plain transpose for every type whose two
+    entries multiply the same operator; conjugated for PairHop, whose entries
+    are Hermitian partners and whose complex phase is physical, #100/#105).
+
+    Without this, an asymmetric Exchange declaration put unequal values at the
+    two (ab,ab) slots -- diverging from the transverse channel, which
+    symmetrises -- and an antisymmetric declaration, an identically zero
+    Hamiltonian, produced a nonzero vertex.
+    """
+
+    def _sc(self, itype, entries):
+        import hwave.sc as sc
+
+        k = np.array([0.0])
+        ik = sc._build_interaction_k(k, k, k, {itype: entries}, 2)
+        S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
+        return S[0, 0, 0], C[0, 0, 0]
+
+    def test_antisymmetric_declarations_give_zero(self):
+        entries = {((0, 0, 0), (0, 1)): 1.0, ((0, 0, 0), (1, 0)): -1.0}
+        for itype in ("Exchange", "CoulombInter", "Ising", "Hund"):
+            with self.subTest(interaction=itype):
+                S, C = self._sc(itype, entries)
+                self.assertLess(float(np.max(np.abs(S))), 1e-12)
+                self.assertLess(float(np.max(np.abs(C))), 1e-12)
+
+    def test_asymmetric_exchange_uses_the_mean(self):
+        S, C = self._sc("Exchange",
+                        {((0, 0, 0), (0, 1)): 1.0, ((0, 0, 0), (1, 0)): 0.35})
+        mean = (1.0 + 0.35) / 2
+        for M in (S, C):
+            self.assertAlmostEqual(M[1, 1].real, mean, places=12)
+            self.assertAlmostEqual(M[2, 2].real, mean, places=12)
+
+    def test_complex_hermitian_pairhop_keeps_its_phase(self):
+        p = 0.7 + 0.4j
+        S, C = self._sc("PairHop",
+                        {((0, 0, 0), (0, 1)): p,
+                         ((0, 0, 0), (1, 0)): np.conj(p)})
+        # Hermitian-closed input: the conjugated mean is an identity, so the
+        # full complex value survives (a plain mean would collapse it to Re p)
+        self.assertGreater(float(np.max(np.abs(S.imag))), 0.39)
+
+
+class TestLegacyFlexFileGuard(unittest.TestCase):
+    """Susceptibility files that predate the #113 vertex corrections must not
+    be silently paired with the corrected S/C matrices when the interaction
+    set contains an affected type (Hund / Exchange / Ising). U/V-only inputs
+    are provably unchanged, so legacy files stay usable there.
+    """
+
+    def _write(self, d, **extra):
+        nd = 4
+        arr = np.zeros((4, 4, nd, nd), dtype=complex)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **extra)
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **extra)
+        return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
+
+    def test_legacy_file_with_affected_type_is_rejected(self):
+        import tempfile
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)               # no sc_vertex_version
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_susceptibilities(
+                inp, 2, 2, 2, 1, interactions={"Hund": {}})
+        self.assertIn("sc_vertex_version", str(cm.exception))
+
+    def test_legacy_file_with_uv_only_is_accepted(self):
+        import tempfile
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)
+        sc._load_flex_susceptibilities(
+            inp, 2, 2, 2, 1,
+            interactions={"CoulombIntra": {}, "CoulombInter": {}})
+
+    def test_tagged_file_with_affected_type_is_accepted(self):
+        import tempfile
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, sc_vertex_version=2)
+        sc._load_flex_susceptibilities(
+            inp, 2, 2, 2, 1, interactions={"Exchange": {}})
 
 
 if __name__ == "__main__":

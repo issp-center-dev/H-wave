@@ -433,10 +433,21 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
                 got = ik[itype][:, :, 0, 0, 0]    # on-site: q-independent
                 np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
 
-    def test_asymmetric_on_site_input_reaches_the_sc_builders(self):
-        """Guard the reachability claim rather than assuming it: an asymmetric
-        ON-SITE inter-orbital entry survives into the S/C matrices, and makes
-        the charge matrix non-symmetric under the orbital-pair transpose."""
+    def test_asymmetric_on_site_input_is_symmetrised_by_the_sc_builders(self):
+        """An asymmetric ON-SITE inter-orbital entry reaches the S/C builders
+        and is reduced there to its physical symmetric coefficient, the MEAN
+        of the two declarations.
+
+        HISTORY: this test used to assert the opposite -- that asymmetric
+        input produced a pair-ASYMMETRIC charge matrix -- which guarded the
+        reachability claim while the builders read the raw per-slot values.
+        Since the #113 corrections the builders symmetrise declarations at
+        entry (matching UHFk's reading of the files and the transverse
+        channel, #105/#106), so the observable is now the mean. The
+        orientation of `_build_interaction_k` itself stays pinned by
+        `test_every_type_is_stored_pair_transposed`, which inspects the
+        builder's input directly.
+        """
         import hwave.sc as sc
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
 
@@ -456,10 +467,13 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
                 self.assertTrue(
                     np.allclose(c_sym, np.swapaxes(c_sym, -1, -2)),
                     "symmetric input must give a pair-symmetric charge matrix")
-                self.assertFalse(
+                self.assertTrue(
                     np.allclose(c_asym, np.swapaxes(c_asym, -1, -2)),
-                    "asymmetric on-site input does reach the S/C builders, so "
-                    "the orientation is observable there")
+                    "asymmetric input must be symmetrised to the mean")
+                # and the mean is what lands: (1.0 + 0.4)/2 at the (ab,ab)
+                # charge slots carries -mean (density-density C = -V there)
+                self.assertAlmostEqual(
+                    c_asym[0, 0, 0, 1, 1].real, -0.7, places=12)
 
 
 # --------------------------------------------------------------------------
