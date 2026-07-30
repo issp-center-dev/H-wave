@@ -442,6 +442,17 @@ class Interaction:
         #   H = W(r)^{\beta\beta^\prime\alpha\alpah^\prime}
         #        * c_{i\alpha}^\dagger c_{i\alpha^\prime} c_{j\beta^\prime}^\dagger c_{j\beta}
         ham_r = np.zeros((nx,ny,nz,*(ns,norb)*4), dtype=np.complex128)
+        # Longitudinal Fierz (cross-slot) corrections live in a SEPARATE
+        # tensor: the ring's longitudinal solve consumes ham_inter_q +
+        # ham_fierz_q, while the transverse (ladder) assembly reads
+        # ham_inter_q alone. The two channels were adjudicated against exact
+        # diagonalization independently (#105 transverse, #113 longitudinal),
+        # and the cross-spin Exchange correction would otherwise land in the
+        # very tensor block the transverse assembly reads via the crossing
+        # relation, doubling the adjudicated ladder vertex (measured: the
+        # extracted Exchange coupling went -0.7 -> -1.4 when the correction
+        # shared the tensor).
+        fierz_r = np.zeros_like(ham_r)
 
         # spin(a,ap,bp,b)  0: up, 1: down
         spin_table = {
@@ -525,6 +536,56 @@ class Interaction:
                         orb = (s4, b, s3, a, s1, a, s2, b)
                         ham_r[(*irvec, *orb)] += v * w
 
+        def _append_inter_cross(type, coeff, spins, tbl=None):
+            # Longitudinal cross-slot (Fierz) content, adjudicated against
+            # exact diagonalization in #113: the ring's W carried the
+            # density (aa,bb) slots of each type but not the (ab,ab)
+            # pair-cross slots, which is why its effective spin vertex was
+            # diag(U0, 0, 0, U1) where the adjudicated table (and the
+            # spin/charge builders in hwave.sc) have diag(U0, U', U', U1)
+            # (#104; measured 1e-2 in chiq). Restricted to ON-SITE entries
+            # with a != b: that is the adjudicated domain -- off-site
+            # cross-orbital content is not representable by a q-only vertex
+            # (#105 measurement) and stays as it was.
+            # `tbl`, when given, must be a PRE-fold table. Locality is
+            # judged BEFORE sublattice folding: folding maps an off-site
+            # bond to (0,0,0) between supercell orbitals, which would
+            # smuggle unadjudicated off-site content into the correction
+            # (measured: a one-orbital +-x bond folded with SubShape=[2,1,1]
+            # produced a spurious Fierz tensor of magnitude V). The pre-fold
+            # table is filtered to its on-site a != b entries, and only the
+            # filtered table is folded.
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            if tbl is None:
+                if has_sub:
+                    tbl = self.param_ham_orig.get(type, {})
+                else:
+                    tbl = self.param_ham.get(type, {})
+            filtered = {}
+            for (irvec, orbvec), v in tbl.items():
+                if tuple(irvec) == (0, 0, 0) and orbvec[0] != orbvec[1]:
+                    filtered[(irvec, orbvec)] = v
+            if not filtered:
+                return
+            if has_sub:
+                filtered = self._reshape_interaction(filtered, False)
+            filtered = _symmetrised(type, filtered)
+            for (irvec, orbvec), v in filtered.items():
+                if tuple(irvec) != (0, 0, 0):
+                    continue
+                a, b = orbvec
+                if a == b:
+                    continue
+                for spinvec, w in spins.items():
+                    s1, s2, s3, s4 = spinvec
+                    # pair-diagonal placement -- bilinear (a,b) coupled to
+                    # bilinear (a,b) -- selected by measurement: it makes
+                    # the ring's chiq equal the FLEX channel solve to 3e-16
+                    # in every adjudicated cell, while the pair-antidiagonal
+                    # placement reproduces the old 1e-2 deficiency
+                    orb = (s4, a, s3, b, s1, a, s2, b)
+                    fierz_r[(*irvec, *orb)] += coeff * v * w
+
         if 'Coulomb' in self.param_ham.keys():
             # The aggregate 'Coulomb' input provides both the intra and inter
             # parts (shared decomposition, see wan90.split_coulomb).
@@ -542,6 +603,12 @@ class Interaction:
 
             _append_inter('CoulombIntra', coulomb_intra)
             _append_inter('CoulombInter', coulomb_inter)
+            _append_inter_cross(
+                'CoulombInter', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 },
+                tbl=(wan90.split_coulomb(
+                        self.param_ham_orig['Coulomb'])[1]
+                     if getattr(self.lattice, "has_sublattice", False)
+                     else coulomb_inter))
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
@@ -552,16 +619,19 @@ class Interaction:
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
+            _append_inter_cross('CoulombInter', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 })
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
+            _append_inter_cross('Hund', +1.0, { (0,0,0,0): 1, (1,1,1,1): 1 })
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
+            _append_inter_cross('Ising', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 })
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
@@ -572,6 +642,7 @@ class Interaction:
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
+            _append_inter_cross('Exchange', +1.0, { (0,0,1,1): 1, (1,1,0,0): 1 })
             self._has_interaction = True
             self._has_interaction_exchange = True
 
@@ -594,6 +665,12 @@ class Interaction:
 
         self.ham_inter_r = ham_r
         self.ham_inter_q = ham_q
+
+        fierz_r = fierz_r.reshape(nx,ny,nz,*(nd,)*4)
+        if np.any(fierz_r):
+            self.ham_fierz_q = FFT.fftn(fierz_r, axes=(0,1,2))
+        else:
+            self.ham_fierz_q = None
 
 class RPA:
     """
@@ -947,12 +1024,23 @@ class RPA:
             # ham_inter_q is built on the host at init; mirror it to chi0q's
             # backend so the inflation einsums and the solve stay on one device.
             ham_inter_q = self.ham_info.ham_inter_q
+            # The longitudinal channels solve with the Fierz-corrected
+            # tensor; ham_inter_q itself stays as the transverse assembly's
+            # input (see _make_ham_inter). The correction's (a,b,a,b) slots
+            # sit off the 'kaabb' diagonal, so the reduced/squashed reads
+            # below are unaffected by construction.
+            fierz_q = getattr(self.ham_info, "ham_fierz_q", None)
+            ham_long_q = (ham_inter_q if fierz_q is None
+                          else ham_inter_q + fierz_q)
             if gpu_active:
                 ham_inter_q = xp.asarray(ham_inter_q)
+                ham_long_q = (ham_inter_q if fierz_q is None
+                              else xp.asarray(ham_long_q))
 
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
+                ham_long = ham_long_q
 
                 if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
                     # Treat combined spin-orbital indices as general orbitals.
@@ -961,13 +1049,14 @@ class RPA:
                     nvol = self.lattice.nvol
                     nd = self.nd
                     ham = xp.einsum('kaabb->kab',
-                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                                    ham_long.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
                 else:
-                    ham = ham_orig
+                    ham = ham_long
 
             elif self.spin_mode == "spin-diag":
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
+                ham_long = ham_long_q
 
                 if self.calc_scheme == "reduced":
                     nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
@@ -982,7 +1071,7 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
                     ham = xp.einsum('kaabb->kab',
-                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                                    ham_long.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
 
                 elif self.calc_scheme == "squashed":
                     nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
@@ -1000,7 +1089,7 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
 
                     ham = xp.einsum('ksauatbvb->ksuatvb',
-                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
 
                 else:
                     nblock,nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
@@ -1016,12 +1105,13 @@ class RPA:
                     chi0q = xp.einsum('glkabcd,gtuv->lkgatbucvd',
                                       chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
-                    ham = ham_orig
+                    ham = ham_long
 
             elif self.spin_mode == "spin-free":
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
+                ham_long = ham_long_q
 
                 if self.calc_scheme == "reduced":
                     # alpha=alpha', beta=beta' case
@@ -1037,7 +1127,7 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
                     ham = xp.einsum('ksasatbtb->ksatb',
-                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(nd,)*2)
+                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(nd,)*2)
 
                 elif self.calc_scheme == "squashed":
                     # norb**2 squash
@@ -1056,7 +1146,7 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
 
                     ham = xp.einsum('ksauatbvb->ksuatvb',
-                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
 
                 else:
                     # general nd**4 case
@@ -1073,7 +1163,7 @@ class RPA:
                     chi0q = xp.einsum('lkabcd,stuv->lksatbucvd',
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
-                    ham = ham_orig
+                    ham = ham_long
 
             # A reused green_info must not carry results from a previous
             # solve: if this run fails validation, or computes ring-only after
