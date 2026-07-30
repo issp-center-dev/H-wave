@@ -119,6 +119,23 @@ class TestTableContent(unittest.TestCase):
         })
 
 
+class TestTableImmutability(unittest.TestCase):
+
+    def test_both_mapping_levels_are_frozen(self):
+        """The table-equality test would still pass if the proxies were
+        removed; pin the freeze itself."""
+        import hwave.solver.vertex_table as vt
+
+        with self.assertRaises(TypeError):
+            vt.ADJUDICATED_SC["Hund"] = {}
+        with self.assertRaises(TypeError):
+            vt.ADJUDICATED_SC["Hund"]["cross"] = (0.0, 0.0)
+        self.assertFalse(hasattr(vt, "_ADJUDICATED_SC_RAW"),
+                         "no mutable backing name may be retained")
+        self.assertIsInstance(vt.sc_coefficients("Hund", "cross"), tuple)
+        self.assertIsInstance(vt.sc_coefficients("Hund", "nope"), tuple)
+
+
 class TestZeroCoefficientSuppression(unittest.TestCase):
 
     def test_nonfinite_input_does_not_leak_into_absent_channels(self):
@@ -156,9 +173,10 @@ class TestIEEEParity(unittest.TestCase):
 
     def test_plus_minus_two_coefficients_preserve_structure(self):
         """The +-2 coefficients: value doubled for finite input, and the
-        component structure of Inf+0j preserved (a real scalar multiply
-        scales componentwise, matching the pre-refactor 2.0 * V form; a
-        finite-only check could not distinguish the forms)."""
+        legacy component structure preserved (numpy promotes the scalar
+        multiply to a COMPLEX multiply, matching the pre-refactor
+        2.0 * V form; a finite-only check could not distinguish the
+        forms)."""
         import warnings
 
         import hwave.sc as sc
