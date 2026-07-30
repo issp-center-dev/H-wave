@@ -547,10 +547,30 @@ class Interaction:
             # with a != b: that is the adjudicated domain -- off-site
             # cross-orbital content is not representable by a q-only vertex
             # (#105 measurement) and stays as it was.
+            # `tbl`, when given, must be a PRE-fold table. Locality is
+            # judged BEFORE sublattice folding: folding maps an off-site
+            # bond to (0,0,0) between supercell orbitals, which would
+            # smuggle unadjudicated off-site content into the correction
+            # (measured: a one-orbital +-x bond folded with SubShape=[2,1,1]
+            # produced a spurious Fierz tensor of magnitude V). The pre-fold
+            # table is filtered to its on-site a != b entries, and only the
+            # filtered table is folded.
+            has_sub = getattr(self.lattice, "has_sublattice", False)
             if tbl is None:
-                tbl = self.param_ham[type]
-            tbl = _symmetrised(type, tbl)
+                if has_sub:
+                    tbl = self.param_ham_orig.get(type, {})
+                else:
+                    tbl = self.param_ham.get(type, {})
+            filtered = {}
             for (irvec, orbvec), v in tbl.items():
+                if tuple(irvec) == (0, 0, 0) and orbvec[0] != orbvec[1]:
+                    filtered[(irvec, orbvec)] = v
+            if not filtered:
+                return
+            if has_sub:
+                filtered = self._reshape_interaction(filtered, False)
+            filtered = _symmetrised(type, filtered)
+            for (irvec, orbvec), v in filtered.items():
                 if tuple(irvec) != (0, 0, 0):
                     continue
                 a, b = orbvec
@@ -583,7 +603,12 @@ class Interaction:
 
             _append_inter('CoulombIntra', coulomb_intra)
             _append_inter('CoulombInter', coulomb_inter)
-            _append_inter_cross('CoulombInter', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 }, tbl=coulomb_inter)
+            _append_inter_cross(
+                'CoulombInter', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 },
+                tbl=(wan90.split_coulomb(
+                        self.param_ham_orig['Coulomb'])[1]
+                     if getattr(self.lattice, "has_sublattice", False)
+                     else coulomb_inter))
             self._has_interaction = True
             self._has_interaction_coulomb = True
 

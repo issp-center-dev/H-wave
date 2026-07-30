@@ -60,6 +60,13 @@ class TestRPACoulombKeyword(unittest.TestCase):
         np.testing.assert_allclose(
             obj_c.ham_inter_q, obj_ref.ham_inter_q, rtol=0.0, atol=1e-12,
             err_msg="'Coulomb' must equal CoulombIntra + CoulombInter")
+        # the Fierz correction (#104) must also agree between the two routes:
+        # the fixture has an on-site inter-orbital entry, so it is nonempty
+        self.assertIsNotNone(obj_c.ham_fierz_q)
+        self.assertIsNotNone(obj_ref.ham_fierz_q)
+        np.testing.assert_allclose(
+            obj_c.ham_fierz_q, obj_ref.ham_fierz_q, rtol=0.0, atol=1e-12,
+            err_msg="aggregate and explicit Fierz tensors must agree")
 
     def test_coulomb_conflicts_with_explicit_terms(self):
         norb = 1

@@ -139,6 +139,59 @@ class TestReducedSquashedOneShot(unittest.TestCase):
                                                rtol=0.0, atol=1e-12)
 
 
+class TestFierzDomain(unittest.TestCase):
+    """The correction applies exactly on the adjudicated domain: on-site
+    inter-orbital entries of the PRE-fold table. Folding maps an off-site
+    bond to (0,0,0) between supercell orbitals, so judging locality on the
+    folded table smuggled unadjudicated off-site content into the
+    correction (a one-orbital +-x bond folded with SubShape=[2,1,1]
+    produced a spurious Fierz tensor of magnitude V)."""
+
+    def _ham_info(self, norb, entries, sub, key='CoulombInter'):
+        import hwave.solver.rpa as rpa_mod
+
+        param_ham = {'Geometry': {'norb': norb, 'rvec': np.eye(3),
+                                  'center': [[0, 0, 0]] * norb},
+                     'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                     key: entries}
+        info = {'mode': 'RPA', 'param': {'T': 2.0, 'filling': 0.5,
+                'CellShape': [4, 1, 1], 'SubShape': list(sub), 'Nmat': 4},
+                'enable_spin_orbital': False, 'calc_scheme': 'general',
+                'calc_type': 'ring'}
+        return rpa_mod.RPA(param_ham, {}, info).ham_info
+
+    def test_folded_offsite_bond_is_a_fierz_noop(self):
+        hi = self._ham_info(1, {((1, 0, 0), (0, 0)): 0.7,
+                                ((-1, 0, 0), (0, 0)): 0.7}, [2, 1, 1])
+        self.assertIsNone(hi.ham_fierz_q)
+
+    def test_folded_onsite_interorbital_keeps_the_correction(self):
+        hi = self._ham_info(2, {((0, 0, 0), (0, 1)): 0.7,
+                                ((0, 0, 0), (1, 0)): 0.7}, [2, 1, 1])
+        self.assertIsNotNone(hi.ham_fierz_q)
+        self.assertAlmostEqual(float(np.max(np.abs(hi.ham_fierz_q))),
+                               0.7, places=12)
+
+    def test_intra_only_and_one_orbital_have_no_fierz(self):
+        hi = self._ham_info(1, {((0, 0, 0), (0, 0)): 4.0}, [1, 1, 1],
+                            key='CoulombIntra')
+        self.assertIsNone(hi.ham_fierz_q)
+        hi = self._ham_info(1, {((1, 0, 0), (0, 0)): 0.7,
+                                ((-1, 0, 0), (0, 0)): 0.7}, [1, 1, 1])
+        self.assertIsNone(hi.ham_fierz_q)
+
+    def test_aggregate_coulomb_fierz_equals_explicit(self):
+        # under folding the aggregate path must split the PRE-fold table
+        explicit = self._ham_info(2, {((0, 0, 0), (0, 1)): 0.7,
+                                      ((0, 0, 0), (1, 0)): 0.7}, [2, 1, 1])
+        aggregate = self._ham_info(
+            2, {((0, 0, 0), (0, 1)): 0.7, ((0, 0, 0), (1, 0)): 0.7,
+                ((0, 0, 0), (0, 0)): 2.0, ((0, 0, 0), (1, 1)): 2.0},
+            [2, 1, 1], key='Coulomb')
+        np.testing.assert_allclose(aggregate.ham_fierz_q,
+                                   explicit.ham_fierz_q, atol=1e-13)
+
+
 class TestSpinModeConsistency(unittest.TestCase):
 
     def test_spin_diag_matches_spin_free_on_symmetric_input(self):
@@ -155,7 +208,9 @@ class TestSpinModeConsistency(unittest.TestCase):
         chi0q_free = np.asarray(gr['chi0q'])
         chiq_free = np.asarray(gr['chiq'])
 
-        out = 'tests/rpa/output'
+        import tempfile
+
+        out = tempfile.mkdtemp()
         np.savez(os.path.join(out, 'chi0q_diag_su2test.npz'),
                  chi0q=np.stack([chi0q_free, chi0q_free], axis=0))
         try:
@@ -174,7 +229,9 @@ class TestSpinModeConsistency(unittest.TestCase):
             self.assertEqual(rpa.spin_mode, "spin-diag")
             np.testing.assert_array_equal(np.asarray(g['chiq']), chiq_free)
         finally:
-            os.remove(os.path.join(out, 'chi0q_diag_su2test.npz'))
+            import shutil
+
+            shutil.rmtree(out, ignore_errors=True)
 
 
 if __name__ == "__main__":
