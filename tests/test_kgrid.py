@@ -116,6 +116,51 @@ class TestProductionCallSites(unittest.TestCase):
         old = np.swapaxes(old[..., ::-1], 0, 1)
         np.testing.assert_array_equal(ed._reverse_kw_and_orbital(gap_w), old)
 
+    def test_rpa_assemble_transverse_vertex(self):
+        """The transverse vertex assembly's q -> -q used to be a
+        coordinate-wise flat-index formula (the nineteenth spelling);
+        pin the production method against a replica of that exact old
+        gather, on a lattice with every dimension > 2 so the map is not
+        the identity anywhere."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        rng = np.random.default_rng(14)
+        norb, ns = 2, 2
+        nx, ny, nz = 4, 3, 5
+        nvol, nd = nx * ny * nz, norb * ns
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.norb, stub.ns = norb, ns
+        stub.lattice = types.SimpleNamespace(nvol=nvol, shape=(nx, ny, nz))
+
+        ham_orig = rng.standard_normal((nvol, nd, nd, nd, nd)) \
+            + 1j * rng.standard_normal((nvol, nd, nd, nd, nd))
+        got = stub._assemble_transverse_vertex(ham_orig)
+
+        # replica of the pre-consolidation assembly (coordinate-wise qrev)
+        ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]
+        spin_flip_block = ham_4d[:, :norb, norb:, :norb, norb:]
+        pair_swap = (0, 3, 4, 1, 2)
+        oi = np.arange(norb)
+        palin = ((oi[:, None, None, None] == oi[None, :, None, None])
+                 & (oi[None, None, :, None] == oi[None, None, None, :]))[None]
+        _ix = (-np.arange(nx)) % nx
+        _iy = (-np.arange(ny)) % ny
+        _iz = (-np.arange(nz)) % nz
+        qrev = ((_ix[:, None, None] * ny + _iy[None, :, None]) * nz
+                + _iz[None, None, :]).reshape(-1)
+
+        def _mean_old(block):
+            swapped = block.transpose(*pair_swap)
+            return 0.5 * (block
+                          + np.where(palin, swapped[qrev], np.conj(swapped)))
+
+        want = (-_mean_old(cross_block).transpose(0, 2, 4, 1, 3)
+                + _mean_old(spin_flip_block))
+        np.testing.assert_array_equal(got, want)
+
     def test_sc_symmetrise_interactions_k(self):
         import hwave.sc as sc
 

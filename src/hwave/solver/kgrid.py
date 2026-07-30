@@ -4,7 +4,7 @@
 given axes: the momentum/position negation ``k -> -k`` (``r -> -r``) on an
 FFT-ordered grid, where index 0 is the Gamma point / origin and stays put.
 
-Before this module the map was spelled three different ways at eighteen
+Before this module the map was spelled three different ways at nineteen
 call sites -- ``roll(arr[::-1], +1)``, ``flip(roll(arr, -1))`` and a
 fancy-index gather ``arr[(-arange(n)) % n]`` -- kept in sync only by
 comments ("same reverse+roll map as the uniform path"). The spellings are
@@ -29,8 +29,6 @@ reverses as ``n -> nmat - 1 - n`` with no roll, a symmetric IR node set
 as a plain flip, and flex.py's tau-node sets likewise flip without
 rolling. Callers compose those locally where the physics lives.
 """
-
-import numpy as np
 
 from hwave.solver import backend as _bk
 

@@ -2733,17 +2733,17 @@ class RPA:
         # is exactly the h.c. redundancy. On-site input is q-independent and
         # unaffected either way.
         nx, ny, nz = self.lattice.shape
-        _ix = (-np.arange(nx)) % nx
-        _iy = (-np.arange(ny)) % ny
-        _iz = (-np.arange(nz)) % nz
-        qrev = xp.asarray(
-            ((_ix[:, None, None] * ny + _iy[None, :, None]) * nz
-             + _iz[None, None, :]).reshape(-1))
 
         def _mean(block):
             swapped = block.transpose(*pair_swap)
+            # q -> -q on the flattened q axis: unflatten, apply the shared
+            # FFT-grid map, flatten back (same gather as the historical
+            # coordinate-wise index computation).
+            swapped_rev = reverse_fft_axes(
+                swapped.reshape(nx, ny, nz, *swapped.shape[1:]),
+                (0, 1, 2)).reshape(swapped.shape)
             return 0.5 * (block
-                          + xp.where(palin, swapped[qrev], xp.conj(swapped)))
+                          + xp.where(palin, swapped_rev, xp.conj(swapped)))
 
         cross_sym = _mean(cross_block)
         flip_sym = _mean(spin_flip_block)
