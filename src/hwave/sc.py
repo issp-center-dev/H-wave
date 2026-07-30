@@ -19,6 +19,7 @@ import logging
 import numpy as np
 
 from hwave.solver.vertex_table import sc_coefficients
+from hwave.solver.kgrid import reverse_fft_axes
 from numpy.fft import fftn, ifftn
 from scipy.optimize import bisect
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
@@ -839,9 +840,7 @@ def _symmetrise_interactions_k(inter_k):
         if itype == "PairHop":
             out[itype] = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
             continue
-        nx, ny, nz = M.shape[2], M.shape[3], M.shape[4]
-        Mrev = M[:, :, (-np.arange(nx)) % nx][:, :, :, (-np.arange(ny)) % ny][
-            :, :, :, :, (-np.arange(nz)) % nz]
+        Mrev = reverse_fft_axes(M, (2, 3, 4))
         out[itype] = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
     return out
 
@@ -2457,11 +2456,9 @@ def _calc_g2(green_kw, beta):
     Nx, Ny, Nz, nmat = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4], green_kw.shape[5]
     nvol = Nx * Ny * Nz
 
-    # G(-k, -wn) via roll+flip
-    green_kw_inv = np.roll(
-        green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
-        (1, 1, 1), (2, 3, 4)
-    )
+    # G(-k, -wn): centered-Matsubara flip on the frequency axis, then the
+    # shared FFT-grid map k -> -k on the spatial axes.
+    green_kw_inv = reverse_fft_axes(green_kw[..., ::-1], (2, 3, 4))
     # einsum("ijpqsk, lmpqsk -> ijlmpqs") sums over k (nmat dimension)
     # Reshape to use tensordot for BLAS: contract last axis (nmat) after
     # merging spatial dims
@@ -3029,8 +3026,7 @@ def _reverse_k_and_orbital(gap):
     ndarray
         Delta_{ba}(-k), same shape.
     """
-    rev = gap[:, :, ::-1, ::-1, ::-1]
-    rev = np.roll(rev, 1, axis=(2, 3, 4))   # index i -> (N - i) % N
+    rev = reverse_fft_axes(gap, (2, 3, 4))  # k -> -k on the FFT grid
     rev = np.swapaxes(rev, 0, 1)            # orbital transpose a <-> b
     return rev
 

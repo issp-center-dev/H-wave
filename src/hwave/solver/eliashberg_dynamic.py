@@ -11,6 +11,7 @@ import numpy as np
 
 from hwave.solver import backend
 from hwave.solver import matsubara as ms
+from hwave.solver.kgrid import reverse_fft_axes
 # Shared spatial-FFT helpers (scipy-parallel on CPU, cuFFT on GPU) live in
 # backend.py so RPA/FLEX use the same implementations; keep the module-local
 # names used throughout this file and by the tests.
@@ -84,8 +85,7 @@ def _reverse_kw_and_orbital(gap_w):
         partner of index ``n`` is ``nmat - 1 - n`` (a plain reversal, no roll);
         the two orbital indices are swapped.
     """
-    rev = gap_w[:, :, ::-1, ::-1, ::-1, :]
-    rev = np.roll(rev, 1, axis=(2, 3, 4))   # k -> -k on the FFT grid
+    rev = reverse_fft_axes(gap_w, (2, 3, 4))  # k -> -k on the FFT grid
     rev = rev[..., ::-1]                     # iw_n -> -iw_n (centered fermionic)
     rev = np.swapaxes(rev, 0, 1)             # orbital transpose a <-> b
     return rev
@@ -576,10 +576,7 @@ def calc_g2_dynamic(green_kw, beta):
     nvol = Nx * Ny * Nz
 
     # G(-k, -wn) via roll+flip -- SAME construction as sc._calc_g2.
-    green_kw_inv = np.roll(
-        green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
-        (1, 1, 1), (2, 3, 4)
-    )
+    green_kw_inv = reverse_fft_axes(green_kw[..., ::-1], (2, 3, 4))
     # Same reshape/index layout as sc._calc_g2's A/B (ij, site, n) and
     # (lm, site, n), but keep the per-frequency product instead of summing
     # (matmul-)contracting over n.

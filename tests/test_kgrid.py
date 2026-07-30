@@ -1,0 +1,93 @@
+"""The single-sourced FFT-grid reversal map (#108).
+
+Eighteen call sites across sc.py, rpa.py, flex.py, eliashberg_dynamic.py
+and uhfk.py used to spell the map ``i -> (N - i) % N`` three different
+ways; these tests pin the map's algebra once and prove all historical
+spellings are the same gather, so the consolidation is bit-identical by
+construction.
+"""
+
+import unittest
+
+import numpy as np
+
+from hwave.solver.kgrid import reverse_fft_axes
+
+
+class TestReverseFftAxes(unittest.TestCase):
+
+    def test_matches_the_index_formula(self):
+        """out[i] == arr[(N - i) % N] on every listed axis, odd and even N."""
+        rng = np.random.default_rng(3)
+        for shape, axes in [((5,), (0,)), ((4,), (0,)),
+                            ((3, 4, 5), (0, 1, 2)),
+                            ((2, 3, 4, 5, 6), (2, 3, 4))]:
+            with self.subTest(shape=shape, axes=axes):
+                a = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+                got = reverse_fft_axes(a, axes)
+                want = a
+                for ax in axes:
+                    n = a.shape[ax]
+                    want = np.take(want, (-np.arange(n)) % n, axis=ax)
+                np.testing.assert_array_equal(got, want)
+
+    def test_involution_and_gamma_fixed_point(self):
+        rng = np.random.default_rng(4)
+        a = rng.standard_normal((3, 5, 4, 7)) * 1j + rng.standard_normal((3, 5, 4, 7))
+        r = reverse_fft_axes(a, (1, 2, 3))
+        np.testing.assert_array_equal(reverse_fft_axes(r, (1, 2, 3)), a)
+        # index 0 on every reversed axis (Gamma / origin) stays put
+        np.testing.assert_array_equal(r[:, 0, 0, 0], a[:, 0, 0, 0])
+
+    def test_all_three_historical_spellings_are_this_gather(self):
+        """roll(flip), flip(roll(-1)) and the fancy-index gather were the
+        three spellings in the tree; all are bit-identical to the shared
+        implementation."""
+        rng = np.random.default_rng(5)
+        a = rng.standard_normal((4, 3, 5, 2)) + 1j * rng.standard_normal((4, 3, 5, 2))
+        axes = (0, 1, 2)
+        got = reverse_fft_axes(a, axes)
+        # spelling 1: reverse then roll +1 (sc.py, eliashberg_dynamic.py)
+        s1 = np.roll(a[::-1, ::-1, ::-1, :], (1, 1, 1), axes)
+        # spelling 2: roll -1 then flip (rpa.py, flex.py, uhfk.py)
+        s2 = np.flip(np.roll(a, -1, axis=axes), axis=axes)
+        # spelling 3: fancy-index gather (sc._symmetrise_interactions_k)
+        s3 = a[(-np.arange(4)) % 4][:, (-np.arange(3)) % 3][:, :, (-np.arange(5)) % 5]
+        for i, s in enumerate((s1, s2, s3), 1):
+            with self.subTest(spelling=i):
+                np.testing.assert_array_equal(got, s)
+
+    def test_short_axis_identity_trap(self):
+        """For N <= 2 the map is the identity: (N - i) % N == i for
+        i in {0, 1}. This is WHY a misapplied reversal is invisible on
+        one- and two-site fixtures (the transverse-channel defect
+        history) -- pinned here so the trap is executable knowledge."""
+        rng = np.random.default_rng(6)
+        for n in (1, 2):
+            a = rng.standard_normal((n, 5)) + 0j
+            np.testing.assert_array_equal(reverse_fft_axes(a, (0,)), a)
+        a3 = rng.standard_normal((3, 5)) + 0j
+        self.assertFalse(np.array_equal(reverse_fft_axes(a3, (0,)), a3))
+
+    def test_composed_site_shapes_are_bit_identical_to_the_old_code(self):
+        """The two composite forms that fold in a frequency/tau axis:
+        sc._calc_g2's centered-Matsubara flip + spatial map, and flex's
+        signed tau-flip + spatial map. Both must reproduce the exact old
+        inline expressions."""
+        rng = np.random.default_rng(7)
+        # sc._calc_g2 / eliashberg_dynamic: (norb, norb, Nx, Ny, Nz, nmat)
+        g = rng.standard_normal((2, 2, 4, 3, 2, 6)) \
+            + 1j * rng.standard_normal((2, 2, 4, 3, 2, 6))
+        old = np.roll(g[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
+        new = reverse_fft_axes(g[..., ::-1], (2, 3, 4))
+        np.testing.assert_array_equal(new, old)
+        # flex chi0 kernel: (nblock, ntau, nx, ny, nz, nd*nd)
+        gt = rng.standard_normal((1, 6, 4, 3, 2, 4)) \
+            + 1j * rng.standard_normal((1, 6, 4, 3, 2, 4))
+        old = -np.flip(np.roll(gt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        new = -np.flip(reverse_fft_axes(gt, (2, 3, 4)), axis=1)
+        np.testing.assert_array_equal(new, old)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 from .rpa import RPA, Lattice, Interaction
 from .density_projection import project_density_pairs
+from .kgrid import reverse_fft_axes
 from . import backend as _bk
 from . import matsubara as _ms
 
@@ -840,8 +841,7 @@ class FLEX(RPA):
         # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
         # plain tau reversal (with the global fermionic -1); r -> -r is
         # reverse+roll on the k grid (identical to the uniform path).
-        g_rev = -xp.flip(
-            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
         g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
         g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
 
@@ -885,8 +885,7 @@ class FLEX(RPA):
 
         # G(-r,-tau): tau flip-only (j -> nt-1-j), spatial roll(-1)+flip, and
         # the leading -1 folds in the fermionic antiperiodicity.
-        g_rev = -xp.flip(
-            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
         g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
         g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
 

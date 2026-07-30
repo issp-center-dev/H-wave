@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
+from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.density_projection import (
     project_density_pairs, project_density_squashed)
 from . import backend as _bk
@@ -595,9 +596,8 @@ class Interaction:
             for (irvec, orbvec), v in tbl.items():
                 arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
                      *orbvec)] += v
-            rev = np.transpose(
-                np.flip(np.roll(arr, -1, axis=(0, 1, 2)), axis=(0, 1, 2)),
-                (0, 1, 2, 4, 3))
+            rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
+                               (0, 1, 2, 4, 3))
             if type == "PairHop":
                 rev = np.conjugate(rev)
             sym = 0.5 * (arr + rev)
@@ -2507,7 +2507,7 @@ class RPA:
             axes=(2, 3, 4), workers=workers)
 
         # calculate chi0 in real space and imaginary time
-        green_rev = xp.flip(xp.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+        green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
@@ -2601,8 +2601,8 @@ class RPA:
         # lattice, and the two orbital axes were being reversed as well --
         # invisible for nd <= 2, where roll(-1)+flip is the identity, which
         # is why the one- and two-orbital fixtures never saw it.
-        green_dn_rev = xp.flip(xp.roll(green_rt[1], -1, axis=(0, 1, 2, 3)),
-                               axis=(0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
+        green_dn_rev = reverse_fft_axes(
+            green_rt[1], (0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
 
         # G_↑(r,τ)
         green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
