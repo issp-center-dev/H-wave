@@ -119,6 +119,57 @@ class TestTableContent(unittest.TestCase):
         })
 
 
+class TestRingBaseContent(unittest.TestCase):
+    """The ring's base spin tables are now DERIVED from the adjudicated
+    table (density slots via the channel decomposition, spin-flip slots
+    from the #105 transverse data). Pin the derived output against the
+    hand-coded per-type tables the ring carried since its adjudication --
+    these literals ARE the adjudicated base content and must never change
+    as a side effect of table or derivation edits."""
+
+    def test_derived_tables_equal_the_adjudicated_hand_coded_ones(self):
+        from hwave.solver.vertex_table import ring_spin_table
+
+        adjudicated = {
+            'CoulombIntra': {(0, 0, 1, 1): 1, (1, 1, 0, 0): 1},
+            'CoulombInter': {(0, 0, 0, 0): 1, (1, 1, 1, 1): 1,
+                             (0, 0, 1, 1): 1, (1, 1, 0, 0): 1},
+            'Hund':         {(0, 0, 0, 0): -1, (1, 1, 1, 1): -1},
+            'Ising':        {(0, 0, 0, 0): 1, (1, 1, 1, 1): 1,
+                             (0, 0, 1, 1): -1, (1, 1, 0, 0): -1},
+            'PairLift':     {(0, 1, 0, 1): 1, (1, 0, 1, 0): 1},
+            'Exchange':     {(0, 1, 1, 0): -1, (1, 0, 0, 1): -1},
+            'PairHop':      {(0, 0, 1, 1): 1, (1, 1, 0, 0): 1},
+        }
+        for itype, want in adjudicated.items():
+            with self.subTest(interaction=itype):
+                got = ring_spin_table(itype)
+                self.assertEqual(got, want)
+                # same keys AND exactly representable weights: the derived
+                # floats must multiply bit-identically to the old ints
+                for k, w in got.items():
+                    self.assertEqual(float(w), float(want[k]))
+
+    def test_unknown_type_yields_empty_table(self):
+        from hwave.solver.vertex_table import ring_spin_table
+
+        self.assertEqual(ring_spin_table("NoSuchType"), {})
+
+    def test_spin_flip_data_is_frozen(self):
+        import hwave.solver.vertex_table as vt
+
+        with self.assertRaises(TypeError):
+            vt.RING_SPIN_FLIP["Exchange"] = {}
+        with self.assertRaises(TypeError):
+            vt.RING_SPIN_FLIP["Exchange"][(0, 1, 1, 0)] = 0.0
+        self.assertFalse(hasattr(vt, "_RING_SPIN_FLIP_RAW"),
+                         "no mutable backing name may be retained")
+        # ring_spin_table returns a fresh dict; mutating it must not leak
+        t = vt.ring_spin_table("Exchange")
+        t[(0, 1, 1, 0)] = 99.0
+        self.assertEqual(vt.ring_spin_table("Exchange")[(0, 1, 1, 0)], -1.0)
+
+
 class TestTableImmutability(unittest.TestCase):
 
     def test_both_mapping_levels_are_frozen(self):
