@@ -93,6 +93,109 @@ def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
     return geom_norb // 2
 
 
+def _chi0q_fingerprint(arr):
+    """Content binding for chi0q provenance.
+
+    Provenance metadata travels in a caller-owned dict, so a caller can
+    replace the array while keeping the metadata; shape checks alone
+    cannot see a same-shaped replacement. The FULL canonical byte content
+    is hashed -- a strided sample was shown to miss single-element edits
+    of unsampled positions (round-6 review). blake2b throughput makes the
+    cost linear but small next to the solve itself; a non-contiguous view
+    or a device-backed array is converted first, which may copy.
+    Legitimate copies hash equal.
+    """
+    import hashlib
+
+    from . import backend as _bk_local
+
+    a = np.ascontiguousarray(_bk_local.to_host(arr))
+    h = hashlib.blake2b(digest_size=16)
+    h.update(str(a.shape).encode())
+    h.update(str(a.dtype).encode())
+    h.update(memoryview(a).cast("B"))
+    return h.hexdigest()
+
+
+def _validate_chi0q_provenance(meta, nfreq, source):
+    """Validate and NORMALIZE a chi0q provenance mapping.
+
+    Shared by the in-memory reuse route and the chi0q_init file route so
+    neither can smuggle malformed provenance past the other (round-5
+    review: nmat was validated only when freq_index was present, a
+    fractional nmat was written back unnormalized, and a non-mapping
+    value raised AttributeError instead of the promised ValueError).
+
+    Returns {"freq_index": int ndarray or None, "nmat": int or None,
+    "coeff_tail": float or None}. Raises ValueError on any defect.
+    """
+    import operator
+    from collections.abc import Mapping
+
+    if not isinstance(meta, Mapping):
+        raise ValueError(
+            "chi0q provenance from {} must be a mapping, got {}".format(
+                source, type(meta).__name__))
+    out = {"freq_index": None, "nmat": None, "coeff_tail": None}
+    m_nmat = meta.get("nmat")
+    if m_nmat is not None:
+        # strict integral scalar: operator.index accepts int and NumPy
+        # integer scalars (including the 0-d arrays npz files store) and
+        # rejects floats, strings, complex, containers and booleans --
+        # every one of which slipped past size-1 coercion (round 6)
+        try:
+            val = np.asarray(m_nmat)
+            if val.ndim != 0:
+                raise TypeError("not a scalar")
+            item = val[()]
+            if isinstance(item, (bool, np.bool_)):
+                raise TypeError("boolean")
+            n = operator.index(item)
+        except TypeError:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be an integral "
+                "scalar, got {!r}".format(source, m_nmat))
+        if n <= 0:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be positive, got "
+                "{}".format(source, n))
+        out["nmat"] = n
+    fi = meta.get("freq_index")
+    if fi is not None:
+        fi = np.asarray(fi)
+        if fi.ndim != 1 or not np.issubdtype(fi.dtype, np.integer):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index must be a "
+                "one-dimensional integer array, got dtype {} with shape "
+                "{}".format(source, fi.dtype, fi.shape))
+        if len(fi) != nfreq:
+            raise ValueError(
+                "chi0q provenance from {} does not describe the supplied "
+                "chi0q (freq_index of length {} for a {}-frequency "
+                "array); the metadata is stale -- recompute or drop "
+                "it.".format(source, len(fi), nfreq))
+        if len(np.unique(fi)) != len(fi):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index carries duplicate "
+                "entries".format(source))
+        if (out["nmat"] is not None and len(fi) > 0
+                and (fi.min() < 0 or fi.max() >= out["nmat"])):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index range [{}, {}] "
+                "exceeds nmat = {}".format(
+                    source, int(fi.min()), int(fi.max()), out["nmat"]))
+        out["freq_index"] = fi
+    ct = meta.get("coeff_tail")
+    if ct is not None:
+        try:
+            out["coeff_tail"] = float(ct)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "chi0q provenance from {}: malformed coeff_tail "
+                "({!r})".format(source, ct))
+    return out
+
+
 class Lattice:
     """
     Lattice parameters:
@@ -943,6 +1046,15 @@ class RPA:
         """
         logger.info("Start RPA calculations")
 
+        # A reused green_info must not carry results from a previous solve:
+        # a stale chiq / chiq_pm would survive into save_results and be
+        # labelled as part of this result. Dropped at ENTRY -- before any
+        # validation and regardless of calc_chiq -- so a failed validation
+        # or a chi0q-only run cannot leave them behind either (adversarial
+        # review, round 3).
+        green_info.pop("chiq", None)
+        green_info.pop("chiq_pm", None)
+
         beta = 1.0/self.T
 
         # GPU (CuPy) execution: resolve the backend once. The heavy work --
@@ -954,10 +1066,134 @@ class RPA:
                                          required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
-            # use chi0q input
+            # use chi0q input; a green_info stored by a previous solve
+            # arrives here, so establish spin_mode from the shape exactly
+            # as the file-based chi0q_init route does (issue #109)
             chi0q = green_info["chi0q"]
-            if chi0q.shape[0] != self.nmat:
-                logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+            if not gpu_active:
+                # normalize a device array to the selected (host) backend
+                # FIRST: real device arrays forbid the implicit conversion
+                # a NumPy-based dtype probe would attempt
+                chi0q = _bk.to_host(chi0q)
+                green_info["chi0q"] = chi0q
+            if not np.issubdtype(chi0q.dtype, np.number):
+                raise ValueError(
+                    "chi0q from green_info has non-numeric dtype {}".format(
+                        chi0q.dtype))
+            self._validate_chi0q_shape(chi0q, source="green_info")
+            # spin-diag arrays carry the spin-block axis first; the
+            # frequency axis is shape[1] there (shape[0] == 2 == nblock,
+            # which used to be misreported as a partial frequency range)
+            nfreq = (chi0q.shape[1] if self.spin_mode == "spin-diag"
+                     else chi0q.shape[0])
+            # Frequency provenance for save_results: inherit the axis of
+            # the run that PRODUCED this chi0q. Priority: metadata stored
+            # by a previous in-memory solve; else metadata already set by
+            # the chi0q_init file reader on this instance; else -- an
+            # untagged partial array -- fall back to the ambiguous 0..n-1
+            # labeling rather than fabricating a full-axis claim.
+            mem_meta = green_info.get("chi0q_freq_meta")
+            if mem_meta is not None:
+                # Validate the provenance against the array and this solver
+                # (shared validator; round-3/5 reviews): a caller can
+                # replace chi0q while leaving the previous solve's metadata
+                # behind, and trusting it silently would mislabel saved
+                # output or solve a semantically different tensor.
+                norm = _validate_chi0q_provenance(
+                    mem_meta, nfreq, source="green_info")
+                # the validator has already guaranteed a Mapping, so read
+                # the fingerprint unconditionally -- a dict-only check let
+                # a UserDict's stale fingerprint pass unverified
+                fp = mem_meta.get("fingerprint")
+                if fp is not None and fp != _chi0q_fingerprint(chi0q):
+                    raise ValueError(
+                        "chi0q_freq_meta does not belong to the supplied "
+                        "chi0q (content fingerprint mismatch): the array "
+                        "was replaced while the previous solve's metadata "
+                        "was kept. The metadata is stale -- recompute or "
+                        "drop the key.")
+                m_norb = mem_meta.get("norb")
+                if m_norb is not None and int(m_norb) != int(self.norb):
+                    raise ValueError(
+                        "chi0q was produced with norb = {} but this solver "
+                        "has norb = {}; the bubble does not describe this "
+                        "system.".format(m_norb, self.norb))
+                m_scheme = mem_meta.get("calc_scheme")
+                if m_scheme is not None:
+                    # reduced and squashed share one bubble representation
+                    # (the reduced 'kab' layout; measured: a reduced-produced
+                    # bubble solved under squashed matches an internal
+                    # squashed recomputation exactly), so only the
+                    # REPRESENTATION class must agree
+                    rep = {"reduced": "reduced", "squashed": "reduced"}
+                    if (rep.get(m_scheme, m_scheme)
+                            != rep.get(self.calc_scheme, self.calc_scheme)):
+                        raise ValueError(
+                            "chi0q was produced under calc_scheme = '{}' "
+                            "whose bubble representation is incompatible "
+                            "with this solver's '{}'.".format(
+                                m_scheme, self.calc_scheme))
+                m_spin = mem_meta.get("spin_mode")
+                if m_spin is not None and m_spin != self.spin_mode:
+                    # the producer knows its spin structure; shape inference
+                    # cannot separate spin-free norb-orbital from spinful
+                    # norb/2-orbital input, so a declared mismatch is fatal
+                    raise ValueError(
+                        "chi0q was produced in spin mode '{}' but its shape "
+                        "reads as '{}' for this solver's configuration; "
+                        "refusing to solve a semantically different "
+                        "tensor.".format(m_spin, self.spin_mode))
+                self._chi0q_init_meta = dict(norm)
+            elif getattr(self, "_chi0q_init_meta", None) is not None:
+                # metadata set by the chi0q_init file reader on this
+                # instance: verify it still describes THIS array before
+                # trusting it (the caller may have replaced info["chi0q"]
+                # between read_init and solve)
+                file_fp = self._chi0q_init_meta.get("fingerprint")
+                if (file_fp is not None
+                        and file_fp != _chi0q_fingerprint(chi0q)):
+                    raise ValueError(
+                        "the chi0q_init metadata on this solver does not "
+                        "belong to the supplied chi0q (content fingerprint "
+                        "mismatch): the array was replaced after the file "
+                        "was read. Recompute or re-read the file.")
+            elif nfreq != self.nmat:
+                self._chi0q_init_meta = {
+                    "freq_index": None, "nmat": None, "coeff_tail": None,
+                }
+            # Write the normalized provenance back so a CHAIN of reuses --
+            # including a bubble that entered through the chi0q_init file
+            # route -- keeps its producing axis (round-3 review).
+            eff = getattr(self, "_chi0q_init_meta", None)
+            if eff is not None:
+                fi_eff = eff.get("freq_index")
+                green_info["chi0q_freq_meta"] = {
+                    "freq_index": (None if fi_eff is None
+                                   else list(np.asarray(fi_eff))),
+                    "nmat": eff.get("nmat"),
+                    "coeff_tail": eff.get("coeff_tail"),
+                    "spin_mode": self.spin_mode,
+                    "norb": int(self.norb),
+                    "calc_scheme": self.calc_scheme,
+                    "fingerprint": _chi0q_fingerprint(chi0q),
+                }
+            # must_fix 6 guard state: the spin-diag transverse channel needs
+            # Green functions bound to THIS bubble; an externally supplied
+            # chi0q has none (a same-instance green0 may belong to an older
+            # bubble)
+            self._chi0q_external = True
+            if (getattr(self, "calc_type", "ring") == "ring+ladder"
+                    and self.spin_mode == "spin-diag"):
+                # fail HERE, before the longitudinal solve populates chiq:
+                # rejecting inside the transverse build would leave a fresh
+                # chiq in green_info from a run that then failed
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be "
+                    "combined with an externally supplied chi0q: the "
+                    "channel needs the Green's functions that produced "
+                    "this exact bubble. Recompute chi0q internally.")
+            if nfreq != self.nmat:
+                logger.info("partial range in matsubara frequency: {} in {}".format(nfreq, self.nmat))
                 #self.nmat = chi0q.shape[0]
             if gpu_active:
                 # VRAM preflight for the externally-supplied chi0q path: the
@@ -1002,6 +1238,10 @@ class RPA:
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
+            self._chi0q_external = False
+            # a previous chi0q_init on this instance must not relabel the
+            # axis of a bubble THIS run computes
+            self._chi0q_init_meta = None
 
             chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
@@ -1019,6 +1259,26 @@ class RPA:
                 pass
 
             green_info["chi0q"] = _bk.to_host(chi0q)
+            # Record the producing run's frequency metadata alongside: a
+            # later solver reusing this green_info (issue #109) must label
+            # its outputs with THIS axis, exactly as the file route does via
+            # _chi0q_init_meta -- stamping the reusing run's own
+            # freq_index/nmat mislabeled a partial-range bubble as a full
+            # axis (measured: 9 frequencies saved with freq_index 0..31).
+            green_info["chi0q_freq_meta"] = {
+                "freq_index": list(self.freq_index),
+                "nmat": int(self.nmat),
+                "coeff_tail": float(getattr(self, "coeff_tail", 0.0)),
+                # producer identity: shape-only spin detection cannot
+                # distinguish a spin-free two-orbital bubble from a spinful
+                # one-orbital one, so the consumer validates against these
+                "spin_mode": self.spin_mode,
+                "norb": int(self.norb),
+                "calc_scheme": self.calc_scheme,
+                # content binding: a same-shaped replacement of the array
+                # must not inherit this metadata (round-5 review)
+                "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
+            }
 
         if self.calc_chiq:
             # ham_inter_q is built on the host at init; mirror it to chi0q's
@@ -1165,14 +1425,6 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_long
 
-            # A reused green_info must not carry results from a previous
-            # solve: if this run fails validation, or computes ring-only after
-            # a ring+ladder run, a stale chiq / chiq_pm from the earlier call
-            # would otherwise survive into save_results and be labelled as
-            # part of this result.
-            green_info.pop("chiq", None)
-            green_info.pop("chiq_pm", None)
-
             # For ring+ladder, validate the transverse channel BEFORE the
             # longitudinal solve: an unrepresentable input should fail here,
             # not after the expensive solve has already populated chiq.
@@ -1238,6 +1490,13 @@ class RPA:
         # the metadata of the file that produced the chi0q -- stamping the
         # CURRENT run's values would mislabel the axis.
         def _freq_meta_kwargs(arr):
+            # the frequency axis of a spin-diag bare bubble is axis 1
+            # (axis 0 is the two-spin block); every other saved array
+            # leads with frequency
+            if arr.ndim in (5, 7) and arr.shape[0] == 2:
+                nfreq_arr = arr.shape[1]
+            else:
+                nfreq_arr = arr.shape[0]
             init_meta = getattr(self, "_chi0q_init_meta", None)
             if init_meta is None:
                 # coeff_tail provenance (issue #80): the tail correction
@@ -1256,7 +1515,7 @@ class RPA:
                 # axis (0..n-1) without fabricating an nmat claim; a
                 # downstream loader then treats the file explicitly as
                 # ambiguous unless its config Nmat matches.
-                kwargs["freq_index"] = np.arange(arr.shape[0])
+                kwargs["freq_index"] = np.arange(nfreq_arr)
             if init_meta["nmat"] is not None:
                 kwargs["nmat"] = init_meta["nmat"]
             # pass-through: re-save the INPUT file's coeff_tail (stamping the
@@ -1393,6 +1652,146 @@ class RPA:
 
         return info
 
+    def _validate_chi0q_shape(self, chi0q, source):
+        """Validate a supplied chi0q against the lattice/scheme and set
+        spin_mode from its shape.
+
+        Shared by every route that accepts a chi0q the solver did not
+        compute itself: the file-based ``chi0q_init`` reader and the
+        in-memory reuse of a ``green_info`` stored by a previous solve.
+        The latter used to run NO validation, so a fresh solver reached
+        the spin_mode dispatch unset and crashed with AttributeError
+        (issue #109).
+        """
+        if not np.issubdtype(chi0q.dtype, np.number):
+            raise ValueError(
+                "chi0q from {}: non-numeric dtype {}".format(
+                    source, chi0q.dtype))
+        if self.calc_scheme == "general":
+            if len(chi0q.shape) == 6:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
+                cs = chi0q.shape
+                if not (cs[1] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[2]
+                if not (nd == self.nd or nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[2] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[3] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[5] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[5] (shape {})".format(
+                            source, chi0q.shape))
+
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 7:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
+                cs = chi0q.shape
+                if not (cs[0] == 2):
+                    raise ValueError(
+                        "chi0q from {}: spin block (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[2] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[3]
+                if not (nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[5] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[5] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[6] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[6] (shape {})".format(
+                            source, chi0q.shape))
+
+                self.spin_mode = "spin-diag"
+            else:
+                raise ValueError(
+                    "chi0q from {}: unexpected shape for general scheme: "
+                    "{}".format(source, chi0q.shape))
+
+        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+            if len(chi0q.shape) == 4:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+                cs = chi0q.shape
+                if not (cs[1] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[2]
+                if not (nd == self.nd or nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[2] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[3] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 5:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb)
+                cs = chi0q.shape
+                if not (cs[0] == 2):
+                    raise ValueError(
+                        "chi0q from {}: spin block (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[2] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[3]
+                if not (nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+
+                self.spin_mode = "spin-diag"
+            else:
+                raise ValueError(
+                    "chi0q from {}: unexpected shape for reduced scheme: "
+                    "{}".format(source, chi0q.shape))
+        else:
+            raise ValueError(
+                "unknown scheme: {}".format(self.calc_scheme))
+
+        logger.debug("chi0q from {}: shape={}, spin_mode={}".format(
+            source, chi0q.shape, self.spin_mode))
+
     def _read_chi0q(self, file_name):
         """Read chi0q from file and validate its shape.
 
@@ -1408,8 +1807,12 @@ class RPA:
 
         Raises
         ------
-        AssertionError
-            If the loaded data doesn't match expected dimensions or format.
+        ValueError
+            If the loaded chi0q's SHAPE doesn't match the lattice and
+            calculation scheme. (Standardized by the #109 validation
+            rework: this previously surfaced as a bare AssertionError,
+            which python -O silently disabled.) File-open and missing-key
+            failures are reported separately and terminate the run.
 
         Notes
         -----
@@ -1449,12 +1852,20 @@ class RPA:
         # solve() passes an input chi0q through untouched, so save_results
         # must not relabel its axis with the current run's freq_index/nmat.
         # coeff_tail rides along for the same reason (issue #80).
-        self._chi0q_init_meta = {
-            "freq_index": data["freq_index"] if "freq_index" in data else None,
-            "nmat": int(data["nmat"]) if "nmat" in data else None,
-            "coeff_tail": (float(data["coeff_tail"])
-                           if "coeff_tail" in data else None),
-        }
+        nfreq_file = (chi0q.shape[1]
+                      if (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2)
+                      else chi0q.shape[0])
+        self._chi0q_init_meta = _validate_chi0q_provenance(
+            {"freq_index": (data["freq_index"]
+                            if "freq_index" in data else None),
+             "nmat": data["nmat"] if "nmat" in data else None,
+             "coeff_tail": (data["coeff_tail"]
+                            if "coeff_tail" in data else None)},
+            nfreq_file, source=file_name)
+        # bind the metadata to the LOADED tensor: if the caller replaces
+        # info["chi0q"] with a same-shaped array before solve(), the file's
+        # axis must not be inherited by the replacement (round-6 review)
+        self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).
@@ -1467,69 +1878,7 @@ class RPA:
                 "with a recomputation under this config.".format(
                     file_name, file_tail, self.coeff_tail))
 
-        # check size
-        if self.calc_scheme == "general":
-            if len(chi0q.shape) == 6:
-                # spin-free or spinful
-                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
-                cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
-
-                if nd == self.nd:
-                    self.spin_mode = "spinful"
-                else:
-                    self.spin_mode = "spin-free"
-            elif len(chi0q.shape) == 7:
-                # spin-diagonal
-                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
-                cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
-                nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
-                assert cs[6] == nd, "shape[6]"
-
-                self.spin_mode = "spin-diag"
-            else:
-                assert False, "unexpected shape for general scheme: {}".format(chi0q.shape)
-
-        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
-            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
-            if len(chi0q.shape) == 4:
-                # spin-free or spinful
-                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
-                cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-
-                if nd == self.nd:
-                    self.spin_mode = "spinful"
-                else:
-                    self.spin_mode = "spin-free"
-            elif len(chi0q.shape) == 5:
-                # spin-diagonal
-                #   shape = (nblock,nmat,nvol,norb,norb)
-                cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
-                nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-
-                self.spin_mode = "spin-diag"
-            else:
-                assert False, "unexpected shape for reduced scheme: {}".format(chi0q.shape)
-        else:
-            assert False, "unknown scheme: {}".format(self.calc_scheme)
+        self._validate_chi0q_shape(chi0q, source=file_name)
 
         logger.info("read_chi0q: shape={}, spin_mode={}".format(chi0q.shape, self.spin_mode))
 
@@ -2453,6 +2802,15 @@ class RPA:
         elif self.spin_mode == "spin-diag":
             # Compute exact chi0_+- from G_↑ and G_↓ Green's functions.
             # chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+            if getattr(self, "_chi0q_external", False):
+                # A same-instance green0 may belong to an OLDER bubble than
+                # the externally supplied chi0q; silently pairing them gives
+                # a chiq_pm from different physics (round-3 review).
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be "
+                    "combined with an externally supplied chi0q: the "
+                    "channel needs the Green's functions that produced "
+                    "this exact bubble. Recompute chi0q internally.")
             if hasattr(self, 'green0') and self.green0 is not None:
                 chi0q_pm_full = self._calc_chi0q_transverse(
                     self.green0, self.green0_tail, 1.0 / self.T)
