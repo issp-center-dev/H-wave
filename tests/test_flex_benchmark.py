@@ -893,11 +893,17 @@ class TestFLEXIronPnictide(unittest.TestCase):
         between hole pockets at Gamma and electron pockets at M.
         """
         center = self.Nmat // 2
-        nd = self.chi_s.shape[-1]
-
-        chi_s_trace = np.zeros(self.Lx * self.Ly)
-        for a in range(nd):
-            chi_s_trace += self.chi_s[center, :, a, a].real
+        chi = np.asarray(self.chi_s)[center]
+        if chi.ndim == 5:
+            # general scheme: rank-4 orbital tensor in the public
+            # [a, c, b, d] convention; the physical spin response sums
+            # the density sector (aa), (bb)
+            norb = chi.shape[-1]
+            chi_s_trace = sum(chi[:, a, a, b, b].real
+                              for a in range(norb) for b in range(norb))
+        else:
+            # reduced/squashed: (nvol, norb, norb) density-pair matrix
+            chi_s_trace = chi.real.sum(axis=(-2, -1))
 
         # Q vectors
         q_pi0 = (self.Lx // 2) * self.Ly  # (pi, 0)

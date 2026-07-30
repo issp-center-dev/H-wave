@@ -835,17 +835,50 @@ class RPA:
                     # ladder diagrams require general scheme (full rank-4 tensor)
                     self.calc_scheme = "general"
                     logger.info("auto mode for calc_scheme: set to general (ring+ladder)")
-                elif self.ham_info.has_interaction_exchange():
-                    self.calc_scheme = "squashed"
-                    logger.info("auto mode for calc_scheme: set to squashed")
+                elif any(self.param_ham.get(t)
+                         for t in ("Exchange", "PairHop")):
+                    # Exchange and PairHop carry NO density-diagonal vertex
+                    # content: only the general scheme represents them. The
+                    # historical auto choice was 'squashed', which silently
+                    # dropped them entirely (#107).
+                    self.calc_scheme = "general"
+                    logger.info(
+                        "auto mode for calc_scheme: set to general "
+                        "(Exchange/PairHop have no density-diagonal vertex)")
                 else:
+                    # PairLift alone does not need the general scheme: its
+                    # particle-hole vertex is exactly zero everywhere.
                     self.calc_scheme = "reduced"
                     logger.info("auto mode for calc_scheme: set to reduced")
 
-        # consistency check
-        if self.calc_scheme == "reduced" and self.ham_info.has_interaction_exchange():
-            logger.error("calc_scheme=reduced is not compatible with exchange-type interaction.")
-            sys.exit(1)
+        # consistency check. The reduced/squashed schemes solve with the
+        # density-diagonal part of the interaction, and the adjudicated
+        # particle-hole vertex of Exchange and PairHop has NO
+        # density-diagonal content (hwave.solver.vertex_table: their
+        # entries live on the cross and antidiagonal slot families). The
+        # projection therefore does not approximate them -- it drops them
+        # entirely, with exactly zero effect on the result. That was three
+        # different policies before #107: reduced rejected exchange-type
+        # input, squashed accepted it silently, FLEX warned of an
+        # 'approximation'. One policy now, for both solvers (FLEX inherits
+        # this check): reject with a pointer to the scheme that keeps them.
+        if self.calc_scheme in ("reduced", "squashed"):
+            dropped = [t for t in ("Exchange", "PairHop")
+                       if self.param_ham.get(t)]
+            if dropped:
+                raise ValueError(
+                    "calc_scheme='{}' solves with the density-diagonal "
+                    "part of the interaction, and the particle-hole vertex "
+                    "of {} has no density-diagonal content: the interaction "
+                    "would have exactly zero effect (not an approximation). "
+                    "Use calc_scheme='general', which carries the full "
+                    "vertex.".format(self.calc_scheme, ", ".join(dropped)))
+            if self.param_ham.get("PairLift"):
+                logger.warning(
+                    "PairLift's particle-hole vertex is exactly zero "
+                    "(adjudicated against exact diagonalization), so it "
+                    "has no effect on the susceptibility channels in any "
+                    "scheme.")
         if self.calc_type == "ring+ladder" and self.calc_scheme != "general":
             logger.error("calc_type='ring+ladder' requires calc_scheme='general' or 'auto'.")
             sys.exit(1)

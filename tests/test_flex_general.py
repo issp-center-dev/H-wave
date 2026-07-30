@@ -884,44 +884,40 @@ class TestFLEXGeneralWarningGating(unittest.TestCase):
     """The density-density reduction warning must fire for reduced/squashed but
     be suppressed for general (where the off-diagonal vertices are kept)."""
 
-    def _construct(self, scheme):
-        """Construct a 2-orbital FLEX while pretending an Exchange interaction is
-        present. ``self.ham_info`` is a fresh ``Interaction`` built inside
-        ``RPA.__init__`` (not the passed object), so patch the class method
-        ``Interaction.has_interaction_exchange`` rather than an instance — this
-        also avoids wiring an extra interaction file."""
-        from unittest.mock import patch
+    def _construct(self, scheme, exchange=True):
+        """Construct a 2-orbital FLEX with a real Exchange interaction
+        (hund_onsite.dat parsed under the Exchange key -- any on-site
+        inter-orbital file works). The former version mocked the
+        has_interaction_exchange flag; the policy is content-based now."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.flex as solver_flex
-        import hwave.solver.rpa as solver_rpa
-        info_input = {
+        idict = {
             'path_to_input': 'tests/rpa/input_2orb',
-            'interaction': {
-                'path_to_input': 'tests/rpa/input_2orb',
-                'Geometry': 'geom.dat',
-                'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
-            },
+            'Geometry': 'geom.dat',
+            'Transfer': 'transfer.dat',
+            'CoulombIntra': 'coulombintra.dat',
         }
-        ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+        if exchange:
+            idict['Exchange'] = 'hund_onsite.dat'
+        ham = read_input_k.QLMSkInput(
+            {'path_to_input': 'tests/rpa/input_2orb',
+             'interaction': idict}).get_param("ham")
         info_mode = {
             'mode': 'FLEX',
             'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
                       'SubShape': [1, 1, 1], 'Nmat': 32},
             'calc_scheme': scheme,
         }
-        with patch.object(solver_rpa.Interaction, 'has_interaction_exchange',
-                          return_value=True):
-            return solver_flex.FLEX(ham, {}, info_mode)
+        return solver_flex.FLEX(ham, {}, info_mode)
 
-    def test_warning_retained_for_squashed(self):
-        # 'squashed' (not 'reduced': RPA errors on reduced+exchange, rpa.py:643).
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+    def test_squashed_with_exchange_is_rejected(self):
+        # ONE policy since #107 (was: reduced errored, squashed warned of
+        # an 'approximation' while dropping the vertex entirely)
+        with self.assertRaises(ValueError) as cm:
             self._construct('squashed')
-        self.assertTrue(any('density-density' in m for m in cm.output))
+        self.assertIn('general', str(cm.exception))
 
-    def test_warning_suppressed_for_general(self):
+    def test_general_with_exchange_constructs_quietly(self):
         with _assert_no_warning(self, 'hwave.solver.flex'):
             self._construct('general')
 

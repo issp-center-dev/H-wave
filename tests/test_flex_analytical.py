@@ -1038,50 +1038,43 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         self.assertTrue(solver._flex_general)
         self.assertEqual(solver.calc_scheme, 'general')
 
-    def test_exchange_interaction_warns(self):
-        """Exchange under 'squashed' is approximated by its density-density
-        part; FLEX must warn (not silently drop) and still construct."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
+    def test_exchange_interaction_is_rejected(self):
+        """Exchange under 'squashed' is REJECTED (one policy since #107):
+        its vertex has no density-diagonal content, so the scheme would
+        drop it entirely -- zero effect, not an approximation. The old
+        behavior accepted it with a warning that called it approximated."""
+        with self.assertRaises(ValueError) as cm:
+            _make_flex_solver_with(
                 calc_scheme='squashed',
                 interactions={'Exchange': self._EXCHANGE_BODY})
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output),
-            "expected a warning about the density-density approximation")
-        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertIn('general', str(cm.exception))
 
-    def test_pairhop_interaction_warns(self):
-        """PairHop sets a separate flag from Exchange/PairLift, but its
-        off-diagonal vertices are also dropped by the density-density reduction,
-        so FLEX must warn for it too."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
+    def test_pairhop_interaction_is_rejected(self):
+        """PairHop likewise: its antidiagonal-slot vertex has no
+        density-diagonal content."""
+        with self.assertRaises(ValueError) as cm:
+            _make_flex_solver_with(
                 calc_scheme='squashed',
                 interactions={'PairHop': self._PAIRHOP_BODY})
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output),
-            "expected a density-density approximation warning for PairHop")
-        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertIn('general', str(cm.exception))
 
     def test_reduced_density_density_ok(self):
         """The standard reduced + density-density path must still construct."""
         solver = _make_flex_solver_with(calc_scheme='reduced')
         self.assertEqual(solver.calc_scheme, 'reduced')
 
-    def test_auto_scheme_exchange_warns(self):
-        """auto + exchange resolves to squashed (inherited RPA logic) and FLEX
-        must warn about the density-density approximation, not error."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
-                calc_scheme='auto',
-                interactions={
-                    'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
-                                    "   0    0    0    1    1   1.0   0.0\n",
-                    'Exchange': self._EXCHANGE_BODY,
-                })
-        self.assertEqual(solver.calc_scheme, 'squashed')
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output))
+    def test_auto_scheme_exchange_selects_general(self):
+        """auto + exchange resolves to GENERAL (the only scheme carrying
+        the Exchange vertex; the historical auto choice was squashed,
+        which silently dropped it -- #107)."""
+        solver = _make_flex_solver_with(
+            calc_scheme='auto',
+            interactions={
+                'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
+                                "   0    0    0    1    1   1.0   0.0\n",
+                'Exchange': self._EXCHANGE_BODY,
+            })
+        self.assertEqual(solver.calc_scheme, 'general')
 
     def test_auto_ring_ladder_rejected_with_clear_message(self):
         """auto + calc_type='ring+ladder' resolves to general (inherited), which
