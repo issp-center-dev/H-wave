@@ -886,6 +886,11 @@ class TestFLEXIronPnictide(unittest.TestCase):
         cls.chi_c = green_info["chiq_c"]
         cls.beta = 1.0 / cls.T
 
+    def test_auto_selected_the_general_scheme(self):
+        """The Kanamori set includes Exchange, so auto must resolve to
+        general -- the scheme in which Exchange genuinely acts."""
+        self.assertEqual(self.solver.calc_scheme, 'general')
+
     def test_spin_susceptibility_peaks_at_pi_0(self):
         """chi_s should peak at Q=(pi,0) or (0,pi), NOT (pi,pi).
 

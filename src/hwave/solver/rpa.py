@@ -872,7 +872,11 @@ class RPA:
                     "of {} has no density-diagonal content: the interaction "
                     "would have exactly zero effect (not an approximation). "
                     "Use calc_scheme='general', which carries the full "
-                    "vertex.".format(self.calc_scheme, ", ".join(dropped)))
+                    "vertex. (Note: FLEX's general scheme is spin-free "
+                    "only; with enable_spin_orbital or a spin-polarized "
+                    "setup no current FLEX scheme supports these "
+                    "interactions.)".format(
+                        self.calc_scheme, ", ".join(dropped)))
             if self.param_ham.get("PairLift"):
                 logger.warning(
                     "PairLift's particle-hole vertex is exactly zero "

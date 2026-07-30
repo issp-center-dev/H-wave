@@ -1018,10 +1018,11 @@ class TestFLEXSchemeGuards(unittest.TestCase):
     """FLEX-specific compatibility guards.
 
     The default reduced/squashed FLEX path consumes the reduced-shape (4-dim)
-    chi0q and reduces the interaction via the density-density diagonal
-    'kaabb->kab' (off-diagonal vertices dropped with a warning). The
-    calc_scheme='general' path keeps the full Kanamori vertices (paramagnetic
-    full-vertex MYO formulation, spin-free only).
+    chi0q and solves with the density-density diagonal 'kaabb->kab' of the
+    interaction; Exchange and PairHop carry no density-diagonal vertex and
+    are REJECTED there (one policy since #107). The calc_scheme='general'
+    path keeps the full Kanamori vertices (paramagnetic full-vertex MYO
+    formulation, spin-free only).
     """
 
     # transfer-format body that registers as an Exchange interaction
@@ -1075,6 +1076,62 @@ class TestFLEXSchemeGuards(unittest.TestCase):
                 'Exchange': self._EXCHANGE_BODY,
             })
         self.assertEqual(solver.calc_scheme, 'general')
+
+    def test_direct_rpa_rejects_exchange_and_pairhop(self):
+        """The policy lives in the shared consistency check; pin it on RPA
+        directly, not only through the inherited FLEX construction."""
+        import numpy as np
+
+        import hwave.solver.rpa as rpa_mod
+
+        for itype in ("Exchange", "PairHop"):
+            for scheme in ("reduced", "squashed"):
+                with self.subTest(interaction=itype, scheme=scheme):
+                    param_ham = {
+                        'Geometry': {'norb': 2, 'rvec': np.eye(3),
+                                     'center': [[0, 0, 0]] * 2},
+                        'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                        itype: {((0, 0, 0), (0, 1)): 0.3,
+                                ((0, 0, 0), (1, 0)): 0.3}}
+                    info = {'mode': 'RPA',
+                            'param': {'T': 2.0, 'filling': 0.5,
+                                      'CellShape': [2, 2, 1],
+                                      'SubShape': [1, 1, 1], 'Nmat': 4},
+                            'enable_spin_orbital': False,
+                            'calc_scheme': scheme, 'calc_type': 'ring'}
+                    with self.assertRaises(ValueError) as cm:
+                        rpa_mod.RPA(param_ham, {}, info)
+                    self.assertIn('general', str(cm.exception))
+
+    def test_auto_selection_matrix(self):
+        """auto: PairHop-only -> general; PairLift-only -> reduced (its
+        vertex is exactly zero, dropping is exact); empty Exchange table
+        -> reduced (content-based detection, not key presence)."""
+        import numpy as np
+
+        import hwave.solver.rpa as rpa_mod
+
+        def make(extra):
+            param_ham = {
+                'Geometry': {'norb': 2, 'rvec': np.eye(3),
+                             'center': [[0, 0, 0]] * 2},
+                'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                'CoulombIntra': {((0, 0, 0), (0, 0)): 1.0,
+                                 ((0, 0, 0), (1, 1)): 1.0}}
+            param_ham.update(extra)
+            info = {'mode': 'RPA',
+                    'param': {'T': 2.0, 'filling': 0.5,
+                              'CellShape': [2, 2, 1],
+                              'SubShape': [1, 1, 1], 'Nmat': 4},
+                    'enable_spin_orbital': False,
+                    'calc_scheme': 'auto', 'calc_type': 'ring'}
+            return rpa_mod.RPA(param_ham, {}, info).calc_scheme
+
+        entries = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}
+        self.assertEqual(make({'PairHop': entries}), 'general')
+        self.assertEqual(make({'PairLift': entries}), 'reduced')
+        self.assertEqual(make({'Exchange': {}}), 'reduced')
+        self.assertEqual(make({}), 'reduced')
 
     def test_auto_ring_ladder_rejected_with_clear_message(self):
         """auto + calc_type='ring+ladder' resolves to general (inherited), which

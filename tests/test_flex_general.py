@@ -881,8 +881,9 @@ class TestFLEXGeneralGuards(unittest.TestCase):
 
 
 class TestFLEXGeneralWarningGating(unittest.TestCase):
-    """The density-density reduction warning must fire for reduced/squashed but
-    be suppressed for general (where the off-diagonal vertices are kept)."""
+    """Scheme policy for exchange-type input: reduced/squashed REJECT
+    Exchange (no density-diagonal vertex content -- one policy since #107),
+    while general keeps the full vertex and constructs quietly."""
 
     def _construct(self, scheme, exchange=True):
         """Construct a 2-orbital FLEX with a real Exchange interaction
@@ -2073,14 +2074,13 @@ class TestGeneralLimits(unittest.TestCase):
 
     def test_general_no_density_density_warning(self):
         """General-path construction with an exchange-type interaction present
-        must NOT emit the density-density reduction warning.
+        must NOT emit any density-density warning.
 
-        This is the focused Hund-suppression counterpart to
-        TestFLEXGeneralWarningGating.test_warning_suppressed_for_general: it
-        reuses the exact same construction (which patches
-        ``Interaction.has_interaction_exchange`` to True so an exchange/Hund-type
-        interaction is seen as present), and asserts the warning stays silent on
-        the new-physics general path.
+        Counterpart to
+        TestFLEXGeneralWarningGating.test_general_with_exchange_constructs_quietly:
+        it reuses the same construction (a real Exchange interaction file;
+        the former mock of has_interaction_exchange is gone -- the policy is
+        content-based) and asserts silence on the general path.
         """
         gating = TestFLEXGeneralWarningGating()
         with _assert_no_warning(self, 'hwave.solver.flex'):
