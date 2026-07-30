@@ -1491,8 +1491,9 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
                     blocks[1][0, 0, 0, 0] = complex(2.0, np.nan)
                 d = tempfile.mkdtemp()
                 inp = self._write(d, blocks)
-                with self.assertRaises(ValueError):
+                with self.assertRaises(ValueError) as cm:
                     sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn('accept_up_block_only', str(cm.exception))
 
     def test_differing_blocks_are_rejected(self):
         import tempfile
@@ -1518,6 +1519,37 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
             green = sc._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIsNotNone(green)
         self.assertTrue(any('DIFFERING' in m for m in cm.output))
+
+    def test_comparison_is_sliced_and_short_circuits(self):
+        """The guard must compare one-frequency slices (bounded memory)
+        and stop at the first mismatch (early exit): instrument
+        np.array_equal and check the largest array it receives and the
+        call count when the FIRST frequency already differs."""
+        import tempfile
+        from unittest import mock
+
+        import hwave.sc as sc
+
+        blocks = self._blocks(1.0)
+        blocks[1][0, 0, 0, 0] += 1.0     # first frequency differs
+        d = tempfile.mkdtemp()
+        inp = self._write(d, blocks)
+        calls = []
+        real_eq = np.array_equal
+
+        def spy(a, b, equal_nan=False):
+            calls.append(np.asarray(a).size)
+            return real_eq(a, b, equal_nan=equal_nan)
+
+        with mock.patch.object(np, 'array_equal', side_effect=spy):
+            with self.assertRaises(ValueError):
+                sc._load_flex_green(inp, 1, 2, 1, 1)
+        nvol_slice = 2 * 1 * 1           # (nvol, norb, norb) elements
+        self.assertTrue(calls, "the guard must compare something")
+        self.assertLessEqual(max(calls), nvol_slice,
+                             "comparison must be per-frequency slices")
+        self.assertLessEqual(len(calls), 2,
+                             "a first-frequency mismatch must short-circuit")
 
     def test_dynamic_route_rejects_differing_blocks(self):
         import tempfile
