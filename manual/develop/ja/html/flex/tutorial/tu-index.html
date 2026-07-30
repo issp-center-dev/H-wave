@@ -604,8 +604,9 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と同じ形状</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: 感受率をどのスピン/電荷頂点と組み合わせるべきか、および
 形状の系統を示すタグ。reduced/squashed スキームは <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道
-形状、<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>）、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair 形状 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>、および <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> 電荷頂点にMYOの値を
-用いること）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）はこのタグで軌道
+形状、<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>）、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair 形状 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>。かつて <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> 電荷頂点にあった
+MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定で解消され、現在は
+両ビルダーは一致します）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）はこのタグで軌道
 インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair 次元が
 一致（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）し形状だけでは区別できないため、このタグが必須です。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>: <strong>general</strong> スキームのみが書き出します。値は

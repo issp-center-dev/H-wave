@@ -132,8 +132,8 @@ The matrix elements are:</p>
 </tr>
 <tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(l_1 = l_3 \neq l_2 = l_4\)</span></p></td>
 <td><p>Cross</p></td>
-<td><p><span class="math notranslate nohighlight">\(U' - I\)</span></p></td>
-<td><p><span class="math notranslate nohighlight">\(-U' + J - I\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(U' + I - J + J'\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(-U' - I + J + J'\)</span></p></td>
 </tr>
 <tr class="row-even"><td><p><span class="math notranslate nohighlight">\(l_1 = l_2 \neq l_3 = l_4\)</span></p></td>
 <td><p>Density</p></td>
@@ -141,12 +141,26 @@ The matrix elements are:</p>
 <td><p><span class="math notranslate nohighlight">\(2U' - J\)</span></p></td>
 </tr>
 <tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(l_1 = l_4 \neq l_2 = l_3\)</span></p></td>
-<td><p>Exchange</p></td>
-<td><p><span class="math notranslate nohighlight">\(J' + P\)</span></p></td>
-<td><p><span class="math notranslate nohighlight">\(J' + P\)</span></p></td>
+<td><p>Pair hop</p></td>
+<td><p><span class="math notranslate nohighlight">\(P\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(P\)</span></p></td>
 </tr>
 </tbody>
 </table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The Cross-row entries for <span class="math notranslate nohighlight">\(J\)</span>, <span class="math notranslate nohighlight">\(J'\)</span> and <span class="math notranslate nohighlight">\(I\)</span>, and the
+placement of <span class="math notranslate nohighlight">\(J'\)</span> in the Cross row rather than the last row, follow
+the exact-diagonalization adjudication of the interaction vertices: the
+Hund term contributes <span class="math notranslate nohighlight">\(S \mathrel{-}= J\)</span>, <span class="math notranslate nohighlight">\(C \mathrel{+}= J\)</span>,
+the Exchange term <span class="math notranslate nohighlight">\(S \mathrel{+}= J'\)</span>, <span class="math notranslate nohighlight">\(C \mathrel{+}= J'\)</span>,
+and the Ising term enters <span class="math notranslate nohighlight">\(S\)</span> with <span class="math notranslate nohighlight">\(+I\)</span>. For the
+SU(2)-symmetric Kanamori combination (<span class="math notranslate nohighlight">\(J' = J\)</span>) these reproduce the
+standard literature matrices (no <span class="math notranslate nohighlight">\(J\)</span> in the Cross <span class="math notranslate nohighlight">\(S\)</span> entry and
+<span class="math notranslate nohighlight">\(-U' + 2J\)</span> in the Cross <span class="math notranslate nohighlight">\(C\)</span> entry). Susceptibility files
+produced before this correction carry no <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code> field and
+are rejected when the interaction set contains Hund, Exchange or Ising.</p>
+</div>
 <p>The RPA susceptibilities are</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">
 <span class="eqno">(7.38)<a class="headerlink" href="#equation-algorithm-eliashberg-8" title="Link to this equation">¶</a></span>\[\hat{X}^s(\mathbf{q}) = \left[\hat{I} - \hat{X}^{(0)}(\mathbf{q})\, \hat{S}\right]^{-1} \hat{X}^{(0)}(\mathbf{q})\]</div>

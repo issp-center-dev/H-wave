@@ -125,16 +125,29 @@ RPA感受率は
      - :math:`U`
    * - :math:`l_1 = l_3 \neq l_2 = l_4`
      - クロス
-     - :math:`U' - I`
-     - :math:`-U' + J - I`
+     - :math:`U' + I - J + J'`
+     - :math:`-U' - I + J + J'`
    * - :math:`l_1 = l_2 \neq l_3 = l_4`
      - 密度
      - :math:`J - 2I`
      - :math:`2U' - J`
    * - :math:`l_1 = l_4 \neq l_2 = l_3`
-     - 交換
-     - :math:`J' + P`
-     - :math:`J' + P`
+     - ペアホップ
+     - :math:`P`
+     - :math:`P`
+
+.. note::
+
+   クロス行の :math:`J` 、 :math:`J'` 、 :math:`I` の各項、および :math:`J'`
+   が最終行ではなくクロス行に現れる配置は、相互作用頂点の厳密対角化による
+   裁定に従っています。Hund 項は :math:`S` に :math:`-J` ・ :math:`C` に
+   :math:`+J` を、Exchange 項は両行列に :math:`+J'` を、Ising 項は :math:`S`
+   に :math:`+I` を与えます。SU(2) 対称な Kanamori の組（ :math:`J' = J` ）
+   ではこれらが標準的な文献の行列（クロス :math:`S` に :math:`J` なし、
+   クロス :math:`C` に :math:`-U' + 2J` ）を再現します。この修正より前に
+   生成された感受率ファイルは ``sc_vertex_version`` フィールドを持たず、
+   相互作用に Hund・Exchange・Ising が含まれる場合は読み込み時に拒否され
+   ます。
 
 RPA感受率は
 

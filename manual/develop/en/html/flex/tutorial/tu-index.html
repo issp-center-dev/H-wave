@@ -633,7 +633,10 @@ same shape as <code class="docutils literal notranslate"><span class="pre">chi0q
 to be paired with, and which shape family they have: <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code> for the
 reduced/squashed schemes (spin-orbital shape, <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>) or
 <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex scheme (orbital-pair shape,
-<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>, and the MYO value of the <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> charge vertex). The
+<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>; the historical MYO-vs-Kuroki difference in the
+<code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> charge vertex was resolved by the exact-diagonalization
+adjudication of the per-type vertex content, so the two builders now
+coincide). The
 Eliashberg loader (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) uses this tag to interpret the orbital
 indices; it is essential for two-orbital systems, where the spin-orbital and
 orbital-pair dimensions coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>) and shape alone is ambiguous.</p></li>

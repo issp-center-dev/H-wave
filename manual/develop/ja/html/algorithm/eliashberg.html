@@ -133,8 +133,8 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 </tr>
 <tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(l_1 = l_3 \neq l_2 = l_4\)</span></p></td>
 <td><p>クロス</p></td>
-<td><p><span class="math notranslate nohighlight">\(U' - I\)</span></p></td>
-<td><p><span class="math notranslate nohighlight">\(-U' + J - I\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(U' + I - J + J'\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(-U' - I + J + J'\)</span></p></td>
 </tr>
 <tr class="row-even"><td><p><span class="math notranslate nohighlight">\(l_1 = l_2 \neq l_3 = l_4\)</span></p></td>
 <td><p>密度</p></td>
@@ -142,12 +142,25 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 <td><p><span class="math notranslate nohighlight">\(2U' - J\)</span></p></td>
 </tr>
 <tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(l_1 = l_4 \neq l_2 = l_3\)</span></p></td>
-<td><p>交換</p></td>
-<td><p><span class="math notranslate nohighlight">\(J' + P\)</span></p></td>
-<td><p><span class="math notranslate nohighlight">\(J' + P\)</span></p></td>
+<td><p>ペアホップ</p></td>
+<td><p><span class="math notranslate nohighlight">\(P\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(P\)</span></p></td>
 </tr>
 </tbody>
 </table>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>クロス行の <span class="math notranslate nohighlight">\(J\)</span> 、 <span class="math notranslate nohighlight">\(J'\)</span> 、 <span class="math notranslate nohighlight">\(I\)</span> の各項、および <span class="math notranslate nohighlight">\(J'\)</span>
+が最終行ではなくクロス行に現れる配置は、相互作用頂点の厳密対角化による
+裁定に従っています。Hund 項は <span class="math notranslate nohighlight">\(S\)</span> に <span class="math notranslate nohighlight">\(-J\)</span> ・ <span class="math notranslate nohighlight">\(C\)</span> に
+<span class="math notranslate nohighlight">\(+J\)</span> を、Exchange 項は両行列に <span class="math notranslate nohighlight">\(+J'\)</span> を、Ising 項は <span class="math notranslate nohighlight">\(S\)</span>
+に <span class="math notranslate nohighlight">\(+I\)</span> を与えます。SU(2) 対称な Kanamori の組（ <span class="math notranslate nohighlight">\(J' = J\)</span> ）
+ではこれらが標準的な文献の行列（クロス <span class="math notranslate nohighlight">\(S\)</span> に <span class="math notranslate nohighlight">\(J\)</span> なし、
+クロス <span class="math notranslate nohighlight">\(C\)</span> に <span class="math notranslate nohighlight">\(-U' + 2J\)</span> ）を再現します。この修正より前に
+生成された感受率ファイルは <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code> フィールドを持たず、
+相互作用に Hund・Exchange・Ising が含まれる場合は読み込み時に拒否され
+ます。</p>
+</div>
 <p>RPA感受率は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">
 <span class="eqno">(7.38)<a class="headerlink" href="#equation-algorithm-eliashberg-8" title="Link to this equation">¶</a></span>\[\hat{X}^s(\mathbf{q}) = \left[\hat{I} - \hat{X}^{(0)}(\mathbf{q})\, \hat{S}\right]^{-1} \hat{X}^{(0)}(\mathbf{q})\]</div>
