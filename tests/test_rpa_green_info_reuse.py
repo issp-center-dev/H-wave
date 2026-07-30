@@ -204,5 +204,82 @@ class TestFileRouteExceptionType(unittest.TestCase):
         self.assertIn("16 in 32", partial[0])
 
 
+class TestReusedFrequencyMetadata(unittest.TestCase):
+    """save_results after a reused-chi0q solve must label the frequency
+    axis of the run that PRODUCED the bubble. Before the metadata
+    inheritance, a 9-frequency partial bubble reused under a full-range
+    config was saved with freq_index 0..31 and nmat 32 -- a mislabeling
+    this PR made reachable by fixing the reuse crash."""
+
+    def _make_ranged(self, freq_range):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        r = read_input_k.QLMSkInput(
+            {'path_to_input': 'tests/rpa/input_2orb',
+             'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                             'Geometry': 'geom.dat',
+                             'Transfer': 'transfer.dat',
+                             'CoulombInter': 'onsite_inter.dat'}})
+        par = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+               'SubShape': [1, 1, 1], 'Nmat': 32}
+        if freq_range is not None:
+            par['matsubara_frequency'] = freq_range
+        sv = rpa_mod.RPA(r.get_param("ham"), {},
+                         {'mode': 'RPA', 'param': par,
+                          'enable_spin_orbital': False,
+                          'calc_scheme': 'general', 'calc_type': 'ring'})
+        return sv, r
+
+    def test_partial_bubble_keeps_its_producing_axis(self):
+        import shutil
+        import tempfile
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = self._make_ranged([12, 20])
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+        self.assertIn('chi0q_freq_meta', g)
+
+        sv2, _ = self._make_ranged(None)
+        sv2.solve(g, 'tests/rpa/output')
+        d = tempfile.mkdtemp()
+        try:
+            sv2.save_results({'path_to_output': d, 'chi0q': 'chi0q.npz',
+                              'chiq': 'chiq.npz'}, g)
+            for f in ('chi0q.npz', 'chiq.npz'):
+                z = np.load(os.path.join(d, f))
+                np.testing.assert_array_equal(z['freq_index'],
+                                              np.arange(12, 21))
+                self.assertEqual(int(z['nmat']), 32)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_untagged_partial_bubble_gets_the_ambiguous_label(self):
+        """Without producing-run metadata (a hand-built green_info), a
+        partial bubble must be labeled 0..n-1 with NO nmat claim -- the
+        same explicit ambiguity as a legacy chi0q_init file -- rather
+        than the reusing run's full axis."""
+        import shutil
+        import tempfile
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = self._make_ranged([12, 20])
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+        g.pop('chi0q_freq_meta')
+
+        sv2, _ = self._make_ranged(None)
+        sv2.solve(g, 'tests/rpa/output')
+        d = tempfile.mkdtemp()
+        try:
+            sv2.save_results({'path_to_output': d, 'chi0q': 'chi0q.npz'}, g)
+            z = np.load(os.path.join(d, 'chi0q.npz'))
+            np.testing.assert_array_equal(z['freq_index'], np.arange(9))
+            self.assertNotIn('nmat', z)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

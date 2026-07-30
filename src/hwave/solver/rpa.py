@@ -964,6 +964,24 @@ class RPA:
             # which used to be misreported as a partial frequency range)
             nfreq = (chi0q.shape[1] if self.spin_mode == "spin-diag"
                      else chi0q.shape[0])
+            # Frequency provenance for save_results: inherit the axis of
+            # the run that PRODUCED this chi0q. Priority: metadata stored
+            # by a previous in-memory solve; else metadata already set by
+            # the chi0q_init file reader on this instance; else -- an
+            # untagged partial array -- fall back to the ambiguous 0..n-1
+            # labeling rather than fabricating a full-axis claim.
+            mem_meta = green_info.get("chi0q_freq_meta")
+            if mem_meta is not None:
+                self._chi0q_init_meta = {
+                    "freq_index": mem_meta.get("freq_index"),
+                    "nmat": mem_meta.get("nmat"),
+                    "coeff_tail": mem_meta.get("coeff_tail"),
+                }
+            elif (getattr(self, "_chi0q_init_meta", None) is None
+                    and nfreq != self.nmat):
+                self._chi0q_init_meta = {
+                    "freq_index": None, "nmat": None, "coeff_tail": None,
+                }
             if nfreq != self.nmat:
                 logger.info("partial range in matsubara frequency: {} in {}".format(nfreq, self.nmat))
                 #self.nmat = chi0q.shape[0]
@@ -1027,6 +1045,17 @@ class RPA:
                 pass
 
             green_info["chi0q"] = _bk.to_host(chi0q)
+            # Record the producing run's frequency metadata alongside: a
+            # later solver reusing this green_info (issue #109) must label
+            # its outputs with THIS axis, exactly as the file route does via
+            # _chi0q_init_meta -- stamping the reusing run's own
+            # freq_index/nmat mislabeled a partial-range bubble as a full
+            # axis (measured: 9 frequencies saved with freq_index 0..31).
+            green_info["chi0q_freq_meta"] = {
+                "freq_index": list(self.freq_index),
+                "nmat": int(self.nmat),
+                "coeff_tail": float(getattr(self, "coeff_tail", 0.0)),
+            }
 
         if self.calc_chiq:
             # ham_inter_q is built on the host at init; mirror it to chi0q's
