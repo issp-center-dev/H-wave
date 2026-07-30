@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
+from hwave.solver.vertex_table import fierz_coefficients
 from . import backend as _bk
 from . import fold
 from . import matsubara as _ms
@@ -639,7 +640,7 @@ class Interaction:
                         orb = (s4, b, s3, a, s1, a, s2, b)
                         ham_r[(*irvec, *orb)] += v * w
 
-        def _append_inter_cross(type, coeff, spins, tbl=None):
+        def _append_inter_cross(type, tbl=None):
             # Longitudinal cross-slot (Fierz) content, adjudicated against
             # exact diagonalization in #113: the ring's W carried the
             # density (aa,bb) slots of each type but not the (ab,ab)
@@ -673,6 +674,20 @@ class Interaction:
             if has_sub:
                 filtered = self._reshape_interaction(filtered, False)
             filtered = _symmetrised(type, filtered)
+            # spin-resolved coefficients DERIVED from the adjudicated S/C
+            # table via the channel decomposition W_same = (C - S)/2,
+            # W_cross = (C + S)/2 (hwave.solver.vertex_table) -- the values
+            # previously hand-coded here per type now have one source
+            w_same, w_cross = fierz_coefficients(type)
+            spins = {}
+            if w_same != 0.0:
+                spins[(0, 0, 0, 0)] = w_same
+                spins[(1, 1, 1, 1)] = w_same
+            if w_cross != 0.0:
+                spins[(0, 0, 1, 1)] = w_cross
+                spins[(1, 1, 0, 0)] = w_cross
+            if not spins:
+                return
             for (irvec, orbvec), v in filtered.items():
                 if tuple(irvec) != (0, 0, 0):
                     continue
@@ -687,7 +702,7 @@ class Interaction:
                     # in every adjudicated cell, while the pair-antidiagonal
                     # placement reproduces the old 1e-2 deficiency
                     orb = (s4, a, s3, b, s1, a, s2, b)
-                    fierz_r[(*irvec, *orb)] += coeff * v * w
+                    fierz_r[(*irvec, *orb)] += v * w
 
         if 'Coulomb' in self.param_ham.keys():
             # The aggregate 'Coulomb' input provides both the intra and inter
@@ -707,7 +722,7 @@ class Interaction:
             _append_inter('CoulombIntra', coulomb_intra)
             _append_inter('CoulombInter', coulomb_inter)
             _append_inter_cross(
-                'CoulombInter', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 },
+                'CoulombInter',
                 tbl=(wan90.split_coulomb(
                         self.param_ham_orig['Coulomb'])[1]
                      if getattr(self.lattice, "has_sublattice", False)
@@ -722,19 +737,19 @@ class Interaction:
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
-            _append_inter_cross('CoulombInter', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 })
+            _append_inter_cross('CoulombInter')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
-            _append_inter_cross('Hund', +1.0, { (0,0,0,0): 1, (1,1,1,1): 1 })
+            _append_inter_cross('Hund')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
-            _append_inter_cross('Ising', -1.0, { (0,0,0,0): 1, (1,1,1,1): 1 })
+            _append_inter_cross('Ising')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
@@ -745,7 +760,7 @@ class Interaction:
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
-            _append_inter_cross('Exchange', +1.0, { (0,0,1,1): 1, (1,1,0,0): 1 })
+            _append_inter_cross('Exchange')
             self._has_interaction = True
             self._has_interaction_exchange = True
 
