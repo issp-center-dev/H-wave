@@ -94,24 +94,26 @@ def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
 
 
 def _chi0q_fingerprint(arr):
-    """Cheap content binding for chi0q provenance.
+    """Content binding for chi0q provenance.
 
     Provenance metadata travels in a caller-owned dict, so a caller can
     replace the array while keeping the metadata; shape checks alone
-    cannot see a same-shaped replacement (measured: a zero bubble
-    inherited the [12..20] axis of the array it displaced). A strided
-    sample keeps the cost negligible for production-size tensors while
-    catching any accidental replacement; legitimate copies hash equal.
+    cannot see a same-shaped replacement. The FULL canonical byte content
+    is hashed -- a strided sample was shown to miss single-element edits
+    of unsampled positions (round-6 review). blake2b throughput makes the
+    cost linear but small next to the solve itself; a non-contiguous view
+    or a device-backed array is converted first, which may copy.
+    Legitimate copies hash equal.
     """
     import hashlib
 
-    a = np.ascontiguousarray(arr)
-    flat = a.reshape(-1)
-    step = max(1, flat.size // 4096)
+    from . import backend as _bk_local
+
+    a = np.ascontiguousarray(_bk_local.to_host(arr))
     h = hashlib.blake2b(digest_size=16)
     h.update(str(a.shape).encode())
     h.update(str(a.dtype).encode())
-    h.update(flat[::step].tobytes())
+    h.update(memoryview(a).cast("B"))
     return h.hexdigest()
 
 
@@ -127,36 +129,37 @@ def _validate_chi0q_provenance(meta, nfreq, source):
     Returns {"freq_index": int ndarray or None, "nmat": int or None,
     "coeff_tail": float or None}. Raises ValueError on any defect.
     """
-    if not isinstance(meta, dict):
+    import operator
+    from collections.abc import Mapping
+
+    if not isinstance(meta, Mapping):
         raise ValueError(
             "chi0q provenance from {} must be a mapping, got {}".format(
                 source, type(meta).__name__))
     out = {"freq_index": None, "nmat": None, "coeff_tail": None}
     m_nmat = meta.get("nmat")
     if m_nmat is not None:
-        val = np.asarray(m_nmat)
-        if val.size != 1:
+        # strict integral scalar: operator.index accepts int and NumPy
+        # integer scalars (including the 0-d arrays npz files store) and
+        # rejects floats, strings, complex, containers and booleans --
+        # every one of which slipped past size-1 coercion (round 6)
+        try:
+            val = np.asarray(m_nmat)
+            if val.ndim != 0:
+                raise TypeError("not a scalar")
+            item = val[()]
+            if isinstance(item, (bool, np.bool_)):
+                raise TypeError("boolean")
+            n = operator.index(item)
+        except TypeError:
             raise ValueError(
-                "chi0q provenance from {}: nmat must be a scalar, got "
-                "shape {}".format(source, val.shape))
-        item = val.reshape(())[()]
-        if isinstance(item, (bool, np.bool_)):
-            raise ValueError(
-                "chi0q provenance from {}: nmat must be an integer, got "
-                "a boolean".format(source))
-        f = float(np.real(item))
-        if np.iscomplexobj(item) and np.imag(item) != 0.0:
-            raise ValueError(
-                "chi0q provenance from {}: nmat must be real".format(source))
-        if not (np.isfinite(f) and f == int(f)):
-            raise ValueError(
-                "chi0q provenance from {}: nmat must be an integer, got "
-                "{!r}".format(source, m_nmat))
-        if int(f) <= 0:
+                "chi0q provenance from {}: nmat must be an integral "
+                "scalar, got {!r}".format(source, m_nmat))
+        if n <= 0:
             raise ValueError(
                 "chi0q provenance from {}: nmat must be positive, got "
-                "{}".format(source, int(f)))
-        out["nmat"] = int(f)
+                "{}".format(source, n))
+        out["nmat"] = n
     fi = meta.get("freq_index")
     if fi is not None:
         fi = np.asarray(fi)
@@ -1139,8 +1142,20 @@ class RPA:
                         "refusing to solve a semantically different "
                         "tensor.".format(m_spin, self.spin_mode))
                 self._chi0q_init_meta = dict(norm)
-            elif (getattr(self, "_chi0q_init_meta", None) is None
-                    and nfreq != self.nmat):
+            elif getattr(self, "_chi0q_init_meta", None) is not None:
+                # metadata set by the chi0q_init file reader on this
+                # instance: verify it still describes THIS array before
+                # trusting it (the caller may have replaced info["chi0q"]
+                # between read_init and solve)
+                file_fp = self._chi0q_init_meta.get("fingerprint")
+                if (file_fp is not None
+                        and file_fp != _chi0q_fingerprint(chi0q)):
+                    raise ValueError(
+                        "the chi0q_init metadata on this solver does not "
+                        "belong to the supplied chi0q (content fingerprint "
+                        "mismatch): the array was replaced after the file "
+                        "was read. Recompute or re-read the file.")
+            elif nfreq != self.nmat:
                 self._chi0q_init_meta = {
                     "freq_index": None, "nmat": None, "coeff_tail": None,
                 }
@@ -1845,6 +1860,10 @@ class RPA:
              "coeff_tail": (data["coeff_tail"]
                             if "coeff_tail" in data else None)},
             nfreq_file, source=file_name)
+        # bind the metadata to the LOADED tensor: if the caller replaces
+        # info["chi0q"] with a same-shaped array before solve(), the file's
+        # axis must not be inherited by the replacement (round-6 review)
+        self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).

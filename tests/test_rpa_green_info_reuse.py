@@ -603,5 +603,97 @@ class TestRoundFiveHardening(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class TestRoundSixHardening(unittest.TestCase):
+    """Round-6 items: strict integral nmat, full-content fingerprint, and
+    file-route fingerprint binding."""
+
+    def _solved(self):
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv, r = _make('general', inter)
+        g = r.get_param("green")
+        sv.solve(g, 'tests/rpa/output')
+        return sv, g
+
+    def test_nmat_must_be_a_strict_integral_scalar(self):
+        """Size-1 coercion accepted [32]; float/string/complex were
+        silently converted. operator.index semantics now apply."""
+        sv1, g = self._solved()
+        base = dict(g['chi0q_freq_meta'])
+        for name, bad in (("list", [32]), ("1-d array", np.array([32])),
+                          ("float", 32.0), ("string", "32"),
+                          ("complex", 32 + 0j), ("mapping", {"x": 1})):
+            with self.subTest(nmat=name):
+                g2 = dict(g)
+                g2['chi0q_freq_meta'] = dict(base, nmat=bad)
+                sv2, _ = _make('general',
+                               {'CoulombInter': 'onsite_inter.dat'})
+                with self.assertRaises(ValueError):
+                    sv2.solve(g2, 'tests/rpa/output')
+
+    def test_single_element_edit_changes_the_fingerprint(self):
+        """The full-content hash must catch ANY edit: the strided sample
+        missed single-element changes at unsampled positions."""
+        sv1, g = self._solved()
+        edited = np.array(g['chi0q'], copy=True)
+        # write through .flat: the solver's chi0q may be F-ordered, where
+        # reshape(-1) silently returns a copy and the edit would be lost
+        edited.flat[1] = edited.flat[1] + 1e-8
+        self.assertFalse(np.array_equal(edited, np.asarray(g['chi0q'])))
+        g['chi0q'] = edited
+        sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g, 'tests/rpa/output')
+        self.assertIn('fingerprint', str(cm.exception))
+
+    def test_file_loaded_tensor_replaced_before_solve_is_rejected(self):
+        """chi0q_init metadata is bound to the LOADED tensor: replacing
+        info['chi0q'] between read_init and solve must not inherit the
+        file's axis."""
+        import tempfile
+
+        sv1, g = self._solved()
+        d = tempfile.mkdtemp()
+        try:
+            np.savez(os.path.join(d, 'chi0q_part.npz'),
+                     chi0q=np.asarray(g['chi0q'])[:9],
+                     freq_index=np.arange(12, 21), nmat=32)
+            sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+            g2 = r2.get_param("green")
+            g2.update(sv2.read_init({'path_to_input': d,
+                                     'chi0q_init': 'chi0q_part.npz'}))
+            g2['chi0q'] = np.zeros_like(np.asarray(g2['chi0q']))
+            with self.assertRaises(ValueError) as cm:
+                sv2.solve(g2, 'tests/rpa/output')
+            self.assertIn('fingerprint', str(cm.exception))
+        finally:
+            import shutil
+
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_untouched_file_tensor_is_accepted(self):
+        """The binding must not reject the legitimate chi0q_init flow."""
+        import shutil
+        import tempfile
+
+        sv1, g = self._solved()
+        d = tempfile.mkdtemp()
+        try:
+            np.savez(os.path.join(d, 'chi0q_part.npz'),
+                     chi0q=np.asarray(g['chi0q'])[:9],
+                     freq_index=np.arange(12, 21), nmat=32)
+            sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+            g2 = r2.get_param("green")
+            g2.update(sv2.read_init({'path_to_input': d,
+                                     'chi0q_init': 'chi0q_part.npz'}))
+            sv2.solve(g2, 'tests/rpa/output')
+            sv2.save_results({'path_to_output': d, 'chiq': 'chiq.npz'}, g2)
+            z = np.load(os.path.join(d, 'chiq.npz'))
+            np.testing.assert_array_equal(z['freq_index'],
+                                          np.arange(12, 21))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
