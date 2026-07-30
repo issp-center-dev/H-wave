@@ -967,15 +967,16 @@ class RPA:
             # arrives here, so establish spin_mode from the shape exactly
             # as the file-based chi0q_init route does (issue #109)
             chi0q = green_info["chi0q"]
-            if not np.issubdtype(np.asarray(chi0q).dtype, np.number):
-                raise ValueError(
-                    "chi0q from green_info has non-numeric dtype {}".format(
-                        np.asarray(chi0q).dtype))
             if not gpu_active:
                 # normalize a device array to the selected (host) backend
-                # instead of failing deep inside the inflation einsums
+                # FIRST: real device arrays forbid the implicit conversion
+                # a NumPy-based dtype probe would attempt
                 chi0q = _bk.to_host(chi0q)
                 green_info["chi0q"] = chi0q
+            if not np.issubdtype(chi0q.dtype, np.number):
+                raise ValueError(
+                    "chi0q from green_info has non-numeric dtype {}".format(
+                        chi0q.dtype))
             self._validate_chi0q_shape(chi0q, source="green_info")
             # spin-diag arrays carry the spin-block axis first; the
             # frequency axis is shape[1] there (shape[0] == 2 == nblock,
@@ -999,9 +1000,26 @@ class RPA:
                 if fi is not None:
                     fi = np.asarray(fi)
                     m_nmat = mem_meta.get("nmat")
+                    if m_nmat is not None:
+                        try:
+                            m_nmat = int(m_nmat)
+                        except (TypeError, ValueError):
+                            raise ValueError(
+                                "chi0q_freq_meta carries a malformed nmat "
+                                "({!r})".format(mem_meta.get("nmat")))
+                        if m_nmat <= 0:
+                            raise ValueError(
+                                "chi0q_freq_meta carries a non-positive "
+                                "nmat ({})".format(m_nmat))
+                    if (fi.ndim != 1
+                            or not np.issubdtype(fi.dtype, np.integer)):
+                        raise ValueError(
+                            "chi0q_freq_meta freq_index must be a "
+                            "one-dimensional integer array, got dtype {} "
+                            "with shape {}".format(fi.dtype, fi.shape))
                     if (len(fi) != nfreq
                             or len(np.unique(fi)) != len(fi)
-                            or (m_nmat is not None
+                            or (m_nmat is not None and len(fi) > 0
                                 and (fi.min() < 0 or fi.max() >= m_nmat))):
                         raise ValueError(
                             "chi0q_freq_meta does not describe the supplied "
@@ -1016,11 +1034,20 @@ class RPA:
                         "has norb = {}; the bubble does not describe this "
                         "system.".format(m_norb, self.norb))
                 m_scheme = mem_meta.get("calc_scheme")
-                if m_scheme is not None and m_scheme != self.calc_scheme:
-                    raise ValueError(
-                        "chi0q was produced under calc_scheme = '{}' but "
-                        "this solver uses '{}'.".format(
-                            m_scheme, self.calc_scheme))
+                if m_scheme is not None:
+                    # reduced and squashed share one bubble representation
+                    # (the reduced 'kab' layout; measured: a reduced-produced
+                    # bubble solved under squashed matches an internal
+                    # squashed recomputation exactly), so only the
+                    # REPRESENTATION class must agree
+                    rep = {"reduced": "reduced", "squashed": "reduced"}
+                    if (rep.get(m_scheme, m_scheme)
+                            != rep.get(self.calc_scheme, self.calc_scheme)):
+                        raise ValueError(
+                            "chi0q was produced under calc_scheme = '{}' "
+                            "whose bubble representation is incompatible "
+                            "with this solver's '{}'.".format(
+                                m_scheme, self.calc_scheme))
                 m_spin = mem_meta.get("spin_mode")
                 if m_spin is not None and m_spin != self.spin_mode:
                     # the producer knows its spin structure; shape inference
@@ -1059,6 +1086,16 @@ class RPA:
             # chi0q has none (a same-instance green0 may belong to an older
             # bubble)
             self._chi0q_external = True
+            if (getattr(self, "calc_type", "ring") == "ring+ladder"
+                    and self.spin_mode == "spin-diag"):
+                # fail HERE, before the longitudinal solve populates chiq:
+                # rejecting inside the transverse build would leave a fresh
+                # chiq in green_info from a run that then failed
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be "
+                    "combined with an externally supplied chi0q: the "
+                    "channel needs the Green's functions that produced "
+                    "this exact bubble. Recompute chi0q internally.")
             if nfreq != self.nmat:
                 logger.info("partial range in matsubara frequency: {} in {}".format(nfreq, self.nmat))
                 #self.nmat = chi0q.shape[0]
@@ -1106,6 +1143,9 @@ class RPA:
             self.green0 = green0
             self.green0_tail = green0_tail
             self._chi0q_external = False
+            # a previous chi0q_init on this instance must not relabel the
+            # axis of a bubble THIS run computes
+            self._chi0q_init_meta = None
 
             chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
@@ -1351,6 +1391,13 @@ class RPA:
         # the metadata of the file that produced the chi0q -- stamping the
         # CURRENT run's values would mislabel the axis.
         def _freq_meta_kwargs(arr):
+            # the frequency axis of a spin-diag bare bubble is axis 1
+            # (axis 0 is the two-spin block); every other saved array
+            # leads with frequency
+            if arr.ndim in (5, 7) and arr.shape[0] == 2:
+                nfreq_arr = arr.shape[1]
+            else:
+                nfreq_arr = arr.shape[0]
             init_meta = getattr(self, "_chi0q_init_meta", None)
             if init_meta is None:
                 # coeff_tail provenance (issue #80): the tail correction
@@ -1369,7 +1416,7 @@ class RPA:
                 # axis (0..n-1) without fabricating an nmat claim; a
                 # downstream loader then treats the file explicitly as
                 # ambiguous unless its config Nmat matches.
-                kwargs["freq_index"] = np.arange(arr.shape[0])
+                kwargs["freq_index"] = np.arange(nfreq_arr)
             if init_meta["nmat"] is not None:
                 kwargs["nmat"] = init_meta["nmat"]
             # pass-through: re-save the INPUT file's coeff_tail (stamping the
@@ -1517,6 +1564,10 @@ class RPA:
         the spin_mode dispatch unset and crashed with AttributeError
         (issue #109).
         """
+        if not np.issubdtype(chi0q.dtype, np.number):
+            raise ValueError(
+                "chi0q from {}: non-numeric dtype {}".format(
+                    source, chi0q.dtype))
         if self.calc_scheme == "general":
             if len(chi0q.shape) == 6:
                 # spin-free or spinful

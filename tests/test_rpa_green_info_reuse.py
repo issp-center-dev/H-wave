@@ -406,5 +406,107 @@ class TestRoundThreeHardening(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class TestRoundFourHardening(unittest.TestCase):
+    """Round-4 items: representation compatibility, stale file metadata,
+    fallback labels on spin-diag arrays, and direct mismatch rejections."""
+
+    def _solved(self, scheme, path='tests/rpa/input_2orb',
+                inter=None):
+        inter = inter or {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv, r = _make(scheme, inter, path=path)
+        g = r.get_param("green")
+        sv.solve(g, 'tests/rpa/output')
+        return sv, g
+
+    def test_reduced_bubble_is_accepted_by_a_squashed_consumer(self):
+        """reduced and squashed share one bubble representation; a
+        reduced-produced bubble solved under squashed must match an
+        internal squashed recomputation exactly."""
+        sv1, g = self._solved('reduced')
+        sv2, r2 = _make('squashed', {'CoulombInter': 'onsite_inter.dat'})
+        g2 = r2.get_param("green")
+        g2['chi0q'] = g['chi0q']
+        g2['chi0q_freq_meta'] = dict(g['chi0q_freq_meta'])
+        sv2.solve(g2, 'tests/rpa/output')
+        sv3, r3 = _make('squashed', {'CoulombInter': 'onsite_inter.dat'})
+        g3 = r3.get_param("green")
+        sv3.solve(g3, 'tests/rpa/output')
+        np.testing.assert_allclose(np.asarray(g2['chiq']),
+                                   np.asarray(g3['chiq']),
+                                   rtol=0.0, atol=1e-13)
+
+    def test_general_bubble_is_rejected_by_a_reduced_consumer(self):
+        sv1, g = self._solved('general')
+        sv2, r2 = _make('reduced', {'CoulombInter': 'onsite_inter.dat'})
+        g2 = r2.get_param("green")
+        g2['chi0q'] = g['chi0q']
+        g2['chi0q_freq_meta'] = dict(g['chi0q_freq_meta'])
+        with self.assertRaises(ValueError):
+            sv2.solve(g2, 'tests/rpa/output')
+
+    def test_declared_spin_mode_mismatch_is_rejected(self):
+        sv1, g = self._solved('general')
+        g['chi0q_freq_meta'] = dict(g['chi0q_freq_meta'],
+                                    spin_mode='spin-diag')
+        sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g, 'tests/rpa/output')
+        self.assertIn('spin mode', str(cm.exception))
+
+    def test_internal_recompute_clears_file_metadata(self):
+        """A solver that once loaded chi0q_init must not relabel the axis
+        of a bubble it computes itself afterwards."""
+        import shutil
+        import tempfile
+
+        sv1, g = self._solved('general')
+        d = tempfile.mkdtemp()
+        try:
+            np.savez(os.path.join(d, 'chi0q_part.npz'),
+                     chi0q=np.asarray(g['chi0q'])[:9],
+                     freq_index=np.arange(9), nmat=32)
+            sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+            g2 = r2.get_param("green")
+            g2.update(sv2.read_init({'path_to_input': d,
+                                     'chi0q_init': 'chi0q_part.npz'}))
+            sv2.solve(g2, 'tests/rpa/output')
+            # now recompute internally on the same instance
+            g3 = r2.get_param("green")
+            g3.pop('chi0q', None)
+            g3.pop('chi0q_freq_meta', None)
+            sv2.solve(g3, 'tests/rpa/output')
+            sv2.save_results({'path_to_output': d, 'chi0q': 'chi0q_new.npz'},
+                             g3)
+            z = np.load(os.path.join(d, 'chi0q_new.npz'))
+            self.assertEqual(len(z['freq_index']), 32,
+                             "internal recomputation mislabeled with the "
+                             "stale chi0q_init axis")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_untagged_partial_spin_diag_save_counts_frequencies(self):
+        """The ambiguous fallback label must count the FREQUENCY axis of a
+        spin-diag bubble ((2, nfreq, ...)), not the spin-block axis: a
+        16-frequency two-block array was labeled [0, 1]."""
+        import shutil
+        import tempfile
+
+        sv1, g = self._solved('general')
+        sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        g2 = r2.get_param("green")
+        half = np.asarray(g['chi0q'])[:16]
+        g2['chi0q'] = np.stack([half, half], axis=0)   # untagged, partial
+        sv2.solve(g2, 'tests/rpa/output')
+        d = tempfile.mkdtemp()
+        try:
+            sv2.save_results({'path_to_output': d, 'chi0q': 'chi0q.npz'},
+                             g2)
+            z = np.load(os.path.join(d, 'chi0q.npz'))
+            np.testing.assert_array_equal(z['freq_index'], np.arange(16))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
