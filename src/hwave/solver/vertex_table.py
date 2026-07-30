@@ -12,12 +12,18 @@ derive their coefficients from it, so they cannot drift apart again
 (they did, repeatedly: #96, #104, #113).
 
 Slot families of the pair-space matrices (slots are (l1*norb+l2,
-l3*norb+l4); ``a != b`` throughout):
+l3*norb+l4)):
 
     ``diag``      (aa, aa)   same orbital on both pairs
     ``cross``     (ab, ab)   pair-diagonal, orbital off-diagonal (Fierz)
     ``density``   (aa, bb)   two densities
     ``antidiag``  (ab, ba)   pair-antidiagonal
+
+``a != b`` throughout, with ONE exception: CoulombInter's ``density``
+entry also applies at a == b, where an inter-site same-orbital V
+contributes 2 V_aa(q) to the charge diagonal (issue #95); Hund and
+Ising stay restricted to a != b there (an orbital has no Hund or Ising
+coupling with itself).
 
 ``S`` enters the spin channel as ``[1 - chi0 S]^-1 chi0`` and ``C`` the
 charge channel as ``[1 + chi0 C]^-1 chi0``. Entries are per unit

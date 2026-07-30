@@ -91,5 +91,48 @@ class TestAssembledConsistency(unittest.TestCase):
                 self.assertIsNone(sv.ham_info.ham_fierz_q)
 
 
+class TestTableContent(unittest.TestCase):
+
+    def test_table_matches_the_adjudicated_values(self):
+        """Pin the exported table itself, independent of the builders."""
+        from hwave.solver.vertex_table import ADJUDICATED_SC
+
+        self.assertEqual(ADJUDICATED_SC, {
+            "CoulombIntra": {"diag": (+1.0, +1.0)},
+            "CoulombInter": {"cross": (+1.0, -1.0), "density": (0.0, +2.0)},
+            "Hund":         {"cross": (-1.0, +1.0), "density": (+1.0, -1.0)},
+            "Exchange":     {"cross": (+1.0, +1.0)},
+            "Ising":        {"cross": (+1.0, -1.0), "density": (-2.0, 0.0)},
+            "PairLift":     {},
+            "PairHop":      {"antidiag": (+1.0, +1.0)},
+        })
+
+
+class TestZeroCoefficientSuppression(unittest.TestCase):
+
+    def test_nonfinite_input_does_not_leak_into_absent_channels(self):
+        """0.0 * Inf is NaN: a channel with no content for a type must
+        stay exactly zero even for non-finite couplings. Diagonal
+        CoulombInter has no S content; density-slot Ising has no C
+        content."""
+        import hwave.sc as sc
+
+        k = np.array([0.0])
+        ik = sc._build_interaction_k(
+            k, k, k, {"CoulombInter": {((0, 0, 0), (0, 0)): np.inf,
+                                       ((0, 0, 0), (1, 1)): np.inf}}, 2)
+        S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
+        self.assertTrue(np.all(S[0, 0, 0] == 0.0),
+                        "diagonal CoulombInter must not touch S")
+
+        ik = sc._build_interaction_k(
+            k, k, k, {"Ising": {((0, 0, 0), (0, 1)): np.inf,
+                                ((0, 0, 0), (1, 0)): np.inf}}, 2)
+        S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
+        # the density slots (aa, bb) of Ising carry S only
+        self.assertEqual(complex(C[0, 0, 0, 0, 3]), 0.0,
+                         "density-slot Ising must not touch C")
+
+
 if __name__ == "__main__":
     unittest.main()

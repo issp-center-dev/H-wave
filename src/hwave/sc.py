@@ -932,8 +932,13 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         for mat, itype in cross_terms:
             if mat is not None:
                 sco, cco = sc_coefficients(itype, "cross")
-                s_q += sco * mat[_l1, _l2]
-                c_q += cco * mat[_l1, _l2]
+                # explicit zero suppression: 0.0 * Inf is NaN, and a
+                # channel with no content for a type must stay untouched
+                # even for non-finite input
+                if sco != 0.0:
+                    s_q += sco * mat[_l1, _l2]
+                if cco != 0.0:
+                    c_q += cco * mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
@@ -955,12 +960,16 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
             for mat, itype in ((J_mat, "Hund"), (I_mat, "Ising")):
                 if mat is not None:
                     sco, cco = sc_coefficients(itype, "density")
-                    s_q += sco * mat[_l1, _l3]
-                    c_q += cco * mat[_l1, _l3]
+                    if sco != 0.0:
+                        s_q += sco * mat[_l1, _l3]
+                    if cco != 0.0:
+                        c_q += cco * mat[_l1, _l3]
         if Up_mat is not None:
             sco, cco = sc_coefficients("CoulombInter", "density")
-            s_q += sco * Up_mat[_l1, _l3]
-            c_q += cco * Up_mat[_l1, _l3]
+            if sco != 0.0:
+                s_q += sco * Up_mat[_l1, _l3]
+            if cco != 0.0:
+                c_q += cco * Up_mat[_l1, _l3]
         S_all[:, :, :, idx12[i], idx34[i]] += s_q
         C_all[:, :, :, idx12[i], idx34[i]] += c_q
 
@@ -976,8 +985,10 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         # slots in both channels. Only PairHop belongs here (#100/#102).
         if PH_mat is not None:
             sco, cco = sc_coefficients("PairHop", "antidiag")
-            s_q += sco * PH_mat[_l1, _l2]
-            c_q += cco * PH_mat[_l1, _l2]
+            if sco != 0.0:
+                s_q += sco * PH_mat[_l1, _l2]
+            if cco != 0.0:
+                c_q += cco * PH_mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
