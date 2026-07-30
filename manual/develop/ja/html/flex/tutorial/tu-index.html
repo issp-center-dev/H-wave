@@ -1169,7 +1169,7 @@ FLEX converged after 62 iterations
 </section>
 <section id="tips">
 <h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
-<ul class="simple">
+<ul>
 <li><p><strong>収束しない場合</strong>: SCFループが収束しない場合は、<code class="docutils literal notranslate"><span class="pre">Mix</span></code> を小さくする
 (例: 0.1 や 0.05)か、温度を上げてみてください。磁気不安定性に近い
 強相関領域では収束が困難になることがあります。</p></li>
@@ -1187,7 +1187,23 @@ FLEX converged after 62 iterations
 <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>) は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> の <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> と設定することで使用できます。
 これによりFLEXレベルのスピン・電荷ゆらぎを用いた超伝導不安定性の
-解析が可能になります。</p></li>
+解析が可能になります。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> 経路では密度‐密度感受率
+<span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> しか保存されないため、pairing vertex が
+完全に FLEX で dress されるのは <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみのモデル
+（または <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）に<strong>限られます</strong>。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code> がある場合は非密度チャネルが
+裸のまま入り、ソルバーが警告を出します。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は
+密度対角の頂点内容を一切持たないため、reduced な感受率とは組み合わせ
+られず<strong>拒否されます</strong>（FLEX/RPA 段のスキームポリシーとも整合）。
+完全な頂点を得るには
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> を使用してください。
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-supported-inter"><span class="std std-ref">Eliashberg の対応する相互作用に関する注意</span></a>
+も参照してください。</p>
+</div>
+</li>
 </ul>
 </section>
 <section id="id38">

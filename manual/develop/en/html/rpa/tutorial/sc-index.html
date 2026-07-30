@@ -646,6 +646,34 @@ layout from shape alone and mislabeled a <code class="docutils literal notransla
 as orbital-pair, corrupting the pairing vertex; Eliashberg eigenvalues and
 gap functions for such runs are <strong>corrected (and therefore change)</strong> in this
 version. Single-orbital and general (myo) results are unaffected.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>Results may change for multi-orbital reduced/squashed FLEX runs.</strong>
+The matrix index of a reduced (kuroki) susceptibility is a <em>density pair</em>:
+the stored <span class="math notranslate nohighlight">\(X[a,b]\)</span> is <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>. Earlier versions
+embedded it into the <span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span> orbital-pair space as
+<span class="math notranslate nohighlight">\(\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]\)</span>, which dropped the
+inter-orbital density coupling <span class="math notranslate nohighlight">\(\chi_{(0,0),(1,1)}\)</span> – a component the
+pairing vertex <span class="math notranslate nohighlight">\(S \chi S\)</span> genuinely references – and scattered
+<span class="math notranslate nohighlight">\(X\)</span> onto pair indices the reduced scheme never computed. This version
+embeds it correctly, as
+<span class="math notranslate nohighlight">\(\text{out}[(a,a),(b,b)] = X[a,b]\)</span> with every other component zero.</p>
+<p>Consequently, <strong>static and dynamic</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> results change
+for runs with <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;=</span> <span class="pre">2</span></code> whose FLEX used <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> or
+<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>. Two independent effects contribute, so a vanishing
+inter-orbital density component is not enough to be safe: the old placement
+both dropped <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> with <span class="math notranslate nohighlight">\(a \neq b\)</span>, and – when
+the interaction reaches the off-density blocks – fabricated dressing there
+out of the diagonal <span class="math notranslate nohighlight">\(\chi_{(a,a),(a,a)}\)</span>. Treat every such stored
+eigenvalue and gap function as needing recomputation. Single-orbital (<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>) results are bit-identical
+(both placements coincide), as are all general (myo) results. With the fix,
+a <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>-only reduced run reproduces the equivalent
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> and general-scheme results exactly <strong>for identical
+:math:`Sigma = 0` physics</strong> (FLEX with <code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">1</span></code>);
+before the fix it did not. This is a statement about the pairing vertex
+only. It does not imply the two schemes are interchangeable at full
+self-consistency, where they also differ in how the self-energy is built.</p>
 <p>As of this version, IR-native susceptibility files (<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span>
 <span class="pre">false</span></code>) must carry this <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> tag, and the loader also
 rejects a <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> that contradicts the tensor’s shape-inferred
@@ -957,6 +985,18 @@ failed) print as <code class="docutils literal notranslate"><span class="pre">na
 <span class="w">  </span><span class="n">seed_gap</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 </pre></div>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> and no explicit <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>, this example runs the
+default <code class="docutils literal notranslate"><span class="pre">reduced</span></code> scheme, so the Eliashberg step <strong>will</strong> print the
+approximation warning described in
+<a class="reference internal" href="#sc-supported-inter"><span class="std std-ref">Supported interactions</span></a>. That is expected here and
+not a misconfiguration: <code class="docutils literal notranslate"><span class="pre">reduced</span></code> supports the general off-site
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> this workflow uses, whereas <code class="docutils literal notranslate"><span class="pre">general</span></code> accepts off-site
+entries only for same-orbital <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> without sublattice folding
+(and on-site terms otherwise). Use <code class="docutils literal notranslate"><span class="pre">general</span></code> when your interactions
+allow it and you need the inter-orbital channels dressed as well.</p>
+</div>
 <p>This descends from <span class="math notranslate nohighlight">\(T = 0.02\)</span> to <span class="math notranslate nohighlight">\(T = 0.005\)</span> over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> and <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>, and writing
@@ -1099,7 +1139,7 @@ the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).</p></li>
 </section>
 </section>
 <section id="supported-interactions">
-<h2><span class="section-number">5.2.11. </span>Supported interactions<a class="headerlink" href="#supported-interactions" title="Link to this heading">¶</a></h2>
+<span id="sc-supported-inter"></span><h2><span class="section-number">5.2.11. </span>Supported interactions<a class="headerlink" href="#supported-interactions" title="Link to this heading">¶</a></h2>
 <p>The Eliashberg solver supports all interaction types available in H-wave:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (<span class="math notranslate nohighlight">\(U\)</span>): Intra-orbital Coulomb repulsion</p></li>
@@ -1113,9 +1153,208 @@ the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).</p></li>
 interactions, the solver automatically uses the generalized
 <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> matrix formulation (Kuroki et al., PRB 79, 224511)
 with four-index vertex structure.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Caveat for</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> <strong>with a reduced/squashed FLEX run.</strong>
+A reduced (<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>) FLEX run stores
+only the density-density components <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>. For
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> alone the <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> matrices live entirely on
+that density-pair block, so the reduced route is exact.
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> also put weight on the
+off-density blocks <span class="math notranslate nohighlight">\(S/C[(a,b),(a,b)]\)</span> with <span class="math notranslate nohighlight">\(a \neq b\)</span>,
+where the reduced run computed no susceptibility at all: those channels
+then enter the pairing vertex <strong>undressed</strong> (the bare
+<span class="math notranslate nohighlight">\(\tfrac{1}{2}(S+C)\)</span> term only), so <span class="math notranslate nohighlight">\(\lambda\)</span> is an
+approximation, and the solver emits a warning naming the offending
+terms. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong> density-diagonal vertex
+content at all – nothing of them would be dressed – and are
+<strong>rejected</strong> with a reduced susceptibility (consistently with the
+FLEX/RPA scheme policy, which refuses to produce such runs).</p>
+<p>This is a limitation of the stored data, not of the loader, and cannot be
+repaired on the Eliashberg side. Re-run FLEX with
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (which stores the full orbital-pair
+susceptibility) for the complete vertex. Note that <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;load&quot;</span></code> is <strong>not</strong> an escape unless the chi0q it reads is itself a
+general (four-index) one: a reduced two-index chi0q is missing exactly
+the same off-density components.
+Single-orbital models are unaffected – there is no off-density pair index.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>The Eliashberg step assumes a paramagnetic background.</strong> The Kuroki
+<span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> matrices carry no spin index, so a reduced FLEX
+susceptibility is consumed by keeping only its spin-up block. That is
+exact for a paramagnetic run, where the discarded blocks are redundant
+(the down block equals the up block and the cross-spin blocks vanish).
+A spin-polarized run – <code class="docutils literal notranslate"><span class="pre">spin_mode</span></code> is auto-detected, so an <code class="docutils literal notranslate"><span class="pre">Extern</span></code>
+field with <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> is enough – generally does not satisfy it.
+The solver inspects the STORED DATA rather than classifying the run
+(the file records no <code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>). Any non-redundancy is reported; if it
+exceeds a few hundred ulp of double precision relative to the kept block,
+the run is <strong>refused</strong> rather than returning an eigenvalue that would not
+approximate the spin-resolved problem. A file whose
+down-spin and cross-spin blocks are identically zero is ambiguous – it may be
+a legacy layout in which only the consumed block was ever populated, or a
+fully polarized sector – so it is refused unless it is
+declared to be the former – either by the file itself
+(<code class="docutils literal notranslate"><span class="pre">chi_spin_blocks</span> <span class="pre">=</span> <span class="pre">&quot;up_only&quot;</span></code>) or, for files written before this check
+existed and which therefore cannot carry a tag, by setting
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">accept_up_block_only</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+<p>The same setting also authorizes the <strong>dressed Green’s function</strong> loader:
+a <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> whose spin blocks genuinely differ is otherwise refused
+(the pair bubble is built from the up block only, so the discarded block
+is real physics), and with <code class="docutils literal notranslate"><span class="pre">accept_up_block_only</span> <span class="pre">=</span> <span class="pre">true</span></code> it proceeds
+with a warning. Unlike the legacy-layout case above, this is an
+<strong>uncontrolled approximation</strong> – the option authorizes discarding real
+spin-resolved content, and the responsibility is the user’s.</p>
+</div>
+</section>
+<section id="what-each-mode-accepts">
+<h2><span class="section-number">5.2.12. </span>What each mode accepts<a class="headerlink" href="#what-each-mode-accepts" title="Link to this heading">¶</a></h2>
+<p>Consolidated from the constraints the solvers actually enforce. Every cell below
+was checked by running the combination.</p>
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> (FLEX)</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+<col style="width: 26.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> / <code class="docutils literal notranslate"><span class="pre">squashed</span></code></p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></th>
+<th class="head"><p>note</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>two-body range</p></td>
+<td><p>on-site and <strong>off-site</strong></p></td>
+<td><p>on-site; off-site only for same-orbital <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code></p></td>
+<td><p>other off-site entries raise <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> on the general path
+(and sublattice folding disables its off-site support)</p></td>
+</tr>
+<tr class="row-odd"><td><p>spin structure</p></td>
+<td><p>spin-free, spin-diag, spinful</p></td>
+<td><p><strong>spin-free only</strong></p></td>
+<td><p>general raises for a polarized one-body Hamiltonian</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
+<td><p>accepted by FLEX</p></td>
+<td><p>rejected</p></td>
+<td><p>see <em>Spin structure</em> below for what the Eliashberg step then does</p></td>
+</tr>
+<tr class="row-odd"><td><p>susceptibility stored</p></td>
+<td><p>density-density only, <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
+<td><p>full orbital-pair</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> and <code class="docutils literal notranslate"><span class="pre">squashed</span></code> store the same shape and index layout</p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">calc_type</span></code></p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 24.0%" />
+<col style="width: 50.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">ring</span></code> (default)</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">ring+ladder</span></code></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RPA</p></td>
+<td><p>every <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> only; adds <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>, leaves <code class="docutils literal notranslate"><span class="pre">chiq</span></code> untouched</p></td>
+</tr>
+<tr class="row-odd"><td><p>FLEX</p></td>
+<td><p>every <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code></p></td>
+<td><p><strong>not supported on any scheme</strong></p></td>
+</tr>
+</tbody>
+</table>
+<p>For a paramagnetic system no susceptibility content is lost by omitting the
+separate transverse channel: SU(2) symmetry makes the transverse and
+longitudinal spin susceptibilities equal, and the <code class="docutils literal notranslate"><span class="pre">3/2</span> <span class="pre">*</span> <span class="pre">chi_s</span></code> factor in the
+FLEX effective interaction is exactly the count of one longitudinal and two
+transverse components. (Running <code class="docutils literal notranslate"><span class="pre">ring+ladder</span></code> in RPA is not free – it solves
+and stores an additional <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> – but it adds no information in the
+paramagnetic case.) The ladder channel becomes distinct only once the spins are
+split.</p>
+<p>Interactions reaching the Eliashberg vertex</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 34.0%" />
+<col style="width: 36.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>susceptibility supplied</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> only</p></th>
+<th class="head"><p>with <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> / <code class="docutils literal notranslate"><span class="pre">Hund</span></code> / <code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>reduced / squashed</p></td>
+<td><p>exact</p></td>
+<td><p>approximate, and warned about: the off-density S/C blocks have no
+susceptibility to dress them. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are
+<strong>rejected</strong> instead (no density-diagonal vertex content at all)</p></td>
+</tr>
+<tr class="row-odd"><td><p>general (four-index)</p></td>
+<td><p>exact</p></td>
+<td><p>exact</p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">0</span></code> to the particle-hole vertex and is inert
+on every route (ignored with a warning).</p>
+</section>
+<section id="spin-structure">
+<h2><span class="section-number">5.2.13. </span>Spin structure<a class="headerlink" href="#spin-structure" title="Link to this heading">¶</a></h2>
+<p>The Eliashberg pairing vertex is <strong>paramagnetic</strong>: the Kuroki <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>
+matrices are <span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span>-sized and carry no spin index, and the
+singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
+a spin-polarized or spin-mixing model is therefore not a matter of
+configuration.</p>
+<p><code class="docutils literal notranslate"><span class="pre">spin_mode</span></code> below is <strong>not an input parameter</strong> – there is no such key in the
+TOML file. It is determined internally from the Hamiltonian: from whether the
+transfer term has spin-off-diagonal blocks (in <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> mode) and
+from whether an external field is present. It is also <strong>independent of</strong>
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>, which selects the orbital tensor rank rather than the spin
+structure; the one link between them is that <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> FLEX
+accepts <code class="docutils literal notranslate"><span class="pre">spin-free</span></code> only and rejects the other two outright.</p>
+<ul class="simple">
+<li><p><strong>Paramagnetic</strong> (<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-free&quot;</span></code>) – fully supported. A reduced
+FLEX susceptibility stores its two spin blocks bit-identically with zero
+cross-spin blocks, so keeping only the spin-up block is exact.</p></li>
+<li><p><strong>Spin-polarized without spin mixing</strong> (<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>; e.g. an
+<code class="docutils literal notranslate"><span class="pre">Extern</span></code> field with <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>) – <strong>refused.</strong> Only the spin-up block
+would survive the embedding, so the eigenvalue would not approximate the
+spin-resolved problem at all; the loader raises rather than returning a
+number. (Content at the floating-point round-off scale – at or below
+<code class="docutils literal notranslate"><span class="pre">256</span> <span class="pre">*</span> <span class="pre">eps</span></code> relative to the kept block, about <code class="docutils literal notranslate"><span class="pre">6e-14</span></code> – is reported as
+round-off and
+allowed through, so a backend rounding asymmetry cannot abort a genuinely
+paramagnetic run.)</p></li>
+<li><p><strong>Spin-mixing / spin-orbit</strong> (<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, giving
+<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spinful&quot;</span></code>) – <strong>not supported.</strong> FLEX itself runs, but
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> stops with a shape error: FLEX writes chi with the physical
+orbital count while the Eliashberg step reads <code class="docutils literal notranslate"><span class="pre">norb</span></code> from <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>,
+where spin-orbital mode stores the spin-orbital count. The error message
+identifies this case explicitly.</p></li>
+</ul>
+<p>Supporting either spin-polarized case would require an
+<span class="math notranslate nohighlight">\(S_z\)</span>-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
+gap function), together with the transverse susceptibility
+<span class="math notranslate nohighlight">\(\chi^{+-}\)</span>, which the reduced scheme does not store. That is a feature
+addition rather than a configuration change.</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.12. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.14. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>For large systems, set <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> to compute
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> internally and avoid loading
@@ -1173,7 +1412,9 @@ pairing instabilities using the appropriate vertex.</p></li>
 <li class="toctree-l3"><a class="reference internal" href="#physical-interpretation">5.2.9. Physical interpretation</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#dynamic-frequency-dependent-eliashberg-equation">5.2.10. Dynamic (frequency-dependent) Eliashberg equation</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#supported-interactions">5.2.11. Supported interactions</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.12. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#what-each-mode-accepts">5.2.12. What each mode accepts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spin-structure">5.2.13. Spin structure</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.14. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. File specifications</a></li>

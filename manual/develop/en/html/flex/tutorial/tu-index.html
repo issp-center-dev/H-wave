@@ -1228,7 +1228,7 @@ interaction files are identical, and so are the results.</p>
 </section>
 <section id="tips">
 <h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
-<ul class="simple">
+<ul>
 <li><p><strong>Convergence issues</strong>: If the SCF loop does not converge, try
 reducing <code class="docutils literal notranslate"><span class="pre">Mix</span></code> (e.g., 0.1 or 0.05) or increasing the temperature.
 Strong correlations near magnetic instabilities can make convergence
@@ -1249,7 +1249,22 @@ where <span class="math notranslate nohighlight">\(N_d = N_{\mathrm{orb}} \times
 (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>) can be used with <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
 by setting <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> in the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section.
 This enables analysis of superconducting instabilities with
-FLEX-level spin and charge fluctuations.</p></li>
+FLEX-level spin and charge fluctuations.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>On the <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> route only the density-density
+susceptibility <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> is stored, so the pairing vertex
+is FLEX-dressed in full <strong>only</strong> for <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>-only models (or
+<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>). With <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or <code class="docutils literal notranslate"><span class="pre">Ising</span></code> the
+off-density channels enter undressed and the solver warns.
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are <strong>rejected</strong> with a reduced
+susceptibility: they have no density-diagonal vertex content at all, so
+nothing of them would be dressed – and the schemes refuse them at the
+FLEX/RPA stage anyway. Use <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> for the complete
+vertex. See
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-supported-inter"><span class="std std-ref">the Eliashberg supported-interactions note</span></a>.</p>
+</div>
+</li>
 </ul>
 </section>
 <section id="implementation-details-and-limitations">
