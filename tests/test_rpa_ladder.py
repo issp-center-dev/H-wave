@@ -805,15 +805,13 @@ class TestRPALadder(unittest.TestCase):
                 self.assertLess(
                     float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
 
-    @unittest.expectedFailure
     def test_su2_onsite_coulombinter_2orb_equality(self):
-        """The CORRECT physics, stated as such: SU(2) holds exactly for
-        on-site CoulombInter, so chi_zz must equal chi_pm.
-
-        Expected to fail while #104 is open (the longitudinal ring drops the
-        inter-orbital spin vertex). When #104 is fixed this flips to an
-        unexpected success, which unittest reports as a failure -- remove the
-        decorator then, and retire the signature test below.
+        """SU(2) holds exactly for on-site CoulombInter, so chi_zz must
+        equal chi_pm. This failed while #104 was open (the longitudinal ring
+        dropped the inter-orbital spin vertex, measured at 1e-2 in chiq); the
+        adjudicated Fierz cross-slot content restored the identity -- the
+        residual dropped from 3e-3 to 4e-34 with the transverse side
+        untouched.
         """
         solver, green_info = self._run_rpa(
             calc_type="ring+ladder", calc_scheme="general",
@@ -882,21 +880,12 @@ class TestRPALadder(unittest.TestCase):
                     Lx=4, Ly=4, Nmat=32, interactions=inter)
                 self.assertIn("chiq_pm", green_info)
 
-    def test_su2_onsite_coulombinter_2orb(self):
-        """On-site CoulombInter at two orbitals: SU(2) must hold, and does not.
-
-        `U' n_a n_b` is built from total densities, which are SU(2) scalars, so
-        the Hamiltonian stays SU(2) symmetric and `chi^{+-} = 2 chi^{zz}` is an
-        exact identity -- verified by diagonalization to 1e-15, including at
-        three times the coupling. The check is therefore valid.
-
-        It fails because the LONGITUDINAL ring is the deficient side: its
-        effective spin vertex is `diag(U_0, 0, 0, U_1)` where `sc.py` and exact
-        diagonalization both give `diag(U_0, U', U', U_1)`. That is issue #104.
-        This test is the detector for it and should start passing when #104 is
-        fixed; it must NOT be made to pass by removing U' from the transverse
-        side as well.
-        """
+    def test_su2_onsite_coulombinter_2orb_no_residual_anywhere(self):
+        """Retired #104 signature test, inverted: while the issue was open,
+        the chi_zz / chi_pm mismatch sat exactly on the U' pair slots (0,1)
+        and (1,0) at 3e-3 and nowhere else. With the adjudicated cross-slot
+        content in the longitudinal W, the mismatch must be gone EVERYWHERE
+        -- including those slots -- not merely reduced."""
         solver, green_info = self._run_rpa(
             calc_type="ring+ladder", calc_scheme="general",
             input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
@@ -918,22 +907,8 @@ class TestRPALadder(unittest.TestCase):
                         zz[:, i, j] = (chiq[iw0, :, a, c, b, d]
                                        - chiq[iw0, :, a, c, norb + b, norb + d])
                         pm[:, i, j] = chiq_pm[iw0, :, a, c, b, d]
-        # The mismatch must sit where the U' vertex acts -- the off-orbital
-        # pair slots (0,1) and (1,0) -- with the measured magnitude, and
-        # NOWHERE else. A generic assertRaises would also pass for unrelated
-        # regressions; this pins the specific #104 signature.
-        offs = [0 * norb + 1, 1 * norb + 0]
-        diff = np.abs(zz - pm)
-        mask = np.zeros((npair, npair), dtype=bool)
-        for i in offs:
-            for j in offs:
-                mask[i, j] = True
-        off_max = float(np.max(diff[:, mask]))
-        self.assertGreater(off_max, 3e-3,
-                           "the U' slots must disagree while #104 is open")
-        # and NOWHERE else: every element outside the expected slots agrees
-        self.assertLess(float(np.max(diff[:, ~mask])), 1e-10,
-                        "the mismatch must be confined to the U' slots")
+        self.assertLess(float(np.max(np.abs(zz - pm))), 1e-10,
+                        "chi_zz and chi_pm must agree in every pair slot")
 
     def test_su2_onsite_coulombintra_2orb(self):
         """CoulombIntra at two orbitals: SU(2) holds and the ring is correct

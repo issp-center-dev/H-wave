@@ -163,14 +163,21 @@ class RPATwoOrbital:
                 chi0 = chi0q[:,:,:,:, idqx, idqy,Nmat//2]
                 Vxq = V*(1.0+np.exp(-1J*kx))
                 Vyq = 2.0*V*np.cos(ky)
-                X0 = np.array(([chi0[0][0][0][0], 0, 0, chi0[0][0][1][1], 0, 0, 0, 0],
-                                [0, 0, 0, 0, 0, 0, 0, 0],
-                                [0, 0, 0, 0, 0, 0, 0, 0],
-                                [chi0[1][1][0][0], 0, 0, chi0[1][1][1][1], 0, 0, 0, 0],
-                                [0, 0, 0, 0, chi0[0][0][0][0], 0, 0, chi0[0][0][1][1]],
-                                [0, 0, 0, 0, 0, 0, 0, 0],
-                                [0, 0, 0, 0, 0, 0, 0, 0],
-                                [0, 0, 0, 0, chi0[1][1][0][0], 0, 0, chi0[1][1][1][1]]), dtype=np.complex128)
+                # FULL pair-space bubble per spin block. The historical
+                # truncation to the palindromic slots ((aa), (bb)) was exact
+                # as long as W had support only there: with column support
+                # restricted to those slots, [I + X0 W]^{-1} X0 restricted to
+                # them never reads the other X0 entries. The #104 fix adds
+                # vertex content on the (ab), (ba) slots, which couples the
+                # sectors, so the bubble must carry its full pair structure.
+                X0 = np.zeros((8, 8), dtype=np.complex128)
+                for sblk in (0, 4):
+                    for a in range(2):
+                        for c in range(2):
+                            for b in range(2):
+                                for d in range(2):
+                                    X0[sblk + 2*a + c, sblk + 2*b + d] = \
+                                        chi0[a][c][b][d]
                 W =  np.array([[Vyq, 0, 0, np.conj(Vxq), U+Vyq, 0, 0, np.conj(Vxq)],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
@@ -179,7 +186,23 @@ class RPATwoOrbital:
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [0, 0, 0, 0, 0, 0, 0, 0],
                                 [Vxq, 0, 0, U+Vyq, Vxq, 0, 0, Vyq]], dtype=np.complex128)
-                X = np.linalg.inv(I + X0 @ W.T) @ X0
+                # Adjudicated longitudinal cross-slot (Fierz) content
+                # (#104/#113): the ON-SITE part of the inter-orbital V
+                # carries a same-spin coupling -V on the (ab), (ba) pair
+                # slots -- the spin/charge decomposition of these entries is
+                # S(ab,ab) = +V, C(ab,ab) = -V, the exact-diagonalization
+                # values. The off-site parts (Vxq phase, Vyq) stay as they
+                # were: off-site cross-orbital content is not representable
+                # by a q-only vertex and remains outside the adjudication.
+                # solved with W + Fierz; ham keeps the base tensor, which
+                # is what the solver stores in ham_inter_q (its Fierz part
+                # lives in the separate ham_fierz_q, exactly so that the
+                # transverse assembly keeps reading the base tensor)
+                W_solve = W.copy()
+                V_on = V
+                for slot in (1, 2, 5, 6):
+                    W_solve[slot, slot] += -V_on
+                X = np.linalg.inv(I + X0 @ W_solve.T) @ X0
 
                 ham[idqx,idqy,:,:] = W
                 chi[idqx,idqy,:,:] = X
