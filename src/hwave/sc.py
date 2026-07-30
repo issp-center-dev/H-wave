@@ -17,6 +17,8 @@ import sys
 import logging
 
 import numpy as np
+
+from hwave.solver.vertex_table import sc_coefficients
 from numpy.fft import fftn, ifftn
 from scipy.optimize import bisect
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
@@ -906,45 +908,32 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
     # CoulombInter contributes 2 V_aa(q) to the charge channel.
     mask1 = (l1f == l2f) & (l2f == l3f) & (l3f == l4f)
     if U_mat is not None and np.any(mask1):
+        sU, cU = sc_coefficients("CoulombIntra", "diag")
         for i in np.where(mask1)[0]:
             _l = l1f[i]
-            S_all[:, :, :, idx12[i], idx34[i]] += U_mat[_l, _l]
-            C_all[:, :, :, idx12[i], idx34[i]] += U_mat[_l, _l]
+            S_all[:, :, :, idx12[i], idx34[i]] += sU * U_mat[_l, _l]
+            C_all[:, :, :, idx12[i], idx34[i]] += cU * U_mat[_l, _l]
 
     # Case 2: l1==l3, l2==l4, l1!=l2
+    # Coefficients come from the single adjudicated table
+    # (hwave.solver.vertex_table). Signs, slots and per-type factors were
+    # established against exact diagonalization in #113 (Ising sign, the
+    # previously missing Hund S term, Exchange moved here from the
+    # pair-antidiagonal Case 4); the SU(2) Kanamori consistency check --
+    # Hund + Exchange at equal J giving S(ab,ab) without J and
+    # C(ab,ab) = -U' + 2J -- is pinned in the tests.
     mask2 = (l1f == l3f) & (l2f == l4f) & (l1f != l2f)
+    cross_terms = [(Up_mat, "CoulombInter"), (I_mat, "Ising"),
+                   (J_mat, "Hund"), (Jp_mat, "Exchange")]
     for i in np.where(mask2)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l2 = l1f[i], l2f[i]
-        if Up_mat is not None:
-            s_q += Up_mat[_l1, _l2]
-            c_q -= Up_mat[_l1, _l2]
-        if I_mat is not None:
-            # SIGN adjudicated by exact diagonalization (issue #113): the
-            # exact spin vertex carries -I at this slot in the
-            # [I + chi0 W]^-1 convention, i.e. +I here (S enters as -S).
-            # The previous -I produced the wrong sign end to end.
-            s_q += I_mat[_l1, _l2]
-            c_q -= I_mat[_l1, _l2]
-        if J_mat is not None:
-            # Hund contributes to BOTH channels at this slot (issue #113):
-            # the exact vertices are W_zz = +J and W_cc = +J, i.e. S -= J and
-            # C += J. The S term was missing entirely.
-            s_q -= J_mat[_l1, _l2]
-            c_q += J_mat[_l1, _l2]
-        if Jp_mat is not None:
-            # Exchange lives HERE, not in the pair-antidiagonal Case 4 where
-            # it sat before (issue #113): exact diagonalization puts its
-            # vertex at this slot family in both channels, W_zz = -J and
-            # W_cc = +J, i.e. S += J and C += J. Consistency check that this
-            # split is right: for the SU(2) Kanamori combination
-            # (Hund + Exchange at equal J) the channel matrices become
-            # S(ab,ab) with no J at all and C(ab,ab) = -U' + 2J -- exactly
-            # the standard literature result, which the previous bookkeeping
-            # reproduced in neither channel per type.
-            s_q += Jp_mat[_l1, _l2]
-            c_q += Jp_mat[_l1, _l2]
+        for mat, itype in cross_terms:
+            if mat is not None:
+                sco, cco = sc_coefficients(itype, "cross")
+                s_q += sco * mat[_l1, _l2]
+                c_q += cco * mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
@@ -963,13 +952,15 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l3 = l1f[i], l3f[i]
         if _l1 != _l3:
-            if J_mat is not None:
-                s_q += J_mat[_l1, _l3]
-                c_q -= J_mat[_l1, _l3]
-            if I_mat is not None:
-                s_q -= 2.0 * I_mat[_l1, _l3]
+            for mat, itype in ((J_mat, "Hund"), (I_mat, "Ising")):
+                if mat is not None:
+                    sco, cco = sc_coefficients(itype, "density")
+                    s_q += sco * mat[_l1, _l3]
+                    c_q += cco * mat[_l1, _l3]
         if Up_mat is not None:
-            c_q += 2.0 * Up_mat[_l1, _l3]
+            sco, cco = sc_coefficients("CoulombInter", "density")
+            s_q += sco * Up_mat[_l1, _l3]
+            c_q += cco * Up_mat[_l1, _l3]
         S_all[:, :, :, idx12[i], idx34[i]] += s_q
         C_all[:, :, :, idx12[i], idx34[i]] += c_q
 
@@ -977,15 +968,18 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
     mask4 = (l1f == l4f) & (l2f == l3f) & (l1f != l2f)
     for i in np.where(mask4)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l2 = l1f[i], l2f[i]
         # Exchange used to sit here; exact diagonalization (issue #113) puts
         # its vertex on the pair-DIAGONAL slot family (Case 2), and end to end
         # the antidiagonal placement produced the right magnitude at the wrong
         # slots in both channels. Only PairHop belongs here (#100/#102).
         if PH_mat is not None:
-            s_q += PH_mat[_l1, _l2]
+            sco, cco = sc_coefficients("PairHop", "antidiag")
+            s_q += sco * PH_mat[_l1, _l2]
+            c_q += cco * PH_mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
-        C_all[:, :, :, idx12[i], idx34[i]] = s_q  # S = C for this channel
+        C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
     return S_all, C_all
 
