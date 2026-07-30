@@ -966,10 +966,11 @@ Example
    default ``reduced`` scheme, so the Eliashberg step **will** print the
    approximation warning described in
    :ref:`Supported interactions <sc_supported_inter>`. That is expected here and
-   not a misconfiguration: ``reduced`` is the scheme that supports the off-site
-   ``CoulombInter`` this workflow uses, whereas ``general`` accepts only on-site
-   two-body terms. Use ``general`` when your interactions allow it and you need
-   the inter-orbital channels dressed as well.
+   not a misconfiguration: ``reduced`` supports the general off-site
+   ``CoulombInter`` this workflow uses, whereas ``general`` accepts off-site
+   entries only for same-orbital ``CoulombInter`` without sublattice folding
+   (and on-site terms otherwise). Use ``general`` when your interactions
+   allow it and you need the inter-orbital channels dressed as well.
 
 This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both

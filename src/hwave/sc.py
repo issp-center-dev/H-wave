@@ -1380,9 +1380,10 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         "for which the reduced run computed no susceptibility, so those "
         "channels enter the pairing vertex undressed (bare 0.5*(S+C) only) and "
         "the resulting lambda is an approximation. calc_scheme='general' stores "
-        "the full orbital-pair chi and removes this gap, but it accepts ON-SITE "
-        "two-body terms only -- for a model with off-site inter-orbital "
-        "interactions there is currently no FLEX-dressed vertex without this "
+        "the full orbital-pair chi and removes this gap; note its off-site "
+        "support is limited to same-orbital CoulombInter without sublattice "
+        "folding -- for a model with off-site INTER-orbital interactions "
+        "there is currently no FLEX-dressed vertex without this "
         "approximation.",
         source or ("a REDUCED (calc_scheme='reduced' or 'squashed') FLEX "
                    "susceptibility"),
