@@ -190,19 +190,37 @@ class TestFierzDomain(unittest.TestCase):
         self.assertIsNone(hi.ham_fierz_q)
 
     def test_fierz_support_sits_on_the_cross_slots_only(self):
-        # exact support: on-site inter-orbital V at 2 orbitals, no folding.
-        # nd = 4 (spin-major: 0=(up,0), 1=(up,1), 2=(dn,0), 3=(dn,1)); the
-        # same-spin pair-diagonal entries (a,b,a,b) carry -V and nothing
-        # else is populated
-        hi = self._ham_info(2, {((0, 0, 0), (0, 1)): 0.7,
-                                ((0, 0, 0), (1, 0)): 0.7}, [1, 1, 1])
-        f = np.asarray(hi.ham_fierz_q).reshape(4, 4, 4, 4, 4)[0]
-        want = np.zeros((4, 4, 4, 4), dtype=complex)
-        for up_a, up_b, dn_a, dn_b in ((0, 1, 2, 3),):
-            for a, b in ((up_a, up_b), (up_b, up_a),
-                         (dn_a, dn_b), (dn_b, dn_a)):
-                want[a, b, a, b] = -0.7
-        np.testing.assert_allclose(f, want, atol=1e-13)
+        # exact support per type: on-site inter-orbital entries at 2
+        # orbitals, no folding. nd = 4 (spin-major: 0=(up,0), 1=(up,1),
+        # 2=(dn,0), 3=(dn,1)); the pair-diagonal entries (a,b,a,b) carry
+        # the adjudicated coefficient -- same-spin for CoulombInter (-V),
+        # Hund (+J) and Ising (-I), cross-spin for Exchange (+J') -- and
+        # nothing else is populated
+        J = 0.7
+        up = {0: 0, 1: 1}
+        dn = {0: 2, 1: 3}
+        same = [(up, up), (dn, dn)]
+        cross = [(up, dn), (dn, up)]
+        table = {
+            'CoulombInter': (-J, same),
+            'Hund': (+J, same),
+            'Ising': (-J, same),
+            'Exchange': (+J, cross),
+        }
+        for key, (coeff, blocks) in table.items():
+            with self.subTest(interaction=key):
+                hi = self._ham_info(2, {((0, 0, 0), (0, 1)): J,
+                                        ((0, 0, 0), (1, 0)): J},
+                                    [1, 1, 1], key=key)
+                f = np.asarray(hi.ham_fierz_q).reshape(4, 4, 4, 4, 4)[0]
+                want = np.zeros((4, 4, 4, 4), dtype=complex)
+                for s_bra, s_ket in blocks:
+                    for a, b in ((0, 1), (1, 0)):
+                        want[s_bra[a], s_bra[b],
+                             s_ket[a], s_ket[b]] = coeff
+                np.testing.assert_allclose(
+                    f, want, atol=1e-13,
+                    err_msg="%s Fierz support" % key)
 
     def test_aggregate_coulomb_fierz_equals_explicit(self):
         # under folding the aggregate path must split the PRE-fold table
