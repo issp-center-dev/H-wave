@@ -148,6 +148,126 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
         np.testing.assert_array_equal(np.asarray(gr1['chiq']),
                                       np.asarray(gr2['chiq']))
 
+    def test_aggregate_coulomb_equals_the_explicit_declaration(self):
+        """An aggregate 'Coulomb' table means CoulombIntra (r = 0 diagonal)
+        plus CoulombInter (everything else). The general path used to drop
+        the key silently -- zero vertex, chiq_s off by 1e-1 -- because
+        neither the guard nor the k-space builder knew the aggregate name.
+        Now it must be bit-identical to the same input declared explicitly."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        def run(aggregate):
+            r = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                                 'Geometry': 'geom.dat',
+                                 'Transfer': 'transfer.dat',
+                                 'CoulombIntra': 'coulombintra.dat',
+                                 'CoulombInter': 'onsite_inter.dat'}})
+            ham = r.get_param("ham")
+            if aggregate:
+                agg = {}
+                agg.update(ham.pop('CoulombIntra'))
+                agg.update(ham.pop('CoulombInter'))
+                ham['Coulomb'] = agg
+            pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                  'SubShape': [1, 1, 1], 'Nmat': 32,
+                  'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+            fx = flex_mod.FLEX(ham, {}, {'mode': 'FLEX', 'param': pf,
+                                         'enable_spin_orbital': False,
+                                         'calc_scheme': 'general'})
+            gf = r.get_param("green")
+            fx.solve(gf, 'tests/rpa/output')
+            return gf
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        ge, ga = run(False), run(True)
+        for key in ('chiq_s', 'chiq_c'):
+            np.testing.assert_array_equal(np.asarray(ge[key]),
+                                          np.asarray(ga[key]))
+
+    def test_aggregate_coulomb_offsite_follows_the_same_policy(self):
+        """Off-site entries arriving through the aggregate table must hit the
+        same guard as explicit CoulombInter: a != b off-site is rejected."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        r = read_input_k.QLMSkInput(
+            {'path_to_input': 'tests/rpa/input_2orb',
+             'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                             'Geometry': 'geom.dat',
+                             'Transfer': 'transfer.dat'}})
+        ham = r.get_param("ham")
+        ham['Coulomb'] = {((1, 0, 0), (0, 1)): 0.7,
+                          ((-1, 0, 0), (1, 0)): 0.7}
+        pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+              'SubShape': [1, 1, 1], 'Nmat': 32,
+              'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+        fx = flex_mod.FLEX(ham, {}, {'mode': 'FLEX', 'param': pf,
+                                     'enable_spin_orbital': False,
+                                     'calc_scheme': 'general'})
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        with self.assertRaises(ValueError):
+            fx.solve(r.get_param("green"), 'tests/rpa/output')
+
+    def test_missing_prefold_table_fails_closed(self):
+        """If folding is active but the pre-fold table is unavailable, the
+        guard must refuse rather than fall back to the folded table (the
+        folded table is exactly what the bypass exploited)."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        r = read_input_k.QLMSkInput(
+            {'path_to_input': 'tests/rpa/input_2orb',
+             'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                             'Geometry': 'geom.dat',
+                             'Transfer': 'transfer.dat',
+                             'CoulombInter': 'offsite_sameorb.dat'}})
+        pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+              'SubShape': [2, 1, 1], 'Nmat': 32,
+              'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+        fx = flex_mod.FLEX(r.get_param("ham"), {},
+                           {'mode': 'FLEX', 'param': pf,
+                            'enable_spin_orbital': False,
+                            'calc_scheme': 'general'})
+        if hasattr(fx.ham_info, 'param_ham_orig'):
+            del fx.ham_info.param_ham_orig
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        with self.assertRaises(ValueError) as cm:
+            fx.solve(r.get_param("green"), 'tests/rpa/output')
+        self.assertIn("param_ham_orig", str(cm.exception))
+
+    def test_one_sided_onsite_hund_reads_as_the_mean(self):
+        """The ring's declaration symmetrisation applies to every type, not
+        just CoulombInter: a one-sided on-site Hund declaration must give
+        bit-identical chiq to the halved both-ends declaration."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        def run(entries):
+            r = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                                 'Geometry': 'geom.dat',
+                                 'Transfer': 'transfer.dat'}})
+            ham = r.get_param("ham")
+            ham['Hund'] = dict(entries)
+            par = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                   'SubShape': [1, 1, 1], 'Nmat': 32}
+            rpa = rpa_mod.RPA(ham, {}, {'mode': 'RPA', 'param': par,
+                                        'enable_spin_orbital': False,
+                                        'calc_scheme': 'general',
+                                        'calc_type': 'ring'})
+            gr = r.get_param("green")
+            rpa.solve(gr, 'tests/rpa/output')
+            return np.asarray(gr['chiq'])
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        one = run({((0, 0, 0), (0, 1)): 0.6})
+        both = run({((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3})
+        np.testing.assert_array_equal(one, both)
+
     def test_rejected_offsite_classes(self):
         """Everything outside the measured-equal class must be rejected."""
         import hwave.qlmsio.read_input_k as read_input_k

@@ -1992,6 +1992,30 @@ class FLEX(RPA):
             #   * Exchange, PairHop -- non-local particle-hole pair off-site.
             #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component
             #     (#106).
+            def _normalized(tbl_dict):
+                # The aggregate 'Coulomb' input carries CoulombIntra (the
+                # r = 0 orbital-diagonal entries) and CoulombInter
+                # (everything else) in one table; wan90.split_coulomb is the
+                # shared decomposition. Without this normalization an
+                # aggregate declaration silently produced a ZERO vertex in
+                # this path -- neither the guard below nor
+                # _build_interaction_k knows the 'Coulomb' key (measured:
+                # chiq_s off by 1e-1 against the identical explicit
+                # declaration).
+                if "Coulomb" not in tbl_dict:
+                    return tbl_dict
+                if ("CoulombIntra" in tbl_dict
+                        or "CoulombInter" in tbl_dict):
+                    raise ValueError(
+                        "Coulomb cannot be specified together with "
+                        "CoulombIntra or CoulombInter")
+                from hwave.qlmsio import wan90
+                intra, inter = wan90.split_coulomb(tbl_dict["Coulomb"])
+                out = {k: v for k, v in tbl_dict.items() if k != "Coulomb"}
+                out["CoulombIntra"] = intra
+                out["CoulombInter"] = inter
+                return out
+
             has_fold = tuple(getattr(self.lattice, "subshape",
                                      (1, 1, 1))) != (1, 1, 1)
             # Under folding the guard must scan the PRE-fold table:
@@ -2003,7 +2027,17 @@ class FLEX(RPA):
             # distinguish from genuinely on-site input.
             scan_ham = self.ham_info.param_ham
             if has_fold:
-                scan_ham = getattr(self.ham_info, "param_ham_orig", scan_ham)
+                # fail CLOSED: validating off-site input against the folded
+                # table is exactly the bypass this scan exists to prevent
+                scan_ham = getattr(self.ham_info, "param_ham_orig", None)
+                if scan_ham is None:
+                    raise ValueError(
+                        "sublattice folding is active but the pre-fold "
+                        "interaction table (param_ham_orig) is missing, so "
+                        "off-site input cannot be validated (the folded "
+                        "table canonicalizes displacements and can hide "
+                        "off-site entries).")
+            scan_ham = _normalized(scan_ham)
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising"):
                 if itype not in scan_ham:
@@ -2048,8 +2082,8 @@ class FLEX(RPA):
             kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
             ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
             kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
-            inter_k = _build_interaction_k(kx, ky, kz,
-                                           self.ham_info.param_ham, no)
+            inter_k = _build_interaction_k(
+                kx, ky, kz, _normalized(self.ham_info.param_ham), no)
 
             # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
             Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
