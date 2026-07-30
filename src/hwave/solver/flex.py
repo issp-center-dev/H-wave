@@ -234,22 +234,11 @@ class FLEX(RPA):
                        "'general', got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        if not self._flex_general and (
-                self.ham_info.has_interaction_exchange()
-                or self.ham_info.has_interaction_pairhop()):
-            # FLEX reduces the vertex via the density-density diagonal
-            # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
-            # are dropped.  This is a deliberate (common) approximation, but
-            # warn so it is not silent (cf. the inherited reduced+exchange
-            # guard, which does not cover the squashed scheme).  Exchange and
-            # PairLift set the exchange flag; PairHop sets a separate flag, so
-            # both are checked here to cover all off-diagonal interaction types.
-            logger.warning(
-                "FLEX uses the density-density reduction; exchange- and "
-                "pair-hopping-type interactions (Exchange, PairLift, PairHop) "
-                "are approximated by their density-density part "
-                "(off-diagonal vertices are dropped). "
-                "Use calc_scheme='general' to keep them.")
+        # Exchange/PairHop under reduced/squashed are rejected by the
+        # consistency check inherited from RPA (one policy for both
+        # solvers, #107): their vertex has no density-diagonal content, so
+        # the schemes would drop them entirely -- the former warning here
+        # called that an 'approximation', which for those types it is not.
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))

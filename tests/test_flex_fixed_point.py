@@ -9,10 +9,10 @@ path (normalization drift, an asymmetric sigma update, a vertex applied
 differently on entry), the fixed point moves and these tests fail.
 
 The matrix covers every interaction type FLEX accepts, under every
-calc_scheme. For the reduced/squashed schemes the exchange- and
-pair-type interactions are approximated by their density-density part
-(a documented warning); the fixed-point property must hold for the
-approximated map all the same.
+calc_scheme. The reduced/squashed schemes REJECT Exchange and PairHop
+(one policy since #107: their vertex has no density-diagonal content,
+so those schemes would drop them entirely); the rejection is pinned
+here alongside the fixed-point cells.
 """
 
 import os
@@ -88,25 +88,29 @@ class TestFlexFixedPoint(unittest.TestCase):
                 "%s / %s: %s of the warm-started sweep differs from the "
                 "converged one by %.3e" % (scheme, name, key, d))
 
+    def _check_or_reject(self, scheme, name, path, interactions):
+        if name in ("Exchange 2orb", "PairHop 2orb"):
+            # ONE policy since #107: the density-diagonal schemes reject
+            # Exchange and PairHop for both solvers -- their adjudicated
+            # vertex has no density-diagonal content, so the schemes
+            # would drop them entirely (zero effect, not an
+            # approximation). Previously reduced raised SystemExit,
+            # squashed silently accepted, FLEX warned.
+            with self.assertRaises(ValueError) as cm:
+                self._check_cell(scheme, name, path, interactions)
+            self.assertIn('general', str(cm.exception))
+            return
+        self._check_cell(scheme, name, path, interactions)
+
     def test_reduced(self):
         for name, path, interactions in CELLS:
             with self.subTest(interaction=name):
-                if name == "Exchange 2orb":
-                    # the inherited guard REJECTS reduced + exchange-type
-                    # input outright (squashed instead warns and
-                    # approximates -- the asymmetry is recorded in #107 and
-                    # will be unified there); pin the current policy so a
-                    # silent change shows up here
-                    with self.assertRaises(SystemExit):
-                        self._check_cell('reduced', name, path,
-                                         interactions)
-                    continue
-                self._check_cell('reduced', name, path, interactions)
+                self._check_or_reject('reduced', name, path, interactions)
 
     def test_squashed(self):
         for name, path, interactions in CELLS:
             with self.subTest(interaction=name):
-                self._check_cell('squashed', name, path, interactions)
+                self._check_or_reject('squashed', name, path, interactions)
 
     def test_general(self):
         for name, path, interactions in CELLS:

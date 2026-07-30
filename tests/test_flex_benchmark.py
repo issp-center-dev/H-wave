@@ -886,6 +886,11 @@ class TestFLEXIronPnictide(unittest.TestCase):
         cls.chi_c = green_info["chiq_c"]
         cls.beta = 1.0 / cls.T
 
+    def test_auto_selected_the_general_scheme(self):
+        """The Kanamori set includes Exchange, so auto must resolve to
+        general -- the scheme in which Exchange genuinely acts."""
+        self.assertEqual(self.solver.calc_scheme, 'general')
+
     def test_spin_susceptibility_peaks_at_pi_0(self):
         """chi_s should peak at Q=(pi,0) or (0,pi), NOT (pi,pi).
 
@@ -893,11 +898,17 @@ class TestFLEXIronPnictide(unittest.TestCase):
         between hole pockets at Gamma and electron pockets at M.
         """
         center = self.Nmat // 2
-        nd = self.chi_s.shape[-1]
-
-        chi_s_trace = np.zeros(self.Lx * self.Ly)
-        for a in range(nd):
-            chi_s_trace += self.chi_s[center, :, a, a].real
+        chi = np.asarray(self.chi_s)[center]
+        if chi.ndim == 5:
+            # general scheme: rank-4 orbital tensor in the public
+            # [a, c, b, d] convention; the physical spin response sums
+            # the density sector (aa), (bb)
+            norb = chi.shape[-1]
+            chi_s_trace = sum(chi[:, a, a, b, b].real
+                              for a in range(norb) for b in range(norb))
+        else:
+            # reduced/squashed: (nvol, norb, norb) density-pair matrix
+            chi_s_trace = chi.real.sum(axis=(-2, -1))
 
         # Q vectors
         q_pi0 = (self.Lx // 2) * self.Ly  # (pi, 0)
