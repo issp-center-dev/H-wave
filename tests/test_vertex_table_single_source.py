@@ -155,6 +155,27 @@ class TestRingBaseContent(unittest.TestCase):
 
         self.assertEqual(ring_spin_table("NoSuchType"), {})
 
+    def test_decomposition_is_algebraic_not_a_seven_case_accident(self):
+        """A synthetic type with non-integral density content (S, C) =
+        (x, y) must decompose to W_same = (y - x)/2, W_cross = (y + x)/2
+        by construction -- the derivation is the algebraic channel
+        identity, not something that merely reproduces the seven
+        integer-valued adjudicated tables."""
+        import hwave.solver.vertex_table as vt
+        from types import MappingProxyType
+        from unittest import mock
+
+        x, y = -3.25, 1.75
+        synthetic = dict(vt.ADJUDICATED_SC)
+        synthetic["Synthetic"] = MappingProxyType({"density": (x, y)})
+        with mock.patch.object(vt, "ADJUDICATED_SC",
+                               MappingProxyType(synthetic)):
+            got = vt.ring_spin_table("Synthetic")
+        self.assertEqual(got, {
+            (0, 0, 0, 0): (y - x) / 2.0, (1, 1, 1, 1): (y - x) / 2.0,
+            (0, 0, 1, 1): (y + x) / 2.0, (1, 1, 0, 0): (y + x) / 2.0,
+        })
+
     def test_spin_flip_data_is_frozen(self):
         import hwave.solver.vertex_table as vt
 
