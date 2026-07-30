@@ -1049,6 +1049,16 @@ Tips
   This enables analysis of superconducting instabilities with
   FLEX-level spin and charge fluctuations.
 
+  .. note::
+
+     On the ``reduced``/``squashed`` route only the density-density
+     susceptibility :math:`\chi_{(a,a),(b,b)}` is stored, so the pairing vertex
+     is FLEX-dressed in full **only** for ``CoulombIntra``-only models (or
+     ``norb = 1``). With ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange`` or
+     ``PairHop`` the off-density channels enter undressed and the solver warns;
+     use ``calc_scheme = "general"`` for the complete vertex. See
+     :ref:`the Eliashberg supported-interactions note <sc_supported_inter>`.
+
 
 Implementation details and limitations
 -----------------------------------------

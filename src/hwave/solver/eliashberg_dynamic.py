@@ -513,6 +513,11 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     import hwave.sc as sc
     nmat = chis_w.shape[-1]
 
+    # Once for the whole run: _compute_vertices_flex below is called per
+    # frequency, so warning inside it would repeat nmat (~1000) times.
+    sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
+                                             convention)
+
     def _one(l):
         return sc._compute_vertices_flex(
             chis_w[..., l], chic_w[..., l], inter_k, norb, Nx, Ny, Nz,
