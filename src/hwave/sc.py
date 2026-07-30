@@ -1297,9 +1297,11 @@ def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz, sc_matrices=None):
     :func:`_build_sc_matrices_all_q`.
 
     This inspects the COMBINED matrices rather than testing each configured term
-    on its own. Those blocks are sums: case 2 mixes CoulombInter, Ising and
-    Hund, case 4 adds Exchange and PairHop. Terms can cancel there, and a
-    per-term test would then announce missing dressing that does not exist.
+    on its own. Those blocks are sums: under the adjudicated slot table
+    (#113) case 2 mixes CoulombInter, Ising, Hund AND Exchange, and case 4
+    carries PairHop alone. Terms can cancel there (equal CoulombInter and
+    Hund cancel case 2 exactly in both channels), and a per-term test would
+    then announce missing dressing that does not exist.
     """
     # Reuse the caller's matrices when it already has them: at the full grid
     # these are O(Nq * norb^4) each, and building a second pair while the first
@@ -1361,9 +1363,10 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     if not configured:
         return
     # Ask the assembled S/C matrices, not the individual terms: the off-density
-    # blocks are sums and the configured terms can cancel there (e.g. Exchange
-    # against PairHop in case 4). Only a nonzero combined block means dressing
-    # is actually missing.
+    # blocks are sums and the configured terms can cancel there (e.g. equal
+    # CoulombInter and Hund cancel case 2 in both channels under the
+    # adjudicated table). Only a nonzero combined block means dressing is
+    # actually missing.
     if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz,
                               sc_matrices) == 0.0:
         return
@@ -2163,13 +2166,39 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # would discard the down-spin propagator exactly as the reduced chi loader
     # used to discard the down-spin susceptibility -- and the pair bubble built
     # from it feeds the Eliashberg kernel directly. The susceptibility guard
-    # normally rejects such a run first, but relying on that is fragile: it is a
-    # different file, and a run whose chi happens to be redundant while its
-    # Green functions are not would slip straight through. Check here too.
-    # Known limitation: a two-block green.npz has only its first block used.
-    # Not guarded here -- tracked separately. (Note the dynamic loader reads the
-    # Green function BEFORE the susceptibility check, so that check cannot be
-    # relied on to reject a polarized run first.)
+    # normally rejects such a run first, but relying on that is fragile: it is
+    # a different file, and a run whose chi happens to be redundant while its
+    # Green functions are not would slip straight through. (The dynamic loader
+    # even reads the Green function BEFORE the susceptibility check.) So the
+    # same policy applies here: discarding the other blocks is lossless
+    # exactly when they are redundant; when they are not, the pair bubble
+    # cannot represent the stored physics and the loader RAISES unless the
+    # user takes responsibility via [eliashberg] accept_up_block_only.
+    # NaN-identical blocks compare as redundant (equal_nan): the guard is
+    # about DIFFERING content, not about validating finiteness.
+    if nblock > 1:
+        for b in range(1, nblock):
+            if not np.array_equal(green_raw[b], green_raw[0],
+                                  equal_nan=True):
+                if _accept_up_block_only(input_dict):
+                    logger.warning(
+                        "green file '%s' carries %d spin blocks with "
+                        "DIFFERING content; [eliashberg] "
+                        "accept_up_block_only is set, so the up block "
+                        "alone feeds the pair bubble and the discarded "
+                        "spin content is the user's responsibility.",
+                        green_path, nblock)
+                    break
+                raise ValueError(
+                    "green file '{}' carries {} spin blocks whose contents "
+                    "differ (block {} != block 0). The Eliashberg pair "
+                    "bubble is built from the up block only, so a "
+                    "spin-resolved dressed Green function cannot be "
+                    "represented -- the discarded block is real physics, "
+                    "not redundancy. Re-run FLEX paramagnetically, or set "
+                    "[eliashberg] accept_up_block_only = true to take "
+                    "responsibility for the approximation.".format(
+                        green_path, nblock, b))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb

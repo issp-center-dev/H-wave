@@ -1415,5 +1415,92 @@ class TestMalformedShapesAreRefused(unittest.TestCase):
                     out, gen.reshape(2, 1, 1, 1, n * n, n * n))
 
 
+class TestGreenTwoBlockGuard(unittest.TestCase):
+    """A two-block green.npz feeds the pair bubble from block 0 only;
+    differing blocks are real physics and must be rejected unless the
+    user takes responsibility (mirrors the chi-side policy)."""
+
+    def _write(self, d, blocks, chi_extra=None):
+        import hwave.sc as sc
+
+        norb, Nx, Ny, Nz, nmat = 1, 2, 1, 1, 4
+        nvol = Nx * Ny * Nz
+        nd_so = norb * 2
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        for b in range(2):
+            chi[:, :, b*norb:(b+1)*norb, b*norb:(b+1)*norb] = 0.1
+        meta = dict(chi_extra or {})
+        np.savez(os.path.join(d, 'chiq_s.npz'), chiq_s=chi, **meta)
+        np.savez(os.path.join(d, 'chiq_c.npz'), chiq_c=chi, **meta)
+        green = np.stack(blocks, axis=0)
+        np.savez(os.path.join(d, 'green.npz'), green=green)
+        return {"file": {"output": {"path_to_output": d}},
+                "eliashberg": {}}
+
+    def _blocks(self, second_scale=1.0, nan=False):
+        norb, nvol, nmat = 1, 2, 4
+        g = (np.arange(nmat * nvol * norb * norb, dtype=complex)
+             .reshape(nmat, nvol, norb, norb) + 1.0)
+        if nan:
+            g[0, 0, 0, 0] = np.nan
+        return [g, g * second_scale]
+
+    def test_identical_blocks_pass(self):
+        import tempfile
+
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, self._blocks(1.0))
+        green = sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIsNotNone(green)
+
+    def test_nan_identical_blocks_pass(self):
+        # the guard is about DIFFERING content, not finiteness
+        import tempfile
+
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, self._blocks(1.0, nan=True))
+        green = sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIsNotNone(green)
+
+    def test_differing_blocks_are_rejected(self):
+        import tempfile
+
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, self._blocks(2.0))
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIn('accept_up_block_only', str(cm.exception))
+
+    def test_differing_blocks_pass_with_authorization(self):
+        import logging
+        import tempfile
+
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, self._blocks(2.0))
+        inp['eliashberg']['accept_up_block_only'] = True
+        with self.assertLogs('hwave_sc', level=logging.WARNING) as cm:
+            green = sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIsNotNone(green)
+        self.assertTrue(any('DIFFERING' in m for m in cm.output))
+
+    def test_dynamic_route_rejects_differing_blocks(self):
+        import tempfile
+
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, self._blocks(2.0))
+        with self.assertRaises(ValueError):
+            sc._load_flex_green(inp, 1, 2, 1, 1, allow_ir=True)
+
+
 if __name__ == "__main__":
     unittest.main()

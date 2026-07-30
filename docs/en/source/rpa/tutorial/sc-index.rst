@@ -1198,14 +1198,15 @@ was checked by running the combination.
    :header-rows: 1
    :widths: 26 24 24 26
 
-   * - 
+   * -
      - ``reduced`` / ``squashed``
      - ``general``
      - note
    * - two-body range
      - on-site and **off-site**
-     - **on-site only**
-     - off-site raises ``ValueError`` on the general path
+     - on-site; off-site only for same-orbital ``CoulombInter``
+     - other off-site entries raise ``ValueError`` on the general path
+       (and sublattice folding disables its off-site support)
    * - spin structure
      - spin-free, spin-diag, spinful
      - **spin-free only**
@@ -1225,7 +1226,7 @@ was checked by running the combination.
    :header-rows: 1
    :widths: 26 24 50
 
-   * - 
+   * -
      - ``ring`` (default)
      - ``ring+ladder``
    * - RPA
@@ -1291,8 +1292,9 @@ accepts ``spin-free`` only and rejects the other two outright.
   ``Extern`` field with ``coeff_extern``) -- **refused.** Only the spin-up block
   would survive the embedding, so the eigenvalue would not approximate the
   spin-resolved problem at all; the loader raises rather than returning a
-  number. (Content far below any physical polarization -- more than eight orders
-  of magnitude smaller than the kept block -- is reported as round-off and
+  number. (Content at the floating-point round-off scale -- below
+  ``256 * eps`` relative to the kept block, about ``6e-14`` -- is reported as
+  round-off and
   allowed through, so a backend rounding asymmetry cannot abort a genuinely
   paramagnetic run.)
 
