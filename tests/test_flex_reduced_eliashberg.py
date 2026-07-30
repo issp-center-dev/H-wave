@@ -646,10 +646,12 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
 
         The dynamic kernel calls that function once per bosonic Matsubara
         frequency (nmat ~ 1000 in production), and
-        eliashberg_dynamic._zero_chi_vertex calls it again with chi = 0 to
-        extract the bare 0.5*(S+C) term. Warning from inside would flood the log
-        and fire on a call where the message makes no sense, so the check is
-        hoisted to the two callers that run once per calculation."""
+        eliashberg_dynamic._instantaneous_vertex calls it again with chi = 0
+        to extract the bare 0.5*(S+C) term. Warning from inside would flood
+        the log and fire on a call where the message makes no sense, so the
+        check is hoisted to the two callers that run once per calculation.
+        (The Exchange/PairHop REJECTION, by contrast, does run inside on
+        every call -- it is a cheap scan and must hold on every route.)"""
         import hwave.sc as sc
         import logging
 
@@ -704,6 +706,106 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
             "expected exactly 1 reduced-data warning for nmat={}, got {}".format(
                 nmat, len(warns)))
         self.assertIn("Hund", warns[0])
+
+
+class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
+    """The Kuroki Exchange/PairHop rejection must be an invariant of the
+    vertex builders themselves, not an artifact of which builder the
+    orchestrator happens to call first (round-9 review: calling
+    ``_instantaneous_vertex`` directly silently returned a ZERO vertex for
+    a nonzero Exchange)."""
+
+    def _inter_k(self, keys, norb=2, Nx=2, Ny=2, Nz=1):
+        return {k: np.ones((norb, norb, Nx, Ny, Nz), dtype=complex)
+                for k in keys}
+
+    def test_compute_vertices_flex_boundary_rejects(self):
+        import hwave.sc as sc
+
+        for key in ("Exchange", "PairHop"):
+            for norb in (1, 2):
+                with self.subTest(interaction=key, norb=norb):
+                    Nx, Ny, Nz = 2, 2, 1
+                    nd = norb * norb
+                    chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+                    with self.assertRaises(ValueError) as cm:
+                        sc._compute_vertices_flex(
+                            chi, chi,
+                            self._inter_k(["CoulombIntra", key],
+                                          norb, Nx, Ny, Nz),
+                            norb, Nx, Ny, Nz, convention="kuroki")
+                    self.assertIn(key, str(cm.exception))
+
+    def test_instantaneous_vertex_rejects_exchange_pairhop(self):
+        from hwave.solver import eliashberg_dynamic as ed
+
+        for key in ("Exchange", "PairHop"):
+            for norb in (1, 2):
+                with self.subTest(interaction=key, norb=norb):
+                    with self.assertRaises(ValueError) as cm:
+                        ed._instantaneous_vertex(
+                            self._inter_k(["CoulombIntra", key],
+                                          norb, 2, 2, 1),
+                            norb, 2, 2, 1, pairing_type="singlet",
+                            convention="kuroki")
+                    self.assertIn(key, str(cm.exception))
+
+    def test_dynamic_builder_route_rejects(self):
+        from hwave.solver import eliashberg_dynamic as ed
+
+        norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
+        chi_w = np.zeros((Nx, Ny, Nz, 1, 1, nmat), dtype=complex)
+        with self.assertRaises(ValueError):
+            ed.compute_vertices_flex_dynamic(
+                chi_w, chi_w, self._inter_k(["Exchange"], norb, Nx, Ny, Nz),
+                norb, Nx, Ny, Nz, pairing_type="singlet",
+                convention="kuroki")
+
+    def test_general_convention_still_accepts_exchange(self):
+        """Centralizing the rejection must not touch the general (myo)
+        convention, which fully represents Exchange/PairHop."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        nd = norb * norb
+        inter_k = self._inter_k(["CoulombIntra", "Exchange", "PairHop"],
+                                norb, Nx, Ny, Nz)
+        chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        V = sc._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
+                                      convention="myo")
+        self.assertEqual(V.shape, (norb, norb, norb, norb, Nx, Ny, Nz))
+        V2 = ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                      pairing_type="singlet",
+                                      convention="myo")
+        self.assertEqual(V2.shape, (norb, norb, norb, norb, Nx, Ny, Nz))
+
+    def test_dynamic_builder_builds_sc_matrices_once(self):
+        """The S/C matrices are frequency-independent: one build per run,
+        independent of nmat (round-9 review measured ~nmat identical
+        full-grid builds)."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+        from unittest import mock
+
+        norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 6
+        nd = norb * norb
+        # CoulombIntra only: the missing-component warning does not fire, so
+        # no per-term attribution builds muddy the count -- any extra build
+        # here is a per-frequency rebuild.
+        inter_k = self._inter_k(["CoulombIntra"], norb, Nx, Ny, Nz)
+        chi_w = np.zeros((Nx, Ny, Nz, nd, nd, nmat), dtype=complex)
+
+        real_build = sc._build_sc_matrices_all_q
+        with mock.patch.object(sc, "_build_sc_matrices_all_q",
+                               side_effect=real_build) as spy:
+            ed.compute_vertices_flex_dynamic(
+                chi_w, chi_w, inter_k, norb, Nx, Ny, Nz,
+                pairing_type="singlet", convention="kuroki")
+        self.assertEqual(
+            spy.call_count, 1,
+            "expected ONE S/C build for nmat={}, got {}".format(
+                nmat, spy.call_count))
 
 
 class TestDiscardedSpinContentIsRefused(unittest.TestCase):
@@ -925,6 +1027,46 @@ class TestStaticEntryPointWarnsOnce(unittest.TestCase):
             "static calc_eliashberg must emit the reduced-data warning exactly "
             "once, got {}".format(len(warns)))
         self.assertIn("CoulombInter", warns[0])
+
+
+class TestStaticEntryPointRejectsExchange(TestStaticEntryPointWarnsOnce):
+    """End-to-end guard on the PUBLIC static route, rejection side: with
+    Exchange configured, the reduced-chi run must raise instead of warn.
+    Reuses the warn-once fixture and adds an Exchange file."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.dir, "exchange.dat"), "w") as f:
+            f.write("Exchange in wannier90-like format for uhfk\n"
+                    "2\n1\n 1\n"
+                    "   0    0    0    1    2   0.300000000000   0.000000000000\n"
+                    "   0    0    0    2    1   0.300000000000   0.000000000000\n")
+        # The parent fixture predates sc_vertex_version on purpose (its
+        # interaction set is unaffected by #113). With Exchange configured the
+        # legacy-file guard would fire FIRST; stamp the current version so the
+        # run reaches the reduced-data rejection under test.
+        for name in ("chiq_s.npz", "chiq_c.npz"):
+            path = os.path.join(self.dir, name)
+            with np.load(path) as d:
+                payload = {k: d[k] for k in d.files}
+            payload["sc_vertex_version"] = 2
+            np.savez(path, **payload)
+
+    def _input_dict(self):
+        d = super()._input_dict()
+        d["file"]["input"]["interaction"]["Exchange"] = "exchange.dat"
+        return d
+
+    def test_calc_eliashberg_emits_exactly_one_reduced_warning(self):
+        """Overrides the inherited warn test: with Exchange present the run
+        must REJECT before building any vertex."""
+        import hwave.sc as sc
+
+        with self.assertRaises(ValueError) as cm:
+            sc.calc_eliashberg(self._input_dict())
+        msg = str(cm.exception)
+        self.assertIn("Exchange", msg)
+        self.assertIn("calc_scheme='general'", msg)
 
 
 class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):

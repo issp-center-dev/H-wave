@@ -1321,6 +1321,63 @@ def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz, sc_matrices=None):
     return weight
 
 
+def _build_vertex_sc_matrices(convention, inter_k, norb, Nx, Ny, Nz):
+    """Build the (S, C) interaction matrices for the given orbital convention.
+
+    Single dispatcher shared by :func:`_compute_vertices_flex` and its
+    callers, so a dynamic run can build the frequency-INDEPENDENT matrices
+    once and pass them to every per-frequency contraction instead of
+    rebuilding ~nmat identical full-grid pairs.
+    """
+    conv = str(convention).lower()
+    if conv == "myo":
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        return build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+    if conv == "kuroki":
+        return _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    raise ValueError(
+        "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
+
+
+def _reject_reduced_flex_unsupported(inter_k, convention="kuroki",
+                                     source=None):
+    """Reject Exchange/PairHop wherever a Kuroki-convention vertex is built.
+
+    This is the cheap half of :func:`_warn_reduced_flex_missing_components`:
+    a dict scan with no S/C construction, so it can (and must) run at EVERY
+    Kuroki vertex boundary -- :func:`_compute_vertices_flex` itself, hence
+    also ``eliashberg_dynamic._instantaneous_vertex`` and every
+    per-frequency dynamic contraction -- making the rejection an enforced
+    invariant rather than an ordering artifact of which builder the
+    orchestrator happens to call first (round-9 review: the IR
+    instantaneous route silently accepted both terms and returned a zero
+    vertex when called directly).
+
+    Exchange and PairHop carry NO density-diagonal vertex content
+    (hwave.solver.vertex_table), so a Kuroki (reduced-origin) chi dresses
+    none of it and the result would silently omit the interaction; the
+    general (myo) convention represents them fully and is not restricted.
+    """
+    if str(convention).lower() != "kuroki":
+        return
+    rejected = [k for k in _REDUCED_FLEX_REJECTED
+                if k in inter_k and np.any(np.asarray(inter_k[k]) != 0)]
+    if rejected:
+        raise ValueError(
+            "the Eliashberg vertex cannot be built from {} together with "
+            "{}: those interactions have no density-diagonal vertex "
+            "content at all (hwave.solver.vertex_table), so reduced "
+            "(density-only) data dresses none of it and the result would "
+            "silently omit the interaction. (H-wave's own reduced/squashed "
+            "runs cannot even be produced with these terms since the "
+            "unified scheme policy.) Provide a general (four-index) "
+            "susceptibility instead -- for a FLEX source, re-run with "
+            "calc_scheme='general'.".format(
+                source or ("a REDUCED (calc_scheme='reduced' or "
+                           "'squashed') FLEX susceptibility"),
+                ", ".join(rejected)))
+
+
 def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
                                           convention="kuroki",
                                           source=None, sc_matrices=None):
@@ -1330,8 +1387,11 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     vertex -- NOT from inside ``_compute_vertices_flex``. That function is
     invoked once per bosonic Matsubara frequency by the dynamic kernel (so the
     warning would repeat ``Nmat`` times, ~1000 in production runs), and again by
-    ``eliashberg_dynamic._zero_chi_vertex`` with chi = 0, where the message
-    would be doubly misleading.
+    ``eliashberg_dynamic._instantaneous_vertex`` with chi = 0, where the
+    message would be doubly misleading. The Exchange/PairHop REJECTION, by
+    contrast, is enforced inside ``_compute_vertices_flex`` on every call
+    (:func:`_reject_reduced_flex_unsupported`) -- it is a cheap scan and
+    must hold on every route, not just the orchestrated one.
 
     A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
     density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
@@ -1362,22 +1422,7 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     # interaction would be silently omitted rather than represented --
     # exactly what the rejection exists to prevent (round-7 review; the
     # bypass returned zero vertices for both terms on both routes).
-    rejected = [k for k in _REDUCED_FLEX_REJECTED
-                if k in inter_k and np.any(np.asarray(inter_k[k]) != 0)]
-    if rejected:
-        raise ValueError(
-            "the Eliashberg vertex cannot be built from {} together with "
-            "{}: those interactions have no density-diagonal vertex "
-            "content at all (hwave.solver.vertex_table), so reduced "
-            "(density-only) data dresses none of it and the result would "
-            "silently omit the interaction. (H-wave's own reduced/squashed "
-            "runs cannot even be produced with these terms since the "
-            "unified scheme policy.) Provide a general (four-index) "
-            "susceptibility instead -- for a FLEX source, re-run with "
-            "calc_scheme='general'.".format(
-                source or ("a REDUCED (calc_scheme='reduced' or "
-                           "'squashed') FLEX susceptibility"),
-                ", ".join(rejected)))
+    _reject_reduced_flex_unsupported(inter_k, convention, source)
     if norb <= 1:
         # norb == 1 has no off-density pair index, so no PARTIAL dressing
         # can be missing (the rejection above still applies).
@@ -1421,7 +1466,8 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
 
 
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                           pairing_type="singlet", convention="kuroki"):
+                           pairing_type="singlet", convention="kuroki",
+                           sc_matrices=None):
     """Compute pairing vertex from pre-computed FLEX susceptibilities.
 
     Uses the same formula as _compute_vertices_general but takes
@@ -1454,6 +1500,12 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
         Grid dimensions.
     pairing_type : str
         "singlet" or "triplet".
+    sc_matrices : tuple of ndarray, optional
+        Precomputed ``(S_all, C_all)`` for this convention
+        (:func:`_build_vertex_sc_matrices`). The matrices are
+        frequency-independent, so a dynamic run passes one pair to every
+        per-frequency call instead of rebuilding ~nmat identical full-grid
+        pairs (round-9 review).
 
     Returns
     -------
@@ -1467,15 +1519,16 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
             "PairLift is configured but does not contribute to the S/C pairing "
             "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
 
-    conv = convention.lower()
-    if conv == "myo":
-        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
-        S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
-    elif conv == "kuroki":
-        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    # Enforced at THIS boundary (not only in the orchestrator): every Kuroki
+    # vertex construction -- including chi = 0 via _instantaneous_vertex --
+    # must reject Exchange/PairHop, or the interaction is silently omitted.
+    _reject_reduced_flex_unsupported(inter_k, convention)
+
+    if sc_matrices is not None:
+        S_all, C_all = sc_matrices
     else:
-        raise ValueError(
-            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
+        S_all, C_all = _build_vertex_sc_matrices(convention, inter_k,
+                                                 norb, Nx, Ny, Nz)
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -4024,11 +4077,19 @@ def calc_eliashberg(input_dict):
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
-        _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
-                                              chi_convention)
+        # One S/C build for the run: the pair feeds the missing-component
+        # diagnostic AND the vertex contraction (round-9 review; previously
+        # each built its own full-grid pair).
+        sc_mats = _build_vertex_sc_matrices(chi_convention, inter_k,
+                                            norb, Nx, Ny, Nz)
+        _warn_reduced_flex_missing_components(
+            inter_k, norb, Nx, Ny, Nz, chi_convention,
+            sc_matrices=(sc_mats if str(chi_convention).lower() == "kuroki"
+                         else None))
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type=pairing_type,
-                                      convention=chi_convention)
+                                      convention=chi_convention,
+                                      sc_matrices=sc_mats)
         logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
 
     else:
