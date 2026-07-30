@@ -56,10 +56,21 @@ class TestAssembledConsistency(unittest.TestCase):
         """For every type with cross-slot content: measure S/C from the
         sc builders and the same-spin/cross-spin entries from the ring,
         and require W_same == (C - S)/2, W_cross == (C + S)/2."""
+        J = 0.7
+        expected_sc = {"CoulombInter": (+J, -J), "Hund": (-J, +J),
+                       "Ising": (+J, -J), "Exchange": (+J, +J)}
         for itype in ("CoulombInter", "Hund", "Ising", "Exchange"):
             with self.subTest(interaction=itype):
-                S, C = self._sc_cross(itype)
-                same, cross = self._rpa_fierz(itype)
+                S, C = self._sc_cross(itype, J=J)
+                # guard against a vacuous pass: if both builders dropped
+                # the cross content entirely, the identity below would
+                # hold on zeros -- pin the expected NONZERO values first
+                want_s, want_c = expected_sc[itype]
+                self.assertAlmostEqual(complex(S), complex(want_s),
+                                       places=12, msg="%s S" % itype)
+                self.assertAlmostEqual(complex(C), complex(want_c),
+                                       places=12, msg="%s C" % itype)
+                same, cross = self._rpa_fierz(itype, J=J)
                 self.assertAlmostEqual(
                     complex(same), complex((C - S) / 2.0), places=12,
                     msg="%s same-spin" % itype)
@@ -143,16 +154,44 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
 
 class TestIEEEParity(unittest.TestCase):
 
-    def test_plus_two_coefficient_keeps_the_multiply_form(self):
-        """The +-2 coefficients (CoulombInter density) intentionally keep
-        the multiplication, matching the pre-refactor 2.0 * V form."""
+    def test_plus_minus_two_coefficients_preserve_structure(self):
+        """The +-2 coefficients: value doubled for finite input, and the
+        component structure of Inf+0j preserved (a real scalar multiply
+        scales componentwise, matching the pre-refactor 2.0 * V form; a
+        finite-only check could not distinguish the forms)."""
+        import warnings
+
         import hwave.sc as sc
+
+        ctx = warnings.catch_warnings()
+        ctx.__enter__()
+        self.addCleanup(ctx.__exit__, None, None, None)
+        warnings.simplefilter("ignore", RuntimeWarning)
 
         m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
         m[0, 1] = m[1, 0] = 0.7
         S, C = sc._build_sc_matrices_all_q(
             {"CoulombInter": m}, 2, 1, 1, 1, _presymmetrised=True)
         self.assertAlmostEqual(complex(C[0, 0, 0, 0, 3]), 1.4, places=13)
+
+        # numpy promotes scalar * complex array to a complex multiply, so
+        # 2.0 * (Inf+0j) is Inf+NaNj -- IDENTICAL to the pre-refactor
+        # 2.0 * V form, and distinguishable from a replace-by-two-adds
+        # implementation (which would give Inf+0j)
+        m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
+        m[0, 1] = m[1, 0] = complex(np.inf, 0.0)
+        S, C = sc._build_sc_matrices_all_q(
+            {"CoulombInter": m}, 2, 1, 1, 1, _presymmetrised=True)
+        got = C[0, 0, 0, 0, 3]          # +2 slot
+        self.assertEqual(got.real, np.inf)
+        self.assertTrue(np.isnan(got.imag),
+                        "the legacy multiply form yields Inf+NaNj here")
+        S, C = sc._build_sc_matrices_all_q(
+            {"Ising": m}, 2, 1, 1, 1, _presymmetrised=True)
+        got = S[0, 0, 0, 0, 3]          # -2 slot
+        self.assertEqual(got.real, -np.inf)
+        self.assertTrue(np.isnan(got.imag),
+                        "the legacy multiply form yields -Inf+NaNj here")
 
     def test_plus_minus_one_coefficients_preserve_complex_infinities(self):
         """numpy's 1.0 * (Inf+0j) is Inf+NaNj (full complex multiply);
@@ -203,6 +242,67 @@ class TestIEEEParity(unittest.TestCase):
                     self.assertEqual(got.imag, 0.0,
                                      "%s %s[%d,%d] imag must stay exactly "
                                      "zero, not NaN" % (itype, ch, i, j))
+
+
+class TestMixedTypeGolden(unittest.TestCase):
+
+    def test_mixed_types_norb3_complex_slots(self):
+        """Permanent legacy-parity protection: a mixed-type norb=3 complex
+        input, with selected slots of every type and family pinned (the
+        pre-refactor and refactored builders were verified bit-for-bit
+        equal on this class of input during review; these values freeze
+        that behavior)."""
+        import hwave.sc as sc
+
+        norb = 3
+
+        def mat(entries):
+            m = np.zeros((norb, norb, 1, 1, 1), dtype=complex)
+            for (a, b), v in entries.items():
+                m[a, b, 0, 0, 0] = v
+            return m
+
+        ik = {
+            "CoulombIntra": mat({(a, a): 2.0 + 0.1 * a for a in range(3)}),
+            "CoulombInter": mat({(0, 1): 0.7, (1, 0): 0.7,
+                                 (0, 2): 0.4, (2, 0): 0.4}),
+            "Hund": mat({(0, 1): 0.3, (1, 0): 0.3}),
+            "Ising": mat({(1, 2): 0.2, (2, 1): 0.2}),
+            "Exchange": mat({(0, 2): 0.25, (2, 0): 0.25}),
+            "PairHop": mat({(0, 1): 0.15 + 0.05j, (1, 0): 0.15 - 0.05j}),
+        }
+        S, C = sc._build_sc_matrices_all_q(
+            ik, norb, 1, 1, 1, _presymmetrised=True)
+        S = S[0, 0, 0]
+        C = C[0, 0, 0]
+        p = lambda a, b: a * norb + b
+        checks = [
+            # diag: U_a at (aa, aa); CoulombInter aa density adds nothing here
+            ("S", p(0, 0), p(0, 0), 2.0), ("C", p(0, 0), p(0, 0), 2.0),
+            ("S", p(1, 1), p(1, 1), 2.1),
+            # density (aa, bb): C = 2 V; Hund S = +J, C = -J; Ising S = -2 I
+            ("C", p(0, 0), p(1, 1), 2 * 0.7 - 0.3),
+            ("S", p(0, 0), p(1, 1), 0.3),
+            ("S", p(1, 1), p(2, 2), -2 * 0.2),
+            ("C", p(1, 1), p(2, 2), 0.0),
+            ("C", p(0, 0), p(2, 2), 2 * 0.4),
+            # cross (ab, ab): V (+, -), Hund (-, +), Ising (+, -), Exch (+, +)
+            ("S", p(0, 1), p(0, 1), 0.7 - 0.3),
+            ("C", p(0, 1), p(0, 1), -0.7 + 0.3),
+            ("S", p(1, 2), p(1, 2), 0.2),
+            ("C", p(1, 2), p(1, 2), -0.2),
+            ("S", p(0, 2), p(0, 2), 0.4 + 0.25),
+            ("C", p(0, 2), p(0, 2), -0.4 + 0.25),
+            # antidiag (ab, ba): PairHop, complex phase preserved, S = C
+            ("S", p(0, 1), p(1, 0), 0.15 + 0.05j),
+            ("C", p(0, 1), p(1, 0), 0.15 + 0.05j),
+            ("S", p(1, 0), p(0, 1), 0.15 - 0.05j),
+        ]
+        M = {"S": S, "C": C}
+        for ch, i, j, want in checks:
+            self.assertAlmostEqual(
+                complex(M[ch][i, j]), complex(want), places=12,
+                msg="%s[%d,%d]" % (ch, i, j))
 
 
 if __name__ == "__main__":

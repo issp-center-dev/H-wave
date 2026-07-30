@@ -47,10 +47,14 @@ decomposition in code -- rather than recording it in a commit message --
 is the point of this module.
 """
 
+from types import MappingProxyType
+
 # (S, C) per unit coupling, per slot family. Types absent from a family
 # contribute nothing there. PairLift has no particle-hole S/C content
-# (adjudicated zero).
-ADJUDICATED_SC = {
+# (adjudicated zero). Read-only: a consumer mutating the table would
+# silently poison BOTH builders at once, which is worse than the drift
+# this module exists to prevent.
+_ADJUDICATED_SC_RAW = {
     "CoulombIntra": {"diag": (+1.0, +1.0)},
     "CoulombInter": {"cross": (+1.0, -1.0), "density": (0.0, +2.0)},
     "Hund":         {"cross": (-1.0, +1.0), "density": (+1.0, -1.0)},
@@ -59,6 +63,13 @@ ADJUDICATED_SC = {
     "PairLift":     {},
     "PairHop":      {"antidiag": (+1.0, +1.0)},
 }
+
+ADJUDICATED_SC = MappingProxyType(
+    {k: MappingProxyType(v) for k, v in _ADJUDICATED_SC_RAW.items()})
+# no mutable backing name is retained: the proxies above hold the only
+# references to the inner dicts, and the module namespace exposes only
+# the read-only view
+del _ADJUDICATED_SC_RAW
 
 
 def sc_coefficients(itype, family):
