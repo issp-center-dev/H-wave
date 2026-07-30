@@ -10,10 +10,11 @@ S/C builders in :mod:`hwave.sc` (FLEX general and Eliashberg) and the
 Fierz CROSS-SLOT correction of the ring vertex in
 :mod:`hwave.solver.rpa` (#104) -- derive their coefficients from it, so
 those pieces cannot drift apart again (they did, repeatedly: #96, #104,
-#113). The ring's long-standing base content (the density slots and the
-transverse spin-flip slots, adjudicated in #105 and never drifted) is
-still encoded in rpa.py's spin tables; folding those into this table is
-a later increment.
+#113). The ring's BASE content is covered too
+(:func:`ring_spin_table`): its density-slot weights are the channel
+decomposition of the same (S, C) entries, executed in code, and the
+transverse spin-flip weights (adjudicated in #105, underivable from the
+longitudinal channels) are recorded here as data.
 
 Slot families of the pair-space matrices (slots are (l1*norb+l2,
 l3*norb+l4)):
@@ -85,3 +86,58 @@ def fierz_coefficients(itype):
     """
     s, c = sc_coefficients(itype, "cross")
     return ((c - s) / 2.0, (c + s) / 2.0)
+
+
+# Transverse spin-flip weights of the ring's base tensor, adjudicated in
+# issue #105 (the transverse ladder channel was measured against exact
+# diagonalization independently of the longitudinal channels). These are
+# NOT derivable from the (S, C) table above: the longitudinal channels see
+# only spin-conserving bilinears, while these entries flip spin on each
+# bilinear -- Exchange couples the spin-raising density (a,a) to the
+# spin-lowering (b,b), PairLift raises on both. Keys are the ring's
+# ``spin(a, ap, bp, b)`` convention (0: up, 1: down); read-only for the
+# same reason as ADJUDICATED_SC.
+_RING_SPIN_FLIP_RAW = {
+    "Exchange": {(0, 1, 1, 0): -1.0, (1, 0, 0, 1): -1.0},
+    "PairLift": {(0, 1, 0, 1): +1.0, (1, 0, 1, 0): +1.0},
+}
+
+RING_SPIN_FLIP = MappingProxyType(
+    {k: MappingProxyType(v) for k, v in _RING_SPIN_FLIP_RAW.items()})
+del _RING_SPIN_FLIP_RAW
+
+
+def ring_spin_table(itype):
+    """Spin-resolved base weights of the ring vertex for ``itype``.
+
+    Returns ``{(s1, s2, s3, s4): w}`` in the ring's ``spin(a, ap, bp, b)``
+    convention. The spin-conserving part is the channel decomposition
+    ``W_same = (C - S)/2``, ``W_cross = (C + S)/2`` of the type's
+    adjudicated (S, C) content at the slot family its base placement
+    occupies -- ``diag`` for CoulombIntra (same orbital on both
+    bilinears), ``antidiag`` for PairHop (its ring placement couples
+    (a,b) to (b,a)), ``density`` for everything else. The spin-flip part
+    is the #105 transverse content, recorded data (see RING_SPIN_FLIP).
+
+    This reproduces the hand-coded per-type spin tables the ring carried
+    since its adjudication, now derived from the one table instead of
+    duplicated next to it.
+    """
+    if itype == "CoulombIntra":
+        family = "diag"
+    elif itype == "PairHop":
+        family = "antidiag"
+    else:
+        family = "density"
+    s, c = sc_coefficients(itype, family)
+    w_same = (c - s) / 2.0
+    w_cross = (c + s) / 2.0
+    table = {}
+    if w_same != 0.0:
+        table[(0, 0, 0, 0)] = w_same
+        table[(1, 1, 1, 1)] = w_same
+    if w_cross != 0.0:
+        table[(0, 0, 1, 1)] = w_cross
+        table[(1, 1, 0, 0)] = w_cross
+    table.update(RING_SPIN_FLIP.get(itype, {}))
+    return table

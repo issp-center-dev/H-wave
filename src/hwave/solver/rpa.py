@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
-from hwave.solver.vertex_table import fierz_coefficients
+from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
 from hwave.solver.density_projection import (
     project_density_pairs, project_density_squashed)
 from . import backend as _bk
@@ -560,17 +560,14 @@ class Interaction:
         # shared the tensor).
         fierz_r = np.zeros_like(ham_r)
 
-        # spin(a,ap,bp,b)  0: up, 1: down
-        spin_table = {
-            'CoulombIntra': { (0,0,1,1): 1, (1,1,0,0): 1 },
-            'CoulombInter': { (0,0,0,0): 1, (1,1,1,1): 1, (0,0,1,1): 1, (1,1,0,0): 1 },
-            'Hund':         { (0,0,0,0): -1, (1,1,1,1): -1 },
-            'Ising':        { (0,0,0,0): 1, (1,1,1,1): 1, (0,0,1,1): -1, (1,1,0,0): -1 },
-            'PairLift':     { (0,1,0,1): 1, (1,0,1,0): 1 },
-            'Exchange':     { (0,1,1,0): -1, (1,0,0,1): -1 },
-            #--
-            'PairHop':      { (0,0,1,1): 1, (1,1,0,0): 1 },
-        }
+        # spin(a,ap,bp,b)  0: up, 1: down -- derived per type from the
+        # adjudicated vertex table (density slots via the channel
+        # decomposition, spin-flip slots from the #105 transverse data)
+        # instead of hand-coded here; hwave.solver.vertex_table is the one
+        # source of this content.
+        spin_table = {t: ring_spin_table(t)
+                      for t in ('CoulombIntra', 'CoulombInter', 'Hund',
+                                'Ising', 'PairLift', 'Exchange', 'PairHop')}
 
         # coulomb-type interactions
         def _symmetrised(type, tbl):
