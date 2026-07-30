@@ -1994,11 +1994,21 @@ class FLEX(RPA):
             #     (#106).
             has_fold = tuple(getattr(self.lattice, "subshape",
                                      (1, 1, 1))) != (1, 1, 1)
+            # Under folding the guard must scan the PRE-fold table:
+            # _init_interaction canonicalizes displacements modulo the folded
+            # grid, and a folded dimension of size one maps every off-site
+            # displacement to (0,0,0) -- e.g. CellShape=[4,4,1] with
+            # SubShape=[4,1,1] turns +-x bonds into zero-displacement
+            # inter-sublattice entries, which the folded table cannot
+            # distinguish from genuinely on-site input.
+            scan_ham = self.ham_info.param_ham
+            if has_fold:
+                scan_ham = getattr(self.ham_info, "param_ham_orig", scan_ham)
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising"):
-                if itype not in self.ham_info.param_ham:
+                if itype not in scan_ham:
                     continue
-                for (irvec, orbvec) in self.ham_info.param_ham[itype]:
+                for (irvec, orbvec) in scan_ham[itype]:
                     if tuple(irvec) == (0, 0, 0):
                         continue
                     ok = (itype == "CoulombInter"
@@ -2018,6 +2028,13 @@ class FLEX(RPA):
                                 itype, tuple(irvec), tuple(orbvec),
                                 ", with sublattice folding" if has_fold
                                 else ""))
+                    # One-sided declarations are fine: BOTH solvers reduce
+                    # a declaration to its reversal-symmetric part (the
+                    # physical coefficient of n_a(i) n_a(i+R), even in R by
+                    # the site sum) -- the S/C builders since #114, and the
+                    # ring's _make_ham_inter since the same reading was
+                    # given to rpa.py. Measured: one-sided v and v/2 at
+                    # both ends give bit-identical chiq in both solvers.
 
             no = self.norb
             nx, ny, nz = self.lattice.shape

@@ -456,11 +456,41 @@ class Interaction:
         }
 
         # coulomb-type interactions
+        def _symmetrised(type, tbl):
+            # Reduce each declaration to its physical symmetric coefficient,
+            # the same reading as uhfk.py and hwave.sc (#106/#113/#114): the
+            # two declarations of one bond are (R, a, b) and (-R, b, a), and
+            # for every type except PairHop they multiply the SAME operator,
+            # so the table entering the vertex is the mean
+            #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
+            # Without this the ring read a one-sided off-site declaration as
+            # v e^{-iqR} where the operator it declares -- v n_a(i) n_a(i+R),
+            # even in R by the site sum -- has the exact vertex v cos(qR)
+            # (measured: chiq differed by 1.2e-2 from the symmetric reading
+            # of the same Hamiltonian). PairHop's partner is the HERMITIAN
+            # entry, so its mean conjugates and its complex phase survives.
+            out = {}
+            for (irvec, orbvec), v in tbl.items():
+                a, b = orbvec
+                partner = (tuple(-x for x in irvec), (b, a))
+                pv = tbl.get(partner, 0.0)
+                if type == "PairHop":
+                    out[(irvec, orbvec)] = 0.5 * (v + np.conjugate(pv))
+                else:
+                    out[(irvec, orbvec)] = 0.5 * (v + pv)
+                if partner not in tbl:
+                    rvec, (pa, pb) = partner
+                    out[(rvec, (pa, pb))] = out.get(
+                        (rvec, (pa, pb)),
+                        0.5 * (np.conjugate(v) if type == "PairHop" else v))
+            return out
+
         def _append_inter(type, tbl=None):
             logger.debug("_append_inter {}".format(type))
             spins = spin_table[type]
             if tbl is None:
                 tbl = self.param_ham[type]
+            tbl = _symmetrised(type, tbl)
             for (irvec,orbvec), v in tbl.items():
                 a, b = orbvec
                 for spinvec, w in spins.items():
@@ -476,7 +506,8 @@ class Interaction:
         #        + (up <-> down)
         def _append_pairhop(type):
             spins = spin_table[type]
-            for (irvec,orbvec), v in self.param_ham[type].items():
+            tbl = _symmetrised(type, self.param_ham[type])
+            for (irvec,orbvec), v in tbl.items():
                 # take account of same-site interaction only
                 if (irvec == (0,0,0)):
                     a, b = orbvec

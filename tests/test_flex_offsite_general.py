@@ -147,6 +147,12 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
             # the accepted class, but with sublattice folding
             ({'CoulombInter': 'offsite_sameorb.dat'}, 'tests/rpa/input_2orb',
              [2, 1, 1]),
+            # folding that maps the bond direction to a single supercell:
+            # every off-site displacement canonicalizes to (0,0,0) in the
+            # folded table, so the guard must scan the PRE-fold table --
+            # before that fix this input was accepted and diverged
+            ({'CoulombInter': 'offsite_sameorb.dat'}, 'tests/rpa/input_2orb',
+             [4, 1, 1]),
         ]
         os.makedirs('tests/rpa/output', exist_ok=True)
         for interactions, path, sub in cases:
@@ -165,6 +171,28 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                     'calc_scheme': 'general'})
                 with self.assertRaises(ValueError):
                     fx.solve(r.get_param("green"), 'tests/rpa/output')
+
+    def test_one_sided_offsite_declaration_matches_the_ring_exactly(self):
+        """A one-sided declaration (only +R) means the reversal-symmetric
+        operator v n(i) n(i+R), whose exact vertex is v cos(qR). Both solvers
+        now read it that way -- the S/C builders since #114, the ring since
+        rpa.py got the same symmetrisation (before that the ring kept a
+        one-sided v e^{-iqR}, off by 1.2e-2 in chiq, the #106 discrepancy) --
+        so the element-complete equivalence must hold for one-sided input,
+        and it must equal the v/2-both-ends reading bit for bit."""
+        one_sided = [('CoulombInter', ((-1, 0, 0), (0, 0)), 0.0),
+                     ('CoulombInter', ((0, -1, 0), (0, 0)), 0.0)]
+        gr, gf = _run_pair('tests/rpa/input',
+                           {'CoulombInter': 'coulombinter.dat'},
+                           [4, 4, 1], filling=0.75, inject=one_sided)
+        _assert_element_complete_equal(self, gr, gf, norb=1)
+        halved = [('CoulombInter', ((s * d[0], s * d[1], 0), (0, 0)), 0.5)
+                  for d in ((1, 0), (0, 1)) for s in (1, -1)]
+        gr2, _ = _run_pair('tests/rpa/input',
+                           {'CoulombInter': 'coulombinter.dat'},
+                           [4, 4, 1], filling=0.75, inject=halved)
+        np.testing.assert_array_equal(np.asarray(gr['chiq']),
+                                      np.asarray(gr2['chiq']))
 
     def test_multi_iteration_offsite_v_runs_and_stays_finite(self):
         """Three iterations exercise the q-dependent V_eff through the
