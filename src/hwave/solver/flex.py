@@ -1943,9 +1943,11 @@ class FLEX(RPA):
         chi0q = chi0q_raw
         assert chi0q.ndim == 6
 
-        # MYO S/C matrices are q-independent constants for on-site Kanamori, so
-        # build them once and cache across SCF iterations. The chi0 transpose
-        # above stays OUTSIDE the cache (chi0 changes every iteration).
+        # The MYO S/C matrices depend only on the interaction (q-resolved for
+        # off-site entries, constant over q for on-site Kanamori), never on the
+        # SCF state, so build them once and cache across iterations. The chi0
+        # transpose above stays OUTSIDE the cache (chi0 changes every
+        # iteration).
         cache = getattr(self, "_myo_sc_cache", None)
         if cache is None:
             from hwave.sc import _build_interaction_k
@@ -1963,37 +1965,125 @@ class FLEX(RPA):
                     "pairing vertex (S=C=0); it is ignored in the general FLEX "
                     "calculation.")
 
-            # Fail-fast: the general (full-vertex) path builds the MYO S/C
-            # matrices on a uniform k-grid that is NOT the FFT q-grid used by
-            # _calc_chi0q.  For ON-SITE Kanamori interactions the S/C matrices
-            # are q-independent constants so this is exact; but an OFF-SITE
-            # interaction entry (irvec != (0,0,0)) makes them genuinely
-            # q-dependent on the wrong grid -> silently wrong physics.  v1 of
-            # the general path is on-site-only, so reject off-site entries.
+            # OFF-SITE entries are allowed ONLY where FLEX at one iteration
+            # is MEASURED equal to the RPA ring, element-complete: CoulombInter
+            # with SAME-orbital pairs (a == b), without sublattice folding.
+            # For that class the vertex is V(q) on the density slots alone and
+            # the equivalence holds to 1e-16 at one and two orbitals, on 4x4,
+            # non-cubic 4x6 and 3D 4x4x2 lattices including a z-direction bond.
+            #
+            # Everything else stays rejected, each for a measured reason:
+            #
+            #   * CoulombInter with a != b off-site, Hund, Ising -- the MYO
+            #     S/C builder applies the full on-site Kanamori slot mapping,
+            #     which places q-dependent values into the Fierz (Case 2)
+            #     inter-orbital slots; for R != 0 the particle-hole pair
+            #     behind those slots is NON-LOCAL and not representable by a
+            #     q-only matrix (the locality argument measured for the
+            #     transverse channel). Off-site Hund / Ising differ from the
+            #     ring by 3e-2 / 7e-2 even at ONE orbital, where no
+            #     inter-orbital slot exists to blame -- an unadjudicated
+            #     vertex-content disagreement, not a grid issue.
+            #   * off-site combined with sublattice folding -- folding turns
+            #     part of an a == b bond into intra-cell inter-orbital
+            #     coupling, and the two solvers then differ by 2e-2 (the
+            #     folded analogue of the #104 content); the equivalence claim
+            #     no longer holds, so it is deferred to the #107 unification.
+            #   * Exchange, PairHop -- non-local particle-hole pair off-site.
+            #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component
+            #     (#106).
+            def _normalized(tbl_dict):
+                # The aggregate 'Coulomb' input carries CoulombIntra (the
+                # r = 0 orbital-diagonal entries) and CoulombInter
+                # (everything else) in one table; wan90.split_coulomb is the
+                # shared decomposition. Without this normalization an
+                # aggregate declaration silently produced a ZERO vertex in
+                # this path -- neither the guard below nor
+                # _build_interaction_k knows the 'Coulomb' key (measured:
+                # chiq_s off by 1e-1 against the identical explicit
+                # declaration).
+                if "Coulomb" not in tbl_dict:
+                    return tbl_dict
+                if ("CoulombIntra" in tbl_dict
+                        or "CoulombInter" in tbl_dict):
+                    raise ValueError(
+                        "Coulomb cannot be specified together with "
+                        "CoulombIntra or CoulombInter")
+                from hwave.qlmsio import wan90
+                intra, inter = wan90.split_coulomb(tbl_dict["Coulomb"])
+                out = {k: v for k, v in tbl_dict.items() if k != "Coulomb"}
+                out["CoulombIntra"] = intra
+                out["CoulombInter"] = inter
+                return out
+
+            has_fold = tuple(getattr(self.lattice, "subshape",
+                                     (1, 1, 1))) != (1, 1, 1)
+            # Under folding the guard must scan the PRE-fold table:
+            # _init_interaction canonicalizes displacements modulo the folded
+            # grid, and a folded dimension of size one maps every off-site
+            # displacement to (0,0,0) -- e.g. CellShape=[4,4,1] with
+            # SubShape=[4,1,1] turns +-x bonds into zero-displacement
+            # inter-sublattice entries, which the folded table cannot
+            # distinguish from genuinely on-site input.
+            scan_ham = self.ham_info.param_ham
+            if has_fold:
+                # fail CLOSED: validating off-site input against the folded
+                # table is exactly the bypass this scan exists to prevent
+                scan_ham = getattr(self.ham_info, "param_ham_orig", None)
+                if scan_ham is None:
+                    raise ValueError(
+                        "sublattice folding is active but the pre-fold "
+                        "interaction table (param_ham_orig) is missing, so "
+                        "off-site input cannot be validated (the folded "
+                        "table canonicalizes displacements and can hide "
+                        "off-site entries).")
+            scan_ham = _normalized(scan_ham)
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising"):
-                if itype in self.ham_info.param_ham:
-                    for (irvec, orbvec) in self.ham_info.param_ham[itype]:
-                        if tuple(irvec) != (0, 0, 0):
-                            raise ValueError(
-                                "FLEX calc_scheme='general' (v1) supports "
-                                "on-site interactions only; interaction '{}' "
-                                "has an off-site entry irvec={}. Off-site "
-                                "two-body interactions are not yet supported "
-                                "by the general full-vertex path.".format(
-                                    itype, tuple(irvec)))
+                if itype not in scan_ham:
+                    continue
+                for (irvec, orbvec) in scan_ham[itype]:
+                    if tuple(irvec) == (0, 0, 0):
+                        continue
+                    ok = (itype == "CoulombInter"
+                          and orbvec[0] == orbvec[1]
+                          and not has_fold)
+                    if not ok:
+                        raise ValueError(
+                            "FLEX calc_scheme='general' accepts off-site "
+                            "entries only for CoulombInter with equal "
+                            "orbitals (a == b) and without sublattice "
+                            "folding; interaction '{}' has an off-site "
+                            "entry irvec={}, orbvec={}{}. For that entry "
+                            "class the general path is measured equal to "
+                            "the RPA ring; other off-site classes are not "
+                            "representable by a q-only vertex or carry "
+                            "unadjudicated vertex content.".format(
+                                itype, tuple(irvec), tuple(orbvec),
+                                ", with sublattice folding" if has_fold
+                                else ""))
+                    # One-sided declarations are fine: BOTH solvers reduce
+                    # a declaration to its reversal-symmetric part (the
+                    # physical coefficient of n_a(i) n_a(i+R), even in R by
+                    # the site sum) -- the S/C builders since #114, and the
+                    # ring's _make_ham_inter since the same reading was
+                    # given to rpa.py. Measured: one-sided v and v/2 at
+                    # both ends give bit-identical chiq in both solvers.
 
             no = self.norb
             nx, ny, nz = self.lattice.shape
 
-            # Build k-space interactions from the raw real-space param_ham. The
-            # k-array ordering is irrelevant for on-site Kanamori terms (constant
-            # over q), so a simple uniform grid suffices for v1.
+            # Build k-space interactions from the raw real-space param_ham.
+            # The grid contract: linspace(0, 2pi, n, endpoint=False) per axis,
+            # C-order flattened -- the same points, order and flattening as
+            # chi0's spatial FFT axis, verified by the element-complete
+            # equivalence with the RPA ring for off-site (q-dependent)
+            # entries. On-site terms are constant over q.
             kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
             ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
             kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
-            inter_k = _build_interaction_k(kx, ky, kz,
-                                           self.ham_info.param_ham, no)
+            inter_k = _build_interaction_k(
+                kx, ky, kz, _normalized(self.ham_info.param_ham), no)
 
             # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
             Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)

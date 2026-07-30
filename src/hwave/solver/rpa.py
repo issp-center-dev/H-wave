@@ -456,11 +456,49 @@ class Interaction:
         }
 
         # coulomb-type interactions
+        def _symmetrised(type, tbl):
+            # Reduce each declaration to its physical symmetric coefficient,
+            # the same reading as uhfk.py and hwave.sc (#106/#113/#114): the
+            # two declarations of one bond are (R, a, b) and (-R, b, a), and
+            # for every type except PairHop they multiply the SAME operator,
+            # so the table entering the vertex is the mean
+            #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
+            # Without this the ring read a one-sided off-site declaration as
+            # v e^{-iqR} where the operator it declares -- v n_a(i) n_a(i+R),
+            # even in R by the site sum -- has the exact vertex v cos(qR)
+            # (measured: chiq differed by 1.2e-2 from the symmetric reading
+            # of the same Hamiltonian). PairHop's partner is the HERMITIAN
+            # entry, so its mean conjugates and its complex phase survives.
+            #
+            # The reversal is done on a dense (nx, ny, nz) array with the
+            # same roll+flip uhfk.py uses (index i -> (-i) mod n), NOT by a
+            # sign-flipped dictionary-key lookup: table keys may sit in a
+            # wrapped canonical form ((n-1, 0, 0) for a -x bond, and folded
+            # tables in particular store canonicalized displacements), where
+            # a (-R) key lookup would silently miss the partner and halve
+            # the coefficient.
+            arr = np.zeros((nx, ny, nz, norb, norb), dtype=np.complex128)
+            for (irvec, orbvec), v in tbl.items():
+                arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
+                     *orbvec)] += v
+            rev = np.transpose(
+                np.flip(np.roll(arr, -1, axis=(0, 1, 2)), axis=(0, 1, 2)),
+                (0, 1, 2, 4, 3))
+            if type == "PairHop":
+                rev = np.conjugate(rev)
+            sym = 0.5 * (arr + rev)
+            out = {}
+            for ix, iy, iz, a, b in zip(*np.nonzero(sym)):
+                out[((int(ix), int(iy), int(iz)), (int(a), int(b)))] = \
+                    sym[ix, iy, iz, a, b]
+            return out
+
         def _append_inter(type, tbl=None):
             logger.debug("_append_inter {}".format(type))
             spins = spin_table[type]
             if tbl is None:
                 tbl = self.param_ham[type]
+            tbl = _symmetrised(type, tbl)
             for (irvec,orbvec), v in tbl.items():
                 a, b = orbvec
                 for spinvec, w in spins.items():
@@ -476,7 +514,8 @@ class Interaction:
         #        + (up <-> down)
         def _append_pairhop(type):
             spins = spin_table[type]
-            for (irvec,orbvec), v in self.param_ham[type].items():
+            tbl = _symmetrised(type, self.param_ham[type])
+            for (irvec,orbvec), v in tbl.items():
                 # take account of same-site interaction only
                 if (irvec == (0,0,0)):
                     a, b = orbvec
