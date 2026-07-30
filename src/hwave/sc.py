@@ -793,7 +793,59 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 # RPA vertices
 # ---------------------------------------------------------------------------
 
-def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
+def _symmetrise_interactions_k(inter_k):
+    """Reduce each interaction to its physical symmetric coefficient.
+
+    An interaction file may declare the same term from both ends, and the two
+    declarations of a bond are (R, a, b) and (-R, b, a). In momentum space
+    (arrays carry e^{-iqR} phases) the same-operator partner of M[b,a](q) is
+    therefore the ORBITAL-TRANSPOSED entry AT -q -- averaging with the same-q
+    transpose instead corrupted every off-site interaction, collapsing a
+    one-direction bond's V(q) = v e^{-iqR} to v cos(qR) (measured: the S/C
+    entry vanished outright at q = pi/2). The mean used here:
+
+      * every type except PairHop: 0.5 * (M(q) + M(-q)^T). The two entries
+        multiply the SAME operator (n_a n_b = n_b n_a; X_ab = X_ba for
+        Exchange), with the same coefficient at the reversed displacement.
+        For a both-ends declaration this mean is an identity; for an on-site
+        complex Hermitian-closed declaration it drops the inert imaginary
+        part; for an antisymmetric declaration -- an identically zero
+        Hamiltonian -- it gives zero.
+      * PairHop: 0.5 * (M(q) + conj(M(q)^T)) at the SAME q. Its partner entry
+        carries the conjugated coefficient at the reversed displacement, and
+        conjugation at fixed q is the Fourier image of {conjugate, R -> -R}
+        (the #105 derivation), so this is an identity for Hermitian-closed
+        input on-site and off-site, and preserves the physical complex phase.
+
+    Idempotent, so it is safe that both the all-q and per-q builders apply it.
+
+    Relation to UHFk: `uhfk.py` stores the HERMITIAN mean -- vba there is the
+    CONJUGATED r-reversed transpose (`_make_ham_inter`) -- which keeps a
+    complex Hermitian-closed coefficient p intact, while this helper folds it
+    to Re(p). The two tables serve different contractions and give the SAME
+    physical Hamiltonian: UHFk sums its table over both ordered orbital
+    pairs, so p + conj(p) appears there; the S/C builders here use each slot
+    exactly once, so the effective real coefficient must already be folded
+    in. That the imaginary part of a Hermitian-closed same-operator
+    declaration is physically inert was adjudicated against exact
+    diagonalization in #105/#106; the slot content is #113. For real
+    declarations -- everything the documented input format produces -- the
+    two conventions coincide identically.
+    """
+    out = {}
+    for itype, M in inter_k.items():
+        if itype == "PairHop":
+            out[itype] = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
+            continue
+        nx, ny, nz = M.shape[2], M.shape[3], M.shape[4]
+        Mrev = M[:, :, (-np.arange(nx)) % nx][:, :, :, (-np.arange(ny)) % ny][
+            :, :, :, :, (-np.arange(nz)) % nz]
+        out[itype] = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
+    return out
+
+
+def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
+                             _presymmetrised=False):
     """Build spin (S) and charge (C) interaction matrices for all q-points at once.
 
     Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
@@ -818,6 +870,13 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     nd = norb * norb
     S_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
     C_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+
+    # _presymmetrised is set by the per-q wrapper, which has already
+    # symmetrised on the FULL grid: the -q partner of an off-site entry is
+    # unreachable from a single-point slice, so re-symmetrising here would
+    # average with the wrong (same-q) partner and corrupt off-site input.
+    if not _presymmetrised:
+        inter_k = _symmetrise_interactions_k(inter_k)
 
     def _get(itype):
         if itype in inter_k:
@@ -862,10 +921,30 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
             s_q += Up_mat[_l1, _l2]
             c_q -= Up_mat[_l1, _l2]
         if I_mat is not None:
-            s_q -= I_mat[_l1, _l2]
+            # SIGN adjudicated by exact diagonalization (issue #113): the
+            # exact spin vertex carries -I at this slot in the
+            # [I + chi0 W]^-1 convention, i.e. +I here (S enters as -S).
+            # The previous -I produced the wrong sign end to end.
+            s_q += I_mat[_l1, _l2]
             c_q -= I_mat[_l1, _l2]
         if J_mat is not None:
+            # Hund contributes to BOTH channels at this slot (issue #113):
+            # the exact vertices are W_zz = +J and W_cc = +J, i.e. S -= J and
+            # C += J. The S term was missing entirely.
+            s_q -= J_mat[_l1, _l2]
             c_q += J_mat[_l1, _l2]
+        if Jp_mat is not None:
+            # Exchange lives HERE, not in the pair-antidiagonal Case 4 where
+            # it sat before (issue #113): exact diagonalization puts its
+            # vertex at this slot family in both channels, W_zz = -J and
+            # W_cc = +J, i.e. S += J and C += J. Consistency check that this
+            # split is right: for the SU(2) Kanamori combination
+            # (Hund + Exchange at equal J) the channel matrices become
+            # S(ab,ab) with no J at all and C(ab,ab) = -U' + 2J -- exactly
+            # the standard literature result, which the previous bookkeeping
+            # reproduced in neither channel per type.
+            s_q += Jp_mat[_l1, _l2]
+            c_q += Jp_mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
@@ -899,8 +978,10 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     for i in np.where(mask4)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l2 = l1f[i], l2f[i]
-        if Jp_mat is not None:
-            s_q += Jp_mat[_l1, _l2]
+        # Exchange used to sit here; exact diagonalization (issue #113) puts
+        # its vertex on the pair-DIAGONAL slot family (Case 2), and end to end
+        # the antidiagonal placement produced the right magnitude at the wrong
+        # slots in both channels. Only PairHop belongs here (#100/#102).
         if PH_mat is not None:
             s_q += PH_mat[_l1, _l2]
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
@@ -910,85 +991,31 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
 
 
 def _build_sc_matrices(inter_k, norb, ix, iy, iz):
-    """Build spin (S) and charge (C) interaction matrices at a given q-point.
+    """Spin (S) and charge (C) matrices at a single q-point.
 
-    Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
-        S_{l1l2,l3l4}, C_{l1l2,l3l4} for multi-orbital systems.
-
-    The composite index maps as (l1,l2) -> l1*norb + l2,
-    giving norb^2 x norb^2 matrices.
-
-    Parameters
-    ----------
-    inter_k : dict
-        Interactions in k-space from _build_interaction_k.
-    norb : int
-        Number of orbitals.
-    ix, iy, iz : int
-        q-point indices.
-
-    Returns
-    -------
-    S_mat : ndarray
-        Spin interaction matrix, shape (norb^2, norb^2).
-    C_mat : ndarray
-        Charge interaction matrix, shape (norb^2, norb^2).
+    Delegates to :func:`_build_sc_matrices_all_q` and slices, so there is ONE
+    implementation of the S/C content. The previous hand-maintained copy had
+    already drifted from the all-q builder once; after the issue #113 vertex
+    corrections a second parallel copy would be a liability.
     """
-    nd = norb * norb
-    S_mat = np.zeros((nd, nd), dtype=complex)
-    C_mat = np.zeros((nd, nd), dtype=complex)
-
-    # Extract interaction values at this q-point
-    def _get(itype):
-        if itype in inter_k:
-            return inter_k[itype][:, :, ix, iy, iz]
-        return np.zeros((norb, norb), dtype=complex)
-
-    U_mat = _get("CoulombIntra")    # U_mm (intra-orbital)
-    Up_mat = _get("CoulombInter")   # U'_mm' (inter-orbital)
-    J_mat = _get("Hund")            # J_mm' (Hund's coupling)
-    Jp_mat = _get("Exchange")       # J'_mm' (pair-hopping)
-    I_mat = _get("Ising")           # I_mm' (Ising S^z S^z)
-    PH_mat = _get("PairHop")        # P_mm' (pair hopping)
-
-    for l1 in range(norb):
-        for l2 in range(norb):
-            idx12 = l1 * norb + l2
-            for l3 in range(norb):
-                for l4 in range(norb):
-                    idx34 = l3 * norb + l4
-
-                    s_val = 0.0 + 0.0j
-                    c_val = 0.0 + 0.0j
-
-                    if l1 == l2 == l3 == l4:
-                        # Same orbital: S = U, C = U + 2 V_aa(q).  The charge
-                        # (Hartree) diagonal also carries the INTER-SITE
-                        # same-orbital CoulombInter (issue #95); the simple
-                        # two-index formulation builds the same thing as
-                        # `Wc = U_k + 2 V_k`.  Hund/Ising are deliberately not
-                        # included: an orbital has no such coupling with itself.
-                        s_val = U_mat[l1, l1]
-                        c_val = U_mat[l1, l1] + 2.0 * Up_mat[l1, l1]
-                    elif l1 == l3 and l2 == l4 and l1 != l2:
-                        # l1=l3 != l2=l4 (cross): S = U' - I, C = -U' + J - I
-                        s_val = Up_mat[l1, l2] - I_mat[l1, l2]
-                        c_val = (-Up_mat[l1, l2] + J_mat[l1, l2]
-                                 - I_mat[l1, l2])
-                    elif l1 == l2 and l3 == l4 and l1 != l3:
-                        # l1=l2 != l3=l4 (dens): S = J - 2I, C = 2U' - J
-                        s_val = J_mat[l1, l3] - 2.0 * I_mat[l1, l3]
-                        c_val = 2.0 * Up_mat[l1, l3] - J_mat[l1, l3]
-                    elif l1 == l4 and l2 == l3 and l1 != l2:
-                        # l1=l4 != l2=l3 (exch): S = J' + P, C = J' + P
-                        s_val = Jp_mat[l1, l2] + PH_mat[l1, l2]
-                        c_val = Jp_mat[l1, l2] + PH_mat[l1, l2]
-
-                    S_mat[idx12, idx34] = s_val
-                    C_mat[idx12, idx34] = c_val
-
-    return S_mat, C_mat
-
+    # Symmetrise on the FULL grid first -- the same-operator partner of an
+    # off-site entry lives at -q, so slicing before symmetrising would discard
+    # it -- then slice the (small, norb^2 per point) interaction arrays down to
+    # the requested q and delegate on a 1x1x1 grid, so the (nd^2 per point) S/C
+    # matrices are never built for the whole grid. Indexing goes through
+    # np.arange so numpy negative indices keep their usual meaning and
+    # out-of-range indices raise instead of returning empty slices.
+    inter_sym = _symmetrise_interactions_k(inter_k)
+    inter_1 = {}
+    for t, M in inter_sym.items():
+        jx = np.arange(M.shape[2])[ix]
+        jy = np.arange(M.shape[3])[iy]
+        jz = np.arange(M.shape[4])[iz]
+        inter_1[t] = np.ascontiguousarray(
+            M[:, :, jx:jx+1, jy:jy+1, jz:jz+1])
+    S_all, C_all = _build_sc_matrices_all_q(inter_1, norb, 1, 1, 1,
+                                            _presymmetrised=True)
+    return S_all[0, 0, 0], C_all[0, 0, 0]
 
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                       pairing_type="singlet", static_index=None):
@@ -1204,17 +1231,16 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
     chi_s and chi_c directly instead of computing them from chi0q via RPA.
     This allows using dressed susceptibilities from the FLEX solver.
 
-    ``convention`` selects the S/C interaction matrices applied to the
-    susceptibilities: "kuroki" (default, arXiv:0902.3691, used by the reduced
-    FLEX path and the rest of the Eliashberg solver) or "myo"
-    (cond-mat/0407094). The two differ ONLY in the charge ``C(ab,ab) = -U'+2J``
-    vs ``-U'+J`` element; they share the native [a,c,b,d] orbital-pair index
-    layout. Susceptibilities produced by the general (full-vertex) FLEX path
-    were computed with the MYO S/C and MUST be paired with ``convention='myo'``
-    so the vertex stays self-consistent (mixing them with Kuroki S/C silently
-    changes the physics in the C(ab,ab) channel). ``convention`` is a S/C-charge
-    selector, not an index-layout flag: ``chis``/``chic`` are expected in the
-    native [a,c,b,d] orbital-pair order regardless (issue #78).
+    ``convention`` records which FLEX path produced the susceptibilities:
+    "kuroki" (default; reduced path) or "myo" (general full-vertex path). The
+    two S/C builders historically differed in the charge ``C(ab,ab)`` element
+    (``-U'+2J`` vs ``-U'+J``); the exact-diagonalization adjudication of the
+    per-type vertex content (issue #113: Hund ``+J`` and Exchange ``+J'``
+    there) made them IDENTICAL, so the flag no longer selects different
+    matrices -- it remains a provenance / layout discriminator, and legacy
+    files are guarded by ``sc_vertex_version`` instead. ``chis``/``chic`` are
+    expected in the native [a,c,b,d] orbital-pair order regardless
+    (issue #78).
 
     Parameters
     ----------
@@ -1295,7 +1321,7 @@ def _resolve_flex_paths(input_dict):
 
 
 def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
-                                     allow_ir=False):
+                                     allow_ir=False, interactions=None):
     """Load FLEX-computed susceptibilities from NPZ files (full frequency axis).
 
     Parameters
@@ -1322,7 +1348,8 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         Provenance/S-C-convention tag of chis_w/chic_w: "myo" (general
         full-vertex FLEX) or "kuroki" (reduced FLEX / legacy files). It selects
         which S/C interaction matrices _compute_vertices_flex pairs the
-        susceptibilities with (they differ only in the C(ab,ab) charge value)
+        susceptibilities with (one implementation since the #113
+        adjudication; the tag is a layout/provenance discriminator)
         and which orbital-pair shape family the file uses (orbital-pair
         nd=norb^2 for "myo", spin-orbital nd=norb*ns for "kuroki"). It is NOT an
         index-layout flag: chis_w/chic_w are returned in the public RPA
@@ -1333,12 +1360,13 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         ("green" absent when there is no green file). Mixed encodings raise.
     """
     if not allow_ir:
-        chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+        chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(
+            input_dict, interactions=interactions)
         ir_meta = None
         green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     else:
         chi_s_raw, chi_c_raw, chi_convention, ir_meta = _read_flex_chi_raw(
-            input_dict, allow_ir=True)
+            input_dict, allow_ir=True, interactions=interactions)
         green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
                                                allow_ir=True)
         if green_w is not None and (green_meta is None) != (ir_meta is None):
@@ -1369,7 +1397,7 @@ _STATIC_IR_HINT = (
     "\"dynamic\" with [eliashberg] matsubara_basis = \"ir\".")
 
 
-def _read_flex_chi_raw(input_dict, allow_ir=False):
+def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
     Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
@@ -1419,6 +1447,61 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
             "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
                 chi_convention, chi_convention_c))
+
+    # S/C vertex-content versioning (#113). The Hund / Exchange / Ising vertex
+    # entries were corrected against exact diagonalization; susceptibilities
+    # computed with the OLD entries must not be paired with the corrected
+    # matrices when the interaction set contains an affected type -- the
+    # kernel would silently mix two different interactions. U/V-only inputs
+    # are provably unchanged, so legacy files stay usable there.
+    if interactions is not None:
+        # activation requires actual CONTENT, not key presence: an explicitly
+        # configured but empty Hund/Exchange/Ising file contributes nothing
+        affected = [t for t in ("Hund", "Exchange", "Ising")
+                    if interactions.get(t)]
+        if affected:
+            versions = {}
+            for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
+                if "sc_vertex_version" not in data:
+                    raise ValueError(
+                        "FLEX susceptibility file '{}' predates the #113 "
+                        "S/C vertex corrections (no sc_vertex_version "
+                        "field), and the interaction set contains {} whose "
+                        "vertex content changed. Pairing the old "
+                        "susceptibilities with the corrected vertices would "
+                        "silently mix two different interactions -- "
+                        "regenerate the susceptibilities with the current "
+                        "code.".format(path, ", ".join(affected)))
+                # strict decode: the tag must be a single integral scalar.
+                # A plain int() would silently truncate (2.9 -> 2, accepted)
+                # and non-finite values would escape as OverflowError.
+                try:
+                    arr = np.asarray(data["sc_vertex_version"])
+                    if arr.size != 1:
+                        raise ValueError("not a scalar")
+                    val = complex(arr.reshape(())[()])
+                    if val.imag != 0.0 or not (
+                            np.isfinite(val.real)
+                            and float(val.real).is_integer()):
+                        raise ValueError("not an integer")
+                    versions[path] = int(val.real)
+                except (TypeError, ValueError, OverflowError):
+                    raise ValueError(
+                        "FLEX susceptibility file '{}' carries a malformed "
+                        "sc_vertex_version field ({!r}).".format(
+                            path, data["sc_vertex_version"]))
+            if len(set(versions.values())) != 1:
+                raise ValueError(
+                    "FLEX chi_s and chi_c carry different sc_vertex_version "
+                    "values ({}); they must come from the same run.".format(
+                        versions))
+            ver = next(iter(versions.values()))
+            if ver != 2:
+                raise ValueError(
+                    "FLEX susceptibility files carry sc_vertex_version = {} "
+                    "but this code supports version 2 (the #113 exact-"
+                    "diagonalization vertex content); regenerate the "
+                    "susceptibilities with the current code.".format(ver))
     # Self-describing index-order marker (issue #78 follow-up). Current files
     # always store [a,c,b,d]; the marker exists so a pre-#78 dev output (the
     # general path stored MYO-transposed arrays under the SAME "myo" tag,
@@ -1596,7 +1679,8 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     return green, meta
 
 
-def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
+def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
+                                interactions=None):
     """Load FLEX-computed susceptibilities at the static (zero bosonic
     frequency) limit from NPZ files.
 
@@ -1626,7 +1710,8 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     # so the static slice is taken before the spin-orbital expansion -- the full
     # loader would otherwise allocate the whole Nmat-long expanded array only to
     # keep one frequency (a memory regression proportional to Nmat).
-    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(
+        input_dict, interactions=interactions)
 
     # The zero bosonic frequency is located via the freq_index/nmat metadata
     # (RPA chiq files can carry a restricted matsubara_frequency axis whose
@@ -3303,7 +3388,7 @@ def calc_eliashberg(input_dict):
         logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
         chis, chic, green_dressed, chi_convention = _load_flex_susceptibilities(
-            input_dict, norb, Nx, Ny, Nz)
+            input_dict, norb, Nx, Ny, Nz, interactions=interactions)
         logger.info("FLEX susceptibility convention: {}".format(chi_convention))
 
         # Use dressed Green's function if available, otherwise use bare

@@ -1066,44 +1066,37 @@ class TestMYOSCMatrices(unittest.TestCase):
         def el(M, l1, l2, l3, l4):
             return M[0, 0, 0, l1 * 2 + l2, l3 * 2 + l4]
 
-        # Case 2 (ab,ab): the MYO-specific charge element
-        self.assertAlmostEqual(el(S, 0, 1, 0, 1), Up)
-        self.assertAlmostEqual(el(C, 0, 1, 0, 1), -Up + 2 * J)
+        # Case 2 (ab,ab): S = U' - J + J', C = -U' + J + J' (issue #113;
+        # for J = J' the charge value equals the standard Kanamori -U' + 2J,
+        # now from the corrected per-type split)
+        self.assertAlmostEqual(el(S, 0, 1, 0, 1), Up - J + Jp)
+        self.assertAlmostEqual(el(C, 0, 1, 0, 1), -Up + J + Jp)
         # Case 3 (aa,bb)
         self.assertAlmostEqual(el(S, 0, 0, 1, 1), J)
         self.assertAlmostEqual(el(C, 0, 0, 1, 1), 2 * Up - J)
-        # Case 4 (ab,ba)
-        self.assertAlmostEqual(el(S, 0, 1, 1, 0), Jp)
-        self.assertAlmostEqual(el(C, 0, 1, 1, 0), Jp)
+        # Case 4 (ab,ba): PairHop only (issue #113)
+        self.assertAlmostEqual(el(S, 0, 1, 1, 0), 0.0)
+        self.assertAlmostEqual(el(C, 0, 1, 1, 0), 0.0)
         # Case 1 (aaaa)
         self.assertAlmostEqual(el(S, 0, 0, 0, 0), U)
         self.assertAlmostEqual(el(C, 0, 0, 0, 0), U)
 
-    def test_diverges_from_kuroki_only_at_charge_abab(self):
+    def test_the_two_builders_are_one_implementation(self):
+        """The MYO-vs-Kuroki charge (ab,ab) divergence was adjudicated by
+        exact diagonalization (issue #113): the exact per-type values are
+        Hund +J and Exchange +J', whose sum reproduces MYO's -U'+2J for the
+        Kanamori combination. With that fixed, `build_sc_matrices_myo`
+        delegates to `_build_sc_matrices_all_q`; assert equality so any
+        future re-divergence fails loudly."""
         from hwave.sc import _build_sc_matrices_all_q
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
-        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.5
+        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.3   # J != J' on purpose
         ik = _kanamori_inter_k(norb=2, U=U, Up=Up, J=J, Jp=Jp,
                                Nx=2, Ny=2, Nz=1)
         Sm, Cm = build_sc_matrices_myo(ik, 2, 2, 2, 1)
         Sk, Ck = _build_sc_matrices_all_q(ik, 2, 2, 2, 1)
-
-        # Spin matrices identical.
-        np.testing.assert_allclose(Sm, Sk)
-
-        # Charge differs ONLY at the (ab,ab) entries, by exactly +J there.
-        diff = Cm - Ck
-        # (ab,ab): idx12 == idx34 with l1!=l2; for norb=2 these are
-        # (0,1)&(0,1) -> flat (1,1) and (1,0)&(1,0) -> flat (2,2).
-        nonzero = [(1, 1), (2, 2)]
-        mask = np.zeros((4, 4), dtype=bool)
-        for (i, j) in nonzero:
-            mask[i, j] = True
-        nz = diff[..., mask]
-        np.testing.assert_allclose(nz, J)
-        zero = diff[..., ~mask]
-        np.testing.assert_allclose(zero, 0.0, atol=1.0e-12)
-
+        np.testing.assert_allclose(Sm, Sk, atol=0)
+        np.testing.assert_allclose(Cm, Ck, atol=0)
 
 class TestBruteForceRef(unittest.TestCase):
     """Structural sanity checks for the physical-index brute-force reference
