@@ -1280,20 +1280,7 @@ _REDUCED_FLEX_PARTIAL = ("CoulombInter", "Hund", "Ising")
 #: can even be produced with them -- such input is stale or mismatched,
 #: and is REJECTED rather than warned about.
 _REDUCED_FLEX_REJECTED = ("Exchange", "PairHop")
-_REDUCED_FLEX_UNSUPPORTED = _REDUCED_FLEX_PARTIAL + _REDUCED_FLEX_REJECTED
 
-
-def _term_has_off_diagonal_weight(mat, norb):
-    """Whether one interaction term has any ``[a, b]`` entry with ``a != b``.
-
-    Used ONLY to attribute a warning to the terms that plausibly caused it. The
-    decision to warn is made by :func:`_off_density_sc_weight` on the assembled
-    S/C matrices, because those blocks are sums and the terms can cancel there.
-    """
-    arr = np.asarray(mat)
-    if arr.ndim < 2 or arr.shape[0] != norb or arr.shape[1] != norb:
-        return True
-    return bool(np.any(arr[~np.eye(norb, dtype=bool)] != 0))
 
 
 def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz, sc_matrices=None):
@@ -1369,9 +1356,11 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         # Only the reduced/squashed route stores a density-only chi; the
         # general (myo) path carries the full orbital-pair susceptibility.
         return
-    if norb <= 1:
-        # norb == 1 has no off-density pair index, so nothing can be missing.
-        return
+    # The rejection must run BEFORE the norb == 1 shortcut: a one-orbital
+    # Exchange/PairHop has zero S/C weight in this builder too, so the
+    # interaction would be silently omitted rather than represented --
+    # exactly what the rejection exists to prevent (round-7 review; the
+    # bypass returned zero vertices for both terms on both routes).
     rejected = [k for k in _REDUCED_FLEX_REJECTED
                 if k in inter_k and np.any(np.asarray(inter_k[k]) != 0)]
     if rejected:
@@ -1388,6 +1377,10 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
                 source or ("a REDUCED (calc_scheme='reduced' or "
                            "'squashed') FLEX susceptibility"),
                 ", ".join(rejected)))
+    if norb <= 1:
+        # norb == 1 has no off-density pair index, so no PARTIAL dressing
+        # can be missing (the rejection above still applies).
+        return
     configured = [k for k in _REDUCED_FLEX_PARTIAL if k in inter_k]
     if not configured:
         return
@@ -2230,24 +2223,32 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # user takes responsibility via [eliashberg] accept_up_block_only.
     # NaN-identical blocks compare as redundant (equal_nan): the guard is
     # about DIFFERING content, not about validating finiteness.
+    # Non-finite content is rejected at the file boundary, as the
+    # susceptibility loader already does: a NaN/Inf dressed Green function
+    # reaches the pair bubble G2 directly, and the iteration solver can
+    # turn the resulting non-finite norm into a SAVED zero eigenvalue with
+    # converged=False (round-7 review). Per-frequency scan, bounded
+    # temporaries.
+    for b in range(nblock):
+        for f in range(nmat_g):
+            if not np.all(np.isfinite(green_raw[b, f])):
+                raise ValueError(
+                    "green file '{}' contains non-finite values (block "
+                    "{}, frequency index {}); a NaN/Inf dressed Green "
+                    "function cannot feed the pair bubble. Re-run the "
+                    "producing FLEX calculation.".format(green_path, b, f))
+
     if nblock > 1:
         def _differs(b):
-            # Per-frequency, per-component comparison. Two reasons:
-            #  * np.array_equal(equal_nan=True) on COMPLEX arrays treats an
-            #    entry as equal when EITHER component is NaN, so nan+1j
-            #    would silently equal nan+2j; comparing the real and
-            #    imaginary parts separately gives the exact semantics
-            #    (matching NaN positions, equality elsewhere).
-            #  * frequency-sliced scanning bounds the comparison
-            #    temporaries to one (nvol, norb, norb) slice -- a
-            #    whole-block scan would allocate masks comparable to the
-            #    multi-GB block itself. .real/.imag are views, not copies.
+            # Per-frequency, per-component comparison (finiteness is
+            # already established above, so plain equality suffices);
+            # frequency-sliced scanning bounds the comparison temporaries
+            # to one (nvol, norb, norb) slice. .real/.imag are views.
             for f in range(green_raw.shape[1]):
                 gb = green_raw[b, f]
                 g0 = green_raw[0, f]
-                if not (np.array_equal(gb.real, g0.real, equal_nan=True)
-                        and np.array_equal(gb.imag, g0.imag,
-                                           equal_nan=True)):
+                if not (np.array_equal(gb.real, g0.real)
+                        and np.array_equal(gb.imag, g0.imag)):
                     return True
             return False
 

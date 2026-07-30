@@ -396,6 +396,21 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
                         err_msg="a density-diagonal chi0q loses nothing in the "
                                 "2-index reduction, so the vertices must match")
 
+    def test_one_orbital_reduced_input_still_rejects_exchange_pairhop(self):
+        """norb = 1 must NOT bypass the rejection: the one-orbital S/C
+        builder gives Exchange/PairHop zero weight too, so accepting them
+        silently omits the interaction (the norb shortcut used to return
+        before the check -- round 7)."""
+        import hwave.sc as sc
+
+        for itype in ("Exchange", "PairHop"):
+            with self.subTest(interaction=itype):
+                m = np.full((1, 1, 2, 1, 1), 0.4, dtype=complex)
+                with self.assertRaises(ValueError) as cm:
+                    sc._warn_reduced_flex_missing_components(
+                        {"CoulombIntra": m.copy(), itype: m}, 1, 2, 1, 1)
+                self.assertIn(itype, str(cm.exception))
+
     def test_two_index_chi0q_rejects_exchange_and_pairhop(self):
         """A 2-index chi0q carries no off-density bubble at all, and
         Exchange/PairHop have no density-diagonal vertex: nothing of them
@@ -1486,22 +1501,36 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
         green = sc._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIsNotNone(green)
 
-    def test_nan_identical_blocks_pass(self):
-        # the guard is about DIFFERING content, not finiteness
+    def test_nonfinite_green_is_rejected_at_the_boundary(self):
+        """NaN/Inf in the dressed Green function reaches the pair bubble
+        directly and can surface as a saved zero eigenvalue; the loader
+        rejects it up front, as the susceptibility loader does -- for
+        one-block and (block-redundant) two-block files alike."""
         import tempfile
 
         import hwave.sc as sc
 
-        d = tempfile.mkdtemp()
-        inp = self._write(d, self._blocks(1.0, nan=True))
-        green = sc._load_flex_green(inp, 1, 2, 1, 1)
-        self.assertIsNotNone(green)
+        for label, val, blocks in (
+                ("nan two-block", np.nan, 2),
+                ("inf two-block", np.inf, 2),
+                ("nan one-block", np.nan, 1)):
+            with self.subTest(case=label):
+                b = self._blocks(1.0)
+                b[0][0, 0, 0, 0] = val
+                b[1] = b[0].copy()
+                if blocks == 1:
+                    b = [b[0]]
+                d = tempfile.mkdtemp()
+                inp = self._write(d, b)
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn('non-finite', str(cm.exception))
 
-    def test_complex_nan_components_are_compared_separately(self):
-        """np.array_equal(equal_nan=True) on complex arrays treats an
-        entry as equal when EITHER component is NaN; the guard compares
-        components separately, so nan+1j vs nan+2j (and 1+nanj vs
-        2+nanj) are DIFFERING content."""
+    def test_partial_nan_components_are_rejected_as_nonfinite(self):
+        """Entries like nan+1j (one finite component) are caught by the
+        finiteness boundary before any block comparison -- the historical
+        complex equal_nan hole (either-component NaN counted as equal)
+        is thereby closed at the boundary."""
         import tempfile
 
         import hwave.sc as sc
@@ -1519,7 +1548,7 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
                 inp = self._write(d, blocks)
                 with self.assertRaises(ValueError) as cm:
                     sc._load_flex_green(inp, 1, 2, 1, 1)
-                self.assertIn('accept_up_block_only', str(cm.exception))
+                self.assertIn('non-finite', str(cm.exception))
 
     def test_differing_blocks_are_rejected(self):
         import tempfile
