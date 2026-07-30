@@ -1004,15 +1004,13 @@ class RPA:
             # input (see _make_ham_inter). The correction's (a,b,a,b) slots
             # sit off the 'kaabb' diagonal, so the reduced/squashed reads
             # below are unaffected by construction.
-            ham_long_q = ham_inter_q
-            if getattr(self.ham_info, "ham_fierz_q", None) is not None:
-                ham_long_q = ham_inter_q + self.ham_info.ham_fierz_q
+            fierz_q = getattr(self.ham_info, "ham_fierz_q", None)
+            ham_long_q = (ham_inter_q if fierz_q is None
+                          else ham_inter_q + fierz_q)
             if gpu_active:
                 ham_inter_q = xp.asarray(ham_inter_q)
-                if ham_long_q is not ham_inter_q:
-                    ham_long_q = xp.asarray(ham_long_q)
-                else:
-                    ham_long_q = ham_inter_q
+                ham_long_q = (ham_inter_q if fierz_q is None
+                              else xp.asarray(ham_long_q))
 
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
