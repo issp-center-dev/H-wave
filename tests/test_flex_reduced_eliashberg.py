@@ -463,9 +463,14 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     def test_no_warning_when_the_terms_cancel_in_the_combined_block(self):
         """The decision is made on the ASSEMBLED S/C matrices, not term by term.
 
-        Case 4 of _build_sc_matrices_all_q builds S = C = Exchange + PairHop on
-        the off-density block, so Exchange = -PairHop cancels it exactly. A
-        per-term test would announce missing dressing that does not exist."""
+        Under the adjudicated vertex table (#113) the pair-cross slots carry
+        CoulombInter (S, C) = (+1, -1) and Hund (-1, +1) per unit coupling,
+        so EQUAL couplings cancel the off-density block exactly in both
+        channels. (The test originally used Exchange = -PairHop, which
+        cancelled in the pre-#113 case-4 placement; Exchange has since moved
+        to the pair-diagonal family and no longer shares a slot with
+        PairHop.) A per-term test would announce missing dressing that does
+        not exist."""
         import hwave.sc as sc
         import logging
 
@@ -475,10 +480,11 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         jp[1, 0] = 0.6
         inter_k = {"CoulombIntra": np.ones((norb, norb, Nx, Ny, Nz),
                                            dtype=complex),
-                   "Exchange": jp, "PairHop": -jp}
+                   "CoulombInter": jp, "Hund": jp.copy()}
         self.assertEqual(
             sc._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0,
-            "Exchange = -PairHop must cancel the case-4 off-density block")
+            "equal CoulombInter and Hund must cancel the pair-cross "
+            "off-density block under the adjudicated table")
 
         records = []
         handler = logging.Handler()
