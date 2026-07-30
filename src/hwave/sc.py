@@ -1348,12 +1348,16 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
     density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
     Kuroki S/C matrices built from CoulombIntra alone live entirely on that
-    density-pair block, so the reduced treatment is exact.  Any inter-orbital
-    two-body term, however, also populates the off-density blocks
-    S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] with a != b -- and there chi is
-    identically zero simply because the reduced run never computed it.  Those
-    channels then keep only the bare 0.5*(S+C) term with no fluctuation
-    dressing, which is a silent approximation rather than a solver error.
+    density-pair block, so the reduced treatment is exact.  CoulombInter,
+    Hund and Ising also populate the off-density block S/C[(a,b),(a,b)]
+    with a != b -- and there chi is identically zero simply because the
+    reduced run never computed it.  Those channels then keep only the bare
+    0.5*(S+C) term with no fluctuation dressing: a silent approximation
+    rather than a solver error, hence the WARNING.  Exchange and PairHop
+    carry NO density-diagonal vertex content at all (vertex_table), so a
+    reduced chi dresses nothing of them; combined with the #120 scheme
+    policy (no reduced/squashed run can be produced with them) that
+    combination is REJECTED rather than warned about.
 
     This is a genuine limitation of the stored data, not of the loader: it
     cannot be repaired on the Eliashberg side.  Re-run FLEX with
@@ -1378,7 +1382,8 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
             "scheme policy (#120) no reduced/squashed FLEX or RPA run can "
             "be produced with them, this input is stale or its interaction "
             "set does not match the run that produced the susceptibility. "
-            "Re-run FLEX with calc_scheme='general'.".format(
+            "Provide a general (four-index) susceptibility instead -- for "
+            "a FLEX source, re-run with calc_scheme='general'.".format(
                 source or ("a REDUCED (calc_scheme='reduced' or "
                            "'squashed') FLEX susceptibility"),
                 ", ".join(rejected)))

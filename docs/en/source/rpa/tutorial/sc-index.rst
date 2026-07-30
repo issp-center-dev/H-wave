@@ -1145,14 +1145,17 @@ with four-index vertex structure.
    A reduced (``calc_scheme = "reduced"`` or ``"squashed"``) FLEX run stores
    only the density-density components :math:`\chi_{(a,a),(b,b)}`. For
    ``CoulombIntra`` alone the :math:`S`/:math:`C` matrices live entirely on
-   that density-pair block, so the reduced route is exact. Every other
-   inter-orbital two-body term -- ``CoulombInter``, ``Hund``, ``Ising``,
-   ``Exchange``, ``PairHop`` -- also puts weight on the off-density blocks
-   :math:`S/C[(a,b),(a,b)]` and :math:`S/C[(a,b),(b,a)]` with :math:`a \neq b`,
-   where the reduced run computed no susceptibility at all. Those channels
+   that density-pair block, so the reduced route is exact.
+   ``CoulombInter``, ``Hund`` and ``Ising`` also put weight on the
+   off-density blocks :math:`S/C[(a,b),(a,b)]` with :math:`a \neq b`,
+   where the reduced run computed no susceptibility at all: those channels
    then enter the pairing vertex **undressed** (the bare
    :math:`\tfrac{1}{2}(S+C)` term only), so :math:`\lambda` is an
-   approximation. The solver emits a warning naming the offending terms.
+   approximation, and the solver emits a warning naming the offending
+   terms. ``Exchange`` and ``PairHop`` have **no** density-diagonal vertex
+   content at all -- nothing of them would be dressed -- and are
+   **rejected** with a reduced susceptibility (consistently with the
+   FLEX/RPA scheme policy, which refuses to produce such runs).
 
    This is a limitation of the stored data, not of the loader, and cannot be
    repaired on the Eliashberg side. Re-run FLEX with

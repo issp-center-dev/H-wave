@@ -1094,13 +1094,16 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    reduced（``calc_scheme = "reduced"`` または ``"squashed"``\ ）の FLEX 計算は
    密度‐密度成分 :math:`\chi_{(a,a),(b,b)}` しか保存しません。``CoulombIntra``
    のみであれば :math:`S`/:math:`C` 行列はこの密度対ブロックに完全に収まるため、
-   reduced 経路は厳密です。一方、それ以外の軌道間2体項
-   ---``CoulombInter``、``Hund``、``Ising``、``Exchange``、``PairHop``---
-   は :math:`a \neq b` の非密度ブロック :math:`S/C[(a,b),(a,b)]`
-   および :math:`S/C[(a,b),(b,a)]` にも重みを持ちますが、そこでは reduced 計算が
-   感受率をまったく求めていません。これらのチャネルは pairing vertex に
+   reduced 経路は厳密です。``CoulombInter``、``Hund``、``Ising`` は
+   :math:`a \neq b` の非密度ブロック :math:`S/C[(a,b),(a,b)]` にも重みを
+   持ちますが、そこでは reduced 計算が感受率をまったく求めていません。
+   これらのチャネルは pairing vertex に
    **裸のまま**\ （\ :math:`\tfrac{1}{2}(S+C)` の項のみ）入るため、\ :math:`\lambda`
-   は近似値になります。ソルバーは該当する項名を挙げて警告を出力します。
+   は近似値になり、ソルバーは該当する項名を挙げて警告を出力します。
+   ``Exchange`` と ``PairHop`` は密度対角の頂点内容を **一切持たない** ため
+   （dress される成分が存在しない）、reduced な感受率との組み合わせは
+   **拒否されます**\ （そのような実行を生成しない FLEX/RPA 側のスキーム
+   ポリシーとも整合します）。
 
    これはローダーではなく保存データ側の制約であり、Eliashberg 側では修復できません。
    完全な頂点を得るには ``calc_scheme = "general"``\ （orbital-pair 感受率を

@@ -2809,6 +2809,17 @@ class TestKanamoriInteraction(unittest.TestCase):
             "green_kw": green_kw,
         }
 
+    @staticmethod
+    def _embed4(chi0q, norb, Nx, Ny, Nz, nmat):
+        """Density-pair embedding of a 2-index chi0q into the four-index
+        form (out[(a,a),(b,b)] = X[a,b], everything else zero)."""
+        out = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz, nmat),
+                       dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                out[a, a, b, b] = chi0q[a, b]
+        return out
+
     def _make_inter_k(self, norb, Nx, Ny, Nz, U=0.0, Up=0.0, J=0.0, Jp=0.0):
         """Create interaction dict for Kanamori-type interactions."""
         inter_k = {}
@@ -2952,25 +2963,13 @@ class TestKanamoriInteraction(unittest.TestCase):
         # exch: C = J'
         npt.assert_allclose(C_all[1, 2], 0.0, atol=1e-10)  # #113
 
-        # Now verify RPA susceptibility computation. Exchange has no
-        # density-diagonal vertex and a 2-index chi0q is rejected with it
-        # (#120 alignment), so the vertex part below runs the Jp-free set;
-        # the S/C matrix checks above keep the full Kanamori.
-        inter_k = self._make_inter_k(norb, Nx, Ny, Nz, U=U, Up=Up, J=J,
-                                     Jp=0.0)
-        # rebuild the S/C matrices from the SAME Jp-free set the code path
-        # receives, so the manual reference and the code agree exactly
-        S_all, C_all = _build_sc_matrices(inter_k, norb, 0, 0, 0)
-        # Now verify RPA susceptibility computation (continued).
-        # Use a small chi0 so the series converges, and make it DENSITY-DIAGONAL
-        # (nonzero only at [(a,a),(b,b)]).  The code path below feeds
-        # _compute_vertices_general a 2-index (reduced) chi0q, which can only
-        # ever carry the density-density components chi0_{(a,a),(b,b)}; a chi0
-        # with weight on off-density pair indices (a,b), a != b -- e.g. the
-        # plain identity, whose [1,1] and [2,2] entries are off-density -- is
-        # not representable there, so the manual reference and the code would be
-        # comparing different physics.  Keeping chi0 density-diagonal makes the
-        # 2-index reduction lossless and the comparison exact.
+        # Now verify RPA susceptibility computation (full Kanamori,
+        # including J': the code path below receives the FOUR-index
+        # embedded chi0q, which the reduced-chi rejection does not police).
+        # Use a small chi0 so the series converges, and make it
+        # DENSITY-DIAGONAL (nonzero only at [(a,a),(b,b)]) so the manual
+        # nd x nd reference and the four-index embedded code path compare
+        # the same physics exactly.
         chi0 = np.zeros((nd, nd), dtype=complex)
         _dens_block = np.array([[0.05, 0.01], [0.01, 0.04]], dtype=complex)
         for a in range(norb):
@@ -3000,10 +2999,19 @@ class TestKanamoriInteraction(unittest.TestCase):
             for b in range(norb):
                 chi0q[a, b, 0, 0, 0, nmat // 2] = chi0[a * norb + a, b * norb + b]
 
+        # four-index embedding: full Kanamori (including J') is retained
+        # -- the reduced-chi rejection polices only 2-index input, and this
+        # doubles as proof that four-index input is not falsely rejected
+        chi0q4 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz, nmat),
+                          dtype=complex)
+        for _a in range(norb):
+            for _b in range(norb):
+                chi0q4[_a, _a, _b, _b] = chi0q[_a, _b]
+
         Vs_singlet = _compute_vertices_general(
-            chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
+            chi0q4, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
         Vs_triplet = _compute_vertices_general(
-            chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="triplet")
+            chi0q4, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="triplet")
 
         # Compare at q=(0,0,0)
         V_s_code = Vs_singlet[:, :, :, :, 0, 0, 0].reshape(nd, nd)
@@ -3031,10 +3039,7 @@ class TestKanamoriInteraction(unittest.TestCase):
         U, J = 2.0, 0.3
         Up = U - 2 * J
         inter_k = self._make_inter_k(norb, Nx, Ny, Nz,
-                                      U=U, Up=Up, J=J, Jp=0.0)
-        # Jp = 0: Exchange has no density-diagonal vertex, and the 2-index
-        # chi0q used here is rejected with it since the #120 policy
-        # alignment; Hund J alone provides the channel structure under test
+                                      U=U, Up=Up, J=J, Jp=J)
 
         # Compute chi0q from Green's function (simple diagonal form)
         chi0q = np.zeros((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
@@ -3049,6 +3054,12 @@ class TestKanamoriInteraction(unittest.TestCase):
                 chi0q[a, b] = -ifftn(
                     fftn(prod, axes=(0, 1, 2)), axes=(0, 1, 2)
                 ) * (Nx * Ny * Nz) / beta
+
+        # embed the density chi0q into the four-index form: full Kanamori
+        # (including J' = J) is retained -- four-index input is not policed
+        # by the reduced-chi rejection, and this also proves it is not
+        # falsely rejected
+        chi0q = self._embed4(chi0q, norb, Nx, Ny, Nz, nmat)
 
         # General mode (4-index vertex) is required with Hund/Exchange
         Vs_q = _compute_vertices(
@@ -3088,10 +3099,7 @@ class TestKanamoriInteraction(unittest.TestCase):
         U, J = 2.0, 0.3
         Up = U - 2 * J
         inter_k = self._make_inter_k(norb, Nx, Ny, Nz,
-                                      U=U, Up=Up, J=J, Jp=0.0)
-        # Jp = 0: Exchange has no density-diagonal vertex, and the 2-index
-        # chi0q used here is rejected with it since the #120 policy
-        # alignment; Hund J alone provides the channel structure under test
+                                      U=U, Up=Up, J=J, Jp=J)
 
         chi0q = np.zeros((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
         for a in range(norb):
@@ -3105,6 +3113,10 @@ class TestKanamoriInteraction(unittest.TestCase):
                 chi0q[a, b] = -ifftn(
                     fftn(prod, axes=(0, 1, 2)), axes=(0, 1, 2)
                 ) * (Nx * Ny * Nz) / beta
+
+        # four-index embedding: full Kanamori including J' = J is retained
+        # (four-index input is not policed by the reduced-chi rejection)
+        chi0q = self._embed4(chi0q, norb, Nx, Ny, Nz, nmat)
 
         Vs_singlet = _compute_vertices(
             chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
