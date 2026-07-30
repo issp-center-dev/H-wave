@@ -954,8 +954,11 @@ class RPA:
                                          required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
-            # use chi0q input
+            # use chi0q input; a green_info stored by a previous solve
+            # arrives here, so establish spin_mode from the shape exactly
+            # as the file-based chi0q_init route does (issue #109)
             chi0q = green_info["chi0q"]
+            self._validate_chi0q_shape(chi0q, source="green_info")
             if chi0q.shape[0] != self.nmat:
                 logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
                 #self.nmat = chi0q.shape[0]
@@ -1393,6 +1396,83 @@ class RPA:
 
         return info
 
+    def _validate_chi0q_shape(self, chi0q, source):
+        """Validate a supplied chi0q against the lattice/scheme and set
+        spin_mode from its shape.
+
+        Shared by every route that accepts a chi0q the solver did not
+        compute itself: the file-based ``chi0q_init`` reader and the
+        in-memory reuse of a ``green_info`` stored by a previous solve.
+        The latter used to run NO validation, so a fresh solver reached
+        the spin_mode dispatch unset and crashed with AttributeError
+        (issue #109).
+        """
+        if self.calc_scheme == "general":
+            if len(chi0q.shape) == 6:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
+                cs = chi0q.shape
+                assert cs[1] == self.lattice.nvol, "lattice volume"
+                nd = cs[2]
+                assert nd == self.nd or nd == self.norb, "shape[2]"
+                assert cs[3] == nd, "shape[3]"
+                assert cs[4] == nd, "shape[4]"
+                assert cs[5] == nd, "shape[5]"
+
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 7:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
+                cs = chi0q.shape
+                assert cs[0] == 2, "spin block"
+                assert cs[2] == self.lattice.nvol, "lattice volume"
+                nd = cs[3]
+                assert nd == self.norb, "shape[3]"
+                assert cs[4] == nd, "shape[4]"
+                assert cs[5] == nd, "shape[5]"
+                assert cs[6] == nd, "shape[6]"
+
+                self.spin_mode = "spin-diag"
+            else:
+                assert False, "unexpected shape for general scheme: {}".format(chi0q.shape)
+
+        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+            if len(chi0q.shape) == 4:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+                cs = chi0q.shape
+                assert cs[1] == self.lattice.nvol, "lattice volume"
+                nd = cs[2]
+                assert nd == self.nd or nd == self.norb, "shape[2]"
+                assert cs[3] == nd, "shape[3]"
+
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 5:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb)
+                cs = chi0q.shape
+                assert cs[0] == 2, "spin block"
+                assert cs[2] == self.lattice.nvol, "lattice volume"
+                nd = cs[3]
+                assert nd == self.norb, "shape[3]"
+                assert cs[4] == nd, "shape[4]"
+
+                self.spin_mode = "spin-diag"
+            else:
+                assert False, "unexpected shape for reduced scheme: {}".format(chi0q.shape)
+        else:
+            assert False, "unknown scheme: {}".format(self.calc_scheme)
+
+        logger.info("chi0q from {}: shape={}, spin_mode={}".format(
+            source, chi0q.shape, self.spin_mode))
+
     def _read_chi0q(self, file_name):
         """Read chi0q from file and validate its shape.
 
@@ -1467,69 +1547,7 @@ class RPA:
                 "with a recomputation under this config.".format(
                     file_name, file_tail, self.coeff_tail))
 
-        # check size
-        if self.calc_scheme == "general":
-            if len(chi0q.shape) == 6:
-                # spin-free or spinful
-                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
-                cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
-
-                if nd == self.nd:
-                    self.spin_mode = "spinful"
-                else:
-                    self.spin_mode = "spin-free"
-            elif len(chi0q.shape) == 7:
-                # spin-diagonal
-                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
-                cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
-                nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
-                assert cs[6] == nd, "shape[6]"
-
-                self.spin_mode = "spin-diag"
-            else:
-                assert False, "unexpected shape for general scheme: {}".format(chi0q.shape)
-
-        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
-            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
-            if len(chi0q.shape) == 4:
-                # spin-free or spinful
-                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
-                cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-
-                if nd == self.nd:
-                    self.spin_mode = "spinful"
-                else:
-                    self.spin_mode = "spin-free"
-            elif len(chi0q.shape) == 5:
-                # spin-diagonal
-                #   shape = (nblock,nmat,nvol,norb,norb)
-                cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
-                nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-
-                self.spin_mode = "spin-diag"
-            else:
-                assert False, "unexpected shape for reduced scheme: {}".format(chi0q.shape)
-        else:
-            assert False, "unknown scheme: {}".format(self.calc_scheme)
+        self._validate_chi0q_shape(chi0q, source=file_name)
 
         logger.info("read_chi0q: shape={}, spin_mode={}".format(chi0q.shape, self.spin_mode))
 
