@@ -1387,9 +1387,9 @@ class TestFlexVertexMYOConvention(unittest.TestCase):
                                           convention="kuroki")
         v_myo = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                        convention="myo")
-        self.assertGreater(
-            np.linalg.norm(v_myo - v_kuroki), 1e-8,
-            "MYO and Kuroki pairing vertices must differ when Hund J != 0")
+        # Adjudicated by exact diagonalization (issue #113): the per-type
+        # values make the two builders identical, so the vertices must AGREE.
+        npt.assert_allclose(v_myo, v_kuroki, atol=1e-12)
 
     def test_myo_matches_myo_sc_formula(self):
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
@@ -2080,10 +2080,14 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_mat[0, 0], U_val, atol=1e-10)
         npt.assert_allclose(C_mat[0, 0], U_val, atol=1e-10)
 
-        # (l1=0,l2=1,l3=0,l4=1) -> l1=l3!=l2=l4: S=U', C=-U'+J
+        # (l1=0,l2=1,l3=0,l4=1) -> l1=l3!=l2=l4:
+        #   S = U' - J + J' (= U' for J = J'),  C = -U' + J + J'
+        # (adjudicated by exact diagonalization, issue #113)
         idx_01 = 0 * norb + 1  # = 1
-        npt.assert_allclose(S_mat[idx_01, idx_01], Up_val, atol=1e-10)
-        npt.assert_allclose(C_mat[idx_01, idx_01], -Up_val + J_val, atol=1e-10)
+        npt.assert_allclose(S_mat[idx_01, idx_01],
+                            Up_val - J_val + Jp_val, atol=1e-10)
+        npt.assert_allclose(C_mat[idx_01, idx_01],
+                            -Up_val + J_val + Jp_val, atol=1e-10)
 
         # (l1=0,l2=0,l3=1,l4=1) -> l1=l2!=l3=l4: S=J, C=2U'-J
         idx_00 = 0 * norb + 0  # = 0
@@ -2091,17 +2095,18 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_mat[idx_00, idx_11], J_val, atol=1e-10)
         npt.assert_allclose(C_mat[idx_00, idx_11], 2 * Up_val - J_val, atol=1e-10)
 
-        # (l1=0,l2=1,l3=1,l4=0) -> l1=l4!=l2=l3: S=J', C=J'
+        # (l1=0,l2=1,l3=1,l4=0) -> l1=l4!=l2=l3: Exchange moved to the
+        # (ab,ab) slots (issue #113); with no PairHop these are zero.
         idx_01 = 0 * norb + 1  # = 1
         idx_10 = 1 * norb + 0  # = 2
-        npt.assert_allclose(S_mat[idx_01, idx_10], Jp_val, atol=1e-10)
-        npt.assert_allclose(C_mat[idx_01, idx_10], Jp_val, atol=1e-10)
+        npt.assert_allclose(S_mat[idx_01, idx_10], 0.0, atol=1e-10)
+        npt.assert_allclose(C_mat[idx_01, idx_10], 0.0, atol=1e-10)
 
     def test_ising_interaction(self):
         """Test S, C for 2 orbitals with Ising interaction.
 
         Ising contributes to cross and dens channels:
-        cross (l1=l3,l2=l4): S = -I, C = -I
+        cross (l1=l3,l2=l4): S = +I (sign per issue #113), C = -I
         dens  (l1=l2,l3=l4): S = -2I, C = 0
         """
         norb = 2
@@ -2115,9 +2120,10 @@ class TestSCMatrices(unittest.TestCase):
         inter_k = {"Ising": I_k}
         S_mat, C_mat = _build_sc_matrices(inter_k, norb, 0, 0, 0)
 
-        # cross (l1=0,l2=1,l3=0,l4=1): S = -I, C = -I
+        # cross (l1=0,l2=1,l3=0,l4=1): S = +I, C = -I. The S sign was
+        # adjudicated by exact diagonalization (issue #113).
         idx_01 = 0 * norb + 1
-        npt.assert_allclose(S_mat[idx_01, idx_01], -I_val, atol=1e-10)
+        npt.assert_allclose(S_mat[idx_01, idx_01], +I_val, atol=1e-10)
         npt.assert_allclose(C_mat[idx_01, idx_01], -I_val, atol=1e-10)
 
         # dens (l1=0,l2=0,l3=1,l4=1): S = -2I, C = 0
@@ -2224,10 +2230,12 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_full[0, 0], U, atol=1e-10)
         npt.assert_allclose(C_full[0, 0], U, atol=1e-10)
 
-        # cross: S = V - I, C = -V + J - I
+        # cross: S = V + I - J + J', C = -V + J + J' - I  (issue #113)
         idx_01 = 0 * norb + 1
-        npt.assert_allclose(S_full[idx_01, idx_01], V - I_val, atol=1e-10)
-        npt.assert_allclose(C_full[idx_01, idx_01], -V + J - I_val, atol=1e-10)
+        npt.assert_allclose(S_full[idx_01, idx_01],
+                            V + I_val - J + Jp, atol=1e-10)
+        npt.assert_allclose(C_full[idx_01, idx_01],
+                            -V + J + Jp - I_val, atol=1e-10)
 
         # dens: S = J - 2I, C = 2V - J
         idx_00 = 0 * norb + 0
@@ -2235,11 +2243,11 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_full[idx_00, idx_11], J - 2 * I_val, atol=1e-10)
         npt.assert_allclose(C_full[idx_00, idx_11], 2 * V - J, atol=1e-10)
 
-        # exch: S = Jp + P, C = Jp + P
+        # exch: PairHop only (Exchange moved to (ab,ab), issue #113)
         idx_01 = 0 * norb + 1
         idx_10 = 1 * norb + 0
-        npt.assert_allclose(S_full[idx_01, idx_10], Jp + P, atol=1e-10)
-        npt.assert_allclose(C_full[idx_01, idx_10], Jp + P, atol=1e-10)
+        npt.assert_allclose(S_full[idx_01, idx_10], P, atol=1e-10)
+        npt.assert_allclose(C_full[idx_01, idx_10], P, atol=1e-10)
 
 
 class TestTripletPairing(unittest.TestCase):
@@ -2898,24 +2906,24 @@ class TestKanamoriInteraction(unittest.TestCase):
         npt.assert_allclose(S_all[0, 0], U, atol=1e-10)
         npt.assert_allclose(S_all[3, 3], U, atol=1e-10)
         # cross (l1=l3 != l2=l4): S = U'
-        npt.assert_allclose(S_all[1, 1], Up, atol=1e-10)  # (01, 01)
-        npt.assert_allclose(S_all[2, 2], Up, atol=1e-10)  # (10, 10)
+        npt.assert_allclose(S_all[1, 1], Up - J + Jp, atol=1e-10)  # (01, 01)
+        npt.assert_allclose(S_all[2, 2], Up - J + Jp, atol=1e-10)  # (10, 10)
         # dens (l1=l2 != l3=l4): S = J
         npt.assert_allclose(S_all[0, 3], J, atol=1e-10)   # (00, 11)
         npt.assert_allclose(S_all[3, 0], J, atol=1e-10)   # (11, 00)
         # exch (l1=l4 != l2=l3): S = J'
-        npt.assert_allclose(S_all[1, 2], Jp, atol=1e-10)  # (01, 10)
-        npt.assert_allclose(S_all[2, 1], Jp, atol=1e-10)  # (10, 01)
+        npt.assert_allclose(S_all[1, 2], 0.0, atol=1e-10)  # (01, 10) #113
+        npt.assert_allclose(S_all[2, 1], 0.0, atol=1e-10)  # (10, 01)
 
         # Check C matrix
         # diag: C = U
         npt.assert_allclose(C_all[0, 0], U, atol=1e-10)
         # cross: C = -U' + J
-        npt.assert_allclose(C_all[1, 1], -Up + J, atol=1e-10)
+        npt.assert_allclose(C_all[1, 1], -Up + J + Jp, atol=1e-10)  # #113
         # dens: C = 2U' - J
         npt.assert_allclose(C_all[0, 3], 2 * Up - J, atol=1e-10)
         # exch: C = J'
-        npt.assert_allclose(C_all[1, 2], Jp, atol=1e-10)
+        npt.assert_allclose(C_all[1, 2], 0.0, atol=1e-10)  # #113
 
         # Now verify RPA susceptibility computation
         # Use a small chi0 so the series converges
@@ -3086,7 +3094,7 @@ class TestKanamoriInteraction(unittest.TestCase):
         npt.assert_allclose(S_diag, U, atol=1e-10)
         npt.assert_allclose(S_cross, Up, atol=1e-10)
         npt.assert_allclose(S_dens, J, atol=1e-10)
-        npt.assert_allclose(S_exch, J, atol=1e-10)
+        npt.assert_allclose(S_exch, 0.0, atol=1e-10)  # Exchange moved (#113)
         # U' = U - 2J
         npt.assert_allclose(S_cross, S_diag - 2 * S_dens, atol=1e-10,
                             err_msg="Kanamori relation U'=U-2J should hold in S matrix")
@@ -3098,9 +3106,11 @@ class TestKanamoriInteraction(unittest.TestCase):
         C_exch = C_mat[1, 2]       # J' = J
 
         npt.assert_allclose(C_diag, U, atol=1e-10)
-        npt.assert_allclose(C_cross, -Up + J, atol=1e-10)
+        # C_cross = -U' + J + J' = -U' + 2J for J = J' -- the standard
+        # Kanamori value, from the corrected per-type split (#113)
+        npt.assert_allclose(C_cross, -Up + 2 * J, atol=1e-10)
         npt.assert_allclose(C_dens, 2 * Up - J, atol=1e-10)
-        npt.assert_allclose(C_exch, J, atol=1e-10)
+        npt.assert_allclose(C_exch, 0.0, atol=1e-10)
 
     def test_kanamori_with_ising_pairhop_eliashberg(self):
         """End-to-end test with all interaction types: U, U', J, J', Ising, PairHop."""

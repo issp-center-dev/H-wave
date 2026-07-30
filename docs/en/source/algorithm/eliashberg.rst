@@ -125,16 +125,30 @@ The matrix elements are:
      - :math:`U`
    * - :math:`l_1 = l_3 \neq l_2 = l_4`
      - Cross
-     - :math:`U' - I`
-     - :math:`-U' + J - I`
+     - :math:`U' + I - J + J'`
+     - :math:`-U' - I + J + J'`
    * - :math:`l_1 = l_2 \neq l_3 = l_4`
      - Density
      - :math:`J - 2I`
      - :math:`2U' - J`
    * - :math:`l_1 = l_4 \neq l_2 = l_3`
-     - Exchange
-     - :math:`J' + P`
-     - :math:`J' + P`
+     - Pair hop
+     - :math:`P`
+     - :math:`P`
+
+.. note::
+
+   The Cross-row entries for :math:`J`, :math:`J'` and :math:`I`, and the
+   placement of :math:`J'` in the Cross row rather than the last row, follow
+   the exact-diagonalization adjudication of the interaction vertices: the
+   Hund term contributes :math:`S \mathrel{-}= J`, :math:`C \mathrel{+}= J`,
+   the Exchange term :math:`S \mathrel{+}= J'`, :math:`C \mathrel{+}= J'`,
+   and the Ising term enters :math:`S` with :math:`+I`. For the
+   SU(2)-symmetric Kanamori combination (:math:`J' = J`) these reproduce the
+   standard literature matrices (no :math:`J` in the Cross :math:`S` entry and
+   :math:`-U' + 2J` in the Cross :math:`C` entry). Susceptibility files
+   produced before this correction carry no ``sc_vertex_version`` field and
+   are rejected when the interaction set contains Hund, Exchange or Ising.
 
 The RPA susceptibilities are
 

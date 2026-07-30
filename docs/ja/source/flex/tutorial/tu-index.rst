@@ -513,8 +513,9 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz`` ファイルを生成�
 - ``chi_convention``: 感受率をどのスピン/電荷頂点と組み合わせるべきか、および
   形状の系統を示すタグ。reduced/squashed スキームは ``"kuroki"``\ （スピン軌道
   形状、``nd = norb * ns``\ ）、general full-vertex スキームは ``"myo"``\
-  （orbital-pair 形状 ``nd = norb^2``\ 、および ``C(ab,ab)`` 電荷頂点にMYOの値を
-  用いること）。Eliashberg ローダー（\ ``hwave_sc``\ ）はこのタグで軌道
+  （orbital-pair 形状 ``nd = norb^2``\ 。かつて ``C(ab,ab)`` 電荷頂点にあった
+  MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定で解消され、現在は
+  両ビルダーは一致します）。Eliashberg ローダー（\ ``hwave_sc``\ ）はこのタグで軌道
   インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair 次元が
   一致（ともに ``4``\ ）し形状だけでは区別できないため、このタグが必須です。
 - ``chi_orbital_layout``: **general** スキームのみが書き出します。値は
