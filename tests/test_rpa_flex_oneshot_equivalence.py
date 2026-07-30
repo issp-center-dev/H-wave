@@ -180,6 +180,30 @@ class TestFierzDomain(unittest.TestCase):
                                 ((-1, 0, 0), (0, 0)): 0.7}, [1, 1, 1])
         self.assertIsNone(hi.ham_fierz_q)
 
+    def test_folded_offsite_aggregate_is_a_fierz_noop(self):
+        # the aggregate path must also judge locality pre-fold: an off-site
+        # same-orbital bond arriving through 'Coulomb' folds to (0,0,0)
+        # between supercell orbitals just like the explicit table
+        hi = self._ham_info(1, {((1, 0, 0), (0, 0)): 0.7,
+                                ((-1, 0, 0), (0, 0)): 0.7}, [2, 1, 1],
+                            key='Coulomb')
+        self.assertIsNone(hi.ham_fierz_q)
+
+    def test_fierz_support_sits_on_the_cross_slots_only(self):
+        # exact support: on-site inter-orbital V at 2 orbitals, no folding.
+        # nd = 4 (spin-major: 0=(up,0), 1=(up,1), 2=(dn,0), 3=(dn,1)); the
+        # same-spin pair-diagonal entries (a,b,a,b) carry -V and nothing
+        # else is populated
+        hi = self._ham_info(2, {((0, 0, 0), (0, 1)): 0.7,
+                                ((0, 0, 0), (1, 0)): 0.7}, [1, 1, 1])
+        f = np.asarray(hi.ham_fierz_q).reshape(4, 4, 4, 4, 4)[0]
+        want = np.zeros((4, 4, 4, 4), dtype=complex)
+        for up_a, up_b, dn_a, dn_b in ((0, 1, 2, 3),):
+            for a, b in ((up_a, up_b), (up_b, up_a),
+                         (dn_a, dn_b), (dn_b, dn_a)):
+                want[a, b, a, b] = -0.7
+        np.testing.assert_allclose(f, want, atol=1e-13)
+
     def test_aggregate_coulomb_fierz_equals_explicit(self):
         # under folding the aggregate path must split the PRE-fold table
         explicit = self._ham_info(2, {((0, 0, 0), (0, 1)): 0.7,
