@@ -1,6 +1,6 @@
 """The single-sourced FFT-grid reversal map (#108).
 
-Eighteen call sites across sc.py, rpa.py, flex.py, eliashberg_dynamic.py
+Nineteen call sites across sc.py, rpa.py, flex.py, eliashberg_dynamic.py
 and uhfk.py used to spell the map ``i -> (N - i) % N`` three different
 ways; these tests pin the map's algebra once and prove all historical
 spellings are the same gather, so the consolidation is bit-identical by
@@ -10,6 +10,7 @@ construction.
 import unittest
 
 import numpy as np
+import pytest
 
 from hwave.solver.kgrid import reverse_fft_axes
 
@@ -173,6 +174,33 @@ class TestProductionCallSites(unittest.TestCase):
         want = 0.5 * (M + Mrev_old.transpose(1, 0, 2, 3, 4))
         got = sc._symmetrise_interactions_k({"Hund": M})["Hund"]
         np.testing.assert_array_equal(got, want)
+
+
+class TestCupyPath(unittest.TestCase):
+    """Device-array coverage; skips without a usable CUDA device.
+
+    The numpy path cannot validate CuPy's own non-contiguous reshape
+    inside the transverse assembly's unflatten -> map -> flatten round
+    trip, so exercise the helper and that round trip on device."""
+
+    def test_reverse_fft_axes_on_device(self):
+        cupy = pytest.importorskip("cupy")
+        try:
+            cupy.zeros(1)
+        except Exception:
+            self.skipTest("cupy installed but no usable CUDA device")
+
+        rng = np.random.default_rng(15)
+        a = rng.standard_normal((60, 2, 2, 2, 2)) \
+            + 1j * rng.standard_normal((60, 2, 2, 2, 2))
+        d = cupy.asarray(a).transpose(0, 3, 4, 1, 2)   # non-contiguous
+        h = a.transpose(0, 3, 4, 1, 2)
+        got = reverse_fft_axes(
+            d.reshape(4, 3, 5, *d.shape[1:]), (0, 1, 2)).reshape(d.shape)
+        self.assertIsInstance(got, cupy.ndarray)
+        want = reverse_fft_axes(
+            h.reshape(4, 3, 5, *h.shape[1:]), (0, 1, 2)).reshape(h.shape)
+        np.testing.assert_array_equal(cupy.asnumpy(got), want)
 
 
 if __name__ == "__main__":
