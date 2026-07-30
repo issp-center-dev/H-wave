@@ -1466,6 +1466,29 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
         green = sc._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIsNotNone(green)
 
+    def test_complex_nan_components_are_compared_separately(self):
+        """np.array_equal(equal_nan=True) on complex arrays treats an
+        entry as equal when EITHER component is NaN; the guard compares
+        components separately, so nan+1j vs nan+2j (and 1+nanj vs
+        2+nanj) are DIFFERING content."""
+        import tempfile
+
+        import hwave.sc as sc
+
+        for kind in ("imag-differs", "real-differs"):
+            with self.subTest(kind=kind):
+                blocks = self._blocks(1.0)
+                if kind == "imag-differs":
+                    blocks[0][0, 0, 0, 0] = complex(np.nan, 1.0)
+                    blocks[1][0, 0, 0, 0] = complex(np.nan, 2.0)
+                else:
+                    blocks[0][0, 0, 0, 0] = complex(1.0, np.nan)
+                    blocks[1][0, 0, 0, 0] = complex(2.0, np.nan)
+                d = tempfile.mkdtemp()
+                inp = self._write(d, blocks)
+                with self.assertRaises(ValueError):
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+
     def test_differing_blocks_are_rejected(self):
         import tempfile
 

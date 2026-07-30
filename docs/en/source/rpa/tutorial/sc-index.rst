@@ -1185,6 +1185,14 @@ with four-index vertex structure.
    existed and which therefore cannot carry a tag, by setting
    ``[eliashberg] accept_up_block_only = true``.
 
+   The same setting also authorizes the **dressed Green's function** loader:
+   a ``green.npz`` whose spin blocks genuinely differ is otherwise refused
+   (the pair bubble is built from the up block only, so the discarded block
+   is real physics), and with ``accept_up_block_only = true`` it proceeds
+   with a warning. Unlike the legacy-layout case above, this is an
+   **uncontrolled approximation** -- the option authorizes discarding real
+   spin-resolved content, and the responsibility is the user's.
+
 
 What each mode accepts
 ----------------------------
@@ -1292,7 +1300,7 @@ accepts ``spin-free`` only and rejects the other two outright.
   ``Extern`` field with ``coeff_extern``) -- **refused.** Only the spin-up block
   would survive the embedding, so the eigenvalue would not approximate the
   spin-resolved problem at all; the loader raises rather than returning a
-  number. (Content at the floating-point round-off scale -- below
+  number. (Content at the floating-point round-off scale -- at or below
   ``256 * eps`` relative to the kept block, about ``6e-14`` -- is reported as
   round-off and
   allowed through, so a backend rounding asymmetry cannot abort a genuinely

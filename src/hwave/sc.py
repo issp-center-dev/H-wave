@@ -2177,9 +2177,28 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # NaN-identical blocks compare as redundant (equal_nan): the guard is
     # about DIFFERING content, not about validating finiteness.
     if nblock > 1:
+        def _differs(b):
+            # Per-frequency, per-component comparison. Two reasons:
+            #  * np.array_equal(equal_nan=True) on COMPLEX arrays treats an
+            #    entry as equal when EITHER component is NaN, so nan+1j
+            #    would silently equal nan+2j; comparing the real and
+            #    imaginary parts separately gives the exact semantics
+            #    (matching NaN positions, equality elsewhere).
+            #  * frequency-sliced scanning bounds the comparison
+            #    temporaries to one (nvol, norb, norb) slice -- a
+            #    whole-block scan would allocate masks comparable to the
+            #    multi-GB block itself. .real/.imag are views, not copies.
+            for f in range(green_raw.shape[1]):
+                gb = green_raw[b, f]
+                g0 = green_raw[0, f]
+                if not (np.array_equal(gb.real, g0.real, equal_nan=True)
+                        and np.array_equal(gb.imag, g0.imag,
+                                           equal_nan=True)):
+                    return True
+            return False
+
         for b in range(1, nblock):
-            if not np.array_equal(green_raw[b], green_raw[0],
-                                  equal_nan=True):
+            if _differs(b):
                 if _accept_up_block_only(input_dict):
                     logger.warning(
                         "green file '%s' carries %d spin blocks with "
