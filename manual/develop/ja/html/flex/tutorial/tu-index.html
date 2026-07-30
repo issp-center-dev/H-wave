@@ -125,8 +125,14 @@ Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
 重要となる場合（例：Onari--Kontaniの軌道ゆらぎ機構 <a class="footnote-reference brackets" href="#id14" id="id10" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>）には効くことがあります。</p>
 <p>またデフォルトの <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> および <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> スキームでは、
 スピン/電荷バーテックスを相互作用の密度--密度成分で構成します。
-off-diagonal（スピンフリップのHund結合、ペアホッピング）の頂点は
-密度--密度成分に縮約されます（<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> を与えると警告が出ます）。
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度--密度成分の頂点を <strong>一切持たない</strong> ため、
+これらのスキームでは近似すらできません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> でこれらを
+与えると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> となり、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> への切り替えが
+案内されます（以前の開発版では警告付きで受理され、相互作用は無音で効果
+ゼロになっていました）。<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> は <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+がある場合、自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code> を選択します。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> はどのスキーム
+でも受理されます：その粒子-正孔頂点は厳密にゼロであり、感受率チャネルから
+落とすことは近似ではなく厳密です。
 したがってこれらのスキームでの「FLEX」は <em>厳密ではなく</em>、密度--密度かつ
 AL/MTを含まないゆらぎ交換近似のレベルである点に注意してください。</p>
 <p>一方、 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> スキームでは、off-diagonalな完全な
@@ -813,19 +819,20 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 <p class="admonition-title">注釈</p>
 <p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> として <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>,
 <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> を受け付けます。<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> および <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> スキームは
-縮約形の感受率を利用し、相互作用を密度-密度成分に縮約します。
+縮約形の感受率を利用し、相互作用の密度-密度成分で解きます。
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度-密度頂点を持たないため <strong>拒否</strong> されます
+（受理すると無音で効果ゼロになるため）。
 <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> スキームは常磁性の完全頂点（full-vertex）パスであり、
-完全なKanamori頂点（MYOの式。<a class="reference internal" href="#flex-scope"><span class="std std-ref">上記</span></a> を参照）を保持し、
-密度-密度縮約の警告を抑制します。ただし <strong>spin-freeモード専用</strong> であり、
+完全なKanamori頂点（MYOの式。<a class="reference internal" href="#flex-scope"><span class="std std-ref">上記</span></a> を参照）を保持
+します。ただし <strong>spin-freeモード専用</strong> であり、
 <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> や <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> に対しては <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を
-送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> にも対応していません。さらに <strong>オンサイト
-相互作用専用</strong> であり、すべての2体項
-（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>/<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>）
-は <code class="docutils literal notranslate"><span class="pre">irvec</span> <span class="pre">=</span> <span class="pre">(0,0,0)</span></code> でなければならず、オフサイト項があると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>
-を送出します（MYOのS/C行列をq非依存の定数として構築するため）。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> にも対応していません。オフサイト項は
+同一軌道（a == b）の <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> かつ副格子折り畳みなしの場合のみ
+受理されます（RPA ring と要素完全一致が実測されたクラス）。それ以外の
+オフサイト項は <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> となります。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> の非対角頂点は <strong>保持されます**（本スキームの目的）が、
 ``PairLift`` は粒子-正孔頂点に ``S=C=0`` で寄与せず **無効（inert）</strong> で、
-警告とともに無視されます。general パスは <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> をMYO規約で
+厳密にゼロである旨の表示とともに受理されます。general パスは <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> をMYO規約で
 保存し（<code class="docutils literal notranslate"><span class="pre">chi_convention=&quot;myo&quot;</span></code> タグ付き）、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> が自動的に読み取り
 ます。いずれのスキームでも
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> には対応していません（ソルバーは
@@ -1097,14 +1104,16 @@ FLEX converged after 62 iterations
 </section>
 <section id="b-general">
 <h2><span class="section-number">6.1.9. </span>サンプル 3b: 完全頂点（general）版<a class="headerlink" href="#b-general" title="Link to this heading">¶</a></h2>
-<p>上記の鉄系超伝導体モデルは、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> を選択した
-完全頂点（full-vertex）版としても提供されています。<strong>同一</strong> のモデルと
-相互作用ファイル（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>）を用いますが、off-diagonalな完全なKanamori頂点
-（スピンフリップのHund結合およびペアホッピング／交換項）を密度-密度成分に
-縮約せずに保持します。これは常磁性の完全頂点MYO定式化 <a class="footnote-reference brackets" href="#id15" id="id36" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
-（THU <a class="footnote-reference brackets" href="#id16" id="id37" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）であり、したがって密度-密度縮約の警告は
-抑制されます。</p>
+<p>上記の鉄系超伝導体モデルは、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> を明示的に選択した
+完全頂点（full-vertex）版としても提供されています。相互作用に <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+が含まれるため、サンプル 3 の <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> も現在は自動的に
+<strong>同じ</strong> general スキームに解決されます — 両サンプルは同一の完全頂点
+パスを実行し、この版は選択を明示している点だけが異なります。<strong>同一</strong> の
+モデルと相互作用ファイル（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>）を用い、off-diagonalな完全なKanamori頂点
+（スピンフリップのHund結合およびペアホッピング／交換項）を保持します。
+これは常磁性の完全頂点MYO定式化 <a class="footnote-reference brackets" href="#id15" id="id36" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
+（THU <a class="footnote-reference brackets" href="#id16" id="id37" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）です。</p>
 <p>この版は、Hund／交換／ペアホッピングのoff-diagonal頂点が重要となる
 多軌道モデル（ここでの鉄系超伝導体モデルなど）で、かつ常磁性のFLEXで
 十分な場合に適しています。なお <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> スキームは
@@ -1153,9 +1162,10 @@ FLEX converged after 62 iterations
   energy = &quot;energy.dat&quot;
 </pre></div>
 </div>
-<p>サンプル 3 からの本質的な変更点は <code class="docutils literal notranslate"><span class="pre">[mode]</span></code> セクションの
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> のみであり、格子情報・トランスファー・
-相互作用ファイルは同一です。</p>
+<p>サンプル 3 との違いは <code class="docutils literal notranslate"><span class="pre">[mode]</span></code> セクションで <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
+を明示している点のみです（サンプル 3 の <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> は同じスキームに解決
+されます）。格子情報・トランスファー・相互作用ファイルは同一で、結果も
+一致します。</p>
 </section>
 <section id="tips">
 <h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
@@ -1211,23 +1221,25 @@ FLEX converged after 62 iterations
 <td><p>フント結合 <span class="math notranslate nohighlight">\(J\)</span></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
-<td><p>部分的に対応</p></td>
-<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span> （密度-密度成分のみ。
-スピンフリップ・対散乱などの非対角頂点は無視されます）</p></td>
+<td><p>general のみ</p></td>
+<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span> （密度-密度頂点を持たないため
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
+を選択）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
 <td><p>対応</p></td>
 <td><p>イジング型相互作用</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
-<td><p>部分的に対応</p></td>
-<td><p>ペアリフト相互作用 （密度-密度成分のみ。
-非対角頂点は無視されます）</p></td>
+<td><p>無効（inert）</p></td>
+<td><p>ペアリフト相互作用 （粒子-正孔頂点は厳密にゼロ。
+全スキームで受理され、感受率チャネルに影響しません）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
-<td><p>部分的に対応</p></td>
-<td><p>ペアホッピング相互作用 （密度-密度成分のみ。
-非対角頂点は無視されます）</p></td>
+<td><p>general のみ</p></td>
+<td><p>ペアホッピング相互作用 （密度-密度頂点を持たないため
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
+を選択）</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
 <td><p><strong>非対応</strong></p></td>
@@ -1281,11 +1293,12 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>この縮約は <strong>密度-密度型相互作用</strong> に対して正確です。
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
 はすべて密度-密度型であり正しく扱われます。
-一方、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は純粋な密度-密度型では
-<strong>なく</strong>、縮約においては密度-密度成分のみが保持され、非対角
-（スピンフリップ・対散乱）頂点は無視されます。これらの相互作用が
-含まれる場合、ソルバーはこの近似をユーザーに知らせるための警告を
-出力します。</p>
+一方、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度-密度頂点を <strong>一切持たない</strong> ため、
+この縮約では全く表現できません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> でこれらを与えると
+ソルバーは <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出し、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> への切り替えを
+案内します（<code class="docutils literal notranslate"><span class="pre">auto</span></code> は自動的に general を選択します）。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> の
+粒子-正孔頂点は厳密にゼロなので、どのスキームでも受理され、チャネルに
+現れないことは厳密です。</p>
 </section>
 <section id="spin-free">
 <h3>スピン自由度の扱い（spin-freeモード）<a class="headerlink" href="#spin-free" title="Link to this heading">¶</a></h3>

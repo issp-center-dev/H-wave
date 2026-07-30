@@ -135,11 +135,18 @@ charge/orbital fluctuations driven by two spin fluctuations are important
 (e.g. the orbital-fluctuation mechanism of Onari and Kontani <a class="footnote-reference brackets" href="#id7" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>).</p>
 <p>In addition, the default <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>
 schemes decompose the interaction via its density–density part for the
-spin/charge vertices; off-diagonal (spin-flip Hund, pair-hopping) vertices
-are reduced to their density–density component (a warning is emitted when
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> interactions are supplied). Accordingly, in these
-schemes “FLEX” means <em>not exact</em>: it is the density–density, AL/MT-free
-fluctuation-exchange level of approximation.</p>
+spin/charge vertices. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong>
+density–density vertex content at all, so these schemes cannot even
+approximate them: supplying either under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> raises a
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> directing you to <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (in earlier
+development builds this input was accepted with a warning while the
+interaction silently had zero effect). <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> selects
+<code class="docutils literal notranslate"><span class="pre">general</span></code> automatically when <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is present.
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is accepted everywhere: its particle-hole vertex is exactly
+zero, so omitting it from the susceptibility channels is exact, not an
+approximation. Accordingly, in these schemes “FLEX” means <em>not exact</em>: it
+is the density–density, AL/MT-free fluctuation-exchange level of
+approximation.</p>
 <p>The alternative <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> instead <strong>retains</strong> the full
 off-diagonal Kanamori vertices. It is a paramagnetic full-vertex
 formulation following Mochizuki, Yanase, and Ogata (MYO) <a class="footnote-reference brackets" href="#id8" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> (and
@@ -869,19 +876,20 @@ chi_u = np.moveaxis(ax.eval_to_uniform(c, nmat=4096), -1, 0)
 <p class="admonition-title">Note</p>
 <p>The FLEX solver accepts <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> in <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>,
 or <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>. The <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> schemes consume the
-reduced-shape susceptibility and reduce the interaction to its
-density-density part. The <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> scheme is the paramagnetic
+reduced-shape susceptibility and solve with the density-density part of
+the interaction; they <strong>reject</strong> <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (whose
+vertex has no density-density content — the input would silently have
+zero effect). The <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> scheme is the paramagnetic
 full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
-<a class="reference internal" href="#flex-scope"><span class="std std-ref">above</span></a>) and suppresses the density-density reduction
-warning, but it is <strong>spin-free only</strong> — it raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for
-<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> and rejects
-<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. It is also <strong>on-site only</strong>: every two-body term
-(<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>/<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>)
-must have <code class="docutils literal notranslate"><span class="pre">irvec</span> <span class="pre">=</span> <span class="pre">(0,0,0)</span></code>; an off-site entry raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>
-(the MYO S/C matrices are built as q-independent constants). <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
-<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> off-diagonal vertices <strong>are kept</strong> (the point of the scheme), but
-<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes <code class="docutils literal notranslate"><span class="pre">S=C=0</span></code> to the particle-hole vertex and is
-<strong>inert</strong> (ignored with a warning). The general path writes <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/
+<a class="reference internal" href="#flex-scope"><span class="std std-ref">above</span></a>), but it is <strong>spin-free only</strong> — it raises a
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> and
+rejects <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. Off-site input is accepted only for
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> with equal orbitals (a == b) and no sublattice folding
+— the class measured element-complete equal to the RPA ring; every
+other off-site entry raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> off-diagonal vertices <strong>are kept</strong> (the point of the scheme),
+but <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes <code class="docutils literal notranslate"><span class="pre">S=C=0</span></code> to the particle-hole vertex and is
+<strong>inert</strong> (accepted with a note that it is exactly zero). The general path writes <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/
 <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> in the MYO convention (tagged <code class="docutils literal notranslate"><span class="pre">chi_convention=&quot;myo&quot;</span></code>), which
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads back automatically. In all schemes
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> is <strong>not</strong> supported (the solver raises a
@@ -1156,13 +1164,15 @@ reflecting orbital-selective correlations.</span><a class="headerlink" href="#id
 <section id="sample-3b-full-vertex-general-variant">
 <h2><span class="section-number">6.1.9. </span>Sample 3b: Full-vertex (general) variant<a class="headerlink" href="#sample-3b-full-vertex-general-variant" title="Link to this heading">¶</a></h2>
 <p>The iron pnictide model above is also provided as a full-vertex variant
-that selects <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>. It uses the <strong>same</strong> model and
-interaction files (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>), but retains the full off-diagonal Kanamori vertices (the
-spin-flip Hund and pair-hopping / exchange terms) instead of reducing them
-to their density–density part. This is the paramagnetic full-vertex MYO
-formulation <a class="footnote-reference brackets" href="#id8" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> (corroborated by THU <a class="footnote-reference brackets" href="#id9" id="id21" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a>), and the density–density
-reduction warning is therefore suppressed.</p>
+that selects <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> explicitly. Since <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is
+present in the interaction files, Sample 3’s <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> now
+resolves to the <strong>same</strong> general scheme automatically — the two samples run
+the identical full-vertex path, and this variant differs only in making the
+choice explicit. It uses the <strong>same</strong> model and interaction files
+(<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>) and retains
+the full off-diagonal Kanamori vertices (the spin-flip Hund and
+pair-hopping / exchange terms). This is the paramagnetic full-vertex MYO
+formulation <a class="footnote-reference brackets" href="#id8" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> (corroborated by THU <a class="footnote-reference brackets" href="#id9" id="id21" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a>).</p>
 <p>This variant is appropriate for multi-orbital models in which the
 Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
 pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
@@ -1211,9 +1221,10 @@ pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
   energy = &quot;energy.dat&quot;
 </pre></div>
 </div>
-<p>The only essential change from Sample 3 is <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> in
-the <code class="docutils literal notranslate"><span class="pre">[mode]</span></code> section; the geometry, transfer, and interaction files are
-identical.</p>
+<p>The only difference from Sample 3 is the explicit
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> in the <code class="docutils literal notranslate"><span class="pre">[mode]</span></code> section (Sample 3’s
+<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> resolves to the same scheme); the geometry, transfer, and
+interaction files are identical, and so are the results.</p>
 </section>
 <section id="tips">
 <h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
@@ -1272,23 +1283,26 @@ FLEX-level spin and charge fluctuations.</p></li>
 <td><p>Hund’s coupling <span class="math notranslate nohighlight">\(J\)</span></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
-<td><p>Partial</p></td>
-<td><p>Exchange interaction <span class="math notranslate nohighlight">\(J'\)</span> (density-density part only;
-off-diagonal spin-flip/pair vertices are dropped)</p></td>
+<td><p>general only</p></td>
+<td><p>Exchange interaction <span class="math notranslate nohighlight">\(J'\)</span> (no density-density vertex
+content: rejected under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code>; <code class="docutils literal notranslate"><span class="pre">auto</span></code>
+selects <code class="docutils literal notranslate"><span class="pre">general</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
 <td><p>Yes</p></td>
 <td><p>Ising-type interaction</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
-<td><p>Partial</p></td>
-<td><p>Pair lifting interaction (density-density part only;
-off-diagonal vertices are dropped)</p></td>
+<td><p>Inert</p></td>
+<td><p>Pair lifting interaction (particle-hole vertex exactly zero;
+accepted in every scheme, with no effect on the
+susceptibility channels)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
-<td><p>Partial</p></td>
-<td><p>Pair hopping interaction (density-density part only;
-off-diagonal vertices are dropped)</p></td>
+<td><p>general only</p></td>
+<td><p>Pair hopping interaction (no density-density vertex content:
+rejected under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code>; <code class="docutils literal notranslate"><span class="pre">auto</span></code> selects
+<code class="docutils literal notranslate"><span class="pre">general</span></code>)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
 <td><p><strong>No</strong></p></td>
@@ -1343,11 +1357,12 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>This contraction is exact for <strong>density-density type interactions</strong>.
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, and <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
 are all density-density type and are handled correctly.
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are <strong>not</strong> purely
-density-density: only their density-density part is retained, while
-their off-diagonal (spin-flip / pair-scattering) vertices are dropped
-in the reduction. The solver emits a warning when such interactions are
-present, so the user is aware of this approximation.</p>
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong> density-density vertex content,
+so this reduction cannot represent them at all: the solver rejects them
+under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> with a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> pointing to
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">auto</span></code> selects it for you).
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>’s particle-hole vertex is exactly zero, so it is accepted
+in every scheme and its absence from the channels is exact.</p>
 </section>
 <section id="spin-degrees-of-freedom-spin-free-mode">
 <h3>Spin degrees of freedom (spin-free mode)<a class="headerlink" href="#spin-degrees-of-freedom-spin-free-mode" title="Link to this heading">¶</a></h3>

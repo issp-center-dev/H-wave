@@ -131,11 +131,18 @@ charge/orbital fluctuations driven by two spin fluctuations are important
 
 In addition, the default ``calc_scheme = "reduced"`` and ``"squashed"``
 schemes decompose the interaction via its density--density part for the
-spin/charge vertices; off-diagonal (spin-flip Hund, pair-hopping) vertices
-are reduced to their density--density component (a warning is emitted when
-``Exchange``/``PairHop`` interactions are supplied). Accordingly, in these
-schemes "FLEX" means *not exact*: it is the density--density, AL/MT-free
-fluctuation-exchange level of approximation.
+spin/charge vertices. ``Exchange`` and ``PairHop`` have **no**
+density--density vertex content at all, so these schemes cannot even
+approximate them: supplying either under ``reduced``/``squashed`` raises a
+``ValueError`` directing you to ``calc_scheme = "general"`` (in earlier
+development builds this input was accepted with a warning while the
+interaction silently had zero effect). ``calc_scheme = "auto"`` selects
+``general`` automatically when ``Exchange`` or ``PairHop`` is present.
+``PairLift`` is accepted everywhere: its particle-hole vertex is exactly
+zero, so omitting it from the susceptibility channels is exact, not an
+approximation. Accordingly, in these schemes "FLEX" means *not exact*: it
+is the density--density, AL/MT-free fluctuation-exchange level of
+approximation.
 
 The alternative ``calc_scheme = "general"`` instead **retains** the full
 off-diagonal Kanamori vertices. It is a paramagnetic full-vertex
@@ -761,19 +768,20 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
    The FLEX solver accepts ``calc_scheme`` in ``"reduced"``, ``"squashed"``,
    or ``"general"``. The ``"reduced"`` and ``"squashed"`` schemes consume the
-   reduced-shape susceptibility and reduce the interaction to its
-   density-density part. The ``"general"`` scheme is the paramagnetic
+   reduced-shape susceptibility and solve with the density-density part of
+   the interaction; they **reject** ``Exchange`` and ``PairHop`` (whose
+   vertex has no density-density content — the input would silently have
+   zero effect). The ``"general"`` scheme is the paramagnetic
    full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
-   :ref:`above <flex_scope>`) and suppresses the density-density reduction
-   warning, but it is **spin-free only** — it raises a ``ValueError`` for
-   ``spin_mode = "spin-diag"`` or ``"spinful"`` and rejects
-   ``enable_spin_orbital``. It is also **on-site only**: every two-body term
-   (``CoulombIntra``/``CoulombInter``/``Hund``/``Exchange``/``PairHop``/``Ising``)
-   must have ``irvec = (0,0,0)``; an off-site entry raises a ``ValueError``
-   (the MYO S/C matrices are built as q-independent constants). ``Exchange`` and
-   ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme), but
-   ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
-   **inert** (ignored with a warning). The general path writes ``chiq_s``/
+   :ref:`above <flex_scope>`), but it is **spin-free only** — it raises a
+   ``ValueError`` for ``spin_mode = "spin-diag"`` or ``"spinful"`` and
+   rejects ``enable_spin_orbital``. Off-site input is accepted only for
+   ``CoulombInter`` with equal orbitals (a == b) and no sublattice folding
+   — the class measured element-complete equal to the RPA ring; every
+   other off-site entry raises a ``ValueError``. ``Exchange`` and
+   ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme),
+   but ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
+   **inert** (accepted with a note that it is exactly zero). The general path writes ``chiq_s``/
    ``chiq_c`` in the MYO convention (tagged ``chi_convention="myo"``), which
    ``hwave_sc`` reads back automatically. In all schemes
    ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
@@ -982,13 +990,15 @@ Sample 3b: Full-vertex (general) variant
 -----------------------------------------
 
 The iron pnictide model above is also provided as a full-vertex variant
-that selects ``calc_scheme = "general"``. It uses the **same** model and
-interaction files (``CoulombIntra``, ``CoulombInter``, ``Hund``,
-``Exchange``), but retains the full off-diagonal Kanamori vertices (the
-spin-flip Hund and pair-hopping / exchange terms) instead of reducing them
-to their density--density part. This is the paramagnetic full-vertex MYO
-formulation [3]_ (corroborated by THU [4]_), and the density--density
-reduction warning is therefore suppressed.
+that selects ``calc_scheme = "general"`` explicitly. Since ``Exchange`` is
+present in the interaction files, Sample 3's ``calc_scheme = "auto"`` now
+resolves to the **same** general scheme automatically — the two samples run
+the identical full-vertex path, and this variant differs only in making the
+choice explicit. It uses the **same** model and interaction files
+(``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``) and retains
+the full off-diagonal Kanamori vertices (the spin-flip Hund and
+pair-hopping / exchange terms). This is the paramagnetic full-vertex MYO
+formulation [3]_ (corroborated by THU [4]_).
 
 This variant is appropriate for multi-orbital models in which the
 Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
@@ -1004,9 +1014,10 @@ The sample files are in
 
 .. literalinclude:: ../sample/iron_2orb_general/input.toml
 
-The only essential change from Sample 3 is ``calc_scheme = "general"`` in
-the ``[mode]`` section; the geometry, transfer, and interaction files are
-identical.
+The only difference from Sample 3 is the explicit
+``calc_scheme = "general"`` in the ``[mode]`` section (Sample 3's
+``"auto"`` resolves to the same scheme); the geometry, transfer, and
+interaction files are identical, and so are the results.
 
 
 Tips
@@ -1064,20 +1075,23 @@ The FLEX solver supports the following interaction types:
      - Yes
      - Hund's coupling :math:`J`
    * - ``Exchange``
-     - Partial
-     - Exchange interaction :math:`J'` (density-density part only;
-       off-diagonal spin-flip/pair vertices are dropped)
+     - general only
+     - Exchange interaction :math:`J'` (no density-density vertex
+       content: rejected under ``reduced``/``squashed``; ``auto``
+       selects ``general``)
    * - ``Ising``
      - Yes
      - Ising-type interaction
    * - ``PairLift``
-     - Partial
-     - Pair lifting interaction (density-density part only;
-       off-diagonal vertices are dropped)
+     - Inert
+     - Pair lifting interaction (particle-hole vertex exactly zero;
+       accepted in every scheme, with no effect on the
+       susceptibility channels)
    * - ``PairHop``
-     - Partial
-     - Pair hopping interaction (density-density part only;
-       off-diagonal vertices are dropped)
+     - general only
+     - Pair hopping interaction (no density-density vertex content:
+       rejected under ``reduced``/``squashed``; ``auto`` selects
+       ``general``)
    * - ``InterAll``
      - **No**
      - Arbitrary 4-body interaction (UHFr solver only)
@@ -1144,11 +1158,12 @@ where :math:`W_{\mathrm{same}}` is the same-spin interaction and
 This contraction is exact for **density-density type interactions**.
 ``CoulombIntra``, ``CoulombInter``, ``Hund``, and ``Ising``
 are all density-density type and are handled correctly.
-``Exchange``, ``PairLift``, and ``PairHop`` are **not** purely
-density-density: only their density-density part is retained, while
-their off-diagonal (spin-flip / pair-scattering) vertices are dropped
-in the reduction. The solver emits a warning when such interactions are
-present, so the user is aware of this approximation.
+``Exchange`` and ``PairHop`` have **no** density-density vertex content,
+so this reduction cannot represent them at all: the solver rejects them
+under ``reduced``/``squashed`` with a ``ValueError`` pointing to
+``calc_scheme = "general"`` (``auto`` selects it for you).
+``PairLift``'s particle-hole vertex is exactly zero, so it is accepted
+in every scheme and its absence from the channels is exact.
 
 
 Spin degrees of freedom (spin-free mode)
