@@ -46,8 +46,11 @@ def main():
         chi_c_total = sum(chi_c[iv0, :, a, a, b, b].real
                           for a in range(nd) for b in range(nd))
     else:
-        chi_s_total = sum(chi_s[iv0, :, a, a].real for a in range(nd))
-        chi_c_total = sum(chi_c[iv0, :, a, a].real for a in range(nd))
+        # reduced layout: (nvol, norb, norb) density-pair matrix; the
+        # physical response sums the WHOLE matrix (the diagonal alone
+        # would omit the inter-orbital density correlations)
+        chi_s_total = chi_s[iv0].real.sum(axis=(-2, -1))
+        chi_c_total = chi_c[iv0].real.sum(axis=(-2, -1))
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 

@@ -1775,8 +1775,9 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
 
     # 2-orbital: build directly from a self-contained ON-SITE 2-orbital fixture
     # (mirrors the _construct / TestGeneralSolveEndToEnd path, but WITHOUT
-    # patching exchange).  The general path rejects off-site two-body terms, so
-    # both the general and squashed runs here use on-site U' for a fair compare.
+    # patching exchange).  The general path rejects off-site two-body terms
+    # other than same-orbital CoulombInter, so both the general and squashed
+    # runs here use on-site U' for a fair compare.
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex

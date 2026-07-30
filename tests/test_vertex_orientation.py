@@ -377,9 +377,10 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
     others would not show up anywhere.
 
     Asymmetric input is reachable: the readers do not validate orbital symmetry
-    (#93), and while the FLEX general path rejects OFF-SITE two-body terms it
-    accepts an asymmetric ON-SITE orbital matrix, which then reaches the MYO
-    S/C builder.
+    (#93), and while the FLEX general path rejects most OFF-SITE two-body
+    terms (it accepts only same-orbital off-site CoulombInter without
+    folding) it accepts an asymmetric ON-SITE orbital matrix, which then
+    reaches the MYO S/C builder.
     """
 
     # the types rpa.py places through _append_inter, i.e. with the
