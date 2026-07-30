@@ -1360,9 +1360,10 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     combination is REJECTED rather than warned about.
 
     This is a genuine limitation of the stored data, not of the loader: it
-    cannot be repaired on the Eliashberg side.  Re-run FLEX with
-    ``calc_scheme="general"`` (which stores the full orbital-pair chi) to get
-    the complete vertex.
+    cannot be repaired on the Eliashberg side.  The universal remedy is a
+    general (four-index) susceptibility; for a FLEX source that means
+    re-running with ``calc_scheme="general"`` (which stores the full
+    orbital-pair chi).
     """
     if str(convention).lower() != "kuroki":
         # Only the reduced/squashed route stores a density-only chi; the
@@ -1377,13 +1378,13 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         raise ValueError(
             "the Eliashberg vertex cannot be built from {} together with "
             "{}: those interactions have no density-diagonal vertex "
-            "content at all (hwave.solver.vertex_table), so a reduced "
-            "susceptibility dresses none of it -- and since the unified "
-            "scheme policy (#120) no reduced/squashed FLEX or RPA run can "
-            "be produced with them, this input is stale or its interaction "
-            "set does not match the run that produced the susceptibility. "
-            "Provide a general (four-index) susceptibility instead -- for "
-            "a FLEX source, re-run with calc_scheme='general'.".format(
+            "content at all (hwave.solver.vertex_table), so reduced "
+            "(density-only) data dresses none of it and the result would "
+            "silently omit the interaction. (H-wave's own reduced/squashed "
+            "runs cannot even be produced with these terms since the "
+            "unified scheme policy.) Provide a general (four-index) "
+            "susceptibility instead -- for a FLEX source, re-run with "
+            "calc_scheme='general'.".format(
                 source or ("a REDUCED (calc_scheme='reduced' or "
                            "'squashed') FLEX susceptibility"),
                 ", ".join(rejected)))

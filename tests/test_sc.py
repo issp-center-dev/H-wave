@@ -3002,11 +3002,7 @@ class TestKanamoriInteraction(unittest.TestCase):
         # four-index embedding: full Kanamori (including J') is retained
         # -- the reduced-chi rejection polices only 2-index input, and this
         # doubles as proof that four-index input is not falsely rejected
-        chi0q4 = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz, nmat),
-                          dtype=complex)
-        for _a in range(norb):
-            for _b in range(norb):
-                chi0q4[_a, _a, _b, _b] = chi0q[_a, _b]
+        chi0q4 = self._embed4(chi0q, norb, Nx, Ny, Nz, nmat)
 
         Vs_singlet = _compute_vertices_general(
             chi0q4, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
@@ -3077,6 +3073,9 @@ class TestKanamoriInteraction(unittest.TestCase):
             max_iter=200, alpha=0.5, tol=1e-5)
         self.assertEqual(sigma_iter.shape, (norb, norb, Nx, Ny, Nz))
         self.assertGreater(n_iter, 0, "Should iterate at least once")
+        self.assertTrue(converged,
+                        "the docstring claims convergence; without it the "
+                        "eigenvalue comparison below would be meaningless")
 
         # Test eigenvalue
         eigenvalues, eigvecs = _solve_eigenvalue(
@@ -3090,7 +3089,8 @@ class TestKanamoriInteraction(unittest.TestCase):
                 err_msg="Leading eigenvalue from eigs should match iteration")
 
     def test_kanamori_singlet_vs_triplet(self):
-        """Singlet and triplet channels should give different eigenvalues with J."""
+        """Singlet and triplet channels should give different eigenvalues
+        with the full Kanamori interactions (J and J' = J)."""
         params = self._setup_2orb_model(Nx=4, Ny=4, Nz=1, nmat=16, beta=5.0)
         norb, Nx, Ny, Nz, nmat, beta = (
             params[k] for k in ["norb", "Nx", "Ny", "Nz", "nmat", "beta"])
