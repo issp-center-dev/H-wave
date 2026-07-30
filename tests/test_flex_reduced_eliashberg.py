@@ -809,6 +809,54 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
                                              pairing_type="singlet",
                                              convention="kuroki",
                                              sc_matrices=mats)
+                chi_w = np.zeros((Nx, Ny, Nz, nd, nd, 3), dtype=complex)
+                with self.assertRaises(ValueError):
+                    ed.compute_vertices_flex_dynamic(
+                        chi_w, chi_w, bad, norb, Nx, Ny, Nz,
+                        pairing_type="singlet", convention="kuroki",
+                        sc_matrices=mats)
+
+    def test_myo_cached_equals_uncached(self):
+        """The sc_matrices cache is an optimization only: cached and
+        uncached myo vertices must be bit-identical on the static,
+        instantaneous, and dynamic routes."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 3
+        nd = norb * norb
+        inter_k = self._inter_k(["CoulombIntra", "Exchange", "PairHop"],
+                                norb, Nx, Ny, Nz)
+        rng = np.random.default_rng(7)
+        chi = (rng.standard_normal((Nx, Ny, Nz, nd, nd))
+               + 1j * rng.standard_normal((Nx, Ny, Nz, nd, nd))) * 0.01
+        chi_w = np.stack([chi] * nmat, axis=-1)
+        mats = sc._build_vertex_sc_matrices("myo", inter_k,
+                                            norb, Nx, Ny, Nz)
+
+        v_cached = sc._compute_vertices_flex(chi, chi, inter_k, norb,
+                                             Nx, Ny, Nz, convention="myo",
+                                             sc_matrices=mats)
+        v_plain = sc._compute_vertices_flex(chi, chi, inter_k, norb,
+                                            Nx, Ny, Nz, convention="myo")
+        self.assertTrue(np.array_equal(v_cached, v_plain))
+
+        i_cached = ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                            pairing_type="singlet",
+                                            convention="myo",
+                                            sc_matrices=mats)
+        i_plain = ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                           pairing_type="singlet",
+                                           convention="myo")
+        self.assertTrue(np.array_equal(i_cached, i_plain))
+
+        d_cached = ed.compute_vertices_flex_dynamic(
+            chi_w, chi_w, inter_k, norb, Nx, Ny, Nz,
+            pairing_type="singlet", convention="myo", sc_matrices=mats)
+        d_plain = ed.compute_vertices_flex_dynamic(
+            chi_w, chi_w, inter_k, norb, Nx, Ny, Nz,
+            pairing_type="singlet", convention="myo")
+        self.assertTrue(np.array_equal(d_cached, d_plain))
 
     def test_unknown_convention_rejected_even_with_cache(self):
         """An unknown convention tag must fail closed at every boundary,
