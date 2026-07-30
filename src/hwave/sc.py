@@ -1201,6 +1201,15 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         # (norb, norb, Nx, Ny, Nz, nmat) -> expand to (Nx, Ny, Nz, nd, nd)
         chi0_2d = chi0q[:, :, :, :, :, si].transpose(2, 3, 4, 0, 1).copy()
         # chi0_2d shape: (Nx, Ny, Nz, norb, norb)
+        # The guard runs for EVERY 2-index input, including norb == 1: the
+        # rejection of Exchange/PairHop applies there too (the one-orbital
+        # builder gives them zero weight, so accepting them silently omits
+        # the interaction -- the norb shortcut below bypassed the helper
+        # entirely, round 8). Only the partial-dressing warning is
+        # norb-gated, inside the helper.
+        _warn_reduced_flex_missing_components(
+            inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q",
+            sc_matrices=(S_all, C_all))
         if norb == 1:
             chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
         else:
@@ -1229,14 +1238,6 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
             chi0_static = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
             dens = np.arange(norb) * norb + np.arange(norb)
             chi0_static[..., dens[:, None], dens[None, :]] = chi0_2d
-            # A reduced chi0q reaching the general S/C formulation is missing
-            # exactly the same off-density components as a reduced FLEX chi, so
-            # report it here too. Without this the approximation was announced
-            # on chi0q_mode="flex" and stayed silent on "load"/"calc", even
-            # though the documentation says both are affected.
-            _warn_reduced_flex_missing_components(
-                inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q",
-                sc_matrices=(S_all, C_all))
 
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0
@@ -2221,8 +2222,8 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # exactly when they are redundant; when they are not, the pair bubble
     # cannot represent the stored physics and the loader RAISES unless the
     # user takes responsibility via [eliashberg] accept_up_block_only.
-    # NaN-identical blocks compare as redundant (equal_nan): the guard is
-    # about DIFFERING content, not about validating finiteness.
+    # Non-finite content is rejected up front (below); the block
+    # comparison then runs on finite data with plain component equality.
     # Non-finite content is rejected at the file boundary, as the
     # susceptibility loader already does: a NaN/Inf dressed Green function
     # reaches the pair bubble G2 directly, and the iteration solver can

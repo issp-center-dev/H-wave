@@ -411,6 +411,24 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
                         {"CoulombIntra": m.copy(), itype: m}, 1, 2, 1, 1)
                 self.assertIn(itype, str(cm.exception))
 
+    def test_one_orbital_two_index_route_rejects_exchange(self):
+        """Route-level pin: _compute_vertices with a one-orbital 2-index
+        chi0q must reject Exchange/PairHop (the caller's norb shortcut
+        bypassed the helper entirely -- round 8)."""
+        import hwave.sc as sc
+
+        norb, Nx, Ny, Nz, nmat = 1, 2, 1, 1, 4
+        chi0q = np.full((norb, norb, Nx, Ny, Nz, nmat), 0.01,
+                        dtype=complex)
+        m = np.full((norb, norb, Nx, Ny, Nz), 0.4, dtype=complex)
+        for itype in ("Exchange", "PairHop"):
+            with self.subTest(interaction=itype):
+                with self.assertRaises(ValueError) as cm:
+                    sc._compute_vertices(
+                        chi0q, {"CoulombIntra": m.copy(), itype: m.copy()},
+                        norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
+                self.assertIn(itype, str(cm.exception))
+
     def test_two_index_chi0q_rejects_exchange_and_pairhop(self):
         """A 2-index chi0q carries no off-density bubble at all, and
         Exchange/PairHop have no density-diagonal vertex: nothing of them
@@ -1525,6 +1543,8 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
                 with self.assertRaises(ValueError) as cm:
                     sc._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn('non-finite', str(cm.exception))
+                with self.assertRaises(ValueError):
+                    sc._load_flex_green(inp, 1, 2, 1, 1, allow_ir=True)
 
     def test_partial_nan_components_are_rejected_as_nonfinite(self):
         """Entries like nan+1j (one finite component) are caught by the
