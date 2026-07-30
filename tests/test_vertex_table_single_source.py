@@ -115,7 +115,12 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
         stay exactly zero even for non-finite couplings. Diagonal
         CoulombInter has no S content; density-slot Ising has no C
         content."""
+        import warnings
+
         import hwave.sc as sc
+
+        warnings.simplefilter("ignore", RuntimeWarning)
+        self.addCleanup(warnings.resetwarnings)
 
         k = np.array([0.0])
         ik = sc._build_interaction_k(
@@ -132,6 +137,54 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
         # the density slots (aa, bb) of Ising carry S only
         self.assertEqual(complex(C[0, 0, 0, 0, 3]), 0.0,
                          "density-slot Ising must not touch C")
+
+
+class TestIEEEParity(unittest.TestCase):
+
+    def test_plus_minus_one_coefficients_preserve_complex_infinities(self):
+        """numpy's 1.0 * (Inf+0j) is Inf+NaNj (full complex multiply);
+        the +-1 coefficients must use direct add/subtract so non-finite
+        values keep the pre-refactor component structure. The interaction
+        arrays are built by hand and passed pre-symmetrised: the public
+        Fourier builder itself multiplies by complex phases and turns Inf
+        into Inf+NaNj before the S/C builder is reached (identically in
+        the old and new code), which would mask the accumulator
+        semantics under test."""
+        import warnings
+
+        import hwave.sc as sc
+
+        warnings.simplefilter("ignore", RuntimeWarning)
+        self.addCleanup(warnings.resetwarnings)
+
+        def mat(entries):
+            m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
+            for (a, b), v in entries.items():
+                m[a, b, 0, 0, 0] = v
+            return m
+
+        inf = complex(np.inf, 0.0)
+        cases = [
+            ("CoulombIntra", {(0, 0): inf, (1, 1): inf},
+             [("S", (0, 0), np.inf), ("C", (0, 0), np.inf)]),
+            ("CoulombInter", {(0, 1): inf, (1, 0): inf},
+             [("S", (1, 1), np.inf), ("C", (1, 1), -np.inf)]),
+            ("PairHop", {(0, 1): inf, (1, 0): inf},
+             [("S", (1, 2), np.inf), ("C", (1, 2), np.inf)]),
+        ]
+        for itype, entries, expected in cases:
+            with self.subTest(interaction=itype):
+                ik = {itype: mat(entries)}
+                S, C = sc._build_sc_matrices_all_q(
+                    ik, 2, 1, 1, 1, _presymmetrised=True)
+                M = {"S": S[0, 0, 0], "C": C[0, 0, 0]}
+                for ch, (i, j), want in expected:
+                    got = M[ch][i, j]
+                    self.assertEqual(got.real, want,
+                                     "%s %s[%d,%d] real" % (itype, ch, i, j))
+                    self.assertEqual(got.imag, 0.0,
+                                     "%s %s[%d,%d] imag must stay exactly "
+                                     "zero, not NaN" % (itype, ch, i, j))
 
 
 if __name__ == "__main__":

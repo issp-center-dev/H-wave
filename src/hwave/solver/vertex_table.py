@@ -7,9 +7,13 @@ the extraction is validated by q-independence for on-site input, and the
 per-channel scale is calibrated on the CoulombIntra control. This module
 is the ONE place that content lives; the two consumers -- the pair-space
 S/C builders in :mod:`hwave.sc` (FLEX general and Eliashberg) and the
-spin-resolved rank-4 ring vertex in :mod:`hwave.solver.rpa` (#104) --
-derive their coefficients from it, so they cannot drift apart again
-(they did, repeatedly: #96, #104, #113).
+Fierz CROSS-SLOT correction of the ring vertex in
+:mod:`hwave.solver.rpa` (#104) -- derive their coefficients from it, so
+those pieces cannot drift apart again (they did, repeatedly: #96, #104,
+#113). The ring's long-standing base content (the density slots and the
+transverse spin-flip slots, adjudicated in #105 and never drifted) is
+still encoded in rpa.py's spin tables; folding those into this table is
+a later increment.
 
 Slot families of the pair-space matrices (slots are (l1*norb+l2,
 l3*norb+l4)):

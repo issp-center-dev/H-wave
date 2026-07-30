@@ -846,6 +846,26 @@ def _symmetrise_interactions_k(inter_k):
     return out
 
 
+def _accumulate_coeff(dst, coeff, value):
+    """dst += coeff * value with IEEE-preserving forms.
+
+    NumPy evaluates ``1.0 * (Inf+0j)`` as ``Inf+NaNj`` (a full complex
+    multiply), while a direct add preserves the zero imaginary part, so
+    the +-1 coefficients of the vertex table must use direct add/subtract
+    to keep the pre-table behavior for non-finite couplings. Zero
+    coefficients suppress the contribution entirely (0.0 * Inf is NaN).
+    ``dst`` must be an ndarray or writeable view; the update is in place.
+    """
+    if coeff == 0.0:
+        return
+    if coeff == 1.0:
+        dst += value
+    elif coeff == -1.0:
+        dst -= value
+    else:
+        dst += coeff * value
+
+
 def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
                              _presymmetrised=False):
     """Build spin (S) and charge (C) interaction matrices for all q-points at once.
@@ -911,8 +931,10 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         sU, cU = sc_coefficients("CoulombIntra", "diag")
         for i in np.where(mask1)[0]:
             _l = l1f[i]
-            S_all[:, :, :, idx12[i], idx34[i]] += sU * U_mat[_l, _l]
-            C_all[:, :, :, idx12[i], idx34[i]] += cU * U_mat[_l, _l]
+            _accumulate_coeff(S_all[:, :, :, idx12[i], idx34[i]],
+                              sU, U_mat[_l, _l])
+            _accumulate_coeff(C_all[:, :, :, idx12[i], idx34[i]],
+                              cU, U_mat[_l, _l])
 
     # Case 2: l1==l3, l2==l4, l1!=l2
     # Coefficients come from the single adjudicated table
@@ -932,13 +954,8 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         for mat, itype in cross_terms:
             if mat is not None:
                 sco, cco = sc_coefficients(itype, "cross")
-                # explicit zero suppression: 0.0 * Inf is NaN, and a
-                # channel with no content for a type must stay untouched
-                # even for non-finite input
-                if sco != 0.0:
-                    s_q += sco * mat[_l1, _l2]
-                if cco != 0.0:
-                    c_q += cco * mat[_l1, _l2]
+                _accumulate_coeff(s_q, sco, mat[_l1, _l2])
+                _accumulate_coeff(c_q, cco, mat[_l1, _l2])
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
@@ -960,16 +977,12 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
             for mat, itype in ((J_mat, "Hund"), (I_mat, "Ising")):
                 if mat is not None:
                     sco, cco = sc_coefficients(itype, "density")
-                    if sco != 0.0:
-                        s_q += sco * mat[_l1, _l3]
-                    if cco != 0.0:
-                        c_q += cco * mat[_l1, _l3]
+                    _accumulate_coeff(s_q, sco, mat[_l1, _l3])
+                    _accumulate_coeff(c_q, cco, mat[_l1, _l3])
         if Up_mat is not None:
             sco, cco = sc_coefficients("CoulombInter", "density")
-            if sco != 0.0:
-                s_q += sco * Up_mat[_l1, _l3]
-            if cco != 0.0:
-                c_q += cco * Up_mat[_l1, _l3]
+            _accumulate_coeff(s_q, sco, Up_mat[_l1, _l3])
+            _accumulate_coeff(c_q, cco, Up_mat[_l1, _l3])
         S_all[:, :, :, idx12[i], idx34[i]] += s_q
         C_all[:, :, :, idx12[i], idx34[i]] += c_q
 
@@ -985,10 +998,8 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         # slots in both channels. Only PairHop belongs here (#100/#102).
         if PH_mat is not None:
             sco, cco = sc_coefficients("PairHop", "antidiag")
-            if sco != 0.0:
-                s_q += sco * PH_mat[_l1, _l2]
-            if cco != 0.0:
-                c_q += cco * PH_mat[_l1, _l2]
+            _accumulate_coeff(s_q, sco, PH_mat[_l1, _l2])
+            _accumulate_coeff(c_q, cco, PH_mat[_l1, _l2])
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
