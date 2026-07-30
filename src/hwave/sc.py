@@ -818,8 +818,19 @@ def _symmetrise_interactions_k(inter_k):
         input on-site and off-site, and preserves the physical complex phase.
 
     Idempotent, so it is safe that both the all-q and per-q builders apply it.
-    This matches `uhfk.py`'s reading of the files ((jab + jba)/2) and the
-    transverse channel's slot-family rule (#105/#106/#113).
+
+    Relation to UHFk: `uhfk.py` stores the HERMITIAN mean -- vba there is the
+    CONJUGATED r-reversed transpose (`_make_ham_inter`) -- which keeps a
+    complex Hermitian-closed coefficient p intact, while this helper folds it
+    to Re(p). The two tables serve different contractions and give the SAME
+    physical Hamiltonian: UHFk sums its table over both ordered orbital
+    pairs, so p + conj(p) appears there; the S/C builders here use each slot
+    exactly once, so the effective real coefficient must already be folded
+    in. That the imaginary part of a Hermitian-closed same-operator
+    declaration is physically inert was adjudicated against exact
+    diagonalization in #105/#106; the slot content is #113. For real
+    declarations -- everything the documented input format produces -- the
+    two conventions coincide identically.
     """
     out = {}
     for itype, M in inter_k.items():
@@ -1461,10 +1472,20 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                         "silently mix two different interactions -- "
                         "regenerate the susceptibilities with the current "
                         "code.".format(path, ", ".join(affected)))
+                # strict decode: the tag must be a single integral scalar.
+                # A plain int() would silently truncate (2.9 -> 2, accepted)
+                # and non-finite values would escape as OverflowError.
                 try:
-                    versions[path] = int(np.asarray(
-                        data["sc_vertex_version"]).item())
-                except (TypeError, ValueError):
+                    arr = np.asarray(data["sc_vertex_version"])
+                    if arr.size != 1:
+                        raise ValueError("not a scalar")
+                    val = complex(arr.reshape(())[()])
+                    if val.imag != 0.0 or not (
+                            np.isfinite(val.real)
+                            and float(val.real).is_integer()):
+                        raise ValueError("not an integer")
+                    versions[path] = int(val.real)
+                except (TypeError, ValueError, OverflowError):
                     raise ValueError(
                         "FLEX susceptibility file '{}' carries a malformed "
                         "sc_vertex_version field ({!r}).".format(

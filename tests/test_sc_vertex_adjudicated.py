@@ -198,6 +198,49 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         with self.assertRaises(IndexError):
             sc._build_sc_matrices(ik, 2, 7, 0, 0)
 
+    def test_offsite_hermitian_pairhop_phase_is_preserved(self):
+        # PairHop's partner is the HERMITIAN entry (-R, (b,a), conj(p)); the
+        # same-q conjugated transpose must be an identity for that closure
+        # off-site too, keeping the full complex phase
+        sc = self._sc()
+        kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        kz = np.array([0.0])
+        p = 0.7 * np.exp(0.3j)
+        ik = sc._build_interaction_k(
+            kx, kx, kz,
+            {"PairHop": {((1, 0, 0), (0, 1)): p,
+                         ((-1, 0, 0), (1, 0)): np.conjugate(p)}}, 2)
+        raw = ik["PairHop"].copy()
+        sym = sc._symmetrise_interactions_k(ik)["PairHop"]
+        np.testing.assert_allclose(sym, raw, atol=1e-13)
+        # PairHop is stored UNtransposed (measured in #100): the entry
+        # (R, (a, b)) lands at [a, b], so [0, 1] carries p e^{-iqR}
+        q1 = kx[1]
+        self.assertAlmostEqual(
+            abs(sym[0, 1, 1, 0, 0] - p * np.exp(-1j * q1)), 0.0, places=12)
+
+    def test_reversal_on_mixed_odd_even_grid(self):
+        # (Nx, Ny, Nz) = (5, 4, 3): odd sizes pair i <-> n-i, even sizes make
+        # 0 and n/2 self-partners; the both-ends identity must hold per axis
+        sc = self._sc()
+        kx = np.linspace(0, 2 * np.pi, 5, endpoint=False)
+        ky = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, 3, endpoint=False)
+        ik = sc._build_interaction_k(
+            kx, ky, kz,
+            {"CoulombInter": {((1, 2, 0), (0, 1)): 0.7,
+                              ((-1, -2, 0), (1, 0)): 0.7,
+                              ((0, 0, 1), (0, 1)): 0.4,
+                              ((0, 0, -1), (1, 0)): 0.4}}, 2)
+        raw = ik["CoulombInter"].copy()
+        sym = sc._symmetrise_interactions_k(ik)["CoulombInter"]
+        np.testing.assert_allclose(sym, raw, atol=1e-13)
+        S, C = sc._build_sc_matrices_all_q(ik, 2, 5, 4, 3)
+        for idx in ((1, 0, 0), (2, 3, 1), (4, 2, 2), (0, 2, 0)):
+            Sp, Cp = sc._build_sc_matrices(ik, 2, *idx)
+            np.testing.assert_allclose(Sp, S[idx], atol=1e-13)
+            np.testing.assert_allclose(Cp, C[idx], atol=1e-13)
+
     def test_one_sided_offsite_declaration_gets_the_mean(self):
         # a single-direction declaration means (jab + jba)/2 in this codebase:
         # half the weight at e^{-iq}, half at e^{+iq} on the transposed slot
@@ -293,6 +336,61 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             self._load(inp, {"Ising": self.HUND})
         self.assertIn("different", str(cm.exception))
+
+    def test_fractional_version_is_rejected_not_truncated(self):
+        # int() would truncate 2.9 to 2 and accept it
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2.9}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"Hund": self.HUND})
+        self.assertIn("malformed", str(cm.exception))
+
+    def test_nonfinite_version_is_rejected_as_valueerror(self):
+        # int(inf) raises OverflowError, which must not escape undocumented
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": np.inf}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"Hund": self.HUND})
+        self.assertIn("malformed", str(cm.exception))
+
+    def test_nonscalar_version_is_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": np.array([2, 2])}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"Hund": self.HUND})
+        self.assertIn("malformed", str(cm.exception))
+
+    def test_integral_float_version_is_accepted(self):
+        # 2.0 decodes to exactly 2; only truncation is forbidden
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2.0}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        self._load(inp, {"Hund": self.HUND})
+
+    def test_full_frequency_loader_activates_the_same_guard(self):
+        # the dynamic-Eliashberg path loads through
+        # _load_flex_susceptibilities_full, which must forward the interaction
+        # content into the same version guard as the static loader
+        import tempfile
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)               # untagged
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_susceptibilities_full(
+                inp, 2, 2, 2, 1, interactions={"Hund": self.HUND})
+        self.assertIn("sc_vertex_version", str(cm.exception))
 
     def test_malformed_version_is_rejected(self):
         import tempfile
