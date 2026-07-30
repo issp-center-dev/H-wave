@@ -20,7 +20,11 @@ Layout conventions:
   read as ``(nvol, (ns, norb) * 4)`` and the orbital pair diagonal is
   extracted while both spin indices per pair are kept --
   ``'ksauatbvb->ksuatvb'`` -- yielding
-  ``(nvol, ns, ns, norb, ns, ns, norb)``. Used by the squashed scheme.
+  ``(nvol, ns, ns, norb, ns, ns, norb)``. Used by RPA's spin-free and
+  spin-diag squashed branches only: FLEX routes BOTH its reduced and
+  squashed modes through ``project_density_pairs`` (its channel solver
+  consumes the pair-diagonal form for either scheme; squashed there is
+  an output-layout distinction, not a different vertex).
 
 ``xp`` is the array backend (NumPy or CuPy); einsum dispatches on it.
 """

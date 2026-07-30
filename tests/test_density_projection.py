@@ -53,5 +53,35 @@ class TestDensityProjections(unittest.TestCase):
         np.testing.assert_array_equal(got, want)
 
 
+class TestLayoutsAndDegenerateShapes(unittest.TestCase):
+    """The helpers are pure element selections and must be layout- and
+    shape-agnostic: Fortran order, non-contiguous views, and degenerate
+    dimensions all reduce to the same values as a fresh C-order copy."""
+
+    def _check(self, ns, norb, nvol):
+        rng = np.random.default_rng(ns * 100 + norb * 10 + nvol)
+        nd = ns * norb
+        shape = (nvol,) + (nd,) * 4
+        h = (rng.standard_normal(shape)
+             + 1j * rng.standard_normal(shape))
+        want_p = project_density_pairs(h.copy(), nvol, nd, np)
+        want_s = project_density_squashed(h.copy(), nvol, ns, norb, np)
+        for label, variant in (
+                ("fortran", np.asfortranarray(h)),
+                ("noncontig", np.ascontiguousarray(
+                    np.concatenate([h, h], axis=0))[:nvol]),
+        ):
+            with self.subTest(layout=label, ns=ns, norb=norb, nvol=nvol):
+                np.testing.assert_array_equal(
+                    project_density_pairs(variant, nvol, nd, np), want_p)
+                np.testing.assert_array_equal(
+                    project_density_squashed(variant, nvol, ns, norb, np),
+                    want_s)
+
+    def test_layout_and_shape_matrix(self):
+        for ns, norb, nvol in ((2, 1, 1), (2, 1, 4), (2, 3, 2), (1, 2, 3)):
+            self._check(ns, norb, nvol)
+
+
 if __name__ == "__main__":
     unittest.main()
