@@ -159,5 +159,50 @@ class TestValidationStrictness(unittest.TestCase):
         self.assertTrue(np.all(np.asarray(g['chiq']) == 0.0))
 
 
+class TestFileRouteExceptionType(unittest.TestCase):
+
+    def test_malformed_chi0q_init_file_raises_valueerror(self):
+        """The public failure type for a malformed chi0q_init file is
+        ValueError (standardized by the #109 validation rework; it was a
+        bare AssertionError before, which python -O silently disabled)."""
+        import tempfile
+
+        sv, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        d = tempfile.mkdtemp()
+        np.savez(os.path.join(d, 'chi0q_bad.npz'),
+                 chi0q=np.zeros((3, 99, 7, 8), dtype=complex))
+        with self.assertRaises(ValueError) as cm:
+            sv.read_init({'path_to_input': d, 'chi0q_init': 'chi0q_bad.npz'})
+        msg = str(cm.exception)
+        self.assertIn('chi0q_bad.npz', msg)
+        self.assertIn('(3, 99, 7, 8)', msg)
+
+    def test_partial_range_spin_diag_reports_the_frequency_axis(self):
+        """When a spin-diag bubble genuinely carries fewer frequencies than
+        Nmat, the partial-range message must report the frequency-axis
+        length, not the spin-block count."""
+        import logging
+
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = _make('general', inter)
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+
+        sv2, r2 = _make('general', inter)
+        g2 = r2.get_param("green")
+        half = np.asarray(g['chi0q'])[:16]
+        g2['chi0q'] = np.stack([half, half], axis=0)
+        with self.assertLogs("hwave.solver.rpa", level=logging.INFO) as cm:
+            try:
+                sv2.solve(g2, 'tests/rpa/output')
+            except Exception:
+                pass   # downstream may reject the shortened axis; the
+                       # message under test is emitted before that
+        partial = [m for m in cm.output if "partial range" in m]
+        self.assertTrue(partial, "expected a partial-range message")
+        self.assertIn("16 in 32", partial[0])
+
+
 if __name__ == "__main__":
     unittest.main()

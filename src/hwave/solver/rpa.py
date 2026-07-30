@@ -1552,8 +1552,11 @@ class RPA:
 
         Raises
         ------
-        AssertionError
-            If the loaded data doesn't match expected dimensions or format.
+        ValueError
+            If the loaded data doesn't match the expected dimensions or
+            format. (Standardized by the #109 validation rework: this
+            previously surfaced as a bare AssertionError, which python -O
+            silently disabled.)
 
         Notes
         -----
