@@ -2952,7 +2952,16 @@ class TestKanamoriInteraction(unittest.TestCase):
         # exch: C = J'
         npt.assert_allclose(C_all[1, 2], 0.0, atol=1e-10)  # #113
 
-        # Now verify RPA susceptibility computation.
+        # Now verify RPA susceptibility computation. Exchange has no
+        # density-diagonal vertex and a 2-index chi0q is rejected with it
+        # (#120 alignment), so the vertex part below runs the Jp-free set;
+        # the S/C matrix checks above keep the full Kanamori.
+        inter_k = self._make_inter_k(norb, Nx, Ny, Nz, U=U, Up=Up, J=J,
+                                     Jp=0.0)
+        # rebuild the S/C matrices from the SAME Jp-free set the code path
+        # receives, so the manual reference and the code agree exactly
+        S_all, C_all = _build_sc_matrices(inter_k, norb, 0, 0, 0)
+        # Now verify RPA susceptibility computation (continued).
         # Use a small chi0 so the series converges, and make it DENSITY-DIAGONAL
         # (nonzero only at [(a,a),(b,b)]).  The code path below feeds
         # _compute_vertices_general a 2-index (reduced) chi0q, which can only
@@ -3022,7 +3031,10 @@ class TestKanamoriInteraction(unittest.TestCase):
         U, J = 2.0, 0.3
         Up = U - 2 * J
         inter_k = self._make_inter_k(norb, Nx, Ny, Nz,
-                                      U=U, Up=Up, J=J, Jp=J)
+                                      U=U, Up=Up, J=J, Jp=0.0)
+        # Jp = 0: Exchange has no density-diagonal vertex, and the 2-index
+        # chi0q used here is rejected with it since the #120 policy
+        # alignment; Hund J alone provides the channel structure under test
 
         # Compute chi0q from Green's function (simple diagonal form)
         chi0q = np.zeros((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
@@ -3076,7 +3088,10 @@ class TestKanamoriInteraction(unittest.TestCase):
         U, J = 2.0, 0.3
         Up = U - 2 * J
         inter_k = self._make_inter_k(norb, Nx, Ny, Nz,
-                                      U=U, Up=Up, J=J, Jp=J)
+                                      U=U, Up=Up, J=J, Jp=0.0)
+        # Jp = 0: Exchange has no density-diagonal vertex, and the 2-index
+        # chi0q used here is rejected with it since the #120 policy
+        # alignment; Hund J alone provides the channel structure under test
 
         chi0q = np.zeros((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
         for a in range(norb):
@@ -3152,7 +3167,10 @@ class TestKanamoriInteraction(unittest.TestCase):
         npt.assert_allclose(C_exch, 0.0, atol=1e-10)
 
     def test_kanamori_with_ising_pairhop_eliashberg(self):
-        """End-to-end test with all interaction types: U, U', J, J', Ising, PairHop."""
+        """End-to-end with every type a 2-index chi0q supports: U, U', J
+        (Hund), Ising -- and a pinned REJECTION for Exchange/PairHop, which
+        have no density-diagonal vertex and are refused with this chi0q
+        form (#120 alignment)."""
         params = self._setup_2orb_model(Nx=4, Ny=4, Nz=1, nmat=16, beta=5.0)
         norb, Nx, Ny, Nz, nmat, beta = (
             params[k] for k in ["norb", "Nx", "Ny", "Nz", "nmat", "beta"])
@@ -3187,8 +3205,11 @@ class TestKanamoriInteraction(unittest.TestCase):
             "CoulombIntra": U_k,
             "CoulombInter": V_k,
             "Hund": J_k,
-            "Exchange": Jp_k,
             "Ising": I_k,
+        }
+        inter_k_rejected = {
+            "CoulombIntra": U_k,
+            "Exchange": Jp_k,
             "PairHop": PH_k,
         }
 
@@ -3208,6 +3229,11 @@ class TestKanamoriInteraction(unittest.TestCase):
         Vs_q = _compute_vertices(
             chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
         self.assertEqual(Vs_q.ndim, 7)
+
+        with self.assertRaises(ValueError) as cm:
+            _compute_vertices(chi0q, inter_k_rejected, norb, Nx, Ny, Nz,
+                              nmat, pairing_type="singlet")
+        self.assertIn("general", str(cm.exception))
 
         G2 = _calc_g2(green_kw, beta)
         sigma_init = _initialize_gap("cos", norb, params["kx"], params["ky"],

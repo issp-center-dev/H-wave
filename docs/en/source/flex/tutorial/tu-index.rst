@@ -1054,9 +1054,13 @@ Tips
      On the ``reduced``/``squashed`` route only the density-density
      susceptibility :math:`\chi_{(a,a),(b,b)}` is stored, so the pairing vertex
      is FLEX-dressed in full **only** for ``CoulombIntra``-only models (or
-     ``norb = 1``). With ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange`` or
-     ``PairHop`` the off-density channels enter undressed and the solver warns;
-     use ``calc_scheme = "general"`` for the complete vertex. See
+     ``norb = 1``). With ``CoulombInter``, ``Hund`` or ``Ising`` the
+     off-density channels enter undressed and the solver warns.
+     ``Exchange`` and ``PairHop`` are **rejected** with a reduced
+     susceptibility: they have no density-diagonal vertex content at all, so
+     nothing of them would be dressed -- and the schemes refuse them at the
+     FLEX/RPA stage anyway. Use ``calc_scheme = "general"`` for the complete
+     vertex. See
      :ref:`the Eliashberg supported-interactions note <sc_supported_inter>`.
 
 

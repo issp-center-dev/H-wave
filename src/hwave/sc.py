@@ -1271,8 +1271,16 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
 #: them there.  Case 2 is S/C[(a,b),(a,b)] and case 4 is S/C[(a,b),(b,a)], both
 #: with a != b; a reduced/squashed run never computes chi on those pair indices,
 #: so the corresponding fluctuation dressing is missing from the vertex.
-_REDUCED_FLEX_UNSUPPORTED = ("CoulombInter", "Hund", "Ising", "Exchange",
-                             "PairHop")
+#: Types whose vertex is PARTIALLY represented by a reduced chi: their
+#: density-slot content is dressed, their cross-slot content is not.
+_REDUCED_FLEX_PARTIAL = ("CoulombInter", "Hund", "Ising")
+#: Types with NO density-diagonal vertex content at all
+#: (hwave.solver.vertex_table): with a reduced chi nothing of them is
+#: dressed, and since the #120 policy no reduced/squashed FLEX or RPA run
+#: can even be produced with them -- such input is stale or mismatched,
+#: and is REJECTED rather than warned about.
+_REDUCED_FLEX_REJECTED = ("Exchange", "PairHop")
+_REDUCED_FLEX_UNSUPPORTED = _REDUCED_FLEX_PARTIAL + _REDUCED_FLEX_REJECTED
 
 
 def _term_has_off_diagonal_weight(mat, norb):
@@ -1359,7 +1367,22 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     if norb <= 1:
         # norb == 1 has no off-density pair index, so nothing can be missing.
         return
-    configured = [k for k in _REDUCED_FLEX_UNSUPPORTED if k in inter_k]
+    rejected = [k for k in _REDUCED_FLEX_REJECTED
+                if k in inter_k and np.any(np.asarray(inter_k[k]) != 0)]
+    if rejected:
+        raise ValueError(
+            "the Eliashberg vertex cannot be built from {} together with "
+            "{}: those interactions have no density-diagonal vertex "
+            "content at all (hwave.solver.vertex_table), so a reduced "
+            "susceptibility dresses none of it -- and since the unified "
+            "scheme policy (#120) no reduced/squashed FLEX or RPA run can "
+            "be produced with them, this input is stale or its interaction "
+            "set does not match the run that produced the susceptibility. "
+            "Re-run FLEX with calc_scheme='general'.".format(
+                source or ("a REDUCED (calc_scheme='reduced' or "
+                           "'squashed') FLEX susceptibility"),
+                ", ".join(rejected)))
+    configured = [k for k in _REDUCED_FLEX_PARTIAL if k in inter_k]
     if not configured:
         return
     # Ask the assembled S/C matrices, not the individual terms: the off-density
@@ -1372,8 +1395,12 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         return
     # Decision above is on the assembled matrices; attribution here is per term,
     # so an inert term that happens to be configured is not named as a cause.
+    # Attribute through the same assembled-and-symmetrised path as the
+    # decision: a raw declaration that symmetrises to zero (#112) must not
+    # be named as a cause.
     missing = [k for k in configured
-               if _term_has_off_diagonal_weight(inter_k[k], norb)] or configured
+               if _off_density_sc_weight({k: inter_k[k]}, norb,
+                                         Nx, Ny, Nz) != 0.0] or configured
     logger.warning(
         "The Eliashberg vertex is being built from %s, which carries only the "
         "density-density components chi_{(a,a),(b,b)}, together with "
@@ -2161,7 +2188,28 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
     green_raw = data_g["green"]
     # H-wave format: (nblock, nfreq, nvol, norb, norb)
+    if green_raw.ndim != 5:
+        raise ValueError(
+            "green file '{}': expected a rank-5 array (nblock, nfreq, "
+            "nvol, norb, norb), got shape {}.".format(
+                green_path, green_raw.shape))
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    # Validate every dimension BEFORE any use: an element-count-compatible
+    # but misshapen file would otherwise be silently reinterpreted by the
+    # reshape below (measured: (1, 3, 1, 4, 4) on a 4-site 2-orbital
+    # system was accepted and scrambled), an empty frequency axis would
+    # contract to an all-zero kernel and return a bogus eigenvalue, and a
+    # zero-block file died on an incidental IndexError.
+    expected_nvol = Nx * Ny * Nz
+    if nblock < 1 or nmat_g < 1:
+        raise ValueError(
+            "green file '{}': needs at least one spin block and one "
+            "frequency, got shape {}.".format(green_path, green_raw.shape))
+    if nvol != expected_nvol or norb1 != norb or norb2 != norb:
+        raise ValueError(
+            "green file '{}': shape {} does not match this run "
+            "(nvol = Nx*Ny*Nz = {}, norb = {}).".format(
+                green_path, green_raw.shape, expected_nvol, norb))
     # A spin-diag FLEX run writes TWO blocks, G_up and G_down. Taking block 0
     # would discard the down-spin propagator exactly as the reduced chi loader
     # used to discard the down-spin susceptibility -- and the pair bubble built

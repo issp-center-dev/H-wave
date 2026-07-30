@@ -339,9 +339,10 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
     ``_compute_vertices_general`` also accepts a 2-index (reduced) chi0q, which
     it lifts into the norb^2 orbital-pair space itself.  That branch is reached
     by the ordinary two-step workflow: RPA with ``calc_scheme="auto"`` resolves
-    to ``"reduced"`` for U + Hund/Ising/PairHop and writes a 2-index chi0q, and
-    ``hwave_sc`` then routes to the general S/C formulation because an
-    inter-orbital vertex term is present.
+    to ``"reduced"`` for U + Hund/Ising (auto selects GENERAL for Exchange or
+    PairHop since #120) and writes a 2-index chi0q, and ``hwave_sc`` then
+    routes to the general S/C formulation because an inter-orbital vertex term
+    is present.
 
     The reduced chi0q carries the same density-pair index as the reduced FLEX
     chi, so it needs the same placement.  Pinning it with a chi0q that is
@@ -381,10 +382,12 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
         return out
 
     def test_density_diagonal_chi0q_gives_identical_vertices(self):
+        # Exchange/PairHop are absent: with a 2-index chi0q they are now
+        # REJECTED outright (no density-diagonal vertex content, #120
+        # alignment) -- pinned separately below
         for keys in (["CoulombIntra"],
                      ["CoulombIntra", "Hund"],
-                     ["CoulombIntra", "CoulombInter", "Hund", "Ising"],
-                     ["CoulombIntra", "Exchange", "PairHop"]):
+                     ["CoulombIntra", "CoulombInter", "Hund", "Ising"]):
             res = self._run(keys)
             for pairing, (V4, V2) in res.items():
                 with self.subTest(interactions="+".join(keys), pairing=pairing):
@@ -392,6 +395,18 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
                         V2, V4, rtol=1e-9, atol=1e-11,
                         err_msg="a density-diagonal chi0q loses nothing in the "
                                 "2-index reduction, so the vertices must match")
+
+    def test_two_index_chi0q_rejects_exchange_and_pairhop(self):
+        """A 2-index chi0q carries no off-density bubble at all, and
+        Exchange/PairHop have no density-diagonal vertex: nothing of them
+        could be dressed, and since #120 no reduced producer can generate
+        such a run -- the combination is rejected, not approximated."""
+        with self.assertRaises(ValueError) as cm:
+            self._run(["CoulombIntra", "Exchange"])
+        self.assertIn("general", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            self._run(["CoulombIntra", "PairHop"])
+        self.assertIn("general", str(cm.exception))
 
 
 class TestReducedFlexMissingComponentWarning(unittest.TestCase):
@@ -406,7 +421,8 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     def test_warns_for_each_unsupported_interorbital_term(self):
         import hwave.sc as sc
 
-        for key in ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop"):
+        # partial types warn; the no-density-content types are rejected
+        for key in ("CoulombInter", "Hund", "Ising"):
             with self.subTest(interaction=key):
                 with self.assertLogs("hwave_sc", level="WARNING") as cm:
                     sc._warn_reduced_flex_missing_components(
@@ -414,6 +430,13 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
                 joined = "\n".join(cm.output)
                 self.assertIn(key, joined)
                 self.assertIn("calc_scheme='general'", joined)
+        for key in ("Exchange", "PairHop"):
+            with self.subTest(interaction=key):
+                with self.assertRaises(ValueError) as cm:
+                    sc._warn_reduced_flex_missing_components(
+                        self._inter_k(["CoulombIntra", key]), 2, 2, 2, 1)
+                self.assertIn(key, str(cm.exception))
+                self.assertIn("general", str(cm.exception))
 
     def test_silent_for_coulombintra_only(self):
         import hwave.sc as sc
@@ -507,14 +530,17 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         jp = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         jp[0, 1] = 0.6
         jp[1, 0] = 0.6
+        # Hund alone: a PARTIAL type (density slots dressed, cross slots
+        # not) with genuine off-density weight -- the warning case.
+        # Exchange/PairHop are rejected outright now, pinned elsewhere.
         inter_k = {"CoulombIntra": np.ones((norb, norb, Nx, Ny, Nz),
                                            dtype=complex),
-                   "Exchange": jp, "PairHop": jp}
+                   "Hund": jp}
         self.assertGreater(
             sc._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0)
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
             sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
-        self.assertIn("Exchange", "\n".join(cm.output))
+        self.assertIn("Hund", "\n".join(cm.output))
 
     def test_diagonal_only_interorbital_term_does_not_warn(self):
         """Only the a != b entries build the off-density blocks, so a term whose

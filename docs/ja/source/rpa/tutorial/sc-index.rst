@@ -1205,10 +1205,12 @@ Eliashberg 頂点に入る相互作用
 
    * - 与える感受率
      - ``CoulombIntra`` のみ
-     - ``CoulombInter`` / ``Hund`` / ``Ising`` / ``Exchange`` / ``PairHop`` を含む
+     - ``CoulombInter`` / ``Hund`` / ``Ising`` を含む
    * - reduced / squashed
      - 厳密
-     - 近似となり警告が出ます（非密度の S/C ブロックを dress する感受率が存在しない）
+     - 近似となり警告が出ます（非密度の S/C ブロックを dress する感受率が
+       存在しない）。``Exchange``/``PairHop`` は密度対角の頂点を一切持たない
+       ため **拒否** されます
    * - general（4インデックス）
      - 厳密
      - 厳密

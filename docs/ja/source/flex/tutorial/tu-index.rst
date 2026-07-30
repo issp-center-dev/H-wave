@@ -994,8 +994,11 @@ Tips
      :math:`\chi_{(a,a),(b,b)}` しか保存されないため、pairing vertex が
      完全に FLEX で dress されるのは ``CoulombIntra`` のみのモデル
      （または ``norb = 1``\ ）に\ **限られます**\ 。``CoulombInter``、
-     ``Hund``、``Ising``、``Exchange``、``PairHop`` がある場合は非密度チャネルが
-     裸のまま入り、ソルバーが警告を出します。完全な頂点を得るには
+     ``Hund``、``Ising`` がある場合は非密度チャネルが
+     裸のまま入り、ソルバーが警告を出します。``Exchange`` と ``PairHop`` は
+     密度対角の頂点内容を一切持たないため、reduced な感受率とは組み合わせ
+     られず\ **拒否されます**\ （FLEX/RPA 段のスキームポリシーとも整合）。
+     完全な頂点を得るには
      ``calc_scheme = "general"`` を使用してください。
      :ref:`Eliashberg の対応する相互作用に関する注意 <sc_supported_inter>`
      も参照してください。

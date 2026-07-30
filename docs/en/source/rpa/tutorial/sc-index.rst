@@ -1261,11 +1261,12 @@ Interactions reaching the Eliashberg vertex
 
    * - susceptibility supplied
      - ``CoulombIntra`` only
-     - with ``CoulombInter`` / ``Hund`` / ``Ising`` / ``Exchange`` / ``PairHop``
+     - with ``CoulombInter`` / ``Hund`` / ``Ising``
    * - reduced / squashed
      - exact
      - approximate, and warned about: the off-density S/C blocks have no
-       susceptibility to dress them
+       susceptibility to dress them. ``Exchange``/``PairHop`` are
+       **rejected** instead (no density-diagonal vertex content at all)
    * - general (four-index)
      - exact
      - exact
