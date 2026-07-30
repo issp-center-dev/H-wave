@@ -943,6 +943,15 @@ class RPA:
         """
         logger.info("Start RPA calculations")
 
+        # A reused green_info must not carry results from a previous solve:
+        # a stale chiq / chiq_pm would survive into save_results and be
+        # labelled as part of this result. Dropped at ENTRY -- before any
+        # validation and regardless of calc_chiq -- so a failed validation
+        # or a chi0q-only run cannot leave them behind either (adversarial
+        # review, round 3).
+        green_info.pop("chiq", None)
+        green_info.pop("chiq_pm", None)
+
         beta = 1.0/self.T
 
         # GPU (CuPy) execution: resolve the backend once. The heavy work --
@@ -958,6 +967,15 @@ class RPA:
             # arrives here, so establish spin_mode from the shape exactly
             # as the file-based chi0q_init route does (issue #109)
             chi0q = green_info["chi0q"]
+            if not np.issubdtype(np.asarray(chi0q).dtype, np.number):
+                raise ValueError(
+                    "chi0q from green_info has non-numeric dtype {}".format(
+                        np.asarray(chi0q).dtype))
+            if not gpu_active:
+                # normalize a device array to the selected (host) backend
+                # instead of failing deep inside the inflation einsums
+                chi0q = _bk.to_host(chi0q)
+                green_info["chi0q"] = chi0q
             self._validate_chi0q_shape(chi0q, source="green_info")
             # spin-diag arrays carry the spin-block axis first; the
             # frequency axis is shape[1] there (shape[0] == 2 == nblock,
@@ -972,6 +990,47 @@ class RPA:
             # labeling rather than fabricating a full-axis claim.
             mem_meta = green_info.get("chi0q_freq_meta")
             if mem_meta is not None:
+                # Validate the provenance against the array and this solver:
+                # a caller can replace chi0q while leaving the previous
+                # solve's metadata behind, and trusting it silently would
+                # mislabel saved output or solve a semantically different
+                # tensor (adversarial review, round 3).
+                fi = mem_meta.get("freq_index")
+                if fi is not None:
+                    fi = np.asarray(fi)
+                    m_nmat = mem_meta.get("nmat")
+                    if (len(fi) != nfreq
+                            or len(np.unique(fi)) != len(fi)
+                            or (m_nmat is not None
+                                and (fi.min() < 0 or fi.max() >= m_nmat))):
+                        raise ValueError(
+                            "chi0q_freq_meta does not describe the supplied "
+                            "chi0q (freq_index of length {} for a {}-"
+                            "frequency array, nmat {}); the metadata is "
+                            "stale -- recompute or drop the key.".format(
+                                len(fi), nfreq, m_nmat))
+                m_norb = mem_meta.get("norb")
+                if m_norb is not None and int(m_norb) != int(self.norb):
+                    raise ValueError(
+                        "chi0q was produced with norb = {} but this solver "
+                        "has norb = {}; the bubble does not describe this "
+                        "system.".format(m_norb, self.norb))
+                m_scheme = mem_meta.get("calc_scheme")
+                if m_scheme is not None and m_scheme != self.calc_scheme:
+                    raise ValueError(
+                        "chi0q was produced under calc_scheme = '{}' but "
+                        "this solver uses '{}'.".format(
+                            m_scheme, self.calc_scheme))
+                m_spin = mem_meta.get("spin_mode")
+                if m_spin is not None and m_spin != self.spin_mode:
+                    # the producer knows its spin structure; shape inference
+                    # cannot separate spin-free norb-orbital from spinful
+                    # norb/2-orbital input, so a declared mismatch is fatal
+                    raise ValueError(
+                        "chi0q was produced in spin mode '{}' but its shape "
+                        "reads as '{}' for this solver's configuration; "
+                        "refusing to solve a semantically different "
+                        "tensor.".format(m_spin, self.spin_mode))
                 self._chi0q_init_meta = {
                     "freq_index": mem_meta.get("freq_index"),
                     "nmat": mem_meta.get("nmat"),
@@ -982,6 +1041,24 @@ class RPA:
                 self._chi0q_init_meta = {
                     "freq_index": None, "nmat": None, "coeff_tail": None,
                 }
+            # Write the normalized provenance back so a CHAIN of reuses --
+            # including a bubble that entered through the chi0q_init file
+            # route -- keeps its producing axis (round-3 review).
+            eff = getattr(self, "_chi0q_init_meta", None)
+            if eff is not None:
+                green_info["chi0q_freq_meta"] = {
+                    "freq_index": eff.get("freq_index"),
+                    "nmat": eff.get("nmat"),
+                    "coeff_tail": eff.get("coeff_tail"),
+                    "spin_mode": self.spin_mode,
+                    "norb": int(self.norb),
+                    "calc_scheme": self.calc_scheme,
+                }
+            # must_fix 6 guard state: the spin-diag transverse channel needs
+            # Green functions bound to THIS bubble; an externally supplied
+            # chi0q has none (a same-instance green0 may belong to an older
+            # bubble)
+            self._chi0q_external = True
             if nfreq != self.nmat:
                 logger.info("partial range in matsubara frequency: {} in {}".format(nfreq, self.nmat))
                 #self.nmat = chi0q.shape[0]
@@ -1028,6 +1105,7 @@ class RPA:
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
+            self._chi0q_external = False
 
             chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
@@ -1055,6 +1133,12 @@ class RPA:
                 "freq_index": list(self.freq_index),
                 "nmat": int(self.nmat),
                 "coeff_tail": float(getattr(self, "coeff_tail", 0.0)),
+                # producer identity: shape-only spin detection cannot
+                # distinguish a spin-free two-orbital bubble from a spinful
+                # one-orbital one, so the consumer validates against these
+                "spin_mode": self.spin_mode,
+                "norb": int(self.norb),
+                "calc_scheme": self.calc_scheme,
             }
 
         if self.calc_chiq:
@@ -1201,14 +1285,6 @@ class RPA:
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
                     ham = ham_long
-
-            # A reused green_info must not carry results from a previous
-            # solve: if this run fails validation, or computes ring-only after
-            # a ring+ladder run, a stale chiq / chiq_pm from the earlier call
-            # would otherwise survive into save_results and be labelled as
-            # part of this result.
-            green_info.pop("chiq", None)
-            green_info.pop("chiq_pm", None)
 
             # For ring+ladder, validate the transverse channel BEFORE the
             # longitudinal solve: an unrepresentable input should fail here,
@@ -1582,10 +1658,11 @@ class RPA:
         Raises
         ------
         ValueError
-            If the loaded data doesn't match the expected dimensions or
-            format. (Standardized by the #109 validation rework: this
-            previously surfaced as a bare AssertionError, which python -O
-            silently disabled.)
+            If the loaded chi0q's SHAPE doesn't match the lattice and
+            calculation scheme. (Standardized by the #109 validation
+            rework: this previously surfaced as a bare AssertionError,
+            which python -O silently disabled.) File-open and missing-key
+            failures are reported separately and terminate the run.
 
         Notes
         -----
@@ -2567,6 +2644,15 @@ class RPA:
         elif self.spin_mode == "spin-diag":
             # Compute exact chi0_+- from G_↑ and G_↓ Green's functions.
             # chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+            if getattr(self, "_chi0q_external", False):
+                # A same-instance green0 may belong to an OLDER bubble than
+                # the externally supplied chi0q; silently pairing them gives
+                # a chiq_pm from different physics (round-3 review).
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be "
+                    "combined with an externally supplied chi0q: the "
+                    "channel needs the Green's functions that produced "
+                    "this exact bubble. Recompute chi0q internally.")
             if hasattr(self, 'green0') and self.green0 is not None:
                 chi0q_pm_full = self._calc_chi0q_transverse(
                     self.green0, self.green0_tail, 1.0 / self.T)

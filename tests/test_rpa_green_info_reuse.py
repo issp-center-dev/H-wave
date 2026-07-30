@@ -194,11 +194,8 @@ class TestFileRouteExceptionType(unittest.TestCase):
         half = np.asarray(g['chi0q'])[:16]
         g2['chi0q'] = np.stack([half, half], axis=0)
         with self.assertLogs("hwave.solver.rpa", level=logging.INFO) as cm:
-            try:
-                sv2.solve(g2, 'tests/rpa/output')
-            except Exception:
-                pass   # downstream may reject the shortened axis; the
-                       # message under test is emitted before that
+            sv2.solve(g2, 'tests/rpa/output')   # completes on 16 frequencies
+        self.assertEqual(np.asarray(g2['chiq']).shape[0], 16)
         partial = [m for m in cm.output if "partial range" in m]
         self.assertTrue(partial, "expected a partial-range message")
         self.assertIn("16 in 32", partial[0])
@@ -277,6 +274,134 @@ class TestReusedFrequencyMetadata(unittest.TestCase):
             z = np.load(os.path.join(d, 'chi0q.npz'))
             np.testing.assert_array_equal(z['freq_index'], np.arange(9))
             self.assertNotIn('nmat', z)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class TestRoundThreeHardening(unittest.TestCase):
+    """Adversarial-review items: stale provenance, stale results, the
+    spin-mode collision, and the ladder/external-bubble hazard."""
+
+    def _solved(self, scheme='general'):
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv, r = _make(scheme, inter)
+        g = r.get_param("green")
+        sv.solve(g, 'tests/rpa/output')
+        return sv, g
+
+    def test_stale_metadata_on_a_replaced_bubble_is_rejected(self):
+        """Replacing chi0q while leaving the previous solve's metadata must
+        fail loudly, not silently mislabel the saved output."""
+        sv1, g = self._solved()
+        # replace with a differently-sized bubble, keep the stale meta
+        g['chi0q'] = np.asarray(g['chi0q'])[:8]
+        sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g, 'tests/rpa/output')
+        self.assertIn('stale', str(cm.exception))
+
+    def test_failed_validation_leaves_no_stale_results(self):
+        """A malformed reused chi0q must not leave the previous solve's
+        chiq/chiq_pm in green_info (they would be saved as this run's)."""
+        sv1, g = self._solved()
+        g['chi0q'] = np.zeros((3, 5), dtype=complex)
+        g.pop('chi0q_freq_meta')
+        sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        with self.assertRaises(ValueError):
+            sv2.solve(g, 'tests/rpa/output')
+        self.assertNotIn('chiq', g)
+        self.assertNotIn('chiq_pm', g)
+
+    def test_producer_norb_mismatch_is_rejected(self):
+        """Shape-only detection cannot distinguish a spin-free two-orbital
+        bubble from a spinful one-orbital one; the recorded producer
+        identity must catch the cross-configuration reuse."""
+        sv1, g = self._solved()          # produced with norb = 2
+        sv2, r2 = _make('general', {'CoulombIntra': 'coulombintra.dat'},
+                        path='tests/rpa/input')   # a norb = 1 solver
+        g2 = r2.get_param("green")
+        g2['chi0q'] = g['chi0q']
+        g2['chi0q_freq_meta'] = g['chi0q_freq_meta']
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g2, 'tests/rpa/output')
+        self.assertIn('norb', str(cm.exception))
+
+    def test_spin_diag_ladder_rejects_an_external_bubble(self):
+        """The spin-diag transverse channel needs the Green functions that
+        produced the bubble; a same-instance green0 may belong to an older
+        one, so an externally supplied chi0q must be rejected there."""
+        import hwave.solver.rpa as rpa_mod
+        import hwave.qlmsio.read_input_k as read_input_k
+
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        r = read_input_k.QLMSkInput(
+            {'path_to_input': 'tests/rpa/input_2orb',
+             'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                             'Geometry': 'geom.dat',
+                             'Transfer': 'transfer.dat',
+                             'CoulombInter': 'onsite_inter.dat'}})
+        par = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+               'SubShape': [1, 1, 1], 'Nmat': 32}
+        sv = rpa_mod.RPA(r.get_param("ham"), {},
+                         {'mode': 'RPA', 'param': par,
+                          'enable_spin_orbital': False,
+                          'calc_scheme': 'general',
+                          'calc_type': 'ring+ladder'})
+        g = r.get_param("green")
+        sv.solve(g, 'tests/rpa/output')      # internal: fine
+        # replace the bubble with a spin-diag-shaped external one; the
+        # instance still holds green0 from the FIRST bubble
+        g['chi0q'] = np.stack([np.asarray(g['chi0q'])[:, :, :2, :2, :2, :2]
+                               if np.asarray(g['chi0q']).ndim == 6
+                               else np.asarray(g['chi0q'])] * 2, axis=0)
+        g.pop('chi0q_freq_meta', None)
+        with self.assertRaises(ValueError) as cm:
+            sv.solve(g, 'tests/rpa/output')
+        self.assertIn('externally supplied', str(cm.exception))
+
+    def test_chained_reuse_keeps_the_producing_axis(self):
+        """A bubble passed through TWO consumers must still carry the
+        producing run's axis (the write-back covers chains, including
+        bubbles that entered through the chi0q_init file route)."""
+        import shutil
+        import tempfile
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        def make_ranged(fr):
+            r = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                                 'Geometry': 'geom.dat',
+                                 'Transfer': 'transfer.dat',
+                                 'CoulombInter': 'onsite_inter.dat'}})
+            par = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                   'SubShape': [1, 1, 1], 'Nmat': 32}
+            if fr:
+                par['matsubara_frequency'] = fr
+            sv = rpa_mod.RPA(r.get_param("ham"), {},
+                             {'mode': 'RPA', 'param': par,
+                              'enable_spin_orbital': False,
+                              'calc_scheme': 'general',
+                              'calc_type': 'ring'})
+            return sv, r
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = make_ranged([12, 20])
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+        sv2, _ = make_ranged(None)
+        sv2.solve(g, 'tests/rpa/output')     # first consumer
+        sv3, _ = make_ranged(None)
+        sv3.solve(g, 'tests/rpa/output')     # second consumer, via write-back
+        d = tempfile.mkdtemp()
+        try:
+            sv3.save_results({'path_to_output': d, 'chiq': 'chiq.npz'}, g)
+            z = np.load(os.path.join(d, 'chiq.npz'))
+            np.testing.assert_array_equal(z['freq_index'], np.arange(12, 21))
+            self.assertEqual(int(z['nmat']), 32)
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
