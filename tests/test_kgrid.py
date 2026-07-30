@@ -10,9 +10,13 @@ construction.
 import unittest
 
 import numpy as np
-import pytest
 
 from hwave.solver.kgrid import reverse_fft_axes
+
+try:
+    import cupy as _cupy
+except ImportError:  # pragma: no cover - GPU-less environments
+    _cupy = None
 
 
 class TestReverseFftAxes(unittest.TestCase):
@@ -183,8 +187,11 @@ class TestCupyPath(unittest.TestCase):
     inside the transverse assembly's unflatten -> map -> flatten round
     trip, so exercise the helper and that round trip on device."""
 
+    @unittest.skipIf(_cupy is None, "cupy not installed")
     def test_reverse_fft_axes_on_device(self):
-        cupy = pytest.importorskip("cupy")
+        # unittest-native skips throughout: CI runs this suite under
+        # unittest, where pytest's Skipped exception counts as an ERROR.
+        cupy = _cupy
         try:
             cupy.zeros(1)
         except Exception:
