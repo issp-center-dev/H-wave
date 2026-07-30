@@ -469,20 +469,28 @@ class Interaction:
             # (measured: chiq differed by 1.2e-2 from the symmetric reading
             # of the same Hamiltonian). PairHop's partner is the HERMITIAN
             # entry, so its mean conjugates and its complex phase survives.
-            out = {}
+            #
+            # The reversal is done on a dense (nx, ny, nz) array with the
+            # same roll+flip uhfk.py uses (index i -> (-i) mod n), NOT by a
+            # sign-flipped dictionary-key lookup: table keys may sit in a
+            # wrapped canonical form ((n-1, 0, 0) for a -x bond, and folded
+            # tables in particular store canonicalized displacements), where
+            # a (-R) key lookup would silently miss the partner and halve
+            # the coefficient.
+            arr = np.zeros((nx, ny, nz, norb, norb), dtype=np.complex128)
             for (irvec, orbvec), v in tbl.items():
-                a, b = orbvec
-                partner = (tuple(-x for x in irvec), (b, a))
-                pv = tbl.get(partner, 0.0)
-                if type == "PairHop":
-                    out[(irvec, orbvec)] = 0.5 * (v + np.conjugate(pv))
-                else:
-                    out[(irvec, orbvec)] = 0.5 * (v + pv)
-                if partner not in tbl:
-                    rvec, (pa, pb) = partner
-                    out[(rvec, (pa, pb))] = out.get(
-                        (rvec, (pa, pb)),
-                        0.5 * (np.conjugate(v) if type == "PairHop" else v))
+                arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
+                     *orbvec)] += v
+            rev = np.transpose(
+                np.flip(np.roll(arr, -1, axis=(0, 1, 2)), axis=(0, 1, 2)),
+                (0, 1, 2, 4, 3))
+            if type == "PairHop":
+                rev = np.conjugate(rev)
+            sym = 0.5 * (arr + rev)
+            out = {}
+            for ix, iy, iz, a, b in zip(*np.nonzero(sym)):
+                out[((int(ix), int(iy), int(iz)), (int(a), int(b)))] = \
+                    sym[ix, iy, iz, a, b]
             return out
 
         def _append_inter(type, tbl=None):

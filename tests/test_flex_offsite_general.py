@@ -130,6 +130,24 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                    cell, filling=0.5)
                 _assert_element_complete_equal(self, gr, gf, norb=2)
 
+    def test_wrapped_declaration_reads_like_its_signed_form(self):
+        """A -x bond may be declared as (n-1, 0, 0) on an n-cell lattice.
+        The symmetrisation reverses displacements modulo the grid (roll+flip,
+        as uhfk.py does), so the wrapped and signed forms of the same bond
+        must give bit-identical chiq; a sign-flipped key lookup would miss
+        the wrapped partner and silently halve the coefficient."""
+        signed = []
+        wrapped = [('CoulombInter', ((-1, 0, 0), (0, 0)), 0.0),
+                   ('CoulombInter', ((3, 0, 0), (0, 0)), 1.0)]
+        gr1, _ = _run_pair('tests/rpa/input',
+                           {'CoulombInter': 'coulombinter.dat'},
+                           [4, 4, 1], filling=0.75, inject=signed)
+        gr2, _ = _run_pair('tests/rpa/input',
+                           {'CoulombInter': 'coulombinter.dat'},
+                           [4, 4, 1], filling=0.75, inject=wrapped)
+        np.testing.assert_array_equal(np.asarray(gr1['chiq']),
+                                      np.asarray(gr2['chiq']))
+
     def test_rejected_offsite_classes(self):
         """Everything outside the measured-equal class must be rejected."""
         import hwave.qlmsio.read_input_k as read_input_k
