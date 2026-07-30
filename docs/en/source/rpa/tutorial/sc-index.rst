@@ -600,6 +600,35 @@ into the directory read by the Eliashberg step:
    gap functions for such runs are **corrected (and therefore change)** in this
    version. Single-orbital and general (myo) results are unaffected.
 
+.. warning::
+
+   **Results may change for multi-orbital reduced/squashed FLEX runs.**
+   The matrix index of a reduced (kuroki) susceptibility is a *density pair*:
+   the stored :math:`X[a,b]` is :math:`\chi_{(a,a),(b,b)}`. Earlier versions
+   embedded it into the :math:`n_\text{orb}^2` orbital-pair space as
+   :math:`\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]`, which dropped the
+   inter-orbital density coupling :math:`\chi_{(0,0),(1,1)}` -- a component the
+   pairing vertex :math:`S \chi S` genuinely references -- and scattered
+   :math:`X` onto pair indices the reduced scheme never computed. This version
+   embeds it correctly, as
+   :math:`\text{out}[(a,a),(b,b)] = X[a,b]` with every other component zero.
+
+   Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
+   for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"`` or
+   ``"squashed"``. Two independent effects contribute, so a vanishing
+   inter-orbital density component is not enough to be safe: the old placement
+   both dropped :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b`, and -- when
+   the interaction reaches the off-density blocks -- fabricated dressing there
+   out of the diagonal :math:`\chi_{(a,a),(a,a)}`. Treat every such stored
+   eigenvalue and gap function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
+   (both placements coincide), as are all general (myo) results. With the fix,
+   a ``CoulombIntra``-only reduced run reproduces the equivalent
+   ``chi0q_mode = "load"`` and general-scheme results exactly **for identical
+   :math:`\Sigma = 0` physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
+   before the fix it did not. This is a statement about the pairing vertex
+   only. It does not imply the two schemes are interchangeable at full
+   self-consistency, where they also differ in how the self-energy is built.
+
    As of this version, IR-native susceptibility files (``write_densified =
    false``) must carry this ``chi_convention`` tag, and the loader also
    rejects a ``chi_convention`` that contradicts the tensor's shape-inferred
@@ -931,6 +960,18 @@ Example
       warm_start     = true
       seed_gap       = true
 
+.. note::
+
+   With ``CoulombInter`` and no explicit ``calc_scheme``, this example runs the
+   default ``reduced`` scheme, so the Eliashberg step **will** print the
+   approximation warning described in
+   :ref:`Supported interactions <sc_supported_inter>`. That is expected here and
+   not a misconfiguration: ``reduced`` supports the general off-site
+   ``CoulombInter`` this workflow uses, whereas ``general`` accepts off-site
+   entries only for same-orbital ``CoulombInter`` without sublattice folding
+   (and on-site terms otherwise). Use ``general`` when your interactions
+   allow it and you need the inter-orbital channels dressed as well.
+
 This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
 ``sigma_init`` and ``seed_eigenvector``, and writing
@@ -1079,6 +1120,8 @@ transfers the gap vector. The result is numerically identical to the CPU run
   and :math:`N_{\mathrm{mat}}=2048` give roughly a 16x per-matvec speedup over
   the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).
 
+.. _sc_supported_inter:
+
 Supported interactions
 ----------------------------
 
@@ -1095,6 +1138,190 @@ For systems with ``Hund``, ``Exchange``, ``Ising``, or ``PairHop``
 interactions, the solver automatically uses the generalized
 :math:`S`/:math:`C` matrix formulation (Kuroki et al., PRB 79, 224511)
 with four-index vertex structure.
+
+.. note::
+
+   **Caveat for** ``chi0q_mode = "flex"`` **with a reduced/squashed FLEX run.**
+   A reduced (``calc_scheme = "reduced"`` or ``"squashed"``) FLEX run stores
+   only the density-density components :math:`\chi_{(a,a),(b,b)}`. For
+   ``CoulombIntra`` alone the :math:`S`/:math:`C` matrices live entirely on
+   that density-pair block, so the reduced route is exact.
+   ``CoulombInter``, ``Hund`` and ``Ising`` also put weight on the
+   off-density blocks :math:`S/C[(a,b),(a,b)]` with :math:`a \neq b`,
+   where the reduced run computed no susceptibility at all: those channels
+   then enter the pairing vertex **undressed** (the bare
+   :math:`\tfrac{1}{2}(S+C)` term only), so :math:`\lambda` is an
+   approximation, and the solver emits a warning naming the offending
+   terms. ``Exchange`` and ``PairHop`` have **no** density-diagonal vertex
+   content at all -- nothing of them would be dressed -- and are
+   **rejected** with a reduced susceptibility (consistently with the
+   FLEX/RPA scheme policy, which refuses to produce such runs).
+
+   This is a limitation of the stored data, not of the loader, and cannot be
+   repaired on the Eliashberg side. Re-run FLEX with
+   ``calc_scheme = "general"`` (which stores the full orbital-pair
+   susceptibility) for the complete vertex. Note that ``chi0q_mode =
+   "load"`` is **not** an escape unless the chi0q it reads is itself a
+   general (four-index) one: a reduced two-index chi0q is missing exactly
+   the same off-density components.
+   Single-orbital models are unaffected -- there is no off-density pair index.
+
+.. note::
+
+   **The Eliashberg step assumes a paramagnetic background.** The Kuroki
+   :math:`S`/:math:`C` matrices carry no spin index, so a reduced FLEX
+   susceptibility is consumed by keeping only its spin-up block. That is
+   exact for a paramagnetic run, where the discarded blocks are redundant
+   (the down block equals the up block and the cross-spin blocks vanish).
+   A spin-polarized run -- ``spin_mode`` is auto-detected, so an ``Extern``
+   field with ``coeff_extern`` is enough -- generally does not satisfy it.
+   The solver inspects the STORED DATA rather than classifying the run
+   (the file records no ``spin_mode``). Any non-redundancy is reported; if it
+   exceeds a few hundred ulp of double precision relative to the kept block,
+   the run is **refused** rather than returning an eigenvalue that would not
+   approximate the spin-resolved problem. A file whose
+   down-spin and cross-spin blocks are identically zero is ambiguous -- it may be
+   a legacy layout in which only the consumed block was ever populated, or a
+   fully polarized sector -- so it is refused unless it is
+   declared to be the former -- either by the file itself
+   (``chi_spin_blocks = "up_only"``) or, for files written before this check
+   existed and which therefore cannot carry a tag, by setting
+   ``[eliashberg] accept_up_block_only = true``.
+
+   The same setting also authorizes the **dressed Green's function** loader:
+   a ``green.npz`` whose spin blocks genuinely differ is otherwise refused
+   (the pair bubble is built from the up block only, so the discarded block
+   is real physics), and with ``accept_up_block_only = true`` it proceeds
+   with a warning. Unlike the legacy-layout case above, this is an
+   **uncontrolled approximation** -- the option authorizes discarding real
+   spin-resolved content, and the responsibility is the user's.
+
+
+What each mode accepts
+----------------------------
+
+Consolidated from the constraints the solvers actually enforce. Every cell below
+was checked by running the combination.
+
+``calc_scheme`` (FLEX)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * -
+     - ``reduced`` / ``squashed``
+     - ``general``
+     - note
+   * - two-body range
+     - on-site and **off-site**
+     - on-site; off-site only for same-orbital ``CoulombInter``
+     - other off-site entries raise ``ValueError`` on the general path
+       (and sublattice folding disables its off-site support)
+   * - spin structure
+     - spin-free, spin-diag, spinful
+     - **spin-free only**
+     - general raises for a polarized one-body Hamiltonian
+   * - ``enable_spin_orbital``
+     - accepted by FLEX
+     - rejected
+     - see *Spin structure* below for what the Eliashberg step then does
+   * - susceptibility stored
+     - density-density only, ``chi_{(a,a),(b,b)}``
+     - full orbital-pair
+     - ``reduced`` and ``squashed`` store the same shape and index layout
+
+``calc_type``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * -
+     - ``ring`` (default)
+     - ``ring+ladder``
+   * - RPA
+     - every ``calc_scheme``
+     - ``calc_scheme = "general"`` only; adds ``chiq_pm``, leaves ``chiq`` untouched
+   * - FLEX
+     - every ``calc_scheme``
+     - **not supported on any scheme**
+
+For a paramagnetic system no susceptibility content is lost by omitting the
+separate transverse channel: SU(2) symmetry makes the transverse and
+longitudinal spin susceptibilities equal, and the ``3/2 * chi_s`` factor in the
+FLEX effective interaction is exactly the count of one longitudinal and two
+transverse components. (Running ``ring+ladder`` in RPA is not free -- it solves
+and stores an additional ``chiq_pm`` -- but it adds no information in the
+paramagnetic case.) The ladder channel becomes distinct only once the spins are
+split.
+
+Interactions reaching the Eliashberg vertex
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 34 36
+
+   * - susceptibility supplied
+     - ``CoulombIntra`` only
+     - with ``CoulombInter`` / ``Hund`` / ``Ising``
+   * - reduced / squashed
+     - exact
+     - approximate, and warned about: the off-density S/C blocks have no
+       susceptibility to dress them. ``Exchange``/``PairHop`` are
+       **rejected** instead (no density-diagonal vertex content at all)
+   * - general (four-index)
+     - exact
+     - exact
+
+``PairLift`` contributes ``S = C = 0`` to the particle-hole vertex and is inert
+on every route (ignored with a warning).
+
+
+Spin structure
+----------------------------
+
+The Eliashberg pairing vertex is **paramagnetic**: the Kuroki :math:`S`/:math:`C`
+matrices are :math:`n_\text{orb}^2`-sized and carry no spin index, and the
+singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
+a spin-polarized or spin-mixing model is therefore not a matter of
+configuration.
+
+``spin_mode`` below is **not an input parameter** -- there is no such key in the
+TOML file. It is determined internally from the Hamiltonian: from whether the
+transfer term has spin-off-diagonal blocks (in ``enable_spin_orbital`` mode) and
+from whether an external field is present. It is also **independent of**
+``calc_scheme``, which selects the orbital tensor rank rather than the spin
+structure; the one link between them is that ``calc_scheme = "general"`` FLEX
+accepts ``spin-free`` only and rejects the other two outright.
+
+
+- **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
+  FLEX susceptibility stores its two spin blocks bit-identically with zero
+  cross-spin blocks, so keeping only the spin-up block is exact.
+
+- **Spin-polarized without spin mixing** (``spin_mode = "spin-diag"``; e.g. an
+  ``Extern`` field with ``coeff_extern``) -- **refused.** Only the spin-up block
+  would survive the embedding, so the eigenvalue would not approximate the
+  spin-resolved problem at all; the loader raises rather than returning a
+  number. (Content at the floating-point round-off scale -- at or below
+  ``256 * eps`` relative to the kept block, about ``6e-14`` -- is reported as
+  round-off and
+  allowed through, so a backend rounding asymmetry cannot abort a genuinely
+  paramagnetic run.)
+
+- **Spin-mixing / spin-orbit** (``mode.enable_spin_orbital = true``, giving
+  ``spin_mode = "spinful"``) -- **not supported.** FLEX itself runs, but
+  ``hwave_sc`` stops with a shape error: FLEX writes chi with the physical
+  orbital count while the Eliashberg step reads ``norb`` from ``geom.dat``,
+  where spin-orbital mode stores the spin-orbital count. The error message
+  identifies this case explicitly.
+
+Supporting either spin-polarized case would require an
+:math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
+gap function), together with the transverse susceptibility
+:math:`\chi^{+-}`, which the reduced scheme does not store. That is a feature
+addition rather than a configuration change.
 
 
 Tips

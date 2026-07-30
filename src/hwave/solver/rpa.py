@@ -2837,20 +2837,21 @@ class RPA:
         # For paramagnetic and spin-diagonal cases, chi0_+- = chi0_orb
         # (same numerical values, just interpreted as transverse bubble)
         if self.spin_mode == "spin-free":
-            # chi0q_orig shape: (nfreq, nvol, norb, norb, norb, norb) for general
-            # or (nfreq, nvol, norb, norb) for reduced
-            if chi0q_orig.ndim == 4:
-                # reduced: expand to general
-                # chi0q_pm[:, :, l1, l2, l3, l2] = chi0q_orig[:, :, l1, l3]
-                # i.e., delta_{l2,l4} structure
-                nfreq, nvol_c, n1, n2 = chi0q_orig.shape
-                chi0q_pm = xp.zeros((nfreq, nvol_c, norb, norb, norb, norb),
-                                    dtype=np.complex128)
-                # Vectorized: broadcast chi0q_orig into diagonal l2=l4 positions
-                for l2 in range(norb):
-                    chi0q_pm[:, :, :, l2, :, l2] = chi0q_orig
-            else:
-                chi0q_pm = chi0q_orig.copy()
+            # chi0q_orig shape: (nfreq, nvol, norb, norb, norb, norb).
+            # The ladder channel is reachable only with calc_scheme="general"
+            # (_set_scheme sys.exit()s otherwise), so enable_reduced is always
+            # False here and chi0q is always the full rank-4 orbital tensor.
+            if chi0q_orig.ndim != 6:
+                raise AssertionError(
+                    "transverse channel expects a general (rank-4 orbital) "
+                    "chi0q, got ndim={}. calc_type='ring+ladder' requires "
+                    "calc_scheme='general'; if that constraint is ever relaxed, "
+                    "a reduced chi0q must be embedded at its DENSITY-PAIR "
+                    "positions chi0_+-[a,a,b,b] = chi0_red[a,b] -- NOT scattered "
+                    "as delta_{{l2,l4}}, which drops the very components the "
+                    "vertex reads (see sc._expand_flex_chi).".format(
+                        chi0q_orig.ndim))
+            chi0q_pm = chi0q_orig.copy()
 
         elif self.spin_mode == "spin-diag":
             # Compute exact chi0_+- from G_↑ and G_↓ Green's functions.
@@ -2872,15 +2873,10 @@ class RPA:
                     chi0q_pm = chi0q_pm_full[self.freq_index]
                 else:
                     chi0q_pm = chi0q_pm_full
-                # Expand reduced to general if needed for vertex contraction
-                if self.enable_reduced and chi0q_pm.ndim == 4:
-                    nfreq, nvol_c, n1, n2 = chi0q_pm.shape
-                    chi0q_pm_gen = xp.zeros(
-                        (nfreq, nvol_c, norb, norb, norb, norb),
-                        dtype=np.complex128)
-                    for l2 in range(norb):
-                        chi0q_pm_gen[:, :, :, l2, :, l2] = chi0q_pm
-                    chi0q_pm = chi0q_pm_gen
+                # No reduced-to-general expansion here either: the ladder
+                # channel forces calc_scheme="general", so _calc_chi0q_transverse
+                # returns the full rank-4 orbital tensor (see the spin-free
+                # branch above for what a reduced chi0q would require).
             else:
                 # The transverse bubble chi0_+- = -G_up * G_down cannot be
                 # reconstructed from the longitudinal chi0q alone (which carries

@@ -1201,15 +1201,43 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         # (norb, norb, Nx, Ny, Nz, nmat) -> expand to (Nx, Ny, Nz, nd, nd)
         chi0_2d = chi0q[:, :, :, :, :, si].transpose(2, 3, 4, 0, 1).copy()
         # chi0_2d shape: (Nx, Ny, Nz, norb, norb)
+        # The guard runs for EVERY 2-index input, including norb == 1: the
+        # rejection of Exchange/PairHop applies there too (the one-orbital
+        # builder gives them zero weight, so accepting them silently omits
+        # the interaction -- the norb shortcut below bypassed the helper
+        # entirely, round 8). Only the partial-dressing warning is
+        # norb-gated, inside the helper.
+        _warn_reduced_flex_missing_components(
+            inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q",
+            sc_matrices=(S_all, C_all))
         if norb == 1:
             chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
         else:
-            # Expand: chi0_{l1*norb+l2, l3*norb+l2} = chi0_2d[l1, l3]
+            # A 2-index (reduced/squashed) chi0q is the density-density diagonal
+            # of the susceptibility: chi0_2d[a, b] IS chi0_{(a,a),(b,b)} (the
+            # matching interaction reduction is einsum('kaabb->kab', ...) in
+            # RPA._inflate_chi0q_and_ham).  With the orbital-pair flat index
+            # (l1,l2) -> l1*norb + l2 used by _build_sc_matrices_all_q, it
+            # therefore belongs at the density-pair positions:
+            #
+            #     chi0_{(a,a),(b,b)} = chi0_2d[a, b],  everything else zero.
+            #
+            # The historical placement chi0_{(l1,l2),(l3,l2)} = chi0_2d[l1,l3]
+            # (a delta_{l2,l4} scatter, i.e. kron(chi0_2d, I_norb)) read the
+            # density-pair index as an ordinary orbital index: it dropped the
+            # inter-orbital density coupling chi0_{(0,0),(1,1)} and scattered
+            # chi0_2d onto pair indices the reduced scheme never computed.  This
+            # is the same defect that _expand_flex_chi carried on the
+            # chi0q_mode="flex" route.
+            #
+            # Off-density rows/columns stay exactly zero.  For the interaction
+            # terms that put S/C weight there (CoulombInter, Hund, Ising,
+            # Exchange, PairHop) those channels are then undressed -- an honest
+            # reflection of what a reduced chi0q contains, rather than a
+            # fabricated dressing.
             chi0_static = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-            for l2 in range(norb):
-                chi0_static[:, :, :,
-                            l2::norb,
-                            l2::norb] = chi0_2d
+            dens = np.arange(norb) * norb + np.arange(norb)
+            chi0_static[..., dens[:, None], dens[None, :]] = chi0_2d
 
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0
@@ -1239,8 +1267,207 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     return Vs_q
 
 
+#: Interaction terms whose Kuroki S/C matrices have entries OUTSIDE the
+#: density-pair block, keyed by the _build_sc_matrices_all_q case that puts
+#: them there.  Case 2 is S/C[(a,b),(a,b)] and case 4 is S/C[(a,b),(b,a)], both
+#: with a != b; a reduced/squashed run never computes chi on those pair indices,
+#: so the corresponding fluctuation dressing is missing from the vertex.
+#: Types whose vertex is PARTIALLY represented by a reduced chi: their
+#: density-slot content is dressed, their cross-slot content is not.
+_REDUCED_FLEX_PARTIAL = ("CoulombInter", "Hund", "Ising")
+#: Types with NO density-diagonal vertex content at all
+#: (hwave.solver.vertex_table): with a reduced chi nothing of them is
+#: dressed, and since the #120 policy no reduced/squashed FLEX or RPA run
+#: can even be produced with them -- such input is stale or mismatched,
+#: and is REJECTED rather than warned about.
+_REDUCED_FLEX_REJECTED = ("Exchange", "PairHop")
+
+
+
+def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz, sc_matrices=None):
+    """Largest |S| or |C| on the blocks a reduced chi cannot dress.
+
+    The reduced susceptibility is zero on every pair index (a,b) with a != b, so
+    the vertex is undressed exactly where S or C is nonzero there --
+    S/C[(a,b),(a,b)] (case 2) and S/C[(a,b),(b,a)] (case 4) of
+    :func:`_build_sc_matrices_all_q`.
+
+    This inspects the COMBINED matrices rather than testing each configured term
+    on its own. Those blocks are sums: under the adjudicated slot table
+    (#113) case 2 mixes CoulombInter, Ising, Hund AND Exchange, and case 4
+    carries PairHop alone. Terms can cancel there (equal CoulombInter and
+    Hund cancel case 2 exactly in both channels), and a per-term test would
+    then announce missing dressing that does not exist.
+    """
+    # Reuse the caller's matrices when it already has them: at the full grid
+    # these are O(Nq * norb^4) each, and building a second pair while the first
+    # is live doubles the allocation for what is only a diagnostic.
+    if sc_matrices is not None:
+        S_all, C_all = sc_matrices
+    else:
+        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    nd = norb * norb
+    density = np.zeros(nd, dtype=bool)
+    density[np.arange(norb) * norb + np.arange(norb)] = True
+    off = ~density
+    if not off.any():
+        return 0.0
+    weight = 0.0
+    for M in (S_all, C_all):
+        # anything outside the density x density sub-block, over all q
+        weight = max(weight,
+                     float(np.max(np.abs(M[..., off, :]))),
+                     float(np.max(np.abs(M[..., :, off]))))
+    return weight
+
+
+def _build_vertex_sc_matrices(convention, inter_k, norb, Nx, Ny, Nz):
+    """Build the (S, C) interaction matrices for the given orbital convention.
+
+    Single dispatcher shared by :func:`_compute_vertices_flex` and its
+    callers, so a dynamic run can build the frequency-INDEPENDENT matrices
+    once and pass them to every per-frequency contraction instead of
+    rebuilding ~nmat identical full-grid pairs.
+    """
+    conv = str(convention).lower()
+    if conv == "myo":
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        return build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+    if conv == "kuroki":
+        return _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    raise ValueError(
+        "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
+
+
+def _reject_reduced_flex_unsupported(inter_k, convention="kuroki",
+                                     source=None):
+    """Reject Exchange/PairHop wherever a Kuroki-convention vertex is built.
+
+    This is the cheap half of :func:`_warn_reduced_flex_missing_components`:
+    a dict scan with no S/C construction, so it can (and must) run at EVERY
+    Kuroki vertex boundary -- :func:`_compute_vertices_flex` itself, hence
+    also ``eliashberg_dynamic._instantaneous_vertex`` and every
+    per-frequency dynamic contraction -- making the rejection an enforced
+    invariant rather than an ordering artifact of which builder the
+    orchestrator happens to call first (round-9 review: the IR
+    instantaneous route silently accepted both terms and returned a zero
+    vertex when called directly).
+
+    Exchange and PairHop carry NO density-diagonal vertex content
+    (hwave.solver.vertex_table), so a Kuroki (reduced-origin) chi dresses
+    none of it and the result would silently omit the interaction; the
+    general (myo) convention represents them fully and is not restricted.
+    """
+    if str(convention).lower() != "kuroki":
+        return
+    rejected = [k for k in _REDUCED_FLEX_REJECTED
+                if k in inter_k and np.any(np.asarray(inter_k[k]) != 0)]
+    if rejected:
+        raise ValueError(
+            "the Eliashberg vertex cannot be built from {} together with "
+            "{}: those interactions have no density-diagonal vertex "
+            "content at all (hwave.solver.vertex_table), so reduced "
+            "(density-only) data dresses none of it and the result would "
+            "silently omit the interaction. (H-wave's own reduced/squashed "
+            "runs cannot even be produced with these terms since the "
+            "unified scheme policy.) Provide a general (four-index) "
+            "susceptibility instead -- for a FLEX source, re-run with "
+            "calc_scheme='general'.".format(
+                source or ("a REDUCED (calc_scheme='reduced' or "
+                           "'squashed') FLEX susceptibility"),
+                ", ".join(rejected)))
+
+
+def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki",
+                                          source=None, sc_matrices=None):
+    """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
+
+    Call this ONCE per run, from the place that is about to build the pairing
+    vertex -- NOT from inside ``_compute_vertices_flex``. That function is
+    invoked once per bosonic Matsubara frequency by the dynamic kernel (so the
+    warning would repeat ``Nmat`` times, ~1000 in production runs), and again by
+    ``eliashberg_dynamic._instantaneous_vertex`` with chi = 0, where the
+    message would be doubly misleading. The Exchange/PairHop REJECTION, by
+    contrast, is enforced inside ``_compute_vertices_flex`` on every call
+    (:func:`_reject_reduced_flex_unsupported`) -- it is a cheap scan and
+    must hold on every route, not just the orchestrated one.
+
+    A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
+    density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
+    Kuroki S/C matrices built from CoulombIntra alone live entirely on that
+    density-pair block, so the reduced treatment is exact.  CoulombInter,
+    Hund and Ising also populate the off-density block S/C[(a,b),(a,b)]
+    with a != b -- and there chi is identically zero simply because the
+    reduced run never computed it.  Those channels then keep only the bare
+    0.5*(S+C) term with no fluctuation dressing: a silent approximation
+    rather than a solver error, hence the WARNING.  Exchange and PairHop
+    carry NO density-diagonal vertex content at all (vertex_table), so a
+    reduced chi dresses nothing of them; combined with the #120 scheme
+    policy (no reduced/squashed run can be produced with them) that
+    combination is REJECTED rather than warned about.
+
+    This is a genuine limitation of the stored data, not of the loader: it
+    cannot be repaired on the Eliashberg side.  The universal remedy is a
+    general (four-index) susceptibility; for a FLEX source that means
+    re-running with ``calc_scheme="general"`` (which stores the full
+    orbital-pair chi).
+    """
+    if str(convention).lower() != "kuroki":
+        # Only the reduced/squashed route stores a density-only chi; the
+        # general (myo) path carries the full orbital-pair susceptibility.
+        return
+    # The rejection must run BEFORE the norb == 1 shortcut: a one-orbital
+    # Exchange/PairHop has zero S/C weight in this builder too, so the
+    # interaction would be silently omitted rather than represented --
+    # exactly what the rejection exists to prevent (round-7 review; the
+    # bypass returned zero vertices for both terms on both routes).
+    _reject_reduced_flex_unsupported(inter_k, convention, source)
+    if norb <= 1:
+        # norb == 1 has no off-density pair index, so no PARTIAL dressing
+        # can be missing (the rejection above still applies).
+        return
+    configured = [k for k in _REDUCED_FLEX_PARTIAL if k in inter_k]
+    if not configured:
+        return
+    # Ask the assembled S/C matrices, not the individual terms: the off-density
+    # blocks are sums and the configured terms can cancel there (e.g. equal
+    # CoulombInter and Hund cancel case 2 in both channels under the
+    # adjudicated table). Only a nonzero combined block means dressing is
+    # actually missing.
+    if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz,
+                              sc_matrices) == 0.0:
+        return
+    # Decision above is on the assembled matrices; attribution here is per term,
+    # so an inert term that happens to be configured is not named as a cause.
+    # Attribute through the same assembled-and-symmetrised path as the
+    # decision: a raw declaration that symmetrises to zero (#112) must not
+    # be named as a cause.
+    missing = [k for k in configured
+               if _off_density_sc_weight({k: inter_k[k]}, norb,
+                                         Nx, Ny, Nz) != 0.0] or configured
+    logger.warning(
+        "The Eliashberg vertex is being built from %s, which carries only the "
+        "density-density components chi_{(a,a),(b,b)}, together with "
+        "inter-orbital interaction(s) %s. Together those terms give the S/C "
+        "matrices nonzero "
+        "off-density components S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] (a != b) "
+        "for which the reduced run computed no susceptibility, so those "
+        "channels enter the pairing vertex undressed (bare 0.5*(S+C) only) and "
+        "the resulting lambda is an approximation. calc_scheme='general' stores "
+        "the full orbital-pair chi and removes this gap; note its off-site "
+        "support is limited to same-orbital CoulombInter without sublattice "
+        "folding -- for a model with off-site INTER-orbital interactions "
+        "there is currently no FLEX-dressed vertex without this "
+        "approximation.",
+        source or ("a REDUCED (calc_scheme='reduced' or 'squashed') FLEX "
+                   "susceptibility"),
+        ", ".join(missing))
+
+
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                           pairing_type="singlet", convention="kuroki"):
+                           pairing_type="singlet", convention="kuroki",
+                           sc_matrices=None):
     """Compute pairing vertex from pre-computed FLEX susceptibilities.
 
     Uses the same formula as _compute_vertices_general but takes
@@ -1273,6 +1500,12 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
         Grid dimensions.
     pairing_type : str
         "singlet" or "triplet".
+    sc_matrices : tuple of ndarray, optional
+        Precomputed ``(S_all, C_all)`` for this convention
+        (:func:`_build_vertex_sc_matrices`). The matrices are
+        frequency-independent, so a dynamic run passes one pair to every
+        per-frequency call instead of rebuilding ~nmat identical full-grid
+        pairs (round-9 review).
 
     Returns
     -------
@@ -1286,15 +1519,26 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
             "PairLift is configured but does not contribute to the S/C pairing "
             "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
 
-    conv = convention.lower()
-    if conv == "myo":
-        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
-        S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
-    elif conv == "kuroki":
-        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
-    else:
+    # Validate the convention BEFORE the cache branch: with precomputed
+    # sc_matrices the dispatcher below is skipped, and an unknown tag would
+    # otherwise be silently treated as "not kuroki" = unrestricted
+    # (round-10 review reproduced convention="invalid" returning a vertex).
+    conv = str(convention).lower()
+    if conv not in ("kuroki", "myo"):
         raise ValueError(
-            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
+            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(
+                convention))
+
+    # Enforced at THIS boundary (not only in the orchestrator): every Kuroki
+    # vertex construction -- including chi = 0 via _instantaneous_vertex --
+    # must reject Exchange/PairHop, or the interaction is silently omitted.
+    _reject_reduced_flex_unsupported(inter_k, conv)
+
+    if sc_matrices is not None:
+        S_all, C_all = sc_matrices
+    else:
+        S_all, C_all = _build_vertex_sc_matrices(conv, inter_k,
+                                                 norb, Nx, Ny, Nz)
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -1376,12 +1620,14 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         ("green" absent when there is no green file). Mixed encodings raise.
     """
     if not allow_ir:
-        chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(
+        (chi_s_raw, chi_c_raw, chi_convention,
+         legacy_tags) = _read_flex_chi_raw(
             input_dict, interactions=interactions)
         ir_meta = None
         green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     else:
-        chi_s_raw, chi_c_raw, chi_convention, ir_meta = _read_flex_chi_raw(
+        (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+         legacy_tags) = _read_flex_chi_raw(
             input_dict, allow_ir=True, interactions=interactions)
         green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
                                                allow_ir=True)
@@ -1397,6 +1643,13 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
+    legacy_s, legacy_c = legacy_tags
+    if _accept_up_block_only(input_dict):
+        legacy_s = legacy_c = "config_override"
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
+                                legacy_s)
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
+                                legacy_c)
     chis_w = np.moveaxis(
         _expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
     chic_w = np.moveaxis(
@@ -1413,14 +1666,53 @@ _STATIC_IR_HINT = (
     "\"dynamic\" with [eliashberg] matsubara_basis = \"ir\".")
 
 
+def _accept_up_block_only(input_dict):
+    """Whether ``[eliashberg] accept_up_block_only`` asserts the layout.
+
+    The file tag is the better signal, but files written before this check
+    existed cannot carry one -- so without a configuration route the escape
+    hatch would be unreachable for exactly the files that need it. The user
+    takes responsibility here rather than the loader guessing from values it
+    cannot disambiguate.
+    """
+    eli = input_dict.get("eliashberg", {})
+    value = eli.get("accept_up_block_only", False)
+    if isinstance(value, bool):
+        return value
+    # Not bool(value): a TOML typo like the string "false" is truthy in Python,
+    # and silently enabling an override that relaxes a correctness guard is the
+    # worst possible reading of a malformed value.
+    raise ValueError(
+        "[eliashberg] accept_up_block_only must be a boolean (true/false), "
+        "got {!r}.".format(value))
+
+
+def _legacy_up_block_only(data):
+    """Whether an npz declares the legacy single-populated-block layout.
+
+    Opt-in only: the values cannot distinguish "the other blocks were never
+    filled" from "this run is fully polarized", so the file has to say so.
+    """
+    if "chi_spin_blocks" not in data:
+        return False
+    return str(data["chi_spin_blocks"]).strip().lower() == "up_only"
+
+
 def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
-    Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
+    Returns ``(chi_s_raw, chi_c_raw, chi_convention, legacy_tags)`` in the
+    H-wave layout. ``legacy_tags`` is the pair of ``chi_spin_blocks`` flags read
+    from the SAME open handles as the arrays: reopening the files afterwards
+    would let a tagged replacement authorize the untagged -- possibly polarized
+    -- array already in memory. No values from the replacement would be used,
+    but the wrong ones would be accepted in silence.
     ``(nfreq, nvol, nd, nd)`` -- no reshape/expansion, so callers that only
     need one static frequency can slice before expanding.
 
-    With ``allow_ir=True`` (the dynamic Eliashberg caller) the return value
+    The tuple is ``(chi_s_raw, chi_c_raw, chi_convention, legacy_tags)``; with
+    ``allow_ir=True`` it is ``(chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+    legacy_tags)``. In that case the return value
     gains a fourth element ``ir_meta``: ``None`` for uniform files, or
     ``{"chis": meta, "chic": meta}`` for IR-native ones (each file carries
     its own node set; the caller refits both independently). The arity
@@ -1541,7 +1833,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                 "vertex. Re-run FLEX with the current build to regenerate "
                 "it.".format(path))
     if not allow_ir:
-        return chi_s_raw, chi_c_raw, chi_convention
+        return (chi_s_raw, chi_c_raw, chi_convention,
+                (_legacy_up_block_only(data_s),
+                 _legacy_up_block_only(data_c)))
 
     native_s, native_c = is_ir_native(data_s), is_ir_native(data_c)
     if native_s != native_c:
@@ -1560,7 +1854,222 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
             "tags chi_convention, or re-tag the npz explicitly.")
     ir_meta = ({"chis": ir_native_meta(data_s),
                 "chic": ir_native_meta(data_c)} if native_s else None)
-    return chi_s_raw, chi_c_raw, chi_convention, ir_meta
+    return (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+            (_legacy_up_block_only(data_s),
+             _legacy_up_block_only(data_c)))
+
+
+#: Relative size, against the kept spin-up block, below which discarded spin
+#: content is attributed to round-off rather than physics.
+#:
+#: A few hundred ulp of double precision. This is a NARROW MARGIN, not a
+#: validated error bound: the error a linear solve can accumulate depends on
+#: dimension, conditioning, backend and operation order, and near a
+#: susceptibility pole a legitimate paramagnetic producer could exceed it. The
+#: claim it rests on is only the measured one -- every producer exercised here
+#: (CPU, uniform and IR axes, static and dynamic, plus production multi-orbital
+#: output) is bit-exact, so the margin is never used in practice and exists so
+#: that a backend whose solve is not bit-symmetric degrades to a warning rather
+#: than aborting.
+#:
+#: It is NOT a claim about how weak a physical field can be. An earlier draft
+#: used 1e-8, justified by a measured Zeeman case at ratio ~1.6 -- which sets no
+#: lower bound at all, and would have relabelled a genuinely weak field as
+#: round-off. If a supported backend is ever found to exceed this margin
+#: legitimately, widen it deliberately with that measurement in hand rather than
+#: treating the constant as already covering it.
+_SPIN_DISCARD_ROUNDOFF_RATIO = 256 * np.finfo(float).eps
+
+
+def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
+                                legacy_up_block_only=False):
+    """Reject, or at minimum report, spin content the embedding would drop.
+
+    The reduced spin-orbital index is spin-block ordered ``s*norb + a``, and the
+    embedding below keeps ONLY the spin-up block ``[:norb, :norb]``. Everything
+    else -- the down block and both cross-spin blocks -- is dropped, because
+    nothing downstream carries spin: the Kuroki S/C matrices and the
+    singlet/triplet vertex formulas are norb^2-sized and paramagnetic.
+
+    Dropping it is lossless exactly when it is redundant: the down block equals
+    the up block and the cross blocks are zero. That holds bit-for-bit for a
+    paramagnetic run -- the inflation writes the same array into both spin
+    blocks and never touches the cross blocks
+    (``FLEX._inflate_chi0q_and_ham``), and the channel vertices are spin-block
+    diagonal, so the RPA solve preserves both properties.
+
+    When it does not hold the discarded data is real and the eigenvalue is not a
+    controlled approximation of anything, so this RAISES rather than warning:
+    a spin-polarized model is outside what this formulation can express, and
+    returning a number for it is worse than refusing.
+
+    The test is on the DISCARDED DATA, not on the run's spin mode. Inferring
+    "spin-polarized" from unequal diagonal blocks would be wrong in both
+    directions: a spinful/spin-orbit run can have unequal blocks while still
+    being time-reversal symmetric, and it can equally have equal diagonal blocks
+    with nonzero cross-spin blocks -- discarded just the same. The stored npz
+    records no ``spin_mode``, so the data is the only signal available.
+
+    Two severities, because a false positive costs very different amounts:
+    anything nonzero is reported, but only content above
+    ``_SPIN_DISCARD_ROUNDOFF_RATIO`` -- a few hundred ulp of double precision --
+    aborts. Exact bit-equality was confirmed on the uniform and IR axes, static
+    and dynamic, and on production multi-orbital output, so the window is there
+    purely so a backend whose solve is not bit-symmetric (a GPU batched solve,
+    say) degrades to a warning instead of killing a legitimate paramagnetic run.
+    It is deliberately anchored to machine precision and not to any assumption
+    about how weak a physical field can be.
+    """
+    if str(convention).lower() != "kuroki":
+        # Only the reduced/squashed layout has spin blocks to compare.
+        return
+    ns = 2
+    chi = np.asarray(chi_raw)
+    if norb <= 0:
+        return
+    if chi.ndim != 4 or chi.shape[-1] != chi.shape[-2]:
+        # Rank AND squareness, before any dimension-based early return. Checking
+        # only the last axis let a rectangular array such as (nfreq, nvol, 2, 8)
+        # slip past -- its last dimension is not norb*ns, so the check returned,
+        # and _expand_flex_chi then flattened 2*8 = 16, took sqrt, and
+        # reinterpreted the rectangle as a 4x4 susceptibility.
+        raise ValueError(
+            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility "
+            "with a square trailing matrix, got shape {}.".format(chi.shape))
+    if chi.shape[-1] != norb * ns:
+        # Not the reduced spin-orbital layout; _expand_flex_chi gives a better
+        # diagnostic for this (it can recognise the spin-orbital-mode case).
+        return
+    up = chi[..., :norb, :norb]
+    if up.size == 0:
+        return
+    down = chi[..., norb:, norb:]
+    cross_ud = chi[..., :norb, norb:]
+    cross_du = chi[..., norb:, :norb]
+
+    # Accumulate per frequency rather than over the whole axis. Keeping the
+    # whole-axis POLICY (see the loaders) does not require whole-axis
+    # TEMPORARIES: abs(up), up-down and abs(up-down) at full size are each of
+    # the order of the stored array, which on a production file would add
+    # multi-GB allocations and could fail a valid file on memory alone.
+    nfreq = chi.shape[0]
+
+    # Per-frequency RATIOS, not a global difference over a global scale. The
+    # ratio decides acceptance, and a single global pair lets a large redundant
+    # frequency mask a small completely non-redundant one: with frequency 0
+    # redundant at scale 1e14 and frequency 1 holding up=1, down=0, the true
+    # mismatch is 100% while the global ratio is 1e-14 -- under the threshold.
+    #
+    # Non-finite values are rejected outright here rather than folded into the
+    # maxima: max(0.0, nan) is 0.0 in Python, so a NaN in a discarded block
+    # would leave the running maximum untouched and the array would be accepted
+    # as exactly redundant.
+    scale = d_down = d_cross = 0.0
+    worst_ratio = 0.0
+    worst_at = (0, 0.0, 0.0, 0.0)
+    any_down = any_cross = False
+    for w in range(nfreq):
+        u, dn = up[w], down[w]
+        cu, cd = cross_ud[w], cross_du[w]
+        for name, blk in (("up", u), ("down", dn),
+                          ("up-down cross", cu), ("down-up cross", cd)):
+            if blk.size and not np.all(np.isfinite(blk)):
+                raise ValueError(
+                    "The reduced FLEX susceptibility {} has non-finite values "
+                    "(NaN or Inf) in its {} block at frequency index {}. NaN "
+                    "compares false against everything, so without this check "
+                    "it would leave the redundancy maxima untouched and the "
+                    "array would be accepted as exactly "
+                    "redundant.".format(label, name, w))
+        w_scale = float(np.max(np.abs(u)))
+        w_down = float(np.max(np.abs(u - dn)))
+        w_cross = max(float(np.max(np.abs(cu))), float(np.max(np.abs(cd))))
+        scale = max(scale, w_scale)
+        d_down = max(d_down, w_down)
+        d_cross = max(d_cross, w_cross)
+        w_ratio = max(w_down, w_cross) / max(w_scale, np.finfo(float).tiny)
+        if w_ratio > worst_ratio:
+            worst_ratio = w_ratio
+            worst_at = (w, w_scale, w_down, w_cross)
+        any_down = any_down or bool(np.any(dn))
+        any_cross = any_cross or bool(np.any(cu)) or bool(np.any(cd))
+
+    if d_down == 0.0 and d_cross == 0.0:
+        return
+
+    # An all-zero down/cross block is NOT a reliable marker of the legacy
+    # single-populated representation: a saturated or projected spin sector, or
+    # externally produced spin-resolved data, can look exactly the same. Absent
+    # data and fully polarized data are indistinguishable from the values alone,
+    # so the file has to SAY which it is. Accept it only when it does.
+    if scale > 0.0 and not any_down and not any_cross:
+        if legacy_up_block_only:
+            # Name the actual source of the authorization: a file tag and a user
+            # override carry different weight, and reporting one as the other
+            # would misrepresent who vouched for the data.
+            via = ("the [eliashberg] accept_up_block_only setting"
+                   if legacy_up_block_only == "config_override"
+                   else "the file's chi_spin_blocks='up_only' tag")
+            logger.warning(
+                "The reduced FLEX susceptibility %s has an all-zero down-spin "
+                "block and all-zero cross-spin blocks. Per %s this is read as "
+                "the layout in which only the block the Eliashberg step "
+                "consumes was ever populated -- not as a spin-polarized run -- "
+                "and the up-spin block is used.", label, via)
+            return
+        raise ValueError(
+            "The reduced FLEX susceptibility {} has a nonzero up-spin block "
+            "with an identically zero down-spin block and zero cross-spin "
+            "blocks. That is either a file in which only the consumed block was "
+            "ever populated, or a fully spin-polarized/projected susceptibility "
+            "-- the values alone cannot tell them apart, and the second is not "
+            "something this paramagnetic formulation can use. If you know it is "
+            "the former, say so: set [eliashberg] accept_up_block_only = true, "
+            "or tag the file itself with chi_spin_blocks='up_only'. Files "
+            "written before this check existed carry no tag, so the "
+            "configuration flag is the route for them.".format(label))
+
+    # Describe the frequency that decided it: acceptance is a per-frequency
+    # ratio, so quoting global maxima could pair a small tail's mismatch with a
+    # huge unrelated scale from elsewhere on the axis.
+    w_at, scale, d_down, d_cross = worst_at
+    parts = []
+    if d_down != 0.0:
+        parts.append("the down-spin block differs from the up-spin block "
+                     "by {:.3e}".format(d_down))
+    if d_cross != 0.0:
+        parts.append("the cross-spin blocks are nonzero "
+                     "(max {:.3e})".format(d_cross))
+    detail = " and ".join(parts)
+    ratio = worst_ratio
+
+    if ratio <= _SPIN_DISCARD_ROUNDOFF_RATIO:
+        logger.warning(
+            "The reduced FLEX susceptibility %s is not exactly spin-redundant: "
+            "%s, against an up-block scale of %.3e at frequency index %d. "
+            "That is %.1e of the kept block there -- within round-off of "
+            "double precision, so it is treated as noise and the calculation "
+            "continues using the up-spin block. Please report it: every tested "
+            "path produces "
+            "bit-identical spin blocks.", label, detail, scale, w_at, ratio)
+        return
+
+    raise ValueError(
+        "The reduced FLEX susceptibility {} is SPIN-RESOLVED: {}, against an "
+        "up-block scale of {:.3e} at frequency index {}. The Eliashberg "
+        "pairing vertex here is "
+        "paramagnetic -- the Kuroki S/C matrices carry no spin index and the "
+        "singlet/triplet decomposition assumes spin-rotational symmetry -- so "
+        "only the up-spin block could be used and the rest would be discarded. "
+        "That is not a controlled approximation of the spin-resolved problem, "
+        "so it is refused rather than silently returning a number. If you meant "
+        "to run a paramagnetic calculation and a field such as coeff_extern is "
+        "the only source of the splitting, drop it and re-run FLEX. If the spin "
+        "structure is intrinsic to your model, this solver cannot describe it: "
+        "a spin-resolved treatment needs an S_z-resolved vertex and the "
+        "transverse susceptibility chi^(+-), which FLEX does not compute at all "
+        "(calc_type='ring+ladder' is rejected on every FLEX scheme).".format(
+            label, detail, scale, w_at))
 
 
 def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
@@ -1574,9 +2083,12 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     - ``"myo"`` (general full-vertex FLEX) is already in orbital-pair space
       ``nd_chi = norb^2``; passed through unchanged.
     - ``"kuroki"`` (reduced / squashed FLEX) is in spin-orbital reduced space
-      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``); the spin-up
-      orbital block ``[:norb, :norb]`` is extracted and diagonally expanded to
-      ``norb^2 x norb^2``.
+      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``), and its matrix
+      index is a DENSITY PAIR: ``X[a, b]`` is ``chi_{(a,a),(b,b)}``.  The
+      spin-up block ``[:norb, :norb]`` is extracted and embedded at the
+      density-pair positions ``[a*norb + a, b*norb + b]`` of the
+      ``norb^2 x norb^2`` orbital-pair space, with every off-density component
+      left exactly zero (see the body for why any other placement is wrong).
 
     Whether the spin-orbital block must be extracted is decided by ``nd_chi``:
     ``nd_chi == norb*ns`` means spin-orbital (extract), ``nd_chi == norb^2``
@@ -1601,9 +2113,25 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     nd = norb * norb          # orbital-pair dimension
     nd_so = norb * ns         # spin-orbital reduced dimension
     nfreq = chi_raw.shape[0]
-    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, -1)
-    nd_chi = int(np.sqrt(chi_full.shape[-1]))
-    chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
+    # Derive nd_chi from the trailing AXES, not from sqrt of the flattened
+    # element count: the latter accepts any rectangle whose product happens to
+    # be a perfect square -- (nfreq, nvol, 2, 8) has 16 trailing elements and
+    # was silently reshaped into a 4x4 susceptibility.
+    #
+    # Two layouts arrive here: the reduced/kuroki one is (nfreq, nvol, nd, nd),
+    # the general/myo one is (nfreq, nvol, norb, norb, norb, norb) -- an
+    # orbital-pair matrix stored with its pair indices unflattened.
+    tail = chi_raw.shape[2:]
+    if len(tail) == 2 and tail[0] == tail[1]:
+        nd_chi = tail[0]
+    elif len(tail) == 4 and len(set(tail)) == 1:
+        nd_chi = tail[0] * tail[1]
+    else:
+        raise ValueError(
+            "FLEX chi must be (nfreq, nvol, nd, nd) or "
+            "(nfreq, nvol, norb, norb, norb, norb); got shape {}.".format(
+                chi_raw.shape))
+    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
 
     if nd_chi == nd and nd_chi == nd_so:
         # ambiguous (norb == 2): the convention tag is the only disambiguator,
@@ -1650,20 +2178,59 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
                     nd_chi, norb, nd, nd_so, convention))
         is_spin_orbital = False
     else:
+        hint = ""
+        if nd_chi == norb and norb % 2 == 0:
+            # The spin-orbital case. FLEX writes chi in its reduced spin-orbital
+            # space, nd = norb_phys * ns; with geom.dat's norb being the
+            # spin-orbital count (= 2 * norb_phys) that lands on nd_chi == norb.
+            # Say so -- the bare dimensions look like a malformed file.
+            hint = (" nd_chi == norb, which is what a "
+                    "spin-orbital FLEX run (mode.enable_spin_orbital = true) "
+                    "produces: FLEX writes chi with the PHYSICAL orbital count "
+                    "while hwave_sc reads norb from geom.dat, where "
+                    "spin-orbital mode stores the spin-orbital count "
+                    "(= 2 x physical). The Eliashberg step does not support "
+                    "spin-orbital / spin-mixing models -- its pairing vertex is "
+                    "paramagnetic -- so this combination is not usable rather "
+                    "than merely misconfigured.")
         raise ValueError(
             "FLEX chi dimension nd_chi={} matches neither the orbital-pair "
-            "size norb^2={} nor the spin-orbital size norb*ns={}.".format(
-                nd_chi, nd, nd_so))
+            "size norb^2={} nor the spin-orbital size norb*ns={} (norb={})."
+            "{}".format(nd_chi, nd, nd_so, norb, hint))
 
     if not is_spin_orbital:
         return chi_full
 
     # Spin-orbital reduced (spin-block ordered s*norb+a): extract the spin-up
-    # orbital block and scatter it diagonally into norb^2 x norb^2.
+    # block and embed it at the DENSITY-PAIR positions of the orbital-pair
+    # space.
+    #
+    # The reduced/squashed scheme keeps only the density-density diagonal of the
+    # susceptibility: the stored X[a, b] IS chi_{(a,a),(b,b)} (its companion
+    # interaction reduction in FLEX._inflate_chi0q_and_ham is
+    # einsum('ksasatbtb->ksatb', ...), the density-density diagonal of the
+    # vertex).  With the orbital-pair flat index (l1,l2) -> l1*norb + l2 used by
+    # the S/C builders, the one faithful embedding is therefore
+    #
+    #     out[(a,a), (b,b)] = X[a, b],   every other component zero.
+    #
+    # The historical placement out[(l1,l2), (l3,l2)] = X[l1, l3] (a delta_{l2,l4}
+    # "spectator" scatter, i.e. kron(X, I_norb)) instead read the density-pair
+    # index as an ordinary orbital index.  That dropped the genuine
+    # inter-orbital density coupling chi_{(0,0),(1,1)} -- which S @ chi @ S does
+    # reference -- and scattered X into pair positions the reduced scheme never
+    # computed, so chi0q_mode="flex" on a reduced run disagreed with the
+    # equivalent "load" run for identical Sigma=0 physics.
+    #
+    # Off-density rows/columns stay exactly zero: a reduced run carries no
+    # information about pair indices (a,b) with a != b, and fabricating them
+    # from the density block is what caused the mismatch.  See
+    # _compute_vertices_flex, which warns when the interaction actually needs
+    # those missing components.
     chi_orb = chi_full[:, :, :, :, :norb, :norb]
     out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        out[:, :, :, :, l2::norb, l2::norb] = chi_orb
+    dens = np.arange(norb) * norb + np.arange(norb)   # flat index of (a,a)
+    out[..., dens[:, None], dens[None, :]] = chi_orb
     return out
 
 
@@ -1684,7 +2251,92 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
     green_raw = data_g["green"]
     # H-wave format: (nblock, nfreq, nvol, norb, norb)
+    if green_raw.ndim != 5:
+        raise ValueError(
+            "green file '{}': expected a rank-5 array (nblock, nfreq, "
+            "nvol, norb, norb), got shape {}.".format(
+                green_path, green_raw.shape))
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    # Validate every dimension BEFORE any use: an element-count-compatible
+    # but misshapen file would otherwise be silently reinterpreted by the
+    # reshape below (measured: (1, 3, 1, 4, 4) on a 4-site 2-orbital
+    # system was accepted and scrambled), an empty frequency axis would
+    # contract to an all-zero kernel and return a bogus eigenvalue, and a
+    # zero-block file died on an incidental IndexError.
+    expected_nvol = Nx * Ny * Nz
+    if nblock < 1 or nmat_g < 1:
+        raise ValueError(
+            "green file '{}': needs at least one spin block and one "
+            "frequency, got shape {}.".format(green_path, green_raw.shape))
+    if nvol != expected_nvol or norb1 != norb or norb2 != norb:
+        raise ValueError(
+            "green file '{}': shape {} does not match this run "
+            "(nvol = Nx*Ny*Nz = {}, norb = {}).".format(
+                green_path, green_raw.shape, expected_nvol, norb))
+    # A spin-diag FLEX run writes TWO blocks, G_up and G_down. Taking block 0
+    # would discard the down-spin propagator exactly as the reduced chi loader
+    # used to discard the down-spin susceptibility -- and the pair bubble built
+    # from it feeds the Eliashberg kernel directly. The susceptibility guard
+    # normally rejects such a run first, but relying on that is fragile: it is
+    # a different file, and a run whose chi happens to be redundant while its
+    # Green functions are not would slip straight through. (The dynamic loader
+    # even reads the Green function BEFORE the susceptibility check.) So the
+    # same policy applies here: discarding the other blocks is lossless
+    # exactly when they are redundant; when they are not, the pair bubble
+    # cannot represent the stored physics and the loader RAISES unless the
+    # user takes responsibility via [eliashberg] accept_up_block_only.
+    # Non-finite content is rejected up front (below); the block
+    # comparison then runs on finite data with plain component equality.
+    # Non-finite content is rejected at the file boundary, as the
+    # susceptibility loader already does: a NaN/Inf dressed Green function
+    # reaches the pair bubble G2 directly, and the iteration solver can
+    # turn the resulting non-finite norm into a SAVED zero eigenvalue with
+    # converged=False (round-7 review). Per-frequency scan, bounded
+    # temporaries.
+    for b in range(nblock):
+        for f in range(nmat_g):
+            if not np.all(np.isfinite(green_raw[b, f])):
+                raise ValueError(
+                    "green file '{}' contains non-finite values (block "
+                    "{}, frequency index {}); a NaN/Inf dressed Green "
+                    "function cannot feed the pair bubble. Re-run the "
+                    "producing FLEX calculation.".format(green_path, b, f))
+
+    if nblock > 1:
+        def _differs(b):
+            # Per-frequency, per-component comparison (finiteness is
+            # already established above, so plain equality suffices);
+            # frequency-sliced scanning bounds the comparison temporaries
+            # to one (nvol, norb, norb) slice. .real/.imag are views.
+            for f in range(green_raw.shape[1]):
+                gb = green_raw[b, f]
+                g0 = green_raw[0, f]
+                if not (np.array_equal(gb.real, g0.real)
+                        and np.array_equal(gb.imag, g0.imag)):
+                    return True
+            return False
+
+        for b in range(1, nblock):
+            if _differs(b):
+                if _accept_up_block_only(input_dict):
+                    logger.warning(
+                        "green file '%s' carries %d spin blocks with "
+                        "DIFFERING content; [eliashberg] "
+                        "accept_up_block_only is set, so the up block "
+                        "alone feeds the pair bubble and the discarded "
+                        "spin content is the user's responsibility.",
+                        green_path, nblock)
+                    break
+                raise ValueError(
+                    "green file '{}' carries {} spin blocks whose contents "
+                    "differ (block {} != block 0). The Eliashberg pair "
+                    "bubble is built from the up block only, so a "
+                    "spin-resolved dressed Green function cannot be "
+                    "represented -- the discarded block is real physics, "
+                    "not redundancy. Re-run FLEX paramagnetically, or set "
+                    "[eliashberg] accept_up_block_only = true to take "
+                    "responsibility for the approximation.".format(
+                        green_path, nblock, b))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
@@ -1726,7 +2378,8 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
     # so the static slice is taken before the spin-orbital expansion -- the full
     # loader would otherwise allocate the whole Nmat-long expanded array only to
     # keep one frequency (a memory regression proportional to Nmat).
-    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(
+    (chi_s_raw, chi_c_raw, chi_convention,
+     legacy_tags) = _read_flex_chi_raw(
         input_dict, interactions=interactions)
 
     # The zero bosonic frequency is located via the freq_index/nmat metadata
@@ -1751,6 +2404,23 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
     center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
     # Slice the static frequency FIRST, then expand only that single slice.
+    # Check the WHOLE stored axis, not just the slice consumed here.
+    #
+    # Both choices have a failure mode and neither case is common: validating
+    # only the static slice lets through a run that is redundant at omega=0 and
+    # polarized elsewhere, which then returns a paramagnetic eigenvalue in
+    # silence; validating everything rejects a file whose unused frequencies are
+    # malformed. The first failure is silent and the second is loud and
+    # diagnosable, so the axis is checked in full. Paramagnetism is a property
+    # of the producing run rather than of one frequency, which is the same
+    # reason.
+    legacy_s, legacy_c = legacy_tags
+    if _accept_up_block_only(input_dict):
+        legacy_s = legacy_c = "config_override"
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
+                                legacy_s)
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
+                                legacy_c)
     chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
                             norb, Nx, Ny, Nz, chi_convention)[0]
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
@@ -3417,9 +4087,23 @@ def calc_eliashberg(input_dict):
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
+        # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
+        # unsupported calculation must not allocate heavily on its way to
+        # the validation error (round-10 review).
+        _reject_reduced_flex_unsupported(inter_k, chi_convention)
+        # One S/C build for the run: the pair feeds the missing-component
+        # diagnostic AND the vertex contraction (round-9 review; previously
+        # each built its own full-grid pair).
+        sc_mats = _build_vertex_sc_matrices(chi_convention, inter_k,
+                                            norb, Nx, Ny, Nz)
+        _warn_reduced_flex_missing_components(
+            inter_k, norb, Nx, Ny, Nz, chi_convention,
+            sc_matrices=(sc_mats if str(chi_convention).lower() == "kuroki"
+                         else None))
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type=pairing_type,
-                                      convention=chi_convention)
+                                      convention=chi_convention,
+                                      sc_matrices=sc_mats)
         logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
 
     else:

@@ -219,7 +219,13 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
             # slice is observable
             chiq = np.zeros((nfreq, nvol, nd, nd), dtype=np.complex128)
             for i in range(nfreq):
-                chiq[i] = float(i)
+                # Fill the SPIN-DIAGONAL blocks only, leaving the cross-spin
+                # blocks at zero: that is what a paramagnetic reduced run
+                # stores, and the loader now refuses anything else (only the
+                # up-spin block survives the embedding). The frequency index is
+                # still encoded in the value, which is what these tests read.
+                chiq[i, :, 0, 0] = float(i)
+                chiq[i, :, 1, 1] = float(i)
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 np.savez(os.path.join(tmp, name),
                          chiq=chiq, freq_index=freq_index, nmat=1024,
@@ -247,7 +253,13 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
             nfreq, nvol, nd = 8, 2, 2
             chiq = np.zeros((nfreq, nvol, nd, nd), dtype=np.complex128)
             for i in range(nfreq):
-                chiq[i] = float(i)
+                # Fill the SPIN-DIAGONAL blocks only, leaving the cross-spin
+                # blocks at zero: that is what a paramagnetic reduced run
+                # stores, and the loader now refuses anything else (only the
+                # up-spin block survives the embedding). The frequency index is
+                # still encoded in the value, which is what these tests read.
+                chiq[i, :, 0, 0] = float(i)
+                chiq[i, :, 1, 1] = float(i)
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 np.savez(os.path.join(tmp, name),
                          chiq=chiq, chi_convention="kuroki")

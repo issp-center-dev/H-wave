@@ -484,7 +484,8 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
 
 
 def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
-                                  Nx, Ny, Nz, pairing_type, convention):
+                                  Nx, Ny, Nz, pairing_type, convention,
+                                  sc_matrices=None):
     """Full-frequency pairing vertex: apply sc._compute_vertices_flex per
     bosonic Matsubara frequency and stack along the trailing axis.
 
@@ -513,10 +514,31 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     import hwave.sc as sc
     nmat = chis_w.shape[-1]
 
+    # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
+    # unsupported calculation must not allocate heavily on its way to the
+    # validation error (round-10 review).
+    sc._reject_reduced_flex_unsupported(inter_k, convention)
+
+    # The S/C matrices are frequency-independent: build ONE pair for the
+    # whole run (or take the caller's) and hand it to the diagnostic and to
+    # every per-frequency contraction. Previously each of the ~nmat calls
+    # rebuilt an identical full-grid pair (round-9 review).
+    if sc_matrices is None:
+        sc_matrices = sc._build_vertex_sc_matrices(convention, inter_k,
+                                                   norb, Nx, Ny, Nz)
+
+    # Once for the whole run: _compute_vertices_flex below is called per
+    # frequency, so warning inside it would repeat nmat (~1000) times.
+    sc._warn_reduced_flex_missing_components(
+        inter_k, norb, Nx, Ny, Nz, convention,
+        sc_matrices=(sc_matrices if str(convention).lower() == "kuroki"
+                     else None))
+
     def _one(l):
         return sc._compute_vertices_flex(
             chis_w[..., l], chic_w[..., l], inter_k, norb, Nx, Ny, Nz,
-            pairing_type=pairing_type, convention=convention)
+            pairing_type=pairing_type, convention=convention,
+            sc_matrices=sc_matrices)
 
     v0 = _one(0)
     out = np.empty(v0.shape + (nmat,), dtype=v0.dtype)
@@ -1020,18 +1042,24 @@ def _ir_vertex_to_rtau(V_nodes, axB, axF, workers=1):
 
 
 def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
-                          convention):
+                          convention, sc_matrices=None):
     """The frequency-INDEPENDENT part of the pairing vertex: the bare
     ``0.5*(S+C)``-type term of ``sc._compute_vertices_flex``, obtained by
     evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
     (CoulombIntra-only) model in the Kuroki convention this cancels
     exactly (S+C = U-U = 0), which is why the issue-#57 defect stayed
-    invisible on the CoulombIntra-only test fixtures."""
+    invisible on the CoulombIntra-only test fixtures.
+
+    The Kuroki Exchange/PairHop rejection is enforced by the delegate
+    itself (``sc._reject_reduced_flex_unsupported``), so this route is
+    guarded even when called directly. ``sc_matrices`` forwards a
+    precomputed (S, C) pair so the run's single build is reused."""
     import hwave.sc as sc
     zero = np.zeros((Nx, Ny, Nz, norb ** 2, norb ** 2), dtype=complex)
     return sc._compute_vertices_flex(zero, zero, inter_k, norb, Nx, Ny, Nz,
                                      pairing_type=pairing_type,
-                                     convention=convention)
+                                     convention=convention,
+                                     sc_matrices=sc_matrices)
 
 
 def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
@@ -1298,9 +1326,16 @@ def solve_dynamic(input_dict):
     # --- Vertex and pair bubble on the frequency axis ---
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
                 "convention=%s)...", pairing_type, chi_convention)
+    # Reject before allocating the O(Nq * norb^4) pair (round-10 review).
+    sc._reject_reduced_flex_unsupported(inter_k, chi_convention)
+    # One S/C build for the whole solve: reused by every per-frequency
+    # contraction and by the IR instantaneous vertex below (round-9 review).
+    sc_mats = sc._build_vertex_sc_matrices(chi_convention, inter_k,
+                                           norb, Nx, Ny, Nz)
     Vs_q_w = compute_vertices_flex_dynamic(
         chis_w, chic_w, inter_k, norb, Nx, Ny, Nz,
-        pairing_type=pairing_type, convention=chi_convention)
+        pairing_type=pairing_type, convention=chi_convention,
+        sc_matrices=sc_mats)
     logger.info("Computing frequency-resolved pair bubble G2...")
     G2_w = calc_g2_dynamic(green_w, beta)
 
@@ -1358,7 +1393,8 @@ def solve_dynamic(input_dict):
         # analytically (see eliashberg_kernel_ir).
         V_inst = _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
                                        pairing_type=pairing_type,
-                                       convention=chi_convention)
+                                       convention=chi_convention,
+                                       sc_matrices=sc_mats)
         inst_scale = float(np.abs(V_inst).max())
         if inst_scale > 0.0:
             logger.info("IR: instantaneous vertex part split off "
