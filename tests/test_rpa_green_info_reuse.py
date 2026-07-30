@@ -695,5 +695,83 @@ class TestRoundSixHardening(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class TestRoundSevenHardening(unittest.TestCase):
+
+    def test_mapping_provenance_fingerprint_is_verified(self):
+        """A Mapping that is not a plain dict must still have its
+        fingerprint verified: the dict-only fetch silently skipped it."""
+        from collections import UserDict
+
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = _make('general', inter)
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+        edited = np.array(g['chi0q'], copy=True)
+        edited.flat[0] = edited.flat[0] + 1e-8
+        g['chi0q'] = edited
+        g['chi0q_freq_meta'] = UserDict(dict(g['chi0q_freq_meta']))
+        sv2, _ = _make('general', inter)
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g, 'tests/rpa/output')
+        self.assertIn('fingerprint', str(cm.exception))
+
+    def test_legitimate_nmat_forms_are_accepted(self):
+        """operator.index strictness must not reject legitimate integer
+        forms: python int, NumPy integer scalars, and npz 0-d values."""
+        import shutil
+        import tempfile
+
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = _make('general', inter)
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+        base = dict(g['chi0q_freq_meta'])
+        d = tempfile.mkdtemp()
+        try:
+            np.savez(os.path.join(d, 'n.npz'), nmat=32)
+            npz_val = np.load(os.path.join(d, 'n.npz'))['nmat']
+            for name, val in (("int", 32), ("np.int32", np.int32(32)),
+                              ("np.int64", np.int64(32)),
+                              ("npz 0-d", npz_val)):
+                with self.subTest(nmat=name):
+                    g2 = dict(g)
+                    g2['chi0q_freq_meta'] = dict(base, nmat=val)
+                    sv2, _ = _make('general', inter)
+                    sv2.solve(g2, 'tests/rpa/output')
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_legacy_file_end_to_end_labels(self):
+        """A legacy chi0q_init file (no freq_index, no nmat): the save must
+        emit the ambiguous 0..n-1 labels, omit nmat, and never serialize a
+        fingerprint key."""
+        import shutil
+        import tempfile
+
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = _make('general', inter)
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+        d = tempfile.mkdtemp()
+        try:
+            np.savez(os.path.join(d, 'legacy.npz'),
+                     chi0q=np.asarray(g['chi0q'])[:9])
+            sv2, r2 = _make('general', inter)
+            g2 = r2.get_param("green")
+            g2.update(sv2.read_init({'path_to_input': d,
+                                     'chi0q_init': 'legacy.npz'}))
+            sv2.solve(g2, 'tests/rpa/output')
+            sv2.save_results({'path_to_output': d, 'chiq': 'chiq.npz'}, g2)
+            z = np.load(os.path.join(d, 'chiq.npz'))
+            np.testing.assert_array_equal(z['freq_index'], np.arange(9))
+            self.assertNotIn('nmat', z)
+            self.assertNotIn('fingerprint', z)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

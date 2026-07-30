@@ -1101,8 +1101,10 @@ class RPA:
                 # output or solve a semantically different tensor.
                 norm = _validate_chi0q_provenance(
                     mem_meta, nfreq, source="green_info")
-                fp = (mem_meta.get("fingerprint")
-                      if isinstance(mem_meta, dict) else None)
+                # the validator has already guaranteed a Mapping, so read
+                # the fingerprint unconditionally -- a dict-only check let
+                # a UserDict's stale fingerprint pass unverified
+                fp = mem_meta.get("fingerprint")
                 if fp is not None and fp != _chi0q_fingerprint(chi0q):
                     raise ValueError(
                         "chi0q_freq_meta does not belong to the supplied "
