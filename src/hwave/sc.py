@@ -1519,15 +1519,25 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
             "PairLift is configured but does not contribute to the S/C pairing "
             "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
 
+    # Validate the convention BEFORE the cache branch: with precomputed
+    # sc_matrices the dispatcher below is skipped, and an unknown tag would
+    # otherwise be silently treated as "not kuroki" = unrestricted
+    # (round-10 review reproduced convention="invalid" returning a vertex).
+    conv = str(convention).lower()
+    if conv not in ("kuroki", "myo"):
+        raise ValueError(
+            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(
+                convention))
+
     # Enforced at THIS boundary (not only in the orchestrator): every Kuroki
     # vertex construction -- including chi = 0 via _instantaneous_vertex --
     # must reject Exchange/PairHop, or the interaction is silently omitted.
-    _reject_reduced_flex_unsupported(inter_k, convention)
+    _reject_reduced_flex_unsupported(inter_k, conv)
 
     if sc_matrices is not None:
         S_all, C_all = sc_matrices
     else:
-        S_all, C_all = _build_vertex_sc_matrices(convention, inter_k,
+        S_all, C_all = _build_vertex_sc_matrices(conv, inter_k,
                                                  norb, Nx, Ny, Nz)
 
     SChisS = S_all @ chis @ S_all
@@ -4077,6 +4087,10 @@ def calc_eliashberg(input_dict):
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
+        # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
+        # unsupported calculation must not allocate heavily on its way to
+        # the validation error (round-10 review).
+        _reject_reduced_flex_unsupported(inter_k, chi_convention)
         # One S/C build for the run: the pair feeds the missing-component
         # diagnostic AND the vertex contraction (round-9 review; previously
         # each built its own full-grid pair).

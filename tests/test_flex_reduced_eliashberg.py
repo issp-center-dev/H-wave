@@ -780,6 +780,69 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
                                       convention="myo")
         self.assertEqual(V2.shape, (norb, norb, norb, norb, Nx, Ny, Nz))
 
+    def test_rejection_holds_with_cached_sc_matrices(self):
+        """Supplying precomputed sc_matrices must not bypass the rejection:
+        the cache skips only the BUILD, never the validation (round-10
+        review reproduced convention='invalid' + cache returning a
+        vertex)."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        nd = norb * norb
+        chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
+        good = self._inter_k(["CoulombIntra"], norb, Nx, Ny, Nz)
+        mats = sc._build_vertex_sc_matrices("kuroki", good,
+                                            norb, Nx, Ny, Nz)
+
+        for key in ("Exchange", "PairHop"):
+            with self.subTest(interaction=key):
+                bad = self._inter_k(["CoulombIntra", key], norb, Nx, Ny, Nz)
+                with self.assertRaises(ValueError) as cm:
+                    sc._compute_vertices_flex(chi, chi, bad, norb,
+                                              Nx, Ny, Nz,
+                                              convention="kuroki",
+                                              sc_matrices=mats)
+                self.assertIn(key, str(cm.exception))
+                with self.assertRaises(ValueError):
+                    ed._instantaneous_vertex(bad, norb, Nx, Ny, Nz,
+                                             pairing_type="singlet",
+                                             convention="kuroki",
+                                             sc_matrices=mats)
+
+    def test_unknown_convention_rejected_even_with_cache(self):
+        """An unknown convention tag must fail closed at every boundary,
+        including when the dispatcher (the only other validator) is skipped
+        by a supplied cache."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        norb, Nx, Ny, Nz = 1, 2, 2, 1
+        chi = np.zeros((Nx, Ny, Nz, 1, 1), dtype=complex)
+        chi_w = np.zeros((Nx, Ny, Nz, 1, 1, 3), dtype=complex)
+        inter_k = self._inter_k(["CoulombIntra"], norb, Nx, Ny, Nz)
+        mats = sc._build_vertex_sc_matrices("kuroki", inter_k,
+                                            norb, Nx, Ny, Nz)
+
+        for cache in (None, mats):
+            with self.subTest(cached=cache is not None):
+                with self.assertRaises(ValueError) as cm:
+                    sc._compute_vertices_flex(chi, chi, inter_k, norb,
+                                              Nx, Ny, Nz,
+                                              convention="invalid",
+                                              sc_matrices=cache)
+                self.assertIn("invalid", str(cm.exception))
+                with self.assertRaises(ValueError):
+                    ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
+                                             pairing_type="singlet",
+                                             convention="invalid",
+                                             sc_matrices=cache)
+                with self.assertRaises(ValueError):
+                    ed.compute_vertices_flex_dynamic(
+                        chi_w, chi_w, inter_k, norb, Nx, Ny, Nz,
+                        pairing_type="singlet", convention="invalid",
+                        sc_matrices=cache)
+
     def test_dynamic_builder_builds_sc_matrices_once(self):
         """The S/C matrices are frequency-independent: one build per run,
         independent of nmat (round-9 review measured ~nmat identical

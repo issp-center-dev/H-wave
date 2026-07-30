@@ -514,6 +514,11 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     import hwave.sc as sc
     nmat = chis_w.shape[-1]
 
+    # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
+    # unsupported calculation must not allocate heavily on its way to the
+    # validation error (round-10 review).
+    sc._reject_reduced_flex_unsupported(inter_k, convention)
+
     # The S/C matrices are frequency-independent: build ONE pair for the
     # whole run (or take the caller's) and hand it to the diagnostic and to
     # every per-frequency contraction. Previously each of the ~nmat calls
@@ -1321,6 +1326,8 @@ def solve_dynamic(input_dict):
     # --- Vertex and pair bubble on the frequency axis ---
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
                 "convention=%s)...", pairing_type, chi_convention)
+    # Reject before allocating the O(Nq * norb^4) pair (round-10 review).
+    sc._reject_reduced_flex_unsupported(inter_k, chi_convention)
     # One S/C build for the whole solve: reused by every per-frequency
     # contraction and by the IR instantaneous vertex below (round-9 review).
     sc_mats = sc._build_vertex_sc_matrices(chi_convention, inter_k,
