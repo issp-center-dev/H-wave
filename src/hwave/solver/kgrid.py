@@ -4,10 +4,11 @@
 given axes: the momentum/position negation ``k -> -k`` (``r -> -r``) on an
 FFT-ordered grid, where index 0 is the Gamma point / origin and stays put.
 
-Before this module the map was spelled three different ways at eight call
-sites -- ``roll(arr[::-1], +1)``, ``flip(roll(arr, -1))`` and a fancy-index
-gather ``arr[(-arange(n)) % n]`` -- kept in sync only by comments ("same
-reverse+roll map as the uniform path"). The spellings are the same gather,
+Before this module the map was spelled three different ways at eighteen
+call sites -- ``roll(arr[::-1], +1)``, ``flip(roll(arr, -1))`` and a
+fancy-index gather ``arr[(-arange(n)) % n]`` -- kept in sync only by
+comments ("same reverse+roll map as the uniform path"). The spellings are
+the same gather,
 so consolidating them is bit-identical; having ONE implementation matters
 because the map has a known trap: for an axis of length N <= 2 it is the
 identity, so a misapplied reversal (wrong axes, or reversing an orbital
@@ -17,11 +18,16 @@ fixtures and was exactly the defect history of the transverse channel
 involution, index-0 fixed point, equivalence of all three historical
 spellings -- once, here.
 
-Frequency/imaginary-time axes are deliberately NOT this module's business:
-their reversal convention differs per grid (a centered fermionic Matsubara
-axis reverses as ``n -> nmat - 1 - n`` with no roll; a tau grid carries a
-fermionic sign and antiperiodicity; symmetric IR node sets reverse as a
-plain flip). Callers compose those locally where the physics lives.
+The helper is a GENERIC periodic-grid index reversal: it applies to any
+axis whose index 0 is the origin of a periodic FFT-ordered coordinate.
+That includes the uniform imaginary-time grid (tau_j = j*beta/N, so
+-tau_j wraps to tau_{(N-j) % N}): rpa.py's chi0 kernels deliberately pass
+their tau axis through this map, with the fermionic sign handled
+separately. What stays OUT of this module is every frequency/time axis
+whose reversal is NOT this map -- a centered fermionic Matsubara axis
+reverses as ``n -> nmat - 1 - n`` with no roll, a symmetric IR node set
+as a plain flip, and flex.py's tau-node sets likewise flip without
+rolling. Callers compose those locally where the physics lives.
 """
 
 import numpy as np

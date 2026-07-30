@@ -89,5 +89,46 @@ class TestReverseFftAxes(unittest.TestCase):
         np.testing.assert_array_equal(new, old)
 
 
+class TestProductionCallSites(unittest.TestCase):
+    """Call the cheap converted PRODUCTION functions directly against the
+    exact pre-consolidation inline expressions, so a wrong axis tuple at a
+    call site cannot hide behind the helper-level tests. (The heavy kernel
+    sites -- the RPA/FLEX chi0 kernels and UHFk's interaction setup -- are
+    covered end-to-end by their reference-value suites.)"""
+
+    def test_sc_reverse_k_and_orbital(self):
+        import hwave.sc as sc
+
+        rng = np.random.default_rng(11)
+        gap = rng.standard_normal((3, 3, 4, 3, 5)) \
+            + 1j * rng.standard_normal((3, 3, 4, 3, 5))
+        old = np.swapaxes(
+            np.roll(gap[:, :, ::-1, ::-1, ::-1], 1, axis=(2, 3, 4)), 0, 1)
+        np.testing.assert_array_equal(sc._reverse_k_and_orbital(gap), old)
+
+    def test_eliashberg_dynamic_reverse_kw_and_orbital(self):
+        from hwave.solver import eliashberg_dynamic as ed
+
+        rng = np.random.default_rng(12)
+        gap_w = rng.standard_normal((3, 3, 4, 3, 5, 6)) \
+            + 1j * rng.standard_normal((3, 3, 4, 3, 5, 6))
+        old = np.roll(gap_w[:, :, ::-1, ::-1, ::-1, :], 1, axis=(2, 3, 4))
+        old = np.swapaxes(old[..., ::-1], 0, 1)
+        np.testing.assert_array_equal(ed._reverse_kw_and_orbital(gap_w), old)
+
+    def test_sc_symmetrise_interactions_k(self):
+        import hwave.sc as sc
+
+        rng = np.random.default_rng(13)
+        nx, ny, nz = 4, 3, 5
+        M = rng.standard_normal((3, 3, nx, ny, nz)) \
+            + 1j * rng.standard_normal((3, 3, nx, ny, nz))
+        Mrev_old = M[:, :, (-np.arange(nx)) % nx][:, :, :, (-np.arange(ny)) % ny][
+            :, :, :, :, (-np.arange(nz)) % nz]
+        want = 0.5 * (M + Mrev_old.transpose(1, 0, 2, 3, 4))
+        got = sc._symmetrise_interactions_k({"Hund": M})["Hund"]
+        np.testing.assert_array_equal(got, want)
+
+
 if __name__ == "__main__":
     unittest.main()
