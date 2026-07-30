@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.vertex_table import fierz_coefficients
+from hwave.solver.density_projection import (
+    project_density_pairs, project_density_squashed)
 from . import backend as _bk
 from . import fold
 from . import matsubara as _ms
@@ -1323,8 +1325,7 @@ class RPA:
                     # exploited by _find_block_diagonal inside _solve_rpa.
                     nvol = self.lattice.nvol
                     nd = self.nd
-                    ham = xp.einsum('kaabb->kab',
-                                    ham_long.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
                 else:
                     ham = ham_long
 
@@ -1345,8 +1346,7 @@ class RPA:
                                       chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
-                    ham = xp.einsum('kaabb->kab',
-                                    ham_long.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
 
                 elif self.calc_scheme == "squashed":
                     nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
@@ -1363,8 +1363,8 @@ class RPA:
                                       chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
 
-                    ham = xp.einsum('ksauatbvb->ksuatvb',
-                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+                    ham = project_density_squashed(ham_long, nvol, ns,
+                                                   norb, xp)
 
                 else:
                     nblock,nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
@@ -1401,8 +1401,9 @@ class RPA:
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
-                    ham = xp.einsum('ksasatbtb->ksatb',
-                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(nd,)*2)
+                    # same spin-major extraction as the combined-index
+                    # pair diagonal (verified bitwise); shared projection
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
 
                 elif self.calc_scheme == "squashed":
                     # norb**2 squash
@@ -1420,8 +1421,8 @@ class RPA:
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
 
-                    ham = xp.einsum('ksauatbvb->ksuatvb',
-                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+                    ham = project_density_squashed(ham_long, nvol, ns,
+                                                   norb, xp)
 
                 else:
                     # general nd**4 case
