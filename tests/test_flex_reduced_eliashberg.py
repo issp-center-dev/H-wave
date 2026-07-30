@@ -1443,6 +1443,11 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
              .reshape(nmat, nvol, norb, norb) + 1.0)
         if nan:
             g[0, 0, 0, 0] = np.nan
+        if second_scale == 1.0:
+            # a true copy: multiplying by 1.0 is a COMPLEX multiply and
+            # turns nan+0j into nan+nanj, which under the exact
+            # per-component semantics is genuinely differing content
+            return [g, g.copy()]
         return [g, g * second_scale]
 
     def test_identical_blocks_pass(self):
