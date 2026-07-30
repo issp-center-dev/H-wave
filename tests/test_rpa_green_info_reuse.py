@@ -83,5 +83,81 @@ class TestGreenInfoReuse(unittest.TestCase):
         np.testing.assert_array_equal(np.asarray(g2['chiq']), chiq_free)
 
 
+class TestValidationStrictness(unittest.TestCase):
+
+    def test_junk_shapes_are_rejected_even_under_optimized_python(self):
+        """The validation must not be built on `assert`: under python -O a
+        malformed array was silently accepted and assigned a spin mode
+        (verified during review with shape (3, 99, 7, 8))."""
+        import subprocess
+        import sys
+        import textwrap
+
+        code = textwrap.dedent("""
+            import sys, numpy as np
+            sys.path.insert(0, %r)
+            import hwave.solver.rpa as rpa_mod
+            param_ham = {'Geometry': {'norb': 1, 'rvec': np.eye(3),
+                                      'center': [[0, 0, 0]]},
+                         'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                         'CoulombIntra': {((0, 0, 0), (0, 0)): 4.0}}
+            info = {'mode': 'RPA', 'param': {'T': 2.0, 'filling': 0.5,
+                    'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                    'Nmat': 16},
+                    'enable_spin_orbital': False, 'calc_scheme': 'reduced',
+                    'calc_type': 'ring'}
+            sv = rpa_mod.RPA(param_ham, {}, info)
+            try:
+                sv._validate_chi0q_shape(
+                    np.zeros((3, 99, 7, 8), dtype=complex), source="probe")
+                print("ACCEPTED")
+            except ValueError:
+                print("REJECTED")
+        """) % (os.path.abspath("src"),)
+        r = subprocess.run([sys.executable, "-O", "-c", code],
+                           capture_output=True, text=True)
+        self.assertIn("REJECTED", r.stdout,
+                      "junk chi0q accepted under python -O: %s %s"
+                      % (r.stdout, r.stderr[-300:]))
+
+    def test_full_range_spin_diag_input_does_not_log_partial_range(self):
+        """The partial-frequency check must read the frequency axis: a
+        spin-diag array carries the spin-block axis first (shape[0] == 2),
+        which used to be misreported as 'partial range ... 2 in 32'."""
+        import logging
+
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv1, r1 = _make('general', inter)
+        g = r1.get_param("green")
+        sv1.solve(g, 'tests/rpa/output')
+
+        sv2, r2 = _make('general', inter)
+        g2 = r2.get_param("green")
+        g2['chi0q'] = np.stack([np.asarray(g['chi0q'])] * 2, axis=0)
+        with self.assertLogs("hwave.solver.rpa", level=logging.INFO) as cm:
+            sv2.solve(g2, 'tests/rpa/output')
+        self.assertFalse(
+            any("partial range" in m for m in cm.output),
+            "full-range spin-diag input misreported as partial: %s"
+            % [m for m in cm.output if "partial" in m])
+
+    def test_spinful_shaped_input_selects_spinful_mode(self):
+        """An in-memory chi0q with nd == norb * ns must dispatch to the
+        spinful branch (the file route already did); a zero bubble solves
+        to a zero chiq without touching the Green-function machinery."""
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv, r = _make('general', inter)
+        g = r.get_param("green")
+        nvol = sv.lattice.nvol
+        nd = sv.nd
+        g['chi0q'] = np.zeros((sv.nmat, nvol, nd, nd, nd, nd),
+                              dtype=complex)
+        sv.solve(g, 'tests/rpa/output')
+        self.assertEqual(sv.spin_mode, "spinful")
+        self.assertTrue(np.all(np.asarray(g['chiq']) == 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()

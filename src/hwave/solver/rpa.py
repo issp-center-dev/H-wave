@@ -959,8 +959,13 @@ class RPA:
             # as the file-based chi0q_init route does (issue #109)
             chi0q = green_info["chi0q"]
             self._validate_chi0q_shape(chi0q, source="green_info")
-            if chi0q.shape[0] != self.nmat:
-                logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+            # spin-diag arrays carry the spin-block axis first; the
+            # frequency axis is shape[1] there (shape[0] == 2 == nblock,
+            # which used to be misreported as a partial frequency range)
+            nfreq = (chi0q.shape[1] if self.spin_mode == "spin-diag"
+                     else chi0q.shape[0])
+            if nfreq != self.nmat:
+                logger.info("partial range in matsubara frequency: {} in {}".format(nfreq, self.nmat))
                 #self.nmat = chi0q.shape[0]
             if gpu_active:
                 # VRAM preflight for the externally-supplied chi0q path: the
@@ -1412,12 +1417,27 @@ class RPA:
                 # spin-free or spinful
                 #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
                 cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
+                if not (cs[1] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
                 nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
+                if not (nd == self.nd or nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[2] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[3] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[5] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[5] (shape {})".format(
+                            source, chi0q.shape))
 
                 if nd == self.nd:
                     self.spin_mode = "spinful"
@@ -1427,17 +1447,37 @@ class RPA:
                 # spin-diagonal
                 #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
                 cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
+                if not (cs[0] == 2):
+                    raise ValueError(
+                        "chi0q from {}: spin block (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[2] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
                 nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
-                assert cs[6] == nd, "shape[6]"
+                if not (nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[5] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[5] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[6] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[6] (shape {})".format(
+                            source, chi0q.shape))
 
                 self.spin_mode = "spin-diag"
             else:
-                assert False, "unexpected shape for general scheme: {}".format(chi0q.shape)
+                raise ValueError(
+                    "chi0q from {}: unexpected shape for general scheme: "
+                    "{}".format(source, chi0q.shape))
 
         elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
             # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
@@ -1445,10 +1485,19 @@ class RPA:
                 # spin-free or spinful
                 #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
                 cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
+                if not (cs[1] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
                 nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
+                if not (nd == self.nd or nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[2] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[3] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
 
                 if nd == self.nd:
                     self.spin_mode = "spinful"
@@ -1458,19 +1507,34 @@ class RPA:
                 # spin-diagonal
                 #   shape = (nblock,nmat,nvol,norb,norb)
                 cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
+                if not (cs[0] == 2):
+                    raise ValueError(
+                        "chi0q from {}: spin block (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[2] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
                 nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
+                if not (nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
 
                 self.spin_mode = "spin-diag"
             else:
-                assert False, "unexpected shape for reduced scheme: {}".format(chi0q.shape)
+                raise ValueError(
+                    "chi0q from {}: unexpected shape for reduced scheme: "
+                    "{}".format(source, chi0q.shape))
         else:
-            assert False, "unknown scheme: {}".format(self.calc_scheme)
+            raise ValueError(
+                "unknown scheme: {}".format(self.calc_scheme))
 
-        logger.info("chi0q from {}: shape={}, spin_mode={}".format(
+        logger.debug("chi0q from {}: shape={}, spin_mode={}".format(
             source, chi0q.shape, self.spin_mode))
 
     def _read_chi0q(self, file_name):
