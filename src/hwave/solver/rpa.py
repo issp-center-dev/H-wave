@@ -1401,8 +1401,9 @@ class RPA:
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
-                    ham = xp.einsum('ksasatbtb->ksatb',
-                                    ham_long.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(nd,)*2)
+                    # same spin-major extraction as the combined-index
+                    # pair diagonal (verified bitwise); shared projection
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
 
                 elif self.calc_scheme == "squashed":
                     # norb**2 squash
