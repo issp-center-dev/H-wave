@@ -33,6 +33,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import RPA, Lattice, Interaction
+from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import matsubara as _ms
 
@@ -1818,9 +1819,11 @@ class FLEX(RPA):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_src
 
-            ham = xp.einsum('ksasatbtb->ksatb',
-                            ham_orig.reshape(nvol, *(ns, norb) * 4)
-                            ).reshape(nvol, nd, nd)
+            # 'ksasatbtb->ksatb' through the (ns, norb) factorized view
+            # picks the same entries as the combined-index pair diagonal
+            # and lands them in the same spin-major (nd, nd) layout, so it
+            # routes through the shared projection
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         elif self.spin_mode == "spin-diag":
             # chi0q_raw shape: (nblock=2, nmat, nvol, norb, norb) for reduced
@@ -1835,17 +1838,17 @@ class FLEX(RPA):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_raw[s]
 
-            ham = xp.einsum('ksasatbtb->ksatb',
-                            ham_orig.reshape(nvol, *(ns, norb) * 4)
-                            ).reshape(nvol, nd, nd)
+            # 'ksasatbtb->ksatb' through the (ns, norb) factorized view
+            # picks the same entries as the combined-index pair diagonal
+            # and lands them in the same spin-major (nd, nd) layout, so it
+            # routes through the shared projection
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         elif self.spin_mode == "spinful":
             # chi0q_raw shape: (nmat, nvol, nd, nd) for reduced
             chi0q = chi0q_raw
 
-            ham = xp.einsum('kaabb->kab',
-                            ham_orig.reshape(nvol, *(nd,) * 4)
-                            ).reshape(nvol, nd, nd)
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         return chi0q, ham
 
