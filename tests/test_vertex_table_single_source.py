@@ -119,8 +119,10 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
 
         import hwave.sc as sc
 
+        ctx = warnings.catch_warnings()
+        ctx.__enter__()
+        self.addCleanup(ctx.__exit__, None, None, None)
         warnings.simplefilter("ignore", RuntimeWarning)
-        self.addCleanup(warnings.resetwarnings)
 
         k = np.array([0.0])
         ik = sc._build_interaction_k(
@@ -141,6 +143,17 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
 
 class TestIEEEParity(unittest.TestCase):
 
+    def test_plus_two_coefficient_keeps_the_multiply_form(self):
+        """The +-2 coefficients (CoulombInter density) intentionally keep
+        the multiplication, matching the pre-refactor 2.0 * V form."""
+        import hwave.sc as sc
+
+        m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
+        m[0, 1] = m[1, 0] = 0.7
+        S, C = sc._build_sc_matrices_all_q(
+            {"CoulombInter": m}, 2, 1, 1, 1, _presymmetrised=True)
+        self.assertAlmostEqual(complex(C[0, 0, 0, 0, 3]), 1.4, places=13)
+
     def test_plus_minus_one_coefficients_preserve_complex_infinities(self):
         """numpy's 1.0 * (Inf+0j) is Inf+NaNj (full complex multiply);
         the +-1 coefficients must use direct add/subtract so non-finite
@@ -154,8 +167,10 @@ class TestIEEEParity(unittest.TestCase):
 
         import hwave.sc as sc
 
+        ctx = warnings.catch_warnings()
+        ctx.__enter__()
+        self.addCleanup(ctx.__exit__, None, None, None)
         warnings.simplefilter("ignore", RuntimeWarning)
-        self.addCleanup(warnings.resetwarnings)
 
         def mat(entries):
             m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
@@ -171,6 +186,9 @@ class TestIEEEParity(unittest.TestCase):
              [("S", (1, 1), np.inf), ("C", (1, 1), -np.inf)]),
             ("PairHop", {(0, 1): inf, (1, 0): inf},
              [("S", (1, 2), np.inf), ("C", (1, 2), np.inf)]),
+            # Case 3's +-1 density coefficients (Hund): S at (aa, bb)
+            ("Hund", {(0, 1): inf, (1, 0): inf},
+             [("S", (0, 3), np.inf), ("C", (0, 3), -np.inf)]),
         ]
         for itype, entries, expected in cases:
             with self.subTest(interaction=itype):
