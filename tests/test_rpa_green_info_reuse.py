@@ -360,6 +360,10 @@ class TestRoundThreeHardening(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             sv.solve(g, 'tests/rpa/output')
         self.assertIn('externally supplied', str(cm.exception))
+        # the rejection fires before the longitudinal solve: no result of
+        # the failed run may remain in green_info
+        self.assertNotIn('chiq', g)
+        self.assertNotIn('chiq_pm', g)
 
     def test_chained_reuse_keeps_the_producing_axis(self):
         """A bubble passed through TWO consumers must still carry the
@@ -445,6 +449,21 @@ class TestRoundFourHardening(unittest.TestCase):
         with self.assertRaises(ValueError):
             sv2.solve(g2, 'tests/rpa/output')
 
+    def test_general_metadata_on_a_reduced_shaped_bubble_is_rejected(self):
+        """The metadata-level scheme check, isolated from the shape check:
+        a reduced-SHAPED bubble carrying calc_scheme='general' provenance
+        declares a representation mismatch and must be rejected even
+        though its shape alone would pass the reduced validator."""
+        sv1, g = self._solved('reduced')
+        sv2, r2 = _make('reduced', {'CoulombInter': 'onsite_inter.dat'})
+        g2 = r2.get_param("green")
+        g2['chi0q'] = g['chi0q']
+        g2['chi0q_freq_meta'] = dict(g['chi0q_freq_meta'],
+                                     calc_scheme='general')
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g2, 'tests/rpa/output')
+        self.assertIn('representation', str(cm.exception))
+
     def test_declared_spin_mode_mismatch_is_rejected(self):
         sv1, g = self._solved('general')
         g['chi0q_freq_meta'] = dict(g['chi0q_freq_meta'],
@@ -505,6 +524,82 @@ class TestRoundFourHardening(unittest.TestCase):
             z = np.load(os.path.join(d, 'chi0q.npz'))
             np.testing.assert_array_equal(z['freq_index'], np.arange(16))
         finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class TestRoundFiveHardening(unittest.TestCase):
+    """Round-5 items: the content fingerprint and the shared provenance
+    schema validator."""
+
+    def _solved(self):
+        inter = {'CoulombInter': 'onsite_inter.dat'}
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv, r = _make('general', inter)
+        g = r.get_param("green")
+        sv.solve(g, 'tests/rpa/output')
+        return sv, g
+
+    def test_same_shaped_replacement_is_rejected(self):
+        """Shape checks alone cannot see a same-shaped replacement: a zero
+        bubble of identical shape inherited the displaced array's axis.
+        The content fingerprint must catch it."""
+        sv1, g = self._solved()
+        g['chi0q'] = np.zeros_like(np.asarray(g['chi0q']))
+        sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        with self.assertRaises(ValueError) as cm:
+            sv2.solve(g, 'tests/rpa/output')
+        self.assertIn('fingerprint', str(cm.exception))
+
+    def test_a_faithful_copy_is_accepted(self):
+        """Legitimate copies hash equal: replacing the array with an exact
+        copy must not trip the fingerprint."""
+        sv1, g = self._solved()
+        chiq_first = np.array(g['chiq'], copy=True)
+        g['chi0q'] = np.array(g['chi0q'], copy=True)
+        sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+        sv2.solve(g, 'tests/rpa/output')
+        np.testing.assert_array_equal(np.asarray(g['chiq']), chiq_first)
+
+    def test_malformed_provenance_schemas_are_rejected(self):
+        cases = [
+            ("non-mapping", "not-a-dict"),
+            ("nmat without freq_index", {'freq_index': None, 'nmat': -1}),
+            ("fractional nmat", None),   # filled below
+            ("boolean nmat", None),
+        ]
+        sv1, g = self._solved()
+        base = dict(g['chi0q_freq_meta'])
+        cases[2] = ("fractional nmat", dict(base, nmat=32.5))
+        cases[3] = ("boolean nmat", dict(base, nmat=True))
+        for name, meta in cases:
+            with self.subTest(case=name):
+                g2 = dict(g)
+                g2['chi0q_freq_meta'] = meta
+                sv2, _ = _make('general',
+                               {'CoulombInter': 'onsite_inter.dat'})
+                with self.assertRaises(ValueError):
+                    sv2.solve(g2, 'tests/rpa/output')
+
+    def test_file_route_provenance_is_validated(self):
+        """chi0q_init files carry the same schema contract: a freq_index
+        that does not match the stored frequency count is rejected at
+        read time."""
+        import tempfile
+
+        sv1, g = self._solved()
+        d = tempfile.mkdtemp()
+        try:
+            np.savez(os.path.join(d, 'chi0q_badfi.npz'),
+                     chi0q=np.asarray(g['chi0q'])[:9],
+                     freq_index=np.arange(5), nmat=32)
+            sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
+            with self.assertRaises(ValueError) as cm:
+                sv2.read_init({'path_to_input': d,
+                               'chi0q_init': 'chi0q_badfi.npz'})
+            self.assertIn('stale', str(cm.exception))
+        finally:
+            import shutil
+
             shutil.rmtree(d, ignore_errors=True)
 
 

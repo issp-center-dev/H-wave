@@ -93,6 +93,106 @@ def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
     return geom_norb // 2
 
 
+def _chi0q_fingerprint(arr):
+    """Cheap content binding for chi0q provenance.
+
+    Provenance metadata travels in a caller-owned dict, so a caller can
+    replace the array while keeping the metadata; shape checks alone
+    cannot see a same-shaped replacement (measured: a zero bubble
+    inherited the [12..20] axis of the array it displaced). A strided
+    sample keeps the cost negligible for production-size tensors while
+    catching any accidental replacement; legitimate copies hash equal.
+    """
+    import hashlib
+
+    a = np.ascontiguousarray(arr)
+    flat = a.reshape(-1)
+    step = max(1, flat.size // 4096)
+    h = hashlib.blake2b(digest_size=16)
+    h.update(str(a.shape).encode())
+    h.update(str(a.dtype).encode())
+    h.update(flat[::step].tobytes())
+    return h.hexdigest()
+
+
+def _validate_chi0q_provenance(meta, nfreq, source):
+    """Validate and NORMALIZE a chi0q provenance mapping.
+
+    Shared by the in-memory reuse route and the chi0q_init file route so
+    neither can smuggle malformed provenance past the other (round-5
+    review: nmat was validated only when freq_index was present, a
+    fractional nmat was written back unnormalized, and a non-mapping
+    value raised AttributeError instead of the promised ValueError).
+
+    Returns {"freq_index": int ndarray or None, "nmat": int or None,
+    "coeff_tail": float or None}. Raises ValueError on any defect.
+    """
+    if not isinstance(meta, dict):
+        raise ValueError(
+            "chi0q provenance from {} must be a mapping, got {}".format(
+                source, type(meta).__name__))
+    out = {"freq_index": None, "nmat": None, "coeff_tail": None}
+    m_nmat = meta.get("nmat")
+    if m_nmat is not None:
+        val = np.asarray(m_nmat)
+        if val.size != 1:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be a scalar, got "
+                "shape {}".format(source, val.shape))
+        item = val.reshape(())[()]
+        if isinstance(item, (bool, np.bool_)):
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be an integer, got "
+                "a boolean".format(source))
+        f = float(np.real(item))
+        if np.iscomplexobj(item) and np.imag(item) != 0.0:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be real".format(source))
+        if not (np.isfinite(f) and f == int(f)):
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be an integer, got "
+                "{!r}".format(source, m_nmat))
+        if int(f) <= 0:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be positive, got "
+                "{}".format(source, int(f)))
+        out["nmat"] = int(f)
+    fi = meta.get("freq_index")
+    if fi is not None:
+        fi = np.asarray(fi)
+        if fi.ndim != 1 or not np.issubdtype(fi.dtype, np.integer):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index must be a "
+                "one-dimensional integer array, got dtype {} with shape "
+                "{}".format(source, fi.dtype, fi.shape))
+        if len(fi) != nfreq:
+            raise ValueError(
+                "chi0q provenance from {} does not describe the supplied "
+                "chi0q (freq_index of length {} for a {}-frequency "
+                "array); the metadata is stale -- recompute or drop "
+                "it.".format(source, len(fi), nfreq))
+        if len(np.unique(fi)) != len(fi):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index carries duplicate "
+                "entries".format(source))
+        if (out["nmat"] is not None and len(fi) > 0
+                and (fi.min() < 0 or fi.max() >= out["nmat"])):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index range [{}, {}] "
+                "exceeds nmat = {}".format(
+                    source, int(fi.min()), int(fi.max()), out["nmat"]))
+        out["freq_index"] = fi
+    ct = meta.get("coeff_tail")
+    if ct is not None:
+        try:
+            out["coeff_tail"] = float(ct)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "chi0q provenance from {}: malformed coeff_tail "
+                "({!r})".format(source, ct))
+    return out
+
+
 class Lattice:
     """
     Lattice parameters:
@@ -991,42 +1091,22 @@ class RPA:
             # labeling rather than fabricating a full-axis claim.
             mem_meta = green_info.get("chi0q_freq_meta")
             if mem_meta is not None:
-                # Validate the provenance against the array and this solver:
-                # a caller can replace chi0q while leaving the previous
-                # solve's metadata behind, and trusting it silently would
-                # mislabel saved output or solve a semantically different
-                # tensor (adversarial review, round 3).
-                fi = mem_meta.get("freq_index")
-                if fi is not None:
-                    fi = np.asarray(fi)
-                    m_nmat = mem_meta.get("nmat")
-                    if m_nmat is not None:
-                        try:
-                            m_nmat = int(m_nmat)
-                        except (TypeError, ValueError):
-                            raise ValueError(
-                                "chi0q_freq_meta carries a malformed nmat "
-                                "({!r})".format(mem_meta.get("nmat")))
-                        if m_nmat <= 0:
-                            raise ValueError(
-                                "chi0q_freq_meta carries a non-positive "
-                                "nmat ({})".format(m_nmat))
-                    if (fi.ndim != 1
-                            or not np.issubdtype(fi.dtype, np.integer)):
-                        raise ValueError(
-                            "chi0q_freq_meta freq_index must be a "
-                            "one-dimensional integer array, got dtype {} "
-                            "with shape {}".format(fi.dtype, fi.shape))
-                    if (len(fi) != nfreq
-                            or len(np.unique(fi)) != len(fi)
-                            or (m_nmat is not None and len(fi) > 0
-                                and (fi.min() < 0 or fi.max() >= m_nmat))):
-                        raise ValueError(
-                            "chi0q_freq_meta does not describe the supplied "
-                            "chi0q (freq_index of length {} for a {}-"
-                            "frequency array, nmat {}); the metadata is "
-                            "stale -- recompute or drop the key.".format(
-                                len(fi), nfreq, m_nmat))
+                # Validate the provenance against the array and this solver
+                # (shared validator; round-3/5 reviews): a caller can
+                # replace chi0q while leaving the previous solve's metadata
+                # behind, and trusting it silently would mislabel saved
+                # output or solve a semantically different tensor.
+                norm = _validate_chi0q_provenance(
+                    mem_meta, nfreq, source="green_info")
+                fp = (mem_meta.get("fingerprint")
+                      if isinstance(mem_meta, dict) else None)
+                if fp is not None and fp != _chi0q_fingerprint(chi0q):
+                    raise ValueError(
+                        "chi0q_freq_meta does not belong to the supplied "
+                        "chi0q (content fingerprint mismatch): the array "
+                        "was replaced while the previous solve's metadata "
+                        "was kept. The metadata is stale -- recompute or "
+                        "drop the key.")
                 m_norb = mem_meta.get("norb")
                 if m_norb is not None and int(m_norb) != int(self.norb):
                     raise ValueError(
@@ -1058,11 +1138,7 @@ class RPA:
                         "reads as '{}' for this solver's configuration; "
                         "refusing to solve a semantically different "
                         "tensor.".format(m_spin, self.spin_mode))
-                self._chi0q_init_meta = {
-                    "freq_index": mem_meta.get("freq_index"),
-                    "nmat": mem_meta.get("nmat"),
-                    "coeff_tail": mem_meta.get("coeff_tail"),
-                }
+                self._chi0q_init_meta = dict(norm)
             elif (getattr(self, "_chi0q_init_meta", None) is None
                     and nfreq != self.nmat):
                 self._chi0q_init_meta = {
@@ -1073,13 +1149,16 @@ class RPA:
             # route -- keeps its producing axis (round-3 review).
             eff = getattr(self, "_chi0q_init_meta", None)
             if eff is not None:
+                fi_eff = eff.get("freq_index")
                 green_info["chi0q_freq_meta"] = {
-                    "freq_index": eff.get("freq_index"),
+                    "freq_index": (None if fi_eff is None
+                                   else list(np.asarray(fi_eff))),
                     "nmat": eff.get("nmat"),
                     "coeff_tail": eff.get("coeff_tail"),
                     "spin_mode": self.spin_mode,
                     "norb": int(self.norb),
                     "calc_scheme": self.calc_scheme,
+                    "fingerprint": _chi0q_fingerprint(chi0q),
                 }
             # must_fix 6 guard state: the spin-diag transverse channel needs
             # Green functions bound to THIS bubble; an externally supplied
@@ -1179,6 +1258,9 @@ class RPA:
                 "spin_mode": self.spin_mode,
                 "norb": int(self.norb),
                 "calc_scheme": self.calc_scheme,
+                # content binding: a same-shaped replacement of the array
+                # must not inherit this metadata (round-5 review)
+                "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
             }
 
         if self.calc_chiq:
@@ -1753,12 +1835,16 @@ class RPA:
         # solve() passes an input chi0q through untouched, so save_results
         # must not relabel its axis with the current run's freq_index/nmat.
         # coeff_tail rides along for the same reason (issue #80).
-        self._chi0q_init_meta = {
-            "freq_index": data["freq_index"] if "freq_index" in data else None,
-            "nmat": int(data["nmat"]) if "nmat" in data else None,
-            "coeff_tail": (float(data["coeff_tail"])
-                           if "coeff_tail" in data else None),
-        }
+        nfreq_file = (chi0q.shape[1]
+                      if (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2)
+                      else chi0q.shape[0])
+        self._chi0q_init_meta = _validate_chi0q_provenance(
+            {"freq_index": (data["freq_index"]
+                            if "freq_index" in data else None),
+             "nmat": data["nmat"] if "nmat" in data else None,
+             "coeff_tail": (data["coeff_tail"]
+                            if "coeff_tail" in data else None)},
+            nfreq_file, source=file_name)
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).
