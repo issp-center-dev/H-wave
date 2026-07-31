@@ -111,6 +111,43 @@ class TestChi0qShapeGuards(unittest.TestCase):
             stub._calc_chi0q_transverse(g, tail, 1.0)
         self.assertIn("green0_tail", str(cm.exception))
 
+    def test_malformed_block_and_orbital_axes_rejected(self):
+        """Round 5 reproduced fail-open structural inputs: nblock=0 gave
+        a finite EMPTY result, nblock=3 a finite three-block one (which
+        the caller's block handling then truncated under -O), nd=0 was
+        accepted, and rectangular orbital axes failed only through an
+        incidental reshape. All are loud ValueErrors now."""
+        stub = self._stub()
+        cases = [
+            ((0, 4, 4, 2, 2), "block axis (0)"),
+            ((3, 4, 4, 2, 2), "block axis (3)"),
+            ((1, 4, 4, 0, 0), "square and nonempty"),
+            ((1, 4, 4, 2, 3), "square and nonempty"),
+        ]
+        for shape, frag in cases:
+            with self.subTest(shape=shape):
+                g = np.zeros(shape, dtype=complex)
+                with self.assertRaises(ValueError) as cm:
+                    stub._calc_chi0q(g, np.zeros_like(g), 1.0)
+                self.assertIn(frag, str(cm.exception))
+
+    def test_transverse_axis_checks(self):
+        """The transverse kernel now validates volume, frequency and the
+        orbital square too (a wrong transverse frequency count was
+        processed normally before round 5)."""
+        stub = self._stub()
+        cases = [
+            ((2, 4, 5, 2, 2), "volume axis (5)"),
+            ((2, 6, 4, 2, 2), "frequency axis (6)"),
+            ((2, 4, 4, 2, 3), "square and nonempty"),
+        ]
+        for shape, frag in cases:
+            with self.subTest(shape=shape):
+                g = np.zeros(shape, dtype=complex)
+                with self.assertRaises(ValueError) as cm:
+                    stub._calc_chi0q_transverse(g, np.zeros_like(g), 1.0)
+                self.assertIn(frag, str(cm.exception))
+
     def test_guard_precedence_on_combined_malformations(self):
         """When several things are wrong at once, the axis checks fire
         before the tail check (and the transverse block count before its
