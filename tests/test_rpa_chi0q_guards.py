@@ -111,6 +111,27 @@ class TestChi0qShapeGuards(unittest.TestCase):
             stub._calc_chi0q_transverse(g, tail, 1.0)
         self.assertIn("green0_tail", str(cm.exception))
 
+    def test_guard_precedence_on_combined_malformations(self):
+        """When several things are wrong at once, the axis checks fire
+        before the tail check (and the transverse block count before its
+        tail check), so the FIRST reported error names the most
+        fundamental problem. Behavior was correct; pin it (round 4)."""
+        stub = self._stub()
+        bad_tail = np.zeros((1, 8, 2, 2, 2), dtype=complex)
+        g_bad_vol = np.zeros((1, 4, 5, 2, 2), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._calc_chi0q(g_bad_vol, bad_tail, 1.0)
+        self.assertIn("volume axis", str(cm.exception))
+        g_bad_freq = np.zeros((1, 6, 4, 2, 2), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._calc_chi0q(g_bad_freq, bad_tail, 1.0)
+        self.assertIn("frequency axis", str(cm.exception))
+        g3 = np.zeros((3, 4, 4, 2, 2), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._calc_chi0q_transverse(
+                g3, np.zeros((3, 8, 2, 2, 2), dtype=complex), 1.0)
+        self.assertIn("nblock=3", str(cm.exception))
+
     def test_volume_guard_survives_python_O(self):
         """The gating CI never runs optimized Python; without this pin a
         regression back to a bare assert would pass CI while vanishing
