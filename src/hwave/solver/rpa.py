@@ -2493,8 +2493,20 @@ class RPA:
         #nvol = self.lattice.nvol
 
         nblock,nmat,nvol,nd,nd2 = green_kw.shape
-        assert nvol == self.lattice.nvol
-        assert nmat == self.nmat
+        # ValueError, not assert (issue #125, the longitudinal analogue of
+        # the transverse block-count fix): these validate INPUT array data,
+        # and a bare assert disappears under python -O -- a Green's
+        # function with the wrong volume or frequency count would then
+        # proceed into the kernel and produce plausible-looking wrong
+        # output instead of failing loudly.
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "chi0q kernel: Green's function volume axis ({}) does not "
+                "match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "chi0q kernel: Green's function frequency axis ({}) does "
+                "not match Nmat ({})".format(nmat, self.nmat))
 
         # Fourier transform from Matsubara freq to imaginary time
         green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
