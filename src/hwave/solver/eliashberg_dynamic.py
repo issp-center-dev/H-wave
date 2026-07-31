@@ -80,7 +80,8 @@ def _reverse_kw_and_orbital(gap_w):
     -------
     ndarray
         ``Delta_{ba}(-k, -iw_n)``, same shape. Spatial ``k -> -k`` is the
-        FFT-grid index map ``i -> (N - i) % N`` (reverse + roll-by-1, matching
+        shared FFT-grid reversal ``i -> (N - i) % N``
+        (``kgrid.reverse_fft_axes``, matching
         ``sc._reverse_k_and_orbital``); the centered fermionic Matsubara
         partner of index ``n`` is ``nmat - 1 - n`` (a plain reversal, no roll);
         the two orbital indices are swapped.
