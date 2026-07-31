@@ -6,9 +6,10 @@ still succeeded, so nothing noticed. This test fails if that ever
 happens again, by asserting the configuration the file declares was
 actually APPLIED, not merely that collection worked.
 
-pytest-style on purpose: it needs the pytest config object, and since
-the CI pytest step gates (issue #84 follow-through), a failure here
-fails CI even though unittest discovery cannot see this module.
+pytest-style on purpose: it needs the pytest config object. unittest
+discovery imports this module but collects no function-style tests;
+since the CI pytest step gates (issue #84 follow-through), a failure
+here still fails CI.
 """
 
 
@@ -37,24 +38,37 @@ def test_pytest_ini_is_actually_loaded(request):
         "pytest.ini addopts were not applied (issue #84 header regression)")
 
 
-def test_coverage_gate_boundary_semantics():
-    """The CI coverage floor compares the ROUNDED total (PR #126 round-3
-    review measured 79.50% passing an 80 floor at coverage's default
-    zero-decimal precision). Pin the boundary at the two-decimal
-    precision .coveragerc sets, and that the config is actually loaded."""
+def test_coverage_floor_is_exact():
+    """The CI floor is enforced by tests/_coverage_floor.py on the
+    integer line counts from coverage.xml -- NOT by the rounded
+    --cov-fail-under comparison, which at any finite precision passes a
+    band just below the floor (79.50% passed at zero decimals; 79.995%
+    would at two, and the round-5 review showed 6151/7689 = 79.9974% is
+    three added statements away in this tree). Pin the exact predicate
+    on those boundary cases."""
+    from tests._coverage_floor import passes
+
+    assert passes(4, 5, 80)             # exactly 80.00%
+    assert passes(80, 100, 80)
+    assert not passes(7999, 10000, 80)  # 79.99%
+    assert not passes(6151, 7689, 80)   # 79.9974% -- rounds to 80.00
+    assert not passes(0, 0, 80)         # nothing measured is not a pass
+
+
+def test_coverage_report_precision_is_two_decimals():
+    """.coveragerc sets two-decimal report precision (display and the
+    soft --cov-fail-under comparison). Asserted through coverage's
+    PUBLIC get_option API only -- a round-5 review found the earlier
+    version of this test bound to undocumented internals, which a
+    coverage upgrade could rename (silently skipping the test under the
+    broad ImportError guard)."""
     try:
         from coverage import Coverage
-        from coverage.results import should_fail_under
     except ImportError:
         import pytest
         pytest.skip("coverage not installed (bare-pytest environments)")
 
-    assert should_fail_under(79.99, 80, 2)
-    assert not should_fail_under(80.00, 80, 2)
-    # at the DEFAULT precision the leak this guards against reappears
-    assert not should_fail_under(79.50, 80, 0)
-
-    cov = Coverage()
-    assert cov.config.precision == 2, (
+    cov = Coverage(data_file=None)
+    assert cov.get_option("report:precision") == 2, (
         ".coveragerc precision=2 was not loaded (cwd must be the repo "
-        "root; got precision={})".format(cov.config.precision))
+        "root)")

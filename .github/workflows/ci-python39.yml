@@ -67,6 +67,7 @@ jobs:
       # tests nor the gate could actually fail CI).
       run: |
         poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+        poetry run python tests/_coverage_floor.py coverage.xml 80
 
     - name: Verify the test suite left the tracked tree clean
       # !cancelled(): report isolation defects even when the gating test
