@@ -1,0 +1,9 @@
+# Report precision for the coverage gate (PR #126, round-3 review).
+# coverage compares --cov-fail-under against the ROUNDED total: at the
+# default zero-decimal precision, 79.50% rounds to 80 and PASSES an
+# 80-percent floor. Two decimals shrink that rounding leeway to 0.005
+# points. Kept in .coveragerc (not pyproject.toml) deliberately: reading
+# coverage config from pyproject requires the coverage[toml] extra on
+# Python < 3.11, and a missing extra would silently drop this setting.
+[report]
+precision = 2
