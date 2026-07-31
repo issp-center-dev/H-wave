@@ -132,6 +132,45 @@ class TestRPALadder(unittest.TestCase):
         with self.assertRaises(ValueError):
             stub._build_transverse_channel(chi0q_orig, ham_orig)
 
+    def test_transverse_spin_free_rejects_reduced_chi0q(self):
+        """The spin-free branch once expanded a reduced chi0q with the
+        defective delta_{l2,l4} placement; the expansion was dead code
+        (ring+ladder forces calc_scheme='general') and is now a loud
+        guard. Pin the guard directly, since no normally constructed
+        solver can reach it (issue #111)."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.norb, stub.ns, stub.nd = 2, 2, 4
+        stub.lattice = types.SimpleNamespace(nvol=4)
+        stub.spin_mode = "spin-free"
+
+        # a reduced (2-index) chi0q: ndim 4, not the rank-4 orbital tensor
+        chi0q_reduced = np.zeros((4, 4, 2, 2), dtype=complex)
+        ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
+        with self.assertRaises(AssertionError) as cm:
+            stub._build_transverse_channel(chi0q_reduced, ham_orig)
+        self.assertIn("density-pair", str(cm.exception).lower())
+        self.assertIn("general", str(cm.exception))
+
+    def test_transverse_spinful_rejects_reduced_chi0q(self):
+        """Same guard on the spinful branch: a non-6-dim chi0q cannot
+        supply the spin-flip block and must be rejected (issue #111)."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.norb, stub.ns, stub.nd = 2, 1, 2
+        stub.lattice = types.SimpleNamespace(nvol=4)
+        stub.spin_mode = "spinful"
+
+        chi0q_reduced = np.zeros((4, 4, 2, 2), dtype=complex)
+        ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._build_transverse_channel(chi0q_reduced, ham_orig)
+        self.assertIn("full", str(cm.exception))
+
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.
 
