@@ -300,6 +300,81 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         self._load(inp, {"CoulombIntra": {(0, 0): 4.0},
                          "CoulombInter": {((0, 0, 0), (0, 1)): 0.7}})
 
+    # ---- #101: interaction ORIENTATION for legacy myo files -------------
+    # PR #99 changed the orbital orientation _build_interaction_k stores,
+    # which the general/myo S/C matrices consume. A myo file bearing the
+    # #78 layout marker but no sc_vertex_version was produced in the window
+    # between those two changes and passes every other gate while carrying
+    # the OLD orientation; version-2 files are necessarily post-#99, so
+    # for a myo file the version requirement doubles as the orientation
+    # marker. Orientation only matters for interactions that are not
+    # invariant under the orbital transpose.
+
+    MYO_TAGS = {"chi_convention": "myo", "chi_orbital_layout": "acbd"}
+    ASYM_V = {((0, 0, 0), (0, 1)): 0.7, ((0, 0, 0), (1, 0)): 0.4}
+    SYM_V = {((0, 0, 0), (0, 1)): 0.7, ((0, 0, 0), (1, 0)): 0.7}
+
+    def _raw(self, inp, interactions):
+        import hwave.sc as sc
+
+        return sc._read_flex_chi_raw(inp, interactions=interactions)
+
+    def test_legacy_myo_with_asymmetric_onsite_coupling_is_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        with self.assertRaises(ValueError) as cm:
+            self._raw(inp, {"CoulombInter": self.ASYM_V})
+        msg = str(cm.exception)
+        self.assertIn("sc_vertex_version", msg)
+        self.assertIn("orientation", msg)
+        self.assertIn("CoulombInter", msg)
+        # the same rejection through the static loader route
+        with self.assertRaises(ValueError):
+            self._load(inp, {"CoulombInter": self.ASYM_V})
+
+    def test_legacy_myo_with_symmetric_coupling_is_accepted(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"CoulombInter": self.SYM_V})
+
+    def test_legacy_kuroki_with_asymmetric_coupling_stays_accepted(self):
+        # the reduced-path (kuroki) files never depended on the
+        # _build_interaction_k orientation; behavior is unchanged there
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)
+        self._raw(inp, {"CoulombInter": self.ASYM_V})
+
+    def test_version2_myo_with_asymmetric_coupling_is_accepted(self):
+        # version 2 implies post-#99 production: correctly oriented
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        tags = dict(self.MYO_TAGS, sc_vertex_version=2)
+        inp = self._write(d, extra_s=dict(tags), extra_c=dict(tags))
+        self._raw(inp, {"CoulombInter": self.ASYM_V})
+
+    def test_legacy_myo_combined_reasons_are_both_named(self):
+        # an asymmetric Hund trips BOTH the #113 content reason and the
+        # #101 orientation reason; the message must name both
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        with self.assertRaises(ValueError) as cm:
+            self._raw(inp, {"Hund": self.ASYM_V})
+        msg = str(cm.exception)
+        self.assertIn("#113", msg)
+        self.assertIn("orientation", msg)
+
     def test_legacy_file_with_empty_affected_type_is_accepted(self):
         # a configured-but-empty Hund file contributes no interaction, so the
         # vertex content cannot differ; key PRESENCE must not trip the guard

@@ -1697,6 +1697,25 @@ def _legacy_up_block_only(data):
     return str(data["chi_spin_blocks"]).strip().lower() == "up_only"
 
 
+def _onsite_transpose_asymmetry(table):
+    """Max |X[0,(a,b)] - X[0,(b,a)]| over the on-site entries of a raw
+    declaration table. Off-site entries are ignored on purpose: their
+    same-operator partner lives at -R (and possibly under a wrapped
+    canonical key), and the general FLEX path rejects off-site two-body
+    terms anyway -- the reachable orientation-sensitive case (#101) is
+    an asymmetric ON-SITE inter-orbital entry."""
+    worst = 0.0
+    for (irvec, orbvec), v in table.items():
+        if tuple(irvec) != (0, 0, 0):
+            continue
+        a, b = orbvec
+        if a == b:
+            continue
+        partner = table.get((tuple(irvec), (b, a)), 0.0)
+        worst = max(worst, abs(v - partner))
+    return worst
+
+
 def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
@@ -1766,19 +1785,47 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
         # configured but empty Hund/Exchange/Ising file contributes nothing
         affected = [t for t in ("Hund", "Exchange", "Ising")
                     if interactions.get(t)]
-        if affected:
+        # #101: a SECOND independent reason a no-version file is unusable.
+        # PR #99 changed the orbital orientation _build_interaction_k stores
+        # (which the general/myo S/C matrices consume), and version-2 files
+        # are necessarily post-#99 (the version tag came later), so for a
+        # myo file the version requirement doubles as the orientation
+        # marker. Orientation only matters when an interaction is not
+        # invariant under the orbital transpose; PairHop is excluded (its
+        # declaration partner is the HERMITIAN entry, a different pairing).
+        orientation = []
+        if str(chi_convention).lower() == "myo":
+            orientation = [
+                t for t in ("CoulombInter", "Hund", "Ising", "Exchange",
+                            "PairLift")
+                if interactions.get(t)
+                and _onsite_transpose_asymmetry(interactions[t]) > 0.0]
+        if affected or orientation:
             versions = {}
             for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
                 if "sc_vertex_version" not in data:
+                    reasons = []
+                    if affected:
+                        reasons.append(
+                            "the interaction set contains {} whose vertex "
+                            "content changed in the #113 corrections".format(
+                                ", ".join(affected)))
+                    if orientation:
+                        reasons.append(
+                            "{} declare(s) an asymmetric on-site "
+                            "inter-orbital coupling, and files this old "
+                            "were computed with the pre-#99 interaction "
+                            "orientation, which the current pairing vertex "
+                            "no longer uses (#101)".format(
+                                ", ".join(orientation)))
                     raise ValueError(
-                        "FLEX susceptibility file '{}' predates the #113 "
-                        "S/C vertex corrections (no sc_vertex_version "
-                        "field), and the interaction set contains {} whose "
-                        "vertex content changed. Pairing the old "
-                        "susceptibilities with the corrected vertices would "
-                        "silently mix two different interactions -- "
-                        "regenerate the susceptibilities with the current "
-                        "code.".format(path, ", ".join(affected)))
+                        "FLEX susceptibility file '{}' predates the current "
+                        "vertex conventions (no sc_vertex_version field), "
+                        "and {}. Pairing the old susceptibilities with the "
+                        "current vertices would silently mix two different "
+                        "interactions -- regenerate the susceptibilities "
+                        "with the current code.".format(
+                            path, "; and ".join(reasons)))
                 # strict decode: the tag must be a single integral scalar.
                 # A plain int() would silently truncate (2.9 -> 2, accepted)
                 # and non-finite values would escape as OverflowError.
