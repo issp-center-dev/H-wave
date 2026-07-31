@@ -132,6 +132,302 @@ class TestRPALadder(unittest.TestCase):
         with self.assertRaises(ValueError):
             stub._build_transverse_channel(chi0q_orig, ham_orig)
 
+    def test_transverse_spin_free_rejects_reduced_chi0q(self):
+        """The spin-free branch once expanded a reduced chi0q with the
+        defective delta_{l2,l4} placement; the expansion was dead code
+        (ring+ladder forces calc_scheme='general') and is now a loud
+        guard. Pin the guard directly, since no normally constructed
+        solver can reach it (issue #111).
+
+        All the malformed-shape guards in this method raise ValueError
+        consistently: an earlier revision used AssertionError here with
+        a claimed invariant-vs-runtime distinction, which a review
+        showed was false -- both branches are equally unreachable
+        through normal construction (the upstream gate is pinned by
+        test_upstream_gate_pins_the_dead_branch_premise below)."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.norb, stub.ns = 2, 2
+        stub.lattice = types.SimpleNamespace(nvol=4)
+        stub.spin_mode = "spin-free"
+
+        # a reduced (2-index) chi0q: ndim 4, not the rank-4 orbital tensor
+        chi0q_reduced = np.zeros((4, 4, 2, 2), dtype=complex)
+        ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._build_transverse_channel(chi0q_reduced, ham_orig)
+        self.assertIn("density-pair", str(cm.exception).lower())
+        self.assertIn("general", str(cm.exception))
+
+    def test_transverse_spinful_rejects_reduced_chi0q(self):
+        """Same guard on the spinful branch: a non-6-dim chi0q cannot
+        supply the spin-flip block and must be rejected (issue #111)."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        # ns is ALWAYS 2 in a constructed RPA; a reduced spinful bubble
+        # for norb=2 ends in (nd, nd) = (4, 4), so this is the state that
+        # could exist just before the upstream scheme validation.
+        stub.norb, stub.ns = 2, 2
+        stub.lattice = types.SimpleNamespace(nvol=4)
+        stub.spin_mode = "spinful"
+
+        chi0q_reduced = np.zeros((4, 4, 4, 4), dtype=complex)
+        ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._build_transverse_channel(chi0q_reduced, ham_orig)
+        # pin the INTENDED failure, not just any ValueError: the message
+        # must identify the channel, the requirement, and the shape
+        msg = str(cm.exception)
+        self.assertIn("spinful transverse", msg)
+        self.assertIn("requires the full", msg)
+        self.assertIn("general-scheme", msg)
+        self.assertIn(str(chi0q_reduced.shape), msg)
+
+    def test_transverse_bubble_rejects_wrong_block_count(self):
+        """The transverse bubble kernel requires exactly the (G_up, G_down)
+        block pair. This used to be a bare assert, which vanishes under
+        python -O -- a 3-block Green's function was then accepted with the
+        third block silently ignored (round-7 review reproduced it). It is
+        now a ValueError naming the observed count."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.lattice = types.SimpleNamespace(shape=(2, 2, 1), nvol=4)
+
+        nmat, nvol, nd = 4, 4, 2
+        for nblock in (1, 3):
+            with self.subTest(nblock=nblock):
+                g = np.zeros((nblock, nmat, nvol, nd, nd), dtype=complex)
+                tail = np.zeros_like(g)
+                with self.assertRaises(ValueError) as cm:
+                    stub._calc_chi0q_transverse(g, tail, 1.0)
+                self.assertIn("nblock={}".format(nblock),
+                              str(cm.exception))
+
+    def test_block_count_guard_survives_python_O(self):
+        """The gating CI never runs optimized Python, so a regression of
+        the block-count guard back to a bare assert would pass CI while
+        vanishing in production -O runs. Pin the guard in a -O
+        subprocess."""
+        import subprocess
+        import sys
+
+        code = (
+            "import types, numpy as np\n"
+            "import hwave.solver.rpa as rpa_module\n"
+            "stub = object.__new__(rpa_module.RPA)\n"
+            "stub.lattice = types.SimpleNamespace(shape=(2, 2, 1), nvol=4)\n"
+            "g = np.zeros((3, 4, 4, 2, 2), dtype=complex)\n"
+            "try:\n"
+            "    stub._calc_chi0q_transverse(g, np.zeros_like(g), 1.0)\n"
+            "except ValueError as e:\n"
+            "    assert 'nblock=3' in str(e), str(e)\n"
+            "else:\n"
+            "    raise SystemExit('guard vanished under -O')\n"
+        )
+        env = dict(os.environ)
+        src = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "src")
+        if os.path.isdir(src):
+            env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+        proc = subprocess.run([sys.executable, "-O", "-c", code],
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(
+            proc.returncode, 0,
+            "guard must survive python -O: {}{}".format(
+                proc.stdout, proc.stderr))
+
+    def test_upstream_gate_pins_the_dead_branch_premise(self):
+        """The two guard tests above exercise states normal construction
+        cannot produce. Pin the PREMISE that makes them unreachable --
+        the invariant under which the old expansion branches were
+        removed: ring+ladder forces the general scheme at construction,
+        and every normally reached transverse call receives the full
+        general-scheme bubble OF ITS SPIN MODE (spin-free 6-dim,
+        spin-diag 7-dim with a leading block axis, spinful 6-dim) --
+        never the 4-dim reduced shape the guards reject."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        input_path = 'tests/rpa/input'
+        info_file_input = {
+            'path_to_input': input_path,
+            'interaction': {
+                'path_to_input': input_path,
+                'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+            },
+        }
+
+        def _construct(calc_scheme):
+            info_mode = {
+                'mode': 'RPA',
+                'param': {'T': 2.0, 'filling': 0.75,
+                          'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                          'Nmat': 16},
+                'enable_spin_orbital': False,
+                'calc_scheme': calc_scheme,
+                'calc_type': 'ring+ladder',
+            }
+            read_io = read_input_k.QLMSkInput(info_file_input)
+            return rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+
+        # reduced/squashed exit before any solve. This pins the CURRENT
+        # legacy contract (logger.error + sys.exit(1)); if _set_scheme is
+        # ever modernized to raise ValueError, this test should change
+        # WITH it, deliberately. Exit code and message are asserted so an
+        # unrelated SystemExit cannot satisfy the check.
+        for scheme in ("reduced", "squashed"):
+            with self.subTest(scheme=scheme):
+                with self.assertLogs("hwave.solver.rpa",
+                                     level="ERROR") as logcm:
+                    with self.assertRaises(SystemExit) as exitcm:
+                        _construct(scheme)
+                self.assertEqual(exitcm.exception.code, 1)
+                self.assertTrue(
+                    any("ring+ladder" in m and "general" in m
+                        for m in logcm.output),
+                    "expected the scheme-gate error, got: {}".format(
+                        logcm.output))
+        # auto resolves to general; general constructs normally
+        self.assertEqual(_construct("auto").calc_scheme, "general")
+        self.assertEqual(_construct("general").calc_scheme, "general")
+
+        # Every normally reached transverse call carries the bubble RANK
+        # OF ITS SPIN MODE -- 6-dim for spin-free and spinful, 7-dim for
+        # spin-diag (leading nblock axis). The guards under test reject
+        # the 4-dim reduced shape, which no mode produces; pinning the
+        # per-mode ranks prevents this invariant from being broadened
+        # into the false universal "always 6-dim" again (round-4 review:
+        # a normal spin-diag ring+ladder run reaches the channel with a
+        # 7-dim bubble).
+        def _spy_run(runner):
+            # record (spin_mode, ndim) PAIRS: rank alone cannot tell a
+            # spinful run from a spin-free one (both are 6-dim), so a
+            # fixture regressing to the wrong mode would pass a
+            # rank-only check (round-5 review)
+            seen = []
+            original = rpa_mod.RPA._build_transverse_channel
+
+            def spy(self_, chi0q_orig, ham_orig):
+                seen.append((self_.spin_mode, chi0q_orig.ndim))
+                return original(self_, chi0q_orig, ham_orig)
+
+            rpa_mod.RPA._build_transverse_channel = spy
+            try:
+                runner()
+            finally:
+                rpa_mod.RPA._build_transverse_channel = original
+            self.assertTrue(seen,
+                            "the ladder solve must reach the channel")
+            return set(seen)
+
+        pairs = _spy_run(lambda: self._run_rpa(
+            calc_type="ring+ladder", Lx=4, Ly=4, Nmat=16))
+        self.assertEqual(pairs, {("spin-free", 6)})
+
+        results = {}
+
+        def _run_and_keep(mode, d):
+            results[mode] = self._run_so_ladder(d)
+
+        # spin-diag: no spin mixing, no #110 warning expected
+        d = self._write_so_ladder_inputs(spin_flip=False)
+        pairs = _spy_run(lambda: _run_and_keep("spin-diag", d))
+        self.assertEqual(pairs, {("spin-diag", 7)})
+
+        # spinful: genuine on-site spin mixing -- the run is a
+        # shape/reachability check, NOT a physics check: the transverse
+        # extraction takes the Sz-conserving block and warns that the
+        # cross terms are omitted (#110). Assert that warning so the
+        # limitation is explicit here.
+        d = self._write_so_ladder_inputs(spin_flip=True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as wcm:
+            pairs = _spy_run(lambda: _run_and_keep("spinful", d))
+        self.assertEqual(pairs, {("spinful", 6)})
+        self.assertTrue(
+            any("Sz-conserving" in m for m in wcm.output),
+            "expected the spin-mixing cross-term warning, got: {}".format(
+                wcm.output))
+
+        # the ranks are not enough: the solves must also produce finite
+        # chiq_pm (a rank-only pin would pass on NaN/divergent output)
+        for mode, ginfo in results.items():
+            with self.subTest(finite=mode):
+                chiq_pm = ginfo["chiq_pm"]
+                self.assertTrue(np.all(np.isfinite(chiq_pm)),
+                                "{} chiq_pm must be finite".format(mode))
+
+        # compact physical pin for the clean (Sz-conserving) spin-diag
+        # case: the static on-site response is real up to numerical
+        # residue and positive (a paramagnetic-like bubble dressed by
+        # repulsion stays a positive response)
+        chiq_pm = results["spin-diag"]["chiq_pm"]
+        iw0 = chiq_pm.shape[0] // 2
+        static = chiq_pm[iw0, :, 0, 0, 0, 0]
+        self.assertLess(float(np.max(np.abs(static.imag))), 1e-10)
+        self.assertGreater(float(np.min(static.real)), 0.0)
+
+    def _write_so_ladder_inputs(self, spin_flip):
+        """Spin-orbital fixtures for the per-mode bubble-rank checks:
+        one physical orbital, spin-diagonal hops with DIFFERENT up/down
+        amplitudes (-> spin-diag), plus an on-site spin flip when
+        requested (-> spinful; on-site keeps ring+ladder representable)."""
+        import tempfile
+
+        d = tempfile.mkdtemp(prefix="rpa_so_ladder_")
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0   0.0   0.0\n  0.0   1.0   0.0\n"
+                    "  0.0   0.0   1.0\n2\n   0.0   0.0   0.0\n"
+                    "   0.0   0.0   0.0\n")
+        rows = [(1, 0, 0, 1, 1, 1.0), (-1, 0, 0, 1, 1, 1.0),
+                (1, 0, 0, 2, 2, 0.8), (-1, 0, 0, 2, 2, 0.8)]
+        if spin_flip:
+            rows += [(0, 0, 0, 1, 2, 0.3), (0, 0, 0, 2, 1, 0.3)]
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer SO\n2\n1\n 1\n")
+            for (rx, ry, rz, a, b, v) in rows:
+                f.write("  {:3d} {:3d} {:3d} {:3d} {:3d}  {:.6f}  0.0\n"
+                        .format(rx, ry, rz, a, b, v))
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("CoulombIntra\n1\n1\n 1\n"
+                    "   0    0    0    1    1   2.000000   0.0\n")
+        return d
+
+    def _run_so_ladder(self, d):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        info_mode = {
+            'mode': 'RPA',
+            'param': {'T': 2.0, 'filling': 0.5,
+                      'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                      'Nmat': 16},
+            'enable_spin_orbital': True,
+            'calc_scheme': 'general',
+            'calc_type': 'ring+ladder',
+        }
+        info_input = {
+            'path_to_input': d,
+            'interaction': {'path_to_input': d, 'Geometry': 'geom.dat',
+                            'Transfer': 'transfer.dat',
+                            'CoulombIntra': 'coulombintra.dat'},
+        }
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        read_io = read_input_k.QLMSkInput(info_input)
+        solver = rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+        green_info = read_io.get_param("green")
+        solver.solve(green_info, out)
+        return green_info
+
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.
 

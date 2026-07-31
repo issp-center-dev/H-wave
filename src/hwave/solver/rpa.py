@@ -2579,7 +2579,15 @@ class RPA:
 
         nx, ny, nz = self.lattice.shape
         nblock, nmat, nvol, nd, nd2 = green_kw.shape
-        assert nblock == 2, "Transverse chi0 requires spin-diag (nblock=2)"
+        if nblock != 2:
+            # ValueError, not assert: an assert disappears under python -O,
+            # and a wrong block count here would silently ignore the extra
+            # blocks (measured: nblock=3 was accepted with the third block
+            # dropped) -- plausible-looking wrong output.
+            raise ValueError(
+                "transverse chi0 requires a spin-diag Green's function with "
+                "exactly 2 spin blocks (G_up, G_down), got nblock={}".format(
+                    nblock))
 
         # Fourier transform from Matsubara freq to imaginary time
         omg = xp.exp(-1j * np.pi * (1.0/nmat - 1.0) * xp.arange(nmat))
@@ -2841,7 +2849,13 @@ class RPA:
             # (_set_scheme sys.exit()s otherwise), so enable_reduced is always
             # False here and chi0q is always the full rank-4 orbital tensor.
             if chi0q_orig.ndim != 6:
-                raise AssertionError(
+                # ValueError, consistently with the spinful malformed-rank
+                # guard below: both protect the same normally unreachable
+                # boundary (a round-3 review found the earlier
+                # AssertionError here rested on no real distinction; the
+                # spin-diag checks are different -- they reject reachable
+                # runtime/provenance conditions, not malformed ranks).
+                raise ValueError(
                     "transverse channel expects a general (rank-4 orbital) "
                     "chi0q, got ndim={}. calc_type='ring+ladder' requires "
                     "calc_scheme='general'; if that constraint is ever relaxed, "
