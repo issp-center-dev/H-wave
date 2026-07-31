@@ -2495,10 +2495,11 @@ class RPA:
         nblock,nmat,nvol,nd,nd2 = green_kw.shape
         # ValueError, not assert (issue #125, the longitudinal analogue of
         # the transverse block-count fix): these validate INPUT array data,
-        # and a bare assert disappears under python -O -- a Green's
-        # function with the wrong volume or frequency count would then
-        # proceed into the kernel and produce plausible-looking wrong
-        # output instead of failing loudly.
+        # and a bare assert disappears under python -O. A wrong frequency
+        # count would then proceed into the kernel and produce
+        # plausible-looking wrong output; a wrong volume fails later at
+        # the lattice reshape, but with a diagnostic that names neither
+        # the axis nor the expectation.
         if nvol != self.lattice.nvol:
             raise ValueError(
                 "chi0q kernel: Green's function volume axis ({}) does not "
