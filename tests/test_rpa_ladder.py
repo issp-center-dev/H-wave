@@ -193,7 +193,9 @@ class TestRPALadder(unittest.TestCase):
         the invariant under which the old expansion branches were
         removed: ring+ladder forces the general scheme at construction,
         and every normally reached transverse call receives the full
-        rank-4 (6-dim) bubble."""
+        general-scheme bubble OF ITS SPIN MODE (spin-free 6-dim,
+        spin-diag 7-dim with a leading block axis, spinful 6-dim) --
+        never the 4-dim reduced shape the guards reject."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.rpa as rpa_mod
 
@@ -239,11 +241,15 @@ class TestRPALadder(unittest.TestCase):
         # a normal spin-diag ring+ladder run reaches the channel with a
         # 7-dim bubble).
         def _spy_run(runner):
+            # record (spin_mode, ndim) PAIRS: rank alone cannot tell a
+            # spinful run from a spin-free one (both are 6-dim), so a
+            # fixture regressing to the wrong mode would pass a
+            # rank-only check (round-5 review)
             seen = []
             original = rpa_mod.RPA._build_transverse_channel
 
             def spy(self_, chi0q_orig, ham_orig):
-                seen.append(chi0q_orig.ndim)
+                seen.append((self_.spin_mode, chi0q_orig.ndim))
                 return original(self_, chi0q_orig, ham_orig)
 
             rpa_mod.RPA._build_transverse_channel = spy
@@ -255,17 +261,16 @@ class TestRPALadder(unittest.TestCase):
                             "the ladder solve must reach the channel")
             return set(seen)
 
-        dims = _spy_run(lambda: self._run_rpa(
+        pairs = _spy_run(lambda: self._run_rpa(
             calc_type="ring+ladder", Lx=4, Ly=4, Nmat=16))
-        self.assertEqual(dims, {6}, "spin-free bubble rank")
+        self.assertEqual(pairs, {("spin-free", 6)})
 
-        for mode, spin_flip, want in (("spin-diag", False, {7}),
-                                      ("spinful", True, {6})):
+        for mode, spin_flip, want in (("spin-diag", False, 7),
+                                      ("spinful", True, 6)):
             with self.subTest(spin_mode=mode):
                 d = self._write_so_ladder_inputs(spin_flip=spin_flip)
-                dims = _spy_run(lambda: self._run_so_ladder(d))
-                self.assertEqual(dims, want,
-                                 "{} bubble rank".format(mode))
+                pairs = _spy_run(lambda: self._run_so_ladder(d))
+                self.assertEqual(pairs, {(mode, want)})
 
     def _write_so_ladder_inputs(self, spin_flip):
         """Spin-orbital fixtures for the per-mode bubble-rank checks:
