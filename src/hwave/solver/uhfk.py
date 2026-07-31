@@ -5,6 +5,7 @@ import os
 from .base import solver_base
 from .perf import do_profile
 from . import fold
+from .kgrid import reverse_fft_axes
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -763,7 +764,7 @@ class UHFk(solver_base):
 
             t = np.conjugate(
                     np.transpose(
-                        np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        reverse_fft_axes(tab_r, (0, 1, 2)),
                         (0,1,2,4,3)
                     )
                 )
@@ -1100,7 +1101,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             vba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(vab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(vab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1144,7 +1145,7 @@ class UHFk(solver_base):
 
                 vba = np.conjugate(
                     np.transpose(
-                        np.flip(np.roll(vab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        reverse_fft_axes(vab_r, (0, 1, 2)),
                         (0,1,2,4,3)
                     )
                 )
@@ -1170,7 +1171,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1196,7 +1197,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1224,7 +1225,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1250,7 +1251,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1276,7 +1277,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )

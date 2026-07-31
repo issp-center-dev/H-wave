@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
+from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.density_projection import (
     project_density_pairs, project_density_squashed)
 from . import backend as _bk
@@ -585,7 +586,8 @@ class Interaction:
             # entry, so its mean conjugates and its complex phase survives.
             #
             # The reversal is done on a dense (nx, ny, nz) array with the
-            # same roll+flip uhfk.py uses (index i -> (-i) mod n), NOT by a
+            # same shared FFT-grid reversal uhfk.py uses (kgrid, index
+            # i -> (-i) mod n), NOT by a
             # sign-flipped dictionary-key lookup: table keys may sit in a
             # wrapped canonical form ((n-1, 0, 0) for a -x bond, and folded
             # tables in particular store canonicalized displacements), where
@@ -595,9 +597,8 @@ class Interaction:
             for (irvec, orbvec), v in tbl.items():
                 arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
                      *orbvec)] += v
-            rev = np.transpose(
-                np.flip(np.roll(arr, -1, axis=(0, 1, 2)), axis=(0, 1, 2)),
-                (0, 1, 2, 4, 3))
+            rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
+                               (0, 1, 2, 4, 3))
             if type == "PairHop":
                 rev = np.conjugate(rev)
             sym = 0.5 * (arr + rev)
@@ -2507,7 +2508,7 @@ class RPA:
             axes=(2, 3, 4), workers=workers)
 
         # calculate chi0 in real space and imaginary time
-        green_rev = xp.flip(xp.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+        green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
@@ -2594,15 +2595,16 @@ class RPA:
             axes=(2, 3, 4), workers=workers)
 
         # G_↓(-r,-τ): reverse τ and EACH spatial axis separately, exactly as
-        # the longitudinal _calc_chi0q does (flip∘roll(-1) per axis is
-        # negation indexing, i -> (-i) mod n). Reversing after flattening to
-        # nvol was wrong twice over: modular negation of the flat C-order
-        # index is not coordinate-wise negation on a multidimensional
-        # lattice, and the two orbital axes were being reversed as well --
-        # invisible for nd <= 2, where roll(-1)+flip is the identity, which
-        # is why the one- and two-orbital fixtures never saw it.
-        green_dn_rev = xp.flip(xp.roll(green_rt[1], -1, axis=(0, 1, 2, 3)),
-                               axis=(0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
+        # the longitudinal _calc_chi0q does (the shared FFT-grid reversal is
+        # negation indexing, i -> (-i) mod n, per axis). Reversing after
+        # flattening to nvol was wrong twice over: modular negation of the
+        # flat C-order index is not coordinate-wise negation on a
+        # multidimensional lattice, and the two orbital axes were being
+        # reversed as well -- invisible for nd <= 2, where the map is the
+        # identity, which is why the one- and two-orbital fixtures never
+        # saw it.
+        green_dn_rev = reverse_fft_axes(
+            green_rt[1], (0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
 
         # G_↑(r,τ)
         green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
@@ -2733,17 +2735,17 @@ class RPA:
         # is exactly the h.c. redundancy. On-site input is q-independent and
         # unaffected either way.
         nx, ny, nz = self.lattice.shape
-        _ix = (-np.arange(nx)) % nx
-        _iy = (-np.arange(ny)) % ny
-        _iz = (-np.arange(nz)) % nz
-        qrev = xp.asarray(
-            ((_ix[:, None, None] * ny + _iy[None, :, None]) * nz
-             + _iz[None, None, :]).reshape(-1))
 
         def _mean(block):
             swapped = block.transpose(*pair_swap)
+            # q -> -q on the flattened q axis: unflatten, apply the shared
+            # FFT-grid map, flatten back (same gather as the historical
+            # coordinate-wise index computation).
+            swapped_rev = reverse_fft_axes(
+                swapped.reshape(nx, ny, nz, *swapped.shape[1:]),
+                (0, 1, 2)).reshape(swapped.shape)
             return 0.5 * (block
-                          + xp.where(palin, swapped[qrev], xp.conj(swapped)))
+                          + xp.where(palin, swapped_rev, xp.conj(swapped)))
 
         cross_sym = _mean(cross_block)
         flip_sym = _mean(spin_flip_block)
