@@ -298,6 +298,15 @@ is tracked separately.</p>
 <p>To enable the transverse channel calculation, set <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>
 in the input TOML file. This requires the <code class="docutils literal notranslate"><span class="pre">general</span></code> calculation scheme
 (automatically selected).</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>In the spin-orbital mode, when the Hamiltonian genuinely mixes spins
+(e.g. spin-orbit coupling), the transverse channel extracts only the
+<span class="math notranslate nohighlight">\(S_z\)</span>-conserving block <span class="math notranslate nohighlight">\(G_\uparrow G_\downarrow\)</span> of the
+bubble; the spin-mixing cross terms are not included, and a warning
+is emitted. The transverse susceptibility of a spin-mixing system is
+therefore an approximation in the current implementation.</p>
+</div>
 </section>
 <section id="spin-orbital-mode">
 <h2><span class="section-number">7.2.3. </span>Spin-orbital mode<a class="headerlink" href="#spin-orbital-mode" title="Link to this heading">¶</a></h2>

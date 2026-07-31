@@ -272,6 +272,14 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 <p>横チャネルの計算を有効にするには、入力TOMLファイルで
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> と設定します。
 これには <code class="docutils literal notranslate"><span class="pre">general</span></code> 計算スキームが必要です（自動選択されます）。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>スピン軌道モードでハミルトニアンが本当にスピンを混合する場合
+（スピン軌道相互作用など）、横チャネルはバブルの <span class="math notranslate nohighlight">\(S_z\)</span>
+保存ブロック <span class="math notranslate nohighlight">\(G_\uparrow G_\downarrow\)</span> のみを抽出します。
+スピン混合のクロス項は含まれず、警告が出力されます。したがって
+スピン混合系の横感受率は、現在の実装では近似となります。</p>
+</div>
 </section>
 <section id="id5">
 <h2><span class="section-number">7.2.3. </span>スピン軌道モード<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
