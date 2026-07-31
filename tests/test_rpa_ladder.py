@@ -209,6 +209,39 @@ class TestRPALadder(unittest.TestCase):
                 self.assertIn("nblock={}".format(nblock),
                               str(cm.exception))
 
+    def test_block_count_guard_survives_python_O(self):
+        """The gating CI never runs optimized Python, so a regression of
+        the block-count guard back to a bare assert would pass CI while
+        vanishing in production -O runs. Pin the guard in a -O
+        subprocess."""
+        import subprocess
+        import sys
+
+        code = (
+            "import types, numpy as np\n"
+            "import hwave.solver.rpa as rpa_module\n"
+            "stub = object.__new__(rpa_module.RPA)\n"
+            "stub.lattice = types.SimpleNamespace(shape=(2, 2, 1), nvol=4)\n"
+            "g = np.zeros((3, 4, 4, 2, 2), dtype=complex)\n"
+            "try:\n"
+            "    stub._calc_chi0q_transverse(g, np.zeros_like(g), 1.0)\n"
+            "except ValueError as e:\n"
+            "    assert 'nblock=3' in str(e), str(e)\n"
+            "else:\n"
+            "    raise SystemExit('guard vanished under -O')\n"
+        )
+        env = dict(os.environ)
+        src = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "src")
+        if os.path.isdir(src):
+            env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+        proc = subprocess.run([sys.executable, "-O", "-c", code],
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(
+            proc.returncode, 0,
+            "guard must survive python -O: {}{}".format(
+                proc.stdout, proc.stderr))
+
     def test_upstream_gate_pins_the_dead_branch_premise(self):
         """The two guard tests above exercise states normal construction
         cannot produce. Pin the PREMISE that makes them unreachable --

@@ -2849,10 +2849,12 @@ class RPA:
             # (_set_scheme sys.exit()s otherwise), so enable_reduced is always
             # False here and chi0q is always the full rank-4 orbital tensor.
             if chi0q_orig.ndim != 6:
-                # ValueError, consistently with the spin-diag and spinful
-                # guards below: all three protect the same unreachable
+                # ValueError, consistently with the spinful malformed-rank
+                # guard below: both protect the same normally unreachable
                 # boundary (a round-3 review found the earlier
-                # AssertionError here rested on no real distinction).
+                # AssertionError here rested on no real distinction; the
+                # spin-diag checks are different -- they reject reachable
+                # runtime/provenance conditions, not malformed ranks).
                 raise ValueError(
                     "transverse channel expects a general (rank-4 orbital) "
                     "chi0q, got ndim={}. calc_type='ring+ladder' requires "
