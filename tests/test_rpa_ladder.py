@@ -230,21 +230,94 @@ class TestRPALadder(unittest.TestCase):
         self.assertEqual(_construct("auto").calc_scheme, "general")
         self.assertEqual(_construct("general").calc_scheme, "general")
 
-        # every normally reached transverse call gets a 6-dim bubble
-        seen = []
-        original = rpa_mod.RPA._build_transverse_channel
+        # Every normally reached transverse call carries the bubble RANK
+        # OF ITS SPIN MODE -- 6-dim for spin-free and spinful, 7-dim for
+        # spin-diag (leading nblock axis). The guards under test reject
+        # the 4-dim reduced shape, which no mode produces; pinning the
+        # per-mode ranks prevents this invariant from being broadened
+        # into the false universal "always 6-dim" again (round-4 review:
+        # a normal spin-diag ring+ladder run reaches the channel with a
+        # 7-dim bubble).
+        def _spy_run(runner):
+            seen = []
+            original = rpa_mod.RPA._build_transverse_channel
 
-        def spy(self_, chi0q_orig, ham_orig):
-            seen.append(chi0q_orig.ndim)
-            return original(self_, chi0q_orig, ham_orig)
+            def spy(self_, chi0q_orig, ham_orig):
+                seen.append(chi0q_orig.ndim)
+                return original(self_, chi0q_orig, ham_orig)
 
-        rpa_mod.RPA._build_transverse_channel = spy
-        try:
-            self._run_rpa(calc_type="ring+ladder", Lx=4, Ly=4, Nmat=16)
-        finally:
-            rpa_mod.RPA._build_transverse_channel = original
-        self.assertTrue(seen, "the ladder solve must reach the channel")
-        self.assertEqual(seen, [6] * len(seen))
+            rpa_mod.RPA._build_transverse_channel = spy
+            try:
+                runner()
+            finally:
+                rpa_mod.RPA._build_transverse_channel = original
+            self.assertTrue(seen,
+                            "the ladder solve must reach the channel")
+            return set(seen)
+
+        dims = _spy_run(lambda: self._run_rpa(
+            calc_type="ring+ladder", Lx=4, Ly=4, Nmat=16))
+        self.assertEqual(dims, {6}, "spin-free bubble rank")
+
+        for mode, spin_flip, want in (("spin-diag", False, {7}),
+                                      ("spinful", True, {6})):
+            with self.subTest(spin_mode=mode):
+                d = self._write_so_ladder_inputs(spin_flip=spin_flip)
+                dims = _spy_run(lambda: self._run_so_ladder(d))
+                self.assertEqual(dims, want,
+                                 "{} bubble rank".format(mode))
+
+    def _write_so_ladder_inputs(self, spin_flip):
+        """Spin-orbital fixtures for the per-mode bubble-rank checks:
+        one physical orbital, spin-diagonal hops with DIFFERENT up/down
+        amplitudes (-> spin-diag), plus an on-site spin flip when
+        requested (-> spinful; on-site keeps ring+ladder representable)."""
+        import tempfile
+
+        d = tempfile.mkdtemp(prefix="rpa_so_ladder_")
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0   0.0   0.0\n  0.0   1.0   0.0\n"
+                    "  0.0   0.0   1.0\n2\n   0.0   0.0   0.0\n"
+                    "   0.0   0.0   0.0\n")
+        rows = [(1, 0, 0, 1, 1, 1.0), (-1, 0, 0, 1, 1, 1.0),
+                (1, 0, 0, 2, 2, 0.8), (-1, 0, 0, 2, 2, 0.8)]
+        if spin_flip:
+            rows += [(0, 0, 0, 1, 2, 0.3), (0, 0, 0, 2, 1, 0.3)]
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer SO\n2\n1\n 1\n")
+            for (rx, ry, rz, a, b, v) in rows:
+                f.write("  {:3d} {:3d} {:3d} {:3d} {:3d}  {:.6f}  0.0\n"
+                        .format(rx, ry, rz, a, b, v))
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("CoulombIntra\n1\n1\n 1\n"
+                    "   0    0    0    1    1   2.000000   0.0\n")
+        return d
+
+    def _run_so_ladder(self, d):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        info_mode = {
+            'mode': 'RPA',
+            'param': {'T': 2.0, 'filling': 0.5,
+                      'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                      'Nmat': 16},
+            'enable_spin_orbital': True,
+            'calc_scheme': 'general',
+            'calc_type': 'ring+ladder',
+        }
+        info_input = {
+            'path_to_input': d,
+            'interaction': {'path_to_input': d, 'Geometry': 'geom.dat',
+                            'Transfer': 'transfer.dat',
+                            'CoulombIntra': 'coulombintra.dat'},
+        }
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        read_io = read_input_k.QLMSkInput(info_input)
+        solver = rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+        solver.solve(read_io.get_param("green"), out)
 
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.
