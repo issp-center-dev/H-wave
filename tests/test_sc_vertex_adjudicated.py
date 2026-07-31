@@ -364,6 +364,25 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         inp = self._write(d, extra_s=dict(tags), extra_c=dict(tags))
         self._raw(inp, {"CoulombInter": self.ASYM_V})
 
+    def test_orientation_reason_fires_for_each_of_the_four_types(self):
+        """Membership pin for the orientation predicate: for Hund, Ising
+        and Exchange the older #113 guard would reject a legacy file
+        anyway, so dropping one of them from the ORIENTATION list would
+        escape a rejection-only test -- assert the orientation-specific
+        wording appears for every one of the four types."""
+        import tempfile
+
+        for itype in ("CoulombInter", "Hund", "Ising", "Exchange"):
+            with self.subTest(interaction=itype):
+                d = tempfile.mkdtemp()
+                inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                                  extra_c=dict(self.MYO_TAGS))
+                with self.assertRaises(ValueError) as cm:
+                    self._raw(inp, {itype: self.ASYM_V})
+                msg = str(cm.exception)
+                self.assertIn("cannot be verified", msg)
+                self.assertIn(itype, msg)
+
     def test_legacy_myo_with_asymmetric_pairlift_is_accepted(self):
         # PairLift's particle-hole S/C contribution is exactly zero on
         # both the producer and consumer sides: an asymmetric PairLift
