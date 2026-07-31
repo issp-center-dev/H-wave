@@ -2508,6 +2508,17 @@ class RPA:
             raise ValueError(
                 "chi0q kernel: Green's function frequency axis ({}) does "
                 "not match Nmat ({})".format(nmat, self.nmat))
+        if green0_tail.shape != green_kw.shape:
+            # the tail is meaningful only as the PAIRED array from the
+            # same _calc_green call; a same-size tail of a different
+            # shape would be silently reshaped below and corrupt chi0q
+            # with finite, plausible-looking values (round-3 review
+            # reproduced it)
+            raise ValueError(
+                "chi0q kernel: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
 
         # Fourier transform from Matsubara freq to imaginary time
         green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
@@ -2601,6 +2612,13 @@ class RPA:
                 "transverse chi0 requires a spin-diag Green's function with "
                 "exactly 2 spin blocks (G_up, G_down), got nblock={}".format(
                     nblock))
+        if green0_tail.shape != green_kw.shape:
+            # same paired-tail invariant as the longitudinal kernel
+            raise ValueError(
+                "transverse chi0: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
 
         # Fourier transform from Matsubara freq to imaginary time
         omg = xp.exp(-1j * np.pi * (1.0/nmat - 1.0) * xp.arange(nmat))

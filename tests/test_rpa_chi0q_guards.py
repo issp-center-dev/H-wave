@@ -1,12 +1,16 @@
 """Input-shape guards of the longitudinal chi0q kernel (issue #125).
 
 RPA._calc_chi0q validated its Green's function's volume and frequency
-axes with bare asserts, which vanish under ``python -O`` -- a malformed
-array would then proceed into the kernel and produce plausible-looking
-wrong output. This is the longitudinal analogue of the transverse
-block-count fix; both guards are now ValueErrors naming the expected
-and observed values, pinned here under the normal interpreter and in a
-``-O`` subprocess.
+axes with bare asserts, which vanish under ``python -O``. A wrong
+frequency count then produces plausible-looking wrong output; a wrong
+volume fails later at the lattice reshape with an unhelpful diagnostic.
+This is the longitudinal analogue of the transverse block-count fix;
+the guards are now ValueErrors naming the expected and observed values,
+pinned here under the normal interpreter and in ``-O`` subprocesses.
+The round-3 review added the paired-tail invariant: a green0_tail whose
+shape differs from the Green's function -- even at the SAME element
+count, where the kernel's reshape succeeds -- must be rejected, in both
+the longitudinal and transverse kernels.
 """
 
 import os
@@ -83,6 +87,29 @@ class TestChi0qShapeGuards(unittest.TestCase):
             proc.returncode, 0,
             "guard must survive python -O: {}{}".format(
                 proc.stdout, proc.stderr))
+
+    def test_mismatched_tail_rejected(self):
+        """Same element count, different shape: the reshape succeeds and
+        the kernel returns finite, plausible-looking garbage (round-3
+        review measured it) -- the paired-tail guard must fire first."""
+        stub = self._stub()
+        g = np.zeros((1, 4, 4, 2, 2), dtype=complex)
+        tail = np.zeros((1, 8, 2, 2, 2), dtype=complex)  # same 64 elements
+        with self.assertRaises(ValueError) as cm:
+            stub._calc_chi0q(g, tail, 1.0)
+        msg = str(cm.exception)
+        self.assertIn("green0_tail", msg)
+        self.assertIn("(1, 8, 2, 2, 2)", msg)
+        self.assertIn("(1, 4, 4, 2, 2)", msg)
+
+    def test_transverse_mismatched_tail_rejected(self):
+        """The transverse kernel shares the paired-tail invariant."""
+        stub = self._stub()
+        g = np.zeros((2, 4, 4, 2, 2), dtype=complex)
+        tail = np.zeros((2, 8, 2, 2, 2), dtype=complex)
+        with self.assertRaises(ValueError) as cm:
+            stub._calc_chi0q_transverse(g, tail, 1.0)
+        self.assertIn("green0_tail", str(cm.exception))
 
     def test_volume_guard_survives_python_O(self):
         """The gating CI never runs optimized Python; without this pin a
