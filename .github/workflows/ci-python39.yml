@@ -60,9 +60,13 @@ jobs:
         poetry run python -m unittest discover tests/ -v
 
     - name: Run tests with pytest and coverage
+      # This step GATES: it runs the pytest-only tests unittest discovery
+      # cannot see, and enforces the coverage floor (issue #84 -- the
+      # floor configured in pytest.ini was silently ignored for a long
+      # time, and this step used to be continue-on-error, so neither the
+      # tests nor the gate could actually fail CI).
       run: |
-        poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml
-      continue-on-error: true
+        poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
 
     - name: Verify the test suite left the tracked tree clean
       run: |
