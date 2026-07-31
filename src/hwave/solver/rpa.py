@@ -2579,7 +2579,15 @@ class RPA:
 
         nx, ny, nz = self.lattice.shape
         nblock, nmat, nvol, nd, nd2 = green_kw.shape
-        assert nblock == 2, "Transverse chi0 requires spin-diag (nblock=2)"
+        if nblock != 2:
+            # ValueError, not assert: an assert disappears under python -O,
+            # and a wrong block count here would silently ignore the extra
+            # blocks (measured: nblock=3 was accepted with the third block
+            # dropped) -- plausible-looking wrong output.
+            raise ValueError(
+                "transverse chi0 requires a spin-diag Green's function with "
+                "exactly 2 spin blocks (G_up, G_down), got nblock={}".format(
+                    nblock))
 
         # Fourier transform from Matsubara freq to imaginary time
         omg = xp.exp(-1j * np.pi * (1.0/nmat - 1.0) * xp.arange(nmat))

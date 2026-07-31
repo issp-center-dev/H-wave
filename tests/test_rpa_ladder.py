@@ -187,6 +187,28 @@ class TestRPALadder(unittest.TestCase):
         self.assertIn("general-scheme", msg)
         self.assertIn(str(chi0q_reduced.shape), msg)
 
+    def test_transverse_bubble_rejects_wrong_block_count(self):
+        """The transverse bubble kernel requires exactly the (G_up, G_down)
+        block pair. This used to be a bare assert, which vanishes under
+        python -O -- a 3-block Green's function was then accepted with the
+        third block silently ignored (round-7 review reproduced it). It is
+        now a ValueError naming the observed count."""
+        import types
+        import hwave.solver.rpa as rpa_module
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.lattice = types.SimpleNamespace(shape=(2, 2, 1), nvol=4)
+
+        nmat, nvol, nd = 4, 4, 2
+        for nblock in (1, 3):
+            with self.subTest(nblock=nblock):
+                g = np.zeros((nblock, nmat, nvol, nd, nd), dtype=complex)
+                tail = np.zeros_like(g)
+                with self.assertRaises(ValueError) as cm:
+                    stub._calc_chi0q_transverse(g, tail, 1.0)
+                self.assertIn("nblock={}".format(nblock),
+                              str(cm.exception))
+
     def test_upstream_gate_pins_the_dead_branch_premise(self):
         """The two guard tests above exercise states normal construction
         cannot produce. Pin the PREMISE that makes them unreachable --
@@ -223,11 +245,23 @@ class TestRPALadder(unittest.TestCase):
             read_io = read_input_k.QLMSkInput(info_file_input)
             return rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
 
-        # reduced/squashed exit before any solve
+        # reduced/squashed exit before any solve. This pins the CURRENT
+        # legacy contract (logger.error + sys.exit(1)); if _set_scheme is
+        # ever modernized to raise ValueError, this test should change
+        # WITH it, deliberately. Exit code and message are asserted so an
+        # unrelated SystemExit cannot satisfy the check.
         for scheme in ("reduced", "squashed"):
             with self.subTest(scheme=scheme):
-                with self.assertRaises(SystemExit):
-                    _construct(scheme)
+                with self.assertLogs("hwave.solver.rpa",
+                                     level="ERROR") as logcm:
+                    with self.assertRaises(SystemExit) as exitcm:
+                        _construct(scheme)
+                self.assertEqual(exitcm.exception.code, 1)
+                self.assertTrue(
+                    any("ring+ladder" in m and "general" in m
+                        for m in logcm.output),
+                    "expected the scheme-gate error, got: {}".format(
+                        logcm.output))
         # auto resolves to general; general constructs normally
         self.assertEqual(_construct("auto").calc_scheme, "general")
         self.assertEqual(_construct("general").calc_scheme, "general")
@@ -265,12 +299,47 @@ class TestRPALadder(unittest.TestCase):
             calc_type="ring+ladder", Lx=4, Ly=4, Nmat=16))
         self.assertEqual(pairs, {("spin-free", 6)})
 
-        for mode, spin_flip, want in (("spin-diag", False, 7),
-                                      ("spinful", True, 6)):
-            with self.subTest(spin_mode=mode):
-                d = self._write_so_ladder_inputs(spin_flip=spin_flip)
-                pairs = _spy_run(lambda: self._run_so_ladder(d))
-                self.assertEqual(pairs, {(mode, want)})
+        results = {}
+
+        def _run_and_keep(mode, d):
+            results[mode] = self._run_so_ladder(d)
+
+        # spin-diag: no spin mixing, no #110 warning expected
+        d = self._write_so_ladder_inputs(spin_flip=False)
+        pairs = _spy_run(lambda: _run_and_keep("spin-diag", d))
+        self.assertEqual(pairs, {("spin-diag", 7)})
+
+        # spinful: genuine on-site spin mixing -- the run is a
+        # shape/reachability check, NOT a physics check: the transverse
+        # extraction takes the Sz-conserving block and warns that the
+        # cross terms are omitted (#110). Assert that warning so the
+        # limitation is explicit here.
+        d = self._write_so_ladder_inputs(spin_flip=True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as wcm:
+            pairs = _spy_run(lambda: _run_and_keep("spinful", d))
+        self.assertEqual(pairs, {("spinful", 6)})
+        self.assertTrue(
+            any("Sz-conserving" in m for m in wcm.output),
+            "expected the spin-mixing cross-term warning, got: {}".format(
+                wcm.output))
+
+        # the ranks are not enough: the solves must also produce finite
+        # chiq_pm (a rank-only pin would pass on NaN/divergent output)
+        for mode, ginfo in results.items():
+            with self.subTest(finite=mode):
+                chiq_pm = ginfo["chiq_pm"]
+                self.assertTrue(np.all(np.isfinite(chiq_pm)),
+                                "{} chiq_pm must be finite".format(mode))
+
+        # compact physical pin for the clean (Sz-conserving) spin-diag
+        # case: the static on-site response is real up to numerical
+        # residue and positive (a paramagnetic-like bubble dressed by
+        # repulsion stays a positive response)
+        chiq_pm = results["spin-diag"]["chiq_pm"]
+        iw0 = chiq_pm.shape[0] // 2
+        static = chiq_pm[iw0, :, 0, 0, 0, 0]
+        self.assertLess(float(np.max(np.abs(static.imag))), 1e-10)
+        self.assertGreater(float(np.min(static.real)), 0.0)
 
     def _write_so_ladder_inputs(self, spin_flip):
         """Spin-orbital fixtures for the per-mode bubble-rank checks:
@@ -322,7 +391,9 @@ class TestRPALadder(unittest.TestCase):
         os.makedirs(out, exist_ok=True)
         read_io = read_input_k.QLMSkInput(info_input)
         solver = rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
-        solver.solve(read_io.get_param("green"), out)
+        green_info = read_io.get_param("green")
+        solver.solve(green_info, out)
+        return green_info
 
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.
