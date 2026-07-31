@@ -137,12 +137,20 @@ class TestRPALadder(unittest.TestCase):
         defective delta_{l2,l4} placement; the expansion was dead code
         (ring+ladder forces calc_scheme='general') and is now a loud
         guard. Pin the guard directly, since no normally constructed
-        solver can reach it (issue #111)."""
+        solver can reach it (issue #111).
+
+        The exception TYPE differs between the two guards on purpose:
+        this branch raises AssertionError because its precondition is
+        guaranteed by _set_scheme for every normal construction (an
+        internal invariant), while the spinful branch raises ValueError
+        because a spinful chi0q's shape depends on runtime input more
+        directly. The tests freeze that distinction as documented
+        behavior rather than an accident."""
         import types
         import hwave.solver.rpa as rpa_module
 
         stub = object.__new__(rpa_module.RPA)
-        stub.norb, stub.ns, stub.nd = 2, 2, 4
+        stub.norb, stub.ns = 2, 2
         stub.lattice = types.SimpleNamespace(nvol=4)
         stub.spin_mode = "spin-free"
 
@@ -161,7 +169,7 @@ class TestRPALadder(unittest.TestCase):
         import hwave.solver.rpa as rpa_module
 
         stub = object.__new__(rpa_module.RPA)
-        stub.norb, stub.ns, stub.nd = 2, 1, 2
+        stub.norb, stub.ns = 2, 1
         stub.lattice = types.SimpleNamespace(nvol=4)
         stub.spin_mode = "spinful"
 
@@ -169,7 +177,13 @@ class TestRPALadder(unittest.TestCase):
         ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
         with self.assertRaises(ValueError) as cm:
             stub._build_transverse_channel(chi0q_reduced, ham_orig)
-        self.assertIn("full", str(cm.exception))
+        # pin the INTENDED failure, not just any ValueError: the message
+        # must identify the channel, the requirement, and the shape
+        msg = str(cm.exception)
+        self.assertIn("spinful transverse", msg)
+        self.assertIn("requires the full", msg)
+        self.assertIn("general-scheme", msg)
+        self.assertIn(str(chi0q_reduced.shape), msg)
 
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.
