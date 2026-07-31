@@ -226,7 +226,12 @@ class TestRPALadder(unittest.TestCase):
             "try:\n"
             "    stub._calc_chi0q_transverse(g, np.zeros_like(g), 1.0)\n"
             "except ValueError as e:\n"
-            "    assert 'nblock=3' in str(e), str(e)\n"
+            # explicit if/raise, NOT assert: an assert inside this -O
+            # subprocess would itself be optimized away and accept any
+            # incidental ValueError (the flaw test_rpa_chi0q_guards
+            # documents)
+            "    if 'nblock=3' not in str(e):\n"
+            "        raise SystemExit('wrong ValueError: ' + str(e))\n"
             "else:\n"
             "    raise SystemExit('guard vanished under -O')\n"
         )

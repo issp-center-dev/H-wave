@@ -1302,13 +1302,22 @@ class RPA:
                 chi0q = chi0q[:,self.freq_index]
                 logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
-            # nblock
+            # nblock: defense in depth behind the kernel's structural
+            # check -- under python -O the former asserts vanished and a
+            # wrong block count was silently truncated (round-5 review)
             if self.spin_mode in [ "spin-free", "spinful" ]:
-                assert chi0q.shape[0] == 1
+                if chi0q.shape[0] != 1:
+                    raise ValueError(
+                        "chi0q block count {} does not match spin_mode "
+                        "'{}' (expected 1)".format(
+                            chi0q.shape[0], self.spin_mode))
                 chi0q = chi0q[0]
             else:
-                assert chi0q.shape[0] == 2
-                pass
+                if chi0q.shape[0] != 2:
+                    raise ValueError(
+                        "chi0q block count {} does not match spin_mode "
+                        "'{}' (expected 2)".format(
+                            chi0q.shape[0], self.spin_mode))
 
             green_info["chi0q"] = _bk.to_host(chi0q)
             # Record the producing run's frequency metadata alongside: a
@@ -2493,8 +2502,50 @@ class RPA:
         #nvol = self.lattice.nvol
 
         nblock,nmat,nvol,nd,nd2 = green_kw.shape
-        assert nvol == self.lattice.nvol
-        assert nmat == self.nmat
+        # ValueError, not assert (issue #125, the longitudinal analogue of
+        # the transverse block-count fix): these validate INPUT array data,
+        # and a bare assert disappears under python -O. A wrong frequency
+        # count would then proceed into the kernel and produce
+        # plausible-looking wrong output; a wrong volume fails later at
+        # the lattice reshape, but with a diagnostic that names neither
+        # the axis nor the expectation.
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "chi0q kernel: Green's function volume axis ({}) does not "
+                "match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "chi0q kernel: Green's function frequency axis ({}) does "
+                "not match Nmat ({})".format(nmat, self.nmat))
+        if nblock not in (1, 2):
+            # 1 = spin-free/spinful, 2 = spin-diag. Anything else is
+            # malformed input: nblock=0 returned a finite EMPTY result
+            # and nblock=3 a finite three-block one, which the caller's
+            # block handling would then silently truncate (round-5
+            # review reproduced both).
+            raise ValueError(
+                "chi0q kernel: Green's function block axis ({}) must be "
+                "1 (spin-free/spinful) or 2 (spin-diag)".format(nblock))
+        if nd != nd2 or nd < 1:
+            raise ValueError(
+                "chi0q kernel: orbital axes must be square and nonempty, "
+                "got ({}, {})".format(nd, nd2))
+        if green0_tail.shape != green_kw.shape:
+            # STRUCTURAL pairing check only: shape equality cannot prove
+            # the tail came from the same _calc_green call (a stale
+            # same-shaped tail passes and shifts chi0q). Provenance
+            # machinery is deliberately out of scope here -- unlike
+            # chi0q reuse (#116), this pair never crosses the
+            # green_info/file boundary: every caller passes the two
+            # arrays one _calc_green call returned together. The guard
+            # exists because a same-SIZE tail of a different shape would
+            # be silently reshaped below and corrupt chi0q with finite,
+            # plausible-looking values (round-3 review reproduced it).
+            raise ValueError(
+                "chi0q kernel: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
 
         # Fourier transform from Matsubara freq to imaginary time
         green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
@@ -2588,6 +2639,25 @@ class RPA:
                 "transverse chi0 requires a spin-diag Green's function with "
                 "exactly 2 spin blocks (G_up, G_down), got nblock={}".format(
                     nblock))
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "transverse chi0: Green's function volume axis ({}) does "
+                "not match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "transverse chi0: Green's function frequency axis ({}) "
+                "does not match Nmat ({})".format(nmat, self.nmat))
+        if nd != nd2 or nd < 1:
+            raise ValueError(
+                "transverse chi0: orbital axes must be square and "
+                "nonempty, got ({}, {})".format(nd, nd2))
+        if green0_tail.shape != green_kw.shape:
+            # same paired-tail invariant as the longitudinal kernel
+            raise ValueError(
+                "transverse chi0: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
 
         # Fourier transform from Matsubara freq to imaginary time
         omg = xp.exp(-1j * np.pi * (1.0/nmat - 1.0) * xp.arange(nmat))
