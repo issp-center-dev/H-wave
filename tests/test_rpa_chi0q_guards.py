@@ -178,5 +178,12 @@ class TestChi0qShapeGuards(unittest.TestCase):
     def test_frequency_guard_survives_python_O(self):
         self._run_O_subprocess((1, 6, 4, 2, 2), "frequency axis (6)")
 
+    def test_structural_guards_survive_python_O(self):
+        """Round-6: persistent -O coverage for the round-5 structural
+        guards (block axis, orbital square) on the longitudinal
+        kernel."""
+        self._run_O_subprocess((3, 4, 4, 2, 2), "block axis (3)")
+        self._run_O_subprocess((1, 4, 4, 2, 3), "square and nonempty")
+
 if __name__ == "__main__":
     unittest.main()
