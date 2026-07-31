@@ -72,3 +72,32 @@ def test_coverage_report_precision_is_two_decimals():
     assert cov.get_option("report:precision") == 2, (
         ".coveragerc precision=2 was not loaded (cwd must be the repo "
         "root)")
+
+
+def test_coverage_floor_cli(tmp_path):
+    """CLI-level pin of the exact-floor checker: passing, failing,
+    malformed and missing XML must produce the right exit codes, and
+    the failure modes must be loud (nonzero), never a silent pass."""
+    import subprocess
+    import sys
+
+    script = "tests/_coverage_floor.py"
+
+    def run(*args):
+        return subprocess.run([sys.executable, script, *args],
+                              capture_output=True, text=True)
+
+    def xml(covered, valid):
+        p = tmp_path / "cov_{}_{}.xml".format(covered, valid)
+        p.write_text('<coverage lines-covered="{}" lines-valid="{}">'
+                     '</coverage>'.format(covered, valid))
+        return str(p)
+
+    assert run(xml(4, 5), "80").returncode == 0
+    assert run(xml(7999, 10000), "80").returncode == 1
+    assert run(xml(6151, 7689), "80").returncode == 1
+
+    bad = tmp_path / "bad.xml"
+    bad.write_text("<coverage")
+    assert run(str(bad), "80").returncode != 0
+    assert run(str(tmp_path / "missing.xml"), "80").returncode != 0
