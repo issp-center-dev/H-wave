@@ -62,6 +62,12 @@ class TestReverseFftAxes(unittest.TestCase):
             with self.subTest(spelling=i):
                 np.testing.assert_array_equal(got, s)
 
+    def test_empty_axes_rejected(self):
+        """axes=() would silently return the array unchanged where the
+        caller believed a reversal happened; it must fail loudly."""
+        with self.assertRaises(ValueError):
+            reverse_fft_axes(np.zeros((3, 3)), ())
+
     def test_short_axis_identity_trap(self):
         """For N <= 2 the map is the identity: (N - i) % N == i for
         i in {0, 1}. This is WHY a misapplied reversal is invisible on

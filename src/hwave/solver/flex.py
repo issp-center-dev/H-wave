@@ -813,7 +813,8 @@ class FLEX(RPA):
         chi0_{ab}(r,tau) = -G_{ab}(r,tau) * G_{ba}(-r,-tau) with the
         fermionic anti-periodicity G(-tau) = -G(beta - tau) realized as a
         pure tau-node index reversal (symmetric node sets); the spatial
-        r -> -r is the same reverse+roll map as the uniform path. The
+        r -> -r is the shared FFT-grid reversal (kgrid.reverse_fft_axes),
+        identical to the uniform path. The
         product lives on the BOSONIC tau nodes (chi0 is periodic), where G
         is evaluated exactly from its fermionic coefficients. All IR
         transforms are physical (the tau -> i nu step is the integral over
@@ -840,7 +841,7 @@ class FLEX(RPA):
 
         # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
         # plain tau reversal (with the global fermionic -1); r -> -r is
-        # reverse+roll on the k grid (identical to the uniform path).
+        # the shared FFT-grid reversal (identical to the uniform path).
         g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
         g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
         g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
@@ -864,8 +865,9 @@ class FLEX(RPA):
         # guard, which is why this one has no analogous check).
         r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
         (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
-        coefficients on the bosonic tau nodes; tau flip-only reversal, spatial
-        roll(-1)+flip; physical transforms, no 1/beta); the orbital product is
+        coefficients on the bosonic tau nodes; tau flip-only reversal, the
+        shared spatial FFT-grid reversal; physical transforms, no 1/beta);
+        the orbital product is
         the full (a,c,b,d) form of the uniform general `_calc_chi0q`
         (rpa.py): chi0[a,c,b,d] = -G[a,b](r,tau) * G[d,c](-r,-tau).
         """
@@ -883,8 +885,9 @@ class FLEX(RPA):
             nblock, ntB, nx, ny, nz, nd * nd)
         g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
 
-        # G(-r,-tau): tau flip-only (j -> nt-1-j), spatial roll(-1)+flip, and
-        # the leading -1 folds in the fermionic antiperiodicity.
+        # G(-r,-tau): tau flip-only (j -> nt-1-j), the shared spatial
+        # FFT-grid reversal, and the leading -1 folds in the fermionic
+        # antiperiodicity.
         g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
         g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
         g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)

@@ -53,4 +53,10 @@ def reverse_fft_axes(arr, axes):
     """
     xp = _bk.array_module_of(arr)
     axes = tuple(axes)
+    if not axes:
+        # An empty tuple would return the array unchanged -- a silent
+        # no-op exactly where the caller believed a reversal happened.
+        # No caller legitimately needs that; fail loudly instead.
+        raise ValueError(
+            "reverse_fft_axes: axes must name at least one axis")
     return xp.roll(xp.flip(arr, axis=axes), 1, axis=axes)

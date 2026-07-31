@@ -586,7 +586,8 @@ class Interaction:
             # entry, so its mean conjugates and its complex phase survives.
             #
             # The reversal is done on a dense (nx, ny, nz) array with the
-            # same roll+flip uhfk.py uses (index i -> (-i) mod n), NOT by a
+            # same shared FFT-grid reversal uhfk.py uses (kgrid, index
+            # i -> (-i) mod n), NOT by a
             # sign-flipped dictionary-key lookup: table keys may sit in a
             # wrapped canonical form ((n-1, 0, 0) for a -x bond, and folded
             # tables in particular store canonicalized displacements), where
@@ -2594,13 +2595,14 @@ class RPA:
             axes=(2, 3, 4), workers=workers)
 
         # G_↓(-r,-τ): reverse τ and EACH spatial axis separately, exactly as
-        # the longitudinal _calc_chi0q does (flip∘roll(-1) per axis is
-        # negation indexing, i -> (-i) mod n). Reversing after flattening to
-        # nvol was wrong twice over: modular negation of the flat C-order
-        # index is not coordinate-wise negation on a multidimensional
-        # lattice, and the two orbital axes were being reversed as well --
-        # invisible for nd <= 2, where roll(-1)+flip is the identity, which
-        # is why the one- and two-orbital fixtures never saw it.
+        # the longitudinal _calc_chi0q does (the shared FFT-grid reversal is
+        # negation indexing, i -> (-i) mod n, per axis). Reversing after
+        # flattening to nvol was wrong twice over: modular negation of the
+        # flat C-order index is not coordinate-wise negation on a
+        # multidimensional lattice, and the two orbital axes were being
+        # reversed as well -- invisible for nd <= 2, where the map is the
+        # identity, which is why the one- and two-orbital fixtures never
+        # saw it.
         green_dn_rev = reverse_fft_axes(
             green_rt[1], (0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
 
