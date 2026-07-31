@@ -330,6 +330,9 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("sc_vertex_version", msg)
         self.assertIn("orientation", msg)
+        # pins the round-1 wording fix: the message must say the
+        # semantics are unverifiable, not overclaim the file's history
+        self.assertIn("cannot be verified", msg)
         self.assertIn("CoulombInter", msg)
         # the same rejection through the static loader route
         with self.assertRaises(ValueError):
@@ -404,6 +407,10 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
             f({((0, 0, 0), (0, 1)): 0.5 + 0.2j,
                ((0, 0, 0), (1, 0)): 0.5 - 0.2j}), 0.4, places=12)
         self.assertEqual(f({((0, 0, 0), (0, 1)): float("nan")}),
+                         float("inf"))
+        self.assertEqual(f({((0, 0, 0), (0, 1)): float("inf")}),
+                         float("inf"))
+        self.assertEqual(f({((0, 0, 0), (0, 1)): complex("nan+nanj")}),
                          float("inf"))
         self.assertEqual(f({((1, 0, 0), (0, 1)): 0.7}), 0.0)  # off-site
 

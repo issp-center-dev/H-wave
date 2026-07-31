@@ -150,14 +150,18 @@ The matrix elements are:
    produced before this correction carry no ``sc_vertex_version`` field and
    are rejected when the interaction set contains Hund, Exchange or Ising.
    For general-scheme (``myo``) files, an unversioned file is also rejected
-   when any configured interaction declares an asymmetric on-site
-   inter-orbital coupling (:math:`X_{ab} \neq X_{ba}`): the orbital
-   orientation in which the interaction enters the vertex, and the
-   symmetrised reading of such declarations, both changed before the
-   version stamp was introduced, so an old file may pair either
-   differently from the current vertex. Symmetric declarations -- every
-   physically ordinary input -- are unaffected, and reduced-scheme files
-   never depended on this orientation.
+   when CoulombInter, Hund, Ising or Exchange declares an asymmetric
+   on-site inter-orbital coupling (:math:`X_{ab} \neq X_{ba}`): the
+   orbital orientation in which the interaction enters the vertex and
+   the symmetrised reading of such declarations both differ between
+   historical builds and the current one, and an unversioned file does
+   not record which semantics it was produced with. PairHop is exempt
+   (its two declarations are Hermitian partners, a different pairing
+   than this transpose), and so is PairLift (its particle-hole vertex
+   contribution is exactly zero, so the orientation cannot matter).
+   Symmetric declarations -- every physically ordinary input -- are
+   unaffected, and reduced-scheme files never depended on this
+   orientation.
 
 The RPA susceptibilities are
 
