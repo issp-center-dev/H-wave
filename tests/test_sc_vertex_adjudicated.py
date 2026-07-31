@@ -361,6 +361,91 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         inp = self._write(d, extra_s=dict(tags), extra_c=dict(tags))
         self._raw(inp, {"CoulombInter": self.ASYM_V})
 
+    def test_legacy_myo_with_asymmetric_pairlift_is_accepted(self):
+        # PairLift's particle-hole S/C contribution is exactly zero on
+        # both the producer and consumer sides: an asymmetric PairLift
+        # cannot change the stored chi or the vertex, so rejecting on it
+        # would be a pure false positive (round-1 review)
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"PairLift": self.ASYM_V})
+
+    def test_legacy_myo_with_asymmetric_pairhop_is_accepted(self):
+        # PairHop's declaration partner is the HERMITIAN entry, a
+        # different pairing than the same-operator transpose this
+        # predicate tests; it must stay excluded
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"PairHop": self.ASYM_V})
+
+    def test_asymmetry_helper_cases(self):
+        """Direct predicate pins: one-sided declarations, numpy orbital
+        key types (as the wan90 parser can produce), Hermitian-complex
+        pairs (Im p != 0 counts as orientation-sensitive -- the
+        symmetrised reading of the imaginary part also changed pre-v2),
+        and non-finite values, which must fail CLOSED (max() drops NaN,
+        so a naive implementation reads a NaN table as symmetric)."""
+        import hwave.sc as sc
+
+        f = sc._onsite_transpose_asymmetry
+        self.assertEqual(f({((0, 0, 0), (0, 1)): 0.7}), 0.7)  # one-sided
+        self.assertEqual(f({((0, 0, 0), (0, 1)): 0.7,
+                            ((0, 0, 0), (1, 0)): 0.7}), 0.0)
+        self.assertEqual(
+            f({((0, 0, 0), (np.int64(0), np.int64(1))): 0.7,
+               ((0, 0, 0), (np.int64(1), np.int64(0))): 0.7}), 0.0)
+        self.assertAlmostEqual(
+            f({((0, 0, 0), (0, 1)): 0.5 + 0.2j,
+               ((0, 0, 0), (1, 0)): 0.5 - 0.2j}), 0.4, places=12)
+        self.assertEqual(f({((0, 0, 0), (0, 1)): float("nan")}),
+                         float("inf"))
+        self.assertEqual(f({((1, 0, 0), (0, 1)): 0.7}), 0.0)  # off-site
+
+    def test_rejection_reaches_the_dynamic_and_ir_readers(self):
+        """The predicate lives in the shared loader; prove the
+        asymmetric-CoulombInter rejection (not the older #113 guard)
+        fires through _load_flex_susceptibilities_full with allow_ir
+        False and True."""
+        import tempfile
+        import hwave.sc as sc
+
+        for allow_ir in (False, True):
+            with self.subTest(allow_ir=allow_ir):
+                d = tempfile.mkdtemp()
+                inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                                  extra_c=dict(self.MYO_TAGS))
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_susceptibilities_full(
+                        inp, 2, 2, 2, 1, allow_ir=allow_ir,
+                        interactions={"CoulombInter": self.ASYM_V})
+                self.assertIn("orientation", str(cm.exception))
+
+    def test_predicate_accepts_parser_produced_key_types(self):
+        """Feed the gate a table read by the real wannier90 parser, so a
+        key-type mismatch between parsed and hand-built tables (ints vs
+        numpy ints, tuple forms) cannot silently break the partner
+        lookup."""
+        import tempfile
+        import hwave.qlmsio.wan90 as wan90
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "coulombinter.dat")
+        with open(path, "w") as fobj:
+            fobj.write("CoulombInter\n2\n1\n 1\n"
+                       "   0    0    0    1    2   0.700000   0.0\n"
+                       "   0    0    0    2    1   0.400000   0.0\n")
+        table = wan90.read_w90(path)
+        self.assertGreater(
+            sc._onsite_transpose_asymmetry(table), 0.0,
+            "parser-produced keys must reach the partner lookup")
+
     def test_legacy_myo_combined_reasons_are_both_named(self):
         # an asymmetric Hund trips BOTH the #113 content reason and the
         # #101 orientation reason; the message must name both

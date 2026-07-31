@@ -149,6 +149,15 @@ The matrix elements are:
    :math:`-U' + 2J` in the Cross :math:`C` entry). Susceptibility files
    produced before this correction carry no ``sc_vertex_version`` field and
    are rejected when the interaction set contains Hund, Exchange or Ising.
+   For general-scheme (``myo``) files, an unversioned file is also rejected
+   when any configured interaction declares an asymmetric on-site
+   inter-orbital coupling (:math:`X_{ab} \neq X_{ba}`): the orbital
+   orientation in which the interaction enters the vertex, and the
+   symmetrised reading of such declarations, both changed before the
+   version stamp was introduced, so an old file may pair either
+   differently from the current vertex. Symmetric declarations -- every
+   physically ordinary input -- are unaffected, and reduced-scheme files
+   never depended on this orientation.
 
 The RPA susceptibilities are
 

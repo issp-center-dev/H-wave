@@ -1712,7 +1712,12 @@ def _onsite_transpose_asymmetry(table):
         if a == b:
             continue
         partner = table.get((tuple(irvec), (b, a)), 0.0)
-        worst = max(worst, abs(v - partner))
+        diff = abs(complex(v) - complex(partner))
+        if not np.isfinite(diff):
+            # fail CLOSED: max() drops NaN (nan > x is False), so a
+            # non-finite declaration would otherwise read as symmetric
+            return float("inf")
+        worst = max(worst, diff)
     return worst
 
 
@@ -1791,13 +1796,16 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
         # are necessarily post-#99 (the version tag came later), so for a
         # myo file the version requirement doubles as the orientation
         # marker. Orientation only matters when an interaction is not
-        # invariant under the orbital transpose; PairHop is excluded (its
-        # declaration partner is the HERMITIAN entry, a different pairing).
+        # invariant under the orbital transpose. PairHop is excluded (its
+        # declaration partner is the HERMITIAN entry, a different pairing);
+        # PairLift is excluded because its particle-hole S/C contribution
+        # is exactly zero on both the producer and consumer sides -- an
+        # asymmetric PairLift cannot change either the stored chi or the
+        # vertex, so rejecting on it would be a pure false positive.
         orientation = []
         if str(chi_convention).lower() == "myo":
             orientation = [
-                t for t in ("CoulombInter", "Hund", "Ising", "Exchange",
-                            "PairLift")
+                t for t in ("CoulombInter", "Hund", "Ising", "Exchange")
                 if interactions.get(t)
                 and _onsite_transpose_asymmetry(interactions[t]) > 0.0]
         if affected or orientation:
@@ -1813,10 +1821,14 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                     if orientation:
                         reasons.append(
                             "{} declare(s) an asymmetric on-site "
-                            "inter-orbital coupling, and files this old "
-                            "were computed with the pre-#99 interaction "
-                            "orientation, which the current pairing vertex "
-                            "no longer uses (#101)".format(
+                            "inter-orbital coupling, whose orientation and "
+                            "symmetrisation semantics cannot be verified "
+                            "for a file this old: the interaction "
+                            "orientation changed in #99 and the "
+                            "declaration symmetrisation arrived with the "
+                            "version-2 stamp, so an unversioned file may "
+                            "pair either or both differently from the "
+                            "current vertex (#101)".format(
                                 ", ".join(orientation)))
                     raise ValueError(
                         "FLEX susceptibility file '{}' predates the current "
