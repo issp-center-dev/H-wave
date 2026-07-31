@@ -139,13 +139,12 @@ class TestRPALadder(unittest.TestCase):
         guard. Pin the guard directly, since no normally constructed
         solver can reach it (issue #111).
 
-        The exception TYPE differs between the two guards on purpose:
-        this branch raises AssertionError because its precondition is
-        guaranteed by _set_scheme for every normal construction (an
-        internal invariant), while the spinful branch raises ValueError
-        because a spinful chi0q's shape depends on runtime input more
-        directly. The tests freeze that distinction as documented
-        behavior rather than an accident."""
+        All the malformed-shape guards in this method raise ValueError
+        consistently: an earlier revision used AssertionError here with
+        a claimed invariant-vs-runtime distinction, which a review
+        showed was false -- both branches are equally unreachable
+        through normal construction (the upstream gate is pinned by
+        test_upstream_gate_pins_the_dead_branch_premise below)."""
         import types
         import hwave.solver.rpa as rpa_module
 
@@ -157,7 +156,7 @@ class TestRPALadder(unittest.TestCase):
         # a reduced (2-index) chi0q: ndim 4, not the rank-4 orbital tensor
         chi0q_reduced = np.zeros((4, 4, 2, 2), dtype=complex)
         ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
-        with self.assertRaises(AssertionError) as cm:
+        with self.assertRaises(ValueError) as cm:
             stub._build_transverse_channel(chi0q_reduced, ham_orig)
         self.assertIn("density-pair", str(cm.exception).lower())
         self.assertIn("general", str(cm.exception))
@@ -169,11 +168,14 @@ class TestRPALadder(unittest.TestCase):
         import hwave.solver.rpa as rpa_module
 
         stub = object.__new__(rpa_module.RPA)
-        stub.norb, stub.ns = 2, 1
+        # ns is ALWAYS 2 in a constructed RPA; a reduced spinful bubble
+        # for norb=2 ends in (nd, nd) = (4, 4), so this is the state that
+        # could exist just before the upstream scheme validation.
+        stub.norb, stub.ns = 2, 2
         stub.lattice = types.SimpleNamespace(nvol=4)
         stub.spin_mode = "spinful"
 
-        chi0q_reduced = np.zeros((4, 4, 2, 2), dtype=complex)
+        chi0q_reduced = np.zeros((4, 4, 4, 4), dtype=complex)
         ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
         with self.assertRaises(ValueError) as cm:
             stub._build_transverse_channel(chi0q_reduced, ham_orig)
@@ -184,6 +186,65 @@ class TestRPALadder(unittest.TestCase):
         self.assertIn("requires the full", msg)
         self.assertIn("general-scheme", msg)
         self.assertIn(str(chi0q_reduced.shape), msg)
+
+    def test_upstream_gate_pins_the_dead_branch_premise(self):
+        """The two guard tests above exercise states normal construction
+        cannot produce. Pin the PREMISE that makes them unreachable --
+        the invariant under which the old expansion branches were
+        removed: ring+ladder forces the general scheme at construction,
+        and every normally reached transverse call receives the full
+        rank-4 (6-dim) bubble."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        input_path = 'tests/rpa/input'
+        info_file_input = {
+            'path_to_input': input_path,
+            'interaction': {
+                'path_to_input': input_path,
+                'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+            },
+        }
+
+        def _construct(calc_scheme):
+            info_mode = {
+                'mode': 'RPA',
+                'param': {'T': 2.0, 'filling': 0.75,
+                          'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                          'Nmat': 16},
+                'enable_spin_orbital': False,
+                'calc_scheme': calc_scheme,
+                'calc_type': 'ring+ladder',
+            }
+            read_io = read_input_k.QLMSkInput(info_file_input)
+            return rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+
+        # reduced/squashed exit before any solve
+        for scheme in ("reduced", "squashed"):
+            with self.subTest(scheme=scheme):
+                with self.assertRaises(SystemExit):
+                    _construct(scheme)
+        # auto resolves to general; general constructs normally
+        self.assertEqual(_construct("auto").calc_scheme, "general")
+        self.assertEqual(_construct("general").calc_scheme, "general")
+
+        # every normally reached transverse call gets a 6-dim bubble
+        seen = []
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(self_, chi0q_orig, ham_orig):
+            seen.append(chi0q_orig.ndim)
+            return original(self_, chi0q_orig, ham_orig)
+
+        rpa_mod.RPA._build_transverse_channel = spy
+        try:
+            self._run_rpa(calc_type="ring+ladder", Lx=4, Ly=4, Nmat=16)
+        finally:
+            rpa_mod.RPA._build_transverse_channel = original
+        self.assertTrue(seen, "the ladder solve must reach the channel")
+        self.assertEqual(seen, [6] * len(seen))
 
     def test_su2_symmetry_1orb_coulombintra(self):
         """For 1-orbital CoulombIntra, ring+ladder should give chi_zz = chi_+-.

@@ -2841,7 +2841,11 @@ class RPA:
             # (_set_scheme sys.exit()s otherwise), so enable_reduced is always
             # False here and chi0q is always the full rank-4 orbital tensor.
             if chi0q_orig.ndim != 6:
-                raise AssertionError(
+                # ValueError, consistently with the spin-diag and spinful
+                # guards below: all three protect the same unreachable
+                # boundary (a round-3 review found the earlier
+                # AssertionError here rested on no real distinction).
+                raise ValueError(
                     "transverse channel expects a general (rank-4 orbital) "
                     "chi0q, got ndim={}. calc_type='ring+ladder' requires "
                     "calc_scheme='general'; if that constraint is ever relaxed, "
