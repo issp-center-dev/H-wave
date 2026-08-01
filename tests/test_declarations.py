@@ -196,6 +196,70 @@ class TestProductionAnchoring(unittest.TestCase):
         self.assertEqual(spy.call_count, 2)
 
 
+class TestSimplePathSymmetrisation(unittest.TestCase):
+    """The one-orbital simple/load vertex path read RAW tables (round 3:
+    a one-sided off-site V entered as v e^{-iqR} while every other
+    consumer read v cos(qR); measured drift 0.7 at q = pi/2). Pin the
+    fix through the production _compute_vertices dispatch."""
+
+    def test_one_sided_bond_reads_as_cos_q(self):
+        import hwave.sc as sc
+
+        nx, norb, nmat = 4, 1, 4
+        kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
+        kz = np.array([0.0])
+        inter_k = sc._build_interaction_k(
+            kx, kz, kz, {"CoulombInter": {((1, 0, 0), (0, 0)): 0.7}}, norb)
+        chi0q = np.zeros((norb, norb, nx, 1, 1, nmat), dtype=complex)
+        V = sc._compute_vertices(chi0q, inter_k, norb, nx, 1, 1, nmat)
+        # with chi0 = 0 the vertex is the bare (Wc + Ws)/2 = V(q); the
+        # symmetrised one-sided declaration is 0.7 cos(q): ~0 at pi/2,
+        # NOT the raw -0.7i
+        v_pi2 = complex(np.asarray(V)[..., 1, 0, 0].flat[0])
+        self.assertLess(abs(v_pi2), 1e-12)
+        v_0 = complex(np.asarray(V)[..., 0, 0, 0].flat[0])
+        self.assertAlmostEqual(v_0.real, 0.7, places=12)
+
+    def test_unknown_interaction_type_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            symmetrise_k({"PairHpo": np.zeros((1, 1, 2, 1, 1),
+                                              dtype=complex)})
+        self.assertIn("PairHpo", str(cm.exception))
+
+    def test_dense_form_is_idempotent(self):
+        for herm, seed in ((False, 12), (True, 13)):
+            with self.subTest(hermitian=herm):
+                arr = _rand((4, 3, 5, 2, 2), seed)
+                once = symmetrise_dense(arr, hermitian=herm)
+                twice = symmetrise_dense(once, hermitian=herm)
+                np.testing.assert_allclose(twice, once, atol=1e-15)
+
+    def test_ring_and_sc_agree_on_an_asymmetric_declaration(self):
+        """The drift class this module exists to prevent, committed as a
+        measured comparison: an asymmetric on-site declaration must
+        reduce to the SAME mean coefficient in the ring's dense route
+        and the S/C k-route."""
+        import hwave.sc as sc
+        from hwave.solver.declarations import symmetrise_dense
+
+        norb = 2
+        k1 = np.array([0.0])
+        tbl = {"Exchange": {((0, 0, 0), (0, 1)): 1.0,
+                            ((0, 0, 0), (1, 0)): 0.35}}
+        mean = (1.0 + 0.35) / 2
+        # S/C k-route
+        S, C = sc._build_sc_matrices_all_q(
+            sc._build_interaction_k(k1, k1, k1, tbl, norb), norb, 1, 1, 1)
+        self.assertAlmostEqual(S[0, 0, 0, 1, 1].real, mean, places=12)
+        # ring dense route
+        arr = np.zeros((1, 1, 1, norb, norb), dtype=complex)
+        arr[0, 0, 0, 0, 1] = 1.0
+        arr[0, 0, 0, 1, 0] = 0.35
+        sym = symmetrise_dense(arr)
+        self.assertAlmostEqual(sym[0, 0, 0, 0, 1].real, mean, places=12)
+        self.assertAlmostEqual(sym[0, 0, 0, 1, 0].real, mean, places=12)
+
+
 class TestIEEESpecialParity(unittest.TestCase):
     """Committed parity for non-finite inputs (verified adversarially in
     review; pinned here so a refactor cannot change the propagation):

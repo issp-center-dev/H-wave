@@ -49,6 +49,15 @@ import numpy as np
 
 from hwave.solver.kgrid import reverse_fft_axes
 
+#: the seven documented two-index declaration types. The reduction rule
+#: is a PHYSICS dispatch (same-operator vs Hermitian-partner, derived
+#: from the operator definitions -- PairHop is the only Hermitian-partner
+#: type; PairLift's endpoint reversal is the same operator because its
+#: raising bilinears commute), so an unknown key must fail loudly rather
+#: than silently receive the same-operator rule.
+KNOWN_TYPES = frozenset(("CoulombIntra", "CoulombInter", "Hund",
+                         "Exchange", "Ising", "PairLift", "PairHop"))
+
 
 def symmetrise_dense(arr, hermitian=False):
     """Mean of a dense real-space table with its reversed-bond partner.
@@ -110,8 +119,10 @@ def symmetrise_k(inter_k):
     coefficient must already be folded in. That the imaginary part of a
     Hermitian-closed same-operator declaration is physically inert was
     adjudicated against exact diagonalization in #105/#106; the slot
-    content is #113. For real declarations -- everything the documented
-    input format produces -- the two conventions coincide identically.
+    content is #113. For real declarations the two conventions coincide
+    identically; the file format itself admits complex entries, and for
+    those the equivalence rests on the Hermitian-closure/redundancy
+    assumptions stated above.
 
     Parameters
     ----------
@@ -126,6 +137,12 @@ def symmetrise_k(inter_k):
     """
     out = {}
     for itype, M in inter_k.items():
+        if itype not in KNOWN_TYPES:
+            raise ValueError(
+                "unknown interaction type '{}': the symmetrisation rule "
+                "is a physics dispatch (same-operator vs Hermitian-"
+                "partner) and cannot be guessed for an unrecognised "
+                "type".format(itype))
         if itype == "PairHop":
             out[itype] = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
             continue

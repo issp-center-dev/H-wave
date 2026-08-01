@@ -1098,6 +1098,14 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     Ps_q : ndarray
         Spin vertex, shape (norb, norb, Nx, Ny, Nz).
     """
+    # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
+    # so a one-sided off-site declaration entered as v e^{-iqR} while the
+    # ring and the general S/C route read the same Hamiltonian as
+    # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7. The
+    # reduction is idempotent, so already-symmetric input is unchanged.
+    inter_k = _symmetrise_interactions_k(
+        {k: inter_k[k] for k in ("CoulombIntra", "CoulombInter")
+         if k in inter_k})
     U_k = inter_k.get("CoulombIntra", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
     V_k = inter_k.get("CoulombInter", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
 
