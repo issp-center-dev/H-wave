@@ -1010,8 +1010,40 @@ def _build_sc_matrices(inter_k, norb, ix, iy, iz):
                                             _presymmetrised=True)
     return S_all[0, 0, 0], C_all[0, 0, 0]
 
+def _declarations_partner_closed(interactions, Nx, Ny, Nz, norb):
+    """True iff every CoulombIntra/CoulombInter declaration table is
+    EXACTLY closed under the reversed-bond partner (R,a,b) <-> (-R,b,a).
+
+    Decided on the RAW tables, before any exponential transform, with
+    bitwise comparison: a both-ends declaration carries identical
+    literals, and 0.5*(x + x) == x exactly in IEEE, so closure detection
+    is exact -- while the k-space arrays of a closed table are only
+    ALGEBRAICALLY symmetric (the +R and -R exponentials are evaluated
+    independently and differ by roundoff), which is why the decision
+    cannot be made after the transform (PR #129 round 5: re-averaging a
+    closed configuration changed saved artifacts at the 1e-18 level).
+    Non-finite or complex non-closed input reads as not closed, which
+    fails toward symmetrising."""
+    from hwave.solver.declarations import symmetrise_dense
+
+    for itype in ("CoulombIntra", "CoulombInter"):
+        tbl = interactions.get(itype) if interactions else None
+        if not tbl:
+            continue
+        arr = np.zeros((Nx, Ny, Nz, norb, norb), dtype=complex)
+        for (irvec, orbvec), v in tbl.items():
+            arr[(irvec[0] % Nx, irvec[1] % Ny, irvec[2] % Nz,
+                 *orbvec)] += v
+        sym = symmetrise_dense(arr)
+        if not (np.array_equal(arr.real, sym.real)
+                and np.array_equal(arr.imag, sym.imag)):
+            return False
+    return True
+
+
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                      pairing_type="singlet", static_index=None):
+                      pairing_type="singlet", static_index=None,
+                      declarations_closed=False):
     """Compute effective pairing interaction V(q).
 
     Supports two modes:
@@ -1075,11 +1107,13 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                 "chi0q (general mode) for the full Kuroki S/C treatment.")
         return _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                         pairing_type=pairing_type,
-                                        static_index=static_index)
+                                        static_index=static_index,
+                                        declarations_closed=declarations_closed)
 
 
 def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                             pairing_type="singlet", static_index=None):
+                             pairing_type="singlet", static_index=None,
+                             declarations_closed=False):
     """Compute vertices using simple Wc=U+2V, Ws=-U formulation.
 
     For singlet:
@@ -1101,11 +1135,17 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
     # so a one-sided off-site declaration entered as v e^{-iqR} while the
     # ring and the general S/C route read the same Hamiltonian as
-    # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7. The
-    # reduction is idempotent, so already-symmetric input is unchanged.
-    inter_k = _symmetrise_interactions_k(
-        {k: inter_k[k] for k in ("CoulombIntra", "CoulombInter")
-         if k in inter_k})
+    # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7.
+    # SKIPPED when the caller proved the raw declarations partner-closed
+    # (round 5): the reduction is only ALGEBRAICALLY idempotent after the
+    # exponential transform -- re-averaging a closed configuration mixed
+    # independently rounded +R/-R exponentials and changed saved
+    # artifacts at the 1e-18 level, violating byte parity for
+    # previously-working symmetric runs.
+    if not declarations_closed:
+        inter_k = _symmetrise_interactions_k(
+            {k: inter_k[k] for k in ("CoulombIntra", "CoulombInter")
+             if k in inter_k})
     U_k = inter_k.get("CoulombIntra", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
     V_k = inter_k.get("CoulombInter", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
 
@@ -4244,9 +4284,11 @@ def calc_eliashberg(input_dict):
 
         # Step 9: Compute RPA vertices
         logger.info("Computing RPA vertices (pairing_type={})...".format(pairing_type))
-        vertex_result = _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
-                                          pairing_type=pairing_type,
-                                          static_index=static_index)
+        vertex_result = _compute_vertices(
+            chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
+            pairing_type=pairing_type, static_index=static_index,
+            declarations_closed=_declarations_partner_closed(
+                interactions, Nx, Ny, Nz, norb))
         if isinstance(vertex_result, tuple):
             Pc_q, Ps_q = vertex_result
             Vs_q = Pc_q + Ps_q

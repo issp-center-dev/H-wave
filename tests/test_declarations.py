@@ -260,6 +260,53 @@ class TestSimplePathSymmetrisation(unittest.TestCase):
         self.assertAlmostEqual(sym[0, 0, 0, 1, 0].real, mean, places=12)
 
 
+class TestClosureGate(unittest.TestCase):
+    """Round 5: re-averaging an ALREADY-closed configuration mixed
+    independently rounded +R/-R exponentials and changed saved artifacts
+    at the 1e-18 level. The simple path now decides on the RAW tables
+    (exact: 0.5*(x+x) == x in IEEE) and skips the k-space averaging for
+    closed input, restoring byte parity."""
+
+    def test_closure_detection(self):
+        import hwave.sc as sc
+
+        closed = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7,
+                                   ((-1, 0, 0), (1, 0)): 0.7}}
+        one_sided = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7}}
+        herm = {"CoulombInter": {((0, 0, 0), (0, 1)): 0.5 + 0.2j,
+                                 ((0, 0, 0), (1, 0)): 0.5 - 0.2j}}
+        self.assertTrue(
+            sc._declarations_partner_closed(closed, 4, 1, 1, 2))
+        self.assertFalse(
+            sc._declarations_partner_closed(one_sided, 4, 1, 1, 2))
+        # Hermitian-closed complex is NOT same-operator closed: the mean
+        # folds it to Re(p), so it must be (re)symmetrised
+        self.assertFalse(
+            sc._declarations_partner_closed(herm, 4, 1, 1, 2))
+        self.assertTrue(sc._declarations_partner_closed({}, 4, 1, 1, 2))
+
+    def test_closed_input_keeps_the_raw_bits(self):
+        """With declarations_closed=True the vertex is computed from the
+        UNTOUCHED k-tables: bitwise equal to the pre-fix raw formula."""
+        import hwave.sc as sc
+
+        nx, norb, nmat = 4, 1, 4
+        kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
+        kz = np.array([0.0])
+        tbl = {"CoulombInter": {((1, 0, 0), (0, 0)): 0.7,
+                                ((-1, 0, 0), (0, 0)): 0.7}}
+        inter_k = sc._build_interaction_k(kx, kz, kz, tbl, norb)
+        chi0q = np.zeros((norb, norb, nx, 1, 1, nmat), dtype=complex)
+        V = sc._compute_vertices(chi0q, inter_k, norb, nx, 1, 1, nmat,
+                                 declarations_closed=True)
+        # pre-fix raw formula at chi0 = 0: (Wc + Ws)/2 = V_k, untouched
+        raw = np.asarray(inter_k["CoulombInter"]).transpose(2, 3, 4, 0, 1)
+        got = np.asarray(V[0] + V[1]) if isinstance(V, tuple) else np.asarray(V)
+        flat_raw = raw.reshape(got.shape) if got.shape != raw.shape else raw
+        np.testing.assert_array_equal(got.real, flat_raw.real)
+        np.testing.assert_array_equal(got.imag, flat_raw.imag)
+
+
 class TestIEEESpecialParity(unittest.TestCase):
     """Committed parity for non-finite inputs (verified adversarially in
     review; pinned here so a refactor cannot change the propagation):
