@@ -777,9 +777,9 @@ class TestRunTimePathResolutionCase(unittest.TestCase):
     """Sixth surfacing (PR #128 round 8): run() absolutized only an
     exact-case 'path_to_input', so a 'Path_To_Input' configuration was
     fingerprinted against the right file but EXECUTED against the
-    unresolved relative path. The resolution is case-insensitive now;
-    pinned by spying on the resolver and stopping the run right after
-    the resolution block."""
+    unresolved relative path. Pinned by capturing the configuration
+    delivered to the per-rung solver (a resolver spy was a false
+    positive -- the fingerprint makes the same resolver call)."""
 
     def test_mixed_case_path_reaches_the_solver_absolutized(self):
         """Asserts the EXECUTION-BOUND configuration (round 9: an earlier
