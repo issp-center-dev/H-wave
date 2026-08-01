@@ -1326,15 +1326,19 @@ accepts ``spin-free`` only and rejects the other two outright.
   allowed through, so a backend rounding asymmetry cannot abort a genuinely
   paramagnetic run.)
 
-- **Spin-mixing / spin-orbit** (``mode.enable_spin_orbital = true``, giving
-  ``spin_mode = "spinful"``) -- **not supported.** ``hwave_sc`` rejects the
-  configuration up front with an explicit error, on both the static and the
-  dynamic entry (issue #83): before this guard, the internally computed
-  :math:`\chi_0` path ran to completion and printed eigenvalues built on
-  inconsistent index/orbital-count conventions -- a silently wrong result,
-  not an approximation. (On the FLEX-load path the chi shape mismatch --
-  physical vs spin-orbital orbital count -- is additionally identified
-  explicitly.)
+- **Spin-orbital representation** (``mode.enable_spin_orbital = true``,
+  whatever spin mode the Hamiltonian then classifies as -- a spin-diagonal
+  or even spin-free model can be written in this representation) --
+  **not supported.** ``hwave_sc`` rejects the configuration up front with
+  an explicit error, on both the static and the dynamic entry, and
+  ``hwave_tsweep`` rejects it in preflight before any FLEX rung runs
+  (issue #83): before this guard, the internally computed :math:`\chi_0`
+  path ran to completion and printed eigenvalues built on inconsistent
+  index/orbital-count conventions -- a silently wrong result, not an
+  approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
+  files remains in the low-level loader for direct helper calls and
+  malformed input; it is no longer reachable through the guarded public
+  entries.)
 
 Supporting either spin-polarized case would require an
 :math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix

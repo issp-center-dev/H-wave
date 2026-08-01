@@ -103,6 +103,12 @@ def preflight(base, cont):
                 "eigenpair from the eigenvalue-analysis block, which is only "
                 "written for solver_mode 'eigenvalue' or 'both'. Set "
                 "[eliashberg] solver_mode = \"eigenvalue\"." % smode)
+        # The Eliashberg solver rejects spin-orbital mode (#83); fail in
+        # preflight rather than after every expensive FLEX rung has run
+        # (with keep_going, ALL rungs would run before ALL rejections).
+        # FLEX-only sweeps (run_eliashberg = false) stay allowed.
+        from hwave.sc import reject_spin_orbital_mode
+        reject_spin_orbital_mode(base)
 
 
 def make_rung_dicts(base, T, rung_out, run_eliashberg,

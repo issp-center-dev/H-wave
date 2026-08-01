@@ -29,6 +29,26 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
                 self.assertIn("enable_spin_orbital", str(cm.exception))
                 self.assertIn("#83", str(cm.exception))
 
+    def test_unrecognized_forms_are_rejected_not_read_as_false(self):
+        """A user who misspells 'true' expecting SO must not silently get
+        a non-SO run that then misreads their spin-orbital inputs."""
+        for label, value in (("misspelled", "ture"), ("garbage", "garbage"),
+                             ("int2", 2), ("list", [True]),
+                             ("none_explicit", None)):
+            with self.subTest(form=label):
+                with self.assertRaises(ValueError):
+                    sc.reject_spin_orbital_mode(
+                        {"mode": {"enable_spin_orbital": value}})
+
+    def test_recognized_false_is_normalized_for_downstream(self):
+        """The resolver, not raw truthiness: a string "false" previously
+        activated the SO branch of the chi0q convention check and diverged
+        inside RPA (truthiness vs == True)."""
+        self.assertFalse(sc._resolve_spin_orbital_flag(
+            {"mode": {"enable_spin_orbital": "false"}}))
+        self.assertTrue(sc._resolve_spin_orbital_flag(
+            {"mode": {"Enable_Spin_Orbital": "on"}}))
+
     def test_falsy_and_absent_forms_pass(self):
         for label, mode in (("absent", {}),
                             ("false", {"enable_spin_orbital": False}),
@@ -98,6 +118,14 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
         # rejected before any output was produced
         self.assertEqual(os.listdir(out), [])
 
+    def test_static_entry_guard_is_the_first_operation(self):
+        """A mode section alone suffices: the guard must fire before any
+        required key (mode.param, files) is even read -- a guard moved
+        after expensive work would raise KeyError here instead."""
+        with self.assertRaises(ValueError) as cm:
+            sc.calc_eliashberg({"mode": {"Enable_Spin_Orbital": True}})
+        self.assertIn("enable_spin_orbital", str(cm.exception))
+
     def test_dynamic_entry_rejects_first(self):
         """solve_dynamic is publicly callable; the guard fires before any
         other configuration is read (a minimal dict suffices)."""
@@ -106,6 +134,37 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
             eliashberg_dynamic.solve_dynamic(
                 {"mode": {"enable_spin_orbital": True}})
         self.assertIn("enable_spin_orbital", str(cm.exception))
+
+
+class TestSpinOrbitalGuardTsweep(unittest.TestCase):
+    """hwave_tsweep must reject in preflight, before any FLEX rung."""
+
+    def _base(self, so_mode, run_eli=True):
+        base = {"mode": dict(so_mode,
+                             param={"CellShape": [2, 2, 1], "Nmat": 8,
+                                    "filling": 0.5}),
+                "eliashberg": {"solver_mode": "eigenvalue"},
+                "file": {"input": {}, "output": {}}}
+        cont = {"run_eliashberg": run_eli}
+        return base, cont
+
+    def test_preflight_rejects_so_with_eliashberg(self):
+        import hwave.tsweep as ts
+        for label, so in (("bool", {"enable_spin_orbital": True}),
+                          ("string", {"enable_spin_orbital": "true"}),
+                          ("cased", {"Enable_Spin_Orbital": True})):
+            with self.subTest(form=label):
+                base, cont = self._base(so)
+                with self.assertRaises(ValueError) as cm:
+                    ts.preflight(base, cont)
+                self.assertIn("enable_spin_orbital", str(cm.exception))
+
+    def test_preflight_allows_flex_only_and_non_so_sweeps(self):
+        import hwave.tsweep as ts
+        base, cont = self._base({"enable_spin_orbital": True}, run_eli=False)
+        ts.preflight(base, cont)
+        base, cont = self._base({"enable_spin_orbital": "false"})
+        ts.preflight(base, cont)
 
 
 if __name__ == "__main__":
