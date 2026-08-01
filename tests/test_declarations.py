@@ -8,6 +8,7 @@ plus bit-parity of each delegation against the pre-refactor inline
 expressions.
 """
 
+import os
 import unittest
 
 import numpy as np
@@ -111,6 +112,123 @@ class TestKForm(unittest.TestCase):
         twice = symmetrise_k(once)
         for k in once:
             np.testing.assert_allclose(twice[k], once[k], atol=1e-15)
+
+
+class TestProductionAnchoring(unittest.TestCase):
+    """Anchor the convention to PRODUCTION transforms, not to a
+    test-local FFT choice (round 1: a sign-flipped helper would pin the
+    wrong identity symmetrically). One-direction bond, norb=2, nx=4 so
+    q = pi/2 is not self-inverse."""
+
+    def test_dense_route_equals_the_production_k_route(self):
+        import hwave.sc as sc
+        from hwave.solver.declarations import symmetrise_dense
+
+        nx, norb = 4, 2
+        kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
+        kz = np.array([0.0])
+        tbl = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7}}
+        prod = sc._symmetrise_interactions_k(
+            sc._build_interaction_k(kx, kz, kz, tbl, norb))["CoulombInter"]
+
+        # dense route with _build_interaction_k's layout: an entry
+        # (R, (a, b)) lands at [R, b, a] (the vertex pair transpose)
+        arr = np.zeros((nx, 1, 1, norb, norb), dtype=complex)
+        arr[1, 0, 0, 1, 0] = 0.7
+        dense = np.fft.fftn(symmetrise_dense(arr),
+                            axes=(0, 1, 2)).transpose(3, 4, 0, 1, 2)
+        np.testing.assert_allclose(dense, prod, atol=1e-13)
+        # and the value itself is the adjudicated one-sided reading:
+        # half weight on e^{-iq}, half on e^{+iq} at the transposed slot
+        q1 = kx[1]
+        self.assertAlmostEqual(
+            prod[1, 0, 1, 0, 0], 0.35 * np.exp(-1j * q1), places=13)
+
+    def test_rpa_ring_consumes_the_shared_dense_core(self):
+        """Delegation spy: the ring assembly must reach
+        declarations.symmetrise_dense (the single-sourcing claim, not
+        just formula parity)."""
+        import tempfile
+        from unittest import mock
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+        from hwave.solver import declarations
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer\n1\n1\n 1\n"
+                    "   1    0    0    1    1   1.000000   0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("CoulombIntra\n1\n1\n 1\n"
+                    "   0    0    0    1    1   2.000000   0.0\n")
+        read_io = read_input_k.QLMSkInput(
+            {"interaction": {"path_to_input": d, "Geometry": "geom.dat",
+                             "Transfer": "transfer.dat",
+                             "CoulombIntra": "coulombintra.dat"}})
+        info_mode = {'mode': 'RPA',
+                     'param': {'T': 1.0, 'filling': 0.5,
+                               'CellShape': [4, 1, 1],
+                               'SubShape': [1, 1, 1], 'Nmat': 4}}
+        with mock.patch.object(
+                rpa_mod, "symmetrise_dense",
+                side_effect=declarations.symmetrise_dense) as spy:
+            rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+        self.assertGreater(spy.call_count, 0)
+
+    def test_sc_builders_consume_the_shared_k_form(self):
+        """Delegation spy for both S/C builder routes."""
+        from unittest import mock
+        import hwave.sc as sc
+        from hwave.solver import declarations
+
+        M = _rand((2, 2, 2, 2, 1), 9)
+        with mock.patch.object(
+                sc, "symmetrise_k",
+                side_effect=declarations.symmetrise_k) as spy:
+            sc._build_sc_matrices_all_q({"Hund": M}, 2, 2, 2, 1)
+            self.assertEqual(spy.call_count, 1)
+            sc._build_sc_matrices({"Hund": M}, 2, 0, 0, 0)
+        self.assertEqual(spy.call_count, 2)
+
+
+class TestIEEESpecialParity(unittest.TestCase):
+    """Committed parity for non-finite inputs (verified adversarially in
+    review; pinned here so a refactor cannot change the propagation):
+    both forms reproduce the pre-refactor expressions bitwise, NaN and
+    Inf included."""
+
+    def test_dense_with_nonfinite_entries(self):
+        arr = _rand((2, 2, 2, 2, 2), 10)
+        arr[0, 0, 0, 0, 1] = np.nan
+        arr[1, 0, 1, 1, 0] = np.inf + 1j
+        for herm in (False, True):
+            with self.subTest(hermitian=herm):
+                rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
+                                   (0, 1, 2, 4, 3))
+                if herm:
+                    rev = np.conjugate(rev)
+                old = 0.5 * (arr + rev)
+                new = symmetrise_dense(arr, hermitian=herm)
+                np.testing.assert_array_equal(new.real, old.real)
+                np.testing.assert_array_equal(new.imag, old.imag)
+
+    def test_k_with_nonfinite_entries(self):
+        M = _rand((2, 2, 2, 2, 1), 11)
+        M[0, 1, 0, 0, 0] = np.nan
+        M[1, 0, 1, 1, 0] = -np.inf
+        nx, ny, nz = 2, 2, 1
+        Mrev = M[:, :, (-np.arange(nx)) % nx][:, :, :, (-np.arange(ny)) % ny][
+            :, :, :, :, (-np.arange(nz)) % nz]
+        old_plain = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
+        old_ph = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
+        out = symmetrise_k({"Ising": M, "PairHop": M})
+        for got, want in ((out["Ising"], old_plain),
+                          (out["PairHop"], old_ph)):
+            np.testing.assert_array_equal(got.real, want.real)
+            np.testing.assert_array_equal(got.imag, want.imag)
 
 
 if __name__ == "__main__":

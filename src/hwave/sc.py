@@ -20,6 +20,7 @@ import numpy as np
 
 from hwave.solver.vertex_table import sc_coefficients
 from hwave.solver.kgrid import reverse_fft_axes
+from hwave.solver.declarations import symmetrise_k
 from numpy.fft import fftn, ifftn
 from scipy.optimize import bisect
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
@@ -812,15 +813,13 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 def _symmetrise_interactions_k(inter_k):
     """Reduce each interaction to its physical symmetric coefficient.
 
-    Thin delegation: the reduction (and its full derivation, including
-    the momentum-space form of the reversed-bond partner, the PairHop
-    Hermitian rule, and the relation to UHFk's Hermitian-mean
-    convention) is single-sourced in
-    :func:`hwave.solver.declarations.symmetrise_k` (#108). Idempotent,
-    so it is safe that both the all-q and per-q builders apply it.
+    Thin delegation: the reduction and its full derivation -- the
+    momentum-space form of the reversed-bond partner, the PairHop
+    Hermitian rule, and the UHFk-relation adjudication note -- are
+    single-sourced in :func:`hwave.solver.declarations.symmetrise_k`
+    (#108). Idempotent, so it is safe that both the all-q and per-q
+    builders apply it.
     """
-    from hwave.solver.declarations import symmetrise_k
-
     return symmetrise_k(inter_k)
 
 

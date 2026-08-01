@@ -41,9 +41,8 @@ lives in one module.
 Relation to UHFk: ``uhfk.py`` stores the HERMITIAN mean for every type
 (its table is contracted over both ordered orbital pairs, so a complex
 same-operator coefficient p appears as p + conj(p) there). The two
-conventions give the same physical Hamiltonian; see
-``sc._symmetrise_interactions_k``'s original derivation, now in
-:func:`symmetrise_k`'s docstring.
+conventions give the same physical Hamiltonian; the full
+adjudication note lives in :func:`symmetrise_k`'s docstring.
 """
 
 import numpy as np
@@ -100,6 +99,19 @@ def symmetrise_k(inter_k):
 
     Idempotent, so it is safe that both the all-q and per-q S/C builders
     apply it.
+
+    Relation to UHFk: ``uhfk.py`` stores the HERMITIAN mean -- vba there
+    is the CONJUGATED r-reversed transpose (``_make_ham_inter``) -- which
+    keeps a complex Hermitian-closed coefficient p intact, while this
+    reduction folds it to Re(p). The two tables serve different
+    contractions and give the SAME physical Hamiltonian: UHFk sums its
+    table over both ordered orbital pairs, so p + conj(p) appears there;
+    the S/C builders use each slot exactly once, so the effective real
+    coefficient must already be folded in. That the imaginary part of a
+    Hermitian-closed same-operator declaration is physically inert was
+    adjudicated against exact diagonalization in #105/#106; the slot
+    content is #113. For real declarations -- everything the documented
+    input format produces -- the two conventions coincide identically.
 
     Parameters
     ----------
