@@ -106,10 +106,14 @@ class TestHwaveScCoulombKeyword(unittest.TestCase):
             self._write_w90(os.path.join(d, "transfer.dat"),
                             [((1, 0, 0), 0, 0, 1.0), ((-1, 0, 0), 0, 0, 1.0)],
                             norb=2)
+            # Hermitian-closed declarations (issue #93: the readers now
+            # reject one-sided/unclosed tables at read time)
             self._write_w90(os.path.join(d, "coulomb.dat"),
                             [((0, 0, 0), 0, 0, 2.0),   # r=0 diag -> intra
                              ((0, 0, 0), 0, 1, 0.3),   # r=0 offdiag -> inter
-                             ((1, 0, 0), 0, 0, 0.5)],  # r!=0 -> inter
+                             ((0, 0, 0), 1, 0, 0.3),
+                             ((1, 0, 0), 0, 0, 0.5),   # r!=0 -> inter
+                             ((-1, 0, 0), 0, 0, 0.5)],
                             norb=2)
             input_dict = {
                 "file": {"input": {"interaction": {

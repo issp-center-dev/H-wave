@@ -1202,8 +1202,13 @@ class UHFk(solver_base):
                 )
             )
 
-            # interaction coeffs: J_ij Sz_i Sz_j where Sz = 1/2 sigma, sigma=+1,-1
-            self.inter_table["Ising"] = (jab_r + jba)/2 / 4
+            # interaction coeffs -- no 1/4: the documented Hamiltonian is
+            # J (n_up - n_down)(n_up - n_down), and the RPA/FLEX vertex
+            # content was adjudicated by exact diagonalization against
+            # exactly that operator (#106); the historical /4 read the
+            # file as J S^z S^z instead, so the same Ising file meant
+            # couplings differing by 4 between UHFk and RPA/FLEX
+            self.inter_table["Ising"] = (jab_r + jba)/2
             # spin combination
             self.spin_table["Ising"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Ising"][0,0,0,0] = 1

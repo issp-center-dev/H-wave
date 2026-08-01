@@ -109,7 +109,24 @@ class QLMSkInput():
             else:
                 f = os.path.join(interaction_file_dir, v)
                 logger.info("QLMSkInput: read interaction {} from {}".format(k, f))
-                self.ham_param[k] = wan90.read_w90(f)
+                tbl = wan90.read_w90(f)
+                # issue #93: fail fast on a declaration table that is not
+                # Hermitian-closed (X_ab(R) = conj(X_ba(-R))) -- every
+                # solver used to do something different with such input.
+                # Transfer keeps its own Hermiticity handling; the
+                # two-body types (and the Coulomb aggregate, which is
+                # U/V-like) are validated here, once, for every consumer
+                # of this reader.
+                _VALIDATED = ("coulomb", "coulombintra", "coulombinter",
+                              "hund", "exchange", "ising", "pairlift",
+                              "pairhop")
+                if k.lower() in _VALIDATED:
+                    from hwave.solver.declarations import (
+                        validate_hermitian_closure)
+                    canonical = ("CoulombIntra" if k.lower() == "coulombintra"
+                                 else k)
+                    validate_hermitian_closure(canonical, tbl, source=f)
+                self.ham_param[k] = tbl
 
         # file.input
         input_file_dir = info_inputfile.get("path_to_input", "")

@@ -1,6 +1,9 @@
 """Declaration symmetrisation, single-sourced (#108 increment 2).
 
-An interaction file may declare the same physical bond from both ends:
+These are TABLE semantics: since issue #93 the file readers reject
+non-Hermitian-closed input, so unclosed tables reach these reductions
+only through reader-bypassing internal paths (and tests). A declaration
+table may carry the same physical bond from both ends:
 the two declarations of one coupling are ``(R, a, b)`` and
 ``(-R, b, a)``. For every type except PairHop they multiply the SAME
 operator, so the table entering any vertex is the mean
@@ -149,3 +152,86 @@ def symmetrise_k(inter_k):
         Mrev = reverse_fft_axes(M, (2, 3, 4))
         out[itype] = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
     return out
+
+
+#: scale-aware tolerance of the Hermitian-closure validation, matching
+#: the bond-channel resolver's reversal tolerance so the two checks
+#: agree by construction (issue #93).
+REVERSE_ATOL = 1e-10
+REVERSE_RTOL = 1e-8
+
+
+def validate_hermitian_closure(itype, table, source=""):
+    """Reject a declaration table that is not Hermitian-closed (#93).
+
+    The physical redundancy of the file format is
+    ``X_ab(R) = conj(X_ba(-R))``: the two entries denote the same
+    coupling (the Hermitian partner for PairHop; for the same-operator
+    types a real closed pair, with an inert imaginary part folded by the
+    symmetrised reading). A pair that DISAGREES beyond the scale-aware
+    tolerance -- including a declared entry whose partner is absent or
+    zero -- is not a different physical model; it is a typo or a
+    convention mixup, and every solver used to do something different
+    with it (silently project, read verbatim, or complete). Fail fast at
+    read time instead, naming the file, the entry and both values.
+
+    Keys are the LITERAL file displacements (validation runs before any
+    folding, so the wrapped-canonical-key trap does not apply here).
+    ``CoulombIntra`` is validated separately: the documented operator is
+    on-site and same-orbital, so any entry with ``R != 0`` or ``a != b``
+    is rejected outright (UHFk used to drop them silently).
+    """
+    def _fmt(irvec, a, b):
+        return "R={} orbitals ({}, {})".format(tuple(irvec), a + 1, b + 1)
+
+    where = " in {}".format(source) if source else ""
+    def _reject_nonfinite(irvec, a, b, v):
+        if not np.isfinite(complex(v)):
+            raise ValueError(
+                "{}{} declares a non-finite coefficient at {}: "
+                "{}".format(itype, where, _fmt(irvec, a, b), v))
+
+    if itype == "CoulombIntra":
+        for (irvec, (a, b)), v in table.items():
+            if tuple(irvec) != (0, 0, 0) or a != b:
+                raise ValueError(
+                    "CoulombIntra{} declares {} = {}: the documented "
+                    "operator is on-site and same-orbital (R = 0, a == "
+                    "b); off-site or inter-orbital entries belong in "
+                    "CoulombInter".format(where, _fmt(irvec, a, b), v))
+            _reject_nonfinite(irvec, a, b, v)
+            # self-partner (R = -R = 0, a == b): Hermiticity means REAL
+            if abs(np.imag(complex(v))) > (REVERSE_ATOL
+                                           + REVERSE_RTOL * abs(v)):
+                raise ValueError(
+                    "CoulombIntra{} declares a complex diagonal at {}: "
+                    "{} -- its Hermitian self-partner requires a real "
+                    "value".format(where, _fmt(irvec, a, b), v))
+        return
+    for (irvec, (a, b)), v in table.items():
+        _reject_nonfinite(irvec, a, b, v)
+        rkey = ((-irvec[0], -irvec[1], -irvec[2]), (b, a))
+        if rkey not in table:
+            # membership FIRST (round-1 review): substituting 0 and
+            # comparing let a declared |v| below the absolute tolerance
+            # pass with no partner at all
+            raise ValueError(
+                "{}{} declares {} = {} with NO partner entry at R={} "
+                "orbitals ({}, {}): declare both directions "
+                "(X_ab(R) = conj(X_ba(-R)))".format(
+                    itype, where, _fmt(irvec, a, b), v,
+                    tuple(-x for x in irvec), b + 1, a + 1))
+        partner = table[rkey]
+        _reject_nonfinite(rkey[0], b, a, partner)
+        tol = REVERSE_ATOL + REVERSE_RTOL * abs(v)
+        if abs(v - np.conj(partner)) > tol:
+            raise ValueError(
+                "{}{} is not Hermitian-closed: {} = {} but the partner "
+                "entry R={} orbitals ({}, {}) = {} (expected conj = "
+                "{}). The two entries denote the SAME coupling "
+                "(X_ab(R) = conj(X_ba(-R))); declare both directions "
+                "with matching values -- a disagreement is read as a "
+                "typo, not as a different model.".format(
+                    itype, where, _fmt(irvec, a, b), v,
+                    tuple(-x for x in irvec), b + 1, a + 1, partner,
+                    np.conj(partner)))

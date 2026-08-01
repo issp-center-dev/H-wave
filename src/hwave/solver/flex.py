@@ -1760,8 +1760,9 @@ class FLEX(RPA):
         #     chi0 INSIDE this function, so a transposed chi0 reaches Sigma no
         #     matter what the boundary does.
         #
-        # Note that H-wave does not currently validate that the interaction
-        # files are orbital-symmetric (issue #93); for an asymmetric file the
+        # Note that since issue #93 the READERS reject non-Hermitian-closed
+        # files; an asymmetric TABLE reaches here only via internal
+        # construction. For such a table the
         # two forms differ, and solve(chi0, U) is the consistent value because
         # it applies the S/C matrices in the same index order that RPA and the
         # Eliashberg loader's S @ chi @ S use.
@@ -2056,7 +2057,9 @@ class FLEX(RPA):
                                 itype, tuple(irvec), tuple(orbvec),
                                 ", with sublattice folding" if has_fold
                                 else ""))
-                    # One-sided declarations are fine: BOTH solvers reduce
+                    # (Reader-bypassing internal tables only: file input
+                    # rejects one-sided declarations since #93.)
+                    # One-sided TABLES are fine: BOTH solvers reduce
                     # a declaration to its reversal-symmetric part (the
                     # physical coefficient of n_a(i) n_a(i+R), even in R by
                     # the site sum) -- the S/C builders since #114, and the
