@@ -182,6 +182,12 @@ def validate_hermitian_closure(itype, table, source=""):
         return "R={} orbitals ({}, {})".format(tuple(irvec), a + 1, b + 1)
 
     where = " in {}".format(source) if source else ""
+    def _reject_nonfinite(irvec, a, b, v):
+        if not np.isfinite(complex(v)):
+            raise ValueError(
+                "{}{} declares a non-finite coefficient at {}: "
+                "{}".format(itype, where, _fmt(irvec, a, b), v))
+
     if itype == "CoulombIntra":
         for (irvec, (a, b)), v in table.items():
             if tuple(irvec) != (0, 0, 0) or a != b:
@@ -190,10 +196,30 @@ def validate_hermitian_closure(itype, table, source=""):
                     "operator is on-site and same-orbital (R = 0, a == "
                     "b); off-site or inter-orbital entries belong in "
                     "CoulombInter".format(where, _fmt(irvec, a, b), v))
+            _reject_nonfinite(irvec, a, b, v)
+            # self-partner (R = -R = 0, a == b): Hermiticity means REAL
+            if abs(np.imag(complex(v))) > (REVERSE_ATOL
+                                           + REVERSE_RTOL * abs(v)):
+                raise ValueError(
+                    "CoulombIntra{} declares a complex diagonal at {}: "
+                    "{} -- its Hermitian self-partner requires a real "
+                    "value".format(where, _fmt(irvec, a, b), v))
         return
     for (irvec, (a, b)), v in table.items():
+        _reject_nonfinite(irvec, a, b, v)
         rkey = ((-irvec[0], -irvec[1], -irvec[2]), (b, a))
-        partner = table.get(rkey, 0.0)
+        if rkey not in table:
+            # membership FIRST (round-1 review): substituting 0 and
+            # comparing let a declared |v| below the absolute tolerance
+            # pass with no partner at all
+            raise ValueError(
+                "{}{} declares {} = {} with NO partner entry at R={} "
+                "orbitals ({}, {}): declare both directions "
+                "(X_ab(R) = conj(X_ba(-R)))".format(
+                    itype, where, _fmt(irvec, a, b), v,
+                    tuple(-x for x in irvec), b + 1, a + 1))
+        partner = table[rkey]
+        _reject_nonfinite(rkey[0], b, a, partner)
         tol = REVERSE_ATOL + REVERSE_RTOL * abs(v)
         if abs(v - np.conj(partner)) > tol:
             raise ValueError(

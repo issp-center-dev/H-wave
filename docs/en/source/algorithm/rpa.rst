@@ -268,9 +268,9 @@ The resulting vertex, for on-site interactions:
 - ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
 - ``Hund`` :math:`J`: :math:`W_{+-} = 0`
 - ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
-- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (in RPA's current normalization of the
-  Ising file; UHFk applies an additional factor :math:`1/4` to the same file --
-  the discrepancy is tracked separately)
+- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (all solvers now read the Ising
+  file in this normalization; the UHFk factor-1/4 discrepancy was resolved
+  with issue #106)
 - ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
 - ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
 
@@ -291,11 +291,9 @@ input failing this is rejected. The transverse pair
 off-site term, so such a term's vertex is not a function of :math:`q` alone
 and cannot be represented. In practice this rejects off-site
 ``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
-``PairLift`` are accepted because their transverse vertex vanishes. Two
-consequences of the criterion being the assembled vertex rather than the raw
-declarations: a set of off-site declarations whose contributions cancel
-exactly in the symmetrised vertex is accepted (what the channel then uses is
-well-defined), and an inter-site pair that folds into the supercell under
+``PairLift`` are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
+rejected earlier, at read time (issue #93: declaration files must be
+Hermitian-closed); an inter-site pair that folds into the supercell under
 ``SubShape`` becomes an intra-cell orbital pair and is representable. The
 longitudinal (``ring``) channel is unaffected.
 

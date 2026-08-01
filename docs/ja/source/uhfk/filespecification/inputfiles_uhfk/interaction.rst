@@ -18,7 +18,7 @@
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}` (\ :math:`S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow})`)
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})` (\ :math:`S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow})`)
     **PairHop**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
     **Exchange**:
@@ -131,11 +131,12 @@
 
 -  スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された ``2α+s+1`` のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜 :math:`N_\text{orbital}/2`）を用います。
 
-.. raw:: latex
-
 .. note::
 
-   Ising 結合は上記のハミルトニアン
+   上記の Ising ハミルトニアンは全ソルバー共通の規約です（RPA/FLEX の
+   頂点内容が厳密対角化で判定された演算子でもあります）。本ページの旧版
+   は :math:`J S^z S^z` （ :math:`S^z = (n_\uparrow - n_\downarrow)/2` ）
+   と定義しており、旧 UHFk はそれに対応する
    :math:`\sum J^{z}_{ij} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`
    に対して、RPA/FLEX ソルバーと一貫した形で読み込まれます。以前の
    UHFk ソルバーは余分な因子 1/4 を適用していました（ファイルを
@@ -147,4 +148,6 @@
    相互作用宣言ファイルはエルミート共役で閉じている必要があります：
    各エントリ :math:`X_{ab}(R)` には相手 :math:`X_{ba}(-R) = X_{ab}(R)^{*}`
    が伴わなければなりません。相手が欠けている、または値が一致しない場合
-   は読み込み時に拒否されます。
+   は読み込み時に拒否されます。（これはここで読む wannier90 形式の
+   k 空間ファイルに適用されます。別系統の UHFr 実空間リーダーは独自の
+   規約を保持します。）

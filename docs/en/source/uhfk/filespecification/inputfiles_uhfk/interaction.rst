@@ -21,7 +21,7 @@ in the wave-number space UHF.
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}, \quad (S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow}))`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
     **Exchange**:
@@ -144,11 +144,13 @@ Usage rules
 
 -  In spin-orbital mode the interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported, handled via a virtual spin decomposition. The doubled ``2α+s+1`` index convention applies to the Transfer file only. Interaction definition files use physical-orbital indices (1 .. :math:`N_\text{orbital}/2`).
 
-.. raw:: latex
-
 .. note::
 
-   The Ising coupling is read against the Hamiltonian written above,
+   The Ising Hamiltonian above is the convention shared by all
+   solvers (it is the operator the RPA/FLEX vertex content was
+   adjudicated against by exact diagonalization). Earlier versions of
+   this page defined the term as :math:`J S^z S^z` with
+   :math:`S^z = (n_\uparrow - n_\downarrow)/2`, and
    :math:`\sum J^{z}_{ij} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`,
    consistently with the RPA/FLEX solvers. Earlier versions of the UHFk
    solver applied an extra factor 1/4 (reading the file as
@@ -160,4 +162,6 @@ Usage rules
    Interaction declaration files must be Hermitian-closed:
    each entry :math:`X_{ab}(R)` must be accompanied by its partner
    :math:`X_{ba}(-R) = X_{ab}(R)^{*}`. A missing or disagreeing partner
-   is rejected at read time.
+   is rejected at read time. (This applies to the wannier90-like
+   k-space format read here; the separate UHFr real-space reader keeps
+   its own conventions.)
