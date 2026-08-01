@@ -651,3 +651,76 @@ def test_read_summary_rows_truncates_on_malformed(tmp_path):
         fw.write("0 0.01 ok none 0.5 0.0 1 1 10\n")
         fw.write("1 notanumber ok none 0.5 0.0 1 1 10\n")   # malformed T
     assert [r["idx"] for r in ts.read_summary_rows(p)] == [0]
+
+
+import tempfile
+import unittest
+
+
+class TestFingerprintCaseInsensitivity(unittest.TestCase):
+    """Third surfacing of the case-sensitivity defect class (PR #128
+    round 6): a lowercase interaction key EXECUTED correctly but was
+    omitted from the resume fingerprint, so a resume could silently
+    reuse results computed with a different interaction file. unittest
+    TestCase on purpose -- the module's pytest-style functions do not
+    gate in CI."""
+
+    def _base(self, d, key, fname):
+        return {
+            "mode": {"mode": "RPA", "param": {"T": 1.0,
+                                              "CellShape": [2, 2, 1]}},
+            "file": {"input": {"interaction": {"path_to_input": d,
+                                               key: fname}}},
+        }
+
+    def test_every_interaction_key_participates_lowercase(self):
+        import hwave.tsweep as ts
+
+        for key in ts._INTERACTION_KEYS:
+            with self.subTest(key=key):
+                d = tempfile.mkdtemp()
+                fn = os.path.join(d, "x.dat")
+                with open(fn, "w") as f:
+                    f.write("one\n")
+                fp_lower = ts.config_fingerprint(
+                    self._base(d, key.lower(), "x.dat"), False, d)
+                fp_canon = ts.config_fingerprint(
+                    self._base(d, key, "x.dat"), False, d)
+                # canonical and lowercase configurations are the same run
+                self.assertEqual(fp_lower, fp_canon)
+                # an in-place content edit must invalidate the resume,
+                # regardless of the key's case
+                with open(fn, "w") as f:
+                    f.write("two\n")
+                fp_edited = ts.config_fingerprint(
+                    self._base(d, key.lower(), "x.dat"), False, d)
+                self.assertNotEqual(fp_lower, fp_edited)
+
+
+class TestReaderKeyCaseParity(unittest.TestCase):
+    """QLMSkInput accepted 'geometry' in validation but dispatched on the
+    exact-case key, feeding the geometry file to the wannier90
+    interaction parser (loud ValueError). Dispatch is normalized now."""
+
+    def test_lowercase_geometry_and_transfer_load(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer\n1\n1\n 1\n"
+                    "   1    0    0    1    1   1.000000   0.0\n")
+        canon = read_input_k.QLMSkInput(
+            {"path_to_input": d,
+             "interaction": {"path_to_input": d, "Geometry": "geom.dat",
+                             "Transfer": "transfer.dat"}}).get_param("ham")
+        lower = read_input_k.QLMSkInput(
+            {"path_to_input": d,
+             "interaction": {"path_to_input": d, "geometry": "geom.dat",
+                             "transfer": "transfer.dat"}}).get_param("ham")
+        self.assertEqual(lower["Geometry"]["norb"],
+                         canon["Geometry"]["norb"])
+        self.assertEqual(sorted(lower["Transfer"].keys()),
+                         sorted(canon["Transfer"].keys()))

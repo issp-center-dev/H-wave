@@ -94,9 +94,13 @@ class QLMSkInput():
             exit(1)
 
         for k, v in files.items():
-            if k == "path_to_input":
+            # dispatch on the NORMALIZED key: validation above is
+            # case-insensitive, so 'geometry' was accepted here and then
+            # fell through to the interaction branch, where read_w90
+            # failed on the geometry format
+            if k.lower() == "path_to_input":
                 pass
-            elif k == "Geometry":
+            elif k.lower() == "geometry":
                 f = os.path.join(interaction_file_dir, v)
                 logger.info("QLMSkInput: read Gemoetry from {}".format(f))
                 self.ham_param[k] = wan90.read_geom(f)

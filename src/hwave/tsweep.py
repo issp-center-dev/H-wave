@@ -263,7 +263,12 @@ def config_fingerprint(base, run_eli, base_dir="."):
            if k not in _ELI_OPERATIONAL_KEYS}
     cont = base.get("continuation", {})
     fin = base.get("file", {}).get("input", {})
-    inter = fin.get("interaction", {})
+    # CaseInsensitiveDict (third surfacing of this defect class): a
+    # lowercase 'coulombinter' key EXECUTES correctly but a case-sensitive
+    # lookup here omitted it from the fingerprint -- the resume would then
+    # silently reuse results computed with a DIFFERENT interaction file.
+    from requests.structures import CaseInsensitiveDict
+    inter = CaseInsensitiveDict(fin.get("interaction", {}))
     ipath = _abspath(base_dir,
                      inter.get("path_to_input", fin.get("path_to_input", ".")))
     digests = {}
