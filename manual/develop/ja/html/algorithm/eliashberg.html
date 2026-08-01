@@ -159,7 +159,23 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 クロス <span class="math notranslate nohighlight">\(C\)</span> に <span class="math notranslate nohighlight">\(-U' + 2J\)</span> ）を再現します。この修正より前に
 生成された感受率ファイルは <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code> フィールドを持たず、
 相互作用に Hund・Exchange・Ising が含まれる場合は読み込み時に拒否され
-ます。</p>
+ます。また general スキーム（<code class="docutils literal notranslate"><span class="pre">myo</span></code>）のファイルでは、CoulombInter・
+Hund・Ising・Exchange のいずれかに非対称なオンサイト軌道間結合
+（ <span class="math notranslate nohighlight">\(X_{ab} \neq X_{ba}\)</span> ）が宣言されている場合も、バージョン無
+しファイルは拒否されます。相互作用が頂点に入る軌道の向きと、そのよう
+な宣言の対称化された読み方は、過去のビルドと現在とで異なっており、バ
+ージョン無しファイルはどのセマンティクスで生成されたかを記録していな
+いためです。PairHop は単純な転置ではなく
+エルミート共役の対に対して検査されます（2 つの宣言はその対なので向き自体
+は変わっていませんが、エルミート共役で閉じていないオンサイト宣言は、そ
+の共役平均による読み方がバージョン刻印と同時に導入されたため、同様に
+拒否されます）。PairLift は対象外です（粒子・正孔頂点への寄与が厳密に
+ゼロであり、向きも対称化された読み方も影響し得ません）。影響を受けない条件を規則ごとに述べると、
+転置検査される 4 種の相互作用については転置対称な宣言
+（ <span class="math notranslate nohighlight">\(X_{ab} = X_{ba}\)</span> 、物理的に通常の入力すべて）、PairHop に
+ついてはエルミート共役で閉じた宣言（ <span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span> 、
+物理的に妥当な形であり、転置対称である必要はありません）です。
+reduced スキームのファイルはこの向きに依存しません。</p>
 </div>
 <p>RPA感受率は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">

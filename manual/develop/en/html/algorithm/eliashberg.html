@@ -159,7 +159,28 @@ SU(2)-symmetric Kanamori combination (<span class="math notranslate nohighlight"
 standard literature matrices (no <span class="math notranslate nohighlight">\(J\)</span> in the Cross <span class="math notranslate nohighlight">\(S\)</span> entry and
 <span class="math notranslate nohighlight">\(-U' + 2J\)</span> in the Cross <span class="math notranslate nohighlight">\(C\)</span> entry). Susceptibility files
 produced before this correction carry no <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code> field and
-are rejected when the interaction set contains Hund, Exchange or Ising.</p>
+are rejected when the interaction set contains Hund, Exchange or Ising.
+For general-scheme (<code class="docutils literal notranslate"><span class="pre">myo</span></code>) files, an unversioned file is also rejected
+when CoulombInter, Hund, Ising or Exchange declares an asymmetric
+on-site inter-orbital coupling (<span class="math notranslate nohighlight">\(X_{ab} \neq X_{ba}\)</span>): the
+orbital orientation in which the interaction enters the vertex and
+the symmetrised reading of such declarations both differ between
+historical builds and the current one, and an unversioned file does
+not record which semantics it was produced with. PairHop is checked
+against its HERMITIAN partner instead of the plain transpose (its two
+declarations are Hermitian partners, so its orientation never changed
+– but an on-site declaration that is not Hermitian-closed is also
+rejected, because the conjugated-mean reading of PairHop declarations
+arrived together with the version stamp). PairLift is exempt (its
+particle-hole vertex contribution is exactly zero, so neither the
+orientation nor the symmetrised reading can matter).
+The unaffected cases, stated per rule: for the four
+transpose-checked interactions, transpose-symmetric declarations
+(<span class="math notranslate nohighlight">\(X_{ab} = X_{ba}\)</span>) – every physically ordinary input; for
+PairHop, Hermitian-closed declarations
+(<span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span>) – the physically valid form, which
+need not be transpose-symmetric. Reduced-scheme files never depended
+on this orientation.</p>
 </div>
 <p>The RPA susceptibilities are</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">
