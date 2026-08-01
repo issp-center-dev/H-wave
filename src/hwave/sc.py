@@ -2665,7 +2665,15 @@ def _coerce_run_beta(T):
         raise ValueError(
             "mode.param T must be a single finite positive real scalar, "
             "got {!r}.".format(T))
-    return 1.0 / float(arr[0])
+    beta = 1.0 / float(arr[0])
+    # A subnormal T passes the checks above but its reciprocal overflows
+    # to inf, recreating exactly the fail-open comparison this helper
+    # exists to prevent (round-7 review) -- gate the RESULT too.
+    if not np.isfinite(beta) or not beta > 0:
+        raise ValueError(
+            "mode.param T = {!r} yields a non-finite beta = 1/T; use a "
+            "physically meaningful temperature.".format(T))
+    return beta
 
 
 def _coerce_g2_tail(value):
@@ -2806,9 +2814,9 @@ def _calc_g2(green_kw, beta, tail=True):
     beta = float(beta_arr[0])
     if beta > _G2_BETA_MAX:
         raise ValueError(
-            "beta = {:g} exceeds the numerically safe range (<= {:g}): the "
-            "pair-bubble accumulation would overflow to NaN. Check the "
-            "temperature.".format(beta, _G2_BETA_MAX))
+            "beta = {!r} exceeds the numerically safe range (<= {!r}): "
+            "the pair-bubble accumulation would overflow to NaN. Check "
+            "the temperature.".format(beta, _G2_BETA_MAX))
     # Grid gate BEFORE any O(norb^2 nvol nmat) work (round-6 review: the
     # guard previously ran after the GEMM, which emitted overflow warnings
     # from data the call then rejected). The centered grid

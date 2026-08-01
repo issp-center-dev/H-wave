@@ -193,6 +193,17 @@ class TestG2TailGuards(unittest.TestCase):
         with self.assertRaises(ValueError):
             _calc_g2(empty, self.beta)
 
+    def test_beta_limit_error_text_distinguishes_the_values(self):
+        """One ULP above the limit must not print as 'beta = 1e+75
+        exceeds ... <= 1e+75' -- reprs differ."""
+        green = _green(_model(Nx=2, Ny=2), 10.0, 4)
+        just_over = np.nextafter(sc._G2_BETA_MAX, np.inf)
+        with self.assertRaises(ValueError) as cm:
+            _calc_g2(green, just_over)
+        msg = str(cm.exception)
+        self.assertIn(repr(just_over), msg)
+        self.assertNotEqual(repr(just_over), repr(sc._G2_BETA_MAX))
+
     def test_invalid_or_unsafe_beta_is_rejected(self):
         """Non-finite/non-positive/complex/vector beta and the overflow
         range (measured: beta = 1e200 turned the whole bubble into NaN
@@ -689,6 +700,19 @@ class TestFlexGreenProvenance(unittest.TestCase):
                     sc._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("T", str(cm.exception))
 
+    def test_subnormal_run_temperature_is_rejected(self):
+        """A positive finite subnormal T passes elementwise checks but
+        1/T overflows to inf, recreating the fail-open comparison; the
+        helper must gate its RESULT."""
+        d = self._tmp()
+        inp = self._write_green(d, beta=0.5)
+        inp["mode"]["param"]["T"] = np.nextafter(0.0, 1.0)
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIn("beta", str(cm.exception))
+        with self.assertRaises(ValueError):
+            sc._coerce_run_beta(np.nextafter(0.0, 1.0))
+
     def test_beta_tolerance_value_is_pinned_on_both_sides(self):
         """rtol = 1e-8 exactly: a 5e-9 relative mismatch loads, a 2e-8 one
         is rejected (the rejecting side is covered per ordering in
@@ -876,8 +900,11 @@ class TestG2TailConfigPlumbing(unittest.TestCase):
                "output_eigenvalue": "eig.dat", "output_gap": "gap.dat"}
         eli.update(eliashberg_extra)
         nmat = getattr(self, "_nmat_override", None) or 8
+        run_T = getattr(self, "_t_override", None)
+        if run_T is None:
+            run_T = 2.0
         inp = {
-            "mode": {"param": {"T": 2.0, "filling": 0.5,
+            "mode": {"param": {"T": run_T, "filling": 0.5,
                                "CellShape": [4, 4, 1],
                                "SubShape": [1, 1, 1], "Nmat": nmat}},
             "file": {"input": {"path_to_input": d,
@@ -921,6 +948,18 @@ class TestG2TailConfigPlumbing(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             self._run({"g2_tail": "garbage"})
         self.assertIn("g2_tail", str(cm.exception))
+
+    def test_subnormal_temperature_fails_before_any_solver_work(self):
+        with self.assertRaises(ValueError) as cm:
+            self._run_with_t(np.nextafter(0.0, 1.0))
+        self.assertIn("beta", str(cm.exception))
+
+    def _run_with_t(self, T):
+        self._t_override = T
+        try:
+            return self._run({})
+        finally:
+            self._t_override = None
 
     def test_odd_nmat_is_rejected_through_the_public_entry(self):
         """An odd grid must fail loudly somewhere on the public path, never

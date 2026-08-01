@@ -1164,7 +1164,9 @@ def solve_dynamic(input_dict):
 
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
-    beta = 1.0 / T
+    # shared validated conversion (round-7 review): an unchecked 1/T here
+    # let a subnormal T reach the dynamic solver as beta = inf
+    beta = sc._coerce_run_beta(T)
     cell_shape = mode_param["CellShape"]
     # Resolve SubShape by the PACKAGE convention (documented default:
     # CellShape, i.e. the whole cell as one supercell) and guard the
