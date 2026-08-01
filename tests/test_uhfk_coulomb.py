@@ -89,8 +89,6 @@ class TestUHFkCombinedCoulomb(unittest.TestCase):
         self._run_with_conflicting_coulomb("CoulombIntra")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestUHFkIsingFactor(unittest.TestCase):
@@ -154,3 +152,7 @@ class TestUHFkIsingFactor(unittest.TestCase):
             # green in output_ref was regenerated with the corrected
             # factor, so the iteration path differs at the EPS level
             self.assertAlmostEqual(got[k], want, places=7, msg=k)
+
+
+if __name__ == "__main__":
+    unittest.main()

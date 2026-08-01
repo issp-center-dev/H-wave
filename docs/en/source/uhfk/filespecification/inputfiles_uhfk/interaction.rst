@@ -154,7 +154,8 @@ Usage rules
    density-difference form above, which is also the operator their
    vertex content was adjudicated against by exact diagonalization.
    (3) The shared convention is now the density-difference form for
-   every solver and page; UHFk results computed with older versions
+   every Wannier90-like k-space solver and page (UHFr's real-space
+   reader keeps its own S^z convention); UHFk results computed with older versions
    correspond to a coupling four times smaller than the same file
    gives now.
 
