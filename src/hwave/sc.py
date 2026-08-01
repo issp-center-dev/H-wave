@@ -2574,12 +2574,30 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
 
-def _calc_g2(green_kw, beta):
+def _calc_g2(green_kw, beta, tail=True):
     """Calculate G2 = T * sum_n G(k, wn) G(-k+q, -wn).
 
     The temperature factor T = 1/beta is included so that the
     Eliashberg kernel correctly computes:
         lambda * sigma(k) = -(T/N_L) sum_{k',n'} P(k-k') G(k') G(-k') sigma(k')
+
+    With ``tail=True`` (the default) the truncated Matsubara sum gets the
+    analytic high-frequency tail correction (issue #86). The summand's exact
+    leading tail is delta_ij delta_lm / wn^2 -- the 1/(i wn) coefficient of
+    G is the identity by completeness of the eigenbasis, and a self-energy
+    only enters at the next order, so this holds for dressed (FLEX) Green
+    functions too, with no free coefficient (unlike chi0q's user-tunable
+    ``coeff_tail``). Subtracting that model inside the window and adding its
+    exact full sum (1/beta) sum_{n in Z} 1/wn^2 = beta/4 amounts to adding
+
+        c = beta/4 - (1/beta) sum_{n in window} 1/wn^2   (> 0)
+
+    to G2[i,i,l,l], i.e. c times the identity on the (il) gap space. This
+    reduces the truncation error from O(1/Nmat) to o(1/Nmat^2) and restores
+    the positive semi-definiteness of G2 that makes the static Eliashberg
+    kernel similar to a Hermitian matrix (real spectrum): the bare truncated
+    sum is slightly indefinite, which injects spurious imaginary parts into
+    the reported eigenvalues at small Nmat.
 
     Parameters
     ----------
@@ -2615,7 +2633,54 @@ def _calc_g2(green_kw, beta):
     Bs = np.moveaxis(B, 1, 0)             # (nvol, norb^2, nmat)
     G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)  # (norb^2, norb^2, nvol)
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
-    return G2 / beta
+    G2 = G2 / beta
+    if tail:
+        # The grid below must match _calc_green's centered Matsubara grid
+        # wn = (2n + 1 - nmat) * pi / beta, n = 0..nmat-1; for odd nmat the
+        # window is asymmetric but the window sum is still computed from the
+        # actual grid, so the correction stays exact for the model tail.
+        wn = (2.0 * np.arange(nmat) + 1.0 - nmat) * np.pi / beta
+        coeff = beta / 4.0 - np.sum(1.0 / wn**2) / beta
+        di = np.arange(norb)
+        # G2[i, i, l, l] += coeff for every (i, l), all k
+        G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
+    return G2
+
+
+def _warn_if_g2_indefinite(G2, norb, tail_enabled):
+    """Warn when the pair bubble G2 has a significantly negative eigenvalue.
+
+    G2 viewed as a matrix on the (i,l) gap space, M[(i,l),(j,m)] = G2[i,j,l,m],
+    is positive semi-definite in the exact Matsubara sum; that is what makes
+    the static kernel K = -Gamma W similar to a Hermitian matrix and its
+    spectrum real. Truncation breaks positivity (issue #86), and users then
+    see complex eigenvalues that look like a broken symmetry. Point them at
+    Nmat / g2_tail instead of leaving that misread silent.
+
+    The check diagonalizes an (norb^2 x norb^2) block per k-point, so it is
+    skipped (with a log line) when norb^4 * nvol is large enough to rival the
+    solve itself.
+    """
+    nvol = int(np.prod(G2.shape[4:]))
+    if norb**4 * nvol > 200_000_000:
+        logger.info("G2 positivity check skipped (norb^4 * nvol = %d too "
+                    "large).", norb**4 * nvol)
+        return None
+    M = G2.reshape(norb, norb, norb, norb, nvol)
+    M = M.transpose(4, 0, 2, 1, 3).reshape(nvol, norb * norb, norb * norb)
+    M = 0.5 * (M + np.conj(M.transpose(0, 2, 1)))
+    ev = np.linalg.eigvalsh(M)
+    min_ev, max_ev = ev.min(), ev.max()
+    if min_ev < -1.0e-6 * max(max_ev, 1.0e-300):
+        hint = ("increase Nmat" if tail_enabled
+                else "increase Nmat or re-enable the tail correction "
+                     "([eliashberg] g2_tail = true)")
+        logger.warning(
+            "G2 (pair bubble) is not positive semi-definite: min eigenvalue "
+            "= %.3e (max = %.3e). This is Matsubara truncation error, not a "
+            "broken symmetry; complex Eliashberg eigenvalues reported below "
+            "are spurious at this level -- %s.", min_ev, max_ev, hint)
+    return min_ev
 
 
 def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
@@ -4312,7 +4377,16 @@ def calc_eliashberg(input_dict):
 
     # --- Step 10: Compute G2 ---
     logger.info("Computing G2...")
-    G2 = _calc_g2(green_kw, beta)
+    # New config keys are read case-insensitively (the config layers disagree
+    # on case handling; see the PR #128 sweep) and only via as_bool so that
+    # TOML true/false and string forms behave identically.
+    from requests.structures import CaseInsensitiveDict
+    g2_tail = backend.as_bool(
+        CaseInsensitiveDict(eli_param).get("g2_tail", True))
+    logger.info("g2_tail = %s (Matsubara tail correction for the pair "
+                "bubble)", g2_tail)
+    G2 = _calc_g2(green_kw, beta, tail=g2_tail)
+    _warn_if_g2_indefinite(G2, norb, g2_tail)
 
     # --- Step 11: Initialize gap function ---
     sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)

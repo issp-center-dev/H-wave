@@ -558,8 +558,11 @@ def calc_g2_dynamic(green_kw, beta):
     G(-k,-wn) built via the shared FFT-grid reversal (kgrid.reverse_fft_axes,
     i -> (N - i) % N). This function drops the sum over n and
     returns the per-frequency summand, so calc_g2_dynamic(...).sum(axis=-1)
-    reproduces sc._calc_g2(...) to machine precision (see
+    reproduces sc._calc_g2(..., tail=False) to machine precision (see
     tests/test_eliashberg_dynamic.py::test_g2_dynamic_sums_to_static).
+    The static path's Matsubara tail correction (issue #86) is a property of
+    taking the frequency sum, so it has no per-frequency counterpart here;
+    the dynamic kernel keeps the bare summand.
 
     Parameters
     ----------

@@ -203,6 +203,11 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 - ``eigenvalue_method``: ``"arnoldi"`` （デフォルト）、 ``"subspace"`` 、
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` /
   ``"shift-invert-lgmres"``。
+- ``g2_tail``: ペアバブル :math:`G^{(2)}` に解析的な松原 tail 補正を適用
+  します（デフォルト ``true`` 、issue #86）。素朴な打ち切り和は
+  :math:`O(1/N_{\rm mat})` だけ不足し、わずかに不定符号になるため、小さい
+  ``Nmat`` では報告される固有値に偽の虚部が混入します。``false`` は補正
+  導入前の結果を再現する場合のみ使用してください。
 - ``sigma_shift`` （shift-invert 系の ``eigenvalue_method`` のみ）: shift-invert
   ソルバの実数ターゲット :math:`\sigma` 。 :math:`\sigma` 近傍の固有値が先に
   求まります。素の ``"arnoldi"`` では無視されます（警告あり）。arnoldi では

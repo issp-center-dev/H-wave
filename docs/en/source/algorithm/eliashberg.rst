@@ -233,8 +233,8 @@ Only positive eigenvalues are physically relevant for the SC transition.
 Two-particle Green's function
 -----------------------------
 
-The Matsubara frequency summation is performed analytically to obtain
-the two-particle Green's function:
+The Matsubara frequency summation is carried out over the finite grid of
+``Nmat`` frequencies to obtain the two-particle Green's function:
 
 .. math::
 
@@ -245,6 +245,28 @@ the two-particle Green's function:
 
 This reduces the Eliashberg kernel to a convolution in k-space,
 which is efficiently computed using the Fast Fourier Transform (FFT).
+
+.. note::
+
+   **Matsubara tail correction (issue #86).** The bare truncated sum
+   undercounts the exact two-particle Green's function by
+   :math:`O(1/N_{\rm mat})`: the summand's exact high-frequency tail is
+   :math:`\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2` (the
+   :math:`1/i\omega_n` coefficient of :math:`G` is the identity by
+   completeness of the eigenbasis, for dressed FLEX Green's functions as
+   well). By default the solver subtracts this model inside the frequency
+   window and adds its exact full sum
+   :math:`T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4`, which amounts
+   to adding a positive multiple of the identity on the gap space. This
+   restores the positive semi-definiteness of :math:`G^{(2)}` that makes
+   the kernel spectrum real: without it, small-``Nmat`` multi-orbital runs
+   report spuriously complex eigenvalues that can be mistaken for a broken
+   symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
+   reproduce results computed before this correction was introduced; the
+   solver additionally warns whenever the computed :math:`G^{(2)}` has a
+   significantly negative eigenvalue, pointing at ``Nmat``. The dynamic
+   (frequency-resolved) solver never takes this frequency sum and is
+   unaffected.
 
 
 FFT-based kernel evaluation
