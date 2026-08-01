@@ -193,6 +193,18 @@ class TestG2TailGuards(unittest.TestCase):
         with self.assertRaises(ValueError):
             _calc_g2(empty, self.beta)
 
+    def test_empty_axis_follows_the_public_ordering_cleanly(self):
+        """calc_eliashberg runs the edge diagnostic BEFORE _calc_g2; on an
+        empty frequency axis the diagnostic must return neutrally (not
+        IndexError) so the user sees the actionable g2_tail ValueError."""
+        empty = np.zeros((2, 2, 2, 2, 1, 0), dtype=complex)
+        self.assertEqual(
+            sc._warn_if_g2_tail_outside_asymptotic_regime(empty, self.beta),
+            0.0)
+        with self.assertRaises(ValueError) as cm:
+            _calc_g2(empty, self.beta)
+        self.assertIn("g2_tail", str(cm.exception))
+
     def test_odd_nmat_guard_survives_python_O(self):
         """The guard is an explicit raise, not an assert: it must still fire
         under python -O (bare-assert defect class)."""
@@ -450,6 +462,31 @@ class TestFlexGreenProvenance(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             sc._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn("freq_index", str(cm.exception))
+
+    def test_malformed_beta_metadata_is_rejected(self):
+        """NaN/Inf make tolerance comparisons silently False, an empty
+        array would IndexError, a vector would use element 0 silently, and
+        non-positive beta is unphysical: all must fail loudly."""
+        for label, bad in (("nan", np.nan), ("inf", np.inf),
+                           ("empty", np.array([])),
+                           ("vector", np.array([0.5, 0.5])),
+                           ("zero", 0.0), ("negative", -0.5)):
+            with self.subTest(beta=label):
+                d = self._tmp()
+                inp = self._write_green(d, beta=bad)
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn("beta", str(cm.exception))
+
+    def test_small_beta_relative_mismatch_is_rejected(self):
+        """No absolute floor: at high temperature (small beta) a relative
+        mismatch must still be caught."""
+        d = self._tmp()
+        inp = self._write_green(d, beta=1.0e-6)
+        inp["mode"]["param"]["T"] = 1.0 / 1.001e-6  # run beta = 1.001e-6
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIn("beta", str(cm.exception))
 
 
 class TestTsweepG2TailFingerprint(unittest.TestCase):

@@ -2498,9 +2498,24 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                         green_path, fi.size, nmat_g))
         run_T = input_dict.get("mode", {}).get("param", {}).get("T")
         if "beta" in data_g:
-            file_beta = float(np.asarray(data_g["beta"]).ravel()[0])
-            if run_T is not None and abs(file_beta - 1.0 / float(run_T)) \
-                    > 1.0e-8 * max(file_beta, 1.0):
+            beta_arr = np.asarray(data_g["beta"]).ravel()
+            # One finite positive scalar, checked BEFORE any comparison:
+            # NaN/Inf make every tolerance comparison False (silently
+            # "matching"), an empty array would die on an incidental
+            # IndexError, and a vector would silently use its first element.
+            if (beta_arr.size != 1 or not np.isfinite(beta_arr[0])
+                    or not beta_arr[0] > 0):
+                raise ValueError(
+                    "green file '{}': beta metadata must be a single "
+                    "finite positive scalar, got {!r}. Regenerate the "
+                    "file.".format(green_path,
+                                   np.asarray(data_g["beta"])))
+            file_beta = float(beta_arr[0])
+            # Symmetric relative tolerance, no absolute floor: an absolute
+            # term would wave through large relative mismatches at small
+            # beta (high temperature), where the grid differs the most.
+            if run_T is not None and not np.isclose(
+                    file_beta, 1.0 / float(run_T), rtol=1.0e-8, atol=0.0):
                 raise ValueError(
                     "green file '{}' was produced at beta = {} but this "
                     "run uses beta = {}; the Matsubara grid (and the tail "
@@ -2664,6 +2679,11 @@ def _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta):
     """
     norb = green_kw.shape[0]
     nmat = green_kw.shape[-1]
+    if nmat < 1:
+        # Nothing to measure on an empty axis; return neutrally so the
+        # public ordering (this diagnostic, then _calc_g2) surfaces the
+        # actionable even-grid ValueError instead of an IndexError here.
+        return 0.0
     eye = np.eye(norb).reshape(norb, norb, 1, 1, 1)
     dev = 0.0
     for idx in (0, nmat - 1):

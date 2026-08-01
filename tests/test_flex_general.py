@@ -505,6 +505,24 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         flex = _make_general_flex(norb=2)
         self.assertEqual(self._save_and_reload_convention(flex), "myo")
 
+    def test_green_file_carries_scalar_beta_provenance(self):
+        """The uniform green writer must stamp beta = 1/T (issue #86): the
+        Eliashberg consumer validates its own beta against this field, so
+        a temperature mismatch fails fast instead of silently corrupting
+        the pair bubble."""
+        import tempfile
+        flex = _make_general_flex(norb=2)
+        d = tempfile.mkdtemp()
+        green = np.zeros((1, flex.nmat, flex.lattice.nvol,
+                          flex.norb, flex.norb), dtype=complex)
+        flex.save_results({"path_to_output": d, "green": "green.npz"},
+                          {"green": green})
+        with np.load(os.path.join(d, "green.npz")) as data:
+            self.assertIn("beta", data)
+            beta = np.asarray(data["beta"]).ravel()
+            self.assertEqual(beta.size, 1)
+            self.assertAlmostEqual(float(beta[0]), 1.0 / flex.T, places=13)
+
     def test_legacy_file_without_tag_defaults_kuroki(self):
         import tempfile
         import hwave.sc as sc
