@@ -163,9 +163,13 @@ The matrix elements are:
    arrived together with the version stamp). PairLift is exempt (its
    particle-hole vertex contribution is exactly zero, so neither the
    orientation nor the symmetrised reading can matter).
-   Symmetric declarations -- every physically ordinary input -- are
-   unaffected, and reduced-scheme files never depended on this
-   orientation.
+   The unaffected cases, stated per rule: for the four
+   transpose-checked interactions, transpose-symmetric declarations
+   (:math:`X_{ab} = X_{ba}`) -- every physically ordinary input; for
+   PairHop, Hermitian-closed declarations
+   (:math:`P_{ba} = P_{ab}^{*}`) -- the physically valid form, which
+   need not be transpose-symmetric. Reduced-scheme files never depended
+   on this orientation.
 
 The RPA susceptibilities are
 

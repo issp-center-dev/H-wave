@@ -781,8 +781,14 @@ class TestRunTimePathResolutionCase(unittest.TestCase):
     pinned by spying on the resolver and stopping the run right after
     the resolution block."""
 
-    def test_mixed_case_path_is_absolutized_against_base_dir(self):
+    def test_mixed_case_path_reaches_the_solver_absolutized(self):
+        """Asserts the EXECUTION-BOUND configuration (round 9: an earlier
+        version of this test spied on the resolver helper, which the
+        fingerprint also calls, so it passed against the broken code):
+        the dict handed to the per-rung solver must carry the mixed-case
+        nested path already absolutized against base_dir."""
         from unittest import mock
+        import hwave.qlms as qlms_mod
         import hwave.tsweep as ts
 
         d = tempfile.mkdtemp()
@@ -791,22 +797,29 @@ class TestRunTimePathResolutionCase(unittest.TestCase):
                                               "CellShape": [2, 2, 1],
                                               "filling": 0.5}},
             "continuation": {"temperatures": [1.0],
-                             "run_eliashberg": False},
+                             "run_eliashberg": False,
+                             "output_dir": os.path.join(d, "tsweep")},
             "file": {"input": {"interaction": {
                         "Path_To_Input": "relative_inputs"}},
                      "output": {"path_to_output": "out"}},
         }
+        cfg_backup = copy.deepcopy(cfg)
 
-        calls = []
-        real = ts._abspath
+        captured = []
 
-        def spy(base, p):
-            calls.append((base, p))
-            return real(base, p)
+        def capture(input_dict=None, **kw):
+            captured.append(copy.deepcopy(input_dict))
+            raise RuntimeError("stop after capture")
 
-        with mock.patch.object(ts, "_abspath", side_effect=spy):
-            with mock.patch.object(ts.os, "makedirs",
-                                   side_effect=RuntimeError("stop")):
-                with self.assertRaises(RuntimeError):
-                    ts.run(cfg, base_dir=d)
-        self.assertIn((os.path.abspath(d), "relative_inputs"), calls)
+        with mock.patch.object(qlms_mod, "run", side_effect=capture):
+            try:
+                ts.run(cfg, base_dir=d)
+            except Exception:
+                pass
+        self.assertTrue(captured, "the per-rung solver must be reached")
+        inter = captured[0]["file"]["input"]["interaction"]
+        self.assertEqual(inter["Path_To_Input"],
+                         os.path.join(os.path.abspath(d),
+                                      "relative_inputs"))
+        # run() must not mutate the caller's dict
+        self.assertEqual(cfg, cfg_backup)
