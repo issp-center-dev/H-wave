@@ -369,13 +369,18 @@ class Interaction:
             self.param_ham_orig = copy.deepcopy(self.param_ham)
 
             # replace by sublatticed versions
+            # dispatch on the NORMALIZED name (PR #128 round 7, fifth
+            # surfacing of the case-defect class): param_ham is a
+            # CaseInsensitiveDict that PRESERVES the declared case, so a
+            # lowercase 'geometry' key fell into _reshape_interaction and
+            # crashed unpacking the geometry table
             for type in self.param_ham.keys():
-                if type in ["Initial"]:
+                if type.lower() == "initial":
                     pass
-                elif type in ["Geometry"]:
+                elif type.lower() == "geometry":
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
-                elif type in ["Transfer"]:
+                elif type.lower() == "transfer":
                     tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
                     self.param_ham[type] = tbl
                 else:

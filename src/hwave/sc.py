@@ -406,10 +406,16 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         # because their S/C matrices have off-diagonal elements that
         # couple to chi0q off-diagonal components.
         # With CoulombIntra only, S is block-diagonal and reduced is exact.
-        files = info_inputfile.get("interaction", {})
+        # CaseInsensitiveDict, like _read_interaction_files (round-5
+        # review): an exact-case check classified a 'coulombinter' run as
+        # reduced, silently omitting the very components the comment
+        # above says inter-orbital interactions require. 'Coulomb' counts
+        # too -- its split can produce a CoulombInter part.
+        from requests.structures import CaseInsensitiveDict
+        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
         has_interorbital = any(k in files for k in
                               ["Hund", "Exchange", "CoulombInter",
-                               "Ising", "PairHop"])
+                               "Ising", "PairHop", "Coulomb"])
         if has_interorbital:
             calc_scheme = "general"
         else:
@@ -488,7 +494,14 @@ def _read_interaction_files(input_dict):
     interactions : dict
         Dictionary of interaction parameters keyed by type name.
     """
-    files = input_dict["file"]["input"]["interaction"]
+    # Case-insensitive on purpose (round-4 review): the FLEX reader stores
+    # these keys in a CaseInsensitiveDict, so a run configured with e.g.
+    # 'coulombinter' PRODUCES a susceptibility with that interaction while
+    # an exact-case lookup here would silently read an EMPTY interaction
+    # set -- the compatibility gate and the pairing vertex would both be
+    # built from nothing.
+    from requests.structures import CaseInsensitiveDict
+    files = CaseInsensitiveDict(input_dict["file"]["input"]["interaction"])
     path_to_input = files.get("path_to_input", "")
 
     geom_file = os.path.join(path_to_input, files["Geometry"])
@@ -1697,6 +1710,55 @@ def _legacy_up_block_only(data):
     return str(data["chi_spin_blocks"]).strip().lower() == "up_only"
 
 
+def _onsite_transpose_asymmetry(table):
+    """Max |X[0,(a,b)] - X[0,(b,a)]| over the on-site entries of a raw
+    declaration table. Off-site entries are ignored on purpose: their
+    same-operator partner lives at -R (and possibly under a wrapped
+    canonical key), and the general FLEX path rejects off-site two-body
+    terms anyway -- the reachable orientation-sensitive case (#101) is
+    an asymmetric ON-SITE inter-orbital entry."""
+    worst = 0.0
+    for (irvec, orbvec), v in table.items():
+        if tuple(irvec) != (0, 0, 0):
+            continue
+        a, b = orbvec
+        if a == b:
+            continue
+        partner = table.get((tuple(irvec), (b, a)), 0.0)
+        diff = abs(complex(v) - complex(partner))
+        if not np.isfinite(diff):
+            # fail CLOSED: max() drops NaN (nan > x is False), so a
+            # non-finite declaration would otherwise read as symmetric
+            return float("inf")
+        worst = max(worst, diff)
+    return worst
+
+
+def _onsite_hermitian_pair_mismatch(table):
+    """Max |X[0,(a,b)] - conj(X[0,(b,a)])| over on-site entries.
+
+    PairHop's two declarations of one pair are HERMITIAN partners, so its
+    orientation never depended on the #99 transpose -- but the version-2
+    stamp introduced the conjugated-mean symmetrisation of those
+    declarations, and a pair that is NOT Hermitian-closed was read
+    differently by older builds (round-4 review measured |dS| = 0.15 in
+    the myo matrices for a real asymmetric declaration). Fails closed on
+    non-finite values like the transpose helper."""
+    worst = 0.0
+    for (irvec, orbvec), v in table.items():
+        if tuple(irvec) != (0, 0, 0):
+            continue
+        a, b = orbvec
+        if a == b:
+            continue
+        partner = table.get((tuple(irvec), (b, a)), 0.0)
+        diff = abs(complex(v) - np.conj(complex(partner)))
+        if not np.isfinite(diff):
+            return float("inf")
+        worst = max(worst, diff)
+    return worst
+
+
 def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
@@ -1766,19 +1828,72 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
         # configured but empty Hund/Exchange/Ising file contributes nothing
         affected = [t for t in ("Hund", "Exchange", "Ising")
                     if interactions.get(t)]
-        if affected:
+        # #101: a SECOND independent reason a no-version file is unusable.
+        # PR #99 changed the orbital orientation _build_interaction_k stores
+        # (which the general/myo S/C matrices consume), and version-2 files
+        # are necessarily post-#99 (the version tag came later), so for a
+        # myo file the version requirement doubles as the orientation
+        # marker. Orientation only matters when an interaction is not
+        # invariant under the orbital transpose. PairHop is excluded (its
+        # declaration partner is the HERMITIAN entry, a different pairing);
+        # PairLift is excluded because its particle-hole S/C contribution
+        # is exactly zero on both the producer and consumer sides -- an
+        # asymmetric PairLift cannot change either the stored chi or the
+        # vertex, so rejecting on it would be a pure false positive.
+        orientation = []
+        resym = []
+        if str(chi_convention).lower() == "myo":
+            orientation = [
+                t for t in ("CoulombInter", "Hund", "Ising", "Exchange")
+                if interactions.get(t)
+                and _onsite_transpose_asymmetry(interactions[t]) > 0.0]
+            # PairHop is NOT exempt wholesale: its orientation never
+            # changed, but the conjugated-mean reading of its Hermitian-
+            # partner declarations arrived with the version stamp, so a
+            # non-Hermitian-closed declaration has unverifiable
+            # symmetrisation semantics in an unversioned file.
+            if (interactions.get("PairHop")
+                    and _onsite_hermitian_pair_mismatch(
+                        interactions["PairHop"]) > 0.0):
+                resym = ["PairHop"]
+        if affected or orientation or resym:
             versions = {}
             for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
                 if "sc_vertex_version" not in data:
+                    reasons = []
+                    if affected:
+                        reasons.append(
+                            "the interaction set contains {} whose vertex "
+                            "content changed in the #113 corrections".format(
+                                ", ".join(affected)))
+                    if resym:
+                        reasons.append(
+                            "PairHop declares on-site entries that are "
+                            "not Hermitian partners, whose symmetrised "
+                            "reading cannot be verified for a file this "
+                            "old: the conjugated-mean reading of PairHop "
+                            "declarations arrived with the version stamp "
+                            "(#101)")
+                    if orientation:
+                        reasons.append(
+                            "{} declare(s) an asymmetric on-site "
+                            "inter-orbital coupling, whose orientation and "
+                            "symmetrisation semantics cannot be verified "
+                            "for a file this old: the interaction "
+                            "orientation changed in #99 and the "
+                            "declaration symmetrisation arrived with the "
+                            "version-2 stamp, so an unversioned file may "
+                            "pair either or both differently from the "
+                            "current vertex (#101)".format(
+                                ", ".join(orientation)))
                     raise ValueError(
-                        "FLEX susceptibility file '{}' predates the #113 "
-                        "S/C vertex corrections (no sc_vertex_version "
-                        "field), and the interaction set contains {} whose "
-                        "vertex content changed. Pairing the old "
-                        "susceptibilities with the corrected vertices would "
-                        "silently mix two different interactions -- "
-                        "regenerate the susceptibilities with the current "
-                        "code.".format(path, ", ".join(affected)))
+                        "FLEX susceptibility file '{}' predates the current "
+                        "vertex conventions (no sc_vertex_version field), "
+                        "and {}. Pairing the old susceptibilities with the "
+                        "current vertices would silently mix two different "
+                        "interactions -- regenerate the susceptibilities "
+                        "with the current code.".format(
+                            path, "; and ".join(reasons)))
                 # strict decode: the tag must be a single integral scalar.
                 # A plain int() would silently truncate (2.9 -> 2, accepted)
                 # and non-finite values would escape as OverflowError.
@@ -3968,7 +4083,36 @@ def calc_eliashberg(input_dict):
     T = mode_param["T"]
     beta = 1.0 / T
     cell_shape = mode_param["CellShape"]
-    sub_shape = mode_param.get("SubShape", cell_shape)
+    # Resolve SubShape by the PACKAGE convention (documented default:
+    # CellShape, i.e. the whole cell as one supercell) and guard the
+    # RESOLVED value: a guard keyed on the explicit key alone let an
+    # omitted SubShape default to a fully folded configuration and reach
+    # the file reader with the very mismatch the guard exists to stop
+    # (round-7 review).
+    if isinstance(cell_shape, (list, tuple)):
+        _cs = list(cell_shape)
+    else:
+        _cs = [cell_shape]
+    while len(_cs) < 3:
+        _cs.append(1)
+    _ss = list(mode_param.get("SubShape", _cs))
+    while len(_ss) < 3:
+        _ss.append(1)
+    if _ss != [1, 1, 1]:
+        # supported nowhere in this module: the geometry and
+        # interactions are consumed UNFOLDED here, so a folded
+        # susceptibility mismatches the expected orbital count and an
+        # off-site bond would fold onto an on-site supercell entry
+        # (round-4 review); failing late produced an unhelpful shape
+        # error instead of this actionable one
+        raise ValueError(
+            "SubShape (sublattice folding) is not supported by the "
+            "Eliashberg module: fold the model into the unit cell "
+            "yourself, or set SubShape = [1, 1, 1] explicitly. (Note: "
+            "omitting SubShape defaults it to CellShape -- the whole "
+            "cell as one supercell -- per the package convention, so it "
+            "must be set explicitly here.)")
+    sub_shape = _ss
     nmat = mode_param.get("Nmat", _DEFAULT_NMAT)
 
     # Filling

@@ -300,6 +300,419 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         self._load(inp, {"CoulombIntra": {(0, 0): 4.0},
                          "CoulombInter": {((0, 0, 0), (0, 1)): 0.7}})
 
+    # ---- #101: interaction ORIENTATION for legacy myo files -------------
+    # PR #99 changed the orbital orientation _build_interaction_k stores,
+    # which the general/myo S/C matrices consume. A myo file bearing the
+    # #78 layout marker but no sc_vertex_version was produced in the window
+    # between those two changes and passes every other gate while carrying
+    # the OLD orientation; version-2 files are necessarily post-#99, so
+    # for a myo file the version requirement doubles as the orientation
+    # marker. Orientation only matters for interactions that are not
+    # invariant under the orbital transpose.
+
+    MYO_TAGS = {"chi_convention": "myo", "chi_orbital_layout": "acbd"}
+    ASYM_V = {((0, 0, 0), (0, 1)): 0.7, ((0, 0, 0), (1, 0)): 0.4}
+    SYM_V = {((0, 0, 0), (0, 1)): 0.7, ((0, 0, 0), (1, 0)): 0.7}
+
+    def _raw(self, inp, interactions):
+        import hwave.sc as sc
+
+        return sc._read_flex_chi_raw(inp, interactions=interactions)
+
+    def test_legacy_myo_with_asymmetric_onsite_coupling_is_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        with self.assertRaises(ValueError) as cm:
+            self._raw(inp, {"CoulombInter": self.ASYM_V})
+        msg = str(cm.exception)
+        self.assertIn("sc_vertex_version", msg)
+        self.assertIn("orientation", msg)
+        # pins the round-1 wording fix: the message must say the
+        # semantics are unverifiable, not overclaim the file's history
+        self.assertIn("cannot be verified", msg)
+        self.assertIn("CoulombInter", msg)
+        # the same rejection through the static loader route
+        with self.assertRaises(ValueError):
+            self._load(inp, {"CoulombInter": self.ASYM_V})
+
+    def test_legacy_myo_with_symmetric_coupling_is_accepted(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"CoulombInter": self.SYM_V})
+
+    def test_legacy_kuroki_with_asymmetric_coupling_stays_accepted(self):
+        # the reduced-path (kuroki) files never depended on the
+        # _build_interaction_k orientation; behavior is unchanged there
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)
+        self._raw(inp, {"CoulombInter": self.ASYM_V})
+
+    def test_version2_myo_with_asymmetric_coupling_is_accepted(self):
+        # version 2 implies post-#99 production: correctly oriented
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        tags = dict(self.MYO_TAGS, sc_vertex_version=2)
+        inp = self._write(d, extra_s=dict(tags), extra_c=dict(tags))
+        self._raw(inp, {"CoulombInter": self.ASYM_V})
+
+    def test_orientation_reason_fires_for_each_of_the_four_types(self):
+        """Membership pin for the orientation predicate: for Hund, Ising
+        and Exchange the older #113 guard would reject a legacy file
+        anyway, so dropping one of them from the ORIENTATION list would
+        escape a rejection-only test -- assert the orientation-specific
+        wording appears for every one of the four types."""
+        import tempfile
+
+        for itype in ("CoulombInter", "Hund", "Ising", "Exchange"):
+            with self.subTest(interaction=itype):
+                d = tempfile.mkdtemp()
+                inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                                  extra_c=dict(self.MYO_TAGS))
+                with self.assertRaises(ValueError) as cm:
+                    self._raw(inp, {itype: self.ASYM_V})
+                msg = str(cm.exception)
+                self.assertIn("cannot be verified", msg)
+                self.assertIn(itype, msg)
+
+    def test_legacy_myo_with_asymmetric_pairlift_is_accepted(self):
+        # PairLift's particle-hole S/C contribution is exactly zero on
+        # both the producer and consumer sides: an asymmetric PairLift
+        # cannot change the stored chi or the vertex, so rejecting on it
+        # would be a pure false positive (round-1 review)
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"PairLift": self.ASYM_V})
+
+    def test_legacy_myo_pairhop_hermitian_pair_rule(self):
+        """PairHop is checked against its HERMITIAN partner (round 4):
+        its orientation never changed, but the conjugated-mean reading
+        of its declarations arrived with the version stamp, so a
+        non-Hermitian-closed legacy declaration measurably changes the
+        myo S/C matrices (|dS| = 0.15 for 0.7/0.4) and must be
+        rejected; a Hermitian-closed complex pair is an identity under
+        that reading and stays accepted, as does a version-2 file."""
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        with self.assertRaises(ValueError) as cm:
+            self._raw(inp, {"PairHop": self.ASYM_V})
+        msg = str(cm.exception)
+        self.assertIn("PairHop", msg)
+        self.assertIn("Hermitian", msg)
+
+        p = 0.7 + 0.4j
+        herm = {((0, 0, 0), (0, 1)): p, ((0, 0, 0), (1, 0)): np.conj(p)}
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"PairHop": herm})
+
+        d = tempfile.mkdtemp()
+        tags = dict(self.MYO_TAGS, sc_vertex_version=2)
+        inp = self._write(d, extra_s=dict(tags), extra_c=dict(tags))
+        self._raw(inp, {"PairHop": self.ASYM_V})
+
+    def test_hermitian_pair_mismatch_helper_cases(self):
+        import hwave.sc as sc
+
+        f = sc._onsite_hermitian_pair_mismatch
+        p = 0.7 + 0.4j
+        self.assertAlmostEqual(
+            f({((0, 0, 0), (0, 1)): p,
+               ((0, 0, 0), (1, 0)): np.conj(p)}), 0.0, places=12)
+        self.assertAlmostEqual(
+            f({((0, 0, 0), (0, 1)): 0.7,
+               ((0, 0, 0), (1, 0)): 0.4}), 0.3, places=12)
+        self.assertEqual(f({((0, 0, 0), (0, 1)): float("nan")}),
+                         float("inf"))
+
+    def test_lowercase_interaction_keys_are_read(self):
+        """A run configured with lowercase type keys produced FLEX
+        susceptibilities (the FLEX reader is case-insensitive) while the
+        standalone reader silently read an EMPTY interaction set --
+        bypassing the gate AND the vertex (round-4 review). The reader
+        is case-insensitive now."""
+        import tempfile
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as fobj:
+            fobj.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                       "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as fobj:
+            fobj.write("Transfer\n2\n1\n 1\n"
+                       "   1    0    0    1    1   1.000000   0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as fobj:
+            fobj.write("CoulombIntra\n2\n1\n 1\n"
+                       "   0    0    0    1    1   4.000000   0.0\n")
+        inp = {"file": {"input": {"interaction": {
+            "path_to_input": d,
+            "geometry": "geom.dat",
+            "transfer": "transfer.dat",
+            "coulombintra": "coulombintra.dat",
+        }}}}
+        geom, hr, inter = sc._read_interaction_files(inp)
+        self.assertIn("CoulombIntra", inter)
+        self.assertTrue(inter["CoulombIntra"])
+
+    def test_pairhop_measurement_basis_is_pinned(self):
+        """The 0.15 delta that justified the PairHop rule (round 4): the
+        current conjugated-mean reading maps a real asymmetric 0.7/0.4
+        on-site declaration to 0.55 at BOTH antidiagonal myo S slots,
+        0.15 away from the historical raw placement (0.7 and 0.4)."""
+        import hwave.sc as sc
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+        k = np.array([0.0])
+        ik = sc._build_interaction_k(
+            k, k, k, {"PairHop": dict(self.ASYM_V)}, 2)
+        S, C = build_sc_matrices_myo(ik, 2, 1, 1, 1)
+        for M in (S, C):
+            self.assertAlmostEqual(M[0, 0, 0, 1, 2].real, 0.55, places=12)
+            self.assertAlmostEqual(M[0, 0, 0, 2, 1].real, 0.55, places=12)
+        self.assertAlmostEqual(abs(S[0, 0, 0, 1, 2] - 0.7), 0.15, places=12)
+        self.assertAlmostEqual(abs(S[0, 0, 0, 2, 1] - 0.4), 0.15, places=12)
+
+    def _calc_fixture(self, case):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as fobj:
+            fobj.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                       "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as fobj:
+            fobj.write("Transfer\n2\n2\n 1 1\n"
+                       "   1    0    0    1    1   1.000000   0.0\n"
+                       "  -1    0    0    1    1   1.000000   0.0\n"
+                       "   1    0    0    2    2   0.800000   0.0\n"
+                       "  -1    0    0    2    2   0.800000   0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as fobj:
+            fobj.write("CoulombIntra\n2\n1\n 1\n"
+                       "   0    0    0    1    1   2.000000   0.0\n"
+                       "   0    0    0    2    2   2.000000   0.0\n")
+        with open(os.path.join(d, "coulombinter.dat"), "w") as fobj:
+            fobj.write("CoulombInter\n2\n1\n 1\n"
+                       "   0    0    0    1    2   0.500000   0.0\n"
+                       "   0    0    0    2    1   0.500000   0.0\n")
+        keys = {"Geometry": "geom.dat", "Transfer": "transfer.dat",
+                "CoulombIntra": "coulombintra.dat",
+                "CoulombInter": "coulombinter.dat"}
+        if case == "lower":
+            for name in ("CoulombIntra", "CoulombInter"):
+                keys[name.lower()] = keys.pop(name)
+        keys["path_to_input"] = d
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        return {
+            "mode": {"param": {"T": 2.0, "filling": 0.5,
+                               "CellShape": [4, 4, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 8}},
+            "file": {"input": {"path_to_input": d,
+                               "interaction": keys},
+                     "output": {"path_to_output": out}},
+            "eliashberg": {"chi0q_mode": "calc",
+                           "frequency": "static",
+                           "pairing_type": "singlet",
+                           "init_gap": "cos",
+                           "solver_mode": "eigenvalue",
+                           "eigenvalue_method": "arnoldi",
+                           "num_eigenvalues": 2,
+                           "output_eigenvalue": "eig.dat",
+                           "output_gap": "gap.dat"},
+        }
+
+    def test_lowercase_keys_choose_the_same_auto_scheme(self):
+        """Round 5: the auto tensor selector classified a lowercase
+        'coulombinter' run as reduced -- silently omitting the components
+        inter-orbital interactions require -- while 'CoulombInter' chose
+        general. Public-entry parity: the same model configured with
+        canonical and lowercase keys must produce identical
+        eigenvalues under chi0q_mode='calc' + auto."""
+        import tempfile
+        import hwave.sc as sc
+
+        fixture = self._calc_fixture
+
+        outs = {}
+        for case in ("canonical", "lower"):
+            inp = fixture(case)
+            sc.calc_eliashberg(inp)
+            eig_path = os.path.join(
+                inp["file"]["output"]["path_to_output"], "eig.dat")
+            with open(eig_path) as fobj:
+                outs[case] = fobj.read()
+        # numeric comparison, not byte identity: the Arnoldi solver is
+        # not run-to-run bit-reproducible (issue #85; observed only in a
+        # ~1e-17 imaginary residual), and the parity claim here is about
+        # the SCHEME choice and the physics
+        def nums(text):
+            vals = []
+            for line in text.splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    vals.extend(float(x) for x in line.split())
+            return np.asarray(vals)
+
+        a, b = nums(outs["canonical"]), nums(outs["lower"])
+        self.assertTrue(a.size)
+        self.assertEqual(a.shape, b.shape)
+        np.testing.assert_allclose(b, a, atol=1e-10)
+
+    def test_omitted_subshape_is_rejected_like_the_folded_default_it_is(self):
+        """Round 7: a guard keyed on the explicit SubShape key let an
+        OMITTED SubShape slip through -- but the package convention
+        defaults it to CellShape (the whole cell as one supercell), a
+        fully folded configuration this module cannot consume. The guard
+        acts on the RESOLVED value now, and its message explains the
+        default, so an omitted SubShape on a nontrivial cell fails
+        before any file access instead of reaching the reader."""
+        import hwave.sc as sc
+
+        inp = self._calc_fixture("canonical")
+        del inp["mode"]["param"]["SubShape"]
+        with self.assertRaises(ValueError) as cm:
+            sc.calc_eliashberg(inp)
+        msg = str(cm.exception)
+        self.assertIn("SubShape", msg)
+        self.assertIn("CellShape", msg)
+
+    def test_subshape_guard_fires_before_any_file_access(self):
+        """Sentinel pin: the SubShape rejection must precede the reader
+        (the guard exists to fail BEFORE work, and a reordering that
+        reads files first would reintroduce the late confusing
+        failure)."""
+        from unittest import mock
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
+                                   "SubShape": [2, 1, 1],
+                                   "filling": 0.5}},
+                "file": {"input": {"interaction": {}},
+                         "output": {"path_to_output": "."}},
+                "eliashberg": {}}
+        with mock.patch.object(sc, "_read_interaction_files",
+                               side_effect=AssertionError(
+                                   "reader must not run")) as spy:
+            with self.assertRaises(ValueError):
+                sc.calc_eliashberg(dict(base))
+            with self.assertRaises(ValueError):
+                ed.solve_dynamic(dict(base))
+        self.assertEqual(spy.call_count, 0)
+
+    def test_subshape_is_rejected_with_an_actionable_error(self):
+        """Sublattice folding is unsupported by the Eliashberg module
+        (geometry/interactions are consumed unfolded); it used to fail
+        late with an unhelpful shape mismatch."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
+                                   "SubShape": [2, 1, 1],
+                                   "filling": 0.5}},
+                "file": {"input": {"interaction": {}},
+                         "output": {"path_to_output": "."}},
+                "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc.calc_eliashberg(base)
+        self.assertIn("SubShape", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            ed.solve_dynamic(base)
+        self.assertIn("SubShape", str(cm.exception))
+
+    def test_asymmetry_helper_cases(self):
+        """Direct predicate pins: one-sided declarations, numpy orbital
+        key types (as the wan90 parser can produce), Hermitian-complex
+        pairs (Im p != 0 counts as orientation-sensitive -- the
+        symmetrised reading of the imaginary part also changed pre-v2),
+        and non-finite values, which must fail CLOSED (max() drops NaN,
+        so a naive implementation reads a NaN table as symmetric)."""
+        import hwave.sc as sc
+
+        f = sc._onsite_transpose_asymmetry
+        self.assertEqual(f({((0, 0, 0), (0, 1)): 0.7}), 0.7)  # one-sided
+        self.assertEqual(f({((0, 0, 0), (0, 1)): 0.7,
+                            ((0, 0, 0), (1, 0)): 0.7}), 0.0)
+        self.assertEqual(
+            f({((0, 0, 0), (np.int64(0), np.int64(1))): 0.7,
+               ((0, 0, 0), (np.int64(1), np.int64(0))): 0.7}), 0.0)
+        self.assertAlmostEqual(
+            f({((0, 0, 0), (0, 1)): 0.5 + 0.2j,
+               ((0, 0, 0), (1, 0)): 0.5 - 0.2j}), 0.4, places=12)
+        self.assertEqual(f({((0, 0, 0), (0, 1)): float("nan")}),
+                         float("inf"))
+        self.assertEqual(f({((0, 0, 0), (0, 1)): float("inf")}),
+                         float("inf"))
+        self.assertEqual(f({((0, 0, 0), (0, 1)): complex("nan+nanj")}),
+                         float("inf"))
+        self.assertEqual(f({((1, 0, 0), (0, 1)): 0.7}), 0.0)  # off-site
+
+    def test_rejection_reaches_the_dynamic_and_ir_readers(self):
+        """The predicate lives in the shared loader; prove the
+        asymmetric-CoulombInter rejection (not the older #113 guard)
+        fires through _load_flex_susceptibilities_full with allow_ir
+        False and True."""
+        import tempfile
+        import hwave.sc as sc
+
+        for allow_ir in (False, True):
+            with self.subTest(allow_ir=allow_ir):
+                d = tempfile.mkdtemp()
+                inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                                  extra_c=dict(self.MYO_TAGS))
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_susceptibilities_full(
+                        inp, 2, 2, 2, 1, allow_ir=allow_ir,
+                        interactions={"CoulombInter": self.ASYM_V})
+                self.assertIn("orientation", str(cm.exception))
+
+    def test_predicate_accepts_parser_produced_key_types(self):
+        """Feed the gate a table read by the real wannier90 parser, so a
+        key-type mismatch between parsed and hand-built tables (ints vs
+        numpy ints, tuple forms) cannot silently break the partner
+        lookup."""
+        import tempfile
+        import hwave.qlmsio.wan90 as wan90
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "coulombinter.dat")
+        with open(path, "w") as fobj:
+            fobj.write("CoulombInter\n2\n1\n 1\n"
+                       "   0    0    0    1    2   0.700000   0.0\n"
+                       "   0    0    0    2    1   0.400000   0.0\n")
+        table = wan90.read_w90(path)
+        self.assertGreater(
+            sc._onsite_transpose_asymmetry(table), 0.0,
+            "parser-produced keys must reach the partner lookup")
+
+    def test_legacy_myo_combined_reasons_are_both_named(self):
+        # an asymmetric Hund trips BOTH the #113 content reason and the
+        # #101 orientation reason; the message must name both
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        with self.assertRaises(ValueError) as cm:
+            self._raw(inp, {"Hund": self.ASYM_V})
+        msg = str(cm.exception)
+        self.assertIn("#113", msg)
+        self.assertIn("orientation", msg)
+
     def test_legacy_file_with_empty_affected_type_is_accepted(self):
         # a configured-but-empty Hund file contributes no interaction, so the
         # vertex content cannot differ; key PRESENCE must not trip the guard

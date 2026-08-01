@@ -149,6 +149,27 @@ The matrix elements are:
    :math:`-U' + 2J` in the Cross :math:`C` entry). Susceptibility files
    produced before this correction carry no ``sc_vertex_version`` field and
    are rejected when the interaction set contains Hund, Exchange or Ising.
+   For general-scheme (``myo``) files, an unversioned file is also rejected
+   when CoulombInter, Hund, Ising or Exchange declares an asymmetric
+   on-site inter-orbital coupling (:math:`X_{ab} \neq X_{ba}`): the
+   orbital orientation in which the interaction enters the vertex and
+   the symmetrised reading of such declarations both differ between
+   historical builds and the current one, and an unversioned file does
+   not record which semantics it was produced with. PairHop is checked
+   against its HERMITIAN partner instead of the plain transpose (its two
+   declarations are Hermitian partners, so its orientation never changed
+   -- but an on-site declaration that is not Hermitian-closed is also
+   rejected, because the conjugated-mean reading of PairHop declarations
+   arrived together with the version stamp). PairLift is exempt (its
+   particle-hole vertex contribution is exactly zero, so neither the
+   orientation nor the symmetrised reading can matter).
+   The unaffected cases, stated per rule: for the four
+   transpose-checked interactions, transpose-symmetric declarations
+   (:math:`X_{ab} = X_{ba}`) -- every physically ordinary input; for
+   PairHop, Hermitian-closed declarations
+   (:math:`P_{ba} = P_{ab}^{*}`) -- the physically valid form, which
+   need not be transpose-symmetric. Reduced-scheme files never depended
+   on this orientation.
 
 The RPA susceptibilities are
 

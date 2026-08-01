@@ -263,7 +263,12 @@ def config_fingerprint(base, run_eli, base_dir="."):
            if k not in _ELI_OPERATIONAL_KEYS}
     cont = base.get("continuation", {})
     fin = base.get("file", {}).get("input", {})
-    inter = fin.get("interaction", {})
+    # CaseInsensitiveDict (third surfacing of this defect class): a
+    # lowercase 'coulombinter' key EXECUTES correctly but a case-sensitive
+    # lookup here omitted it from the fingerprint -- the resume would then
+    # silently reuse results computed with a DIFFERENT interaction file.
+    from requests.structures import CaseInsensitiveDict
+    inter = CaseInsensitiveDict(fin.get("interaction", {}))
     ipath = _abspath(base_dir,
                      inter.get("path_to_input", fin.get("path_to_input", ".")))
     digests = {}
@@ -446,13 +451,20 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
     sigma_name = resolve_sigma_name(input_dict)
     gap_name = resolve_gap_name(input_dict)
 
-    # resolve base input paths to absolute so CWD does not matter
+    # resolve base input paths to absolute so CWD does not matter. The
+    # key match is case-insensitive (sixth surfacing of this defect
+    # class): the reader and the fingerprint accept 'Path_To_Input', so
+    # an exact-case check here hashed the right file while the solver
+    # executed against the UNRESOLVED relative path.
+    def _absolutize_path_key(mapping):
+        for k in list(mapping.keys()):
+            if k.lower() == "path_to_input":
+                mapping[k] = _abspath(base_dir, mapping[k])
+
     fin = input_dict.setdefault("file", {}).setdefault("input", {})
-    if "path_to_input" in fin:
-        fin["path_to_input"] = _abspath(base_dir, fin["path_to_input"])
+    _absolutize_path_key(fin)
     inter = fin.get("interaction", {})
-    if "path_to_input" in inter:
-        inter["path_to_input"] = _abspath(base_dir, inter["path_to_input"])
+    _absolutize_path_key(inter)
 
     os.makedirs(out_dir, exist_ok=True)
     summary_path = os.path.join(out_dir, summary_file)
