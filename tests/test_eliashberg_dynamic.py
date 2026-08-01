@@ -612,7 +612,10 @@ def test_g2_dynamic_sums_to_static(norb):
     beta = 10.0
     g2w = ed.calc_g2_dynamic(green, beta)
     assert g2w.shape == (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-    g2_static = sc._calc_g2(green, beta)
+    # tail=False: the summand pin is about the shared construction, and the
+    # static tail correction (issue #86) is a property of the frequency SUM,
+    # which the dynamic path never takes.
+    g2_static = sc._calc_g2(green, beta, tail=False)
     assert np.allclose(g2w.sum(axis=-1), g2_static, atol=1e-12)
     # component check (independent of the sum): reproduce a single element
     green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
