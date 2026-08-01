@@ -229,6 +229,26 @@ class TestG2TailGuards(unittest.TestCase):
                 _calc_g2(green, 10.0, tail=False)
         self.assertIn("non-finite", str(cm.exception))
 
+    def test_finiteness_scan_runs_in_bounded_chunks(self):
+        """The non-finite gate must not allocate a G2-sized Boolean mask
+        (round-9 review: ~6% of the tensor again -- an OOM tipping point
+        for large runs). Pin the chunk bound by capturing every isfinite
+        argument during a call."""
+        from unittest import mock
+        H = _model(Nx=2, Ny=2)
+        green = _green(H, self.beta, 32)
+        sizes = []
+        real_isfinite = np.isfinite
+
+        def spy(x, *args, **kwargs):
+            sizes.append(np.asarray(x).size)
+            return real_isfinite(x, *args, **kwargs)
+
+        with mock.patch.object(sc.np, "isfinite", side_effect=spy):
+            _calc_g2(green, self.beta)
+        self.assertTrue(sizes)
+        self.assertLessEqual(max(sizes), 1 << 20)
+
     def test_reduced_precision_input_is_promoted(self):
         """A complex64 (file-precision) Green function must accumulate in
         complex128; the result agrees with the full-precision one to
@@ -700,6 +720,33 @@ class TestFlexGreenProvenance(unittest.TestCase):
                     sc._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("T", str(cm.exception))
 
+    @unittest.skipUnless(
+        np.finfo(np.longdouble).max > np.finfo(np.float64).max,
+        "needs a longdouble wider than binary64")
+    def test_extended_precision_beta_narrowing_to_inf_is_rejected(self):
+        """On x86-64 Linux a finite longdouble beyond binary64 range
+        passes elementwise isfinite and then narrows to inf in float(),
+        silently re-opening the provenance gate (round-9 review); the
+        gate must validate the NARROWED value."""
+        d = self._tmp()
+        big = np.longdouble(np.finfo(np.float64).max) * np.longdouble(2)
+        inp = self._write_green(d, beta=np.array(big))
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_green(inp, 1, 2, 1, 1)
+        self.assertIn("beta", str(cm.exception))
+
+    @unittest.skipUnless(
+        np.finfo(np.longdouble).tiny < np.finfo(np.float64).tiny * 1e-100,
+        "needs a longdouble with wider exponent range than binary64")
+    def test_extended_precision_T_narrowing_to_zero_raises_value_error(self):
+        """A positive extended-precision T below the binary64 range
+        narrows to 0.0; the documented ValueError must fire, not an
+        incidental ZeroDivisionError."""
+        tiny = np.longdouble(2) ** np.longdouble(-16000)
+        self.assertGreater(tiny, 0)
+        with self.assertRaises(ValueError):
+            sc._coerce_run_beta(tiny)
+
     def test_subnormal_run_temperature_is_rejected(self):
         """A positive finite subnormal T passes elementwise checks but
         1/T overflows to inf, recreating the fail-open comparison; the
@@ -923,26 +970,19 @@ class TestG2TailConfigPlumbing(unittest.TestCase):
         return float(lines[0].split()[0])
 
     def test_default_on_off_switch_and_case_insensitive_key(self):
+        """Three end-to-end solves pin the public wiring: the default is
+        ON, the switch changes the result at Nmat=8, and a differently-
+        cased key behaves identically (case-insensitivity defect class,
+        PR #128). The remaining accepted spellings ("off", 0/1, "False",
+        explicit True) are equivalence-tested directly on the parser the
+        public path uses (TestG2TailStrictParsing) -- repeating them as
+        full solves multiplied CI cost without strengthening the oracle
+        (round-9 review)."""
         lam_default = self._run({})
         lam_off = self._run({"g2_tail": False})
         lam_off_cased = self._run({"G2_Tail": False})
-        lam_off_string = self._run({"g2_tail": "off"})
-        lam_on_explicit = self._run({"g2_tail": True})
-        # The switch must change the result at Nmat=8, the default must be
-        # ON, the differently-cased key must behave identically to the
-        # lowercase one (case-insensitivity defect class, PR #128), and a
-        # string boolean ("off") must not be read as truthy.
         self.assertNotAlmostEqual(lam_default, lam_off, places=6)
-        self.assertEqual(lam_default, lam_on_explicit)
         self.assertEqual(lam_off, lam_off_cased)
-        self.assertEqual(lam_off, lam_off_string)
-
-    def test_integer_and_capitalized_string_forms(self):
-        lam_default = self._run({})
-        lam_off = self._run({"g2_tail": False})
-        self.assertEqual(self._run({"g2_tail": 1}), lam_default)
-        self.assertEqual(self._run({"g2_tail": 0}), lam_off)
-        self.assertEqual(self._run({"g2_tail": "False"}), lam_off)
 
     def test_invalid_value_is_rejected_not_read_as_false(self):
         with self.assertRaises(ValueError) as cm:

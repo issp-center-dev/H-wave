@@ -2508,25 +2508,22 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         run_T = input_dict.get("mode", {}).get("param", {}).get("T")
         run_beta = None if run_T is None else _coerce_run_beta(run_T)
         if "beta" in data_g:
-            beta_arr = np.asarray(data_g["beta"]).ravel()
-            # One REAL-NUMERIC finite positive scalar, checked BEFORE any
-            # comparison or conversion: NaN/Inf make every tolerance
-            # comparison False (silently "matching"), an empty array would
-            # die on an incidental IndexError, a vector would silently use
-            # its first element, float() would silently discard a complex
-            # value's imaginary part, booleans would read as 0/1, and a
-            # string would raise an incidental TypeError instead of this
-            # actionable error. dtype.kind i/u/f admits exactly the real
-            # numeric types.
-            if (beta_arr.size != 1 or beta_arr.dtype.kind not in "iuf"
-                    or not np.isfinite(beta_arr[0])
-                    or not beta_arr[0] > 0):
+            # One REAL-NUMERIC finite positive scalar, validated on the
+            # NARROWED float64 (see _finite_positive_float64): NaN/Inf make
+            # every tolerance comparison False (silently "matching"), an
+            # empty array would die on an incidental IndexError, a vector
+            # would silently use its first element, float() would silently
+            # discard a complex value's imaginary part, booleans would read
+            # as 0/1, a string would raise an incidental TypeError, and a
+            # wider-than-binary64 longdouble could pass elementwise checks
+            # yet narrow to inf.
+            file_beta = _finite_positive_float64(data_g["beta"])
+            if file_beta is None:
                 raise ValueError(
                     "green file '{}': beta metadata must be a single "
                     "finite positive real scalar, got {!r}. Regenerate "
                     "the file.".format(green_path,
                                        np.asarray(data_g["beta"])))
-            file_beta = float(beta_arr[0])
             # Explicitly symmetric relative tolerance (max of both
             # magnitudes), no absolute floor: an absolute term would wave
             # through large relative mismatches at small beta (high
@@ -2643,6 +2640,27 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
 
+def _finite_positive_float64(value):
+    """Convert a declared real-numeric scalar to float64 and validate the
+    CONVERTED value; return it, or None if the value is structurally or
+    numerically unacceptable.
+
+    Conversion must happen BEFORE the finite/positive checks (round-9
+    review): on platforms where np.longdouble is wider than binary64, a
+    finite extended-precision value can pass an elementwise isfinite test
+    and then narrow to inf (or a positive one to 0.0) in the float64 the
+    computation actually uses -- recreating the fail-open comparisons these
+    gates exist to prevent. Validating the narrowed float64 closes that.
+    """
+    arr = np.asarray(value).ravel()
+    if arr.size != 1 or arr.dtype.kind not in "iuf":
+        return None
+    v = float(arr[0])
+    if not np.isfinite(v) or not v > 0:
+        return None
+    return v
+
+
 # Numerically safe upper bound for beta in the pair bubble: the batched
 # GEMM forms ~beta^2 intermediates before the division by beta, so a
 # physically meaningless beta (T < 1e-75) would overflow them to NaN.
@@ -2659,13 +2677,12 @@ def _coerce_run_beta(T):
     review). Same real-numeric/finite/positive contract as the file-side
     beta gate.
     """
-    arr = np.asarray(T).ravel()
-    if (arr.size != 1 or arr.dtype.kind not in "iuf"
-            or not np.isfinite(arr[0]) or not arr[0] > 0):
+    t = _finite_positive_float64(T)
+    if t is None:
         raise ValueError(
             "mode.param T must be a single finite positive real scalar, "
             "got {!r}.".format(T))
-    beta = 1.0 / float(arr[0])
+    beta = 1.0 / t
     # A subnormal T passes the checks above but its reciprocal overflows
     # to inf, recreating exactly the fail-open comparison this helper
     # exists to prevent (round-7 review) -- gate the RESULT too.
@@ -2805,13 +2822,12 @@ def _calc_g2(green_kw, beta, tail=True):
     # _G2_BETA_MAX have no physical meaning (T < 1e-75), so reject rather
     # than restructure the arithmetic (the tail=False stream must stay
     # bit-identical to the pre-correction implementation for valid input).
-    beta_arr = np.asarray(beta).ravel()
-    if (beta_arr.size != 1 or beta_arr.dtype.kind not in "iuf"
-            or not np.isfinite(beta_arr[0]) or not beta_arr[0] > 0):
+    beta_f = _finite_positive_float64(beta)
+    if beta_f is None:
         raise ValueError(
             "beta must be a single finite positive real scalar, got "
             "{!r}.".format(beta))
-    beta = float(beta_arr[0])
+    beta = beta_f
     if beta > _G2_BETA_MAX:
         raise ValueError(
             "beta = {!r} exceeds the numerically safe range (<= {!r}): "
@@ -2868,11 +2884,17 @@ def _calc_g2(green_kw, beta, tail=True):
         G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
     # Fail-fast on a non-finite bubble (round-6 review): downstream
     # diagnostics may legitimately SKIP on size, and the solvers would then
-    # propagate NaN into saved eigenvalues silently.
-    if not np.all(np.isfinite(G2)):
-        raise ValueError(
-            "G2 (pair bubble) contains non-finite values; check the input "
-            "Green function and beta.")
+    # propagate NaN into saved eigenvalues silently. Scan in bounded chunks
+    # (round-9 review): a whole-tensor np.isfinite allocates a G2-sized
+    # Boolean mask -- ~6% of the tensor again, enough to tip a large run
+    # that otherwise fits into OOM.
+    flat = G2.reshape(-1)
+    step = 1 << 20
+    for start in range(0, flat.size, step):
+        if not np.all(np.isfinite(flat[start:start + step])):
+            raise ValueError(
+                "G2 (pair bubble) contains non-finite values; check the "
+                "input Green function and beta.")
     return G2
 
 
