@@ -210,8 +210,12 @@ This section controls the Eliashberg solver. Key parameters:
   frequency sum misses the leading identity tail (an
   :math:`O(1/N_{\rm mat})` error) and can be slightly indefinite, which
   injects spurious imaginary parts into the reported eigenvalues at small
-  ``Nmat``. Set ``false`` only to reproduce results
-  computed before the correction existed.
+  ``Nmat``. The correction is asymptotic: it helps when the largest
+  retained frequency exceeds the relevant energy scales (the solver warns
+  when the Green function still deviates strongly from its tail at the
+  window edge -- in that regime the correction can overshoot and passing
+  the positivity check does not certify accuracy). ``false`` reproduces
+  results computed before the correction existed.
 - ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
   :math:`\sigma` are found first. Ignored (with a warning) for the plain

@@ -264,11 +264,19 @@ which is efficiently computed using the Fast Fourier Transform (FFT).
    the solver reports): without the correction, small-``Nmat`` multi-orbital runs
    can report spuriously complex eigenvalues that are then easily mistaken
    for a broken symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
-   reproduce results computed before this correction was introduced; the
-   solver additionally warns whenever the computed :math:`G^{(2)}` has a
-   significantly negative eigenvalue, pointing at ``Nmat``. The dynamic
-   (frequency-resolved) solver never takes this frequency sum and is
-   unaffected.
+   reproduce results computed before this correction was introduced.
+   With the leading :math:`1/\omega_n^2` term removed and the odd inverse
+   powers cancelling on the symmetric grid, the omitted-sum error scales as
+   :math:`O(N_{\rm mat}^{-3})` (assuming the conventional integer-power
+   high-frequency expansion). The correction is asymptotic: when the
+   largest retained frequency does not exceed the relevant energy and
+   self-energy scales it can overshoot, and the solver warns when the
+   Green function still deviates strongly from :math:`I/(i\omega_n)` at
+   the window edge. The solver additionally warns whenever the computed
+   :math:`G^{(2)}` has a significantly negative eigenvalue, pointing at
+   ``Nmat`` -- a structural diagnostic of the kernel's real-spectrum
+   property, not an error estimate. The dynamic (frequency-resolved)
+   solver never takes this frequency sum and is unaffected.
 
 
 FFT-based kernel evaluation

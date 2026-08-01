@@ -2788,6 +2788,12 @@ class FLEX(RPA):
                      green=green_info.get("green"),
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
+                     # temperature provenance (issue #86): the Eliashberg
+                     # consumer rebuilds the Matsubara grid from its own
+                     # beta and validates it against this field, so a file
+                     # from a different temperature fails fast instead of
+                     # silently corrupting the pair bubble
+                     beta=1.0 / self.T,
                      **green_extra,
                      **_freq_meta("F"))
             logger.info("save_results: save green in file {}".format(file_name))

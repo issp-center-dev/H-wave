@@ -2477,6 +2477,44 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                     "[eliashberg] accept_up_block_only = true to take "
                     "responsibility for the approximation.".format(
                         green_path, nblock, b))
+    # Grid/temperature provenance (round-3 review). The consumer rebuilds
+    # the Matsubara frequencies from ITS OWN beta and assumes the file holds
+    # the full centered fermionic grid, so a Green function produced at a
+    # different temperature -- or a densified/restricted frequency axis --
+    # would be consumed silently with a wrong grid, and the tail correction
+    # would then apply a wrong analytic complement. Uniform files written
+    # since this change carry beta; older files get a warning, not an error.
+    if not is_ir_native(data_g):
+        if "freq_index" in data_g:
+            fi = np.asarray(data_g["freq_index"]).ravel()
+            if fi.size != nmat_g or not np.array_equal(
+                    fi, np.arange(nmat_g)):
+                raise ValueError(
+                    "green file '{}': freq_index does not describe the "
+                    "full centered frequency grid of the stored axis "
+                    "({} entries for {} frequencies); the pair bubble "
+                    "needs the full fermionic grid. Re-run the producing "
+                    "FLEX calculation with the full grid.".format(
+                        green_path, fi.size, nmat_g))
+        run_T = input_dict.get("mode", {}).get("param", {}).get("T")
+        if "beta" in data_g:
+            file_beta = float(np.asarray(data_g["beta"]).ravel()[0])
+            if run_T is not None and abs(file_beta - 1.0 / float(run_T)) \
+                    > 1.0e-8 * max(file_beta, 1.0):
+                raise ValueError(
+                    "green file '{}' was produced at beta = {} but this "
+                    "run uses beta = {}; the Matsubara grid (and the tail "
+                    "correction built on it) would be inconsistent. Use "
+                    "the producing run's temperature or regenerate the "
+                    "file.".format(green_path, file_beta,
+                                   1.0 / float(run_T)))
+        elif run_T is not None:
+            logger.warning(
+                "green file '%s' carries no beta metadata (written before "
+                "this field existed); the run's beta = %g is assumed to "
+                "match the producing FLEX run. Verify the temperatures "
+                "agree -- a mismatch silently corrupts the pair bubble.",
+                green_path, 1.0 / float(run_T))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
@@ -2573,6 +2611,78 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
 # ---------------------------------------------------------------------------
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
+
+def _coerce_g2_tail(value):
+    """Strictly parse the [eliashberg] g2_tail switch.
+
+    backend.as_bool reads any unrecognized string ("ture", "garbage") as
+    False and any nonzero integer as True -- for a switch that changes the
+    physics of every reported eigenvalue, a spelling error must fail loudly
+    instead of silently flipping the result (round-3 review). Accepted:
+    real booleans, integers 0/1, and the strings true/false/yes/no/on/off/0/1
+    (case- and whitespace-insensitive).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "yes", "on", "1"):
+            return True
+        if v in ("false", "no", "off", "0"):
+            return False
+    raise ValueError(
+        "[eliashberg] g2_tail = {!r} is not a recognized boolean; use "
+        "true/false (or yes/no, on/off, 0/1).".format(value))
+
+
+# Threshold for the asymptotic-regime diagnostic below: at the window edge
+# |i wn G(k, i wn) - I| measures how far the Green function still is from
+# its leading 1/(i wn) tail. 0.5 flags the regime where the neglected
+# scales are at least comparable to the largest retained frequency.
+_G2_TAIL_EDGE_DEV_THRESHOLD = 0.5
+
+
+def _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta):
+    """Warn when the tail correction's asymptotic premise looks violated.
+
+    The correction subtracts the model I/(i wn) x -I/(i wn) inside the
+    window and adds its exact full sum, which IMPROVES the result only when
+    the largest retained frequency exceeds the relevant energy/self-energy
+    scales -- otherwise the model does not describe the summand anywhere in
+    the window and the added beta/4-complement can overshoot (measured:
+    H = diag(1, -1), beta = 10, Nmat = 2 makes the corrected cross-orbital
+    channel WORSE than the bare sum while staying PSD, so the positivity
+    diagnostic alone cannot catch it). The same check flags a loaded Green
+    function whose leading coefficient is not the identity (e.g. a scaled
+    or truncation-damaged file): for those the fixed unit-coefficient
+    correction is wrong by construction.
+
+    Returns the measured edge deviation max_k |i wn G(k, i wn) - I| over
+    both window endpoints.
+    """
+    norb = green_kw.shape[0]
+    nmat = green_kw.shape[-1]
+    eye = np.eye(norb).reshape(norb, norb, 1, 1, 1)
+    dev = 0.0
+    for idx in (0, nmat - 1):
+        wn = (2.0 * idx + 1.0 - nmat) * np.pi / beta
+        dev = max(dev, float(np.abs(1j * wn * green_kw[..., idx]
+                                    - eye).max()))
+    if dev > _G2_TAIL_EDGE_DEV_THRESHOLD:
+        logger.warning(
+            "g2_tail: at the largest retained Matsubara frequency the Green "
+            "function deviates from its asymptotic tail I/(i wn) by %.2f "
+            "(threshold %.2f). The tail correction is asymptotic and can "
+            "OVERSHOOT in this regime; the result may be less accurate than "
+            "the bare sum, and passing the positivity check does not certify "
+            "accuracy. Increase Nmat until the window edge exceeds the "
+            "relevant energy scales, or check the loaded Green function's "
+            "normalization/provenance.",
+            dev, _G2_TAIL_EDGE_DEV_THRESHOLD)
+    return dev
+
 
 def _calc_g2(green_kw, beta, tail=True):
     """Calculate G2 = T * sum_n G(k, wn) G(-k+q, -wn).
@@ -4421,13 +4531,16 @@ def calc_eliashberg(input_dict):
     # --- Step 10: Compute G2 ---
     logger.info("Computing G2...")
     # New config keys are read case-insensitively (the config layers disagree
-    # on case handling; see the PR #128 sweep) and only via as_bool so that
-    # TOML true/false and string forms behave identically.
+    # on case handling; see the PR #128 sweep) and through the strict parser:
+    # a misspelled value must fail, not silently flip the physics.
     from requests.structures import CaseInsensitiveDict
-    g2_tail = backend.as_bool(
+    g2_tail = _coerce_g2_tail(
         CaseInsensitiveDict(eli_param).get("g2_tail", True))
     logger.info("g2_tail = %s (Matsubara tail correction for the pair "
-                "bubble)", g2_tail)
+                "bubble); Green frequency axis = %d points", g2_tail,
+                green_kw.shape[-1])
+    if g2_tail:
+        _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
     G2 = _calc_g2(green_kw, beta, tail=g2_tail)
     _warn_if_g2_indefinite(G2, norb, g2_tail)
 

@@ -16,7 +16,13 @@ import numpy as np
 logger = logging.getLogger("qlms").getChild("tsweep")
 
 MANIFEST_NAME = "tsweep_manifest.json"
-_MANIFEST_VERSION = 1
+# Version 2: the G2 Matsubara tail correction (issue #86) changed the
+# resolved physics of a config with no explicit g2_tail key from tail-off
+# to tail-on. A version-1 manifest's fingerprint cannot distinguish rungs
+# computed either way, so resuming it would silently mix pre- and
+# post-correction eigenvalues in one lambda_vs_T.dat ladder; the bump
+# invalidates every pre-correction manifest instead.
+_MANIFEST_VERSION = 2
 
 
 def build_ladder(cont):
@@ -276,10 +282,20 @@ def config_fingerprint(base, run_eli, base_dir="."):
         fn = inter.get(key)
         if fn:
             digests[key] = _file_digest(_abspath(ipath, fn))
+    # The RESOLVED tail switch, not just the raw [eliashberg] dict: with the
+    # key omitted the dict is identical across package versions while the
+    # physics default is not, so any future default flip must change the
+    # fingerprint through this entry (the current flip is covered by the
+    # _MANIFEST_VERSION bump). Resolution shares sc.py's strict parser, so
+    # an invalid value fails here exactly as the run itself would.
+    from hwave.sc import _coerce_g2_tail
+    g2_tail_resolved = _coerce_g2_tail(
+        CaseInsensitiveDict(base.get("eliashberg", {})).get("g2_tail", True))
     src = {
         "mode": base.get("mode", {}).get("mode"),
         "param": param,                        # full mode.param minus T
         "eliashberg": eli,                     # full eliashberg minus operational
+        "g2_tail_resolved": g2_tail_resolved,
         "run_eliashberg": bool(run_eli),
         "warm_start": cont.get("warm_start", True),
         "seed_gap": cont.get("seed_gap", True),
