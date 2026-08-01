@@ -2845,9 +2845,10 @@ class RPA:
         for off-site CoulombInter / Ising / Exchange is not proportional to
         V(q) at all (residuals 1.0 / 1.0 / 0.33), while off-site Hund and
         PairLift give no vertex and are therefore fine. Checking the assembled
-        vertex also means a declaration whose off-site parts cancel in the
+        vertex also means an internal TABLE whose off-site parts cancel in the
         symmetrised sum is accepted, which is correct: what the channel uses
-        is then well-defined. (`_append_pairhop` silently discards off-site
+        is then well-defined. (File input never reaches here unclosed: since
+        #93 the readers reject declarations that are not Hermitian-closed.) (`_append_pairhop` silently discards off-site
         PairHop before this point; see the documentation warning.)
         """
         nvol = self.lattice.nvol

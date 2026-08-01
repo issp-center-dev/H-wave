@@ -240,8 +240,10 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
 
     def test_one_sided_onsite_hund_reads_as_the_mean(self):
         """The ring's declaration symmetrisation applies to every type, not
-        just CoulombInter: a one-sided on-site Hund declaration must give
-        bit-identical chiq to the halved both-ends declaration."""
+        just CoulombInter: a one-sided on-site Hund entry injected into the
+        internal TABLE after the read (file input must be Hermitian-closed
+        since #93) must give bit-identical chiq to the halved both-ends
+        table."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.rpa as rpa_mod
 
