@@ -247,9 +247,9 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 - ``CoulombInter`` :math:`V` : :math:`W_{+-} = -V`
 - ``Hund`` :math:`J` : :math:`W_{+-} = 0`
 - ``Exchange`` :math:`J` : :math:`W_{+-} = -(J + J^{\rm T})/2`
-- ``Ising`` :math:`I` : :math:`W_{+-} = +I` （全ソルバーがこの規格化で
-  Ising ファイルを読みます。UHFk の因子 1/4 の不一致は issue #106 で解消
-  済みです）
+- ``Ising`` :math:`I` : :math:`W_{+-} = +I` （wannier90 形式の k 空間ソルバーはすべてこの規格化で Ising ファイル
+  を読みます。UHFk の因子 1/4 の不一致は issue #106 で解消済みです。
+  別系統の実空間 UHFr リーダーは S^z 規約を保持します）
 - ``PairLift`` :math:`J` : :math:`W_{+-} = 0`
 - ``PairHop`` :math:`J` : :math:`W_{+-} = -J`
 

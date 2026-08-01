@@ -1,6 +1,9 @@
 """Declaration symmetrisation, single-sourced (#108 increment 2).
 
-An interaction file may declare the same physical bond from both ends:
+These are TABLE semantics: since issue #93 the file readers reject
+non-Hermitian-closed input, so unclosed tables reach these reductions
+only through reader-bypassing internal paths (and tests). A declaration
+table may carry the same physical bond from both ends:
 the two declarations of one coupling are ``(R, a, b)`` and
 ``(-R, b, a)``. For every type except PairHop they multiply the SAME
 operator, so the table entering any vertex is the mean

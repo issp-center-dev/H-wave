@@ -268,9 +268,10 @@ The resulting vertex, for on-site interactions:
 - ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
 - ``Hund`` :math:`J`: :math:`W_{+-} = 0`
 - ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
-- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (all solvers now read the Ising
-  file in this normalization; the UHFk factor-1/4 discrepancy was resolved
-  with issue #106)
+- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (all Wannier90-like k-space solvers now read
+  the Ising file in this normalization -- the UHFk factor-1/4 discrepancy
+  was resolved with issue #106; the separate real-space UHFr reader keeps
+  its S^z convention)
 - ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
 - ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
 

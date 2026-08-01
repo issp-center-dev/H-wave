@@ -6,7 +6,9 @@ Ising指定ファイル
 Ising相互作用をハミルトニアンに付け加えます
 (:math:`S=1/2`\ の系でのみ使用可能)。 電子系の場合には
 
-.. math:: \mathcal{H}+=\sum_{i,j}J_{ij}^{z} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow} )
+.. math:: \mathcal{H}+=\sum_{i,j}J_{ij}^{z} S^{z}_{i} S^{z}_{j}, \quad S^{z}_{i}=\tfrac{1}{2}(n_{i\uparrow}-n_{i\downarrow})
+
+（注：この実空間 UHFr の規約は、Ising ファイルを :math:`J (n_\uparrow-n_\downarrow)(n_\uparrow-n_\downarrow)` として読む wannier90 形式の k 空間ソルバーとは異なります。）
 
 が付け加えられ、スピン系の場合には
 

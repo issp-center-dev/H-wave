@@ -820,8 +820,9 @@ class TestFLEXGeneralGuards(unittest.TestCase):
         Hund / Ising differ from the ring even at one orbital), Exchange and
         PairHop have a non-local pair, CoulombIntra is read only at r = 0 by
         UHFk (#106)."""
-        # accepted: a == b off-site CoulombInter (one-sided is fine: both
-        # solvers reduce a declaration to its reversal-symmetric part)
+        # accepted: a == b off-site CoulombInter (a one-sided internal
+        # TABLE is fine: both solvers reduce it to its reversal-symmetric
+        # part; file input must be closed since #93)
         flex = _make_general_flex(norb=2)
         flex.ham_info.param_ham.setdefault("CoulombInter", {})[
             ((1, 0, 0), (0, 0))] = 1.0

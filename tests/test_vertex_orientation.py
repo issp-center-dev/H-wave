@@ -376,8 +376,8 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
     Kanamori fixtures are all orbital-symmetric, so a wrong orientation for the
     others would not show up anywhere.
 
-    Asymmetric input is reachable: the readers do not validate orbital symmetry
-    (#93), and while the FLEX general path rejects most OFF-SITE two-body
+    Asymmetric TABLES are exercised here via the internal builders (the
+    file readers reject unclosed input since #93), and while the FLEX general path rejects most OFF-SITE two-body
     terms (it accepts only same-orbital off-site CoulombInter without
     folding) it accepts an asymmetric ON-SITE orbital matrix, which then
     reaches the MYO S/C builder.

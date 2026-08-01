@@ -321,7 +321,8 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                     _construct_and_solve()
 
     def test_one_sided_offsite_declaration_matches_the_ring_exactly(self):
-        """A one-sided declaration (only +R) means the reversal-symmetric
+        """A one-sided internal TABLE (only +R; built after the read, since
+        file input must be closed per #93) means the reversal-symmetric
         operator v n(i) n(i+R), whose exact vertex is v cos(qR). Both solvers
         now read it that way -- the S/C builders since #114, the ring since
         rpa.py got the same symmetrisation (before that the ring kept a
