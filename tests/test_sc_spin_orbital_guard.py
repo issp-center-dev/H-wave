@@ -49,6 +49,36 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
         self.assertTrue(sc._resolve_spin_orbital_flag(
             {"mode": {"Enable_Spin_Orbital": "on"}}))
 
+    def test_loader_forwards_the_resolved_boolean(self):
+        """Plumbing pin: _load_chi0q must hand validate_chi0q_index_convention
+        the resolved boolean False for a string 'false', not the raw truthy
+        string (which activated the SO validation branch)."""
+        import numpy as np
+        from unittest import mock
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"),
+                 chi0q=np.zeros((2, 1, 1, 1), dtype=complex))
+        inp = {"mode": {"enable_spin_orbital": "false",
+                        "param": {"Nmat": 2}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}}}
+        seen = []
+        real = sc.validate_chi0q_index_convention
+
+        def spy(data, flag, file_name=""):
+            seen.append(flag)
+            return real(data, flag, file_name)
+
+        with mock.patch.object(sc, "validate_chi0q_index_convention",
+                               side_effect=spy):
+            try:
+                sc._load_chi0q(inp)
+            except ValueError:
+                pass  # shape/metadata checks past the spy may still fire
+        self.assertEqual(seen, [False])
+
     def test_falsy_and_absent_forms_pass(self):
         for label, mode in (("absent", {}),
                             ("false", {"enable_spin_orbital": False}),
