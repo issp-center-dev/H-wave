@@ -4083,22 +4083,33 @@ def calc_eliashberg(input_dict):
     T = mode_param["T"]
     beta = 1.0 / T
     cell_shape = mode_param["CellShape"]
-    if "SubShape" in mode_param:
-        _ss = list(mode_param["SubShape"])
-        while len(_ss) < 3:
-            _ss.append(1)
-        if _ss != [1, 1, 1]:
-            # supported nowhere in this module: the geometry and
-            # interactions are consumed UNFOLDED here, so a folded
-            # susceptibility mismatches the expected orbital count and an
-            # off-site bond would fold onto an on-site supercell entry
-            # (round-4 review); failing late produced an unhelpful shape
-            # error instead of this actionable one
-            raise ValueError(
-                "SubShape (sublattice folding) is not supported by the "
-                "Eliashberg module: fold the model into the unit cell "
-                "yourself, or use SubShape = [1, 1, 1].")
-    sub_shape = mode_param.get("SubShape", cell_shape)
+    # Resolve SubShape by the PACKAGE convention (documented default:
+    # CellShape, i.e. the whole cell as one supercell) and guard the
+    # RESOLVED value: a guard keyed on the explicit key alone let an
+    # omitted SubShape default to a fully folded configuration and reach
+    # the file reader with the very mismatch the guard exists to stop
+    # (round-7 review).
+    _cs = list(cell_shape) if isinstance(cell_shape, (list, tuple))         else [cell_shape]
+    while len(_cs) < 3:
+        _cs.append(1)
+    _ss = list(mode_param.get("SubShape", _cs))
+    while len(_ss) < 3:
+        _ss.append(1)
+    if _ss != [1, 1, 1]:
+        # supported nowhere in this module: the geometry and
+        # interactions are consumed UNFOLDED here, so a folded
+        # susceptibility mismatches the expected orbital count and an
+        # off-site bond would fold onto an on-site supercell entry
+        # (round-4 review); failing late produced an unhelpful shape
+        # error instead of this actionable one
+        raise ValueError(
+            "SubShape (sublattice folding) is not supported by the "
+            "Eliashberg module: fold the model into the unit cell "
+            "yourself, or set SubShape = [1, 1, 1] explicitly. (Note: "
+            "omitting SubShape defaults it to CellShape -- the whole "
+            "cell as one supercell -- per the package convention, so it "
+            "must be set explicitly here.)")
+    sub_shape = _ss
     nmat = mode_param.get("Nmat", _DEFAULT_NMAT)
 
     # Filling

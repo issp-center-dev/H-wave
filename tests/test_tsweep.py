@@ -724,3 +724,50 @@ class TestReaderKeyCaseParity(unittest.TestCase):
                          canon["Geometry"]["norb"])
         self.assertEqual(sorted(lower["Transfer"].keys()),
                          sorted(canon["Transfer"].keys()))
+
+    def test_mixed_case_path_to_input_resolves(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        ham = read_input_k.QLMSkInput(
+            {"interaction": {"Path_To_Input": d,
+                             "Geometry": "geom.dat"}}).get_param("ham")
+        self.assertEqual(ham["Geometry"]["norb"], 1)
+
+    def test_lowercase_keys_survive_sublattice_reshape(self):
+        """Fifth surfacing (PR #128 round 7): the sublattice reshape
+        dispatched on exact-case names, so a lowercase 'geometry' table
+        fell into the interaction reshaper and crashed. Both cases must
+        fold identically now."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer\n1\n2\n 1 1\n"
+                    "   1    0    0    1    1   1.000000   0.0\n"
+                    "  -1    0    0    1    1   1.000000   0.0\n")
+
+        def build(keys):
+            info_mode = {
+                'mode': 'RPA',
+                'param': {'T': 1.0, 'filling': 0.5,
+                          'CellShape': [4, 1, 1], 'SubShape': [2, 1, 1],
+                          'Nmat': 4},
+                'calc_scheme': 'general',
+            }
+            read_io = read_input_k.QLMSkInput({"interaction": keys})
+            return rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+
+        canon = build({"path_to_input": d, "Geometry": "geom.dat",
+                       "Transfer": "transfer.dat"})
+        lower = build({"path_to_input": d, "geometry": "geom.dat",
+                       "transfer": "transfer.dat"})
+        self.assertEqual(lower.ham_info.param_ham["Geometry"]["norb"],
+                         canon.ham_info.param_ham["Geometry"]["norb"])

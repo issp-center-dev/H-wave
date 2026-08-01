@@ -487,6 +487,54 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         self.assertAlmostEqual(abs(S[0, 0, 0, 1, 2] - 0.7), 0.15, places=12)
         self.assertAlmostEqual(abs(S[0, 0, 0, 2, 1] - 0.4), 0.15, places=12)
 
+    def _calc_fixture(self, case):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as fobj:
+            fobj.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                       "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as fobj:
+            fobj.write("Transfer\n2\n2\n 1 1\n"
+                       "   1    0    0    1    1   1.000000   0.0\n"
+                       "  -1    0    0    1    1   1.000000   0.0\n"
+                       "   1    0    0    2    2   0.800000   0.0\n"
+                       "  -1    0    0    2    2   0.800000   0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as fobj:
+            fobj.write("CoulombIntra\n2\n1\n 1\n"
+                       "   0    0    0    1    1   2.000000   0.0\n"
+                       "   0    0    0    2    2   2.000000   0.0\n")
+        with open(os.path.join(d, "coulombinter.dat"), "w") as fobj:
+            fobj.write("CoulombInter\n2\n1\n 1\n"
+                       "   0    0    0    1    2   0.500000   0.0\n"
+                       "   0    0    0    2    1   0.500000   0.0\n")
+        keys = {"Geometry": "geom.dat", "Transfer": "transfer.dat",
+                "CoulombIntra": "coulombintra.dat",
+                "CoulombInter": "coulombinter.dat"}
+        if case == "lower":
+            for name in ("CoulombIntra", "CoulombInter"):
+                keys[name.lower()] = keys.pop(name)
+        keys["path_to_input"] = d
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        return {
+            "mode": {"param": {"T": 2.0, "filling": 0.5,
+                               "CellShape": [4, 4, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 8}},
+            "file": {"input": {"path_to_input": d,
+                               "interaction": keys},
+                     "output": {"path_to_output": out}},
+            "eliashberg": {"chi0q_mode": "calc",
+                           "frequency": "static",
+                           "pairing_type": "singlet",
+                           "init_gap": "cos",
+                           "solver_mode": "eigenvalue",
+                           "eigenvalue_method": "arnoldi",
+                           "num_eigenvalues": 2,
+                           "output_eigenvalue": "eig.dat",
+                           "output_gap": "gap.dat"},
+        }
+
     def test_lowercase_keys_choose_the_same_auto_scheme(self):
         """Round 5: the auto tensor selector classified a lowercase
         'coulombinter' run as reduced -- silently omitting the components
@@ -497,55 +545,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         import tempfile
         import hwave.sc as sc
 
-        def fixture(case):
-            d = tempfile.mkdtemp()
-            with open(os.path.join(d, "geom.dat"), "w") as fobj:
-                fobj.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
-                           "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
-            with open(os.path.join(d, "transfer.dat"), "w") as fobj:
-                fobj.write("Transfer\n2\n2\n 1 1\n"
-                           "   1    0    0    1    1   1.000000   0.0\n"
-                           "  -1    0    0    1    1   1.000000   0.0\n"
-                           "   1    0    0    2    2   0.800000   0.0\n"
-                           "  -1    0    0    2    2   0.800000   0.0\n")
-            with open(os.path.join(d, "coulombintra.dat"), "w") as fobj:
-                fobj.write("CoulombIntra\n2\n1\n 1\n"
-                           "   0    0    0    1    1   2.000000   0.0\n"
-                           "   0    0    0    2    2   2.000000   0.0\n")
-            with open(os.path.join(d, "coulombinter.dat"), "w") as fobj:
-                fobj.write("CoulombInter\n2\n1\n 1\n"
-                           "   0    0    0    1    2   0.500000   0.0\n"
-                           "   0    0    0    2    1   0.500000   0.0\n")
-            keys = {"Geometry": "geom.dat", "Transfer": "transfer.dat",
-                    "CoulombIntra": "coulombintra.dat",
-                    "CoulombInter": "coulombinter.dat"}
-            if case == "lower":
-                # lowercase the interaction TYPE keys only -- the round-5
-                # defect: 'coulombinter' chose the reduced scheme. The
-                # Geometry/Transfer structural keys are a separate reader
-                # concern and stay canonical here.
-                for name in ("CoulombIntra", "CoulombInter"):
-                    keys[name.lower()] = keys.pop(name)
-            keys["path_to_input"] = d
-            out = os.path.join(d, "out")
-            os.makedirs(out, exist_ok=True)
-            return {
-                "mode": {"param": {"T": 2.0, "filling": 0.5,
-                                   "CellShape": [4, 4, 1],
-                                   "SubShape": [1, 1, 1], "Nmat": 8}},
-                "file": {"input": {"path_to_input": d,
-                                   "interaction": keys},
-                         "output": {"path_to_output": out}},
-                "eliashberg": {"chi0q_mode": "calc",
-                               "frequency": "static",
-                               "pairing_type": "singlet",
-                               "init_gap": "cos",
-                               "solver_mode": "eigenvalue",
-                               "eigenvalue_method": "arnoldi",
-                               "num_eigenvalues": 2,
-                               "output_eigenvalue": "eig.dat",
-                               "output_gap": "gap.dat"},
-            }
+        fixture = self._calc_fixture
 
         outs = {}
         for case in ("canonical", "lower"):
@@ -570,6 +570,24 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         self.assertTrue(a.size)
         self.assertEqual(a.shape, b.shape)
         np.testing.assert_allclose(b, a, atol=1e-10)
+
+    def test_omitted_subshape_is_rejected_like_the_folded_default_it_is(self):
+        """Round 7: a guard keyed on the explicit SubShape key let an
+        OMITTED SubShape slip through -- but the package convention
+        defaults it to CellShape (the whole cell as one supercell), a
+        fully folded configuration this module cannot consume. The guard
+        acts on the RESOLVED value now, and its message explains the
+        default, so an omitted SubShape on a nontrivial cell fails
+        before any file access instead of reaching the reader."""
+        import hwave.sc as sc
+
+        inp = self._calc_fixture("canonical")
+        del inp["mode"]["param"]["SubShape"]
+        with self.assertRaises(ValueError) as cm:
+            sc.calc_eliashberg(inp)
+        msg = str(cm.exception)
+        self.assertIn("SubShape", msg)
+        self.assertIn("CellShape", msg)
 
     def test_subshape_guard_fires_before_any_file_access(self):
         """Sentinel pin: the SubShape rejection must precede the reader

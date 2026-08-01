@@ -79,8 +79,10 @@ class QLMSkInput():
         self.ham_param = CaseInsensitiveDict()
         self.green = CaseInsensitiveDict()
 
-        # file.input.interaction
-        files = info_inputfile.get("interaction", {})
+        # file.input.interaction -- normalized ONCE so every lookup
+        # (path_to_input here, validation and dispatch below) shares the
+        # same case-insensitive semantics
+        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
         interaction_file_dir = files.get("path_to_input", "")
 
         # check if keyword is valid
