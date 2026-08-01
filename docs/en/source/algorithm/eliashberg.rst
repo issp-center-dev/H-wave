@@ -249,8 +249,8 @@ which is efficiently computed using the Fast Fourier Transform (FFT).
 .. note::
 
    **Matsubara tail correction (issue #86).** The bare truncated sum
-   undercounts the exact two-particle Green's function by
-   :math:`O(1/N_{\rm mat})`: the summand's exact high-frequency tail is
+   misses the leading positive identity tail of the exact two-particle
+   Green's function, an :math:`O(1/N_{\rm mat})` error: the summand's exact high-frequency tail is
    :math:`\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2` (the
    :math:`1/i\omega_n` coefficient of :math:`G` is the identity by
    completeness of the eigenbasis, for dressed FLEX Green's functions as
@@ -262,8 +262,8 @@ which is efficiently computed using the Fast Fourier Transform (FFT).
    :math:`G^{(2)}` that makes the kernel spectrum real (the higher-order
    truncation remainder can still leave a tiny negative eigenvalue, which
    the solver reports): without the correction, small-``Nmat`` multi-orbital runs
-   report spuriously complex eigenvalues that can be mistaken for a broken
-   symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
+   can report spuriously complex eigenvalues that are then easily mistaken
+   for a broken symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
    reproduce results computed before this correction was introduced; the
    solver additionally warns whenever the computed :math:`G^{(2)}` has a
    significantly negative eigenvalue, pointing at ``Nmat``. The dynamic

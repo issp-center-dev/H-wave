@@ -1,8 +1,9 @@
 """The pair-bubble Matsubara tail correction (#86).
 
-sc._calc_g2's truncated sum (1/beta) sum_n G(k,iw_n) G(-k,-iw_n) undercounts
-the exact pair bubble by O(1/Nmat), which makes G2 slightly indefinite and
-injects spurious imaginary parts into the static Eliashberg eigenvalues.
+sc._calc_g2's truncated sum (1/beta) sum_n G(k,iw_n) G(-k,-iw_n) misses
+the leading identity tail of the exact pair bubble (an O(1/Nmat) error),
+which can leave G2 slightly indefinite and inject spurious imaginary parts
+into the static Eliashberg eigenvalues.
 The correction adds the analytic tail of the exact summand model
 delta_ij delta_lm / wn^2, i.e. c * identity on the (i,l) gap space with
 c = beta/4 - (1/beta) sum_{n in window} 1/wn^2.
@@ -242,17 +243,44 @@ class TestG2TailGuards(unittest.TestCase):
         self.assertTrue(any("non-Hermitian" in m for m in cm.output))
 
     def test_size_guard_skips_the_check(self):
+        """Both guard dimensions independently: the work bound and the byte
+        bound must each trigger the skip on their own."""
         H = _model(Nx=2, Ny=2)
         g2 = _calc_g2(_green(H, self.beta, 32), self.beta)
-        saved = sc._G2_CHECK_MAX_WORK
-        sc._G2_CHECK_MAX_WORK = 1
-        try:
-            with self.assertLogs("hwave_sc", level="INFO") as cm:
-                result = _warn_if_g2_indefinite(g2, 2, tail_enabled=True)
-        finally:
-            sc._G2_CHECK_MAX_WORK = saved
-        self.assertIsNone(result)
-        self.assertTrue(any("skipped" in m for m in cm.output))
+        for attr in ("_G2_CHECK_MAX_WORK", "_G2_CHECK_MAX_BYTES"):
+            with self.subTest(threshold=attr):
+                saved = getattr(sc, attr)
+                setattr(sc, attr, 1)
+                try:
+                    with self.assertLogs("hwave_sc", level="INFO") as cm:
+                        result = _warn_if_g2_indefinite(
+                            g2, 2, tail_enabled=True)
+                finally:
+                    setattr(sc, attr, saved)
+                self.assertIsNone(result)
+                self.assertTrue(any("skipped" in m for m in cm.output))
+
+    def test_flex_loaded_green_with_odd_grid_is_rejected(self):
+        """The previously-unvalidated production route: _load_flex_green
+        accepts a file with an odd frequency axis (it validates shape and
+        finiteness, not grid parity), and the tail correction is then the
+        first place the invalid grid can corrupt results -- pin that the
+        production loader output hits the _calc_g2 guard."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        norb, Nx, Ny, Nz, nmat = 1, 2, 1, 1, 5
+        green_file = np.ones((1, nmat, Nx * Ny * Nz, norb, norb),
+                             dtype=complex)
+        np.savez(os.path.join(d, "green.npz"), green=green_file)
+        inp = {"file": {"output": {"path_to_output": d}},
+               "eliashberg": {}}
+        green = sc._load_flex_green(inp, norb, Nx, Ny, Nz)
+        self.assertIsNotNone(green)
+        self.assertEqual(green.shape[-1], nmat)
+        with self.assertRaises(ValueError) as cm:
+            _calc_g2(green, self.beta)
+        self.assertIn("g2_tail", str(cm.exception))
 
 
 class TestG2TailDressedGreen(unittest.TestCase):

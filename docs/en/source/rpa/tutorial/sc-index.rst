@@ -207,9 +207,10 @@ This section controls the Eliashberg solver. Key parameters:
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
   bubble :math:`G^{(2)}` (default ``true``; issue #86). The bare truncated
-  frequency sum is short by :math:`O(1/N_{\rm mat})` and slightly
-  indefinite, which injects spurious imaginary parts into the reported
-  eigenvalues at small ``Nmat``. Set ``false`` only to reproduce results
+  frequency sum misses the leading identity tail (an
+  :math:`O(1/N_{\rm mat})` error) and can be slightly indefinite, which
+  injects spurious imaginary parts into the reported eigenvalues at small
+  ``Nmat``. Set ``false`` only to reproduce results
   computed before the correction existed.
 - ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near

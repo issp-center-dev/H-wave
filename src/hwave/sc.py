@@ -2598,8 +2598,8 @@ def _calc_g2(green_kw, beta, tail=True):
     static Eliashberg kernel similar to a Hermitian matrix (real spectrum);
     the higher-order remainder can still leave a small exact eigenvalue
     negative, which _warn_if_g2_indefinite reports. The bare truncated sum
-    is slightly indefinite, which injects spurious imaginary parts into the
-    reported eigenvalues at small Nmat.
+    can be slightly indefinite, which then injects spurious imaginary parts
+    into the reported eigenvalues at small Nmat.
 
     Parameters
     ----------
@@ -2661,8 +2661,11 @@ def _calc_g2(green_kw, beta, tail=True):
 
 # _warn_if_g2_indefinite skip thresholds (module-level so tests can patch
 # them): eigvalsh work scales as (norb^2)^3 per k-point, i.e. norb^6 * nvol
-# flops up to a constant, and the (nvol, norb^2, norb^2) view plus its
-# Hermitized copy each take 16 * norb^4 * nvol bytes.
+# flops up to a constant. The peak memory is ~three full complex copies of
+# the (nvol, norb^2, norb^2) view (the transpose/reshape materializes one,
+# the residual |M - M^dag| evaluation another, the Hermitized matrix a
+# third; tracemalloc-measured peak ~1.5x the two-copy figure), each
+# 16 * norb^4 * nvol bytes.
 _G2_CHECK_MAX_WORK = 20_000_000_000
 _G2_CHECK_MAX_BYTES = 2_000_000_000
 
@@ -2687,7 +2690,7 @@ def _warn_if_g2_indefinite(G2, norb, tail_enabled):
     """
     nvol = int(np.prod(G2.shape[4:]))
     work = norb**6 * nvol
-    nbytes = 2 * 16 * norb**4 * nvol
+    nbytes = 3 * 16 * norb**4 * nvol
     if work > _G2_CHECK_MAX_WORK or nbytes > _G2_CHECK_MAX_BYTES:
         logger.info("G2 positivity check skipped (work estimate norb^6 * "
                     "nvol = %d, temporaries = %d bytes).", work, nbytes)
