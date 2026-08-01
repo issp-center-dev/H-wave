@@ -285,6 +285,92 @@ class TestClosureGate(unittest.TestCase):
             sc._declarations_partner_closed(herm, 4, 1, 1, 2))
         self.assertTrue(sc._declarations_partner_closed({}, 4, 1, 1, 2))
 
+    def test_huge_closed_coefficient_detected_without_overflow(self):
+        """Round 6: the mean-based comparison overflowed for closed
+        coefficients above float64.max / 2, reading them as open (with
+        RuntimeWarnings). The direct partner comparison forms no mean."""
+        import warnings
+        import hwave.sc as sc
+
+        big = np.finfo(np.float64).max * 0.75
+        closed = {"CoulombInter": {((1, 0, 0), (0, 1)): big,
+                                   ((-1, 0, 0), (1, 0)): big}}
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self.assertTrue(
+                sc._declarations_partner_closed(closed, 4, 1, 1, 2))
+        nonfinite = {"CoulombInter": {((1, 0, 0), (0, 1)): np.inf,
+                                      ((-1, 0, 0), (1, 0)): np.inf}}
+        self.assertFalse(
+            sc._declarations_partner_closed(nonfinite, 4, 1, 1, 2))
+
+    def test_e2e_symmetric_run_takes_the_raw_pipeline(self):
+        """End-to-end capture through calc_eliashberg (round 6): on a
+        symmetric fixture the closure detector must return True in the
+        production flow and the simple path must never call the k-space
+        symmetriser -- i.e. the executed pipeline IS the pre-fix one, so
+        saved artifacts are byte-identical by construction."""
+        import tempfile
+        from unittest import mock
+        import hwave.sc as sc
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer\n1\n2\n 1 1\n"
+                    "   1    0    0    1    1   1.000000   0.0\n"
+                    "  -1    0    0    1    1   1.000000   0.0\n")
+        # CoulombIntra only: the auto tensor selector (PR #128) chooses
+        # the general scheme whenever CoulombInter is present, so the
+        # SIMPLE path is reachable from the calc route only for U-only
+        # input (V reaches it via chi0q_mode='load' with a 2-index file).
+        # On-site U is partner-closed by construction.
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("CoulombIntra\n1\n1\n 1\n"
+                    "   0    0    0    1    1   2.000000   0.0\n")
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        inp = {
+            "mode": {"param": {"T": 2.0, "filling": 0.5,
+                               "CellShape": [4, 4, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 8}},
+            "file": {"input": {"path_to_input": d,
+                               "interaction": {"path_to_input": d,
+                                               "Geometry": "geom.dat",
+                                               "Transfer": "transfer.dat",
+                                               "CoulombIntra":
+                                                   "coulombintra.dat"}},
+                     "output": {"path_to_output": out}},
+            "eliashberg": {"chi0q_mode": "calc", "frequency": "static",
+                           "pairing_type": "singlet", "init_gap": "cos",
+                           "solver_mode": "eigenvalue",
+                           "eigenvalue_method": "arnoldi",
+                           "num_eigenvalues": 1,
+                           "output_eigenvalue": "eig.dat",
+                           "output_gap": "gap.dat"},
+        }
+        real_closed = sc._declarations_partner_closed
+        real_symm = sc._symmetrise_interactions_k
+        real_simple = sc._compute_vertices_simple
+        with mock.patch.object(sc, "_declarations_partner_closed",
+                               side_effect=real_closed) as det_spy, \
+                mock.patch.object(sc, "_symmetrise_interactions_k",
+                                  side_effect=real_symm) as sym_spy, \
+                mock.patch.object(sc, "_compute_vertices_simple",
+                                  side_effect=real_simple) as simple_spy:
+            sc.calc_eliashberg(inp)
+        # the run really took the simple path, the detector fired and
+        # returned True, and the k-space symmetriser was never invoked:
+        # the executed pipeline is byte-identical to the pre-fix one
+        self.assertEqual(simple_spy.call_count, 1)
+        self.assertEqual(det_spy.call_count, 1)
+        self.assertEqual(sym_spy.call_count, 0)
+        self.assertTrue(os.path.exists(os.path.join(out, "gap.dat")))
+
     def test_closed_input_keeps_the_raw_bits(self):
         """With declarations_closed=True the vertex is computed from the
         UNTOUCHED k-tables: bitwise equal to the pre-fix raw formula."""

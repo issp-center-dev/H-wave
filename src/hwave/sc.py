@@ -1022,10 +1022,12 @@ def _declarations_partner_closed(interactions, Nx, Ny, Nz, norb):
     independently and differ by roundoff), which is why the decision
     cannot be made after the transform (PR #129 round 5: re-averaging a
     closed configuration changed saved artifacts at the 1e-18 level).
-    Non-finite or complex non-closed input reads as not closed, which
-    fails toward symmetrising."""
-    from hwave.solver.declarations import symmetrise_dense
-
+    Non-finite input reads as not closed (explicitly, before any
+    comparison), which fails toward symmetrising. The closure test
+    compares the table DIRECTLY with its reversed/transposed partner --
+    no mean is formed, so a closed coefficient above float64.max / 2
+    cannot overflow into a false 'open' (PR #129 round 6 reproduced
+    exactly that with the earlier mean-based comparison)."""
     for itype in ("CoulombIntra", "CoulombInter"):
         tbl = interactions.get(itype) if interactions else None
         if not tbl:
@@ -1034,9 +1036,12 @@ def _declarations_partner_closed(interactions, Nx, Ny, Nz, norb):
         for (irvec, orbvec), v in tbl.items():
             arr[(irvec[0] % Nx, irvec[1] % Ny, irvec[2] % Nz,
                  *orbvec)] += v
-        sym = symmetrise_dense(arr)
-        if not (np.array_equal(arr.real, sym.real)
-                and np.array_equal(arr.imag, sym.imag)):
+        if not np.all(np.isfinite(arr)):
+            return False
+        rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
+                           (0, 1, 2, 4, 3))
+        if not (np.array_equal(arr.real, rev.real)
+                and np.array_equal(arr.imag, rev.imag)):
             return False
     return True
 
