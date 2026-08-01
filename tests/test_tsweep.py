@@ -771,3 +771,42 @@ class TestReaderKeyCaseParity(unittest.TestCase):
                        "transfer": "transfer.dat"})
         self.assertEqual(lower.ham_info.param_ham["Geometry"]["norb"],
                          canon.ham_info.param_ham["Geometry"]["norb"])
+
+
+class TestRunTimePathResolutionCase(unittest.TestCase):
+    """Sixth surfacing (PR #128 round 8): run() absolutized only an
+    exact-case 'path_to_input', so a 'Path_To_Input' configuration was
+    fingerprinted against the right file but EXECUTED against the
+    unresolved relative path. The resolution is case-insensitive now;
+    pinned by spying on the resolver and stopping the run right after
+    the resolution block."""
+
+    def test_mixed_case_path_is_absolutized_against_base_dir(self):
+        from unittest import mock
+        import hwave.tsweep as ts
+
+        d = tempfile.mkdtemp()
+        cfg = {
+            "mode": {"mode": "RPA", "param": {"T": 1.0, "Nmat": 16,
+                                              "CellShape": [2, 2, 1],
+                                              "filling": 0.5}},
+            "continuation": {"temperatures": [1.0],
+                             "run_eliashberg": False},
+            "file": {"input": {"interaction": {
+                        "Path_To_Input": "relative_inputs"}},
+                     "output": {"path_to_output": "out"}},
+        }
+
+        calls = []
+        real = ts._abspath
+
+        def spy(base, p):
+            calls.append((base, p))
+            return real(base, p)
+
+        with mock.patch.object(ts, "_abspath", side_effect=spy):
+            with mock.patch.object(ts.os, "makedirs",
+                                   side_effect=RuntimeError("stop")):
+                with self.assertRaises(RuntimeError):
+                    ts.run(cfg, base_dir=d)
+        self.assertIn((os.path.abspath(d), "relative_inputs"), calls)
