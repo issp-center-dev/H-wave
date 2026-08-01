@@ -254,6 +254,19 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> （デフォルト）、 <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code> 、
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: ペアバブル <span class="math notranslate nohighlight">\(G^{(2)}\)</span> に解析的な松原 tail 補正を適用
+します（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code> 、issue #86）。素朴な打ち切り和は主要な
+単位行列 tail を取りこぼし（ <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span> の誤差）、わずかに
+不定符号になり得るため、小さい <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> では報告される固有値に偽の虚部が
+混入します。この補正は漸近的です。保持される最大周波数が関連するエネル
+ギースケールを超えるときに有効で、窓端でグリーン関数が tail から大きく
+外れている場合はソルバーが警告します（その領域では過補正になり得て、
+正定値性チェックの通過は精度の保証になりません）。加算項はペアバブル
+段階でのみ単位行列であり、組み上がったカーネルのスカラーシフトでは
+ないため、補正の有効化により先頭固有値の入れ替わりや shift-invert
+ターゲットとの距離の変化が正当に起こり得ます（これは補正された物理で
+あり、ソルバーの欠陥ではありません）。<code class="docutils literal notranslate"><span class="pre">false</span></code> は補正導入前の結果を
+再現します。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> （shift-invert 系の <code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code> のみ）: shift-invert
 ソルバの実数ターゲット <span class="math notranslate nohighlight">\(\sigma\)</span> 。 <span class="math notranslate nohighlight">\(\sigma\)</span> 近傍の固有値が先に
 求まります。素の <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> では無視されます（警告あり）。arnoldi では

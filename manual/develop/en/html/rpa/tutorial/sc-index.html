@@ -255,6 +255,21 @@ nodal <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&qu
 <li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: Number of eigenvalues to compute in eigenvalue mode.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (default), <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: Apply the analytic Matsubara tail correction to the pair
+bubble <span class="math notranslate nohighlight">\(G^{(2)}\)</span> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>; issue #86). The bare truncated
+frequency sum misses the leading identity tail (an
+<span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span> error) and can be slightly indefinite, which
+injects spurious imaginary parts into the reported eigenvalues at small
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. The correction is asymptotic: it helps when the largest
+retained frequency exceeds the relevant energy scales (the solver warns
+when the Green function still deviates strongly from its tail at the
+window edge – in that regime the correction can overshoot and passing
+the positivity check does not certify accuracy). Because the added term
+is the identity only at the pair-bubble stage – not a scalar shift of
+the assembled kernel – enabling it can legitimately change which
+eigenvalue leads or its distance from a shift-invert target; that is
+corrected physics, not a solver defect. <code class="docutils literal notranslate"><span class="pre">false</span></code> reproduces
+results computed before the correction existed.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> (shift-invert <code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code> only): the real target
 <span class="math notranslate nohighlight">\(\sigma\)</span> for the shift-invert eigensolver; eigenvalues near
 <span class="math notranslate nohighlight">\(\sigma\)</span> are found first. Ignored (with a warning) for the plain

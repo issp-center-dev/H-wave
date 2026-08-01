@@ -233,8 +233,8 @@ Only positive eigenvalues are physically relevant for the SC transition.
 Two-particle Green's function
 -----------------------------
 
-The Matsubara frequency summation is performed analytically to obtain
-the two-particle Green's function:
+The Matsubara frequency summation is carried out over the finite grid of
+``Nmat`` frequencies to obtain the two-particle Green's function:
 
 .. math::
 
@@ -245,6 +245,38 @@ the two-particle Green's function:
 
 This reduces the Eliashberg kernel to a convolution in k-space,
 which is efficiently computed using the Fast Fourier Transform (FFT).
+
+.. note::
+
+   **Matsubara tail correction (issue #86).** The bare truncated sum
+   misses the leading positive identity tail of the exact two-particle
+   Green's function, an :math:`O(1/N_{\rm mat})` error: the summand's exact high-frequency tail is
+   :math:`\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2` (the
+   :math:`1/i\omega_n` coefficient of :math:`G` is the identity by
+   completeness of the eigenbasis, for dressed FLEX Green's functions as
+   well). By default the solver subtracts this model inside the frequency
+   window and adds its exact full sum
+   :math:`T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4`, which amounts
+   to adding a positive multiple of the identity on the gap space. In
+   practice this restores the positive semi-definiteness of
+   :math:`G^{(2)}` that makes the kernel spectrum real (the higher-order
+   truncation remainder can still leave a tiny negative eigenvalue, which
+   the solver reports): without the correction, small-``Nmat`` multi-orbital runs
+   can report spuriously complex eigenvalues that are then easily mistaken
+   for a broken symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
+   reproduce results computed before this correction was introduced.
+   With the leading :math:`1/\omega_n^2` term removed and the odd inverse
+   powers cancelling on the symmetric grid, the omitted-sum error scales as
+   :math:`O(N_{\rm mat}^{-3})` (assuming the conventional integer-power
+   high-frequency expansion). The correction is asymptotic: when the
+   largest retained frequency does not exceed the relevant energy and
+   self-energy scales it can overshoot, and the solver warns when the
+   Green function still deviates from :math:`I/(i\omega_n)` at the window
+   edge by more than 0.5 in maximum elementwise deviation. The solver additionally warns whenever the computed
+   :math:`G^{(2)}` has a significantly negative eigenvalue, pointing at
+   ``Nmat`` -- a structural diagnostic of the kernel's real-spectrum
+   property, not an error estimate. The dynamic (frequency-resolved)
+   solver never takes this frequency sum and is unaffected.
 
 
 FFT-based kernel evaluation

@@ -219,7 +219,7 @@ reduced スキームのファイルはこの向きに依存しません。</p>
 SC転移には正の固有値のみが物理的に関連します。</p>
 <section id="id7">
 <h3>二粒子グリーン関数<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
-<p>松原振動数の和を解析的に実行することで、
+<p>松原振動数の和を <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 点の有限グリッド上で実行することで、
 二粒子グリーン関数が得られます:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-13">
 <span class="eqno">(7.43)<a class="headerlink" href="#equation-algorithm-eliashberg-13" title="Link to this equation">¶</a></span>\[G^{(2)}_{\alpha\beta;\gamma\delta}(\mathbf{q})
@@ -228,6 +228,35 @@ SC転移には正の固有値のみが物理的に関連します。</p>
   G_{\beta\delta}(-\mathbf{k}+\mathbf{q}, -i\omega_n)\]</div>
 <p>これにより、Eliashbergカーネルはk空間での畳み込みに帰着し、
 高速フーリエ変換（FFT）を用いて効率的に計算できます。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>松原 tail 補正（issue #86）。</strong> 打ち切り和は厳密な二粒子グリーン
+関数の主要な正の単位行列 tail を取りこぼします（ <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>
+の誤差）。被和関数の厳密な
+高周波 tail は
+<span class="math notranslate nohighlight">\(\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2\)</span> です
+（<span class="math notranslate nohighlight">\(G\)</span> の <span class="math notranslate nohighlight">\(1/i\omega_n\)</span> 係数は固有基底の完全性により単位
+行列で、これは FLEX のドレストグリーン関数でも同じです）。デフォルト
+ではソルバーがこのモデルを周波数窓内で差し引き、その厳密な全和
+<span class="math notranslate nohighlight">\(T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4\)</span> を解析的に
+加えます。これはギャップ空間上の単位行列の正の倍数を加えることに相当
+し、カーネルのスペクトルを実にする <span class="math notranslate nohighlight">\(G^{(2)}\)</span> の半正定値性を実用上
+回復します（高次の打ち切り残差により微小な負固有値が残る場合があり、
+その場合ソルバーが警告します）。補正なしでは、小さい <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> の多軌道
+計算が偽の複素固有値を報告することがあり、対称性の破れと誤読される
+おそれがあります。補正導入前の結果を
+再現するには <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで <code class="docutils literal notranslate"><span class="pre">g2_tail</span> <span class="pre">=</span> <span class="pre">false</span></code> を設定
+してください。主要な <span class="math notranslate nohighlight">\(1/\omega_n^2\)</span> 項を除去し、対称グリッド上で
+奇数次逆べきが相殺するため、除外和の誤差は <span class="math notranslate nohighlight">\(O(N_{\rm mat}^{-3})\)</span>
+でスケールします（通常の整数べき高周波展開を仮定）。この補正は漸近的で、
+保持される最大周波数が関連するエネルギー・自己エネルギースケールを超え
+ない場合は過補正になり得ます。窓端でグリーン関数が
+<span class="math notranslate nohighlight">\(I/(i\omega_n)\)</span> から要素毎の最大偏差で 0.5 を超えて外れている
+場合、ソルバーは警告を出します。また、計算された <span class="math notranslate nohighlight">\(G^{(2)}\)</span> が有意に負の固有値を持つ場合も
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を指す警告を出します（これはカーネルの実スペクトル性に関する
+構造的診断であり、誤差の推定ではありません）。動的（周波数分解）
+ソルバーはこの周波数和を取らないため影響を受けません。</p>
+</div>
 </section>
 <section id="fft">
 <h3>FFTによるカーネル評価<a class="headerlink" href="#fft" title="Link to this heading">¶</a></h3>

@@ -205,6 +205,21 @@ This section controls the Eliashberg solver. Key parameters:
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
+  bubble :math:`G^{(2)}` (default ``true``; issue #86). The bare truncated
+  frequency sum misses the leading identity tail (an
+  :math:`O(1/N_{\rm mat})` error) and can be slightly indefinite, which
+  injects spurious imaginary parts into the reported eigenvalues at small
+  ``Nmat``. The correction is asymptotic: it helps when the largest
+  retained frequency exceeds the relevant energy scales (the solver warns
+  when the Green function still deviates strongly from its tail at the
+  window edge -- in that regime the correction can overshoot and passing
+  the positivity check does not certify accuracy). Because the added term
+  is the identity only at the pair-bubble stage -- not a scalar shift of
+  the assembled kernel -- enabling it can legitimately change which
+  eigenvalue leads or its distance from a shift-invert target; that is
+  corrected physics, not a solver defect. ``false`` reproduces
+  results computed before the correction existed.
 - ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
   :math:`\sigma` are found first. Ignored (with a warning) for the plain
