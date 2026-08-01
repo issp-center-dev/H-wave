@@ -794,22 +794,11 @@ class TestRPALadder(unittest.TestCase):
         entries that denote the same operator. Interaction files are not checked
         for orbital symmetry (#93), so such input is reachable.
         """
-        import hwave.solver.rpa as rpa_mod
-
-        captured = {}
-        original = rpa_mod.RPA._build_transverse_channel
-
-        def spy(inner_self, chi0q_orig, ham_orig):
-            out = original(inner_self, chi0q_orig, ham_orig)
-            captured["ham_pm"] = np.asarray(out[1])
-            return out
-
         # Since issue #93 the READERS reject such input outright: an
         # antisymmetric pair is a typo, not a zero model, and it never
         # reaches any solver. (That an antisymmetric TABLE symmetrises
         # to zero stays pinned at the builder level in
         # test_sc_vertex_adjudicated / test_declarations.)
-        del captured, original, spy
         for itype in ("CoulombInter", "Ising", "Exchange"):
             with self.subTest(interaction=itype):
                 with self.assertRaises(ValueError) as cm:
@@ -883,19 +872,9 @@ class TestRPALadder(unittest.TestCase):
                 T=2.0, filling=0.5,
                 interactions={"CoulombInter": "offsite_asym_nonzero.dat"})
 
-        # the identically zero Hamiltonian must be accepted, with a zero vertex
-        captured = {}
-        original = rpa_mod.RPA._build_transverse_channel
-
-        def spy(inner_self, chi0q_orig, ham_orig):
-            out = original(inner_self, chi0q_orig, ham_orig)
-            captured["ham_pm"] = np.asarray(out[1])
-            return out
-
         # the cancelling redundant pair (V_ab(+x) = +1, V_ba(-x) = -1)
         # is a typo under issue #93's read-time validation and is
         # rejected there too -- it can no longer reach the channel
-        del captured, original, spy
         with self.assertRaises(ValueError) as cm:
             self._run_rpa(
                 calc_type="ring+ladder", calc_scheme="general",
