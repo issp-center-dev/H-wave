@@ -4089,7 +4089,10 @@ def calc_eliashberg(input_dict):
     # omitted SubShape default to a fully folded configuration and reach
     # the file reader with the very mismatch the guard exists to stop
     # (round-7 review).
-    _cs = list(cell_shape) if isinstance(cell_shape, (list, tuple))         else [cell_shape]
+    if isinstance(cell_shape, (list, tuple)):
+        _cs = list(cell_shape)
+    else:
+        _cs = [cell_shape]
     while len(_cs) < 3:
         _cs.append(1)
     _ss = list(mode_param.get("SubShape", _cs))
