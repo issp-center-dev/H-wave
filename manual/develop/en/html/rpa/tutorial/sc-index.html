@@ -1258,7 +1258,8 @@ was checked by running the combination.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>accepted by FLEX</p></td>
 <td><p>rejected</p></td>
-<td><p>see <em>Spin structure</em> below for what the Eliashberg step then does</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the configuration outright (issue #83); see
+<em>Spin structure</em> below</p></td>
 </tr>
 <tr class="row-odd"><td><p>susceptibility stored</p></td>
 <td><p>density-density only, <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -1355,12 +1356,19 @@ number. (Content at the floating-point round-off scale – at or below
 round-off and
 allowed through, so a backend rounding asymmetry cannot abort a genuinely
 paramagnetic run.)</p></li>
-<li><p><strong>Spin-mixing / spin-orbit</strong> (<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, giving
-<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spinful&quot;</span></code>) – <strong>not supported.</strong> FLEX itself runs, but
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> stops with a shape error: FLEX writes chi with the physical
-orbital count while the Eliashberg step reads <code class="docutils literal notranslate"><span class="pre">norb</span></code> from <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>,
-where spin-orbital mode stores the spin-orbital count. The error message
-identifies this case explicitly.</p></li>
+<li><p><strong>Spin-orbital representation</strong> (<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+whatever spin mode the Hamiltonian then classifies as – a spin-diagonal
+or even spin-free model can be written in this representation) –
+<strong>not supported.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> rejects the configuration up front with
+an explicit error, on both the static and the dynamic entry, and
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> rejects it in preflight before any FLEX rung runs
+(issue #83): before this guard, the internally computed <span class="math notranslate nohighlight">\(\chi_0\)</span>
+path ran to completion and printed eigenvalues built on inconsistent
+index/orbital-count conventions – a silently wrong result, not an
+approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
+files remains in the low-level loader for direct helper calls and
+malformed input; it is no longer reachable through the guarded public
+entries.)</p></li>
 </ul>
 <p>Supporting either spin-polarized case would require an
 <span class="math notranslate nohighlight">\(S_z\)</span>-resolved pairing vertex (and, for spin-orbit, a full spin-matrix

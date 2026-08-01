@@ -1201,7 +1201,8 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>FLEX は受け付ける</p></td>
 <td><p>拒否</p></td>
-<td><p>その後 Eliashberg で何が起きるかは下の「スピン構造の取り扱い」参照</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は設定を即座に拒否します（issue #83）。下の
+「スピン構造の取り扱い」参照</p></td>
 </tr>
 <tr class="row-odd"><td><p>保存される感受率</p></td>
 <td><p>密度‐密度成分のみ <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -1293,12 +1294,17 @@ reduced の FLEX 感受率は2つのスピンブロックをビット単位で�
 およそ <code class="docutils literal notranslate"><span class="pre">6e-14</span></code> の相対量を下回る成分は
 丸め誤差として報告のうえ通過させるので、バックエンド由来の丸めの非対称で
 常磁性ランが止まることはありません。）</p></li>
-<li><p><strong>スピン混成・スピン軌道相互作用</strong>（<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、
-すなわち <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spinful&quot;</span></code>）--- <strong>サポートされていません。</strong>
-FLEX 自体は動作しますが、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は形状エラーで停止します。FLEX は
-物理軌道数で chi を書く一方、Eliashberg 側は <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> の <code class="docutils literal notranslate"><span class="pre">norb</span></code>---
-スピン軌道モードではスピン軌道数---を読むためです。エラーメッセージが
-この場合であることを明示します。</p></li>
+<li><p><strong>スピン軌道表現</strong>（<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>。
+ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
+スピン自由な模型もこの表現で書けます）--- <strong>サポートされていません。</strong>
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は静的・動的の両エントリで設定を明示的なエラーとして即座に
+拒否し、<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> は FLEX rung の実行前に preflight で拒否します
+（issue #83）。このガード導入前は、内部で <span class="math notranslate nohighlight">\(\chi_0\)</span> を
+計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
+出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
+FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の
+ための低水準ローダに残っていますが、ガードされた公開エントリからは到達
+しません。）</p></li>
 </ul>
 <p>いずれの偏極ケースに対応するにも、<span class="math notranslate nohighlight">\(S_z\)</span> で分解した pairing vertex
 （スピン軌道相互作用の場合はさらにスピン行列としてのギャップ関数）と、
