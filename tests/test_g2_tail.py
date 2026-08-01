@@ -193,6 +193,49 @@ class TestG2TailGuards(unittest.TestCase):
         with self.assertRaises(ValueError):
             _calc_g2(empty, self.beta)
 
+    def test_invalid_or_unsafe_beta_is_rejected(self):
+        """Non-finite/non-positive/complex/vector beta and the overflow
+        range (measured: beta = 1e200 turned the whole bubble into NaN
+        while G stayed finite) must all fail loudly."""
+        H = _model(Nx=2, Ny=2)
+        green = _green(H, 10.0, 4)
+        for label, bad in (("nan", np.nan), ("inf", np.inf), ("zero", 0.0),
+                           ("negative", -1.0), ("complex", 10.0 + 0j),
+                           ("bool", True), ("vector", np.array([1.0, 2.0])),
+                           ("huge", 1.0e200)):
+            with self.subTest(beta=label):
+                with self.assertRaises(ValueError) as cm:
+                    _calc_g2(green, bad)
+                self.assertIn("beta", str(cm.exception))
+
+    def test_non_finite_bubble_is_rejected_not_propagated(self):
+        """A non-finite G2 must raise -- the diagnostics may legitimately
+        skip on size, and the solvers would then save NaN eigenvalues."""
+        green = np.ones((1, 1, 2, 1, 1, 4), dtype=complex)
+        green[0, 0, 0, 0, 0, 0] = np.inf
+        with np.errstate(invalid="ignore"):
+            with self.assertRaises(ValueError) as cm:
+                _calc_g2(green, 10.0, tail=False)
+        self.assertIn("non-finite", str(cm.exception))
+
+    def test_reduced_precision_input_is_promoted(self):
+        """A complex64 (file-precision) Green function must accumulate in
+        complex128; the result agrees with the full-precision one to
+        single-precision accuracy and carries complex128 dtype."""
+        H = _model(Nx=2, Ny=2)
+        green = _green(H, self.beta, 32)
+        g2_64 = _calc_g2(green.astype(np.complex64), self.beta)
+        g2_128 = _calc_g2(green, self.beta)
+        self.assertEqual(g2_64.dtype, np.complex128)
+        np.testing.assert_allclose(g2_64, g2_128, rtol=0, atol=1.0e-5)
+
+    def test_fortran_order_input_gives_identical_results(self):
+        H = _model(Nx=2, Ny=2)
+        green = _green(H, self.beta, 32)
+        np.testing.assert_array_equal(
+            _calc_g2(np.asfortranarray(green), self.beta),
+            _calc_g2(green, self.beta))
+
     def test_empty_axis_follows_the_public_ordering_cleanly(self):
         """calc_eliashberg runs the edge diagnostic BEFORE _calc_g2; on an
         empty frequency axis the diagnostic must return neutrally (not
@@ -303,11 +346,11 @@ class TestG2TailGuards(unittest.TestCase):
             sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES = saved
 
     def test_flex_loaded_green_with_odd_grid_is_rejected(self):
-        """The previously-unvalidated production route: _load_flex_green
-        accepts a file with an odd frequency axis (it validates shape and
-        finiteness, not grid parity), and the tail correction is then the
-        first place the invalid grid can corrupt results -- pin that the
-        production loader output hits the _calc_g2 guard."""
+        """An odd uniform frequency axis cannot be a centered fermionic
+        grid (it contains wn = 0); since round 6 the LOADER itself rejects
+        it at the file boundary, before any vertex or pair-bubble
+        construction (_calc_g2's tail guard remains as defense in depth
+        for reader-bypassing callers)."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         d = tmp.name
@@ -317,12 +360,9 @@ class TestG2TailGuards(unittest.TestCase):
         np.savez(os.path.join(d, "green.npz"), green=green_file)
         inp = {"file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
-        green = sc._load_flex_green(inp, norb, Nx, Ny, Nz)
-        self.assertIsNotNone(green)
-        self.assertEqual(green.shape[-1], nmat)
         with self.assertRaises(ValueError) as cm:
-            _calc_g2(green, self.beta)
-        self.assertIn("g2_tail", str(cm.exception))
+            sc._load_flex_green(inp, norb, Nx, Ny, Nz)
+        self.assertIn("centered fermionic", str(cm.exception))
 
 
 def _diag_model(Nx=2, Ny=1, Nz=1):
@@ -395,6 +435,134 @@ class TestG2TailAsymptoticDiagnostic(unittest.TestCase):
                           - exact).max()
         self.assertLess(err_corr, 1.0e-4)
         self.assertLess(err_corr, err_bare / 5.0)
+
+
+class TestG2DiagnosticThresholds(unittest.TestCase):
+    """The diagnostic thresholds are contractual: mutations to their values
+    or formulas must fail these pins (round-6 mutation audit)."""
+
+    beta = 10.0
+
+    def test_production_constants(self):
+        self.assertEqual(sc._G2_TAIL_EDGE_DEV_THRESHOLD, 0.5)
+        self.assertEqual(sc._G2_CHECK_MAX_WORK, 20_000_000_000)
+        self.assertEqual(sc._G2_CHECK_MAX_BYTES, 2_000_000_000)
+        self.assertEqual(sc._G2_BETA_MAX, 1.0e75)
+
+    def _scaled_green(self, factor, nmat=64):
+        iw = 1j * (2 * np.arange(nmat) + 1 - nmat) * np.pi / self.beta
+        green = np.zeros((1, 1, 2, 1, 1, nmat), dtype=complex)
+        green[0, 0, :, 0, 0, :] = factor / iw
+        return green
+
+    def test_edge_threshold_boundary(self):
+        """G = (1+d) I/(i wn) has edge deviation exactly d: d = 0.45 stays
+        silent, d = 0.55 warns."""
+        records = []
+
+        class _Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        grab = _Grab(level=logging.WARNING)
+        target = logging.getLogger("hwave_sc")
+        target.addHandler(grab)
+        try:
+            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+                self._scaled_green(1.45), self.beta)
+        finally:
+            target.removeHandler(grab)
+        self.assertAlmostEqual(dev, 0.45, places=12)
+        self.assertEqual(records, [])
+        with self.assertLogs("hwave_sc", level="WARNING"):
+            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+                self._scaled_green(1.55), self.beta)
+        self.assertAlmostEqual(dev, 0.55, places=12)
+
+    def _gap_space_g2(self, offdiag=0.0, neg=None):
+        """norb=2, nvol=1 G2 whose gap-space matrix M[(i,l),(j,m)] is the
+        identity, optionally with M[(0,0),(0,1)] = i*offdiag (anti-Hermitian
+        perturbation) or M[(0,1),(0,1)] = -neg (negative eigenvalue)."""
+        g2 = np.zeros((2, 2, 2, 2, 1, 1, 1), dtype=complex)
+        for i in range(2):
+            for l in range(2):
+                g2[i, i, l, l] = 1.0
+        if offdiag:
+            g2[0, 0, 0, 1] += 1j * offdiag
+        if neg is not None:
+            g2[0, 0, 1, 1] = -neg
+        return g2
+
+    def test_hermiticity_threshold_boundary(self):
+        """Relative residual 3e-9 (below 1e-8) is treated as roundoff;
+        3e-8 gets the non-Hermitian warning."""
+        records = []
+
+        class _Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        grab = _Grab(level=logging.WARNING)
+        target = logging.getLogger("hwave_sc")
+        target.addHandler(grab)
+        try:
+            _warn_if_g2_indefinite(self._gap_space_g2(offdiag=3.0e-9), 2,
+                                   tail_enabled=True)
+        finally:
+            target.removeHandler(grab)
+        self.assertFalse(any("non-Hermitian" in r.getMessage()
+                             for r in records))
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _warn_if_g2_indefinite(self._gap_space_g2(offdiag=3.0e-8), 2,
+                                   tail_enabled=True)
+        self.assertTrue(any("non-Hermitian" in m for m in cm.output))
+
+    def test_psd_threshold_boundary(self):
+        """min/max eigenvalue ratio 5e-7 (below 1e-6) stays silent;
+        5e-6 warns."""
+        records = []
+
+        class _Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        grab = _Grab(level=logging.WARNING)
+        target = logging.getLogger("hwave_sc")
+        target.addHandler(grab)
+        try:
+            _warn_if_g2_indefinite(self._gap_space_g2(neg=5.0e-7), 2,
+                                   tail_enabled=True)
+        finally:
+            target.removeHandler(grab)
+        self.assertEqual(records, [])
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            _warn_if_g2_indefinite(self._gap_space_g2(neg=5.0e-6), 2,
+                                   tail_enabled=True)
+        self.assertTrue(any("positive semi-definite" in m
+                            for m in cm.output))
+
+    def test_skip_formulas_at_the_exact_boundary(self):
+        """Pins the work formula norb^6 * nvol and the three-copy byte
+        formula 3 * 16 * norb^4 * nvol at their exact values (256 and 3072
+        here): a scale or exponent drift flips one of these outcomes."""
+        H = _model(Nx=2, Ny=2)
+        g2 = _calc_g2(_green(H, self.beta, 32), self.beta)
+        saved = (sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES)
+        try:
+            for work_thr, byte_thr, runs in ((256, 3072, True),
+                                             (255, 3072, False),
+                                             (256, 3071, False)):
+                with self.subTest(work=work_thr, bytes=byte_thr):
+                    sc._G2_CHECK_MAX_WORK = work_thr
+                    sc._G2_CHECK_MAX_BYTES = byte_thr
+                    result = _warn_if_g2_indefinite(g2, 2,
+                                                    tail_enabled=True)
+                    if runs:
+                        self.assertIsNotNone(result)
+                    else:
+                        self.assertIsNone(result)
+        finally:
+            sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES = saved
 
 
 class TestG2TailStrictParsing(unittest.TestCase):
@@ -506,6 +674,65 @@ class TestFlexGreenProvenance(unittest.TestCase):
                     sc._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("beta", str(cm.exception))
 
+    def test_invalid_run_temperature_is_rejected(self):
+        """A NaN/Inf/boolean/non-positive run T previously made every
+        tolerance comparison False -- the mismatch slipped through as
+        'matching' and beta = NaN reached the whole Matsubara grid."""
+        for label, bad_T in (("nan", np.nan), ("inf", np.inf),
+                             ("bool", True), ("zero", 0.0),
+                             ("negative", -2.0)):
+            with self.subTest(T=label):
+                d = self._tmp()
+                inp = self._write_green(d, beta=0.5)
+                inp["mode"]["param"]["T"] = bad_T
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn("T", str(cm.exception))
+
+    def test_beta_tolerance_value_is_pinned_on_both_sides(self):
+        """rtol = 1e-8 exactly: a 5e-9 relative mismatch loads, a 2e-8 one
+        is rejected (the rejecting side is covered per ordering in
+        test_beta_tolerance_is_symmetric_at_the_boundary)."""
+        d = self._tmp()
+        inp = self._write_green(d, beta=0.5 * (1.0 + 5.0e-9))
+        self.assertIsNotNone(sc._load_flex_green(inp, 1, 2, 1, 1))
+
+    def test_beta_tolerance_scales_with_the_larger_magnitude(self):
+        """Pins the max(|a|, |b|) scaling: |diff| = 1.0 at beta ~ 1e8 sits
+        exactly on the max-scaled threshold (accepted, since the test is
+        strict >) but beyond the smaller-operand-scaled one -- a formula
+        keyed to either single operand flips one of these."""
+        for label, file_beta, run_T in (
+                ("file_larger", 1.0e8, 1.0 / (1.0e8 - 1.0)),
+                ("run_larger", 1.0e8 - 1.0, 1.0e-8)):
+            with self.subTest(order=label):
+                d = self._tmp()
+                inp = self._write_green(d, beta=file_beta)
+                inp["mode"]["param"]["T"] = run_T
+                self.assertIsNotNone(sc._load_flex_green(inp, 1, 2, 1, 1))
+
+    def test_unsigned_integer_beta_is_accepted(self):
+        d = self._tmp()
+        inp = self._write_green(d, beta=np.uint8(1))
+        inp["mode"]["param"]["T"] = 1.0
+        self.assertIsNotNone(sc._load_flex_green(inp, 1, 2, 1, 1))
+
+    def test_freq_index_content_is_checked_not_just_length(self):
+        """Equal-length but non-canonical axes (permuted, reversed,
+        shifted, duplicated) must be rejected: dropping the content check
+        while keeping the length check must fail here."""
+        for label, fi in (("permuted", [1, 0, 2, 3]),
+                          ("reversed", [3, 2, 1, 0]),
+                          ("shifted", [1, 2, 3, 4]),
+                          ("duplicated", [0, 1, 1, 3])):
+            with self.subTest(freq_index=label):
+                d = self._tmp()
+                inp = self._write_green(d, beta=0.5,
+                                        freq_index=np.array(fi))
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn("freq_index", str(cm.exception))
+
     def test_small_beta_relative_mismatch_is_rejected(self):
         """No absolute floor: at high temperature (small beta) a relative
         mismatch must still be caught."""
@@ -545,12 +772,41 @@ class TestTsweepG2TailFingerprint(unittest.TestCase):
                                    False)
         self.assertIsInstance(fp, str)
 
+    def test_dynamic_sweep_ignores_the_static_only_switch(self):
+        """The dynamic solver never consumes g2_tail, so a dynamic-frequency
+        sweep must fingerprint without parsing it."""
+        import hwave.tsweep as ts
+        fp = ts.config_fingerprint(
+            self._base({"frequency": "dynamic", "g2_tail": "garbage"}),
+            True)
+        self.assertIsInstance(fp, str)
+
+    def test_equivalent_spellings_fingerprint_identically(self):
+        """Canonicalization: omitted, true, "on", and a differently-cased
+        key all resolve to the same physics and must produce the SAME
+        fingerprint (only the resolved boolean is hashed, not the raw
+        key), while false differs."""
+        import hwave.tsweep as ts
+        fp_omitted = ts.config_fingerprint(self._base(), True)
+        for label, eli in (("true", {"g2_tail": True}),
+                           ("on", {"g2_tail": "on"}),
+                           ("cased", {"G2_Tail": True})):
+            with self.subTest(spelling=label):
+                self.assertEqual(
+                    ts.config_fingerprint(self._base(eli), True),
+                    fp_omitted)
+        self.assertNotEqual(
+            ts.config_fingerprint(self._base({"g2_tail": False}), True),
+            fp_omitted)
+
     def test_pre_correction_manifest_cannot_be_resumed(self):
         """Upgrade regression: a version-1 manifest (written before the
         default flipped to tail-on) must be refused outright -- its
         fingerprint cannot distinguish rungs computed either way."""
         import hwave.tsweep as ts
-        self.assertGreaterEqual(ts._MANIFEST_VERSION, 2)
+        # exact schema version: a silent bump would strand every existing
+        # sweep, a silent revert would resurrect the mixing bug
+        self.assertEqual(ts._MANIFEST_VERSION, 2)
         old_manifest = {"version": 1, "ladder": [1.0], "fingerprint": "x"}
         with self.assertRaises(ValueError) as cm:
             ts._validate_resume(old_manifest, [1.0], "x")

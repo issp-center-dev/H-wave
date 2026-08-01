@@ -2485,6 +2485,15 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     # would then apply a wrong analytic complement. Uniform files written
     # since this change carry beta; older files get a warning, not an error.
     if not is_ir_native(data_g):
+        # An odd uniform axis cannot be a centered fermionic grid (it
+        # contains wn = 0); reject at the file boundary, before any vertex
+        # or pair-bubble construction (round-6 review).
+        if nmat_g % 2 != 0:
+            raise ValueError(
+                "green file '{}': the frequency axis has {} points, which "
+                "cannot be a centered fermionic Matsubara grid (even count "
+                "required). Re-run the producing FLEX calculation.".format(
+                    green_path, nmat_g))
         if "freq_index" in data_g:
             fi = np.asarray(data_g["freq_index"]).ravel()
             if fi.size != nmat_g or not np.array_equal(
@@ -2497,6 +2506,7 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                     "FLEX calculation with the full grid.".format(
                         green_path, fi.size, nmat_g))
         run_T = input_dict.get("mode", {}).get("param", {}).get("T")
+        run_beta = None if run_T is None else _coerce_run_beta(run_T)
         if "beta" in data_g:
             beta_arr = np.asarray(data_g["beta"]).ravel()
             # One REAL-NUMERIC finite positive scalar, checked BEFORE any
@@ -2521,23 +2531,21 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
             # magnitudes), no absolute floor: an absolute term would wave
             # through large relative mismatches at small beta (high
             # temperature), where the grid differs the most.
-            if run_T is not None and abs(file_beta - 1.0 / float(run_T)) \
-                    > 1.0e-8 * max(abs(file_beta),
-                                   abs(1.0 / float(run_T))):
+            if run_beta is not None and abs(file_beta - run_beta) \
+                    > 1.0e-8 * max(abs(file_beta), abs(run_beta)):
                 raise ValueError(
                     "green file '{}' was produced at beta = {} but this "
                     "run uses beta = {}; the Matsubara grid (and the tail "
                     "correction built on it) would be inconsistent. Use "
                     "the producing run's temperature or regenerate the "
-                    "file.".format(green_path, file_beta,
-                                   1.0 / float(run_T)))
-        elif run_T is not None:
+                    "file.".format(green_path, file_beta, run_beta))
+        elif run_beta is not None:
             logger.warning(
                 "green file '%s' carries no beta metadata (written before "
                 "this field existed); the run's beta = %g is assumed to "
                 "match the producing FLEX run. Verify the temperatures "
                 "agree -- a mismatch silently corrupts the pair bubble.",
-                green_path, 1.0 / float(run_T))
+                green_path, run_beta)
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
@@ -2635,6 +2643,31 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
 
+# Numerically safe upper bound for beta in the pair bubble: the batched
+# GEMM forms ~beta^2 intermediates before the division by beta, so a
+# physically meaningless beta (T < 1e-75) would overflow them to NaN.
+_G2_BETA_MAX = 1.0e75
+
+
+def _coerce_run_beta(T):
+    """Validate the run temperature and return beta = 1/T.
+
+    The provenance gate compares the FILE's beta against the run's, and a
+    NaN/Inf run temperature makes every tolerance comparison False -- i.e.
+    an invalid run would slip through as 'matching' and calc_eliashberg
+    would then build the whole Matsubara grid from beta = NaN (round-6
+    review). Same real-numeric/finite/positive contract as the file-side
+    beta gate.
+    """
+    arr = np.asarray(T).ravel()
+    if (arr.size != 1 or arr.dtype.kind not in "iuf"
+            or not np.isfinite(arr[0]) or not arr[0] > 0):
+        raise ValueError(
+            "mode.param T must be a single finite positive real scalar, "
+            "got {!r}.".format(T))
+    return 1.0 / float(arr[0])
+
+
 def _coerce_g2_tail(value):
     """Strictly parse the [eliashberg] g2_tail switch.
 
@@ -2687,10 +2720,11 @@ def _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta):
     """
     norb = green_kw.shape[0]
     nmat = green_kw.shape[-1]
-    if nmat < 1:
-        # Nothing to measure on an empty axis; return neutrally so the
-        # public ordering (this diagnostic, then _calc_g2) surfaces the
-        # actionable even-grid ValueError instead of an IndexError here.
+    if nmat < 1 or green_kw.size == 0:
+        # Nothing to measure on an empty axis (or norb = 0); return
+        # neutrally so the public ordering (this diagnostic, then
+        # _calc_g2) surfaces the actionable even-grid ValueError instead
+        # of an IndexError/max-of-empty here.
         return 0.0
     eye = np.eye(norb).reshape(norb, norb, 1, 1, 1)
     dev = 0.0
@@ -2755,6 +2789,45 @@ def _calc_g2(green_kw, beta, tail=True):
     Nx, Ny, Nz, nmat = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4], green_kw.shape[5]
     nvol = Nx * Ny * Nz
 
+    # beta gate (round-6 review): a non-finite or non-positive beta poisons
+    # every frequency below, and a finite but astronomically large one
+    # overflows the batched GEMM's ~beta^2 intermediates to NaN before the
+    # division by beta -- measured: beta = 1e200 turns the whole pair
+    # bubble into NaN while G itself is finite. beta values beyond
+    # _G2_BETA_MAX have no physical meaning (T < 1e-75), so reject rather
+    # than restructure the arithmetic (the tail=False stream must stay
+    # bit-identical to the pre-correction implementation for valid input).
+    beta_arr = np.asarray(beta).ravel()
+    if (beta_arr.size != 1 or beta_arr.dtype.kind not in "iuf"
+            or not np.isfinite(beta_arr[0]) or not beta_arr[0] > 0):
+        raise ValueError(
+            "beta must be a single finite positive real scalar, got "
+            "{!r}.".format(beta))
+    beta = float(beta_arr[0])
+    if beta > _G2_BETA_MAX:
+        raise ValueError(
+            "beta = {:g} exceeds the numerically safe range (<= {:g}): the "
+            "pair-bubble accumulation would overflow to NaN. Check the "
+            "temperature.".format(beta, _G2_BETA_MAX))
+    # Grid gate BEFORE any O(norb^2 nvol nmat) work (round-6 review: the
+    # guard previously ran after the GEMM, which emitted overflow warnings
+    # from data the call then rejected). The centered grid
+    # wn = (2n + 1 - nmat) * pi / beta is only fermionic for EVEN nmat: an
+    # odd nmat puts wn = 0 in the window, and nmat <= 0 would return the
+    # bare analytic shift beta/4 with no Green-function samples at all.
+    if tail and (nmat <= 0 or nmat % 2 != 0):
+        raise ValueError(
+            "the Matsubara tail correction (g2_tail) requires an even, "
+            "positive number of frequencies on the centered fermionic "
+            "grid; the Green function has nmat = {}. Fix the frequency "
+            "axis of the input Green function (or Nmat), or set "
+            "[eliashberg] g2_tail = false.".format(nmat))
+    # Promote reduced-precision (e.g. complex64 file) input once so the
+    # accumulation runs in complex128; a no-op for complex128 input, which
+    # keeps the tail=False bit-parity with the pre-correction code.
+    if green_kw.dtype != np.complex128:
+        green_kw = np.ascontiguousarray(green_kw, dtype=np.complex128)
+
     # G(-k, -wn): centered-Matsubara flip on the frequency axis, then the
     # shared FFT-grid map k -> -k on the spatial axes.
     green_kw_inv = reverse_fft_axes(green_kw[..., ::-1], (2, 3, 4))
@@ -2775,25 +2848,23 @@ def _calc_g2(green_kw, beta, tail=True):
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
     G2 = G2 / beta
     if tail:
-        # The grid below must match _calc_green's centered Matsubara grid
-        # wn = (2n + 1 - nmat) * pi / beta, n = 0..nmat-1. That grid is only
-        # fermionic for EVEN nmat: an odd nmat puts wn = 0 in the window
-        # (divide by zero below, and a bosonic frequency in a fermionic sum),
-        # and nmat <= 0 would return the bare analytic shift beta/4 with no
-        # Green-function samples at all. Loaded FLEX Green functions reach
-        # this point without any earlier grid validation, so guard here.
-        if nmat <= 0 or nmat % 2 != 0:
-            raise ValueError(
-                "the Matsubara tail correction (g2_tail) requires an even, "
-                "positive number of frequencies on the centered fermionic "
-                "grid; the Green function has nmat = {}. Fix the frequency "
-                "axis of the input Green function (or Nmat), or set "
-                "[eliashberg] g2_tail = false.".format(nmat))
-        wn = (2.0 * np.arange(nmat) + 1.0 - nmat) * np.pi / beta
-        coeff = beta / 4.0 - np.sum(1.0 / wn**2) / beta
+        # Dimensionless form of the window complement: with
+        # wn = r * pi / beta for the odd integers r = 2n + 1 - nmat,
+        # beta/4 - (1/beta) sum 1/wn^2 = beta * (1/4 - (1/pi^2) sum 1/r^2).
+        # Working in r keeps every intermediate O(1) regardless of beta
+        # (the wn-based form underflows wn^2 to 0 for extreme beta).
+        r = 2.0 * np.arange(nmat) + 1.0 - nmat
+        coeff = beta * (0.25 - np.sum(1.0 / r**2) / np.pi**2)
         di = np.arange(norb)
         # G2[i, i, l, l] += coeff for every (i, l), all k
         G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
+    # Fail-fast on a non-finite bubble (round-6 review): downstream
+    # diagnostics may legitimately SKIP on size, and the solvers would then
+    # propagate NaN into saved eigenvalues silently.
+    if not np.all(np.isfinite(G2)):
+        raise ValueError(
+            "G2 (pair bubble) contains non-finite values; check the input "
+            "Green function and beta.")
     return G2
 
 
@@ -4353,7 +4424,7 @@ def calc_eliashberg(input_dict):
     # --- Parse parameters ---
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
-    beta = 1.0 / T
+    beta = _coerce_run_beta(T)
     cell_shape = mode_param["CellShape"]
     # Resolve SubShape by the PACKAGE convention (documented default:
     # CellShape, i.e. the whole cell as one supercell) and guard the

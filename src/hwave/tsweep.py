@@ -265,8 +265,11 @@ def config_fingerprint(base, run_eli, base_dir="."):
     Geometry/Transfer/Coulomb/... file also invalidates the resume."""
     param = dict(base.get("mode", {}).get("param", {}))
     param.pop("T", None)                       # per-rung; excluded
+    # The raw g2_tail key is EXCLUDED from the hashed mapping: equivalent
+    # spellings (omitted / true / "on" / differently-cased) must fingerprint
+    # identically, so only the canonical resolved boolean below enters.
     eli = {k: v for k, v in base.get("eliashberg", {}).items()
-           if k not in _ELI_OPERATIONAL_KEYS}
+           if k not in _ELI_OPERATIONAL_KEYS and k.lower() != "g2_tail"}
     cont = base.get("continuation", {})
     fin = base.get("file", {}).get("input", {})
     # CaseInsensitiveDict (third surfacing of this defect class): a
@@ -288,10 +291,11 @@ def config_fingerprint(base, run_eli, base_dir="."):
     # fingerprint through this entry (the current flip is covered by the
     # _MANIFEST_VERSION bump). Resolution shares sc.py's strict parser, so
     # an invalid value fails here exactly as the run itself would -- but
-    # only when the Eliashberg solver actually runs: a FLEX-only sweep must
-    # not fail on a switch it never consumes (None marks that state and
-    # still fingerprints distinctly from True/False).
-    if run_eli:
+    # only when the STATIC Eliashberg solver actually runs: a FLEX-only or
+    # dynamic-frequency sweep must not fail on a switch it never consumes
+    # (None marks those states and still fingerprints distinctly from
+    # True/False).
+    if run_eli and eliashberg_frequency(base) != "dynamic":
         from hwave.sc import _coerce_g2_tail
         g2_tail_resolved = _coerce_g2_tail(
             CaseInsensitiveDict(base.get("eliashberg", {})).get(

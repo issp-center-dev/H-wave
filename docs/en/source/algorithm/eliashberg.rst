@@ -271,8 +271,8 @@ which is efficiently computed using the Fast Fourier Transform (FFT).
    high-frequency expansion). The correction is asymptotic: when the
    largest retained frequency does not exceed the relevant energy and
    self-energy scales it can overshoot, and the solver warns when the
-   Green function still deviates strongly from :math:`I/(i\omega_n)` at
-   the window edge. The solver additionally warns whenever the computed
+   Green function still deviates from :math:`I/(i\omega_n)` at the window
+   edge by more than 0.5 in maximum elementwise deviation. The solver additionally warns whenever the computed
    :math:`G^{(2)}` has a significantly negative eigenvalue, pointing at
    ``Nmat`` -- a structural diagnostic of the kernel's real-spectrum
    property, not an error estimate. The dynamic (frequency-resolved)
