@@ -291,8 +291,7 @@ def _load_chi0q(input_dict):
         "FLEX with [mode.param] write_densified = true, or switch to "
         "frequency = \"dynamic\" with [eliashberg] matsubara_basis = "
         "\"ir\".")
-    enable_spin_orbital = input_dict.get("mode", {}).get(
-        "enable_spin_orbital", False)
+    enable_spin_orbital = _resolve_spin_orbital_flag(input_dict)
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
@@ -428,6 +427,11 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     info_mode_rpa = dict(info_mode)
     info_mode_rpa["calc_scheme"] = calc_scheme
+    # Forward the RESOLVED boolean, not the raw value: RPA mixes truthiness
+    # and == True checks on this flag, so a string "false" would diverge
+    # internally (round-1 review of #83's guard).
+    info_mode_rpa["enable_spin_orbital"] = _resolve_spin_orbital_flag(
+        input_dict)
 
     logger.info("Computing chi0q internally (calc_scheme={})...".format(calc_scheme))
 
@@ -2699,15 +2703,15 @@ def _coerce_run_beta(T):
     return beta
 
 
-def _coerce_g2_tail(value):
-    """Strictly parse the [eliashberg] g2_tail switch.
+def _coerce_config_bool(value, name):
+    """Strictly parse a physics-relevant boolean config switch.
 
     backend.as_bool reads any unrecognized string ("ture", "garbage") as
     False and any nonzero integer as True -- for a switch that changes the
-    physics of every reported eigenvalue, a spelling error must fail loudly
-    instead of silently flipping the result (round-3 review). Accepted:
-    real booleans, integers 0/1, and the strings true/false/yes/no/on/off/0/1
-    (case- and whitespace-insensitive).
+    physics (or gates a rejection), a spelling error must fail loudly
+    instead of silently flipping the behavior. Accepted: real booleans,
+    integers 0/1, and the strings true/false/yes/no/on/off/0/1 (case- and
+    whitespace-insensitive).
     """
     if isinstance(value, bool):
         return value
@@ -2720,8 +2724,30 @@ def _coerce_g2_tail(value):
         if v in ("false", "no", "off", "0"):
             return False
     raise ValueError(
-        "[eliashberg] g2_tail = {!r} is not a recognized boolean; use "
-        "true/false (or yes/no, on/off, 0/1).".format(value))
+        "{} = {!r} is not a recognized boolean; use "
+        "true/false (or yes/no, on/off, 0/1).".format(name, value))
+
+
+def _coerce_g2_tail(value):
+    """Strictly parse the [eliashberg] g2_tail switch (round-3 review)."""
+    return _coerce_config_bool(value, "[eliashberg] g2_tail")
+
+
+def _resolve_spin_orbital_flag(input_dict):
+    """Resolve [mode] enable_spin_orbital to a real boolean, strictly.
+
+    One resolver for every consumer in this module: the raw value used to
+    be forwarded as-is, so a string "false" was truthy at the chi0q
+    convention check and internally inconsistent inside RPA (its orbital
+    counting uses truthiness while the transfer remap tests == True).
+    Case-insensitive key lookup (config layers disagree on case handling;
+    PR #128 sweep); unrecognized values raise.
+    """
+    from requests.structures import CaseInsensitiveDict
+    return _coerce_config_bool(
+        CaseInsensitiveDict(input_dict.get("mode", {})).get(
+            "enable_spin_orbital", False),
+        "[mode] enable_spin_orbital")
 
 
 # Threshold for the asymptotic-regime diagnostic below: at the window edge
@@ -4446,6 +4472,32 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 # Main calculation
 # ---------------------------------------------------------------------------
 
+def reject_spin_orbital_mode(input_dict):
+    """Raise when [mode] enable_spin_orbital is set: the Eliashberg module
+    does not support it, and until issue #83 it RAN anyway and printed
+    eigenvalues built on four internal inconsistencies (norb never halved
+    to the physical count; the internally computed chi0q in interleaved
+    order against spin-block consumers -- measured 27% off, exactly a
+    [0,2,1,3] permutation; interaction files read at the spin-orbital
+    dimension, so U landed on (orb0, up)/(orb0, down) as two 'orbitals'
+    and orbital 1 got none; paramagnetic orbital-space S/C rules applied
+    to spin-orbital indices). A silent wrong result, not an approximation.
+
+    Resolution is strict (shared _resolve_spin_orbital_flag): recognized
+    false forms proceed as non-SO, unrecognized values raise -- a user who
+    misspells "true" must not silently get a non-SO run that then
+    misreads spin-orbital-formatted inputs.
+    """
+    if _resolve_spin_orbital_flag(input_dict):
+        raise ValueError(
+            "[mode] enable_spin_orbital = true is not supported by the "
+            "Eliashberg module (hwave_sc): the pairing vertex is "
+            "paramagnetic and the internal index/orbital-count "
+            "conventions are not spin-orbital aware, so a run would "
+            "produce silently wrong eigenvalues (issue #83). Use the "
+            "UHFk/RPA/FLEX solvers for spin-orbital models.")
+
+
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
@@ -4461,6 +4513,7 @@ def calc_eliashberg(input_dict):
         Parsed TOML configuration dictionary.
     """
     # --- Parse parameters ---
+    reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     beta = _coerce_run_beta(T)
