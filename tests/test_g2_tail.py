@@ -247,8 +247,12 @@ class TestG2TailGuards(unittest.TestCase):
         sizes = []
         real_isfinite = np.isfinite
 
+        chunks = []
+
         def spy(x, *args, **kwargs):
             sizes.append(np.asarray(x).size)
+            if np.asarray(x).size > 1:
+                chunks.append(x)
             return real_isfinite(x, *args, **kwargs)
 
         with mock.patch.object(sc.np, "isfinite", side_effect=spy):
@@ -257,9 +261,11 @@ class TestG2TailGuards(unittest.TestCase):
         self.assertEqual(chunk_sizes,
                          [1 << 20, 23**4 * 4 - (1 << 20)])
         # production layout: ufunc-'K' output is non-contiguous, and the
-        # memory-order flatten must SHARE storage, not copy
+        # ACTUAL scanned chunks must share G2's storage -- a regression to
+        # reshape(-1) would keep the sizes right while scanning a copy
         self.assertFalse(g2.flags.c_contiguous)
-        self.assertTrue(np.shares_memory(g2, g2.ravel(order="K")))
+        for chunk in chunks:
+            self.assertTrue(np.shares_memory(chunk, g2))
 
     def test_reduced_precision_input_is_promoted(self):
         """A complex64 (file-precision) Green function must accumulate in
@@ -640,6 +646,7 @@ class TestFinitePositiveScalarHelper(unittest.TestCase):
 
     def test_rejected_forms(self):
         for value in ([2.0], [[2.0]], (2.0,), "2.0", True,
+                      np.array([2.0]), np.array([[2.0]]),
                       np.array([1.0, 2.0]), np.array([]), None,
                       2.0 + 0j, np.nan, np.inf, 0.0, -1.0):
             with self.subTest(value=repr(value)):

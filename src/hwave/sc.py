@@ -2656,10 +2656,12 @@ def _finite_positive_float64(value):
         # the contract is a SCALAR: [2.0] or [[2.0]] silently passing an
         # asarray-based gate would bless container-typed configs
         return None
-    arr = np.asarray(value).ravel()
-    if arr.size != 1 or arr.dtype.kind not in "iuf":
+    arr = np.asarray(value)
+    # ndim == 0, not size == 1: np.array([2.0]) and np.array([[2.0]]) are
+    # containers too, and NPZ metadata arrives as ndarray already
+    if arr.ndim != 0 or arr.dtype.kind not in "iuf":
         return None
-    v = float(arr[0])
+    v = float(arr.item())
     if not np.isfinite(v) or not v > 0:
         return None
     return v
