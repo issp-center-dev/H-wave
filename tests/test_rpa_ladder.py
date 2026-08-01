@@ -804,58 +804,35 @@ class TestRPALadder(unittest.TestCase):
             captured["ham_pm"] = np.asarray(out[1])
             return out
 
+        # Since issue #93 the READERS reject such input outright: an
+        # antisymmetric pair is a typo, not a zero model, and it never
+        # reaches any solver. (That an antisymmetric TABLE symmetrises
+        # to zero stays pinned at the builder level in
+        # test_sc_vertex_adjudicated / test_declarations.)
+        del captured, original, spy
         for itype in ("CoulombInter", "Ising", "Exchange"):
-            # Exchange too: X_ab^dagger = X_ba are the same Hermitian operator
-            # pair, so an antisymmetric J also denotes a zero Hamiltonian.
             with self.subTest(interaction=itype):
-                captured.clear()
-                rpa_mod.RPA._build_transverse_channel = spy
-                try:
+                with self.assertRaises(ValueError) as cm:
                     self._run_rpa(
                         calc_type="ring+ladder", calc_scheme="general",
                         input_path='tests/rpa/input_2orb',
                         Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.5,
                         interactions={itype: "onsite_inter_antisym.dat"})
-                finally:
-                    rpa_mod.RPA._build_transverse_channel = original
-                self.assertLess(
-                    float(np.max(np.abs(captured["ham_pm"]))), 1e-12,
-                    "a declaration denoting a zero Hamiltonian must give a "
-                    "zero vertex")
+                self.assertIn("Hermitian-closed", str(cm.exception))
 
     def test_exchange_vertex_uses_only_the_symmetric_part(self):
-        """Exchange depends only on J_ab + J_ba, and the vertex must too.
-
-        `X_ab^dagger = X_ba`, so `H = sum_ab J_ab (X_ab + X_ba)` and the
-        antisymmetric part of J cancels identically. Measured on an asymmetric
-        real J = (1.0, 0.35) -- physical, since Exchange is Hermitian for any
-        real J -- exact diagonalization requires -(1.0 + 0.35) at BOTH slots,
-        while the raw interaction block holds -0.35 and -1.00 separately.
-        """
-        import hwave.solver.rpa as rpa_mod
-
-        captured = {}
-        original = rpa_mod.RPA._build_transverse_channel
-
-        def spy(inner_self, chi0q_orig, ham_orig):
-            out = original(inner_self, chi0q_orig, ham_orig)
-            captured["ham_pm"] = np.asarray(out[1])
-            return out
-
-        rpa_mod.RPA._build_transverse_channel = spy
-        try:
+        """An asymmetric real Exchange declaration (J = 1.0 / 0.35) used
+        to be read as the mean; since issue #93 the readers reject it as
+        not Hermitian-closed before any solver runs. The mean reading of
+        asymmetric TABLES stays adjudicated at the builder level
+        (test_sc_vertex_adjudicated)."""
+        with self.assertRaises(ValueError) as cm:
             self._run_rpa(
                 calc_type="ring+ladder", calc_scheme="general",
                 input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
                 T=2.0, filling=0.5,
                 interactions={"Exchange": "onsite_inter_asym.dat"})
-        finally:
-            rpa_mod.RPA._build_transverse_channel = original
-
-        got = captured["ham_pm"][0]
-        want = np.zeros_like(got)
-        want[0, 0, 1, 1] = want[1, 1, 0, 0] = -(1.0 + 0.35) / 2
-        np.testing.assert_allclose(got, want, atol=1e-10)
+        self.assertIn("Hermitian-closed", str(cm.exception))
 
     def test_offsite_two_body_is_rejected(self):
         """The one-orbital `coulombinter.dat` carries OFF-SITE bonds, and the
@@ -915,18 +892,17 @@ class TestRPALadder(unittest.TestCase):
             captured["ham_pm"] = np.asarray(out[1])
             return out
 
-        captured.clear()
-        rpa_mod.RPA._build_transverse_channel = spy
-        try:
+        # the cancelling redundant pair (V_ab(+x) = +1, V_ba(-x) = -1)
+        # is a typo under issue #93's read-time validation and is
+        # rejected there too -- it can no longer reach the channel
+        del captured, original, spy
+        with self.assertRaises(ValueError) as cm:
             self._run_rpa(
                 calc_type="ring+ladder", calc_scheme="general",
                 input_path='tests/rpa/input_2orb', Lx=4, Ly=4, Nmat=32,
                 T=2.0, filling=0.5,
                 interactions={"CoulombInter": "offsite_redundant_zero.dat"})
-        finally:
-            rpa_mod.RPA._build_transverse_channel = original
-        self.assertIn("ham_pm", captured, "the spy must actually have run")
-        self.assertLess(float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
+        self.assertIn("Hermitian-closed", str(cm.exception))
 
     def test_spin_diag_transverse_bubble_matches_the_longitudinal_kernel(self):
         """With G_up == G_dn the transverse bubble must equal the longitudinal
@@ -1093,18 +1069,13 @@ class TestRPALadder(unittest.TestCase):
                     run({'CoulombInter': 'offsite_asym_nonzero.dat'},
                         cell, [2, 2, 1])
 
-                # identically zero: accepted with a zero vertex
-                captured.clear()
-                rpa_mod.RPA._build_transverse_channel = spy
-                try:
+                # cancelling redundant pair: rejected at read since
+                # issue #93 (a typo, not a zero model), on any folding --
+                # validation runs on the PRE-fold table
+                with self.assertRaises(ValueError) as cm:
                     run({'CoulombInter': 'offsite_redundant_zero.dat'},
                         cell, [2, 2, 1])
-                finally:
-                    rpa_mod.RPA._build_transverse_channel = original
-                self.assertIn("ham_pm", captured,
-                              "the spy must actually have run")
-                self.assertLess(
-                    float(np.max(np.abs(captured["ham_pm"]))), 1e-12)
+                self.assertIn("Hermitian-closed", str(cm.exception))
 
     def test_su2_onsite_coulombinter_2orb_equality(self):
         """SU(2) holds exactly for on-site CoulombInter, so chi_zz must
@@ -1150,7 +1121,7 @@ class TestRPALadder(unittest.TestCase):
 
         parts = [{"CoulombIntra": "coulombintra.dat"},
                  {"CoulombInter": "onsite_inter.dat"},
-                 {"Exchange": "onsite_inter_asym.dat"},
+                 {"Exchange": "onsite_inter.dat"},
                  {"PairHop": "onsite_cplx_hermitian.dat"}]
         combined = {}
         for d in parts:

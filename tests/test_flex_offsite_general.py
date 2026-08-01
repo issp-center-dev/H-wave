@@ -298,17 +298,27 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                 idict = {'path_to_input': path, 'Geometry': 'geom.dat',
                          'Transfer': 'transfer.dat'}
                 idict.update(interactions)
-                r = read_input_k.QLMSkInput({'path_to_input': path,
-                                             'interaction': idict})
-                pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
-                      'SubShape': sub, 'Nmat': 32,
-                      'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
-                fx = flex_mod.FLEX(r.get_param("ham"), {},
-                                   {'mode': 'FLEX', 'param': pf,
-                                    'enable_spin_orbital': False,
-                                    'calc_scheme': 'general'})
-                with self.assertRaises(ValueError):
+
+                def _construct_and_solve():
+                    # the rejection may now fire at READ time (issue #93:
+                    # e.g. an off-site file configured as CoulombIntra
+                    # violates its on-site same-orbital rule) or at the
+                    # FLEX off-site guard; both are loud ValueErrors and
+                    # both verdicts are what this test pins
+                    r = read_input_k.QLMSkInput({'path_to_input': path,
+                                                 'interaction': idict})
+                    pf = {'T': 2.0, 'filling': 0.5,
+                          'CellShape': [4, 4, 1],
+                          'SubShape': sub, 'Nmat': 32,
+                          'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+                    fx = flex_mod.FLEX(r.get_param("ham"), {},
+                                       {'mode': 'FLEX', 'param': pf,
+                                        'enable_spin_orbital': False,
+                                        'calc_scheme': 'general'})
                     fx.solve(r.get_param("green"), 'tests/rpa/output')
+
+                with self.assertRaises(ValueError):
+                    _construct_and_solve()
 
     def test_one_sided_offsite_declaration_matches_the_ring_exactly(self):
         """A one-sided declaration (only +R) means the reversal-symmetric

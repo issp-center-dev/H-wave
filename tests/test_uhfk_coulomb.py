@@ -57,7 +57,22 @@ class TestUHFkCombinedCoulomb(unittest.TestCase):
             inter = params["file"]["input"]["interaction"]
             coulomb_file = inter.pop("CoulombInter")
             inter["Coulomb"] = coulomb_file
-            inter[explicit_key] = coulomb_file  # ambiguous co-specification
+            if explicit_key == "CoulombIntra":
+                # the CoulombInter file contains off-site entries, which
+                # the read-time validation (issue #93) would reject under
+                # the CoulombIntra rule BEFORE the conflict check this
+                # test pins -- point the explicit key at a valid on-site
+                # same-orbital file instead
+                with open("coulombintra_conflict.dat", "w") as fobj:
+                    fobj.write("CoulombIntra for the conflict test\n"
+                               "2\n1\n 1\n"
+                               "   0    0    0    1    1   1.0   0.0\n"
+                               "   0    0    0    2    2   1.0   0.0\n")
+                self.addCleanup(os.remove, os.path.abspath(
+                    "coulombintra_conflict.dat"))
+                inter[explicit_key] = "coulombintra_conflict.dat"
+            else:
+                inter[explicit_key] = coulomb_file  # ambiguous co-spec
             params["file"]["output"]["energy"] = "energy_conflict.dat"
 
             with self.assertRaises(SystemExit):

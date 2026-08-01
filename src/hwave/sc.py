@@ -515,11 +515,17 @@ def _read_interaction_files(input_dict):
     interaction_types = ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                         "Ising", "PairLift", "PairHop"]
     interactions = {}
+    from hwave.solver.declarations import validate_hermitian_closure
+
     for itype in interaction_types:
         if itype in files:
             f = os.path.join(path_to_input, files[itype])
             logger.info("Reading {} from {}".format(itype, f))
-            interactions[itype] = wan90.read_w90(f)
+            tbl = wan90.read_w90(f)
+            # issue #93: fail fast on non-Hermitian-closed declarations,
+            # with the same rule and tolerance as the k-space reader
+            validate_hermitian_closure(itype, tbl, source=f)
+            interactions[itype] = tbl
 
     # combined 'Coulomb' input: same decomposition as UHFk/RPA
     # (wan90.split_coulomb; r=0 diagonal -> CoulombIntra, rest -> CoulombInter)
@@ -530,7 +536,9 @@ def _read_interaction_files(input_dict):
                 "CoulombIntra or CoulombInter")
         f = os.path.join(path_to_input, files["Coulomb"])
         logger.info("Reading Coulomb from {}".format(f))
-        coulomb_intra, coulomb_inter = wan90.split_coulomb(wan90.read_w90(f))
+        _coulomb_tbl = wan90.read_w90(f)
+        validate_hermitian_closure("Coulomb", _coulomb_tbl, source=f)
+        coulomb_intra, coulomb_inter = wan90.split_coulomb(_coulomb_tbl)
         if coulomb_intra:
             interactions["CoulombIntra"] = coulomb_intra
         if coulomb_inter:

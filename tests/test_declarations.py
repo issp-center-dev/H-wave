@@ -432,3 +432,47 @@ class TestIEEESpecialParity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHermitianClosureValidation(unittest.TestCase):
+    """Read-time rejection of unclosed declaration tables (issue #93)."""
+
+    def test_disagreeing_pair_raises_naming_everything(self):
+        from hwave.solver.declarations import validate_hermitian_closure
+
+        tbl = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.9}
+        with self.assertRaises(ValueError) as cm:
+            validate_hermitian_closure("Hund", tbl, source="hund.dat")
+        msg = str(cm.exception)
+        for frag in ("hund.dat", "0.3", "0.9", "Hermitian-closed"):
+            self.assertIn(frag, msg)
+
+    def test_one_sided_declaration_raises(self):
+        from hwave.solver.declarations import validate_hermitian_closure
+
+        with self.assertRaises(ValueError):
+            validate_hermitian_closure(
+                "CoulombInter", {((1, 0, 0), (0, 1)): 0.7})
+
+    def test_closed_tables_pass(self):
+        from hwave.solver.declarations import validate_hermitian_closure
+
+        validate_hermitian_closure(
+            "CoulombInter", {((1, 0, 0), (0, 1)): 0.7,
+                             ((-1, 0, 0), (1, 0)): 0.7})
+        p = 0.7 + 0.4j
+        validate_hermitian_closure(
+            "PairHop", {((0, 0, 0), (0, 1)): p,
+                        ((0, 0, 0), (1, 0)): np.conj(p)})
+        validate_hermitian_closure("CoulombIntra",
+                                   {((0, 0, 0), (0, 0)): 4.0})
+
+    def test_coulombintra_rules(self):
+        from hwave.solver.declarations import validate_hermitian_closure
+
+        with self.assertRaises(ValueError):
+            validate_hermitian_closure(
+                "CoulombIntra", {((1, 0, 0), (0, 0)): 1.0})
+        with self.assertRaises(ValueError):
+            validate_hermitian_closure(
+                "CoulombIntra", {((0, 0, 0), (0, 1)): 1.0})
