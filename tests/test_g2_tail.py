@@ -478,6 +478,34 @@ class TestFlexGreenProvenance(unittest.TestCase):
                     sc._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("beta", str(cm.exception))
 
+    def test_non_real_or_non_numeric_beta_is_rejected(self):
+        """float() would silently discard a complex imaginary part, bools
+        would read as 0/1, and strings raised an incidental TypeError; all
+        must produce the same actionable ValueError."""
+        for label, bad in (("complex", 0.5 + 2j), ("complex_zero_imag",
+                                                   0.5 + 0j),
+                           ("bool", True), ("string", "0.5")):
+            with self.subTest(beta=label):
+                d = self._tmp()
+                inp = self._write_green(d, beta=bad)
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn("beta", str(cm.exception))
+
+    def test_beta_tolerance_is_symmetric_at_the_boundary(self):
+        """The relative tolerance uses max(|a|, |b|), so swapping which
+        side is larger must not change the verdict."""
+        for label, file_beta, run_T in (
+                ("file_larger", 0.5 * (1.0 + 2.0e-8), 2.0),
+                ("run_larger", 0.5, 2.0 / (1.0 + 2.0e-8))):
+            with self.subTest(order=label):
+                d = self._tmp()
+                inp = self._write_green(d, beta=file_beta)
+                inp["mode"]["param"]["T"] = run_T
+                with self.assertRaises(ValueError) as cm:
+                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                self.assertIn("beta", str(cm.exception))
+
     def test_small_beta_relative_mismatch_is_rejected(self):
         """No absolute floor: at high temperature (small beta) a relative
         mismatch must still be caught."""
@@ -508,6 +536,14 @@ class TestTsweepG2TailFingerprint(unittest.TestCase):
         import hwave.tsweep as ts
         with self.assertRaises(ValueError):
             ts.config_fingerprint(self._base({"g2_tail": "garbage"}), True)
+
+    def test_flex_only_sweep_ignores_an_invalid_g2_tail(self):
+        """With run_eliashberg=false the switch is never consumed, so a
+        malformed value must not break a FLEX-only sweep's fingerprint."""
+        import hwave.tsweep as ts
+        fp = ts.config_fingerprint(self._base({"g2_tail": "garbage"}),
+                                   False)
+        self.assertIsInstance(fp, str)
 
     def test_pre_correction_manifest_cannot_be_resumed(self):
         """Upgrade regression: a version-1 manifest (written before the

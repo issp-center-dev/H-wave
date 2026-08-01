@@ -287,10 +287,17 @@ def config_fingerprint(base, run_eli, base_dir="."):
     # physics default is not, so any future default flip must change the
     # fingerprint through this entry (the current flip is covered by the
     # _MANIFEST_VERSION bump). Resolution shares sc.py's strict parser, so
-    # an invalid value fails here exactly as the run itself would.
-    from hwave.sc import _coerce_g2_tail
-    g2_tail_resolved = _coerce_g2_tail(
-        CaseInsensitiveDict(base.get("eliashberg", {})).get("g2_tail", True))
+    # an invalid value fails here exactly as the run itself would -- but
+    # only when the Eliashberg solver actually runs: a FLEX-only sweep must
+    # not fail on a switch it never consumes (None marks that state and
+    # still fingerprints distinctly from True/False).
+    if run_eli:
+        from hwave.sc import _coerce_g2_tail
+        g2_tail_resolved = _coerce_g2_tail(
+            CaseInsensitiveDict(base.get("eliashberg", {})).get(
+                "g2_tail", True))
+    else:
+        g2_tail_resolved = None
     src = {
         "mode": base.get("mode", {}).get("mode"),
         "param": param,                        # full mode.param minus T

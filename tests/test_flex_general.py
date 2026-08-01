@@ -512,7 +512,9 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         the pair bubble."""
         import tempfile
         flex = _make_general_flex(norb=2)
-        d = tempfile.mkdtemp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
         green = np.zeros((1, flex.nmat, flex.lattice.nvol,
                           flex.norb, flex.norb), dtype=complex)
         flex.save_results({"path_to_output": d, "green": "green.npz"},

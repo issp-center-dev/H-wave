@@ -2499,23 +2499,31 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         run_T = input_dict.get("mode", {}).get("param", {}).get("T")
         if "beta" in data_g:
             beta_arr = np.asarray(data_g["beta"]).ravel()
-            # One finite positive scalar, checked BEFORE any comparison:
-            # NaN/Inf make every tolerance comparison False (silently
-            # "matching"), an empty array would die on an incidental
-            # IndexError, and a vector would silently use its first element.
-            if (beta_arr.size != 1 or not np.isfinite(beta_arr[0])
+            # One REAL-NUMERIC finite positive scalar, checked BEFORE any
+            # comparison or conversion: NaN/Inf make every tolerance
+            # comparison False (silently "matching"), an empty array would
+            # die on an incidental IndexError, a vector would silently use
+            # its first element, float() would silently discard a complex
+            # value's imaginary part, booleans would read as 0/1, and a
+            # string would raise an incidental TypeError instead of this
+            # actionable error. dtype.kind i/u/f admits exactly the real
+            # numeric types.
+            if (beta_arr.size != 1 or beta_arr.dtype.kind not in "iuf"
+                    or not np.isfinite(beta_arr[0])
                     or not beta_arr[0] > 0):
                 raise ValueError(
                     "green file '{}': beta metadata must be a single "
-                    "finite positive scalar, got {!r}. Regenerate the "
-                    "file.".format(green_path,
-                                   np.asarray(data_g["beta"])))
+                    "finite positive real scalar, got {!r}. Regenerate "
+                    "the file.".format(green_path,
+                                       np.asarray(data_g["beta"])))
             file_beta = float(beta_arr[0])
-            # Symmetric relative tolerance, no absolute floor: an absolute
-            # term would wave through large relative mismatches at small
-            # beta (high temperature), where the grid differs the most.
-            if run_T is not None and not np.isclose(
-                    file_beta, 1.0 / float(run_T), rtol=1.0e-8, atol=0.0):
+            # Explicitly symmetric relative tolerance (max of both
+            # magnitudes), no absolute floor: an absolute term would wave
+            # through large relative mismatches at small beta (high
+            # temperature), where the grid differs the most.
+            if run_T is not None and abs(file_beta - 1.0 / float(run_T)) \
+                    > 1.0e-8 * max(abs(file_beta),
+                                   abs(1.0 / float(run_T))):
                 raise ValueError(
                     "green file '{}' was produced at beta = {} but this "
                     "run uses beta = {}; the Matsubara grid (and the tail "
