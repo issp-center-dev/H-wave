@@ -63,14 +63,16 @@ class TestUHFkCombinedCoulomb(unittest.TestCase):
                 # the CoulombIntra rule BEFORE the conflict check this
                 # test pins -- point the explicit key at a valid on-site
                 # same-orbital file instead
-                with open("coulombintra_conflict.dat", "w") as fobj:
+                import tempfile
+                tmp = tempfile.mkdtemp()
+                self.addCleanup(__import__("shutil").rmtree, tmp, True)
+                cpath = os.path.join(tmp, "coulombintra_conflict.dat")
+                with open(cpath, "w") as fobj:
                     fobj.write("CoulombIntra for the conflict test\n"
                                "2\n1\n 1\n"
                                "   0    0    0    1    1   1.0   0.0\n"
                                "   0    0    0    2    2   1.0   0.0\n")
-                self.addCleanup(os.remove, os.path.abspath(
-                    "coulombintra_conflict.dat"))
-                inter[explicit_key] = "coulombintra_conflict.dat"
+                inter[explicit_key] = cpath
             else:
                 inter[explicit_key] = coulomb_file  # ambiguous co-spec
             params["file"]["output"]["energy"] = "energy_conflict.dat"

@@ -265,7 +265,7 @@ msgid ""
 msgstr ""
 
 #: ../../filespecification/expertmode_en.rst
-msgid "**Ising**: Ising interactions, :math:`S_i~z S_j~z`"
+msgid "**Ising**: Ising interactions, :math:`(n_{i~up}-n_{i~down})(n_{j~up}-n_{j~down})`"
 msgstr ""
 
 #: ../../filespecification/expertmode_en.rst

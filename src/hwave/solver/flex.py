@@ -2056,7 +2056,9 @@ class FLEX(RPA):
                                 itype, tuple(irvec), tuple(orbvec),
                                 ", with sublattice folding" if has_fold
                                 else ""))
-                    # One-sided declarations are fine: BOTH solvers reduce
+                    # (Reader-bypassing internal tables only: file input
+                    # rejects one-sided declarations since #93.)
+                    # One-sided TABLES are fine: BOTH solvers reduce
                     # a declaration to its reversal-symmetric part (the
                     # physical coefficient of n_a(i) n_a(i+R), even in R by
                     # the site sum) -- the S/C builders since #114, and the

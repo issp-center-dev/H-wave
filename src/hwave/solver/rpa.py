@@ -2779,9 +2779,10 @@ class RPA:
             Hund           0            PairHop   -P
             Exchange      -(J + J^T)/2
 
-        A declaration that is not Hermitian-closed (e.g. a real antisymmetric
-        PairHop, which makes H itself non-Hermitian) is projected onto its
-        Hermitian part rather than rejected; input validation is #93.
+        A non-Hermitian-closed TABLE reaching this builder directly (a
+        reader-bypassing internal path) is projected onto its Hermitian
+        part; FILE input cannot reach here unclosed since the #93
+        read-time validation.
 
         The orbital ordering is one of two the measurements cannot separate;
         they agree exactly on every physically valid on-site input and differ

@@ -136,7 +136,7 @@ Usage rules
 
 -  Header cannot be omitted.
 
--  The unspecified elements of the coefficient matrix are assumed to be zero.
+-  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner X_ba(-R) is unspecified is rejected at read time (issue #93): both directions of a coupling must be declared.
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 
