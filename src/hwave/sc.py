@@ -812,50 +812,16 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 def _symmetrise_interactions_k(inter_k):
     """Reduce each interaction to its physical symmetric coefficient.
 
-    An interaction file may declare the same term from both ends, and the two
-    declarations of a bond are (R, a, b) and (-R, b, a). In momentum space
-    (arrays carry e^{-iqR} phases) the same-operator partner of M[b,a](q) is
-    therefore the ORBITAL-TRANSPOSED entry AT -q -- averaging with the same-q
-    transpose instead corrupted every off-site interaction, collapsing a
-    one-direction bond's V(q) = v e^{-iqR} to v cos(qR) (measured: the S/C
-    entry vanished outright at q = pi/2). The mean used here:
-
-      * every type except PairHop: 0.5 * (M(q) + M(-q)^T). The two entries
-        multiply the SAME operator (n_a n_b = n_b n_a; X_ab = X_ba for
-        Exchange), with the same coefficient at the reversed displacement.
-        For a both-ends declaration this mean is an identity; for an on-site
-        complex Hermitian-closed declaration it drops the inert imaginary
-        part; for an antisymmetric declaration -- an identically zero
-        Hamiltonian -- it gives zero.
-      * PairHop: 0.5 * (M(q) + conj(M(q)^T)) at the SAME q. Its partner entry
-        carries the conjugated coefficient at the reversed displacement, and
-        conjugation at fixed q is the Fourier image of {conjugate, R -> -R}
-        (the #105 derivation), so this is an identity for Hermitian-closed
-        input on-site and off-site, and preserves the physical complex phase.
-
-    Idempotent, so it is safe that both the all-q and per-q builders apply it.
-
-    Relation to UHFk: `uhfk.py` stores the HERMITIAN mean -- vba there is the
-    CONJUGATED r-reversed transpose (`_make_ham_inter`) -- which keeps a
-    complex Hermitian-closed coefficient p intact, while this helper folds it
-    to Re(p). The two tables serve different contractions and give the SAME
-    physical Hamiltonian: UHFk sums its table over both ordered orbital
-    pairs, so p + conj(p) appears there; the S/C builders here use each slot
-    exactly once, so the effective real coefficient must already be folded
-    in. That the imaginary part of a Hermitian-closed same-operator
-    declaration is physically inert was adjudicated against exact
-    diagonalization in #105/#106; the slot content is #113. For real
-    declarations -- everything the documented input format produces -- the
-    two conventions coincide identically.
+    Thin delegation: the reduction (and its full derivation, including
+    the momentum-space form of the reversed-bond partner, the PairHop
+    Hermitian rule, and the relation to UHFk's Hermitian-mean
+    convention) is single-sourced in
+    :func:`hwave.solver.declarations.symmetrise_k` (#108). Idempotent,
+    so it is safe that both the all-q and per-q builders apply it.
     """
-    out = {}
-    for itype, M in inter_k.items():
-        if itype == "PairHop":
-            out[itype] = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
-            continue
-        Mrev = reverse_fft_axes(M, (2, 3, 4))
-        out[itype] = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
-    return out
+    from hwave.solver.declarations import symmetrise_k
+
+    return symmetrise_k(inter_k)
 
 
 def _accumulate_coeff(dst, coeff, value):
