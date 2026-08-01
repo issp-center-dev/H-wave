@@ -1162,6 +1162,9 @@ def solve_dynamic(input_dict):
 
     import hwave.sc as sc
 
+    # spin-orbital mode is unsupported here exactly as on the static path;
+    # solve_dynamic is publicly callable, so guard both entries (issue #83)
+    sc.reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     # shared validated conversion (round-7 review): an unchecked 1/T here

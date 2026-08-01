@@ -4446,6 +4446,33 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 # Main calculation
 # ---------------------------------------------------------------------------
 
+def reject_spin_orbital_mode(input_dict):
+    """Raise when [mode] enable_spin_orbital is set: the Eliashberg module
+    does not support it, and until issue #83 it RAN anyway and printed
+    eigenvalues built on four internal inconsistencies (norb never halved
+    to the physical count; the internally computed chi0q in interleaved
+    order against spin-block consumers -- measured 27% off, exactly a
+    [0,2,1,3] permutation; interaction files read at the spin-orbital
+    dimension, so U landed on (orb0, up)/(orb0, down) as two 'orbitals'
+    and orbital 1 got none; paramagnetic orbital-space S/C rules applied
+    to spin-orbital indices). A silent wrong result, not an approximation.
+
+    The key is looked up case-insensitively (config layers disagree on
+    case handling; PR #128 sweep) and coerced with as_bool so string forms
+    of false do not trip the guard.
+    """
+    from requests.structures import CaseInsensitiveDict
+    if backend.as_bool(CaseInsensitiveDict(input_dict.get("mode", {})).get(
+            "enable_spin_orbital", False)):
+        raise ValueError(
+            "[mode] enable_spin_orbital = true is not supported by the "
+            "Eliashberg module (hwave_sc): the pairing vertex is "
+            "paramagnetic and the internal index/orbital-count "
+            "conventions are not spin-orbital aware, so a run would "
+            "produce silently wrong eigenvalues (issue #83). Use the "
+            "UHFk/RPA/FLEX solvers for spin-orbital models.")
+
+
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
@@ -4461,6 +4488,7 @@ def calc_eliashberg(input_dict):
         Parsed TOML configuration dictionary.
     """
     # --- Parse parameters ---
+    reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     beta = _coerce_run_beta(T)

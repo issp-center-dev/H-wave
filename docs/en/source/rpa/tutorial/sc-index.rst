@@ -1240,7 +1240,8 @@ was checked by running the combination.
    * - ``enable_spin_orbital``
      - accepted by FLEX
      - rejected
-     - see *Spin structure* below for what the Eliashberg step then does
+     - ``hwave_sc`` refuses the configuration outright (issue #83); see
+       *Spin structure* below
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
@@ -1326,11 +1327,14 @@ accepts ``spin-free`` only and rejects the other two outright.
   paramagnetic run.)
 
 - **Spin-mixing / spin-orbit** (``mode.enable_spin_orbital = true``, giving
-  ``spin_mode = "spinful"``) -- **not supported.** FLEX itself runs, but
-  ``hwave_sc`` stops with a shape error: FLEX writes chi with the physical
-  orbital count while the Eliashberg step reads ``norb`` from ``geom.dat``,
-  where spin-orbital mode stores the spin-orbital count. The error message
-  identifies this case explicitly.
+  ``spin_mode = "spinful"``) -- **not supported.** ``hwave_sc`` rejects the
+  configuration up front with an explicit error, on both the static and the
+  dynamic entry (issue #83): before this guard, the internally computed
+  :math:`\chi_0` path ran to completion and printed eigenvalues built on
+  inconsistent index/orbital-count conventions -- a silently wrong result,
+  not an approximation. (On the FLEX-load path the chi shape mismatch --
+  physical vs spin-orbital orbital count -- is additionally identified
+  explicitly.)
 
 Supporting either spin-polarized case would require an
 :math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
