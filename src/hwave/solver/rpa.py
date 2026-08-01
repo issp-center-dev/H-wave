@@ -26,6 +26,7 @@ import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
 from hwave.solver.kgrid import reverse_fft_axes
+from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import (
     project_density_pairs, project_density_squashed)
 from . import backend as _bk
@@ -602,11 +603,7 @@ class Interaction:
             for (irvec, orbvec), v in tbl.items():
                 arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
                      *orbvec)] += v
-            rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
-                               (0, 1, 2, 4, 3))
-            if type == "PairHop":
-                rev = np.conjugate(rev)
-            sym = 0.5 * (arr + rev)
+            sym = symmetrise_dense(arr, hermitian=(type == "PairHop"))
             out = {}
             for ix, iy, iz, a, b in zip(*np.nonzero(sym)):
                 out[((int(ix), int(iy), int(iz)), (int(a), int(b)))] = \

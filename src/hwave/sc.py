@@ -20,6 +20,7 @@ import numpy as np
 
 from hwave.solver.vertex_table import sc_coefficients
 from hwave.solver.kgrid import reverse_fft_axes
+from hwave.solver.declarations import symmetrise_k
 from numpy.fft import fftn, ifftn
 from scipy.optimize import bisect
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
@@ -812,50 +813,14 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 def _symmetrise_interactions_k(inter_k):
     """Reduce each interaction to its physical symmetric coefficient.
 
-    An interaction file may declare the same term from both ends, and the two
-    declarations of a bond are (R, a, b) and (-R, b, a). In momentum space
-    (arrays carry e^{-iqR} phases) the same-operator partner of M[b,a](q) is
-    therefore the ORBITAL-TRANSPOSED entry AT -q -- averaging with the same-q
-    transpose instead corrupted every off-site interaction, collapsing a
-    one-direction bond's V(q) = v e^{-iqR} to v cos(qR) (measured: the S/C
-    entry vanished outright at q = pi/2). The mean used here:
-
-      * every type except PairHop: 0.5 * (M(q) + M(-q)^T). The two entries
-        multiply the SAME operator (n_a n_b = n_b n_a; X_ab = X_ba for
-        Exchange), with the same coefficient at the reversed displacement.
-        For a both-ends declaration this mean is an identity; for an on-site
-        complex Hermitian-closed declaration it drops the inert imaginary
-        part; for an antisymmetric declaration -- an identically zero
-        Hamiltonian -- it gives zero.
-      * PairHop: 0.5 * (M(q) + conj(M(q)^T)) at the SAME q. Its partner entry
-        carries the conjugated coefficient at the reversed displacement, and
-        conjugation at fixed q is the Fourier image of {conjugate, R -> -R}
-        (the #105 derivation), so this is an identity for Hermitian-closed
-        input on-site and off-site, and preserves the physical complex phase.
-
-    Idempotent, so it is safe that both the all-q and per-q builders apply it.
-
-    Relation to UHFk: `uhfk.py` stores the HERMITIAN mean -- vba there is the
-    CONJUGATED r-reversed transpose (`_make_ham_inter`) -- which keeps a
-    complex Hermitian-closed coefficient p intact, while this helper folds it
-    to Re(p). The two tables serve different contractions and give the SAME
-    physical Hamiltonian: UHFk sums its table over both ordered orbital
-    pairs, so p + conj(p) appears there; the S/C builders here use each slot
-    exactly once, so the effective real coefficient must already be folded
-    in. That the imaginary part of a Hermitian-closed same-operator
-    declaration is physically inert was adjudicated against exact
-    diagonalization in #105/#106; the slot content is #113. For real
-    declarations -- everything the documented input format produces -- the
-    two conventions coincide identically.
+    Thin delegation: the reduction and its full derivation -- the
+    momentum-space form of the reversed-bond partner, the PairHop
+    Hermitian rule, and the UHFk-relation adjudication note -- are
+    single-sourced in :func:`hwave.solver.declarations.symmetrise_k`
+    (#108). Idempotent, so it is safe that both the all-q and per-q
+    builders apply it.
     """
-    out = {}
-    for itype, M in inter_k.items():
-        if itype == "PairHop":
-            out[itype] = 0.5 * (M + np.conj(M.transpose(1, 0, 2, 3, 4)))
-            continue
-        Mrev = reverse_fft_axes(M, (2, 3, 4))
-        out[itype] = 0.5 * (M + Mrev.transpose(1, 0, 2, 3, 4))
-    return out
+    return symmetrise_k(inter_k)
 
 
 def _accumulate_coeff(dst, coeff, value):
@@ -1045,8 +1010,45 @@ def _build_sc_matrices(inter_k, norb, ix, iy, iz):
                                             _presymmetrised=True)
     return S_all[0, 0, 0], C_all[0, 0, 0]
 
+def _declarations_partner_closed(interactions, Nx, Ny, Nz, norb):
+    """True iff every CoulombIntra/CoulombInter declaration table is
+    EXACTLY closed under the reversed-bond partner (R,a,b) <-> (-R,b,a).
+
+    Decided on the RAW tables, before any exponential transform, with
+    bitwise comparison: a both-ends declaration carries identical
+    literals, and 0.5*(x + x) == x exactly in IEEE, so closure detection
+    is exact -- while the k-space arrays of a closed table are only
+    ALGEBRAICALLY symmetric (the +R and -R exponentials are evaluated
+    independently and differ by roundoff), which is why the decision
+    cannot be made after the transform (PR #129 round 5: re-averaging a
+    closed configuration changed saved artifacts at the 1e-18 level).
+    Non-finite input reads as not closed (explicitly, before any
+    comparison), which fails toward symmetrising. The closure test
+    compares the table DIRECTLY with its reversed/transposed partner --
+    no mean is formed, so a closed coefficient above float64.max / 2
+    cannot overflow into a false 'open' (PR #129 round 6 reproduced
+    exactly that with the earlier mean-based comparison)."""
+    for itype in ("CoulombIntra", "CoulombInter"):
+        tbl = interactions.get(itype) if interactions else None
+        if not tbl:
+            continue
+        arr = np.zeros((Nx, Ny, Nz, norb, norb), dtype=complex)
+        for (irvec, orbvec), v in tbl.items():
+            arr[(irvec[0] % Nx, irvec[1] % Ny, irvec[2] % Nz,
+                 *orbvec)] += v
+        if not np.all(np.isfinite(arr)):
+            return False
+        rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
+                           (0, 1, 2, 4, 3))
+        if not (np.array_equal(arr.real, rev.real)
+                and np.array_equal(arr.imag, rev.imag)):
+            return False
+    return True
+
+
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                      pairing_type="singlet", static_index=None):
+                      pairing_type="singlet", static_index=None,
+                      declarations_closed=False):
     """Compute effective pairing interaction V(q).
 
     Supports two modes:
@@ -1110,11 +1112,13 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                 "chi0q (general mode) for the full Kuroki S/C treatment.")
         return _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                         pairing_type=pairing_type,
-                                        static_index=static_index)
+                                        static_index=static_index,
+                                        declarations_closed=declarations_closed)
 
 
 def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                             pairing_type="singlet", static_index=None):
+                             pairing_type="singlet", static_index=None,
+                             declarations_closed=False):
     """Compute vertices using simple Wc=U+2V, Ws=-U formulation.
 
     For singlet:
@@ -1133,6 +1137,20 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     Ps_q : ndarray
         Spin vertex, shape (norb, norb, Nx, Ny, Nz).
     """
+    # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
+    # so a one-sided off-site declaration entered as v e^{-iqR} while the
+    # ring and the general S/C route read the same Hamiltonian as
+    # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7.
+    # SKIPPED when the caller proved the raw declarations partner-closed
+    # (round 5): the reduction is only ALGEBRAICALLY idempotent after the
+    # exponential transform -- re-averaging a closed configuration mixed
+    # independently rounded +R/-R exponentials and changed saved
+    # artifacts at the 1e-18 level, violating byte parity for
+    # previously-working symmetric runs.
+    if not declarations_closed:
+        inter_k = _symmetrise_interactions_k(
+            {k: inter_k[k] for k in ("CoulombIntra", "CoulombInter")
+             if k in inter_k})
     U_k = inter_k.get("CoulombIntra", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
     V_k = inter_k.get("CoulombInter", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
 
@@ -4271,9 +4289,11 @@ def calc_eliashberg(input_dict):
 
         # Step 9: Compute RPA vertices
         logger.info("Computing RPA vertices (pairing_type={})...".format(pairing_type))
-        vertex_result = _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
-                                          pairing_type=pairing_type,
-                                          static_index=static_index)
+        vertex_result = _compute_vertices(
+            chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
+            pairing_type=pairing_type, static_index=static_index,
+            declarations_closed=_declarations_partner_closed(
+                interactions, Nx, Ny, Nz, norb))
         if isinstance(vertex_result, tuple):
             Pc_q, Ps_q = vertex_result
             Vs_q = Pc_q + Ps_q
