@@ -395,16 +395,99 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
                           extra_c=dict(self.MYO_TAGS))
         self._raw(inp, {"PairLift": self.ASYM_V})
 
-    def test_legacy_myo_with_asymmetric_pairhop_is_accepted(self):
-        # PairHop's declaration partner is the HERMITIAN entry, a
-        # different pairing than the same-operator transpose this
-        # predicate tests; it must stay excluded
+    def test_legacy_myo_pairhop_hermitian_pair_rule(self):
+        """PairHop is checked against its HERMITIAN partner (round 4):
+        its orientation never changed, but the conjugated-mean reading
+        of its declarations arrived with the version stamp, so a
+        non-Hermitian-closed legacy declaration measurably changes the
+        myo S/C matrices (|dS| = 0.15 for 0.7/0.4) and must be
+        rejected; a Hermitian-closed complex pair is an identity under
+        that reading and stays accepted, as does a version-2 file."""
         import tempfile
 
         d = tempfile.mkdtemp()
         inp = self._write(d, extra_s=dict(self.MYO_TAGS),
                           extra_c=dict(self.MYO_TAGS))
+        with self.assertRaises(ValueError) as cm:
+            self._raw(inp, {"PairHop": self.ASYM_V})
+        msg = str(cm.exception)
+        self.assertIn("PairHop", msg)
+        self.assertIn("Hermitian", msg)
+
+        p = 0.7 + 0.4j
+        herm = {((0, 0, 0), (0, 1)): p, ((0, 0, 0), (1, 0)): np.conj(p)}
+        d = tempfile.mkdtemp()
+        inp = self._write(d, extra_s=dict(self.MYO_TAGS),
+                          extra_c=dict(self.MYO_TAGS))
+        self._raw(inp, {"PairHop": herm})
+
+        d = tempfile.mkdtemp()
+        tags = dict(self.MYO_TAGS, sc_vertex_version=2)
+        inp = self._write(d, extra_s=dict(tags), extra_c=dict(tags))
         self._raw(inp, {"PairHop": self.ASYM_V})
+
+    def test_hermitian_pair_mismatch_helper_cases(self):
+        import hwave.sc as sc
+
+        f = sc._onsite_hermitian_pair_mismatch
+        p = 0.7 + 0.4j
+        self.assertAlmostEqual(
+            f({((0, 0, 0), (0, 1)): p,
+               ((0, 0, 0), (1, 0)): np.conj(p)}), 0.0, places=12)
+        self.assertAlmostEqual(
+            f({((0, 0, 0), (0, 1)): 0.7,
+               ((0, 0, 0), (1, 0)): 0.4}), 0.3, places=12)
+        self.assertEqual(f({((0, 0, 0), (0, 1)): float("nan")}),
+                         float("inf"))
+
+    def test_lowercase_interaction_keys_are_read(self):
+        """A run configured with lowercase type keys produced FLEX
+        susceptibilities (the FLEX reader is case-insensitive) while the
+        standalone reader silently read an EMPTY interaction set --
+        bypassing the gate AND the vertex (round-4 review). The reader
+        is case-insensitive now."""
+        import tempfile
+        import hwave.sc as sc
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as fobj:
+            fobj.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                       "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as fobj:
+            fobj.write("Transfer\n2\n1\n 1\n"
+                       "   1    0    0    1    1   1.000000   0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as fobj:
+            fobj.write("CoulombIntra\n2\n1\n 1\n"
+                       "   0    0    0    1    1   4.000000   0.0\n")
+        inp = {"file": {"input": {"interaction": {
+            "path_to_input": d,
+            "geometry": "geom.dat",
+            "transfer": "transfer.dat",
+            "coulombintra": "coulombintra.dat",
+        }}}}
+        geom, hr, inter = sc._read_interaction_files(inp)
+        self.assertIn("CoulombIntra", inter)
+        self.assertTrue(inter["CoulombIntra"])
+
+    def test_subshape_is_rejected_with_an_actionable_error(self):
+        """Sublattice folding is unsupported by the Eliashberg module
+        (geometry/interactions are consumed unfolded); it used to fail
+        late with an unhelpful shape mismatch."""
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
+                                   "SubShape": [2, 1, 1],
+                                   "filling": 0.5}},
+                "file": {"input": {"interaction": {}},
+                         "output": {"path_to_output": "."}},
+                "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc.calc_eliashberg(base)
+        self.assertIn("SubShape", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            ed.solve_dynamic(base)
+        self.assertIn("SubShape", str(cm.exception))
 
     def test_asymmetry_helper_cases(self):
         """Direct predicate pins: one-sided declarations, numpy orbital

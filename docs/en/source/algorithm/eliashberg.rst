@@ -155,10 +155,14 @@ The matrix elements are:
    orbital orientation in which the interaction enters the vertex and
    the symmetrised reading of such declarations both differ between
    historical builds and the current one, and an unversioned file does
-   not record which semantics it was produced with. PairHop is exempt
-   (its two declarations are Hermitian partners, a different pairing
-   than this transpose), and so is PairLift (its particle-hole vertex
-   contribution is exactly zero, so the orientation cannot matter).
+   not record which semantics it was produced with. PairHop is checked
+   against its HERMITIAN partner instead of the plain transpose (its two
+   declarations are Hermitian partners, so its orientation never changed
+   -- but an on-site declaration that is not Hermitian-closed is also
+   rejected, because the conjugated-mean reading of PairHop declarations
+   arrived together with the version stamp). PairLift is exempt (its
+   particle-hole vertex contribution is exactly zero, so neither the
+   orientation nor the symmetrised reading can matter).
    Symmetric declarations -- every physically ordinary input -- are
    unaffected, and reduced-scheme files never depended on this
    orientation.

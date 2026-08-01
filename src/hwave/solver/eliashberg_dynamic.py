@@ -1163,6 +1163,21 @@ def solve_dynamic(input_dict):
     T = mode_param["T"]
     beta = 1.0 / T
     cell_shape = mode_param["CellShape"]
+    if "SubShape" in mode_param:
+        _ss = list(mode_param["SubShape"])
+        while len(_ss) < 3:
+            _ss.append(1)
+        if _ss != [1, 1, 1]:
+            # supported nowhere in this module: the geometry and
+            # interactions are consumed UNFOLDED here, so a folded
+            # susceptibility mismatches the expected orbital count and an
+            # off-site bond would fold onto an on-site supercell entry
+            # (round-4 review); failing late produced an unhelpful shape
+            # error instead of this actionable one
+            raise ValueError(
+                "SubShape (sublattice folding) is not supported by the "
+                "Eliashberg module: fold the model into the unit cell "
+                "yourself, or use SubShape = [1, 1, 1].")
     sub_shape = mode_param.get("SubShape", cell_shape)
     if isinstance(cell_shape, list):
         cell_shape = list(cell_shape)
