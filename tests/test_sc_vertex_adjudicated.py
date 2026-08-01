@@ -469,6 +469,132 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         self.assertIn("CoulombIntra", inter)
         self.assertTrue(inter["CoulombIntra"])
 
+    def test_pairhop_measurement_basis_is_pinned(self):
+        """The 0.15 delta that justified the PairHop rule (round 4): the
+        current conjugated-mean reading maps a real asymmetric 0.7/0.4
+        on-site declaration to 0.55 at BOTH antidiagonal myo S slots,
+        0.15 away from the historical raw placement (0.7 and 0.4)."""
+        import hwave.sc as sc
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+
+        k = np.array([0.0])
+        ik = sc._build_interaction_k(
+            k, k, k, {"PairHop": dict(self.ASYM_V)}, 2)
+        S, C = build_sc_matrices_myo(ik, 2, 1, 1, 1)
+        for M in (S, C):
+            self.assertAlmostEqual(M[0, 0, 0, 1, 2].real, 0.55, places=12)
+            self.assertAlmostEqual(M[0, 0, 0, 2, 1].real, 0.55, places=12)
+        self.assertAlmostEqual(abs(S[0, 0, 0, 1, 2] - 0.7), 0.15, places=12)
+        self.assertAlmostEqual(abs(S[0, 0, 0, 2, 1] - 0.4), 0.15, places=12)
+
+    def test_lowercase_keys_choose_the_same_auto_scheme(self):
+        """Round 5: the auto tensor selector classified a lowercase
+        'coulombinter' run as reduced -- silently omitting the components
+        inter-orbital interactions require -- while 'CoulombInter' chose
+        general. Public-entry parity: the same model configured with
+        canonical and lowercase keys must produce identical
+        eigenvalues under chi0q_mode='calc' + auto."""
+        import tempfile
+        import hwave.sc as sc
+
+        def fixture(case):
+            d = tempfile.mkdtemp()
+            with open(os.path.join(d, "geom.dat"), "w") as fobj:
+                fobj.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                           "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
+            with open(os.path.join(d, "transfer.dat"), "w") as fobj:
+                fobj.write("Transfer\n2\n2\n 1 1\n"
+                           "   1    0    0    1    1   1.000000   0.0\n"
+                           "  -1    0    0    1    1   1.000000   0.0\n"
+                           "   1    0    0    2    2   0.800000   0.0\n"
+                           "  -1    0    0    2    2   0.800000   0.0\n")
+            with open(os.path.join(d, "coulombintra.dat"), "w") as fobj:
+                fobj.write("CoulombIntra\n2\n1\n 1\n"
+                           "   0    0    0    1    1   2.000000   0.0\n"
+                           "   0    0    0    2    2   2.000000   0.0\n")
+            with open(os.path.join(d, "coulombinter.dat"), "w") as fobj:
+                fobj.write("CoulombInter\n2\n1\n 1\n"
+                           "   0    0    0    1    2   0.500000   0.0\n"
+                           "   0    0    0    2    1   0.500000   0.0\n")
+            keys = {"Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat",
+                    "CoulombInter": "coulombinter.dat"}
+            if case == "lower":
+                # lowercase the interaction TYPE keys only -- the round-5
+                # defect: 'coulombinter' chose the reduced scheme. The
+                # Geometry/Transfer structural keys are a separate reader
+                # concern and stay canonical here.
+                for name in ("CoulombIntra", "CoulombInter"):
+                    keys[name.lower()] = keys.pop(name)
+            keys["path_to_input"] = d
+            out = os.path.join(d, "out")
+            os.makedirs(out, exist_ok=True)
+            return {
+                "mode": {"param": {"T": 2.0, "filling": 0.5,
+                                   "CellShape": [4, 4, 1],
+                                   "SubShape": [1, 1, 1], "Nmat": 8}},
+                "file": {"input": {"path_to_input": d,
+                                   "interaction": keys},
+                         "output": {"path_to_output": out}},
+                "eliashberg": {"chi0q_mode": "calc",
+                               "frequency": "static",
+                               "pairing_type": "singlet",
+                               "init_gap": "cos",
+                               "solver_mode": "eigenvalue",
+                               "eigenvalue_method": "arnoldi",
+                               "num_eigenvalues": 2,
+                               "output_eigenvalue": "eig.dat",
+                               "output_gap": "gap.dat"},
+            }
+
+        outs = {}
+        for case in ("canonical", "lower"):
+            inp = fixture(case)
+            sc.calc_eliashberg(inp)
+            eig_path = os.path.join(
+                inp["file"]["output"]["path_to_output"], "eig.dat")
+            with open(eig_path) as fobj:
+                outs[case] = fobj.read()
+        # numeric comparison, not byte identity: the Arnoldi solver is
+        # not run-to-run bit-reproducible (issue #85; observed only in a
+        # ~1e-17 imaginary residual), and the parity claim here is about
+        # the SCHEME choice and the physics
+        def nums(text):
+            vals = []
+            for line in text.splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    vals.extend(float(x) for x in line.split())
+            return np.asarray(vals)
+
+        a, b = nums(outs["canonical"]), nums(outs["lower"])
+        self.assertTrue(a.size)
+        self.assertEqual(a.shape, b.shape)
+        np.testing.assert_allclose(b, a, atol=1e-10)
+
+    def test_subshape_guard_fires_before_any_file_access(self):
+        """Sentinel pin: the SubShape rejection must precede the reader
+        (the guard exists to fail BEFORE work, and a reordering that
+        reads files first would reintroduce the late confusing
+        failure)."""
+        from unittest import mock
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+
+        base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
+                                   "SubShape": [2, 1, 1],
+                                   "filling": 0.5}},
+                "file": {"input": {"interaction": {}},
+                         "output": {"path_to_output": "."}},
+                "eliashberg": {}}
+        with mock.patch.object(sc, "_read_interaction_files",
+                               side_effect=AssertionError(
+                                   "reader must not run")) as spy:
+            with self.assertRaises(ValueError):
+                sc.calc_eliashberg(dict(base))
+            with self.assertRaises(ValueError):
+                ed.solve_dynamic(dict(base))
+        self.assertEqual(spy.call_count, 0)
+
     def test_subshape_is_rejected_with_an_actionable_error(self):
         """Sublattice folding is unsupported by the Eliashberg module
         (geometry/interactions are consumed unfolded); it used to fail

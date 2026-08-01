@@ -406,10 +406,16 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         # because their S/C matrices have off-diagonal elements that
         # couple to chi0q off-diagonal components.
         # With CoulombIntra only, S is block-diagonal and reduced is exact.
-        files = info_inputfile.get("interaction", {})
+        # CaseInsensitiveDict, like _read_interaction_files (round-5
+        # review): an exact-case check classified a 'coulombinter' run as
+        # reduced, silently omitting the very components the comment
+        # above says inter-orbital interactions require. 'Coulomb' counts
+        # too -- its split can produce a CoulombInter part.
+        from requests.structures import CaseInsensitiveDict
+        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
         has_interorbital = any(k in files for k in
                               ["Hund", "Exchange", "CoulombInter",
-                               "Ising", "PairHop"])
+                               "Ising", "PairHop", "Coulomb"])
         if has_interorbital:
             calc_scheme = "general"
         else:
