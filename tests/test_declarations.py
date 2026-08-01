@@ -430,8 +430,6 @@ class TestIEEESpecialParity(unittest.TestCase):
             np.testing.assert_array_equal(got.imag, want.imag)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestHermitianClosureValidation(unittest.TestCase):
@@ -476,3 +474,7 @@ class TestHermitianClosureValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_hermitian_closure(
                 "CoulombIntra", {((0, 0, 0), (0, 1)): 1.0})
+
+
+if __name__ == "__main__":
+    unittest.main()

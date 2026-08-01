@@ -146,22 +146,26 @@ Usage rules
 
 .. note::
 
-   The Ising Hamiltonian above is the convention shared by all
-   solvers (it is the operator the RPA/FLEX vertex content was
-   adjudicated against by exact diagonalization). Earlier versions of
-   this page defined the term as :math:`J S^z S^z` with
-   :math:`S^z = (n_\uparrow - n_\downarrow)/2`, and
-   :math:`\sum J^{z}_{ij} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`,
-   consistently with the RPA/FLEX solvers. Earlier versions of the UHFk
-   solver applied an extra factor 1/4 (reading the file as
-   :math:`J S^z S^z`); results computed with those versions correspond
-   to a coupling four times smaller than the same file gives now.
+   Convention history of the Ising term. (1) Older versions of this
+   page defined it as :math:`J S^z S^z` with
+   :math:`S^z = (n_\uparrow - n_\downarrow)/2`, and the UHFk solver
+   followed that definition (an effective factor 1/4 relative to the
+   form above). (2) The RPA/FLEX solvers always read the file in the
+   density-difference form above, which is also the operator their
+   vertex content was adjudicated against by exact diagonalization.
+   (3) The shared convention is now the density-difference form for
+   every solver and page; UHFk results computed with older versions
+   correspond to a coupling four times smaller than the same file
+   gives now.
 
 .. note::
 
-   Interaction declaration files must be Hermitian-closed:
+   The two-body declaration files (Coulomb, CoulombIntra,
+   CoulombInter, Hund, Exchange, Ising, PairLift, PairHop) must be
+   Hermitian-closed:
    each entry :math:`X_{ab}(R)` must be accompanied by its partner
    :math:`X_{ba}(-R) = X_{ab}(R)^{*}`. A missing or disagreeing partner
-   is rejected at read time. (This applies to the wannier90-like
+   is rejected at read time. CoulombIntra additionally requires on-site
+   same-orbital entries with finite real values. (This applies to the wannier90-like
    k-space format read here; the separate UHFr real-space reader keeps
    its own conventions.)
