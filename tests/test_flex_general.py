@@ -521,9 +521,13 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
                           {"green": green})
         with np.load(os.path.join(d, "green.npz")) as data:
             self.assertIn("beta", data)
-            beta = np.asarray(data["beta"]).ravel()
-            self.assertEqual(beta.size, 1)
-            self.assertAlmostEqual(float(beta[0]), 1.0 / flex.T, places=13)
+            beta = np.asarray(data["beta"])
+            # ndim 0, not just size 1: the loader's scalar gate rejects
+            # rank-1 metadata, so a future writer regression to shape (1,)
+            # must fail HERE, not at every user's load
+            self.assertEqual(beta.ndim, 0)
+            self.assertAlmostEqual(float(beta.item()), 1.0 / flex.T,
+                                   places=13)
 
     def test_legacy_file_without_tag_defaults_kuroki(self):
         import tempfile
