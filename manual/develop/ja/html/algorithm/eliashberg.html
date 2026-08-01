@@ -82,10 +82,11 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 電荷チャネル（ <span class="math notranslate nohighlight">\(W_c\)</span> ）を用いて計算されます。 <span class="math notranslate nohighlight">\(U\)</span> と
 <span class="math notranslate nohighlight">\(V\)</span> は宣言ファイルの対称化された読み（逆向きボンドの相手
 <span class="math notranslate nohighlight">\((R, a, b) \leftrightarrow (-R, b, a)\)</span> との平均）として入り、
-パッケージ内の他の全経路と一致します。したがって片側のみのオフサイト
-宣言は <span class="math notranslate nohighlight">\(v e^{-iqR}\)</span> ではなく <span class="math notranslate nohighlight">\(v \cos(qR)\)</span> として寄与します
-（以前の簡易モードは片側の生の位相を使用していました。両方向を含む宣言
-はビット単位で不変に読まれます）:</p>
+パッケージ内の他の全経路と一致します。両方向を含む実数の宣言はビット単位で不変に読まれます（エルミート共役
+で閉じた複素対は、不活性な虚部が実係数に折り畳まれます）
+（issue #93 以降、エルミート共役の相手を欠く片側宣言は読み込み時に拒否
+されるため、ここに到達するのは閉じたファイルのみです。以前の簡易モード
+は片側ファイルを生の位相で読んでいました）:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-3">
 <span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-eliashberg-3" title="Link to this equation">¶</a></span>\[W_s = -U, \qquad W_c = U + 2V\]</div>
 <p>RPA感受率は</p>

@@ -81,11 +81,12 @@ are present, the pairing vertex is computed using the spin (<span class="math no
 and charge (<span class="math notranslate nohighlight">\(W_c\)</span>) channels. <span class="math notranslate nohighlight">\(U\)</span> and <span class="math notranslate nohighlight">\(V\)</span> enter as the
 symmetrised reading of the declaration file – the mean with the
 reversed-bond partner <span class="math notranslate nohighlight">\((R, a, b) \leftrightarrow (-R, b, a)\)</span> –
-matching every other route in the package: a one-sided off-site
-declaration therefore contributes <span class="math notranslate nohighlight">\(v \cos(qR)\)</span>, not
-<span class="math notranslate nohighlight">\(v e^{-iqR}\)</span> (earlier versions of the simple mode used the raw
-one-sided phase; declarations that already contain both directions are
-read unchanged, bit for bit):</p>
+matching every other route in the package: real declarations that contain both directions are
+read unchanged, bit for bit; a Hermitian-closed complex pair has its
+inert imaginary part folded to the real coefficient. (Since issue #93 a one-sided declaration
+– an entry with no Hermitian partner – is rejected at read time, so
+only closed files reach this point; earlier versions of the simple mode
+read a one-sided file with the raw one-sided phase.):</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-3">
 <span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-eliashberg-3" title="Link to this equation">¶</a></span>\[W_s = -U, \qquad W_c = U + 2V\]</div>
 <p>The RPA susceptibilities are</p>

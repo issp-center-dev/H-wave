@@ -54,7 +54,7 @@ in the random phase approximation,</p>
 </dd>
 <dt><strong>Hund</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)\)</span></p>
 </dd>
-<dt><strong>Ising</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}, \quad S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow})\)</span></p>
+<dt><strong>Ising</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})\)</span></p>
 </dd>
 <dt><strong>PairHop</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}\)</span></p>
 </dd>
@@ -156,7 +156,7 @@ These parameters specify the real and imaginary parts of the coefficient
 <h2>Usage rules<a class="headerlink" href="#usage-rules" title="Link to this heading">¶</a></h2>
 <ul>
 <li><p>Header cannot be omitted.</p></li>
-<li><p>The unspecified elements of the coefficient matrix are assumed to be zero.</p></li>
+<li><p>The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner X_ba(-R) is unspecified is rejected at read time (issue #93): both directions of a coupling must be declared.</p></li>
 <li><p>The translation vectors need to be enclosed within the CellShape. If the range of <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, or <code class="docutils literal notranslate"><span class="pre">r_z</span></code> exceeds the extent of <code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, or <code class="docutils literal notranslate"><span class="pre">z</span></code> dimension of CellShape, the program terminates with an error.</p></li>
 <li><p>When <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> is set to <code class="docutils literal notranslate"><span class="pre">true</span></code>, the orbital indices of the
 Transfer term use the interleaved spin-orbital convention and range from 1 to

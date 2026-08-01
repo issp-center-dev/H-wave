@@ -21,7 +21,7 @@ in the wave-number space UHF.
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}, \quad (S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow}))`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
     **Exchange**:
@@ -136,7 +136,7 @@ Usage rules
 
 -  Header cannot be omitted.
 
--  The unspecified elements of the coefficient matrix are assumed to be zero.
+-  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner X_ba(-R) is unspecified is rejected at read time (issue #93): both directions of a coupling must be declared.
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 
@@ -144,4 +144,29 @@ Usage rules
 
 -  In spin-orbital mode the interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported, handled via a virtual spin decomposition. The doubled ``2α+s+1`` index convention applies to the Transfer file only. Interaction definition files use physical-orbital indices (1 .. :math:`N_\text{orbital}/2`).
 
-.. raw:: latex
+.. note::
+
+   Convention history of the Ising term. (1) Older versions of this
+   page defined it as :math:`J S^z S^z` with
+   :math:`S^z = (n_\uparrow - n_\downarrow)/2`, and the UHFk solver
+   followed that definition (an effective factor 1/4 relative to the
+   form above). (2) The RPA/FLEX solvers always read the file in the
+   density-difference form above, which is also the operator their
+   vertex content was adjudicated against by exact diagonalization.
+   (3) The shared convention is now the density-difference form for
+   every Wannier90-like k-space solver and page (UHFr's real-space
+   reader keeps its own S^z convention); UHFk results computed with older versions
+   correspond to a coupling four times smaller than the same file
+   gives now.
+
+.. note::
+
+   The two-body declaration files (Coulomb, CoulombIntra,
+   CoulombInter, Hund, Exchange, Ising, PairLift, PairHop) must be
+   Hermitian-closed:
+   each entry :math:`X_{ab}(R)` must be accompanied by its partner
+   :math:`X_{ba}(-R) = X_{ab}(R)^{*}`. A missing or disagreeing partner
+   is rejected at read time. CoulombIntra additionally requires on-site
+   same-orbital entries with finite real values. (This applies to the wannier90-like
+   k-space format read here; the separate UHFr real-space reader keeps
+   its own conventions.)

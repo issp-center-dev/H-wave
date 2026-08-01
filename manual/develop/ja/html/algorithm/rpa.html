@@ -229,9 +229,9 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 <li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -V\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -(J + J^{\rm T})/2\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = +I\)</span> （RPA が現在 Ising ファイルに用いて
-いる規格化での値。UHFk は同じファイルにさらに <span class="math notranslate nohighlight">\(1/4\)</span> を掛けており、この
-不一致は別途追跡されています）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = +I\)</span> （wannier90 形式の k 空間ソルバーはすべてこの規格化で Ising ファイル
+を読みます。UHFk の因子 1/4 の不一致は issue #106 で解消済みです。
+別系統の実空間 UHFr リーダーは S^z 規約を保持します）</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -J\)</span></p></li>
 </ul>
@@ -250,11 +250,10 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 対して非局所となり、その頂点は <span class="math notranslate nohighlight">\(q\)</span> のみの関数では表現できないためです。
 実際にはオフサイトの <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Ising</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> が拒否され、
 オフサイトの <code class="docutils literal notranslate"><span class="pre">Hund</span></code> と <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> は横方向頂点が消えるため受理されます。
-判定基準が生の宣言ではなく組み立て後の頂点であることの帰結が2つあります。
-対称化後の頂点で寄与が厳密に打ち消し合うオフサイト宣言の組は受理されます
-（その場合チャネルが実際に使う頂点は well-defined です）。また <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>
-による折り畳みでスーパーセル内に収まるサイト間ペアはセル内軌道ペアとなり、
-表現可能として受理されます。縦方向（ <code class="docutils literal notranslate"><span class="pre">ring</span></code> ）チャネルは影響を受けません。</p>
+なお、互いに打ち消し合う・値が食い違う宣言の組は、より早い読み込み時に
+拒否されます（issue #93: 宣言ファイルはエルミート共役で閉じている必要が
+あります）。また <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> による折り畳みでスーパーセル内に収まる
+サイト間ペアはセル内軌道ペアとなり、表現可能として受理されます。縦方向（ <code class="docutils literal notranslate"><span class="pre">ring</span></code> ）チャネルは影響を受けません。</p>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
 <p>オフサイトの <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は相互作用の読み込み時にこの検査より前に暗黙に

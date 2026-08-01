@@ -28,7 +28,7 @@ UHFk用入力ファイル
     **Hund**:
       :math:`n_{i\uparrow}n_{j\uparrow}+n_{i\downarrow}n_{j\downarrow}`\ で表される相互作用を指定します。
     **Ising**:
-      :math:`S_i^z S_j^z`\ で表される相互作用を指定します。  
+      :math:`(n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`\ で表される相互作用を指定します。  
     **Exchange**:
       :math:`S_i^+ S_j^-`\ で表される相互作用を指定します。  
     **PairLift**:

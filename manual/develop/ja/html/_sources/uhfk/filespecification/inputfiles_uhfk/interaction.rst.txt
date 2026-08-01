@@ -18,7 +18,7 @@
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}` (\ :math:`S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow})`)
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
     **Exchange**:
@@ -122,7 +122,7 @@
 
 -  行数固定で読み込みを行うため、ヘッダの省略はできません。
 
--  係数行列のうち、省略された要素は 0と仮定します。
+-  係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手 :math:`X_{ba}(-R)` が省略された宣言済みエントリは読み込み時に拒否されます（issue #93）。結合の両方向を宣言してください。
 
 -  並進ベクトルは全て ``CellShape`` 内に収まるとします。
    ``r_x``, ``r_y``, ``r_z`` の範囲が ``CellShape`` のx,y,z軸のサイズを超える場合はエラーで終了します。
@@ -131,4 +131,26 @@
 
 -  スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された ``2α+s+1`` のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜 :math:`N_\text{orbital}/2`）を用います。
 
-.. raw:: latex
+.. note::
+
+   Ising 項の規約の履歴。（1）本ページの旧版はこの項を
+   :math:`J S^z S^z` （ :math:`S^z = (n_\uparrow - n_\downarrow)/2` ）
+   と定義しており、UHFk ソルバーはその定義に従っていました（上記の形式
+   に対して実効的に因子 1/4）。（2）RPA/FLEX ソルバーは一貫して上記の
+   密度差形式でファイルを読んでおり、これは厳密対角化で頂点内容が判定
+   された演算子でもあります。（3）現在は wannier90 形式の k 空間ソルバーとページはすべて密度差
+   形式を共有します（UHFr の実空間リーダーは独自の S^z 規約を保持し
+   ます）。旧バージョンの UHFk の結果は、同じファイルが現在
+   与える結合の 4 分の 1 に対応します。
+
+.. note::
+
+   二体相互作用の宣言ファイル（Coulomb, CoulombIntra, CoulombInter,
+   Hund, Exchange, Ising, PairLift, PairHop）はエルミート共役で閉じて
+   いる必要があります：
+   各エントリ :math:`X_{ab}(R)` には相手 :math:`X_{ba}(-R) = X_{ab}(R)^{*}`
+   が伴わなければなりません。相手が欠けている、または値が一致しない場合
+   は読み込み時に拒否されます。 CoulombIntra はさらにオンサイト同一軌道・有限実数値の
+   エントリのみを受け付けます。（これはここで読む wannier90 形式の
+   k 空間ファイルに適用されます。別系統の UHFr 実空間リーダーは独自の
+   規約を保持します。）

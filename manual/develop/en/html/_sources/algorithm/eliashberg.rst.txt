@@ -65,11 +65,12 @@ are present, the pairing vertex is computed using the spin (:math:`W_s`)
 and charge (:math:`W_c`) channels. :math:`U` and :math:`V` enter as the
 symmetrised reading of the declaration file -- the mean with the
 reversed-bond partner :math:`(R, a, b) \leftrightarrow (-R, b, a)` --
-matching every other route in the package: a one-sided off-site
-declaration therefore contributes :math:`v \cos(qR)`, not
-:math:`v e^{-iqR}` (earlier versions of the simple mode used the raw
-one-sided phase; declarations that already contain both directions are
-read unchanged, bit for bit):
+matching every other route in the package: real declarations that contain both directions are
+read unchanged, bit for bit; a Hermitian-closed complex pair has its
+inert imaginary part folded to the real coefficient. (Since issue #93 a one-sided declaration
+-- an entry with no Hermitian partner -- is rejected at read time, so
+only closed files reach this point; earlier versions of the simple mode
+read a one-sided file with the raw one-sided phase.):
 
 .. math::
 
