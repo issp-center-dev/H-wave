@@ -154,7 +154,9 @@ class TestProductionAnchoring(unittest.TestCase):
         import hwave.solver.rpa as rpa_mod
         from hwave.solver import declarations
 
-        d = tempfile.mkdtemp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
         with open(os.path.join(d, "geom.dat"), "w") as f:
             f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
                     "1\n 0.0 0.0 0.0\n")
