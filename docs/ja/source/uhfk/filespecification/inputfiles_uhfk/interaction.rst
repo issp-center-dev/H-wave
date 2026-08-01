@@ -132,3 +132,19 @@
 -  スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された ``2α+s+1`` のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜 :math:`N_\text{orbital}/2`）を用います。
 
 .. raw:: latex
+
+.. note::
+
+   Ising 結合は上記のハミルトニアン
+   :math:`\sum J^{z}_{ij} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`
+   に対して、RPA/FLEX ソルバーと一貫した形で読み込まれます。以前の
+   UHFk ソルバーは余分な因子 1/4 を適用していました（ファイルを
+   :math:`J S^z S^z` として読解）。旧バージョンの結果は、同じファイルが
+   現在与える結合の 4 分の 1 に対応します。
+
+.. note::
+
+   相互作用宣言ファイルはエルミート共役で閉じている必要があります：
+   各エントリ :math:`X_{ab}(R)` には相手 :math:`X_{ba}(-R) = X_{ab}(R)^{*}`
+   が伴わなければなりません。相手が欠けている、または値が一致しない場合
+   は読み込み時に拒否されます。

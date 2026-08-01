@@ -145,3 +145,19 @@ Usage rules
 -  In spin-orbital mode the interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported, handled via a virtual spin decomposition. The doubled ``2α+s+1`` index convention applies to the Transfer file only. Interaction definition files use physical-orbital indices (1 .. :math:`N_\text{orbital}/2`).
 
 .. raw:: latex
+
+.. note::
+
+   The Ising coupling is read against the Hamiltonian written above,
+   :math:`\sum J^{z}_{ij} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`,
+   consistently with the RPA/FLEX solvers. Earlier versions of the UHFk
+   solver applied an extra factor 1/4 (reading the file as
+   :math:`J S^z S^z`); results computed with those versions correspond
+   to a coupling four times smaller than the same file gives now.
+
+.. note::
+
+   Interaction declaration files must be Hermitian-closed:
+   each entry :math:`X_{ab}(R)` must be accompanied by its partner
+   :math:`X_{ba}(-R) = X_{ab}(R)^{*}`. A missing or disagreeing partner
+   is rejected at read time.

@@ -1,6 +1,9 @@
-Energy_Total        = -10.74418063479572
-Energy_Band         = -8.794240820599656
-Energy_CoulombIntra = -5.358774927711394
-Energy_Ising        = 3.40883511351533
+Energy_Total        = -21.330608360052757
+Energy_Band         = -32.420196353846585
+Energy_CoulombIntra = -3.410168548631557
+Energy_Ising        = 14.499756542425386
+FreeEnergy_Total    = -21.330608360052757
+FreeEnergy_Band     = -32.420196353846585
 NCond   = 16.0
-Sz      = -4.440892098500626e-16
+Sz      = 4.440892098500626e-16
+ChemicalPotential = 4.000000000000001
