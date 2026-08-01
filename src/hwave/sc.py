@@ -2593,11 +2593,13 @@ def _calc_g2(green_kw, beta, tail=True):
         c = beta/4 - (1/beta) sum_{n in window} 1/wn^2   (> 0)
 
     to G2[i,i,l,l], i.e. c times the identity on the (il) gap space. This
-    reduces the truncation error from O(1/Nmat) to o(1/Nmat^2) and restores
-    the positive semi-definiteness of G2 that makes the static Eliashberg
-    kernel similar to a Hermitian matrix (real spectrum): the bare truncated
-    sum is slightly indefinite, which injects spurious imaginary parts into
-    the reported eigenvalues at small Nmat.
+    reduces the truncation error from O(1/Nmat) to the next order and in
+    practice restores the positive semi-definiteness of G2 that makes the
+    static Eliashberg kernel similar to a Hermitian matrix (real spectrum);
+    the higher-order remainder can still leave a small exact eigenvalue
+    negative, which _warn_if_g2_indefinite reports. The bare truncated sum
+    is slightly indefinite, which injects spurious imaginary parts into the
+    reported eigenvalues at small Nmat.
 
     Parameters
     ----------
@@ -2636,9 +2638,19 @@ def _calc_g2(green_kw, beta, tail=True):
     G2 = G2 / beta
     if tail:
         # The grid below must match _calc_green's centered Matsubara grid
-        # wn = (2n + 1 - nmat) * pi / beta, n = 0..nmat-1; for odd nmat the
-        # window is asymmetric but the window sum is still computed from the
-        # actual grid, so the correction stays exact for the model tail.
+        # wn = (2n + 1 - nmat) * pi / beta, n = 0..nmat-1. That grid is only
+        # fermionic for EVEN nmat: an odd nmat puts wn = 0 in the window
+        # (divide by zero below, and a bosonic frequency in a fermionic sum),
+        # and nmat <= 0 would return the bare analytic shift beta/4 with no
+        # Green-function samples at all. Loaded FLEX Green functions reach
+        # this point without any earlier grid validation, so guard here.
+        if nmat <= 0 or nmat % 2 != 0:
+            raise ValueError(
+                "the Matsubara tail correction (g2_tail) requires an even, "
+                "positive number of frequencies on the centered fermionic "
+                "grid; the Green function has nmat = {}. Fix the frequency "
+                "axis of the input Green function (or Nmat), or set "
+                "[eliashberg] g2_tail = false.".format(nmat))
         wn = (2.0 * np.arange(nmat) + 1.0 - nmat) * np.pi / beta
         coeff = beta / 4.0 - np.sum(1.0 / wn**2) / beta
         di = np.arange(norb)
@@ -2647,27 +2659,52 @@ def _calc_g2(green_kw, beta, tail=True):
     return G2
 
 
+# _warn_if_g2_indefinite skip thresholds (module-level so tests can patch
+# them): eigvalsh work scales as (norb^2)^3 per k-point, i.e. norb^6 * nvol
+# flops up to a constant, and the (nvol, norb^2, norb^2) view plus its
+# Hermitized copy each take 16 * norb^4 * nvol bytes.
+_G2_CHECK_MAX_WORK = 20_000_000_000
+_G2_CHECK_MAX_BYTES = 2_000_000_000
+
+
 def _warn_if_g2_indefinite(G2, norb, tail_enabled):
     """Warn when the pair bubble G2 has a significantly negative eigenvalue.
 
     G2 viewed as a matrix on the (i,l) gap space, M[(i,l),(j,m)] = G2[i,j,l,m],
-    is positive semi-definite in the exact Matsubara sum; that is what makes
-    the static kernel K = -Gamma W similar to a Hermitian matrix and its
-    spectrum real. Truncation breaks positivity (issue #86), and users then
-    see complex eigenvalues that look like a broken symmetry. Point them at
-    Nmat / g2_tail instead of leaving that misread silent.
+    is Hermitian positive semi-definite in the exact Matsubara sum; that is
+    what makes the static kernel K = -Gamma W similar to a Hermitian matrix
+    and its spectrum real. Truncation breaks positivity (issue #86), and
+    users then see complex eigenvalues that look like a broken symmetry.
+    Point them at Nmat / g2_tail instead of leaving that misread silent.
 
-    The check diagonalizes an (norb^2 x norb^2) block per k-point, so it is
-    skipped (with a log line) when norb^4 * nvol is large enough to rival the
-    solve itself.
+    A significantly non-Hermitian G2 gets its own warning first (a loaded
+    Green function can be malformed, non-causal, or on the wrong grid;
+    silently Hermitizing would hide exactly that defect), and the PSD test
+    then runs on the Hermitian part. The check diagonalizes an
+    (norb^2 x norb^2) block per k-point, so it is skipped (with a log line)
+    when the eigensolver work estimate norb^6 * nvol or the temporaries'
+    size would rival the solve itself.
     """
     nvol = int(np.prod(G2.shape[4:]))
-    if norb**4 * nvol > 200_000_000:
-        logger.info("G2 positivity check skipped (norb^4 * nvol = %d too "
-                    "large).", norb**4 * nvol)
+    work = norb**6 * nvol
+    nbytes = 2 * 16 * norb**4 * nvol
+    if work > _G2_CHECK_MAX_WORK or nbytes > _G2_CHECK_MAX_BYTES:
+        logger.info("G2 positivity check skipped (work estimate norb^6 * "
+                    "nvol = %d, temporaries = %d bytes).", work, nbytes)
         return None
     M = G2.reshape(norb, norb, norb, norb, nvol)
     M = M.transpose(4, 0, 2, 1, 3).reshape(nvol, norb * norb, norb * norb)
+    scale = float(np.abs(M).max()) if M.size else 0.0
+    herm_residual = (float(np.abs(M - np.conj(M.transpose(0, 2, 1))).max())
+                     if M.size else 0.0)
+    if herm_residual > 1.0e-8 * max(scale, 1.0e-300):
+        logger.warning(
+            "G2 (pair bubble) is significantly non-Hermitian on the gap "
+            "space: max |M - M^dag| = %.3e against max |M| = %.3e. The "
+            "exact pair bubble is Hermitian, so check the input Green "
+            "function's provenance (grid, temperature, causality); the "
+            "positivity diagnostic below uses only the Hermitian part.",
+            herm_residual, scale)
     M = 0.5 * (M + np.conj(M.transpose(0, 2, 1)))
     ev = np.linalg.eigvalsh(M)
     min_ev, max_ev = ev.min(), ev.max()
@@ -2677,9 +2714,12 @@ def _warn_if_g2_indefinite(G2, norb, tail_enabled):
                      "([eliashberg] g2_tail = true)")
         logger.warning(
             "G2 (pair bubble) is not positive semi-definite: min eigenvalue "
-            "= %.3e (max = %.3e). This is Matsubara truncation error, not a "
-            "broken symmetry; complex Eliashberg eigenvalues reported below "
-            "are spurious at this level -- %s.", min_ev, max_ev, hint)
+            "= %.3e (max = %.3e). The most likely cause is Matsubara "
+            "truncation error rather than a broken symmetry, and complex "
+            "Eliashberg eigenvalues reported below are then spurious at "
+            "this level -- %s. If the Green function was loaded from file, "
+            "also check that its grid and temperature match this run.",
+            min_ev, max_ev, hint)
     return min_ev
 
 

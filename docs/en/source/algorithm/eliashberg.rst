@@ -257,9 +257,11 @@ which is efficiently computed using the Fast Fourier Transform (FFT).
    well). By default the solver subtracts this model inside the frequency
    window and adds its exact full sum
    :math:`T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4`, which amounts
-   to adding a positive multiple of the identity on the gap space. This
-   restores the positive semi-definiteness of :math:`G^{(2)}` that makes
-   the kernel spectrum real: without it, small-``Nmat`` multi-orbital runs
+   to adding a positive multiple of the identity on the gap space. In
+   practice this restores the positive semi-definiteness of
+   :math:`G^{(2)}` that makes the kernel spectrum real (the higher-order
+   truncation remainder can still leave a tiny negative eigenvalue, which
+   the solver reports): without the correction, small-``Nmat`` multi-orbital runs
    report spuriously complex eigenvalues that can be mistaken for a broken
    symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
    reproduce results computed before this correction was introduced; the
