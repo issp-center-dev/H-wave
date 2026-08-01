@@ -230,13 +230,20 @@ class TestG2TailGuards(unittest.TestCase):
         self.assertIn("non-finite", str(cm.exception))
 
     def test_finiteness_scan_runs_in_bounded_chunks(self):
-        """The non-finite gate must not allocate a G2-sized Boolean mask
-        (round-9 review: ~6% of the tensor again -- an OOM tipping point
-        for large runs). Pin the chunk bound by capturing every isfinite
-        argument during a call."""
+        """The non-finite gate must neither allocate a G2-sized Boolean
+        mask nor flatten via a full copy (round-10: reshape(-1) copied the
+        non-contiguous 'K'-layout tensor -- worse than the mask it
+        replaced). norb = 23, nvol = 4 gives 23^4 * 4 = 1,119,364 > 2^20
+        elements, so a reverted whole-tensor scan cannot hide inside one
+        chunk; the exact chunk sizes are pinned, and the shares-storage
+        premise of ravel(order='K') is pinned on the production layout
+        (nvol > 1 -- with a single k-point the layout degenerates to
+        contiguous and the premise is untestable)."""
         from unittest import mock
-        H = _model(Nx=2, Ny=2)
-        green = _green(H, self.beta, 32)
+        norb, nmat = 23, 2
+        rng = np.random.RandomState(9)
+        green = (rng.randn(norb, norb, 2, 2, 1, nmat)
+                 + 1j * rng.randn(norb, norb, 2, 2, 1, nmat))
         sizes = []
         real_isfinite = np.isfinite
 
@@ -245,9 +252,14 @@ class TestG2TailGuards(unittest.TestCase):
             return real_isfinite(x, *args, **kwargs)
 
         with mock.patch.object(sc.np, "isfinite", side_effect=spy):
-            _calc_g2(green, self.beta)
-        self.assertTrue(sizes)
-        self.assertLessEqual(max(sizes), 1 << 20)
+            g2 = _calc_g2(green, self.beta)
+        chunk_sizes = [n for n in sizes if n > 1]
+        self.assertEqual(chunk_sizes,
+                         [1 << 20, 23**4 * 4 - (1 << 20)])
+        # production layout: ufunc-'K' output is non-contiguous, and the
+        # memory-order flatten must SHARE storage, not copy
+        self.assertFalse(g2.flags.c_contiguous)
+        self.assertTrue(np.shares_memory(g2, g2.ravel(order="K")))
 
     def test_reduced_precision_input_is_promoted(self):
         """A complex64 (file-precision) Green function must accumulate in
@@ -615,6 +627,25 @@ class TestG2TailStrictParsing(unittest.TestCase):
                     sc._coerce_g2_tail(value)
 
 
+class TestFinitePositiveScalarHelper(unittest.TestCase):
+    """_finite_positive_float64: the shared gate behind the file-beta,
+    run-T, and _calc_g2 checks. Scalar means scalar -- containers are
+    rejected even when they hold one number (round-10 review)."""
+
+    def test_accepted_forms(self):
+        for value in (2.0, 2, np.float64(2.0), np.int64(2),
+                      np.uint8(2), np.array(2.0)):
+            with self.subTest(value=repr(value)):
+                self.assertEqual(sc._finite_positive_float64(value), 2.0)
+
+    def test_rejected_forms(self):
+        for value in ([2.0], [[2.0]], (2.0,), "2.0", True,
+                      np.array([1.0, 2.0]), np.array([]), None,
+                      2.0 + 0j, np.nan, np.inf, 0.0, -1.0):
+            with self.subTest(value=repr(value)):
+                self.assertIsNone(sc._finite_positive_float64(value))
+
+
 class TestFlexGreenProvenance(unittest.TestCase):
     """green.npz temperature/grid provenance (round 3): the consumer
     rebuilds the Matsubara grid from its own beta, so a file from another
@@ -736,7 +767,8 @@ class TestFlexGreenProvenance(unittest.TestCase):
         self.assertIn("beta", str(cm.exception))
 
     @unittest.skipUnless(
-        np.finfo(np.longdouble).tiny < np.finfo(np.float64).tiny * 1e-100,
+        np.finfo(np.longdouble).tiny
+        < np.longdouble(np.finfo(np.float64).tiny) * np.longdouble("1e-100"),
         "needs a longdouble with wider exponent range than binary64")
     def test_extended_precision_T_narrowing_to_zero_raises_value_error(self):
         """A positive extended-precision T below the binary64 range

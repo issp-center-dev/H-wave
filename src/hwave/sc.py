@@ -2652,6 +2652,10 @@ def _finite_positive_float64(value):
     computation actually uses -- recreating the fail-open comparisons these
     gates exist to prevent. Validating the narrowed float64 closes that.
     """
+    if isinstance(value, (list, tuple)):
+        # the contract is a SCALAR: [2.0] or [[2.0]] silently passing an
+        # asarray-based gate would bless container-typed configs
+        return None
     arr = np.asarray(value).ravel()
     if arr.size != 1 or arr.dtype.kind not in "iuf":
         return None
@@ -2888,7 +2892,10 @@ def _calc_g2(green_kw, beta, tail=True):
     # (round-9 review): a whole-tensor np.isfinite allocates a G2-sized
     # Boolean mask -- ~6% of the tensor again, enough to tip a large run
     # that otherwise fits into OOM.
-    flat = G2.reshape(-1)
+    # ravel(order="K") flattens in MEMORY order and shares storage with
+    # the (non-contiguous, ufunc-'K'-layout) G2; reshape(-1) would copy
+    # the whole tensor here -- worse than the mask it replaced.
+    flat = G2.ravel(order="K")
     step = 1 << 20
     for start in range(0, flat.size, step):
         if not np.all(np.isfinite(flat[start:start + step])):
