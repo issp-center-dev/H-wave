@@ -719,8 +719,9 @@ class Test3DPhysicalOracle(unittest.TestCase):
             f.write(" 0 0 0 1 1 1.0 0.0\n")
 
     def _solver(self, nmat, tail):
-        d = tempfile.mkdtemp()
-        self.addCleanup(lambda: None)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
         self._write(d)
         info_mode = {"mode": "RPA",
                      "param": {"T": T, "mu": MU,
@@ -749,14 +750,20 @@ class Test3DPhysicalOracle(unittest.TestCase):
                 chi0 = np.asarray(gi["chi0q"])
                 self.assertEqual(chi0.shape[0], 2)
                 nfreq = chi0.shape[1]
-                stat = chi0.reshape(2, nfreq, nvol)[:, nfreq // 2].real
-                e = 0.0
+                stat = chi0.reshape(2, nfreq, nvol)[:, nfreq // 2]
+                # a same-spin static bubble is real; the discarded
+                # imaginary part must be negligible, not merely ignored
+                self.assertLess(np.abs(stat.imag).max(), 1e-10)
                 for blk, sz in ((0, +1), (1, -1)):
-                    e = max(e, np.abs(stat[blk]
-                                      - self._exact_block(sz)).max())
-                errs[(nmat, tail)] = e
-        self.assertLess(errs[(256, 1.0)], errs[(256, 0.0)] / 10.0)
-        self.assertGreater(errs[(256, 1.0)] / errs[(1024, 1.0)], 8.0)
+                    errs[(blk, nmat, tail)] = np.abs(
+                        stat[blk].real - self._exact_block(sz)).max()
+        # each spin block must satisfy the pins INDEPENDENTLY: a
+        # convention swap can hide inside a two-block maximum
+        for blk in (0, 1):
+            self.assertLess(errs[(blk, 256, 1.0)],
+                            errs[(blk, 256, 0.0)] / 10.0)
+            self.assertGreater(errs[(blk, 256, 1.0)]
+                               / errs[(blk, 1024, 1.0)], 8.0)
 
     def test_transverse_second_order(self):
         nvol = np.prod(self.SHAPE)
@@ -813,9 +820,11 @@ class TestActiveTailRobustness(unittest.TestCase):
         solver.solve(gi, out)
         chi0 = np.asarray(gi["chi0q"])
         self.assertTrue(np.all(np.isfinite(chi0)))
-        # folded: 2 orbitals on LX/2 cells
-        self.assertEqual(chi0.shape[-1] if chi0.ndim == 3 else
-                         chi0.shape[-2], 2)
+        # complete folded shape: LX/2 momentum cells and 2 folded
+        # orbitals (asserting one axis alone cannot distinguish the
+        # folded volume from the orbital matrix; round-7 review)
+        nfreq = chi0.shape[0]
+        self.assertEqual(chi0.shape, (nfreq, LX // 2, 2, 2))
 
 
 class TestFlexInheritsTheFix(unittest.TestCase):

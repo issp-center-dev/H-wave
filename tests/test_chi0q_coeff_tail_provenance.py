@@ -418,13 +418,87 @@ def test_flex_ir_save_omits_endpoint_marker(write_densified):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [float('nan'), float('inf'),
-                                 -float('inf'), "abc", True, [1.0]])
+                                 -float('inf'), "abc", True, [1.0],
+                                 "1.0", np.str_("1.0"), np.bool_(True),
+                                 np.array(1.0), np.array([1.0])])
 def test_rpa_rejects_pathological_coeff_tail(bad):
+    """Type-strict: numeric strings (quoted TOML numbers), booleans and
+    arrays -- 0-d included -- are rejected, not coerced."""
     with pytest.raises(ValueError, match="coeff_tail"):
         _make_rpa(coeff_tail=bad)
 
 
-@pytest.mark.parametrize("ok", [0.0, 1.0, 0.5, -1.0, 2])
+@pytest.mark.parametrize("ok", [0.0, 1.0, 0.5, -1.0, 2, np.float64(1.0)])
 def test_rpa_accepts_finite_real_coeff_tail(ok):
     solver = _make_rpa(coeff_tail=ok)
     assert solver.coeff_tail == float(ok)
+
+
+# ---------------------------------------------------------------------------
+# in-memory reuse route (round-7 review: it bypassed the endpoint gate)
+# ---------------------------------------------------------------------------
+
+def _mem_chi0q(solver):
+    """Full-frequency general-scheme bubble (the _make_rpa fixture uses
+    calc_scheme='general': one orbital, six axes)."""
+    nvol = solver.lattice.nvol
+    return np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex)
+
+
+def _mem_meta(solver, chi0q, coeff_tail, tail_endpoint):
+    from hwave.solver.rpa import _chi0q_fingerprint
+    meta = {"freq_index": list(range(solver.nmat)), "nmat": solver.nmat,
+            "coeff_tail": coeff_tail, "norb": int(solver.norb),
+            "calc_scheme": solver.calc_scheme,
+            "fingerprint": _chi0q_fingerprint(chi0q)}
+    if tail_endpoint is not None:
+        meta["tail_endpoint"] = tail_endpoint
+    return meta
+
+
+def _solve_with_mem_chi0q(solver, chi0q, meta):
+    d = tempfile.mkdtemp()
+    gi = {"chi0q": chi0q}
+    if meta is not None:
+        gi["chi0q_freq_meta"] = meta
+    solver.solve(gi, d)
+    return gi
+
+
+def test_mem_reuse_rejects_premarker_nonzero_tail():
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, 1.0, None)
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        _solve_with_mem_chi0q(solver, chi0q, meta)
+
+
+def test_mem_reuse_rejects_unknown_marker():
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, 1.0, "branch_mean_v999")
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        _solve_with_mem_chi0q(solver, chi0q, meta)
+
+
+def test_mem_reuse_accepts_marked_and_resaves_unchanged():
+    solver = _make_rpa(coeff_tail=0.0)      # config differs from producer
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, 1.0, _MARKER)
+    gi = _solve_with_mem_chi0q(solver, chi0q, meta)
+    saved = _save_chi0q(solver, gi)
+    assert float(saved['coeff_tail']) == 1.0
+    assert str(saved['tail_endpoint']) == _MARKER
+
+
+def test_mem_reuse_untagged_full_freq_resaves_without_fabrication():
+    """A full-Nmat external chi0q WITHOUT metadata previously fell
+    through with _chi0q_init_meta unset, and save_results stamped the
+    CURRENT run's coeff_tail and endpoint marker onto data of unknown
+    provenance (round-7 review)."""
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)              # full frequency count
+    gi = _solve_with_mem_chi0q(solver, chi0q, None)
+    saved = _save_chi0q(solver, gi)
+    assert 'coeff_tail' not in saved
+    assert 'tail_endpoint' not in saved

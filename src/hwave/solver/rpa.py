@@ -416,6 +416,37 @@ def _validate_chi0q_provenance(meta, nfreq, source):
 TAIL_ENDPOINT_CONVENTION = "branch_mean_v1"
 
 
+def _enforce_tail_endpoint(meta, source):
+    """Endpoint-convention gate on NORMALIZED chi0q provenance.
+
+    Fail-closed for any nonzero-coeff_tail bubble whose endpoint
+    treatment is absent (pre-#134) or unrecognized -- nothing in the
+    array itself can reveal which treatment produced it. Zero-tail
+    bubbles and unknown-tail (no coeff_tail record) bubbles pass:
+    the endpoint is vacuous respectively unknowable there. One gate is
+    shared by the chi0q_init file reader and the in-memory reuse route
+    (round-7 review: the in-memory route bypassed the file gate).
+    """
+    tail = meta.get("coeff_tail")
+    if tail is None or tail == 0.0:
+        return
+    te = meta.get("tail_endpoint")
+    if te is None:
+        raise ValueError(
+            "chi0q provenance from {} records coeff_tail = {} but no "
+            "tail_endpoint marker: the bubble was produced before the "
+            "equal-time endpoint fix (issue #134) and its tail-corrected "
+            "values carry the pre-fix O(1/Nmat) endpoint error. Recompute "
+            "the bubble with this version instead of reusing it.".format(
+                source, tail))
+    if te != TAIL_ENDPOINT_CONVENTION:
+        raise ValueError(
+            "chi0q provenance from {} carries unrecognized tail_endpoint "
+            "= {!r} (this build implements {!r}); refusing to reuse a "
+            "bubble whose endpoint treatment is unknown.".format(
+                source, te, TAIL_ENDPOINT_CONVENTION))
+
+
 class Lattice:
     """
     Lattice parameters:
@@ -1138,17 +1169,19 @@ class RPA:
         # accepted and silently produced non-finite susceptibilities; large
         # values cause catastrophic cancellation. Booleans are rejected --
         # float(True) == 1.0 would silently enable the correction.
+        import numbers
         _ct = self.param_mod.get("coeff_tail", 0.0)
-        if isinstance(_ct, bool):
+        # type-strict, not coercive (round-7 review): float() would also
+        # accept numeric strings (a quoted TOML number), booleans and 0-d
+        # arrays. numbers.Real keeps Python and NumPy real scalars;
+        # booleans are excluded explicitly -- float(True) == 1.0 would
+        # silently enable the correction.
+        if (isinstance(_ct, (bool, np.bool_))
+                or not isinstance(_ct, numbers.Real)):
             raise ValueError(
                 "[mode.param] coeff_tail must be a real number, got "
                 "{!r}".format(_ct))
-        try:
-            _ct = float(_ct)
-        except (TypeError, ValueError):
-            raise ValueError(
-                "[mode.param] coeff_tail must be a real number, got "
-                "{!r}".format(_ct))
+        _ct = float(_ct)
         if not np.isfinite(_ct):
             raise ValueError(
                 "[mode.param] coeff_tail must be finite, got {}".format(_ct))
@@ -1441,6 +1474,10 @@ class RPA:
                         "reads as '{}' for this solver's configuration; "
                         "refusing to solve a semantically different "
                         "tensor.".format(m_spin, self.spin_mode))
+                # endpoint gate on the SAME normalized form the file
+                # route checks (round-7 review: this route accepted a
+                # nonzero-tail bubble without or with an unknown marker)
+                _enforce_tail_endpoint(norm, "green_info chi0q_freq_meta")
                 self._chi0q_init_meta = dict(norm)
             elif getattr(self, "_chi0q_init_meta", None) is not None:
                 # metadata set by the chi0q_init file reader on this
@@ -1455,7 +1492,12 @@ class RPA:
                         "belong to the supplied chi0q (content fingerprint "
                         "mismatch): the array was replaced after the file "
                         "was read. Recompute or re-read the file.")
-            elif nfreq != self.nmat:
+            else:
+                # untagged external tensor -- full-frequency included
+                # (round-7 review: a full-Nmat external array previously
+                # fell through with no metadata, and save_results then
+                # stamped the CURRENT run's coeff_tail and endpoint
+                # marker onto data of unknown provenance)
                 self._chi0q_init_meta = {
                     "freq_index": None, "nmat": None, "coeff_tail": None,
                     "tail_endpoint": None,
@@ -2197,33 +2239,10 @@ class RPA:
                 "with a recomputation under this config.".format(
                     file_name, file_tail, self.coeff_tail))
         # Endpoint-convention gate (issue #134, fail-closed like the
-        # momentum-convention gate): a nonzero-tail chi0q produced before
-        # the branch-mean endpoint fix carries an O(1/Nmat) error that a
-        # current recomputation does not, and NOTHING in the array itself
-        # can reveal which treatment produced it. Zero-tail files are
-        # exempt (the tail machinery is off), as are legacy files without
-        # a coeff_tail key (unknown tail, unchanged acceptance -- the
-        # coeff_tail stamp and this marker were introduced together with
-        # their respective fixes, so a nonzero stamp without the marker
-        # identifies the pre-fix window precisely).
-        if file_tail is not None and file_tail != 0.0:
-            file_te = self._chi0q_init_meta["tail_endpoint"]
-            if file_te is None:
-                raise ValueError(
-                    "chi0q_init file '{}' records coeff_tail = {} but no "
-                    "tail_endpoint marker: it was produced before the "
-                    "equal-time endpoint fix (issue #134) and its "
-                    "tail-corrected values carry the pre-fix O(1/Nmat) "
-                    "endpoint error. Recompute the bubble with this "
-                    "version (chi0q_mode = \"calc\") instead of reusing "
-                    "the file.".format(file_name, file_tail))
-            if file_te != TAIL_ENDPOINT_CONVENTION:
-                raise ValueError(
-                    "chi0q_init file '{}' carries unrecognized "
-                    "tail_endpoint = {!r} (this build implements {!r}); "
-                    "refusing to reuse a bubble whose endpoint treatment "
-                    "is unknown.".format(
-                        file_name, file_te, TAIL_ENDPOINT_CONVENTION))
+        # momentum-convention gate); shared with the in-memory reuse
+        # route -- see _enforce_tail_endpoint.
+        _enforce_tail_endpoint(self._chi0q_init_meta,
+                               "file '{}'".format(file_name))
 
         self._validate_chi0q_shape(chi0q, source=file_name)
 
