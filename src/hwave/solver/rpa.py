@@ -1058,6 +1058,29 @@ class Interaction:
         else:
             self.ham_fierz_q = None
 
+        # Spinful exchange content (issue #137). The spinful general solve
+        # resums chi = [1 - chi0 W]^-1 chi0 with ONE vertex tensor; the
+        # physically complete first order is the ANTISYMMETRIZED bare
+        # particle-hole vertex Gamma = D + X, where X is the crossed
+        # (exchange) wiring of the same interaction. Re-pairing the on-site
+        # two-body term
+        #     W^{b b' a a'} c^+_a c_a' c^+_b' c_b
+        #       = - W^{b b' a a'} c^+_a c_b c^+_b' c_a' + (one-body)
+        # shows the crossed wiring is the direct wiring of the coefficient
+        # tensor with the b and a' slots swapped and negated:
+        #     X[b, b', a, a'] = - D[a', b', a, b]   (on-site block only).
+        # Off-site exchange depends on both fermionic momenta and cannot be
+        # written as W(q); it stays outside the ring-form resummation (the
+        # same limitation the non-spin-orbital ladder has). In the
+        # spin-conserving limit X reproduces the adjudicated transverse
+        # (ring+ladder) vertex; ED confirmed Gamma = D + X for CoulombIntra
+        # (issue #137 reproduction).
+        exch_onsite = -np.transpose(ham_r[0, 0, 0], (3, 1, 2, 0))
+        if np.any(exch_onsite):
+            self.ham_spinful_exchange = exch_onsite
+        else:
+            self.ham_spinful_exchange = None
+
 class RPA:
     """
     RPA calculation
@@ -1178,6 +1201,16 @@ class RPA:
         # accepted and silently produced non-finite susceptibilities; large
         # values cause catastrophic cancellation. Booleans are rejected --
         # float(True) == 1.0 would silently enable the correction.
+        # Spinful antisymmetrized vertex (issue #137): default ON; False
+        # reproduces the pre-#137 ring-only spinful numbers. Strict bool
+        # (the g2_tail/#83 lesson: coercion turns "false" into True).
+        _sve = self.param_mod.get("spinful_vertex_exchange", True)
+        if not isinstance(_sve, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] spinful_vertex_exchange must be a boolean, "
+                "got {!r}".format(_sve))
+        self.spinful_vertex_exchange = bool(_sve)
+
         import numbers
         _ct = self.param_mod.get("coeff_tail", 0.0)
         # type-strict, not coercive (round-7 review): float() would also
@@ -1662,6 +1695,20 @@ class RPA:
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
                 ham_long = ham_long_q
+                # Antisymmetrized vertex (issue #137): resum with
+                # Gamma = D + crossed(D)|on-site so the spin-flip pair
+                # slots are corrected (ring-only left them at the bare
+                # bubble). The longitudinal Fierz tensor is the DENSITY-
+                # slot projection of the same crossing (built for the
+                # non-spin-orbital solver, which has no spin-flip slots),
+                # so it must NOT be added on top -- that double-counts
+                # every on-site cross-orbital slot. Opt-out via
+                # [mode.param] spinful_vertex_exchange = false reproduces
+                # the pre-#137 ring-only numbers (ham_inter + fierz).
+                exch = getattr(self.ham_info, "ham_spinful_exchange", None)
+                if exch is not None and self.spinful_vertex_exchange:
+                    exch = xp.asarray(exch) if gpu_active else exch
+                    ham_long = ham_inter_q + exch[None, ...]
 
                 if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
                     # Treat combined spin-orbital indices as general orbitals.
