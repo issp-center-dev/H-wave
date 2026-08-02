@@ -178,14 +178,18 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
         outer_ax, n_outer = axes[o], dims[o]
         inner_block_axes = tuple(a - (a > outer_ax)
                                  for i, a in enumerate(axes) if i != o)
-        lead = arr.shape[0] if outer_ax != 0 else 1
-        plane = max(1, arr.size // n_outer)
+        q_set = set(axes)
     else:
         outer_ax = q_axis % arr.ndim
         n_outer = arr.shape[outer_ax]
         inner_block_axes = None
-        lead = arr.shape[0] if outer_ax != 0 else 1
-        plane = max(1, arr.size // n_outer)
+        q_set = {outer_ax}
+    # lead-chunk over an axis OUTSIDE the momentum set (round-11: slicing
+    # an inner q axis would break the reversal pairing); if every axis is
+    # a momentum axis, lead chunking is disabled
+    chunk_ax = next((i for i in range(arr.ndim) if i not in q_set), None)
+    lead = arr.shape[chunk_ax] if chunk_ax is not None else 1
+    plane = max(1, arr.size // n_outer)
 
     if plane <= _MOMENTUM_SCAN_BLOCK:
         q_step = max(1, _MOMENTUM_SCAN_BLOCK // plane)
@@ -196,17 +200,16 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
         lead_step = max(1, _MOMENTUM_SCAN_BLOCK // per_lead)
 
     def _lead_slices():
-        if outer_ax == 0:
+        if chunk_ax is None:
             yield slice(None)
         else:
             for l0 in range(0, lead, lead_step):
                 yield slice(l0, l0 + lead_step)
 
     def _index(lsl, qsel):
-        if outer_ax == 0:
-            return arr[qsel]
         idx = [slice(None)] * arr.ndim
-        idx[0] = lsl
+        if chunk_ax is not None:
+            idx[chunk_ax] = lsl
         idx[outer_ax] = qsel
         return arr[tuple(idx)]
 

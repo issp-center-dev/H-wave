@@ -783,6 +783,70 @@ class TestRound9Hardening(unittest.TestCase):
         tracemalloc.stop()
         self.assertLess(peak, int(arr.nbytes * 0.6))
 
+    def test_chunked_scan_matches_a_full_tensor_oracle(self):
+        """Committed oracle equivalence for every chunk path (round 11):
+        the chunked verdict must equal a literal full-tensor evenness
+        check, with the block bound patched tiny to force multi-level
+        chunking, for even AND odd payloads on: lead-sliced flat,
+        lead-sliced explicit, q_step > 1 flat, an all-momentum-axes
+        array (chunking disabled), and explicit axes including axis 0."""
+        import hwave.solver.rpa as rpa_mod
+
+        def oracle(payload, q_axis, grid):
+            nx, ny, nz = grid
+            if isinstance(q_axis, (tuple, list)):
+                v = np.moveaxis(payload, tuple(q_axis), (0, 1, 2))
+                v = v.reshape((nx, ny, nz) + v.shape[3:])
+            else:
+                v = np.moveaxis(payload, q_axis, 0)
+                v = v.reshape((nx, ny, nz) + v.shape[1:])
+            from hwave.solver.kgrid import reverse_fft_axes
+            r = reverse_fft_axes(v, (0, 1, 2))
+            scale = np.abs(v).max()
+            if scale == 0:
+                return True
+            return bool(np.all(np.abs(v - r) <= 1e-8 * (np.abs(v)
+                        + np.abs(r)) + 1e-15 * scale))
+
+        n = 3
+        q = np.arange(n)
+        even_prof = np.cos(2 * np.pi * q / n)
+        odd_prof = even_prof + 0.3 * np.sin(2 * np.pi * q / n)
+        cases = []
+        for prof, label in ((even_prof, "even"), (odd_prof, "odd")):
+            flat = np.ones((5, n, 2, 2))
+            flat *= prof[None, :, None, None]
+            cases.append((flat, 1, (n, 1, 1), "flat-" + label))
+            expl = np.ones((5, n, n, n, 2))
+            expl *= prof[None, :, None, None, None]
+            cases.append((expl, (1, 2, 3), (n, n, n), "expl-" + label))
+            allq = np.ones((n, n, n))
+            allq *= prof[:, None, None]
+            cases.append((allq, (0, 1, 2), (n, n, n), "allq-" + label))
+            ax0 = np.ones((n, 2, n, n))
+            ax0 *= prof[None, None, :, None]
+            cases.append((ax0, (0, 2, 3), (n, n, n), "ax0-" + label))
+        saved = rpa_mod._MOMENTUM_SCAN_BLOCK
+        rpa_mod._MOMENTUM_SCAN_BLOCK = 4   # force multi-level chunking
+        try:
+            for payload, qa, grid, label in cases:
+                with self.subTest(case=label):
+                    tmp = tempfile.TemporaryDirectory()
+                    self.addCleanup(tmp.cleanup)
+                    path = os.path.join(tmp.name, "x.npz")
+                    np.savez(path, chi0q=payload)
+                    data = np.load(path)
+                    want_ok = oracle(payload, qa, grid)
+                    if want_ok:
+                        validate_momentum_convention(
+                            data, path, data["chi0q"], qa, grid)
+                    else:
+                        with self.assertRaises(ValueError):
+                            validate_momentum_convention(
+                                data, path, data["chi0q"], qa, grid)
+        finally:
+            rpa_mod._MOMENTUM_SCAN_BLOCK = saved
+
     def test_manifest_v2_upgrade_is_refused(self):
         import hwave.tsweep as ts
         old_manifest = {"version": 2, "ladder": [1.0], "fingerprint": "x"}
