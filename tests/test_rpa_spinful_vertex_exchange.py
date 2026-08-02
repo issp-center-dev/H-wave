@@ -46,9 +46,10 @@ def _write_geom(d, nd):
 
 
 def _run_rpa(d, inter, lx, nmat, so=True, scheme="general",
-             calc_type="ring", exchange=None):
+             calc_type="ring", exchange=None, gpu=False):
     param = {"T": T, "mu": MU, "CellShape": [lx, 1, 1],
-             "SubShape": [1, 1, 1], "Nmat": nmat, "coeff_tail": 1.0}
+             "SubShape": [1, 1, 1], "Nmat": nmat, "coeff_tail": 1.0,
+             "gpu": gpu}
     if exchange is not None:
         param["spinful_vertex_exchange"] = exchange
     info_mode = {"mode": "RPA", "param": param,
@@ -161,7 +162,6 @@ class TestSpinConservingLimits(unittest.TestCase):
     EPS = 1e-4
     T00, T11, T01 = 0.7 + 0.3j, 0.5 - 0.2j, 0.25 + 0.15j
     E0, E1 = 0.10, -0.05
-    V = 0.3
 
     V = 0.3
     # PairHop declared as a complex Hermitian pair (P, conj P): its
@@ -281,8 +281,7 @@ class TestExchangeTensorStructure(unittest.TestCase):
 
     LX = 4
 
-    def _solver(self, so, subshape, tname, ents, offsite_r=None,
-                norb_phys=1):
+    def _solver(self, so, subshape, tname, ents, norb_phys=1):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         d = tmp.name
@@ -345,6 +344,47 @@ class TestExchangeTensorStructure(unittest.TestCase):
         self.assertIsNone(
             getattr(solver.ham_info, "ham_spinful_exchange", None))
 
+    def test_aggregate_coulomb_mixed_sources_onsite_only(self):
+        """The aggregate Coulomb input (split into intra + inter parts)
+        with mixed on-site AND off-site content, under sublattice
+        folding: the exchange tensor must equal that of a run given ONLY
+        the on-site declarations, while the direct interaction keeps the
+        folded off-site part (round-2 review: the aggregate split is the
+        one sourcing branch the other structural pins do not reach)."""
+        mixed = [(0, 0, 0, 0.3), (1, 0, 0, 0.2), (-1, 0, 0, 0.2)]
+        onsite = [(0, 0, 0, 0.3)]
+        s_mixed = self._solver(True, (2, 1, 1), "Coulomb", mixed)
+        s_onsite = self._solver(True, (2, 1, 1), "Coulomb", onsite)
+        Xm = s_mixed.ham_info.ham_spinful_exchange
+        Xo = s_onsite.ham_info.ham_spinful_exchange
+        self.assertIsNotNone(Xm)
+        np.testing.assert_array_equal(Xm, Xo)
+        # the folded off-site direct part must survive in ham_inter_q
+        self.assertGreater(
+            np.abs(np.asarray(s_mixed.ham_info.ham_inter_q)
+                   - np.asarray(s_onsite.ham_info.ham_inter_q)).max(),
+            1e-12)
+
+    def test_pairhop_mixed_folded_sources_onsite_only(self):
+        """Complex Hermitian PairHop with an off-site pair alongside the
+        on-site pair, under folding: pins the PairHop slot layout, the
+        conjugating symmetrisation's phase preservation AND the pre-fold
+        exclusion together."""
+        P = 0.3 * np.exp(0.4j)
+        mixed = [(0, 0, 1, P), (0, 1, 0, np.conj(P)),
+                 (1, 0, 1, 0.2), (-1, 1, 0, 0.2)]
+        onsite = [(0, 0, 1, P), (0, 1, 0, np.conj(P))]
+        s_mixed = self._solver(True, (2, 1, 1), "PairHop", mixed,
+                               norb_phys=2)
+        s_onsite = self._solver(True, (2, 1, 1), "PairHop", onsite,
+                                norb_phys=2)
+        Xm = s_mixed.ham_info.ham_spinful_exchange
+        Xo = s_onsite.ham_info.ham_spinful_exchange
+        self.assertIsNotNone(Xm)
+        np.testing.assert_array_equal(Xm, Xo)
+        # the complex phase must survive into the crossing
+        self.assertGreater(np.abs(Xm.imag).max(), 1e-3)
+
     def test_density_projection_vanishes_all_types(self):
         """project_density_pairs(X) == 0 structurally: the reduced and
         squashed spinful schemes must be unaffected by the crossing."""
@@ -364,13 +404,57 @@ class TestExchangeTensorStructure(unittest.TestCase):
                 self.assertLess(np.abs(proj).max(), 1e-14)
 
 
+class TestOptOutWithActiveFierz(unittest.TestCase):
+    """spinful_vertex_exchange = false must reproduce the pre-#137
+    vertex ham_inter + fierz (round-2 review: the one-orbital
+    CoulombIntra opt-out fixture has fierz = 0, so the lazy closure's
+    fierz path was unexercised). On-site CoulombInter carries a nonzero
+    Fierz tensor; in the spin-conserving limit the ring-only density
+    slots must match the non-spin-orbital ring solve (which uses
+    ham_inter + fierz), and the spin-flip slots must remain the BARE
+    bubble."""
+
+    def test_ring_only_matches_fierz_path(self):
+        h = TestSpinConservingLimits
+        t = h("test_all_types")
+        LX, NORB = h.LX, h.NORB
+        ND = 2 * NORB
+        tname = "CoulombInter"
+        # non-SO ring reference (ham_inter + fierz path by construction)
+        tmp1 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp1.cleanup)
+        inter1 = t._write(tmp1.name, False, 0.0, tname)
+        _, g0 = _run_rpa(tmp1.name, inter1, LX, h.NMAT, so=False)
+        # spinful run at small eps with the exchange DISABLED
+        tmp2 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp2.cleanup)
+        inter2 = t._write(tmp2.name, True, h.EPS, tname)
+        s1, g1 = _run_rpa(tmp2.name, inter2, LX, h.NMAT, so=True,
+                          exchange=False)
+        self.assertEqual(s1.spin_mode, "spinful")
+        c0 = np.asarray(g0["chiq"])
+        c1 = np.asarray(g1["chiq"])
+        nf = c0.shape[0]
+        r0 = c0.reshape(nf, LX, ND, ND, ND, ND)[nf // 2]
+        r1 = c1.reshape(nf, LX, ND, ND, ND, ND)[nf // 2]
+        mask = np.abs(r0) > 1e-12
+        self.assertLess(np.abs((r1 - r0)[mask]).max(), 1e-7)
+        # ring-only spin-flip slots: bare bubble (no interaction
+        # correction) -- compare against the spinful chi0q
+        b1 = np.asarray(g1["chi0q"]).reshape(nf, LX, ND, ND, ND, ND)[
+            nf // 2]
+        up, dn = slice(0, NORB), slice(NORB, ND)
+        self.assertLess(
+            np.abs(r1[:, up, dn, up, dn]
+                   - b1[:, up, dn, up, dn]).max(), 1e-7)
+
+
 class TestNonSpinfulUnaffected(unittest.TestCase):
     """The flag and the exchange machinery must be invisible outside
     spinful mode: a non-spin-orbital run gives bitwise identical chiq
     for both flag values."""
 
     def test_bitwise(self):
-        import hwave.qlmsio.read_input_k as rk
         results = []
         for flag in (True, False):
             tmp = tempfile.TemporaryDirectory()
@@ -392,6 +476,35 @@ class TestNonSpinfulUnaffected(unittest.TestCase):
             _, gi = _run_rpa(d, inter, 4, 32, so=False, exchange=flag)
             results.append(np.asarray(gi["chiq"]))
         np.testing.assert_array_equal(results[0], results[1])
+
+
+class TestSpinfulGpuEquivalence(unittest.TestCase):
+    """CPU/CuPy equivalence of the spinful solve with BOTH the exchange
+    and Fierz tensors active, for both flag values (round-2 review:
+    the committed GPU tests cover only non-spin-orbital CoulombIntra).
+    Skips without a usable CUDA device."""
+
+    def test_cpu_gpu_match(self):
+        try:
+            import cupy
+            cupy.zeros(1)
+        except Exception:
+            self.skipTest("cupy unavailable or no usable CUDA device")
+        h = TestSpinConservingLimits
+        t = h("test_all_types")
+        for flag in (True, False):
+            with self.subTest(flag=flag):
+                out = {}
+                for gpu in (False, True):
+                    tmp = tempfile.TemporaryDirectory()
+                    self.addCleanup(tmp.cleanup)
+                    inter = t._write(tmp.name, True, h.EPS,
+                                     "CoulombInter")
+                    _, gi = _run_rpa(tmp.name, inter, h.LX, 64,
+                                     so=True, exchange=flag, gpu=gpu)
+                    out[gpu] = np.asarray(gi["chiq"])
+                np.testing.assert_allclose(out[True], out[False],
+                                           atol=1e-10)
 
 
 class TestFirstOrderAgainstED(unittest.TestCase):
