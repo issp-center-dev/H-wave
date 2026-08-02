@@ -903,6 +903,51 @@ class Interaction:
                         orb = (s4, b, s3, a, s1, a, s2, b)
                         ham_r[(*irvec, *orb)] += v * w
 
+        # Pre-fold on-site direct tensor feeding the spinful exchange
+        # crossing (issue #137). Locality is judged on the PRE-fold
+        # declarations, exactly like the Fierz builder below: sublattice
+        # folding maps off-site bonds to r = 0 between supercell
+        # orbitals, and reading ham_r[0, 0, 0] after folding would cross
+        # off-site content that the ring-form resummation cannot
+        # represent (round-1 review; the same trap the Fierz builder
+        # documents). Only built for spin-orbital runs -- no other mode
+        # consumes it.
+        # (getattr: tests drive _make_ham_inter on __new__-built stubs
+        # without __init__, the same pattern save_results documents)
+        onsite_r = (np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
+                    if getattr(self, "enable_spin_orbital", False)
+                    else None)
+
+        def _append_onsite_direct(type, tbl=None, pairhop=False):
+            if onsite_r is None:
+                return
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            if tbl is None:
+                if has_sub:
+                    tbl = self.param_ham_orig.get(type, {})
+                else:
+                    tbl = self.param_ham.get(type, {})
+            filtered = {}
+            for (irvec, orbvec), v in tbl.items():
+                if tuple(irvec) == (0, 0, 0):
+                    filtered[(irvec, orbvec)] = v
+            if not filtered:
+                return
+            if has_sub:
+                filtered = self._reshape_interaction(filtered, False)
+            filtered = _symmetrised(type, filtered)
+            spins = spin_table[type]
+            for (irvec, orbvec), v in filtered.items():
+                if tuple(irvec) != (0, 0, 0):
+                    continue
+                a, b = orbvec
+                for spinvec, w in spins.items():
+                    s1, s2, s3, s4 = spinvec
+                    # same slot layouts as the ham_r builders above
+                    orb = ((s4, b, s3, a, s1, a, s2, b) if pairhop
+                           else (s4, b, s3, b, s1, a, s2, a))
+                    onsite_r[orb] += v * w
+
         def _append_inter_cross(type, tbl=None):
             # Longitudinal cross-slot (Fierz) content, adjudicated against
             # exact diagonalization in #113: the ring's W carried the
@@ -984,51 +1029,60 @@ class Interaction:
 
             _append_inter('CoulombIntra', coulomb_intra)
             _append_inter('CoulombInter', coulomb_inter)
-            _append_inter_cross(
-                'CoulombInter',
-                tbl=(wan90.split_coulomb(
-                        self.param_ham_orig['Coulomb'])[1]
-                     if getattr(self.lattice, "has_sublattice", False)
-                     else coulomb_inter))
+            if getattr(self.lattice, "has_sublattice", False):
+                _pre_intra, _pre_inter = wan90.split_coulomb(
+                    self.param_ham_orig['Coulomb'])
+            else:
+                _pre_intra, _pre_inter = coulomb_intra, coulomb_inter
+            _append_inter_cross('CoulombInter', tbl=_pre_inter)
+            _append_onsite_direct('CoulombIntra', tbl=_pre_intra)
+            _append_onsite_direct('CoulombInter', tbl=_pre_inter)
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'CoulombIntra' in self.param_ham.keys():
             _append_inter('CoulombIntra')
+            _append_onsite_direct('CoulombIntra')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
             _append_inter_cross('CoulombInter')
+            _append_onsite_direct('CoulombInter')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
             _append_inter_cross('Hund')
+            _append_onsite_direct('Hund')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
             _append_inter_cross('Ising')
+            _append_onsite_direct('Ising')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'PairLift' in self.param_ham.keys():
             _append_inter('PairLift')
+            _append_onsite_direct('PairLift')
             self._has_interaction = True
             self._has_interaction_exchange = True
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
             _append_inter_cross('Exchange')
+            _append_onsite_direct('Exchange')
             self._has_interaction = True
             self._has_interaction_exchange = True
 
         if 'PairHop' in self.param_ham.keys():
             _append_pairhop('PairHop')
+            _append_onsite_direct('PairHop', pairhop=True)
             self._has_interaction = True
             self._has_interaction_pairhop = True
 
@@ -1057,6 +1111,31 @@ class Interaction:
             self.ham_fierz_q = FFT.ifftn(fierz_r, axes=(0,1,2)) * nvol
         else:
             self.ham_fierz_q = None
+
+        # Spinful exchange content (issue #137). The spinful general solve
+        # resums chi = [1 - chi0 W]^-1 chi0 with ONE vertex tensor; the
+        # physically complete first order is the ANTISYMMETRIZED bare
+        # particle-hole vertex Gamma = D + X, where X is the crossed
+        # (exchange) wiring of the same interaction. Re-pairing the on-site
+        # two-body term
+        #     W^{b b' a a'} c^+_a c_a' c^+_b' c_b
+        #       = - W^{b b' a a'} c^+_a c_b c^+_b' c_a' + (one-body)
+        # shows the crossed wiring is the direct wiring of the coefficient
+        # tensor with the b and a' slots swapped and negated:
+        #     X[b, b', a, a'] = - D[a', b', a, b]   (on-site block only).
+        # Off-site exchange depends on both fermionic momenta and cannot be
+        # written as W(q); it stays outside the ring-form resummation (the
+        # same limitation the non-spin-orbital ladder has). In the
+        # spin-conserving limit X reproduces the adjudicated transverse
+        # (ring+ladder) vertex; ED confirmed Gamma = D + X for CoulombIntra
+        # (issue #137 reproduction).
+        if onsite_r is not None:
+            exch_onsite = -np.transpose(
+                onsite_r.reshape(*(nd,) * 4), (3, 1, 2, 0))
+            self.ham_spinful_exchange = (exch_onsite
+                                         if np.any(exch_onsite) else None)
+        else:
+            self.ham_spinful_exchange = None
 
 class RPA:
     """
@@ -1178,6 +1257,16 @@ class RPA:
         # accepted and silently produced non-finite susceptibilities; large
         # values cause catastrophic cancellation. Booleans are rejected --
         # float(True) == 1.0 would silently enable the correction.
+        # Spinful antisymmetrized vertex (issue #137): default ON; False
+        # reproduces the pre-#137 ring-only spinful numbers. Strict bool
+        # (the g2_tail/#83 lesson: coercion turns "false" into True).
+        _sve = self.param_mod.get("spinful_vertex_exchange", True)
+        if not isinstance(_sve, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] spinful_vertex_exchange must be a boolean, "
+                "got {!r}".format(_sve))
+        self.spinful_vertex_exchange = bool(_sve)
+
         import numbers
         _ct = self.param_mod.get("coeff_tail", 0.0)
         # type-strict, not coercive (round-7 review): float() would also
@@ -1651,17 +1740,40 @@ class RPA:
             # sit off the 'kaabb' diagonal, so the reduced/squashed reads
             # below are unaffected by construction.
             fierz_q = getattr(self.ham_info, "ham_fierz_q", None)
-            ham_long_q = (ham_inter_q if fierz_q is None
-                          else ham_inter_q + fierz_q)
             if gpu_active:
                 ham_inter_q = xp.asarray(ham_inter_q)
-                ham_long_q = (ham_inter_q if fierz_q is None
-                              else xp.asarray(ham_long_q))
+
+            def _fierz_long():
+                # assembled lazily: the spinful antisymmetrized branch
+                # replaces the Fierz-corrected tensor entirely, and
+                # building + device-transferring it there would allocate
+                # a large temporary that is immediately discarded
+                # (round-1 review)
+                if fierz_q is None:
+                    return ham_inter_q
+                fz = xp.asarray(fierz_q) if gpu_active else fierz_q
+                return ham_inter_q + fz
 
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
-                ham_long = ham_long_q
+                ham_long = None
+                # Antisymmetrized vertex (issue #137): resum with
+                # Gamma = D + crossed(D)|on-site so the spin-flip pair
+                # slots are corrected (ring-only left them at the bare
+                # bubble). The longitudinal Fierz tensor is the DENSITY-
+                # slot projection of the same crossing (built for the
+                # non-spin-orbital solver, which has no spin-flip slots),
+                # so it must NOT be added on top -- that double-counts
+                # every on-site cross-orbital slot. Opt-out via
+                # [mode.param] spinful_vertex_exchange = false reproduces
+                # the pre-#137 ring-only numbers (ham_inter + fierz).
+                exch = getattr(self.ham_info, "ham_spinful_exchange", None)
+                if exch is not None and self.spinful_vertex_exchange:
+                    exch = xp.asarray(exch) if gpu_active else exch
+                    ham_long = ham_inter_q + exch[None, ...]
+                else:
+                    ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
                     # Treat combined spin-orbital indices as general orbitals.
@@ -1676,7 +1788,7 @@ class RPA:
             elif self.spin_mode == "spin-diag":
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
-                ham_long = ham_long_q
+                ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
                     nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
@@ -1730,7 +1842,7 @@ class RPA:
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
-                ham_long = ham_long_q
+                ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
                     # alpha=alpha', beta=beta' case
