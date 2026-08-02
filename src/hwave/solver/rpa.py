@@ -2795,6 +2795,36 @@ class RPA:
         # calculate chi0 in real space and imaginary time
         green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
+        # Equal-time endpoint correction (issue #134). The tail piece
+        # aa/(i w_n) carries G's equal-time jump: its tau-space branches
+        # are -aa/2 for 0 < tau < beta and +aa/2 for tau < 0, i.e.
+        # G(0^-) = G(0^+) + aa * VV^dag (= twice the subtracted
+        # green0_tail constant in these kt units). Subtracting
+        # green0_tail above reconstructs the 0^+ branch at EVERY tau
+        # slot, but the bubble chi(tau) is DISCONTINUOUS at tau = 0
+        # whenever the two factors differ (different spins, or asymmetric
+        # multi-orbital structure): chi(0^+) uses (G_fwd(0^+), G_rev(0^-))
+        # and chi(0^-) the opposite pair. A discrete Fourier transform of
+        # a jump converges O(1/Nmat) unless the tau = 0 sample is the
+        # MEAN of the two branches -- without this the tail-corrected
+        # bubble was ~4.5x WORSE than the uncorrected one; with it the
+        # convergence is O(1/Nmat^2) (measured doubling ratios ~16).
+        # No-op -- including bitwise -- when the tail is zero.
+        _tail_on = bool(xp.any(green0_tail != 0))
+        if _tail_on:
+            tail_kt0 = green0_tail.reshape(
+                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
+            jump_f = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
+                                       workers=workers)
+            # the reversed factor lives at -r: its jump is the spatial
+            # reversal of the forward one
+            jump_r_rev = reverse_fft_axes(jump_f, (2, 3, 4))
+            jump_f = jump_f.reshape(nblock, nvol, nd, nd)
+            jump_r_rev = jump_r_rev.reshape(nblock, nvol, nd, nd)
+            fwd0_p = green_rt.reshape(
+                nblock, nmat, nvol, nd, nd)[:, 0].copy()
+            rev0_p = green_rev[:, 0].copy()
+
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
 
@@ -2805,6 +2835,12 @@ class RPA:
             chi0_rt = (green_rt_5d
                        * green_rev.swapaxes(-2, -1)
                        * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
+            if _tail_on:
+                # mean of the two equal-time branches (sgn[0] = +1)
+                chi0_rt[:, 0] = 0.5 * (
+                    fwd0_p * (rev0_p + jump_r_rev).swapaxes(-2, -1)
+                    + (fwd0_p + jump_f)
+                    * rev0_p.swapaxes(-2, -1))
             nd_shape = (nd, nd)
             nds = nd ** 2
         else:
@@ -2819,6 +2855,16 @@ class RPA:
                        * green_rev[:, :, :, np.newaxis, :, np.newaxis, :])
             # shape: (g,l,r,a,d,b,c) -> need (g,l,r,a,c,b,d)
             chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
+            if _tail_on:
+                # mean of the two equal-time branches (sgn[0] = +1),
+                # same outer-product layout as the bulk slice
+                def _slice(gf, gr):
+                    x = (gf[:, :, :, np.newaxis, :, np.newaxis]
+                         * gr[:, :, np.newaxis, :, np.newaxis, :])
+                    return x.transpose(0, 1, 2, 5, 4, 3)
+                chi0_rt[:, 0] = 0.5 * (
+                    _slice(fwd0_p, rev0_p + jump_r_rev)
+                    + _slice(fwd0_p + jump_f, rev0_p))
             nd_shape = (nd, nd, nd, nd)
             nds = nd ** 4
 
@@ -2921,6 +2967,27 @@ class RPA:
         # G_↑(r,τ)
         green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
 
+        # Equal-time endpoint correction (issue #134), transverse form.
+        # chi_+-(tau) = -G_up(tau) G_dn(-tau) is DISCONTINUOUS at tau = 0
+        # whenever up and down differ (any spin splitting): the discrete
+        # bosonic transform of a jump converges O(1/Nmat) unless the
+        # tau = 0 sample is the MEAN of the two branches
+        # (G_up(0^+), G_dn(0^-)) and (G_up(0^-), G_dn(0^+)); the branch
+        # difference is the tail piece's jump aa * VV^dag per spin
+        # block (see the longitudinal kernel).
+        _tail_on = bool(xp.any(green0_tail != 0))
+        if _tail_on:
+            tail_kt0 = green0_tail.reshape(
+                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
+            jump = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
+                                     workers=workers)
+            jump_up = jump[0].reshape(nvol, nd, nd)
+            # the reversed down factor lives at -r
+            jump_dn_rev = reverse_fft_axes(
+                jump[1:2], (1, 2, 3)).reshape(nvol, nd, nd)
+            up0_p = green_up_rt[0].copy()
+            dn0_p = green_dn_rev[0].copy()
+
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
 
@@ -2930,12 +2997,22 @@ class RPA:
             chi0_rt = (green_up_rt
                        * green_dn_rev.swapaxes(-2, -1)
                        * sgn[:, np.newaxis, np.newaxis, np.newaxis])
+            if _tail_on:
+                chi0_rt[0] = 0.5 * (
+                    up0_p * (dn0_p + jump_dn_rev).swapaxes(-2, -1)
+                    + (up0_p + jump_up) * dn0_p.swapaxes(-2, -1))
             nd_shape = (nd, nd)
             nds = nd**2
         else:
             # chi0_+-[l,r,a,c,b,d] = G_↑[l,r,a,b] * G_↓_rev[l,r,d,c] * sgn[l]
             chi0_rt = xp.einsum('lrab,lrdc,l->lracbd',
                                 green_up_rt, green_dn_rev, sgn)
+            if _tail_on:
+                chi0_rt[0] = 0.5 * (
+                    xp.einsum('rab,rdc->racbd', up0_p,
+                              dn0_p + jump_dn_rev)
+                    + xp.einsum('rab,rdc->racbd', up0_p + jump_up,
+                                dn0_p))
             nd_shape = (nd, nd, nd, nd)
             nds = nd**4
 

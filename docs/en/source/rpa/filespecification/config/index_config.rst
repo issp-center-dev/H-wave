@@ -189,6 +189,15 @@ Parameters
   This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
   After Fourier transforming the diagonalized one-body Green function to the imaginary time representation by subtracting :math:`\texttt{coeff\_tail}/(i \omega_n)`, the term :math:`-\beta/2\cdot\texttt{coeff\_tail}` is added to the one-body Green function.
   In the FLEX solver the same tail treatment is applied to the *dressed* Green function before the bare susceptibility :math:`\chi_0(q)` is computed, so that ``coeff_tail`` accelerates the frequency summation without changing the physical result. (The FLEX self-energy convolution keeps the full Green function and is unaffected.)
+  Since issue #134 the susceptibility kernels also restore the Green
+  function's equal-time discontinuity at the bubble's :math:`\tau = 0`
+  sample (the tail piece carries the jump; the sample is the mean of the
+  two branches), which makes ``coeff_tail = 1.0`` converge at
+  :math:`O(1/N_{\rm mat}^2)`. Earlier versions omitted this endpoint and
+  ``coeff_tail`` then *slowed* the convergence by a constant factor
+  (still :math:`O(1/N_{\rm mat})`); results produced with a nonzero
+  ``coeff_tail`` before this fix are not comparable with current ones
+  at the same ``Nmat``.
 
 - ``matsubara_frequency``
 
