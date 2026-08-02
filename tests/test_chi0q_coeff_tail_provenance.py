@@ -164,10 +164,12 @@ def test_rpa_read_then_resave_preserves_coeff_tail():
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
              freq_index=np.arange(solver.nmat), nmat=solver.nmat,
-             coeff_tail=1.0, momentum_convention="e_plus_ikR")
+             coeff_tail=1.0, tail_endpoint="branch_mean_v1",
+             momentum_convention="e_plus_ikR")
     solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
     assert float(saved['coeff_tail']) == 1.0
+    assert str(saved['tail_endpoint']) == _MARKER
 
 
 def test_rpa_read_then_resave_omits_for_legacy_file():
@@ -188,10 +190,14 @@ def test_rpa_read_then_resave_omits_for_legacy_file():
 # readers
 # ---------------------------------------------------------------------------
 
-def _write_chi0q_file(d, nmat=8, nvol=16, coeff_tail=None):
+def _write_chi0q_file(d, nmat=8, nvol=16, coeff_tail=None, marker=True):
     kwargs = {}
     if coeff_tail is not None:
         kwargs['coeff_tail'] = coeff_tail
+        if marker:
+            # new files carry the endpoint marker; pass marker=False to
+            # model a pre-#134 file
+            kwargs['tail_endpoint'] = "branch_mean_v1"
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((nmat, nvol, 1, 1), dtype=complex),
              freq_index=np.arange(nmat), nmat=nmat, **kwargs, momentum_convention="e_plus_ikR")
@@ -245,7 +251,8 @@ def test_rpa_read_chi0q_warns_on_mismatch_and_keeps_provenance(caplog):
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
              freq_index=np.arange(solver.nmat), nmat=solver.nmat,
-             coeff_tail=1.0, momentum_convention="e_plus_ikR")
+             coeff_tail=1.0, tail_endpoint="branch_mean_v1",
+             momentum_convention="e_plus_ikR")
     with caplog.at_level(logging.WARNING, logger='hwave.solver.rpa'):
         solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     assert any('coeff_tail' in m for m in _warnings(caplog))
@@ -259,8 +266,296 @@ def test_rpa_read_chi0q_silent_on_match(caplog):
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
              freq_index=np.arange(solver.nmat), nmat=solver.nmat,
-             coeff_tail=1.0, momentum_convention="e_plus_ikR")
+             coeff_tail=1.0, tail_endpoint="branch_mean_v1",
+             momentum_convention="e_plus_ikR")
     with caplog.at_level(logging.WARNING, logger='hwave.solver.rpa'):
         solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     assert not any('coeff_tail' in m for m in _warnings(caplog))
     assert solver._chi0q_init_meta['coeff_tail'] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# equal-time endpoint convention marker (issue #134)
+# ---------------------------------------------------------------------------
+#
+# The #134 fix changes what a NONZERO-coeff_tail chi0q file contains at
+# O(1/Nmat): pre-fix files carry the one-sided-endpoint error and are not
+# comparable with a current recomputation at the same Nmat. Files now stamp
+# tail_endpoint = "branch_mean_v1"; loaders REJECT a nonzero-tail file
+# without the marker (fail-closed, like the momentum-convention gate) and
+# any unrecognized marker value. Zero-tail files are exempt: the endpoint
+# treatment is vacuous when the tail machinery is off.
+
+_MARKER = "branch_mean_v1"
+
+
+def _write_rpa_chi0q(solver, d, **extra):
+    nvol = solver.lattice.nvol
+    np.savez(os.path.join(d, 'chi0q.npz'),
+             chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
+             freq_index=np.arange(solver.nmat), nmat=solver.nmat,
+             momentum_convention="e_plus_ikR", **extra)
+    return os.path.join(d, 'chi0q.npz')
+
+
+def test_rpa_read_rejects_premarker_nonzero_tail_file():
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=1.0)
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        solver._read_chi0q(fn)
+
+
+def test_rpa_read_rejects_unknown_endpoint_marker():
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=1.0,
+                          tail_endpoint="branch_mean_v999")
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        solver._read_chi0q(fn)
+
+
+def test_rpa_read_accepts_marked_nonzero_tail_file():
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=1.0, tail_endpoint=_MARKER)
+    solver._read_chi0q(fn)
+    assert solver._chi0q_init_meta['tail_endpoint'] == _MARKER
+
+
+def test_rpa_read_accepts_zero_tail_file_without_marker():
+    solver = _make_rpa(coeff_tail=0.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=0.0)
+    solver._read_chi0q(fn)
+
+
+def test_rpa_read_accepts_legacy_file_without_tail_key():
+    """No coeff_tail key at all: unknown tail, unchanged acceptance."""
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d)
+    solver._read_chi0q(fn)
+
+
+def test_rpa_fresh_save_stamps_endpoint_marker():
+    solver = _make_rpa(coeff_tail=1.0)
+    saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
+    assert str(saved['tail_endpoint']) == _MARKER
+
+
+def test_rpa_resave_propagates_endpoint_marker():
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=1.0, tail_endpoint=_MARKER)
+    solver._read_chi0q(fn)
+    saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
+    assert str(saved['tail_endpoint']) == _MARKER
+
+
+def test_rpa_resave_does_not_fabricate_marker_for_zero_tail_legacy():
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=0.0)
+    solver._read_chi0q(fn)
+    saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
+    assert 'tail_endpoint' not in saved
+
+
+def test_sc_load_rejects_premarker_nonzero_tail_file():
+    import hwave.sc as sc
+    d = tempfile.mkdtemp()
+    _write_chi0q_file(d, coeff_tail=1.0, marker=False)
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+
+
+def test_sc_load_accepts_marked_nonzero_tail_file():
+    import hwave.sc as sc
+    d = tempfile.mkdtemp()
+    _write_chi0q_file(d, coeff_tail=1.0)
+    sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+
+
+def test_sc_load_accepts_zero_tail_file_without_marker():
+    import hwave.sc as sc
+    d = tempfile.mkdtemp()
+    _write_chi0q_file(d, coeff_tail=0.0)
+    sc._load_chi0q(_sc_input(d, coeff_tail=0.0))
+
+
+def test_flex_save_stamps_endpoint_marker():
+    """Uniform-grid FLEX chi0q.npz must carry the marker next to
+    coeff_tail; the IR path omits both (tail machinery bypassed)."""
+    from tests.test_flex_general import _make_general_flex
+    flex = _make_general_flex(norb=2)
+    flex.coeff_tail = 1.0
+    d = tempfile.mkdtemp()
+    nvol = flex.lattice.nvol
+    chi0 = np.zeros((flex.nmat, nvol, 2, 2, 2, 2), dtype=complex)
+    flex.save_results({'path_to_output': d, 'chi0q': 'chi0q'},
+                      {'chi0q': chi0})
+    with np.load(os.path.join(d, 'chi0q.npz')) as f:
+        assert float(f['coeff_tail']) == 1.0
+        assert str(f['tail_endpoint']) == _MARKER
+
+
+@pytest.mark.parametrize('write_densified', [True, False])
+def test_flex_ir_save_omits_endpoint_marker(write_densified):
+    """IR output must not claim an endpoint treatment that never ran."""
+    flex = _flex_ir_stub(write_densified)
+    d = tempfile.mkdtemp()
+    nvol = flex.lattice.nvol
+    chi0 = np.zeros((flex.nmat, nvol, 2, 2, 2, 2), dtype=complex)
+    flex.save_results({'path_to_output': d, 'chi0q': 'chi0q'},
+                      {'chi0q': chi0})
+    with np.load(os.path.join(d, 'chi0q.npz')) as f:
+        assert 'tail_endpoint' not in f.files
+
+
+# ---------------------------------------------------------------------------
+# coeff_tail config validation (deep-review should_fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [float('nan'), float('inf'),
+                                 -float('inf'), "abc", True, [1.0],
+                                 "1.0", np.str_("1.0"), np.bool_(True),
+                                 np.array(1.0), np.array([1.0])])
+def test_rpa_rejects_pathological_coeff_tail(bad):
+    """Type-strict: numeric strings (quoted TOML numbers), booleans and
+    arrays -- 0-d included -- are rejected, not coerced."""
+    with pytest.raises(ValueError, match="coeff_tail"):
+        _make_rpa(coeff_tail=bad)
+
+
+@pytest.mark.parametrize("ok", [0.0, 1.0, 0.5, -1.0, 2, np.float64(1.0)])
+def test_rpa_accepts_finite_real_coeff_tail(ok):
+    solver = _make_rpa(coeff_tail=ok)
+    assert solver.coeff_tail == float(ok)
+
+
+# ---------------------------------------------------------------------------
+# in-memory reuse route (round-7 review: it bypassed the endpoint gate)
+# ---------------------------------------------------------------------------
+
+def _mem_chi0q(solver):
+    """Full-frequency general-scheme bubble (the _make_rpa fixture uses
+    calc_scheme='general': one orbital, six axes)."""
+    nvol = solver.lattice.nvol
+    return np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex)
+
+
+def _mem_meta(solver, chi0q, coeff_tail, tail_endpoint):
+    from hwave.solver.rpa import _chi0q_fingerprint
+    meta = {"freq_index": list(range(solver.nmat)), "nmat": solver.nmat,
+            "coeff_tail": coeff_tail, "norb": int(solver.norb),
+            "calc_scheme": solver.calc_scheme,
+            "fingerprint": _chi0q_fingerprint(chi0q)}
+    if tail_endpoint is not None:
+        meta["tail_endpoint"] = tail_endpoint
+    return meta
+
+
+def _solve_with_mem_chi0q(solver, chi0q, meta):
+    d = tempfile.mkdtemp()
+    gi = {"chi0q": chi0q}
+    if meta is not None:
+        gi["chi0q_freq_meta"] = meta
+    solver.solve(gi, d)
+    return gi
+
+
+def test_mem_reuse_rejects_premarker_nonzero_tail():
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, 1.0, None)
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        _solve_with_mem_chi0q(solver, chi0q, meta)
+
+
+def test_mem_reuse_rejects_unknown_marker():
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, 1.0, "branch_mean_v999")
+    with pytest.raises(ValueError, match="tail_endpoint"):
+        _solve_with_mem_chi0q(solver, chi0q, meta)
+
+
+def test_mem_reuse_accepts_marked_and_resaves_unchanged():
+    solver = _make_rpa(coeff_tail=0.0)      # config differs from producer
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, 1.0, _MARKER)
+    gi = _solve_with_mem_chi0q(solver, chi0q, meta)
+    saved = _save_chi0q(solver, gi)
+    assert float(saved['coeff_tail']) == 1.0
+    assert str(saved['tail_endpoint']) == _MARKER
+
+
+def test_mem_reuse_untagged_full_freq_resaves_without_fabrication():
+    """A full-Nmat external chi0q WITHOUT metadata previously fell
+    through with _chi0q_init_meta unset, and save_results stamped the
+    CURRENT run's coeff_tail and endpoint marker onto data of unknown
+    provenance (round-7 review)."""
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)              # full frequency count
+    gi = _solve_with_mem_chi0q(solver, chi0q, None)
+    saved = _save_chi0q(solver, gi)
+    assert 'coeff_tail' not in saved
+    assert 'tail_endpoint' not in saved
+
+
+def test_mem_reuse_end_to_end_chain_preserves_provenance():
+    """Legitimate chained workflow (round-8 review): solver 1 COMPUTES a
+    coeff_tail=1.0 bubble (no hand-built metadata), solver 2 reuses the
+    same green_info, and the save from solver 2 must still carry the
+    producing run's coeff_tail and endpoint marker."""
+    import hwave.qlmsio.read_input_k as read_input_k
+    d = tempfile.mkdtemp()
+    solver1 = _make_rpa(coeff_tail=1.0)
+    gi = read_input_k.QLMSkInput({
+        'path_to_input': 'tests/rpa/input',
+        'interaction': {'path_to_input': 'tests/rpa/input',
+                        'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                        'CoulombIntra': 'coulombintra.dat'},
+    }).get_param("green")
+    solver1.solve(gi, d)
+    assert gi["chi0q_freq_meta"]["tail_endpoint"] == _MARKER
+
+    solver2 = _make_rpa(coeff_tail=1.0)
+    solver2.solve(gi, d)                    # in-memory reuse route
+    saved = _save_chi0q(solver2, gi)
+    assert float(saved['coeff_tail']) == 1.0
+    assert str(saved['tail_endpoint']) == _MARKER
+
+
+@pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
+def test_mem_reuse_rejects_malformed_tail_provenance(bad):
+    """Foreign provenance must not smuggle a malformed coeff_tail past
+    the endpoint gate (round-8 review: float() normalized these)."""
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, bad, _MARKER)
+    with pytest.raises(ValueError, match="coeff_tail"):
+        _solve_with_mem_chi0q(solver, chi0q, meta)
+
+
+@pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
+def test_rpa_read_rejects_malformed_tail_provenance(bad):
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=bad, tail_endpoint=_MARKER)
+    with pytest.raises(ValueError, match="coeff_tail"):
+        solver._read_chi0q(fn)
+
+
+@pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
+def test_sc_load_rejects_malformed_tail_provenance(bad):
+    import hwave.sc as sc
+    d = tempfile.mkdtemp()
+    np.savez(os.path.join(d, 'chi0q.npz'),
+             chi0q=np.zeros((8, 16, 1, 1), dtype=complex),
+             freq_index=np.arange(8), nmat=8, coeff_tail=bad,
+             tail_endpoint="branch_mean_v1",
+             momentum_convention="e_plus_ikR")
+    with pytest.raises(ValueError, match="coeff_tail"):
+        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))

@@ -326,7 +326,8 @@ def _validate_chi0q_provenance(meta, nfreq, source):
     value raised AttributeError instead of the promised ValueError).
 
     Returns {"freq_index": int ndarray or None, "nmat": int or None,
-    "coeff_tail": float or None}. Raises ValueError on any defect.
+    "coeff_tail": float or None, "tail_endpoint": str or None}. Raises
+    ValueError on any defect.
     """
     import operator
     from collections.abc import Mapping
@@ -335,7 +336,8 @@ def _validate_chi0q_provenance(meta, nfreq, source):
         raise ValueError(
             "chi0q provenance from {} must be a mapping, got {}".format(
                 source, type(meta).__name__))
-    out = {"freq_index": None, "nmat": None, "coeff_tail": None}
+    out = {"freq_index": None, "nmat": None, "coeff_tail": None,
+           "tail_endpoint": None}
     m_nmat = meta.get("nmat")
     if m_nmat is not None:
         # strict integral scalar: operator.index accepts int and NumPy
@@ -386,13 +388,72 @@ def _validate_chi0q_provenance(meta, nfreq, source):
         out["freq_index"] = fi
     ct = meta.get("coeff_tail")
     if ct is not None:
-        try:
-            out["coeff_tail"] = float(ct)
-        except (TypeError, ValueError):
+        # type-strict like the config validation (round-8 review):
+        # float() would also normalize booleans, numeric strings and
+        # non-finite values, letting malformed foreign provenance pass
+        # the endpoint gate and be re-saved. Unwrap the 0-d scalar an
+        # npz file stores, then require a finite non-boolean Real.
+        import numbers
+        val = np.asarray(ct)
+        item = val[()] if val.ndim == 0 else None
+        if (item is None or isinstance(item, (bool, np.bool_))
+                or not isinstance(item, numbers.Real)
+                or not np.isfinite(float(item))):
             raise ValueError(
                 "chi0q provenance from {}: malformed coeff_tail "
                 "({!r})".format(source, ct))
+        out["coeff_tail"] = float(item)
+    te = meta.get("tail_endpoint")
+    if te is not None:
+        # npz stores strings as 0-d unicode arrays; unwrap and require a
+        # plain string (np.str_ passes the isinstance check)
+        val = np.asarray(te)
+        item = val[()] if val.ndim == 0 else None
+        if not isinstance(item, str):
+            raise ValueError(
+                "chi0q provenance from {}: malformed tail_endpoint "
+                "({!r})".format(source, te))
+        out["tail_endpoint"] = str(item)
     return out
+
+
+# Equal-time endpoint convention of the coeff_tail machinery (issue #134).
+# chi0q computed with a NONZERO coeff_tail before the branch-mean endpoint
+# fix carries an O(1/Nmat) error that a current recomputation at the same
+# Nmat does not; files stamp this marker so loaders can tell the two
+# apart. Bump the value if the endpoint treatment ever changes again.
+TAIL_ENDPOINT_CONVENTION = "branch_mean_v1"
+
+
+def _enforce_tail_endpoint(meta, source):
+    """Endpoint-convention gate on NORMALIZED chi0q provenance.
+
+    Fail-closed for any nonzero-coeff_tail bubble whose endpoint
+    treatment is absent (pre-#134) or unrecognized -- nothing in the
+    array itself can reveal which treatment produced it. Zero-tail
+    bubbles and unknown-tail (no coeff_tail record) bubbles pass:
+    the endpoint is vacuous respectively unknowable there. One gate is
+    shared by the chi0q_init file reader and the in-memory reuse route
+    (round-7 review: the in-memory route bypassed the file gate).
+    """
+    tail = meta.get("coeff_tail")
+    if tail is None or tail == 0.0:
+        return
+    te = meta.get("tail_endpoint")
+    if te is None:
+        raise ValueError(
+            "chi0q provenance from {} records coeff_tail = {} but no "
+            "tail_endpoint marker: the bubble was produced before the "
+            "equal-time endpoint fix (issue #134) and its tail-corrected "
+            "values carry the pre-fix O(1/Nmat) endpoint error. Recompute "
+            "the bubble with this version instead of reusing it.".format(
+                source, tail))
+    if te != TAIL_ENDPOINT_CONVENTION:
+        raise ValueError(
+            "chi0q provenance from {} carries unrecognized tail_endpoint "
+            "= {!r} (this build implements {!r}); refusing to reuse a "
+            "bubble whose endpoint treatment is unknown.".format(
+                source, te, TAIL_ENDPOINT_CONVENTION))
 
 
 class Lattice:
@@ -1113,7 +1174,27 @@ class RPA:
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
-        self.coeff_tail = self.param_mod.get("coeff_tail", 0.0)
+        # finite-real validation (issue #134 deep review): NaN/inf were
+        # accepted and silently produced non-finite susceptibilities; large
+        # values cause catastrophic cancellation. Booleans are rejected --
+        # float(True) == 1.0 would silently enable the correction.
+        import numbers
+        _ct = self.param_mod.get("coeff_tail", 0.0)
+        # type-strict, not coercive (round-7 review): float() would also
+        # accept numeric strings (a quoted TOML number), booleans and 0-d
+        # arrays. numbers.Real keeps Python and NumPy real scalars;
+        # booleans are excluded explicitly -- float(True) == 1.0 would
+        # silently enable the correction.
+        if (isinstance(_ct, (bool, np.bool_))
+                or not isinstance(_ct, numbers.Real)):
+            raise ValueError(
+                "[mode.param] coeff_tail must be a real number, got "
+                "{!r}".format(_ct))
+        _ct = float(_ct)
+        if not np.isfinite(_ct):
+            raise ValueError(
+                "[mode.param] coeff_tail must be finite, got {}".format(_ct))
+        self.coeff_tail = _ct
         self.ext = self.param_mod.get("coeff_extern", 0.0)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
@@ -1402,6 +1483,10 @@ class RPA:
                         "reads as '{}' for this solver's configuration; "
                         "refusing to solve a semantically different "
                         "tensor.".format(m_spin, self.spin_mode))
+                # endpoint gate on the SAME normalized form the file
+                # route checks (round-7 review: this route accepted a
+                # nonzero-tail bubble without or with an unknown marker)
+                _enforce_tail_endpoint(norm, "green_info chi0q_freq_meta")
                 self._chi0q_init_meta = dict(norm)
             elif getattr(self, "_chi0q_init_meta", None) is not None:
                 # metadata set by the chi0q_init file reader on this
@@ -1416,9 +1501,15 @@ class RPA:
                         "belong to the supplied chi0q (content fingerprint "
                         "mismatch): the array was replaced after the file "
                         "was read. Recompute or re-read the file.")
-            elif nfreq != self.nmat:
+            else:
+                # untagged external tensor -- full-frequency included
+                # (round-7 review: a full-Nmat external array previously
+                # fell through with no metadata, and save_results then
+                # stamped the CURRENT run's coeff_tail and endpoint
+                # marker onto data of unknown provenance)
                 self._chi0q_init_meta = {
                     "freq_index": None, "nmat": None, "coeff_tail": None,
+                    "tail_endpoint": None,
                 }
             # Write the normalized provenance back so a CHAIN of reuses --
             # including a bubble that entered through the chi0q_init file
@@ -1431,6 +1522,7 @@ class RPA:
                                    else list(np.asarray(fi_eff))),
                     "nmat": eff.get("nmat"),
                     "coeff_tail": eff.get("coeff_tail"),
+                    "tail_endpoint": eff.get("tail_endpoint"),
                     "spin_mode": self.spin_mode,
                     "norb": int(self.norb),
                     "calc_scheme": self.calc_scheme,
@@ -1537,6 +1629,7 @@ class RPA:
                 "freq_index": list(self.freq_index),
                 "nmat": int(self.nmat),
                 "coeff_tail": float(getattr(self, "coeff_tail", 0.0)),
+                "tail_endpoint": TAIL_ENDPOINT_CONVENTION,
                 # producer identity: shape-only spin detection cannot
                 # distinguish a spin-free two-orbital bubble from a spinful
                 # one-orbital one, so the consumer validates against these
@@ -1772,7 +1865,9 @@ class RPA:
                 # would recompute with a different setting. (getattr: tests
                 # drive save_results on __new__-built stubs without __init__.)
                 return {"freq_index": self.freq_index, "nmat": self.nmat,
-                        "coeff_tail": getattr(self, "coeff_tail", 0.0)}
+                        "coeff_tail": getattr(self, "coeff_tail", 0.0),
+                        # endpoint convention of THIS build (issue #134)
+                        "tail_endpoint": TAIL_ENDPOINT_CONVENTION}
             kwargs = {}
             if init_meta["freq_index"] is not None:
                 kwargs["freq_index"] = init_meta["freq_index"]
@@ -1790,6 +1885,10 @@ class RPA:
             # compute); omit the key when the input did not record one.
             if init_meta.get("coeff_tail") is not None:
                 kwargs["coeff_tail"] = init_meta["coeff_tail"]
+            # same pass-through for the endpoint marker: never fabricate
+            # one for data this run did not compute
+            if init_meta.get("tail_endpoint") is not None:
+                kwargs["tail_endpoint"] = init_meta["tail_endpoint"]
             return kwargs
 
         if "chiq" in info_outputfile.keys():
@@ -2129,7 +2228,9 @@ class RPA:
                             if "freq_index" in data else None),
              "nmat": data["nmat"] if "nmat" in data else None,
              "coeff_tail": (data["coeff_tail"]
-                            if "coeff_tail" in data else None)},
+                            if "coeff_tail" in data else None),
+             "tail_endpoint": (data["tail_endpoint"]
+                               if "tail_endpoint" in data else None)},
             nfreq_file, source=file_name)
         # bind the metadata to the LOADED tensor: if the caller replaces
         # info["chi0q"] with a same-shaped array before solve(), the file's
@@ -2146,6 +2247,11 @@ class RPA:
                 "keeps the file's tail treatment, which is NOT comparable "
                 "with a recomputation under this config.".format(
                     file_name, file_tail, self.coeff_tail))
+        # Endpoint-convention gate (issue #134, fail-closed like the
+        # momentum-convention gate); shared with the in-memory reuse
+        # route -- see _enforce_tail_endpoint.
+        _enforce_tail_endpoint(self._chi0q_init_meta,
+                               "file '{}'".format(file_name))
 
         self._validate_chi0q_shape(chi0q, source=file_name)
 
@@ -2795,6 +2901,45 @@ class RPA:
         # calculate chi0 in real space and imaginary time
         green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
 
+        # Equal-time endpoint correction (issue #134). The tail piece
+        # aa/(i w_n) carries G's equal-time jump: its tau-space branches
+        # are -aa/2 for 0 < tau < beta and +aa/2 for tau < 0, i.e.
+        # G(0^-) = G(0^+) + aa * VV^dag (= twice the subtracted
+        # green0_tail constant in these kt units). Subtracting
+        # green0_tail above reconstructs the 0^+ branch at EVERY tau
+        # slot (exactly so at tau = 0 only for coeff_tail = 1; a
+        # fractional coefficient cancels only part of the jump, leaves a
+        # scaled-down discontinuity and stays first order -- use 0 or
+        # 1), but the bubble chi(tau) is DISCONTINUOUS at tau = 0
+        # whenever the two factors differ (different spins, or asymmetric
+        # multi-orbital structure): chi(0^+) uses (G_fwd(0^+), G_rev(0^-))
+        # and chi(0^-) the opposite pair. A discrete Fourier transform of
+        # a jump converges O(1/Nmat) unless the tau = 0 sample is the
+        # MEAN of the two branches -- without this the tail-corrected
+        # bubble was ~4.5x WORSE than the uncorrected one; with it the
+        # convergence is O(1/Nmat^2) (measured fourfold-Nmat ratios ~16).
+        # No-op -- including bitwise -- when the tail is zero. The
+        # predicate inspects only frequency slice 0: that is the ONLY
+        # slice the correction reads (the tail is frequency-constant by
+        # construction), and reducing the full repeated tensor would
+        # force a device synchronization over nmat times the data on the
+        # GPU path (round-6 review).
+        _tail_on = bool(xp.any(
+            green0_tail.reshape(nblock, nmat, -1)[:, 0] != 0))
+        if _tail_on:
+            tail_kt0 = green0_tail.reshape(
+                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
+            jump_f = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
+                                       workers=workers)
+            # the reversed factor lives at -r: its jump is the spatial
+            # reversal of the forward one
+            jump_r_rev = reverse_fft_axes(jump_f, (2, 3, 4))
+            jump_f = jump_f.reshape(nblock, nvol, nd, nd)
+            jump_r_rev = jump_r_rev.reshape(nblock, nvol, nd, nd)
+            fwd0_p = green_rt.reshape(
+                nblock, nmat, nvol, nd, nd)[:, 0].copy()
+            rev0_p = green_rev[:, 0].copy()
+
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
 
@@ -2805,6 +2950,12 @@ class RPA:
             chi0_rt = (green_rt_5d
                        * green_rev.swapaxes(-2, -1)
                        * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
+            if _tail_on:
+                # mean of the two equal-time branches (sgn[0] = +1)
+                chi0_rt[:, 0] = 0.5 * (
+                    fwd0_p * (rev0_p + jump_r_rev).swapaxes(-2, -1)
+                    + (fwd0_p + jump_f)
+                    * rev0_p.swapaxes(-2, -1))
             nd_shape = (nd, nd)
             nds = nd ** 2
         else:
@@ -2819,6 +2970,16 @@ class RPA:
                        * green_rev[:, :, :, np.newaxis, :, np.newaxis, :])
             # shape: (g,l,r,a,d,b,c) -> need (g,l,r,a,c,b,d)
             chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
+            if _tail_on:
+                # mean of the two equal-time branches (sgn[0] = +1),
+                # same outer-product layout as the bulk slice
+                def _slice(gf, gr):
+                    x = (gf[:, :, :, np.newaxis, :, np.newaxis]
+                         * gr[:, :, np.newaxis, :, np.newaxis, :])
+                    return x.transpose(0, 1, 2, 5, 4, 3)
+                chi0_rt[:, 0] = 0.5 * (
+                    _slice(fwd0_p, rev0_p + jump_r_rev)
+                    + _slice(fwd0_p + jump_f, rev0_p))
             nd_shape = (nd, nd, nd, nd)
             nds = nd ** 4
 
@@ -2921,6 +3082,36 @@ class RPA:
         # G_↑(r,τ)
         green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
 
+        # Equal-time endpoint correction (issue #134), transverse form.
+        # chi_+-(tau) = -G_up(tau) G_dn(-tau) is DISCONTINUOUS at tau = 0
+        # whenever up and down differ (any spin splitting): the discrete
+        # bosonic transform of a jump converges O(1/Nmat) unless the
+        # tau = 0 sample is the MEAN of the two branches
+        # (G_up(0^+), G_dn(0^-)) and (G_up(0^-), G_dn(0^+)); the branch
+        # difference is the tail piece's jump aa * VV^dag per spin
+        # block (see the longitudinal kernel).
+        # slice-0 predicate for the same reasons as the longitudinal
+        # kernel: it is the only slice the correction reads, and the full
+        # reduction costs a GPU sync over the whole repeated tensor
+        _tail_on = bool(xp.any(
+            green0_tail.reshape(nblock, nmat, -1)[:, 0] != 0))
+        if _tail_on:
+            tail_kt0 = green0_tail.reshape(
+                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
+            jump = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
+                                     workers=workers)
+            jump_up = jump[0].reshape(nvol, nd, nd)
+            # the reversed down factor lives at -r. Index the spin block
+            # OUT (jump[1], not jump[1:2]) so the reversal axes (1, 2, 3)
+            # are (x, y, z): with the spin axis retained they would be
+            # (singleton tau, x, y), silently leaving z unreversed --
+            # invisible on every nz = 1 fixture (round-2 review, caught
+            # on a (1, 1, 3) lattice).
+            jump_dn_rev = reverse_fft_axes(
+                jump[1], (1, 2, 3)).reshape(nvol, nd, nd)
+            up0_p = green_up_rt[0].copy()
+            dn0_p = green_dn_rev[0].copy()
+
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
 
@@ -2930,12 +3121,22 @@ class RPA:
             chi0_rt = (green_up_rt
                        * green_dn_rev.swapaxes(-2, -1)
                        * sgn[:, np.newaxis, np.newaxis, np.newaxis])
+            if _tail_on:
+                chi0_rt[0] = 0.5 * (
+                    up0_p * (dn0_p + jump_dn_rev).swapaxes(-2, -1)
+                    + (up0_p + jump_up) * dn0_p.swapaxes(-2, -1))
             nd_shape = (nd, nd)
             nds = nd**2
         else:
             # chi0_+-[l,r,a,c,b,d] = G_↑[l,r,a,b] * G_↓_rev[l,r,d,c] * sgn[l]
             chi0_rt = xp.einsum('lrab,lrdc,l->lracbd',
                                 green_up_rt, green_dn_rev, sgn)
+            if _tail_on:
+                chi0_rt[0] = 0.5 * (
+                    xp.einsum('rab,rdc->racbd', up0_p,
+                              dn0_p + jump_dn_rev)
+                    + xp.einsum('rab,rdc->racbd', up0_p + jump_up,
+                                dn0_p))
             nd_shape = (nd, nd, nd, nd)
             nds = nd**4
 

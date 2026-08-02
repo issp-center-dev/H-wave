@@ -2696,8 +2696,11 @@ class FLEX(RPA):
             # key rather than claim a correction that did not happen. This
             # covers IR-native AND densified-IR output. (getattr: tests drive
             # save_results on __new__-built stubs without __init__.)
+            from hwave.solver.rpa import TAIL_ENDPOINT_CONVENTION
             tail_meta = ({} if getattr(self, "use_ir", False)
-                         else {"coeff_tail": getattr(self, "coeff_tail", 0.0)})
+                         else {"coeff_tail": getattr(self, "coeff_tail", 0.0),
+                               # endpoint convention marker (issue #134)
+                               "tail_endpoint": TAIL_ENDPOINT_CONVENTION})
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
                      # full grid size: lets consumers locate the zero bosonic

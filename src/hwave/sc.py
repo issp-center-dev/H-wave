@@ -303,7 +303,18 @@ def _load_chi0q(input_dict, norb=None):
     # calc comparisons are not silently inconsistent. Files without the key
     # (older builds) load silently as before.
     if "coeff_tail" in data:
-        file_tail = float(data["coeff_tail"])
+        # type-strict provenance normalization, mirroring
+        # rpa._validate_chi0q_provenance (round-8 review)
+        import numbers
+        _val = np.asarray(data["coeff_tail"])
+        _item = _val[()] if _val.ndim == 0 else None
+        if (_item is None or isinstance(_item, (bool, np.bool_))
+                or not isinstance(_item, numbers.Real)
+                or not np.isfinite(float(_item))):
+            raise ValueError(
+                "chi0q file '{}': malformed coeff_tail ({!r})".format(
+                    file_name, data["coeff_tail"]))
+        file_tail = float(_item)
         config_tail = float(input_dict.get("mode", {}).get("param", {})
                             .get("coeff_tail", 0.0))
         if file_tail != config_tail:
@@ -313,6 +324,32 @@ def _load_chi0q(input_dict, norb=None):
                 "NOT comparable with a chi0q_mode=\"calc\" run under this "
                 "config. Set [mode.param] coeff_tail = {} to match the "
                 "file.".format(file_name, file_tail, config_tail, file_tail))
+        # Endpoint-convention gate (issue #134): a nonzero-tail chi0q
+        # produced before the branch-mean endpoint fix carries a pre-fix
+        # O(1/Nmat) error indistinguishable from the array itself; refuse
+        # it rather than feed it to the Eliashberg solver. Zero-tail files
+        # and legacy files without the coeff_tail key are exempt (same
+        # policy as the RPA chi0q_init reader).
+        if file_tail != 0.0:
+            from hwave.solver.rpa import TAIL_ENDPOINT_CONVENTION
+            te = None
+            if "tail_endpoint" in data:
+                val = np.asarray(data["tail_endpoint"])
+                te = str(val[()]) if val.ndim == 0 else repr(val)
+            if te is None:
+                raise ValueError(
+                    "chi0q file '{}' records coeff_tail = {} but no "
+                    "tail_endpoint marker: it was produced before the "
+                    "equal-time endpoint fix (issue #134) and its "
+                    "tail-corrected values carry the pre-fix O(1/Nmat) "
+                    "endpoint error. Recompute the bubble with this "
+                    "version.".format(file_name, file_tail))
+            if te != TAIL_ENDPOINT_CONVENTION:
+                raise ValueError(
+                    "chi0q file '{}' carries unrecognized tail_endpoint = "
+                    "{!r} (this build implements {!r}); refusing to use a "
+                    "bubble whose endpoint treatment is unknown.".format(
+                        file_name, te, TAIL_ENDPOINT_CONVENTION))
 
     # Unconditional marker validation (round-10 review): a PRESENT
     # marker must be checked even when the layout/grid cannot be

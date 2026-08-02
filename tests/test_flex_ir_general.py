@@ -361,11 +361,16 @@ def test_coeff_tail_uniform_converges_toward_ir_as_nmat_grows():
         a = np.moveaxis(ed._ir_compress(
             np.moveaxis(su.sigma, 1, -1), axF, nmat, "u"), -1, 1)
         diffs.append(np.abs(a - sig_ir_nodes).max() / scale)
-    # Measured (2026-07-21): diffs ~= [8.1e-3, 4.1e-3, 2.4e-3] -- monotone,
-    # roughly halving as Nmat doubles (O(1/Nmat) truncation error).
-    assert diffs[0] > diffs[1] > diffs[2], \
-        "no monotone Nmat convergence with coeff_tail on: {}".format(diffs)
-    assert diffs[-1] < 1e-2, diffs
+    # Measured (2026-07-21, pre-#134): diffs ~= [8.1e-3, 4.1e-3, 2.4e-3]
+    # -- monotone O(1/Nmat). Since the #134 endpoint fix the uniform path
+    # converges at O(1/Nmat^2) and drops BELOW the IR reference's own
+    # accuracy (measured post-fix: ~[4.5e-4, 2.3e-4, 7.0e-4]); strict
+    # monotonicity is then no longer meaningful -- the difference floors
+    # at the reference bias -- so pin the agreement scale instead, an
+    # order tighter than the pre-fix worst point.
+    assert max(diffs) < 1.5e-3, \
+        "uniform-vs-IR disagreement too large with coeff_tail on: " \
+        "{}".format(diffs)
 
 
 def test_dispatch_routes_general_uniform_and_ir(monkeypatch):
