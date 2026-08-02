@@ -402,6 +402,108 @@ class TestNblockActiveTailReducedGeneral(unittest.TestCase):
                     red[..., a, b], gen[..., a, a, b, b], atol=1e-13)
 
 
+class TestTransverseSyntheticTail(unittest.TestCase):
+    """Transverse analogues of the synthetic-tail checks (round-2
+    review): every committed active-tail transverse fixture has nz = 1,
+    so a reversal applied to the wrong axis tuple -- e.g. one that
+    still carries the spin axis and therefore reverses (tau, x, y)
+    instead of (x, y, z) -- was invisible. A momentum-dependent
+    down-spin tail on a (1, 1, 3) lattice pins the exact modular
+    spatial reversal in both schemes, against a reference that indexes
+    (-r) mod n explicitly."""
+
+    NX, NMAT, ND = 3, 4, 2
+
+    def _fixture(self):
+        rng = np.random.RandomState(2134)
+        green = (rng.randn(2, self.NMAT, self.NX, self.ND, self.ND)
+                 + 1j * rng.randn(2, self.NMAT, self.NX, self.ND, self.ND))
+        tailk = (rng.randn(2, 1, self.NX, self.ND, self.ND)
+                 + 1j * rng.randn(2, 1, self.NX, self.ND, self.ND))
+        tail = np.tile(tailk, (1, self.NMAT, 1, 1, 1))
+        return green, tailk, tail
+
+    def _stub(self, reduced):
+        NX, NMAT = self.NX, self.NMAT
+
+        class _Lat:
+            shape = (1, 1, NX)
+            nvol = NX
+
+        class _S:
+            lattice = _Lat()
+            nmat = NMAT
+            enable_reduced = reduced
+            fft_workers = 1
+        return _S()
+
+    def _reference(self, green, tailk, reduced):
+        import hwave.solver.matsubara as _ms
+        import hwave.solver.backend as _bk
+        NX, NMAT, ND = self.NX, self.NMAT, self.ND
+        rev = [(-r) % NX for r in range(NX)]
+        gkt = _ms.fermion_to_tau(green.reshape(2, NMAT, -1), axis=1
+                                 ).reshape(2, NMAT, NX, ND, ND) \
+            - np.tile(tailk, (1, NMAT, 1, 1, 1))
+        grt = _bk.spatial_ifftn(
+            gkt.reshape(2, NMAT, 1, 1, NX, ND * ND),
+            axes=(2, 3, 4), workers=1).reshape(2, NMAT, NX, ND, ND)
+        up = grt[0]
+        dn_rev = np.stack([grt[1][(-l) % NMAT][rev] for l in range(NMAT)])
+        jr = _bk.spatial_ifftn(
+            (2.0 * tailk).reshape(2, 1, 1, 1, NX, ND * ND),
+            axes=(2, 3, 4), workers=1).reshape(2, NX, ND, ND)
+        jump_up, jump_dn_rev = jr[0], jr[1][rev]
+        if reduced:
+            chi = np.stack([(1.0 if l == 0 else -1.0)
+                            * up[l] * dn_rev[l].swapaxes(-2, -1)
+                            for l in range(NMAT)])
+            chi[0] = 0.5 * (
+                up[0] * (dn_rev[0] + jump_dn_rev).swapaxes(-2, -1)
+                + (up[0] + jump_up) * dn_rev[0].swapaxes(-2, -1))
+            nds = ND * ND
+            tshape = (NMAT, NX, ND, ND)
+        else:
+            chi = np.stack([(1.0 if l == 0 else -1.0)
+                            * np.einsum('rab,rdc->racbd', up[l], dn_rev[l])
+                            for l in range(NMAT)])
+            chi[0] = 0.5 * (
+                np.einsum('rab,rdc->racbd', up[0],
+                          dn_rev[0] + jump_dn_rev)
+                + np.einsum('rab,rdc->racbd', up[0] + jump_up, dn_rev[0]))
+            nds = ND ** 4
+            tshape = (NMAT, NX, ND, ND, ND, ND)
+        cqt = _bk.spatial_fftn(chi.reshape(NMAT, 1, 1, NX, nds),
+                               axes=(1, 2, 3), workers=1)
+        return _ms.tau_to_boson(
+            cqt.reshape(1, NMAT, -1), axis=1).reshape(*tshape) * (-1.0)
+
+    def test_kernel_matches_branch_construction(self):
+        import hwave.solver.rpa as R
+        green, tailk, tail = self._fixture()
+        for reduced in (True, False):
+            with self.subTest(reduced=reduced):
+                got = np.asarray(R.RPA._calc_chi0q_transverse(
+                    self._stub(reduced), green, tail, 1.0))
+                want = self._reference(green, tailk, reduced)
+                np.testing.assert_allclose(got, want, atol=1e-12)
+
+    def test_reduced_matches_general_diagonal(self):
+        """Distinct active up/down tails: reduced[l, q, a, b] must equal
+        general[l, q, a, a, b, b] (the longitudinal analogue already
+        exists; the transverse kernels are separate code)."""
+        import hwave.solver.rpa as R
+        green, _, tail = self._fixture()
+        red = np.asarray(R.RPA._calc_chi0q_transverse(
+            self._stub(True), green, tail, 1.0))
+        gen = np.asarray(R.RPA._calc_chi0q_transverse(
+            self._stub(False), green, tail, 1.0))
+        for a in range(self.ND):
+            for b in range(self.ND):
+                np.testing.assert_allclose(
+                    red[..., a, b], gen[..., a, a, b, b], atol=1e-13)
+
+
 class TestFlexInheritsTheFix(unittest.TestCase):
 
     def test_flex_uniform_chi0_delegates_to_the_fixed_kernel(self):

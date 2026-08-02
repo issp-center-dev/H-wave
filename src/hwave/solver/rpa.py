@@ -2982,9 +2982,14 @@ class RPA:
             jump = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
                                      workers=workers)
             jump_up = jump[0].reshape(nvol, nd, nd)
-            # the reversed down factor lives at -r
+            # the reversed down factor lives at -r. Index the spin block
+            # OUT (jump[1], not jump[1:2]) so the reversal axes (1, 2, 3)
+            # are (x, y, z): with the spin axis retained they would be
+            # (singleton tau, x, y), silently leaving z unreversed --
+            # invisible on every nz = 1 fixture (round-2 review, caught
+            # on a (1, 1, 3) lattice).
             jump_dn_rev = reverse_fft_axes(
-                jump[1:2], (1, 2, 3)).reshape(nvol, nd, nd)
+                jump[1], (1, 2, 3)).reshape(nvol, nd, nd)
             up0_p = green_up_rt[0].copy()
             dn0_p = green_dn_rev[0].copy()
 
