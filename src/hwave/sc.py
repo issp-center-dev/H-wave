@@ -342,28 +342,41 @@ def _load_chi0q(input_dict, norb=None):
     # without norb a malformed 8D file passed both marked and unmarked;
     # with norb the (8,8,2,2,2,2)-style raw/ref ambiguity also vanishes,
     # since norb cannot be two values at once).
+    _qax = None
+    _resolved = False
     if norb is not None and _grid is not None:
         nv, no = _nvol, int(norb)
-        ok = (
-            (chi0q.ndim == 4 and tuple(chi0q.shape[1:]) == (nv, no, no))
-            or (chi0q.ndim == 6
-                and tuple(chi0q.shape[1:]) == (nv, no, no, no, no))
-            or (chi0q.ndim == 6
-                and tuple(chi0q.shape[:5]) == (no, no) + _grid)
-            or (chi0q.ndim == 8
-                and tuple(chi0q.shape[:7]) == (no,) * 4 + _grid)
-            or (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2
-                and tuple(chi0q.shape[2:4]) == (nv, no))
-        )
-        if not ok:
+        # Full trailing shapes for every layout (round-7 review: partial
+        # slices accepted malformed spin-diag arrays), and the layout
+        # matched HERE directly selects the q axes -- re-running the
+        # norb-blind structural routing below raised 'matches BOTH' for
+        # shapes this gate had already disambiguated.
+        if chi0q.ndim == 4 and tuple(chi0q.shape[1:]) == (nv, no, no):
+            _qax = 1
+        elif (chi0q.ndim == 6
+                and tuple(chi0q.shape[1:]) == (nv, no, no, no, no)):
+            _qax = 1
+        elif (chi0q.ndim == 6
+                and tuple(chi0q.shape[:5]) == (no, no) + _grid):
+            _qax = (2, 3, 4)
+        elif (chi0q.ndim == 8
+                and tuple(chi0q.shape[:7]) == (no,) * 4 + _grid):
+            _qax = (4, 5, 6)
+        elif (chi0q.ndim == 5 and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:]) == (nv, no, no)):
+            _qax = 2
+        elif (chi0q.ndim == 7 and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:]) == (nv, no, no, no, no)):
+            _qax = 2
+        else:
             raise ValueError(
                 "chi0q file '{}': shape {} matches no supported layout "
                 "for norb = {} and CellShape {}; the file is malformed "
                 "or from a different system. Regenerate it with the "
                 "current version.".format(file_name, chi0q.shape, no,
                                           list(_grid)))
-    _qax = None
-    if _grid is None:
+        _resolved = True
+    if _resolved or _grid is None:
         pass
     elif chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
         _qax = 2

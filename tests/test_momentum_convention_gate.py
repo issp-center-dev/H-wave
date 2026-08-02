@@ -337,6 +337,49 @@ class TestRound4Hardening(unittest.TestCase):
                     self.assertIn("no supported layout",
                                   str(cm.exception))
 
+    def test_norb_gate_rejects_malformed_spin_diag_shapes(self):
+        """5D/7D spin-diag layouts are checked over their FULL trailing
+        shapes (round-7: partial slices accepted malformed arrays)."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for label, shape in (("5d", (2, 4, 8, 2, 3)),
+                             ("7d", (2, 4, 8, 2, 2, 2, 3))):
+            for marked in (False, True):
+                with self.subTest(shape=label, marked=marked):
+                    d = tempfile.mkdtemp(dir=tmp.name)
+                    extra = ({"momentum_convention": MOMENTUM_CONVENTION}
+                             if marked else {})
+                    np.savez(os.path.join(d, "chi0q.npz"),
+                             chi0q=np.zeros(shape), **extra)
+                    inp = {"mode": {"param": {"T": 1.0, "Nmat": 4,
+                                              "CellShape": [2, 2, 2]}},
+                           "file": {"input": {"path_to_flex_output": d},
+                                    "output": {"path_to_output": d}},
+                           "eliashberg": {}}
+                    with self.assertRaises(ValueError) as cm:
+                        sc._load_chi0q(inp, norb=2)
+                    self.assertIn("no supported layout",
+                                  str(cm.exception))
+
+    def test_norb_resolves_the_structural_ambiguity(self):
+        """(8, 8, 2, 2, 2, 2) on a 2x2x2 grid is raw for norb = 2 and ref
+        for norb = 8; with norb supplied the routing must resolve it (the
+        no-norb path keeps failing closed, pinned elsewhere)."""
+        payload = np.zeros((8, 8, 2, 2, 2, 2))
+        for no in (2, 8):
+            with self.subTest(norb=no):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                d = tmp.name
+                np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload,
+                         momentum_convention=MOMENTUM_CONVENTION)
+                inp = {"mode": {"param": {"T": 1.0, "Nmat": 8,
+                                          "CellShape": [2, 2, 2]}},
+                       "file": {"input": {"path_to_flex_output": d},
+                                "output": {"path_to_output": d}},
+                       "eliashberg": {}}
+                sc._load_chi0q(inp, norb=no)   # must not raise
+
     def test_huge_complex_odd_payload_is_rejected(self):
         """Finite complex values whose MAGNITUDE overflows: |x+iy| = inf
         for x, y ~ 1.3e308, and an infinite scale previously normalized
