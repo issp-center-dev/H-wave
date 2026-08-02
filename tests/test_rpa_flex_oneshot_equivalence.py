@@ -254,7 +254,7 @@ class TestSpinModeConsistency(unittest.TestCase):
 
         out = tempfile.mkdtemp()
         np.savez(os.path.join(out, 'chi0q_diag_su2test.npz'),
-                 chi0q=np.stack([chi0q_free, chi0q_free], axis=0))
+                 chi0q=np.stack([chi0q_free, chi0q_free], axis=0), momentum_convention="e_plus_ikR")
         try:
             r = _read('tests/rpa/input_2orb', inter)
             par = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],

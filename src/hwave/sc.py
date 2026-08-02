@@ -314,6 +314,27 @@ def _load_chi0q(input_dict):
                 "config. Set [mode.param] coeff_tail = {} to match the "
                 "file.".format(file_name, file_tail, config_tail, file_tail))
 
+    # Fourier-sign provenance gate (issue #133): chi0q is q-labeled; a
+    # pre-#133 file carries flipped labels. Legacy files are accepted only
+    # when the payload is q-even (see the validator). The q axis is the
+    # flattened CellShape volume: identify it by LAYOUT (axis 1 for the
+    # (nfreq, nvol, ...) raw layouts, axis 2 behind a leading spin-diag 2).
+    from hwave.solver.rpa import validate_momentum_convention
+    _cs = list(input_dict.get("mode", {}).get("param", {}).get(
+        "CellShape", [1, 1, 1]))
+    while len(_cs) < 3:
+        _cs.append(1)
+    _nvol = int(np.prod(_cs))
+    if chi0q.ndim >= 2 and chi0q.shape[1] == _nvol:
+        _qax = 1
+    elif chi0q.ndim >= 3 and chi0q.shape[0] == 2 and chi0q.shape[2] == _nvol:
+        _qax = 2
+    else:
+        _qax = None
+    if _qax is not None:
+        validate_momentum_convention(data, file_name, chi0q, _qax,
+                                     tuple(_cs))
+
     freq_index, file_nmat = _read_freq_meta(data)
     # Identify the frequency axis from the array LAYOUT, never from the
     # freq_index length (a restricted freq_index can coincidentally match
@@ -1152,7 +1173,8 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         Spin vertex, shape (norb, norb, Nx, Ny, Nz).
     """
     # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
-    # so a one-sided off-site declaration entered as v e^{-iqR} while the
+    # so a one-sided off-site declaration entered as v e^{+iqR} (the
+    # documented sign, #133) while the
     # ring and the general S/C route read the same Hamiltonian as
     # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7.
     # SKIPPED when the caller proved the raw declarations partner-closed
@@ -1820,6 +1842,19 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+    from hwave.solver.rpa import validate_momentum_convention
+    from hwave.solver.ir_axis import is_ir_native as _is_irn
+    # Fourier-sign provenance (issue #133): H-wave chi layout has the
+    # flattened q volume on axis 1. IR-native files have their own layout
+    # and are gated by their consumers' IR machinery, not here.
+    _cs = list(input_dict.get("mode", {}).get("param", {}).get(
+        "CellShape", [1, 1, 1]))
+    while len(_cs) < 3:
+        _cs.append(1)
+    _grid = tuple(int(x) for x in _cs)
+    if not _is_irn(data_s) and chi_s_raw.ndim >= 2             and chi_s_raw.shape[1] == int(np.prod(_grid)):
+        validate_momentum_convention(data_s, chi_s_path, chi_s_raw, 1,
+                                     _grid)
     # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
     # The tag and the general-path MYO consumption ship together, so any
     # untagged file from a released build is necessarily a reduced/Kuroki
@@ -1838,6 +1873,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    if not _is_irn(data_c) and chi_c_raw.ndim >= 2             and chi_c_raw.shape[1] == int(np.prod(_grid)):
+        validate_momentum_convention(data_c, chi_c_path, chi_c_raw, 1,
+                                     _grid)
     # The spin and charge files must share one convention; combining e.g. an MYO
     # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
     chi_convention_present_c = "chi_convention" in data_c
@@ -2549,6 +2587,11 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                 "match the producing FLEX run. Verify the temperatures "
                 "agree -- a mismatch silently corrupts the pair bubble.",
                 green_path, run_beta)
+    if not is_ir_native(data_g):
+        from hwave.solver.rpa import validate_momentum_convention
+        # green layout (nblock, nfreq, nvol, norb, norb): q axis 2
+        validate_momentum_convention(data_g, green_path, green_raw, 2,
+                                     (Nx, Ny, Nz))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb

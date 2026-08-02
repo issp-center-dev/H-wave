@@ -275,8 +275,8 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
     def _write(self, d, extra_s=None, extra_c=None):
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(extra_s or {}))
-        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(extra_c or {}))
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(extra_s or {}), momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(extra_c or {}), momentum_convention="e_plus_ikR")
         return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
 
     def _load(self, inp, interactions):

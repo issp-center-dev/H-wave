@@ -40,20 +40,26 @@ the Hamiltonian is rewritten in the following form
 .. note::
 
    This :math:`e^{+i\bf{k}\cdot\bf{r}}` convention (the Wannier90-style
-   sign, shared with UHFk) is what every internal Fourier transform of the
-   RPA module follows since issue #133: :math:`\varepsilon({\bf k})
-   = \sum_{\bf R} t({\bf R}) e^{+i {\bf k}\cdot{\bf R}}` and
-   :math:`W({\bf q}) = \sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot
-   {\bf R}}`. Before that fix the non-spin-orbital path used the opposite
-   sign throughout (a self-consistent global :math:`{\bf k} \to -{\bf k}`
-   relabeling, so the stored ``chi0q``/``chiq`` of a non-centrosymmetric
-   model carried negated momentum labels), while the spin-orbital path
-   mixed the two signs between the transfer and the interaction, which
-   made the spin-orbital ``chiq`` combine :math:`\chi_0({\bf q})` with
-   :math:`W(-{\bf q})` -- invisible for momentum-symmetric interactions,
-   wrong for directional bonds. Momentum-resolved outputs of
-   non-centrosymmetric models produced before this fix flip their
-   :math:`{\bf q}` labels relative to current output.
+   sign, shared with UHFk) is what every real-space-coefficient build
+   (:math:`R \to k/q`) of the RPA module follows since issue #133:
+   :math:`\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
+   e^{+i {\bf k}\cdot{\bf R}}` and :math:`W({\bf q}) = \sum_{\bf R}
+   W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}` (the convolution transforms
+   inside the susceptibility machinery are self-inverse pairs and are not
+   affected). Before that fix the non-spin-orbital path used the opposite
+   sign throughout -- a self-consistent global :math:`{\bf k} \to
+   -{\bf k}` relabeling, so its stored ``chi0q``/``chiq`` carried negated
+   momentum labels whenever the tensor is not elementwise even under
+   :math:`{\bf q} \to -{\bf q}` on the FFT grid -- while the
+   spin-orbital path mixed the two signs between the transfer and the
+   interaction, so its ``chiq`` was solved from :math:`\chi_0({\bf q})`
+   with :math:`W(-{\bf q})`: for interactions with
+   :math:`W({\bf q}) \neq W(-{\bf q})` (directional bonds) the old
+   spin-orbital ``chiq`` is wrong, not merely relabeled. Momentum-space
+   files written since this fix carry ``momentum_convention =
+   "e_plus_ikR"``; loaders reject unmarked legacy files unless their
+   content is :math:`{\bf q}`-even (for which the two conventions
+   coincide).
 
 .. math::
     \begin{aligned}

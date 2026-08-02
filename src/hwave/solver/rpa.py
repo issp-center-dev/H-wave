@@ -77,6 +77,53 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
             "current RPA solver.".format(file_name, conv)
         )
 
+MOMENTUM_CONVENTION = "e_plus_ikR"
+
+
+def validate_momentum_convention(data, file_name, payload, q_axis,
+                                 lattice_shape):
+    """Fail closed on momentum-convention mismatches (issue #133).
+
+    Every k/q-space NPZ written since #133 carries
+    momentum_convention = "e_plus_ikR" (the documented Wannier90-style
+    sign). Files written before the fix carry q labels of the OPPOSITE
+    sign; silently combining one with current-convention quantities would
+    mix q and -q. Legacy files without the marker are accepted ONLY when
+    the stored payload is elementwise even under q -> -q on the FFT grid
+    (then the two conventions coincide bit-for-bit -- true for every
+    centrosymmetric fixture); otherwise they are rejected with a
+    regeneration hint, following the sc_vertex_version fail-closed
+    precedent of gating on content, not age.
+
+    Parameters: payload is the stored array, q_axis its flattened
+    (nx, ny, nz) momentum axis, lattice_shape that grid.
+    """
+    files = getattr(data, "files", data)
+    if "momentum_convention" in files:
+        tag = str(np.asarray(data["momentum_convention"]).ravel()[0])
+        if tag != MOMENTUM_CONVENTION:
+            raise ValueError(
+                "file '{}' records momentum_convention = '{}' but this "
+                "build uses '{}'; regenerate the file.".format(
+                    file_name, tag, MOMENTUM_CONVENTION))
+        return
+    from hwave.solver.kgrid import reverse_fft_axes
+    nx, ny, nz = lattice_shape
+    arr = np.moveaxis(np.asarray(payload), q_axis, 0)
+    arr = arr.reshape(nx, ny, nz, -1)
+    asym = float(np.abs(arr - reverse_fft_axes(arr, (0, 1, 2))).max())
+    scale = float(np.abs(arr).max())
+    if asym > 1.0e-8 * max(scale, 1.0e-300):
+        raise ValueError(
+            "file '{}' carries no momentum_convention marker and its "
+            "content is not even under q -> -q (asymmetry {:.3e} vs scale "
+            "{:.3e}): it was written before the #133 Fourier-sign "
+            "alignment and its momentum labels are flipped relative to "
+            "this build. Regenerate the file with the current version. "
+            "(Files whose content is q-even are accepted: for them the "
+            "two conventions coincide.)".format(file_name, asym, scale))
+
+
 def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
                       source="geom.dat"):
     """Physical orbital count from a geometry ``norb``.
@@ -590,7 +637,8 @@ class Interaction:
             # so the table entering the vertex is the mean
             #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
             # Without this the ring read a one-sided off-site declaration as
-            # v e^{-iqR} where the operator it declares -- v n_a(i) n_a(i+R),
+            # v e^{+iqR} (the documented sign, #133) where the operator it
+            # declares -- v n_a(i) n_a(i+R),
             # even in R by the site sum -- has the exact vertex v cos(qR)
             # (measured: chiq differed by 1.2e-2 from the symmetric reading
             # of the same Hamiltonian). PairHop's partner is the HERMITIAN
@@ -1608,6 +1656,7 @@ class RPA:
                     # unlike UHFk's interleaved (2*orb+spin) output; record it so
                     # consumers do not silently mix the two conventions.
                     index_convention = "spin_block",
+                    momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
@@ -1626,6 +1675,7 @@ class RPA:
                 wavevector_index = self.wavenum_table,
                 # spin-orbital axes are spin-block ordered (spin*norb+orb)
                 index_convention = "spin_block",
+                momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
             )
             np.savez(file_name, **save_kwargs)
@@ -1904,6 +1954,22 @@ class RPA:
         except Exception as e:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
+
+        # Fourier-sign provenance gate (issue #133): chi0q is q-labeled;
+        # a pre-#133 file carries flipped labels. Legacy files are accepted
+        # only when the payload is q-even (see the validator). Layout: the
+        # flattened lattice volume sits on axis 1, or axis 2 behind a
+        # leading spin-diag block of 2.
+        _nvol = self.lattice.nvol
+        if chi0q.ndim >= 2 and chi0q.shape[1] == _nvol:
+            _qax = 1
+        elif chi0q.ndim >= 3 and chi0q.shape[0] == 2                 and chi0q.shape[2] == _nvol:
+            _qax = 2
+        else:
+            _qax = None
+        if _qax is not None:
+            validate_momentum_convention(data, file_name, chi0q, _qax,
+                                         self.lattice.shape)
 
         # Stage 3 (design ir-matsubara-stage3.md Sec. 4): chi0q_init assumes
         # a uniform frequency grid; sparse-node files must not fall through

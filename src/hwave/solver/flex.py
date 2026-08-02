@@ -362,7 +362,16 @@ class FLEX(RPA):
                 "from the array shape alone.".format(
                     file_name, list(self.lattice.shape)))
         meta = ir_native_meta(data) if is_ir_native(data) else None
-        return data["sigma"], meta
+        # Fourier-sign provenance gate (issue #133): sigma is a k-labeled
+        # quantity; a pre-#133 file carries flipped labels. Legacy files
+        # are accepted only when the payload is q-even (see the validator).
+        from hwave.solver.rpa import validate_momentum_convention
+        sig = data["sigma"]
+        # layout (nblock, nmat_or_nodes, nvol, nd, nd): nvol is axis 2 --
+        # do NOT search by size, nmat == nvol collisions are realistic
+        validate_momentum_convention(data, file_name, sig, 2,
+                                     self.lattice.shape)
+        return sig, meta
 
     @do_profile
     def solve(self, green_info, path_to_output):
@@ -2695,6 +2704,7 @@ class FLEX(RPA):
                      # frequency (index nmat//2) unambiguously (run
                      # provenance only on IR-native files)
                      nmat=self.nmat,
+                     momentum_convention="e_plus_ikR",
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      # FLEX chi0q comes from the same spin-block-ordered RPA
@@ -2725,6 +2735,9 @@ class FLEX(RPA):
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
                            sc_vertex_version=2,
+                           # Fourier-sign provenance (issue #133): q labels
+                           # follow the documented e^{+iqR} convention
+                           momentum_convention="e_plus_ikR",
                            **_freq_meta("B"))
         if self._flex_general:
             # Self-describing index-order marker for the ORBITAL-PAIR files
@@ -2773,6 +2786,7 @@ class FLEX(RPA):
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
+                     momentum_convention="e_plus_ikR",
                      **_freq_meta("F"))
             logger.info("save_results: save sigma in file {}".format(file_name))
 
@@ -2794,6 +2808,7 @@ class FLEX(RPA):
                      # from a different temperature fails fast instead of
                      # silently corrupting the pair bubble
                      beta=1.0 / self.T,
+                     momentum_convention="e_plus_ikR",
                      **green_extra,
                      **_freq_meta("F"))
             logger.info("save_results: save green in file {}".format(file_name))

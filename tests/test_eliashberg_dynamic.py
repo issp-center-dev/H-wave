@@ -58,10 +58,10 @@ def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     # "myo" convention; tag it so the loader treats it as orbital-pair (no
     # spin-orbital block extraction).
     np.savez(tmp_path/"chiq_s.npz", chiq_s=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo", chi_orbital_layout="acbd")
+             chi_convention="myo", chi_orbital_layout="acbd", momentum_convention="e_plus_ikR")
     np.savez(tmp_path/"chiq_c.npz", chiq_c=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo", chi_orbital_layout="acbd")
-    np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)))
+             chi_convention="myo", chi_orbital_layout="acbd", momentum_convention="e_plus_ikR")
+    np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
@@ -81,7 +81,7 @@ def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
     from hwave.solver import eliashberg_dynamic as ed
     m = _write_flex_fixture(tmp_path, nmat=8)
     # overwrite green with a different nmat
-    np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)))
+    np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)), momentum_convention="e_plus_ikR")
     inp = {"mode": {"param": {"Nmat": 8}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}
@@ -175,9 +175,9 @@ def _write_flex_so_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
         chi[..., norb:, norb:] = block
         return chi
 
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic())
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic())
-    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)))
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
@@ -346,8 +346,8 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
         return chi
 
     # no chi_convention tag -> _read_flex_chi_raw defaults to "kuroki"
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic())
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic())
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic(), momentum_convention="e_plus_ikR")
     inp = {"mode": {"param": {"Nmat": nmat}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}

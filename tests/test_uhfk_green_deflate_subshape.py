@@ -239,7 +239,7 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         # write a green file in UHFk's _save_green format (unfolded "green" key)
         npz_path = os.path.join(self.tmp, "green_init.npz")
         green_unfolded = self.s211._deflate_green(self.s211.Green)
-        np.savez(npz_path, green=green_unfolded, green_sublattice=self.s211.Green)
+        np.savez(npz_path, green=green_unfolded, green_sublattice=self.s211.Green, momentum_convention="e_plus_ikR")
 
         nvol, nd = rpa.lattice.nvol, rpa.nd
         g = rpa._read_green(npz_path)
@@ -279,7 +279,7 @@ class TestGreenDeflateSubShape(unittest.TestCase):
 
         npz_path = os.path.join(self.tmp, "green_old.npz")
         old_green = self.s211._deflate_green(self.s211.Green, hamiltonian=True)
-        np.savez(npz_path, green=old_green, green_sublattice=self.s211.Green)
+        np.savez(npz_path, green=old_green, green_sublattice=self.s211.Green, momentum_convention="e_plus_ikR")
 
         g = rpa._read_green(npz_path)
         self.assertEqual(g.shape, (nvol, nd, nd))
@@ -295,7 +295,7 @@ class TestGreenDeflateSubShape(unittest.TestCase):
 
         npz_path = os.path.join(self.tmp, "green_ambiguous.npz")
         old_green = self.s211._deflate_green(self.s211.Green, hamiltonian=True)
-        np.savez(npz_path, green=old_green)
+        np.savez(npz_path, green=old_green, momentum_convention="e_plus_ikR")
 
         with self.assertRaises(SystemExit):
             rpa._read_green(npz_path)
@@ -338,7 +338,7 @@ class TestGreenDeflateSubShape(unittest.TestCase):
 
         npz_path = os.path.join(self.tmp, "green_so_notag.npz")
         old_green = so211._deflate_green(so211.Green, hamiltonian=True)
-        np.savez(npz_path, green=old_green, green_sublattice=so211.Green)
+        np.savez(npz_path, green=old_green, green_sublattice=so211.Green, momentum_convention="e_plus_ikR")
 
         with self.assertRaises(SystemExit):
             rpa._read_green(npz_path)
@@ -357,7 +357,7 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         npz_path = os.path.join(self.tmp, "green_so_tag.npz")
         new_green = so211._deflate_green(so211.Green)
         np.savez(npz_path, green=new_green,
-                 green_convention=np.array("green_slot_first"))
+                 green_convention=np.array("green_slot_first"), momentum_convention="e_plus_ikR")
 
         g = rpa._read_green(npz_path)
         self.assertEqual(g.shape, (nvol, nd, nd))
@@ -374,7 +374,7 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         npz_path = os.path.join(self.tmp, "green_new_nogsub.npz")
         new_green = self.s211._deflate_green(self.s211.Green)
         np.savez(npz_path, green=new_green,
-                 green_convention=np.array("green_slot_first"))
+                 green_convention=np.array("green_slot_first"), momentum_convention="e_plus_ikR")
 
         g = rpa._read_green(npz_path)
         self.assertEqual(g.shape, (nvol, nd, nd))

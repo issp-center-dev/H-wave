@@ -245,7 +245,7 @@ def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
         calls["flex"].append(copy.deepcopy(input_dict))
         out = input_dict["file"]["output"]["path_to_output"]
         os.makedirs(out, exist_ok=True)
-        np.savez(os.path.join(out, "sigma.npz"), sigma=np.ones((1,)))
+        np.savez(os.path.join(out, "sigma.npz"), sigma=np.ones((1,)), momentum_convention="e_plus_ikR")
         return {"scf_converged": True, "scf_iterations": 10}
 
     def fake_eli(input_dict):

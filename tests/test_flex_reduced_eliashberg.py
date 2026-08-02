@@ -1084,11 +1084,11 @@ class TestStaticEntryPointWarnsOnce(unittest.TestCase):
             return chi
 
         np.savez(os.path.join(self.dir, "chiq_s.npz"),
-                 chiq_s=paramagnetic_chi(), chi_convention="kuroki")
+                 chiq_s=paramagnetic_chi(), chi_convention="kuroki", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(self.dir, "chiq_c.npz"),
-                 chiq_c=paramagnetic_chi(), chi_convention="kuroki")
+                 chiq_c=paramagnetic_chi(), chi_convention="kuroki", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(self.dir, "green.npz"),
-                 green=rc((1, self.nmat, nvol, self.norb, self.norb)))
+                 green=rc((1, self.nmat, nvol, self.norb, self.norb)), momentum_convention="e_plus_ikR")
 
     def _input_dict(self):
         return {
@@ -1338,11 +1338,11 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
             return a
 
         np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=chi(),
-                 chi_convention="kuroki")
+                 chi_convention="kuroki", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=chi(),
-                 chi_convention="kuroki")
+                 chi_convention="kuroki", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "green.npz"),
-                 green=rc((1, nmat, nvol, norb, norb)))
+                 green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
         return {"mode": {"param": {"Nmat": nmat}},
                 "file": {"output": {"path_to_output": d}},
                 "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
@@ -1414,7 +1414,7 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
                      chi_convention="kuroki", **extra)
         g = green(rc, nmat, nvol, norb) if green else rc(
             (1, nmat, nvol, norb, norb))
-        np.savez(os.path.join(d, "green.npz"), green=g)
+        np.savez(os.path.join(d, "green.npz"), green=g, momentum_convention="e_plus_ikR")
         return {"mode": {"param": {"Nmat": nmat}},
                 "file": {"output": {"path_to_output": d}},
                 "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
@@ -1742,10 +1742,10 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
         for b in range(2):
             chi[:, :, b*norb:(b+1)*norb, b*norb:(b+1)*norb] = 0.1
         meta = dict(chi_extra or {})
-        np.savez(os.path.join(d, 'chiq_s.npz'), chiq_s=chi, **meta)
-        np.savez(os.path.join(d, 'chiq_c.npz'), chiq_c=chi, **meta)
+        np.savez(os.path.join(d, 'chiq_s.npz'), chiq_s=chi, **meta, momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, 'chiq_c.npz'), chiq_c=chi, **meta, momentum_convention="e_plus_ikR")
         green = np.stack(blocks, axis=0)
-        np.savez(os.path.join(d, 'green.npz'), green=green)
+        np.savez(os.path.join(d, 'green.npz'), green=green, momentum_convention="e_plus_ikR")
         return {"file": {"output": {"path_to_output": d}},
                 "eliashberg": {}}
 

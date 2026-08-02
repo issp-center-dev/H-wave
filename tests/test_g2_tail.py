@@ -406,7 +406,7 @@ class TestG2TailGuards(unittest.TestCase):
         norb, Nx, Ny, Nz, nmat = 1, 2, 1, 1, 5
         green_file = np.ones((1, nmat, Nx * Ny * Nz, norb, norb),
                              dtype=complex)
-        np.savez(os.path.join(d, "green.npz"), green=green_file)
+        np.savez(os.path.join(d, "green.npz"), green=green_file, momentum_convention="e_plus_ikR")
         inp = {"file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
@@ -662,7 +662,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
     def _write_green(self, d, nmat=4, **extra):
         norb, nvol = 1, 2
         green = np.ones((1, nmat, nvol, norb, norb), dtype=complex)
-        np.savez(os.path.join(d, "green.npz"), green=green, **extra)
+        np.savez(os.path.join(d, "green.npz"), green=green, **extra, momentum_convention="e_plus_ikR")
         return {"mode": {"param": {"T": 2.0}},
                 "file": {"output": {"path_to_output": d}},
                 "eliashberg": {}}
@@ -915,8 +915,9 @@ class TestTsweepG2TailFingerprint(unittest.TestCase):
         fingerprint cannot distinguish rungs computed either way."""
         import hwave.tsweep as ts
         # exact schema version: a silent bump would strand every existing
-        # sweep, a silent revert would resurrect the mixing bug
-        self.assertEqual(ts._MANIFEST_VERSION, 2)
+        # sweep, a silent revert would resurrect a mixing bug (2 = the #86
+        # tail-correction flip, 3 = the #133 Fourier-sign alignment)
+        self.assertEqual(ts._MANIFEST_VERSION, 3)
         old_manifest = {"version": 1, "ladder": [1.0], "fingerprint": "x"}
         with self.assertRaises(ValueError) as cm:
             ts._validate_resume(old_manifest, [1.0], "x")

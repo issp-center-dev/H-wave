@@ -65,10 +65,11 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
     these builders -- shares it. Historically sc.py built
     epsilon_k[orb2, orb1] with e^{+ikR} against a e^{-ikR} core, i.e. the
     orbital-transposed matrix at -k; then briefly the core convention
-    itself was split between modes. For real hoppings the signs coincide
-    element-wise, which masked all of it; complex Hermitian hoppings pin
-    the sign.) These tests pin the solver convention with a complex
-    Hermitian fixture."""
+    itself was split between modes. For hoppings whose k-space matrix is
+    elementwise even under k -> -k -- e.g. R-symmetric real bonds -- the
+    signs coincide, which masked all of it; complex Hermitian directional
+    hoppings pin the sign.) These tests pin the solver convention with a
+    complex Hermitian fixture."""
 
     def setUp(self):
         self.Nx, self.Ny, self.Nz = 4, 4, 1
@@ -2528,7 +2529,7 @@ class TestChi0qInternal(unittest.TestCase):
 
             # Save it as npz file
             chi0q_file = os.path.join(output_dir, "chi0q.npz")
-            np.savez(chi0q_file, chi0q=chi0q_calc)
+            np.savez(chi0q_file, chi0q=chi0q_calc, momentum_convention="e_plus_ikR")
 
             # Load it back
             from hwave.sc import _load_chi0q
