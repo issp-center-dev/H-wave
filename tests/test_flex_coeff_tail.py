@@ -100,7 +100,11 @@ class TestFlexCoeffTail(unittest.TestCase):
         Since the #134 endpoint fix the corrected result sits essentially
         on the exact value, so this difference IS coeff_tail=0's full
         truncation error rather than a partial cancellation with the
-        old (broken) tail -- the bound reflects that scale."""
+        old (broken) tail -- the bound reflects that scale. NOTE: this
+        is an O(1)-corruption SENTINEL only (a wrong spin factor or a
+        double-counted tail lands at O(scale)); it cannot discriminate
+        endpoint-level inconsistencies -- the second-order convergence
+        pins in test_coeff_tail_endpoint.py carry that burden."""
         chi0q_0 = _run_flex(Nmat=64, coeff_tail=0.0)["chi0q"]
         chi0q_1 = _run_flex(Nmat=64, coeff_tail=1.0)["chi0q"]
 

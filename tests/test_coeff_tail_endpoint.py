@@ -256,21 +256,11 @@ class TestTransverseEndpoint(unittest.TestCase):
         return -out / LX
 
     def test_transverse_tail_accelerates(self):
+        # Extern convention resolved (round-1 review): coeff_extern h
+        # gives H_up = H0 + h, H_dn = H0 - h, so e_dn = eps - MU - HZ
+        # and e_up = eps - MU + HZ; the fixed static index and the single
+        # candidate together also pin the bosonic index convention.
         candidates = [self._exact_pm()]
-        # sign convention of Extern (up/down assignment) is pinned by
-        # whichever branch matches at convergence; both split candidates
-        # share the acceleration property under test
-        out2 = np.zeros(LX)
-        for q in range(LX):
-            for k in range(LX):
-                edn = _eps(k) - MU + HZ
-                eup = _eps((k + q) % LX) - MU - HZ
-                de = eup - edn
-                if abs(de) < 1e-12:
-                    out2[q] += -BETA * _fermi(edn) * (1 - _fermi(edn))
-                else:
-                    out2[q] += (_fermi(eup) - _fermi(edn)) / de
-        candidates.append(-out2 / LX)
 
         def pm_static(nmat, tail):
             """Drive the fixed kernel directly with production-built
@@ -286,8 +276,11 @@ class TestTransverseEndpoint(unittest.TestCase):
             pm = np.asarray(solver._calc_chi0q_transverse(
                 solver.green0, solver.green0_tail, BETA))
             pm = pm.reshape(nmat, LX)
-            # static bosonic index: chi is largest at nu = 0
+            # static bosonic index is nmat//2 on this kernel's centered
+            # output; a drifting index convention must fail here, not be
+            # absorbed by an argmax search (round-1 review)
             idx = int(np.argmax(np.abs(pm).sum(axis=1)))
+            assert idx == nmat // 2, idx
             return pm[idx].real
 
         err = {}
@@ -300,6 +293,113 @@ class TestTransverseEndpoint(unittest.TestCase):
         # system; the mean-endpoint sample restores second order
         self.assertLess(err[(256, 1.0)], err[(256, 0.0)] / 10.0)
         self.assertGreater(err[(256, 1.0)] / err[(1024, 1.0)], 8.0)
+
+
+class TestSyntheticTailReversal(unittest.TestCase):
+    """Missing-spatial-reversal detector (round-1 review): production
+    VV^dag is the identity (complete eigenbasis), so the jump is
+    momentum-independent and the committed physical fixtures cannot see
+    a dropped reverse_fft_axes on the reversed factor's jump. A
+    synthetic momentum-DEPENDENT tail on a length-3 axis discriminates:
+    the kernel's tau = 0 slice must equal an independently constructed
+    mean of the two equal-time branches."""
+
+    def test_kernel_matches_branch_construction_with_k_dependent_tail(self):
+        import types
+        import hwave.solver.matsubara as _ms
+        import hwave.solver.backend as _bk
+        from hwave.solver.kgrid import reverse_fft_axes
+
+        NX, NMAT, nd = 3, 4, 1
+        nx, nmat = NX, NMAT
+        rng = np.random.RandomState(134)
+        green = (rng.randn(1, nmat, nx, nd, nd)
+                 + 1j * rng.randn(1, nmat, nx, nd, nd))
+        # frequency-constant, momentum-dependent synthetic tail
+        tailk = (rng.randn(1, 1, nx, nd, nd)
+                 + 1j * rng.randn(1, 1, nx, nd, nd))
+        tail = np.tile(tailk, (1, nmat, 1, 1, 1))
+
+        class _Lat:
+            shape = (NX, 1, 1)
+            nvol = NX
+
+        class _S:
+            lattice = _Lat()
+            nmat = NMAT
+            enable_reduced = True
+            fft_workers = 1
+
+        import hwave.solver.rpa as R
+        got = R.RPA._calc_chi0q(_S(), green, tail, 1.0)
+
+        # independent branch construction: build G(tau) on both branches
+        # explicitly, form chi(tau) with the mean at tau = 0, transform
+        gkt = _ms.fermion_to_tau(green.reshape(1, nmat, -1), axis=1
+                                 ).reshape(1, nmat, nx, nd, nd) - tail
+        grt = _bk.spatial_ifftn(gkt.reshape(1, nmat, nx, 1, 1, nd * nd),
+                                axes=(2, 3, 4), workers=1
+                                ).reshape(1, nmat, nx, nd, nd)
+        jr = _bk.spatial_ifftn(
+            (2.0 * tailk).reshape(1, 1, nx, 1, 1, nd * nd),
+            axes=(2, 3, 4), workers=1).reshape(1, nx, nd, nd)
+        grev = np.stack([grt[:, (-l) % nmat] for l in range(nmat)], axis=1)
+        grev = np.stack([grev[:, l][:, [( -r) % nx for r in range(nx)]]
+                         for l in range(nmat)], axis=1)
+        jrev = jr[:, [(-r) % nx for r in range(nx)]]
+        chi = np.empty((1, nmat, nx, nd, nd), dtype=complex)
+        for l in range(nmat):
+            sgn = 1.0 if l == 0 else -1.0
+            chi[:, l] = sgn * grt[:, l] * grev[:, l].swapaxes(-2, -1)
+        chi[:, 0] = 0.5 * (grt[:, 0] * (grev[:, 0] + jrev
+                                        ).swapaxes(-2, -1)
+                           + (grt[:, 0] + jr)
+                           * grev[:, 0].swapaxes(-2, -1))
+        cqt = _bk.spatial_fftn(chi.reshape(1, nmat, nx, 1, 1, nd * nd),
+                               axes=(2, 3, 4), workers=1)
+        want = _ms.tau_to_boson(cqt.reshape(1, nmat, -1), axis=1
+                                ).reshape(1, nmat, nx, nd, nd) * (-1.0)
+        np.testing.assert_allclose(np.asarray(got), want, atol=1e-12)
+
+
+class TestNblockActiveTailReducedGeneral(unittest.TestCase):
+    """nblock=2 longitudinal consistency with per-block ACTIVE tails
+    (round-1 review): reduced[g, l, q, a, b] must equal the general
+    scheme's diagonal slots general[g, l, q, a, a, b, b], including the
+    endpoint correction, with each spin block carrying a DIFFERENT
+    momentum-dependent tail so a block mix-up or a diagonal-only jump
+    cannot cancel."""
+
+    def test_reduced_matches_general_diagonal(self):
+        NX, NMAT, ND = 3, 4, 2
+        rng = np.random.RandomState(1134)
+        green = (rng.randn(2, NMAT, NX, ND, ND)
+                 + 1j * rng.randn(2, NMAT, NX, ND, ND))
+        tailk = (rng.randn(2, 1, NX, ND, ND)
+                 + 1j * rng.randn(2, 1, NX, ND, ND))
+        tail = np.tile(tailk, (1, NMAT, 1, 1, 1))
+
+        class _Lat:
+            shape = (NX, 1, 1)
+            nvol = NX
+
+        def _stub(reduced):
+            class _S:
+                lattice = _Lat()
+                nmat = NMAT
+                enable_reduced = reduced
+                fft_workers = 1
+            return _S()
+
+        import hwave.solver.rpa as R
+        red = np.asarray(R.RPA._calc_chi0q(_stub(True), green, tail, 1.0))
+        gen = np.asarray(R.RPA._calc_chi0q(_stub(False), green, tail, 1.0))
+        self.assertEqual(red.shape, (2, NMAT, NX, ND, ND))
+        self.assertEqual(gen.shape, (2, NMAT, NX, ND, ND, ND, ND))
+        for a in range(ND):
+            for b in range(ND):
+                np.testing.assert_allclose(
+                    red[..., a, b], gen[..., a, a, b, b], atol=1e-13)
 
 
 class TestFlexInheritsTheFix(unittest.TestCase):
