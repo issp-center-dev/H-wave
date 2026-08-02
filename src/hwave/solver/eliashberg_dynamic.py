@@ -1132,9 +1132,13 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     # match this run's convention; spatial axes are (2, 3, 4) BEFORE any
     # IR compression. Legacy unmarked seeds pass only if k-even.
     from hwave.solver.rpa import validate_momentum_convention
-    if gap.ndim == 6:
-        validate_momentum_convention(data, path, gap, (2, 3, 4),
-                                     tuple(gap.shape[2:5]))
+    if gap.ndim != 6:
+        raise ValueError(
+            "seed_eigenvector '{}' has ndim = {} but a gap file is always "
+            "(norb, norb, Nx, Ny, Nz, Nmat); the file is malformed or not "
+            "a gap file.".format(path, gap.ndim))
+    validate_momentum_convention(data, path, gap, (2, 3, 4),
+                                 tuple(gap.shape[2:5]))
     if gap.shape[-1] != nmat:
         raise ValueError(
             "seed_eigenvector has Nmat={} but this run uses Nmat={}; "

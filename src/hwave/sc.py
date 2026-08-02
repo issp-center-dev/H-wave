@@ -336,9 +336,32 @@ def _load_chi0q(input_dict):
         _qax = 2
     elif chi0q.ndim == 8:
         _qax = (4, 5, 6)
-    elif chi0q.ndim == 6 and tuple(chi0q.shape[2:5]) == _grid             and chi0q.shape[0] == chi0q.shape[1]             and chi0q.shape[1] != _nvol:
-        _qax = (2, 3, 4)
-    elif chi0q.ndim in (4, 6):
+    elif chi0q.ndim == 6:
+        # raw (nfreq, nvol, norb x4) vs ref (norb, norb, Nx, Ny, Nz,
+        # nfreq): decide by the FULL structure of both patterns
+        # (round-3 review: testing shape[1] != nvol misrouted a ref file
+        # with norb == nvol onto the orbital axis). Truly ambiguous
+        # shapes fail closed unless the marker decides.
+        _is_ref = (chi0q.shape[0] == chi0q.shape[1]
+                   and tuple(chi0q.shape[2:5]) == _grid)
+        _is_raw = (chi0q.shape[1] == _nvol
+                   and len(set(chi0q.shape[2:6])) == 1)
+        if _is_ref and _is_raw:
+            if "momentum_convention" in getattr(data, "files", []):
+                _qax = (2, 3, 4)   # any axis: the validator accepts on tag
+            else:
+                raise ValueError(
+                    "chi0q file '{}': shape {} matches BOTH the raw and "
+                    "the reference 6D layout and carries no "
+                    "momentum_convention marker (issue #133) -- the "
+                    "momentum axes cannot be identified safely. "
+                    "Regenerate the file with the current version, which "
+                    "stamps the marker.".format(file_name, chi0q.shape))
+        elif _is_ref:
+            _qax = (2, 3, 4)
+        elif _is_raw or chi0q.shape[1] == _nvol:
+            _qax = 1
+    elif chi0q.ndim == 4:
         _qax = 1
     if _qax is not None:
         validate_momentum_convention(data, file_name, chi0q, _qax, _grid)

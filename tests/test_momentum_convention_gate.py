@@ -105,12 +105,98 @@ class TestValidatorHardening(unittest.TestCase):
         self.assertIn("non-finite", str(cm.exception))
 
     def test_float_noise_evenness_is_accepted(self):
-        payload = _q_even(4)
-        noisy = payload * (1.0 + 1.0e-12)
-        # perturb one element by pure roundoff-scale noise
-        data, path = self._npz(chi0q=noisy)
+        """A genuinely even payload with one element perturbed by
+        roundoff-scale ASYMMETRIC noise must still pass."""
+        payload = _q_even(4).astype(float)
+        payload[0, 1, 0, 0] *= (1.0 + 1.0e-12)   # breaks q-evenness at 1e-12
+        data, path = self._npz(chi0q=payload)
         validate_momentum_convention(data, path, data["chi0q"], 1,
                                      (4, 1, 1))
+
+    def test_huge_finite_odd_payload_is_rejected_without_overflow(self):
+        """Opposite values near float64.max made |a - rev| and the
+        tolerance both infinite (inf > inf is False) before the
+        normalized comparison."""
+        nx = 4
+        payload = np.zeros((1, nx, 1, 1))
+        payload[0, 1] = 1.7e308
+        payload[0, 3] = -1.7e308
+        data, path = self._npz(chi0q=payload)
+        with self.assertRaises(ValueError) as cm:
+            validate_momentum_convention(data, path, data["chi0q"], 1,
+                                         (nx, 1, 1))
+        self.assertIn("#133", str(cm.exception))
+
+    def test_zero_paired_with_denormal_is_accepted(self):
+        """Deliberate: an exact zero against a minimum denormal sits far
+        below the machine-epsilon-scaled absolute floor."""
+        nx = 4
+        payload = np.ones((1, nx, 1, 1))
+        payload[0, 1] = 0.0
+        payload[0, 3] = 5e-324
+        data, path = self._npz(chi0q=payload)
+        validate_momentum_convention(data, path, data["chi0q"], 1,
+                                     (nx, 1, 1))
+
+    def test_6d_ref_layout_with_norb_equal_nvol_is_gated(self):
+        """Round-3 reproduction: ref (norb, norb, Nx, Ny, Nz, nfreq) with
+        norb == nvol was misrouted onto the orbital axis and bypassed."""
+        nx = 4
+        q = np.arange(nx)
+        odd = np.cos(2 * np.pi * q / nx) + 0.3 * np.sin(2 * np.pi * q / nx)
+        payload = np.zeros((nx, nx, nx, 1, 1, 2))
+        payload[:, :, :, 0, 0, :] = odd[None, None, :, None]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload)
+        inp = {"mode": {"param": {"T": 1.0, "Nmat": 2,
+                                  "CellShape": [nx, 1, 1]}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._load_chi0q(inp)
+        self.assertIn("#133", str(cm.exception))
+
+    def test_ambiguous_unmarked_6d_layout_fails_closed(self):
+        """A shape matching BOTH raw and ref patterns cannot have its
+        momentum axes identified; unmarked such files must be refused,
+        marked ones accepted on the tag."""
+        # grid (2,2,2): shape (8, 8, 2, 2, 2, 2) is ref(norb=8) AND
+        # raw(nfreq=8, nvol=8, norb=2)
+        payload = np.zeros((8, 8, 2, 2, 2, 2))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload)
+        inp = {"mode": {"param": {"T": 1.0, "Nmat": 8,
+                                  "CellShape": [2, 2, 2]}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._load_chi0q(inp)
+        self.assertIn("BOTH", str(cm.exception))
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload,
+                 momentum_convention=MOMENTUM_CONVENTION)
+        sc._load_chi0q(inp)   # tag decides; must not raise here
+
+    def test_non_cubic_permuted_and_negative_axes(self):
+        """The 3-axis path must respect axis identity on a non-cubic grid
+        (4, 2, 1), in permuted order and with negative axis indices."""
+        nx, ny = 4, 2
+        qx = np.arange(nx)
+        odd_x = (np.cos(2 * np.pi * qx / nx)
+                 + 0.3 * np.sin(2 * np.pi * qx / nx))
+        payload = np.zeros((1, 1, nx, ny, 1, 2))
+        payload[0, 0, :, :, 0, :] = odd_x[:, None, None]
+        data, path = self._npz(chi0q=payload)
+        for axes in ((2, 3, 4), (-4, -3, -2)):
+            with self.subTest(axes=axes):
+                with self.assertRaises(ValueError):
+                    validate_momentum_convention(
+                        data, path, data["chi0q"], axes, (nx, ny, 1))
 
     def test_three_axis_layout_is_gated(self):
         """Already-expanded reference layouts carry (qx, qy, qz) on three

@@ -129,11 +129,19 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
     # is compared at its own scale, with only a machine-noise absolute
     # floor tied to the global scale.
     scale = float(np.abs(arr).max()) if arr.size else 0.0
-    diff = np.abs(arr - rev)
-    tol = 1.0e-8 * (np.abs(arr) + np.abs(rev)) + 1.0e-15 * max(scale,
-                                                               1.0e-300)
+    if scale == 0.0:
+        return
+    # Normalize BEFORE differencing (round-3 review): finite values near
+    # float64.max would overflow |a - rev| and the tolerance both to inf,
+    # and inf > inf is False -- a maximally odd payload would pass. After
+    # division by the (finite, positive) global scale every quantity is
+    # O(1).
+    arrn = arr / scale
+    revn = rev / scale
+    diff = np.abs(arrn - revn)
+    tol = 1.0e-8 * (np.abs(arrn) + np.abs(revn)) + 1.0e-15
     if bool(np.any(diff > tol)):
-        asym = float(diff.max())
+        asym = float(diff.max()) * scale
         raise ValueError(
             "file '{}' carries no momentum_convention marker and its "
             "content is not elementwise even under q -> -q (max pair "
