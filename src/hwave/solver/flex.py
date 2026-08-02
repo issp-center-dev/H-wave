@@ -32,7 +32,7 @@ except ImportError:
 import logging
 logger = logging.getLogger(__name__)
 
-from .rpa import RPA, Lattice, Interaction
+from .rpa import RPA, Lattice, Interaction, MOMENTUM_CONVENTION
 from .density_projection import project_density_pairs
 from .kgrid import reverse_fft_axes
 from . import backend as _bk
@@ -2704,7 +2704,7 @@ class FLEX(RPA):
                      # frequency (index nmat//2) unambiguously (run
                      # provenance only on IR-native files)
                      nmat=self.nmat,
-                     momentum_convention="e_plus_ikR",
+                     momentum_convention=MOMENTUM_CONVENTION,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      # FLEX chi0q comes from the same spin-block-ordered RPA
@@ -2737,7 +2737,7 @@ class FLEX(RPA):
                            sc_vertex_version=2,
                            # Fourier-sign provenance (issue #133): q labels
                            # follow the documented e^{+iqR} convention
-                           momentum_convention="e_plus_ikR",
+                           momentum_convention=MOMENTUM_CONVENTION,
                            **_freq_meta("B"))
         if self._flex_general:
             # Self-describing index-order marker for the ORBITAL-PAIR files
@@ -2786,7 +2786,7 @@ class FLEX(RPA):
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
-                     momentum_convention="e_plus_ikR",
+                     momentum_convention=MOMENTUM_CONVENTION,
                      **_freq_meta("F"))
             logger.info("save_results: save sigma in file {}".format(file_name))
 
@@ -2808,7 +2808,7 @@ class FLEX(RPA):
                      # from a different temperature fails fast instead of
                      # silently corrupting the pair bubble
                      beta=1.0 / self.T,
-                     momentum_convention="e_plus_ikR",
+                     momentum_convention=MOMENTUM_CONVENTION,
                      **green_extra,
                      **_freq_meta("F"))
             logger.info("save_results: save green in file {}".format(file_name))

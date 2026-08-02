@@ -108,20 +108,41 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
                     file_name, tag, MOMENTUM_CONVENTION))
         return
     from hwave.solver.kgrid import reverse_fft_axes
+    arr = np.asarray(payload)
+    # Non-finite content makes every comparison below silently False;
+    # reject it here (the loaders' own finiteness gates may run later).
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(
+            "file '{}' carries no momentum_convention marker and contains "
+            "non-finite values; regenerate the file.".format(file_name))
     nx, ny, nz = lattice_shape
-    arr = np.moveaxis(np.asarray(payload), q_axis, 0)
-    arr = arr.reshape(nx, ny, nz, -1)
-    asym = float(np.abs(arr - reverse_fft_axes(arr, (0, 1, 2))).max())
-    scale = float(np.abs(arr).max())
-    if asym > 1.0e-8 * max(scale, 1.0e-300):
+    if isinstance(q_axis, (tuple, list)):
+        # already-expanded layouts carry three explicit momentum axes
+        arr = np.moveaxis(arr, tuple(q_axis), (0, 1, 2))
+        arr = arr.reshape(nx, ny, nz, -1)
+    else:
+        arr = np.moveaxis(arr, q_axis, 0).reshape(nx, ny, nz, -1)
+    rev = reverse_fft_axes(arr, (0, 1, 2))
+    # PAIR-LOCAL scaling (round-2 review): a global-max tolerance lets a
+    # small-amplitude channel be order-one q-odd relative to ITSELF while
+    # hiding under another channel's large even amplitude. Each q/-q pair
+    # is compared at its own scale, with only a machine-noise absolute
+    # floor tied to the global scale.
+    scale = float(np.abs(arr).max()) if arr.size else 0.0
+    diff = np.abs(arr - rev)
+    tol = 1.0e-8 * (np.abs(arr) + np.abs(rev)) + 1.0e-15 * max(scale,
+                                                               1.0e-300)
+    if bool(np.any(diff > tol)):
+        asym = float(diff.max())
         raise ValueError(
             "file '{}' carries no momentum_convention marker and its "
-            "content is not even under q -> -q (asymmetry {:.3e} vs scale "
-            "{:.3e}): it was written before the #133 Fourier-sign "
-            "alignment and its momentum labels are flipped relative to "
-            "this build. Regenerate the file with the current version. "
-            "(Files whose content is q-even are accepted: for them the "
-            "two conventions coincide.)".format(file_name, asym, scale))
+            "content is not elementwise even under q -> -q (max pair "
+            "deviation {:.3e}, global scale {:.3e}): it was written "
+            "before the #133 Fourier-sign alignment and its momentum "
+            "labels are flipped relative to this build. Regenerate the "
+            "file with the current version. (Files whose content is "
+            "q-even are accepted: for them the two conventions "
+            "coincide.)".format(file_name, asym, scale))
 
 
 def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
@@ -1955,22 +1976,6 @@ class RPA:
             logger.error("read_chi0q failed: {}".format(e))
             sys.exit(1)
 
-        # Fourier-sign provenance gate (issue #133): chi0q is q-labeled;
-        # a pre-#133 file carries flipped labels. Legacy files are accepted
-        # only when the payload is q-even (see the validator). Layout: the
-        # flattened lattice volume sits on axis 1, or axis 2 behind a
-        # leading spin-diag block of 2.
-        _nvol = self.lattice.nvol
-        if chi0q.ndim >= 2 and chi0q.shape[1] == _nvol:
-            _qax = 1
-        elif chi0q.ndim >= 3 and chi0q.shape[0] == 2                 and chi0q.shape[2] == _nvol:
-            _qax = 2
-        else:
-            _qax = None
-        if _qax is not None:
-            validate_momentum_convention(data, file_name, chi0q, _qax,
-                                         self.lattice.shape)
-
         # Stage 3 (design ir-matsubara-stage3.md Sec. 4): chi0q_init assumes
         # a uniform frequency grid; sparse-node files must not fall through
         # to the positional metadata handling below. (Outside the try block
@@ -2017,6 +2022,18 @@ class RPA:
                     file_name, file_tail, self.coeff_tail))
 
         self._validate_chi0q_shape(chi0q, source=file_name)
+
+        # Fourier-sign provenance gate (issue #133), AFTER the IR rejection
+        # and shape validation so a malformed file gets its own diagnosis
+        # first. The q axis is chosen STRUCTURALLY from the now-validated
+        # layout, never by dimension-size search (round-2 review: a
+        # spin-diag (2, nfreq, nvol, ...) file with nfreq == nvol would
+        # otherwise be probed on its frequency axis and slip through):
+        # raw layouts put the flattened volume on axis 1, spin-diag
+        # layouts (ndim 5/7, leading 2) on axis 2.
+        _qax = 2 if (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2) else 1
+        validate_momentum_convention(data, file_name, chi0q, _qax,
+                                     self.lattice.shape)
 
         logger.info("read_chi0q: shape={}, spin_mode={}".format(chi0q.shape, self.spin_mode))
 

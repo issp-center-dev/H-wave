@@ -316,24 +316,32 @@ def _load_chi0q(input_dict):
 
     # Fourier-sign provenance gate (issue #133): chi0q is q-labeled; a
     # pre-#133 file carries flipped labels. Legacy files are accepted only
-    # when the payload is q-even (see the validator). The q axis is the
-    # flattened CellShape volume: identify it by LAYOUT (axis 1 for the
-    # (nfreq, nvol, ...) raw layouts, axis 2 behind a leading spin-diag 2).
+    # when the payload is elementwise q-even (see the validator). The q
+    # axes are chosen STRUCTURALLY from the accepted layouts (round-2
+    # review: a size search probed the frequency axis when nfreq == nvol,
+    # and skipped the already-expanded reference layouts entirely):
+    #   4D/6D raw  (nfreq, nvol, ...)            -> axis 1
+    #   5D/7D spin-diag (2, nfreq, nvol, ...)    -> axis 2
+    #   6D ref  (no, no, Nx, Ny, Nz, nfreq)      -> axes (2, 3, 4)
+    #   8D ref  (no, no, no, no, Nx, Ny, Nz, nfreq) -> axes (4, 5, 6)
     from hwave.solver.rpa import validate_momentum_convention
     _cs = list(input_dict.get("mode", {}).get("param", {}).get(
         "CellShape", [1, 1, 1]))
     while len(_cs) < 3:
         _cs.append(1)
-    _nvol = int(np.prod(_cs))
-    if chi0q.ndim >= 2 and chi0q.shape[1] == _nvol:
-        _qax = 1
-    elif chi0q.ndim >= 3 and chi0q.shape[0] == 2 and chi0q.shape[2] == _nvol:
+    _grid = tuple(int(x) for x in _cs)
+    _nvol = int(np.prod(_grid))
+    _qax = None
+    if chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
         _qax = 2
-    else:
-        _qax = None
+    elif chi0q.ndim == 8:
+        _qax = (4, 5, 6)
+    elif chi0q.ndim == 6 and tuple(chi0q.shape[2:5]) == _grid             and chi0q.shape[0] == chi0q.shape[1]             and chi0q.shape[1] != _nvol:
+        _qax = (2, 3, 4)
+    elif chi0q.ndim in (4, 6):
+        _qax = 1
     if _qax is not None:
-        validate_momentum_convention(data, file_name, chi0q, _qax,
-                                     tuple(_cs))
+        validate_momentum_convention(data, file_name, chi0q, _qax, _grid)
 
     freq_index, file_nmat = _read_freq_meta(data)
     # Identify the frequency axis from the array LAYOUT, never from the

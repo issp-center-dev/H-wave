@@ -146,7 +146,8 @@ class TestOffsiteVqPreservation(unittest.TestCase):
 
     The partner of an off-site entry (R, (a, b)) is (-R, (b, a)), which in
     momentum space is the orbital transpose AT -q. Averaging with the same-q
-    transpose instead collapses V(q) = v e^{-iqR} to v cos(qR) -- at q = pi/2
+    transpose instead collapses V(q) = v e^{+iqR} (documented sign, #133)
+    to v cos(qR) -- at q = pi/2
     the S/C entry vanished outright. Checked at a q with sin(q) != 0 so any
     cos-collapse or conjugation error changes the answer.
     """

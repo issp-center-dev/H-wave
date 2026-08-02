@@ -809,6 +809,8 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         eigenvalue=eigenvalue,
         axis_order=axis_order,
         normalization=normalization,
+        # Fourier-sign provenance (issue #133): the gap is k-resolved
+        momentum_convention="e_plus_ikR",  # = rpa.MOMENTUM_CONVENTION
         **(extra_meta or {}),
     )
 
@@ -1124,7 +1126,15 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     path = eli_param.get("seed_eigenvector")
     if not path:
         return None
-    gap = np.asarray(np.load(path)["gap"])   # (norb,norb,Nx,Ny,Nz,Nmat)
+    data = np.load(path)
+    gap = np.asarray(data["gap"])   # (norb,norb,Nx,Ny,Nz,Nmat)
+    # Fourier-sign provenance gate (issue #133): the seed's k labels must
+    # match this run's convention; spatial axes are (2, 3, 4) BEFORE any
+    # IR compression. Legacy unmarked seeds pass only if k-even.
+    from hwave.solver.rpa import validate_momentum_convention
+    if gap.ndim == 6:
+        validate_momentum_convention(data, path, gap, (2, 3, 4),
+                                     tuple(gap.shape[2:5]))
     if gap.shape[-1] != nmat:
         raise ValueError(
             "seed_eigenvector has Nmat={} but this run uses Nmat={}; "

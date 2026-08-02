@@ -23,8 +23,11 @@ def _rand(shape, seed):
 
 
 def _fft_ab_q(arr):
-    """(nx, ny, nz, a, b) real-space table -> (a, b, nx, ny, nz) with the
-    e^{-iqR} phase convention (numpy's forward FFT)."""
+    """(nx, ny, nz, a, b) real-space table -> (a, b, nx, ny, nz) via
+    numpy's forward FFT. The commutation identity under test applies the
+    SAME transform on both sides, so its sign is immaterial here; the
+    production R -> q builds use e^{+iqR} since #133 (the
+    production-anchoring test below transforms accordingly)."""
     return np.fft.fftn(arr, axes=(0, 1, 2)).transpose(3, 4, 0, 1, 2)
 
 

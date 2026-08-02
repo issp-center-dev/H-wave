@@ -66,6 +66,108 @@ class TestValidatorUnit(unittest.TestCase):
         self.assertIn("#133", str(cm.exception))
 
 
+class TestValidatorHardening(unittest.TestCase):
+    """Round-2 attack surface: pair-local tolerance, non-finite content,
+    three-axis layouts, and the spin-diag axis collision."""
+
+    def _npz(self, **arrays):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, **arrays)
+        return np.load(path), path
+
+    def test_small_odd_channel_is_not_masked_by_a_large_even_one(self):
+        """Pair-local scaling: a channel that is order-one q-odd relative
+        to ITSELF must reject even when its amplitude sits below the old
+        1e-8 * global_max threshold (here 1e-10 of the large channel; the
+        residual absolute floor is machine-epsilon-sized, so this is well
+        above it)."""
+        nx = 4
+        q = np.arange(nx)
+        big_even = 1.0e6 * np.cos(2 * np.pi * q / nx)
+        tiny_odd = 1.0e-4 * np.sin(2 * np.pi * q / nx)
+        payload = np.stack([big_even, tiny_odd], axis=-1)[None, :, :]
+        data, path = self._npz(chi0q=payload)
+        with self.assertRaises(ValueError) as cm:
+            validate_momentum_convention(data, path, data["chi0q"], 1,
+                                         (nx, 1, 1))
+        self.assertIn("#133", str(cm.exception))
+
+    def test_non_finite_unmarked_payload_is_rejected(self):
+        payload = _q_even(4)
+        payload = payload.astype(float)
+        payload[0, 1] = np.nan
+        data, path = self._npz(chi0q=payload)
+        with self.assertRaises(ValueError) as cm:
+            validate_momentum_convention(data, path, data["chi0q"], 1,
+                                         (4, 1, 1))
+        self.assertIn("non-finite", str(cm.exception))
+
+    def test_float_noise_evenness_is_accepted(self):
+        payload = _q_even(4)
+        noisy = payload * (1.0 + 1.0e-12)
+        # perturb one element by pure roundoff-scale noise
+        data, path = self._npz(chi0q=noisy)
+        validate_momentum_convention(data, path, data["chi0q"], 1,
+                                     (4, 1, 1))
+
+    def test_three_axis_layout_is_gated(self):
+        """Already-expanded reference layouts carry (qx, qy, qz) on three
+        separate axes."""
+        nx = 4
+        q = np.arange(nx)
+        odd = (np.cos(2 * np.pi * q / nx)
+               + 0.3 * np.sin(2 * np.pi * q / nx))
+        payload = np.zeros((1, 1, nx, 1, 1, 2))
+        payload[0, 0, :, 0, 0, :] = odd[:, None]
+        data, path = self._npz(chi0q=payload)
+        with self.assertRaises(ValueError):
+            validate_momentum_convention(data, path, data["chi0q"],
+                                         (2, 3, 4), (nx, 1, 1))
+
+    def test_spin_diag_collision_nfreq_equals_nvol(self):
+        """(2, nfreq, nvol, ...) with nfreq == nvol: the loader must probe
+        the q axis (2), not the frequency axis -- a size search picked
+        axis 1 and slipped a q-odd payload through."""
+        nx = 4
+        q = np.arange(nx)
+        odd = (np.cos(2 * np.pi * q / nx)
+               + 0.3 * np.sin(2 * np.pi * q / nx))
+        # q-odd along axis 2, constant along the (same-sized) axis 1
+        payload = np.tile(odd[None, None, :, None, None], (2, nx, 1, 1, 1))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload)
+        inp = {"mode": {"param": {"T": 1.0, "Nmat": nx,
+                                  "CellShape": [nx, 1, 1]}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._load_chi0q(inp)
+        self.assertIn("#133", str(cm.exception))
+
+
+class TestDynamicGapSeedGate(unittest.TestCase):
+
+    def test_unmarked_k_odd_seed_is_rejected(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        nx, nmat = 4, 4
+        q = np.arange(nx)
+        prof = 1.0 + 0.3 * np.sin(2 * np.pi * q / nx)
+        gap = np.ones((1, 1, nx, 1, 1, nmat), dtype=complex) *             prof[None, None, :, None, None, None]
+        path = os.path.join(tmp.name, "seed.npz")
+        np.savez(path, gap=gap)
+        with self.assertRaises(ValueError) as cm:
+            ed._load_seed_gap({"seed_eigenvector": path}, gap.shape,
+                              False, None, nmat)
+        self.assertIn("#133", str(cm.exception))
+
+
 class TestLoaderGates(unittest.TestCase):
     """Each production loader must reach the gate."""
 
