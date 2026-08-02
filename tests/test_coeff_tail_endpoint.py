@@ -305,10 +305,8 @@ class TestSyntheticTailReversal(unittest.TestCase):
     mean of the two equal-time branches."""
 
     def test_kernel_matches_branch_construction_with_k_dependent_tail(self):
-        import types
         import hwave.solver.matsubara as _ms
         import hwave.solver.backend as _bk
-        from hwave.solver.kgrid import reverse_fft_axes
 
         NX, NMAT, nd = 3, 4, 1
         nx, nmat = NX, NMAT
@@ -320,21 +318,10 @@ class TestSyntheticTailReversal(unittest.TestCase):
                  + 1j * rng.randn(1, 1, nx, nd, nd))
         tail = np.tile(tailk, (1, nmat, 1, 1, 1))
 
-        class _Lat:
-            shape = (NX, 1, 1)
-            nvol = NX
-
-        class _S:
-            lattice = _Lat()
-            nmat = NMAT
-            enable_reduced = True
-            fft_workers = 1
-
-        import hwave.solver.rpa as R
-        got = R.RPA._calc_chi0q(_S(), green, tail, 1.0)
-
         # independent branch construction: build G(tau) on both branches
-        # explicitly, form chi(tau) with the mean at tau = 0, transform
+        # explicitly, form chi(tau) with the mean at tau = 0, transform.
+        # A singleton FFT axis is the identity, so the flat reference is
+        # the same for either orientation of the length-3 axis below.
         gkt = _ms.fermion_to_tau(green.reshape(1, nmat, -1), axis=1
                                  ).reshape(1, nmat, nx, nd, nd) - tail
         grt = _bk.spatial_ifftn(gkt.reshape(1, nmat, nx, 1, 1, nd * nd),
@@ -359,7 +346,27 @@ class TestSyntheticTailReversal(unittest.TestCase):
                                axes=(2, 3, 4), workers=1)
         want = _ms.tau_to_boson(cqt.reshape(1, nmat, -1), axis=1
                                 ).reshape(1, nmat, nx, nd, nd) * (-1.0)
-        np.testing.assert_allclose(np.asarray(got), want, atol=1e-12)
+
+        # both orientations of the nontrivial axis: an axis tuple that is
+        # off by one (round-2's transverse defect was exactly that, on
+        # the z slot) is invisible when only x varies (round-3 review)
+        import hwave.solver.rpa as R
+        for shape in ((NX, 1, 1), (1, 1, NX)):
+            with self.subTest(shape=shape):
+                class _Lat:
+                    pass
+                _Lat.shape = shape
+                _Lat.nvol = NX
+
+                class _S:
+                    lattice = _Lat()
+                    nmat = NMAT
+                    enable_reduced = True
+                    fft_workers = 1
+
+                got = R.RPA._calc_chi0q(_S(), green, tail, 1.0)
+                np.testing.assert_allclose(np.asarray(got), want,
+                                           atol=1e-12)
 
 
 class TestNblockActiveTailReducedGeneral(unittest.TestCase):
@@ -502,6 +509,126 @@ class TestTransverseSyntheticTail(unittest.TestCase):
             for b in range(self.ND):
                 np.testing.assert_allclose(
                     red[..., a, b], gen[..., a, a, b, b], atol=1e-13)
+
+
+class TestZeroTailBitwise(unittest.TestCase):
+    """coeff_tail = 0 must be BITWISE unchanged by the endpoint fix
+    (round-3 review): the spy test proves the correction FFT is
+    skipped, this one asserts the stated output guarantee directly.
+    The reference replicates the pre-fix zero-tail operation sequence
+    verbatim (same ops, same order, same process), so equality must be
+    exact -- assert_array_equal, no tolerance."""
+
+    NX, NMAT, ND = 3, 4, 2
+    BETA = 0.7
+
+    def _lat_stub(self, reduced):
+        NX, NMAT = self.NX, self.NMAT
+
+        class _Lat:
+            shape = (1, 1, NX)
+            nvol = NX
+
+        class _S:
+            lattice = _Lat()
+            nmat = NMAT
+            enable_reduced = reduced
+            fft_workers = 1
+        return _S()
+
+    def _green(self, nblock, seed):
+        rng = np.random.RandomState(seed)
+        return (rng.randn(nblock, self.NMAT, self.NX, self.ND, self.ND)
+                + 1j * rng.randn(nblock, self.NMAT, self.NX, self.ND,
+                                 self.ND))
+
+    def test_longitudinal_forms(self):
+        import hwave.solver.rpa as R
+        import hwave.solver.matsubara as _ms
+        import hwave.solver.backend as _bk
+        from hwave.solver.kgrid import reverse_fft_axes
+        NX, NMAT, ND, BETA = self.NX, self.NMAT, self.ND, self.BETA
+        green = self._green(2, 34)
+        zeros = np.zeros_like(green)
+        for reduced in (True, False):
+            with self.subTest(reduced=reduced):
+                got = np.asarray(R.RPA._calc_chi0q(
+                    self._lat_stub(reduced), green, zeros, BETA))
+                gkt = _ms.fermion_to_tau(
+                    green.reshape(2, NMAT, -1), axis=1).reshape(
+                    2, NMAT, 1, 1, NX, ND, ND)
+                gkt -= zeros.reshape(2, NMAT, 1, 1, NX, ND, ND)
+                grt = _bk.spatial_ifftn(
+                    gkt.reshape(2, NMAT, 1, 1, NX, ND * ND),
+                    axes=(2, 3, 4), workers=1)
+                grev = reverse_fft_axes(grt, (1, 2, 3, 4)).reshape(
+                    2, NMAT, NX, ND, ND)
+                sgn = np.full(NMAT, -1)
+                sgn[0] = 1
+                if reduced:
+                    g5 = grt.reshape(2, NMAT, NX, ND, ND)
+                    chi = (g5 * grev.swapaxes(-2, -1)
+                           * sgn[np.newaxis, :, np.newaxis, np.newaxis,
+                                 np.newaxis])
+                    nd_shape, nds = (ND, ND), ND ** 2
+                else:
+                    gf = grt.reshape(2, NMAT, NX, ND, ND)
+                    sgn_bc = sgn[np.newaxis, :, np.newaxis, np.newaxis,
+                                 np.newaxis]
+                    chi = ((gf * sgn_bc)[:, :, :, :, np.newaxis, :,
+                                         np.newaxis]
+                           * grev[:, :, :, np.newaxis, :, np.newaxis, :])
+                    chi = chi.transpose(0, 1, 2, 3, 6, 5, 4)
+                    nd_shape, nds = (ND, ND, ND, ND), ND ** 4
+                cqt = _bk.spatial_fftn(
+                    chi.reshape(2, NMAT, 1, 1, NX, nds),
+                    axes=(2, 3, 4), workers=1)
+                want = _ms.tau_to_boson(
+                    cqt.reshape(2, NMAT, NX * nds), axis=1).reshape(
+                    2, NMAT, NX, *nd_shape) * (-1.0 / BETA)
+                np.testing.assert_array_equal(got, want)
+
+    def test_transverse_forms(self):
+        import hwave.solver.rpa as R
+        import hwave.solver.backend as _bk
+        from hwave.solver.kgrid import reverse_fft_axes
+        NX, NMAT, ND, BETA = self.NX, self.NMAT, self.ND, self.BETA
+        green = self._green(2, 35)
+        zeros = np.zeros_like(green)
+        for reduced in (True, False):
+            with self.subTest(reduced=reduced):
+                got = np.asarray(R.RPA._calc_chi0q_transverse(
+                    self._lat_stub(reduced), green, zeros, BETA))
+                omg = np.exp(-1j * np.pi * (1.0 / NMAT - 1.0)
+                             * np.arange(NMAT))
+                gkt = (np.fft.fft(green.reshape(2, NMAT, -1), axis=1)
+                       * omg[np.newaxis, :, np.newaxis]).reshape(
+                    2, NMAT, 1, 1, NX, ND, ND)
+                gkt -= zeros.reshape(2, NMAT, 1, 1, NX, ND, ND)
+                grt = _bk.spatial_ifftn(
+                    gkt.reshape(2, NMAT, 1, 1, NX, ND * ND),
+                    axes=(2, 3, 4), workers=1)
+                dn_rev = reverse_fft_axes(grt[1], (0, 1, 2, 3)).reshape(
+                    NMAT, NX, ND, ND)
+                up = grt[0].reshape(NMAT, NX, ND, ND)
+                sgn = np.full(NMAT, -1)
+                sgn[0] = 1
+                if reduced:
+                    chi = (up * dn_rev.swapaxes(-2, -1)
+                           * sgn[:, np.newaxis, np.newaxis, np.newaxis])
+                    nd_shape, nds = (ND, ND), ND ** 2
+                else:
+                    chi = np.einsum('lrab,lrdc,l->lracbd', up, dn_rev,
+                                    sgn)
+                    nd_shape, nds = (ND, ND, ND, ND), ND ** 4
+                cqt = _bk.spatial_fftn(
+                    chi.reshape(NMAT, 1, 1, NX, nds),
+                    axes=(1, 2, 3), workers=1)
+                omg2 = np.exp(1j * np.pi * (-1) * np.arange(NMAT))
+                want = np.fft.ifft(
+                    cqt.reshape(NMAT, NX * nds) * omg2[:, np.newaxis],
+                    axis=0).reshape(NMAT, NX, *nd_shape) * (-1.0 / BETA)
+                np.testing.assert_array_equal(got, want)
 
 
 class TestFlexInheritsTheFix(unittest.TestCase):
