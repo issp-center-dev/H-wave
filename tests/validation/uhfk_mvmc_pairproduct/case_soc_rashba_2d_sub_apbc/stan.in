@@ -1,0 +1,39 @@
+// 2D 6x4 Rashba + Hubbard SOC fixture with APBC in x (v3.6 shipping).
+// Matches the H-wave input.toml (CellShape=[6,4,1], SubShape=[2,2,1],
+// Ncond selected by Phase 2 soc_pilot_gap.py, enable_spin_orbital=true,
+// BoundaryCondition=["antiperiodic", "periodic", "periodic"]).
+// phase0 = 180.0 -> APBC in x. StdFace bakes the (-1)^wrap sign into
+// vmcdry's trans.def so mVMC's H = -sum trans applies the wrap flip on
+// boundary-crossing bonds. On the bridge side, tools/_uhfk_to_mvmc/
+// trans_emit.py's boundary_theta pathway keeps the phase consistent.
+//
+// Folded BZ = [3, 2, 1] under SubShape [2, 2, 1]. The APBC twist shifts
+// k_x by pi/L_full = pi/6. Phase 2 step 2b's soc_pilot_gap.py under
+// theta=(pi, 0, 0) selects the closed-shell Ncond.
+//
+// FermionHubbardGC sets lGC=1 so StdFace emits orbitalidxgen.def
+// (6-column General format).
+//
+// Single-sample run (NDataQty=1) so the v3.6 G3 workspace resolver
+// (spec §5.6) picks the unique zvo_out_001.dat without ambiguity.
+L     = 6
+W     = 4
+Lsub  = 2
+Wsub  = 2
+model = "FermionHubbardGC"
+lattice = "square"
+t     = 1.0
+U     = 2.0
+phase0 = 180.0
+ncond = 8
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

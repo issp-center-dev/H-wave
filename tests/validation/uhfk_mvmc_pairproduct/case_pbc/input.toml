@@ -1,0 +1,45 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. With Fock on, CoulombIntra couples up/down into a
+  # single mixed block and column_spin becomes -1, which the bridge
+  # rejects (v1 needs Sz-separable blocks).
+  flag_fock = false
+
+[mode.param]
+  # Ne = 1 per spin (k = 0 only). PBC L=8 Ne=4 (quarter filling) has a
+  # Fermi-level degeneracy at k = ±pi/4, which the bridge correctly
+  # rejects. Drop to Ne=2 total to keep the Fermi level non-degenerate.
+  Ncond        = 2
+  2Sz          = 0
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [8, 1, 1]
+  SubShape     = [1, 1, 1]
+  BoundaryCondition = ["periodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy     = "energy.dat"
+  eigen      = "eigen.npz"
+  green      = "green.npz"
+  onebodyg   = "greenone.dat"
+  occupation = "occupation.npz"

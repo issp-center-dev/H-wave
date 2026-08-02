@@ -1,0 +1,27 @@
+// PBC 1D Hubbard, L=8, t=1, U=2, quarter filling. Matches the
+// H-wave input.toml (CellShape=[8,1,1], Ncond=4, 2Sz=0,
+// BoundaryCondition=["periodic", "periodic", "periodic"]).
+L     = 8
+Lsub  = 8
+model = "FermionHubbard"
+lattice = "chain"
+t     = 1.0
+U     = 2.0
+// Ne = 2 total (1 per spin, k=0 only) avoids the PBC L=8 Fermi-level
+// degeneracy at k = +/- pi/4.
+ncond = 2
+2Sz   = 0
+NSPGaussLeg    = 1
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+// NSROptItrSmp is not used when NSROptItrStep = 0; vmcdry hangs on the
+// warning emitted for the unused key, so we omit it.
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 4000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

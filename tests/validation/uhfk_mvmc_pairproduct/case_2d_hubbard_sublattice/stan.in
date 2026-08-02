@@ -1,0 +1,23 @@
+// 2D Hubbard 4x4 square, PBC, t=1, U=1, Ne=2 closed shell.
+L     = 4
+W     = 4
+Lsub  = 2
+Wsub  = 2
+model = "FermionHubbard"
+lattice = "square"
+t     = 1.0
+U     = 1.0
+ncond = 2
+2Sz   = 0
+NSPGaussLeg    = 1
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

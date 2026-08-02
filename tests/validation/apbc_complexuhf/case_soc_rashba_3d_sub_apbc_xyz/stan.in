@@ -1,0 +1,17 @@
+// v3.7 64-site ComplexUHF mirror: APBC in x, y, and z.
+// Orthorhombic StdFace maps phase0/phase1/phase2 to W/L/Height,
+// which are the x/y/z direct-vector coordinates, respectively.
+W       = 4
+L       = 4
+Height  = 4
+Wsub    = 2
+Lsub    = 2
+Hsub    = 2
+model   = "FermionHubbardGC"
+lattice = "orthorhombic"
+t       = 1.0
+U       = 2.0
+phase0  = 180.0
+phase1  = 180.0
+phase2  = 180.0
+ncond   = 12

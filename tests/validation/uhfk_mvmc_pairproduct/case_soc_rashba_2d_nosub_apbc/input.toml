@@ -1,0 +1,57 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. With Fock off, CoulombIntra stays diagonal in
+  # spin and the SOC branch of the bridge only picks up Rashba spin
+  # mixing from the Transfer block.
+  flag_fock = false
+  # v3.1 SOC dispatch: orbital index in Transfer.dat carries spin as
+  # 2 * orb + spin (Wannier90 SOI packing). Geometry.dat's norb is 2
+  # (one physical orbital times two spin-orbital labels).
+  enable_spin_orbital = true
+
+[mode.param]
+  # Ncond = 8: under APBC-in-x the k-mesh is twisted by (pi, 0, 0) / L,
+  # which shifts the single-particle spectrum. Ncond = 6 (the PBC
+  # fixture's filling) becomes degenerate at the Fermi level under
+  # APBC (gap ~ 4e-16 per scripts/soc_pilot_gap.py, "REJECT"). The
+  # next OK filling is Ne = 8 with HOMO-LUMO gap ~ 1.346, which sits
+  # inside the well-separated pair of Rashba-split branches for the
+  # twisted mesh. Ne = 8 is even, satisfying the SOC / General-branch
+  # pair-closure constraint.
+  Ncond        = 8
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [4, 4, 1]
+  SubShape     = [1, 1, 1]
+  # APBC in x, PBC in y and z. This is the v3.2 SOC+APBC fixture:
+  # the bridge's trans_emit applies exp(i * pi * wraps_x) to
+  # boundary-crossing rows so mVMC's H = -sum trans recovers the
+  # physical Hamiltonian on the periodic-site frame.
+  BoundaryCondition = ["antiperiodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy   = "energy.dat"
+  eigen    = "eigen.npz"
+  green    = "green.npz"
+  onebodyg = "greenone.dat"
+  occupation = "occupation.npz"

@@ -381,6 +381,5 @@ class TestGreenDeflateSubShape(unittest.TestCase):
         self.assertLess(
             np.max(np.abs(g - self.s211.Green.reshape(nvol, nd, nd))), 1.0e-9)
 
-
 if __name__ == "__main__":
     unittest.main()

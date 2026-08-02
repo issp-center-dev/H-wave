@@ -1,0 +1,48 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. With Fock off, CoulombIntra stays diagonal in
+  # spin and the SOC branch of the bridge only picks up Rashba spin
+  # mixing from the Transfer block.
+  flag_fock = false
+  # v3.1 SOC dispatch: orbital index in Transfer.dat carries spin as
+  # 2 * orb + spin (Wannier90 SOI packing). Geometry.dat's norb is 2
+  # (one physical orbital times two spin-orbital labels).
+  enable_spin_orbital = true
+
+[mode.param]
+  # Ncond = 8: on CellShape=[6,4,1] with SubShape=[2,2,1] (folded BZ
+  # [3, 2, 1]) at t=1, alpha=0.5, U=2 the 8th eigenvalue sits below a
+  # non-trivial gap. Verified by scripts/soc_pilot_gap.py.
+  Ncond        = 8
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [6, 4, 1]
+  SubShape     = [2, 2, 1]
+  BoundaryCondition = ["periodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy   = "energy.dat"
+  eigen    = "eigen.npz"
+  green    = "green.npz"
+  onebodyg = "greenone.dat"
+  occupation = "occupation.npz"

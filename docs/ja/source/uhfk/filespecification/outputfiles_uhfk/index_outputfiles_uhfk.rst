@@ -13,3 +13,4 @@ UHFkの出力ファイルに関するファイル形式を記載します。
    energy_uhfk
    eigen_uhfk
    green_uhfk
+   occupation_uhfk

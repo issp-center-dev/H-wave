@@ -1,0 +1,9 @@
+L          = 8
+Lsub       = 1
+model      = "FermionHubbard"
+lattice    = "chain"
+t          = 1.0
+U          = 2.0
+2Sz        = 0
+nelec      = 4
+phase0     = 180.0

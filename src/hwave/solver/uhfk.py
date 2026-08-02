@@ -4,6 +4,12 @@ import numpy as np
 import os
 from .base import solver_base
 from .perf import do_profile
+from ._apbc_phase import (
+    normalize_boundary_condition,
+    transfer_phase,
+    inverse_gauge_phase,
+    twist_offset,
+)
 from . import fold
 from .kgrid import reverse_fft_axes
 from ..qlmsio import wan90
@@ -33,6 +39,7 @@ class UHFk(solver_base):
         self._init_mode(info_mode)  # Set solver modes like Fock term
         self._init_param()          # Initialize parameters
         self._init_lattice()        # Setup lattice geometry
+        self._check_apbc_interactions()
         self._init_orbit()          # Setup orbital structure
         # self._dump_param_ham()
         self._check_interaction()   # Validate interactions
@@ -253,6 +260,45 @@ class UHFk(solver_base):
 
         self.shape = (nx, ny, nz)
         self.nvol = nvol
+
+        # ----- APBC: read & normalize BoundaryCondition -----
+        bc_raw = self.param_mod.get("BoundaryCondition", None)
+        if bc_raw is None:
+            self.boundary_theta = (0.0, 0.0, 0.0)
+            self.boundary_periodic = True
+        else:
+            self.boundary_theta = normalize_boundary_condition(bc_raw)
+            self.boundary_periodic = all(t == 0.0 for t in self.boundary_theta)
+
+        # Sublattice + APBC is supported (v2). The gauge phase is applied to
+        # Transfer in its original signed-irvec representation before any
+        # sublattice fold, in _init_interaction.
+
+        logger.info(
+            "    BoundaryCondition = {} (theta/pi = {})".format(
+                bc_raw if bc_raw is not None else ["periodic"] * 3,
+                [t / np.pi for t in self.boundary_theta],
+            )
+        )
+
+    def _check_apbc_interactions(self) -> None:
+        """Reject non-density-type interactions when APBC is active (v1 scope).
+
+        Density-density terms (CoulombIntra/Inter/Coulomb, Hund, Ising, Exchange)
+        are gauge-invariant under the site-dependent gauge applied for APBC.
+        PairHop / PairLift are not; v1 fails fast. See spec sections 6, 8.
+        """
+        if self.boundary_periodic:
+            return
+        forbidden = ("PairHop", "PairLift")
+        present = [name for name in forbidden if name in self.param_ham
+                   and self.param_ham[name]]
+        if present:
+            raise ValueError(
+                f"APBC + {present[0]} is not supported in v1 "
+                "(non-density interaction is not gauge-invariant under the "
+                "site-dependent gauge; deferred to v2)"
+            )
 
     @do_profile
     def _init_orbit(self):
@@ -544,10 +590,35 @@ class UHFk(solver_base):
     @do_profile
     def _init_interaction(self):
         """Initialize interaction terms.
-        
+
         Processes interaction terms for sublattice structure if needed.
         Handles different types of interactions (Coulomb, Hund, etc).
         """
+        # ----- APBC: inject the gauge phase into Transfer in its ORIGINAL
+        # (pre-fold) signed-irvec representation. Per spec 3.2, the phase is
+        # exp(i sum_d theta_d * R_d / L_d) where R is the full-lattice
+        # displacement. For original Transfer entries R = irvec directly, so
+        # this is the correct place to apply it regardless of whether a
+        # subsequent sublattice fold runs. Doing it after the fold would be
+        # wrong because the fold wraps irvec modulo (Lx/Bx, Ly/By, Lz/Bz) and
+        # discards the signed information needed for the phase.
+        #
+        # Before mutating Transfer, snapshot the raw input. _export_interaction
+        # uses this snapshot so the exported Transfer.dat under APBC contains
+        # un-phased values; combined with the separate BoundaryCondition.dat,
+        # the export round-trips cleanly (re-importing does NOT double-apply
+        # the twist).
+        if not self.boundary_periodic and "Transfer" in self.param_ham:
+            import copy
+            self._transfer_raw_export = copy.deepcopy(self.param_ham["Transfer"])
+            theta = np.array(self.boundary_theta, dtype=np.float64)
+            L = np.array(self.cellshape, dtype=np.float64)
+            phased_transfer = {}
+            for (irvec, orbvec), v in self.param_ham["Transfer"].items():
+                rv = np.asarray(irvec, dtype=np.float64)
+                phased_transfer[(irvec, orbvec)] = v * transfer_phase(rv, theta, L)
+            self.param_ham["Transfer"] = phased_transfer
+
         # reinterpret interaction coefficient on sublattice
         if self.has_sublattice:
             # backup
@@ -995,6 +1066,10 @@ class UHFk(solver_base):
         nvol     = self.nvol
         norb     = self.norb
         nd       = self.nd
+
+        # APBC gauge phase is applied earlier in _init_interaction, in the
+        # original (pre-fold) signed-irvec representation. By the time we get
+        # here, self.param_ham["Transfer"] already carries it.
 
         if self.enable_spin_orbital == True:
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
@@ -1753,6 +1828,12 @@ class UHFk(solver_base):
         gab_r = np.fft.fftn(gab_k.reshape(nx, ny, nz, nd, nd),
                             axes=(0, 1, 2), norm='forward')
 
+        # Persist per-block Fermi-Dirac weights so _save_occupation can emit
+        # the converged occupation without recomputing it. group_dists is
+        # overwritten every SCF iteration; at convergence the stored value
+        # is the converged one.
+        self._green_list["dist"] = group_dists
+
         # store
         self.Green_prev = self.Green
         self.Green = gab_r.reshape(nvol, ns, norb, ns, norb)
@@ -2175,6 +2256,7 @@ class UHFk(solver_base):
                      eigenvector = evv,
                      wavevector_unit = self.kvec,
                      wavevector_index = self.wavenum_table,
+                     twist_offset = twist_offset(self.boundary_theta),
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
 
@@ -2189,6 +2271,16 @@ class UHFk(solver_base):
         if "onebodyg" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["onebodyg"])
             self._save_greenone(file_name, green_info)
+
+        # occupation.npz holds the converged SCF Fermi-Dirac weights together
+        # with mu, T, and per-column spin/mu-group metadata. It is consumed
+        # by the H-wave -> mVMC PairProduct bridge to project finite-T
+        # occupations to T=0 Slater determinants without re-running the SCF.
+        # The keyword is opt-in so existing input.toml files keep their
+        # current output layout.
+        if "occupation" in info_outputfile.keys():
+            file_name = os.path.join(path_to_output, info_outputfile["occupation"])
+            self._save_occupation(file_name)
 
         if "initial" in info_outputfile.keys():
             logger.warning("save_results: save initial is not supported")
@@ -2211,6 +2303,20 @@ class UHFk(solver_base):
         return self._read_green_from_data(v)
 
     def _read_green_from_data(self, ginfo):
+        # If the saved file records boundary_theta, warn when it differs from
+        # the current run. The Green is stored in the gauge-transformed
+        # (tilde) basis specific to the boundary it was computed under, so
+        # cross-boundary restart will start the SCF from the wrong basis.
+        if "boundary_theta" in ginfo.files:
+            saved_theta = np.asarray(ginfo["boundary_theta"], dtype=np.float64)
+            current_theta = np.asarray(self.boundary_theta, dtype=np.float64)
+            if not np.allclose(saved_theta, current_theta):
+                logger.warning(
+                    "_read_green: saved Green was computed under boundary_theta "
+                    "{} but the current run uses {}. The Green is stored in the "
+                    "gauge basis specific to its boundary; restarting across "
+                    "boundaries is not supported and may give wrong results."
+                    .format(tuple(saved_theta), tuple(current_theta)))
         if self.has_sublattice:
             if "green_sublattice" in ginfo.files:
                 logger.debug("_read_green: read green_sublattice")
@@ -2230,8 +2336,137 @@ class UHFk(solver_base):
                 data = None
         return data
 
+    def _step_fill_occupation_t0(self):
+        """Compute T=0 step occupation per block, per mu-group.
+
+        Returns the same list-of-arrays layout produced by ``_green()`` --
+        one entry per block, each with shape ``(nvol, blk_size)`` and
+        values in {0, 1}. We reuse ``_find_dist_group_zero_t`` so the
+        tie-breaker (lowest k^2 wins on degenerate eigenvalues) matches
+        what the SCF itself used.
+
+        This helper is the fallback path for ``_save_occupation`` when
+        ``self._green_list["dist"]`` is not populated (e.g. tests that
+        bypass ``_green()``); in normal SCF runs the persisted dist is
+        used directly.
+        """
+        ws_list = self._green_list["eigenvalue"]
+        vs_list = self._green_list.get("eigenvector", [None] * len(ws_list))
+        nblock = len(ws_list)
+        ngroup = len(self.group_nconds)
+
+        group_blocks = [[] for _ in range(ngroup)]
+        for b in range(nblock):
+            group_blocks[self.block_to_group[b]].append(b)
+
+        dists_list = [None] * nblock
+        for g in range(ngroup):
+            blist = group_blocks[g]
+            ws_group = [ws_list[b] for b in blist]
+            vs_group = [vs_list[b] for b in blist]
+            ncond = self.group_nconds[g]
+            dists, _mu = self._find_dist_group_zero_t(ws_group, vs_group, ncond)
+            for i, b in enumerate(blist):
+                dists_list[b] = dists[i]
+        return dists_list
+
+    @do_profile
+    def _save_occupation(self, file_name):
+        """Save the converged SCF occupation, mu, T, and per-column metadata.
+
+        Output keys (see spec 4.1):
+          occupation       : (nvol, nd) float64 -- Fermi-Dirac weight per
+                             (k-point, eigenvector column). At T=0 the
+                             values are 0 or 1; at T>0 they are fractional.
+          mu               : (n_mu_groups,) float64 -- chemical potential
+                             per mu-group. Sz-fixed -> 2 (up, down);
+                             Sz-free -> 1.
+          T                : scalar float64 -- SCF temperature.
+          column_spin      : (nd,) int64 -- 0 = up-only block, 1 = down-only
+                             block, -1 = mixed block (Sz-free / spin-orbital
+                             coupling).
+          column_mu_group  : (nd,) int64 -- mu-group index for each column;
+                             ``mu[column_mu_group[n]]`` gives the chemical
+                             potential associated with column n.
+
+        The column layout matches ``eigenvector`` in ``eigen.npz``:
+        columns are arranged in block order from ``_detect_blocks``.
+        """
+        nvol = self.nvol
+        nd = self.nd
+        norb = self.norb
+        blocks = self.block_info
+
+        # Persisted per-block dists come from _green() (uhfk.py:1837 region).
+        # Fall back to the explicit T=0 recompute when missing, so tests
+        # that build a UHFk instance without running the SCF still work.
+        dists_list = self._green_list.get("dist")
+        if dists_list is None:
+            if self.T != 0:
+                raise RuntimeError(
+                    "_save_occupation: T>0 requires the SCF to have populated "
+                    "_green_list['dist']; call solver.solve() first."
+                )
+            dists_list = self._step_fill_occupation_t0()
+
+        occupation = np.zeros((nvol, nd), dtype=np.float64)
+        column_spin = np.zeros(nd, dtype=np.int64)
+        column_mu_group = np.zeros(nd, dtype=np.int64)
+
+        col_offset = 0
+        for i_blk, blk in enumerate(blocks):
+            blk_idx = np.asarray(blk)
+            blk_size = blk_idx.size
+            occupation[:, col_offset:col_offset + blk_size] = dists_list[i_blk]
+
+            # Spin character of this block: 0 = only up-spin original indices,
+            # 1 = only down-spin, -1 = mixed (Sz-free or spin-orbital coupling).
+            # Original index conventions follow _detect_blocks
+            # (uhfk.py:1540-1545): normal mode packs (s, a) -> s*norb + a,
+            # spin-orbital mode packs (s, a) -> 2*a + s.
+            if self.enable_spin_orbital:
+                n_up = int(np.sum(blk_idx % 2 == 0))
+                n_down = int(np.sum(blk_idx % 2 == 1))
+            else:
+                n_up = int(np.sum(blk_idx < norb))
+                n_down = int(np.sum(blk_idx >= norb))
+            if n_up > 0 and n_down == 0:
+                spin_char = 0
+            elif n_up == 0 and n_down > 0:
+                spin_char = 1
+            else:
+                spin_char = -1
+            column_spin[col_offset:col_offset + blk_size] = spin_char
+            column_mu_group[col_offset:col_offset + blk_size] = (
+                self.block_to_group[i_blk]
+            )
+            col_offset += blk_size
+
+        mu_array = np.asarray(self._green_list["mu"], dtype=np.float64)
+
+        np.savez(
+            file_name,
+            occupation=occupation,
+            mu=mu_array,
+            T=np.float64(self.T),
+            column_spin=column_spin,
+            column_mu_group=column_mu_group,
+        )
+        logger.info(
+            "save_results: save occupation/mu/T/column_metadata in file {}".format(
+                file_name
+            )
+        )
+
     @do_profile
     def _save_green(self, file_name):
+        # APBC convention: self.Green is the SCF working state in the
+        # gauge-transformed (tilde) basis. We save it as-is (which is what
+        # warm-start expects), and record the boundary_theta the run used so
+        # downstream tools can detect the gauge state. The user-facing
+        # physical Green output is greenone.dat (which applies
+        # inverse_gauge_phase in _save_greenone); see green_uhfk.rst.
+        boundary_theta = np.asarray(self.boundary_theta, dtype=np.float64)
         if self.has_sublattice:
             green_orig = self._deflate_green(self.Green)
             # Tag the deflated "green" key with the fold convention used since
@@ -2242,24 +2477,18 @@ class UHFk(solver_base):
             # back without silently using the wrong sign. See issue #36.
             np.savez(file_name, green = green_orig,
                      green_sublattice = self.Green,
+                     boundary_theta = boundary_theta,
                      green_convention = np.array("green_slot_first"))
         else:
-            np.savez(file_name, green = self.Green)
+            np.savez(file_name,
+                     green = self.Green,
+                     boundary_theta = boundary_theta)
         logger.info("save_results: save green function to file {}".format(file_name))
 
     @do_profile
     def _save_greenone(self, file_name, green_info):
         if not "onebodyg_uhf" in green_info or not "geometry_uhf" in green_info:
             logger.error("_save_greenone: onebodyg_uhf and geometry_uhf are required")
-            return None
-
-        if self.enable_spin_orbital:
-            # In spin-orbital mode spin is folded into the orbital index (ns=1),
-            # so the (i, s, j, t) one-body Green output cannot be expressed on
-            # the (spin, orbital, spin, orbital) axes. Reject rather than crash.
-            logger.error(
-                "_save_greenone: one-body Green output (onebodyg) is not "
-                "supported in spin-orbital mode")
             return None
 
         if self.has_sublattice:
@@ -2270,32 +2499,52 @@ class UHFk(solver_base):
         geom = green_info["geometry_uhf"]
         greenone = green_info["onebodyg_uhf"]
 
-        lx,ly,lz = self.cellshape
-        lvol     = self.cellvol
-        norb     = self.norb
-        nd       = self.nd
-        ns       = self.ns
-
+        lx, ly, lz = self.cellshape
         tbl = geom["site2vec"]
 
-        def _pack_site(ix,iy,iz):
-            return ix + lx * (iy + ly * iz)
+        def _pack_site(ix, iy, iz):
+            # self.Green is reshaped from (nx, ny, nz, ns, norb, ns, norb)
+            # to (nvol, ns, norb, ns, norb) in C-order (numpy default). The
+            # flat index into gr must therefore also follow C-order — the
+            # x direction is the slowest, z is the fastest.
+            # Historical bug (Fortran-order): ``ix + lx * (iy + ly * iz)``
+            # returned the wrong element for any 2D+ system whose Green
+            # function is not x<->y symmetric (e.g. Rashba SOC), because it
+            # transposes the x and z axes relative to self.Green's actual
+            # memory layout. Same-spin sectors of the shipped v1/v2/v3 test
+            # fixtures happened to be x<->y symmetric so the bug was silent
+            # until the SOC branch exercised s != t entries.
+            return ix * ly * lz + iy * lz + iz
 
         with open(file_name, "w") as fw:
             # G(i,a,s; j,b,t) := G(a,s;b,t;j-i)
-            for (i,s,j,t) in greenone:
-                (ix,iy,iz,a) = tbl[i]
-                (jx,jy,jz,b) = tbl[j]
+            for (i, s, j, t) in greenone:
+                (ix, iy, iz, a_phys) = tbl[i]
+                (jx, jy, jz, b_phys) = tbl[j]
 
                 kx = (jx - ix + lx) % lx
                 ky = (jy - iy + ly) % ly
                 kz = (jz - iz + lz) % lz
-                idx = _pack_site(kx,ky,kz)
+                idx = _pack_site(kx, ky, kz)
 
-                v = gr[idx,s,a,t,b]
+                if self.enable_spin_orbital:
+                    # gr.shape = (nvol, 1, 2*norb_phys, 1, 2*norb_phys);
+                    # pack spin into the orbital slot as 2*a + s.
+                    a_packed = 2 * a_phys + s
+                    b_packed = 2 * b_phys + t
+                    v = gr[idx, 0, a_packed, 0, b_packed]
+                else:
+                    v = gr[idx, s, a_phys, t, b_phys]
+
+                if not self.boundary_periodic:
+                    r_i = np.array([ix, iy, iz], dtype=np.float64)
+                    r_j = np.array([jx, jy, jz], dtype=np.float64)
+                    theta = np.array(self.boundary_theta, dtype=np.float64)
+                    Lvec = np.array(self.cellshape, dtype=np.float64)
+                    v = v * inverse_gauge_phase(r_i, r_j, theta, Lvec)
 
                 fw.write("{:3} {:3} {:3} {:3}  {:.12e} {:.12e}\n".format(
-                    i, s, j, t, v.real, v.imag
+                    i, s, j, t, v.real, v.imag,
                 ))
 
         logger.info("save_results: save greenone to file {}".format(file_name))
@@ -2340,11 +2589,21 @@ class UHFk(solver_base):
                 fw.write("{:.8f} {:.8f} {:.8f}\n".format(center[k][0], center[k][1], center[k][2]))
 
     def _export_interaction(self, type, file_name):
-        intr = self.param_ham[type]
+        # For Transfer under APBC, _init_interaction mutates self.param_ham
+        # in place by multiplying each entry by the gauge phase. The raw
+        # (un-phased) values are snapshotted into self._transfer_raw_export
+        # so the exported Transfer.dat stays un-phased; the boundary is
+        # carried separately by BoundaryCondition.dat. This prevents a
+        # round-trip from re-importing both files and applying the twist a
+        # second time. For non-Transfer types or PBC, fall back to param_ham.
+        if type == "Transfer" and hasattr(self, "_transfer_raw_export"):
+            intr = self._transfer_raw_export
+        else:
+            intr = self.param_ham[type]
 
         min_r = [0,0,0]
         max_r = [0,0,0]
-        for (irvec,orbvec), v in self.param_ham[type].items():
+        for (irvec,orbvec), v in intr.items():
             for k in range(3):
                 min_r[k] = irvec[k] if irvec[k] < min_r[k] else min_r[k]
                 max_r[k] = irvec[k] if irvec[k] > max_r[k] else max_r[k]
@@ -2367,7 +2626,7 @@ class UHFk(solver_base):
             # write index and elements. Orbital indices are stored 0-based in
             # memory but the wannier90-like format is 1-based (read_w90 subtracts
             # one), so emit orbvec + 1 to keep the file round-trippable.
-            for (irvec,orbvec), v in self.param_ham[type].items():
+            for (irvec,orbvec), v in intr.items():
                 if (abs(v) > 1.0e-12):
                     fw.write("{:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
                         *irvec, orbvec[0] + 1, orbvec[1] + 1, v.real, v.imag
@@ -2385,3 +2644,21 @@ class UHFk(solver_base):
                 file_name = os.path.join(path_to_output, prefix + type + ".dat")
                 self._export_interaction(type, file_name)
                 logger.info("export {} to {}".format(type, file_name))
+        bc_file = os.path.join(path_to_output, prefix + "BoundaryCondition.dat")
+        self._export_boundary_condition(bc_file)
+        logger.info("export BoundaryCondition to {}".format(bc_file))
+
+    def _export_boundary_condition(self, file_name):
+        """Write the BoundaryCondition that the SCF ran under as a separate file.
+
+        Format: header line + one direction label per line (3 lines: x, y, z).
+        Values: "periodic" or "antiperiodic". Always written alongside
+        Transfer.dat so consumers reconstruct the correct boundary.
+        """
+        labels = []
+        for t in self.boundary_theta:
+            labels.append("antiperiodic" if t != 0.0 else "periodic")
+        with open(file_name, "w") as fw:
+            fw.write("# BoundaryCondition for uhfk export (per direction: x, y, z)\n")
+            for label in labels:
+                fw.write("{}\n".format(label))

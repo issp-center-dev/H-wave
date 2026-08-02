@@ -1,0 +1,50 @@
+// PBC 1D Hubbard, L=8, t=1, U=2, Sz-free (no 2Sz constraint).
+// Matches the H-wave input.toml (CellShape=[8,1,1], Ncond=4,
+// BoundaryCondition=["periodic", "periodic", "periodic"]). phase0 =
+// 0.0 -> pure PBC (no boundary-crossing sign).
+//
+// v3 B case: without 2Sz StdFace's FermionHubbard generator emits an
+// orbitalidx.def sized for Sz-free sampling. The bridge dispatch
+// exercised here is the Sz-free (single shared mu-group, no 2Sz)
+// branch. The plan originally called for on-site Zeeman-like Transfer
+// entries to stabilize a definite target state, but H-wave silently
+// drops spin-block Transfer entries when enable_spin_orbital=false
+// (uhfk.py:1136-1146) and the Hermite check errors on them
+// (uhfk.py:879); enable_spin_orbital=true would be needed to make them
+// effective, but tools/uhfk_to_mvmc.py rejects that mode in v1. See
+// the fixture README "Known limitation" section for details. The
+// physical model here is therefore the plain NN Hubbard; H-wave
+// converges from the random initial Green function to a
+// symmetry-broken FM state.
+//
+// StdFace only emits orbitalidxgen.def (6-column General) when
+// lGC == 1 or 2Sz != 0 (StdFace_main.c:1426). This B case is Sz-free
+// (no 2Sz), so we use FermionHubbardGC to set lGC=1, which triggers
+// OrbitalGeneral emission without imposing a fixed 2Sz. The initial
+// WF written by the bridge still carries a definite Ncond=4 particle
+// number, so mVMC's NVMCCalMode=1 measurement of <H> is invariant
+// under lGC because it uses the initial WF as-is (NSROptItrStep=0
+// disables ncond projection updates).
+L     = 8
+Lsub  = 8
+model = "FermionHubbardGC"
+lattice = "chain"
+t     = 1.0
+U     = 2.0
+phase0 = 0.0
+ncond = 4
+// NSPGaussLeg is not specified (default projection off), matching the
+// Sz-free input.toml (no 2Sz key).
+NVMCCalMode    = 1
+NLanczosMode   = 0
+NDataIdxStart  = 1
+NDataQtySmp    = 1
+NSROptItrStep  = 0
+// NSROptItrSmp is not used when NSROptItrStep = 0; vmcdry hangs on the
+// warning emitted for the unused key, so we omit it.
+NVMCWarmUp     = 10
+NVMCInterval   = 1
+NVMCSample     = 10000
+RndSeed        = 12345
+NSplitSize     = 1
+NStore         = 0

@@ -19,6 +19,7 @@ eigen
     
     wavevector_unit = data["wavevector_unit"]
     wavevector_index = data["wavevector_index"]
+    twist_offset = data["twist_offset"]
 
 
 ``eigenvalue`` には波数ごとの固有値 :math:`\lambda_l(\vec{k})` が格納されます。
@@ -44,5 +45,17 @@ Sz固定の場合は、固有値のインデックスは軌道部分 ``l'`` と�
 
     k_vec = np.dot(wavevector_index[k], wavevector_unit)
 
-		
+``twist_offset`` には計算実行時の境界条件に対応する方向ごとのツイストオフセット
+:math:`\theta_d / (2\pi)` が格納されます。各成分は ``periodic`` で ``0`` 、
+``antiperiodic`` で ``1/2`` です。任意の境界条件下での物理波数ベクトルは
+インデックス ``k`` に対して次のように求められます。
+
+.. code-block:: python
+
+    k_vec_phys = np.dot(wavevector_index[k] + twist_offset, wavevector_unit)
+
+全方向周期境界の場合は ``twist_offset`` は全成分ゼロとなり、このフィールドを
+無視する既存の読み込みコードは従来通りの整数グリッド解釈となります(後方互換)。
+
+
 .. raw:: latex

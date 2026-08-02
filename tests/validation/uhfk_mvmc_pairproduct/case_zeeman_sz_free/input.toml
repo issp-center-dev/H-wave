@@ -1,0 +1,51 @@
+[log]
+  print_level = 1
+  print_step  = 50
+
+[mode]
+  mode = "UHFk"
+  # flag_fock must live in [mode], NOT [mode.param]: uhfk.py:82 reads
+  # info_mode directly. With Fock on, CoulombIntra couples up/down into a
+  # single mixed block and column_spin becomes -1, which the bridge
+  # rejects (v1 needs Sz-separable blocks).
+  flag_fock = false
+
+[mode.param]
+  Ncond        = 4
+  # Sz-free (no 2Sz key). flag_fock=false above keeps CoulombIntra's
+  # Fock term off, so up and down never mix into a single block; that
+  # keeps column_spin ∈ {0, 1} even though 2Sz is unset (single shared
+  # mu-group). The plan originally called for on-site Zeeman-like
+  # Transfer entries here to stabilize a definite target state, but
+  # H-wave silently drops spin-block Transfer entries in normal mode
+  # (uhfk.py:1136-1146) and the Hermite check hard-errors on them
+  # (uhfk.py:879); enable_spin_orbital=true would be needed to make
+  # them effective, but tools/uhfk_to_mvmc.py rejects that mode in v1.
+  # See the fixture README "Known limitation" section for details.
+  IterationMax = 2000
+  EPS          = 14
+  Mix          = 0.5
+  RndSeed      = 12345
+  T            = 0.0
+  CellShape    = [8, 1, 1]
+  SubShape     = [1, 1, 1]
+  BoundaryCondition = ["periodic", "periodic", "periodic"]
+
+[file]
+[file.input]
+  path_to_input = ""
+  geometry_uhf = "geometry_uhf.dat"
+  onebodyg_uhf = "OneBodyG.dat"
+[file.input.interaction]
+  path_to_input = "./"
+  Geometry     = "Geometry.dat"
+  Transfer     = "Transfer.dat"
+  CoulombIntra = "CoulombIntra.dat"
+
+[file.output]
+  path_to_output = "output"
+  energy   = "energy.dat"
+  eigen    = "eigen.npz"
+  green    = "green.npz"
+  onebodyg = "greenone.dat"
+  occupation = "occupation.npz"
