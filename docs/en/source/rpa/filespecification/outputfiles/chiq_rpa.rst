@@ -17,6 +17,14 @@ The file contains several arrays bound to the following keys:
 
   The susceptibility matrix or the irreducible susceptibility matrix. Their data layout is described in the following sections.
 
+- ``momentum_convention``:
+
+  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (issue #133): the
+  momentum labels follow :math:`M(k) = \sum_R M(R) e^{+ikR}`. Loaders
+  reject files recording a different value; files written before this
+  field existed are accepted only when their content is elementwise even
+  under :math:`q \to -q` (for which the two conventions coincide).
+
 - ``freq_index``:
 
   The value or the range of Matsubara frequency is specified by ``matsubara_frequency`` parameter. The array bound to ``freq_index`` relates the index of the output data and the label of the actual Matsubara frequency.

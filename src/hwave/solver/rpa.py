@@ -80,6 +80,43 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
 MOMENTUM_CONVENTION = "e_plus_ikR"
 
 
+def check_momentum_marker(data, file_name):
+    """Strictly validate a PRESENT momentum_convention marker.
+
+    Returns True when a valid marker is present, False when the file has
+    none. A malformed marker (not exactly one value) or a mismatching tag
+    raises. Consumers whose legacy files are known to already use the
+    documented sign (e.g. UHFk green outputs) call this alone, accepting
+    unmarked files without a content check.
+    """
+    files = getattr(data, "files", data)
+    if "momentum_convention" not in files:
+        return False
+    tag_arr = np.asarray(data["momentum_convention"]).ravel()
+    # exactly one value (round-5 review): a multi-element marker
+    # previously authorized via its first element and an empty one
+    # died on an incidental IndexError
+    if tag_arr.size != 1:
+        raise ValueError(
+            "file '{}': momentum_convention must be a single value, "
+            "got {!r}; regenerate the file.".format(
+                file_name, np.asarray(data["momentum_convention"])))
+    tag = str(tag_arr[0])
+    if tag != MOMENTUM_CONVENTION:
+        raise ValueError(
+            "file '{}' records momentum_convention = '{}' but this "
+            "build uses '{}'; regenerate the file.".format(
+                file_name, tag, MOMENTUM_CONVENTION))
+    return True
+
+
+# Chunk bound for the validator's scans: temporaries per processed block
+# stay at a few times this many elements, independent of the payload size
+# (round-9 review: the previous whole-tensor pipeline allocated ~5.5x the
+# payload -- ~200 GiB for a large general-scheme chi file).
+_MOMENTUM_SCAN_BLOCK = 1 << 18
+
+
 def validate_momentum_convention(data, file_name, payload, q_axis,
                                  lattice_shape):
     """Fail closed on momentum-convention mismatches (issue #133).
@@ -95,85 +132,104 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
     regeneration hint, following the sc_vertex_version fail-closed
     precedent of gating on content, not age.
 
+    Both the finiteness scan (which runs for marked files too -- a valid
+    marker must not authorize NaN/Inf content) and the q/-q comparison
+    are CHUNKED: no full-size reversed, normalized, or boolean tensor is
+    materialized (round-9 review).
+
     Parameters: payload is the stored array, q_axis its flattened
-    (nx, ny, nz) momentum axis, lattice_shape that grid.
+    (nx, ny, nz) momentum axis (or a 3-tuple of explicit axes),
+    lattice_shape that grid.
     """
-    files = getattr(data, "files", data)
-    if "momentum_convention" in files:
-        tag_arr = np.asarray(data["momentum_convention"]).ravel()
-        # exactly one value (round-5 review): a multi-element marker
-        # previously authorized via its first element and an empty one
-        # died on an incidental IndexError
-        if tag_arr.size != 1:
-            raise ValueError(
-                "file '{}': momentum_convention must be a single value, "
-                "got {!r}; regenerate the file.".format(
-                    file_name, np.asarray(data["momentum_convention"])))
-        tag = str(tag_arr[0])
-        if tag != MOMENTUM_CONVENTION:
-            raise ValueError(
-                "file '{}' records momentum_convention = '{}' but this "
-                "build uses '{}'; regenerate the file.".format(
-                    file_name, tag, MOMENTUM_CONVENTION))
-        return
-    from hwave.solver.kgrid import reverse_fft_axes
+    marked = check_momentum_marker(data, file_name)
     arr = np.asarray(payload)
-    # Non-finite content makes every comparison below silently False;
-    # reject it here (the loaders' own finiteness gates may run later).
-    if not np.all(np.isfinite(arr)):
-        raise ValueError(
-            "file '{}' carries no momentum_convention marker and contains "
-            "non-finite values; regenerate the file.".format(file_name))
-    nx, ny, nz = lattice_shape
-    if isinstance(q_axis, (tuple, list)):
-        # already-expanded layouts carry three explicit momentum axes
-        arr = np.moveaxis(arr, tuple(q_axis), (0, 1, 2))
-        arr = arr.reshape(nx, ny, nz, -1)
-    else:
-        arr = np.moveaxis(arr, q_axis, 0).reshape(nx, ny, nz, -1)
-    rev = reverse_fft_axes(arr, (0, 1, 2))
-    # PAIR-LOCAL scaling (round-2 review): a global-max tolerance lets a
-    # small-amplitude channel be order-one q-odd relative to ITSELF while
-    # hiding under another channel's large even amplitude. Each q/-q pair
-    # is compared at its own scale, with only a machine-noise absolute
-    # floor tied to the global scale.
-    # Scale from the real/imag COMPONENTS, not complex magnitudes:
-    # |x + iy| overflows to inf for finite x, y near float64.max, and an
-    # infinite scale would normalize every asymmetry away (round-6
-    # review). Component maxima are finite for any finite payload.
     if arr.size == 0:
         return
-    if np.iscomplexobj(arr):
-        scale = float(max(np.abs(arr.real).max(), np.abs(arr.imag).max()))
+    nx, ny, nz = lattice_shape
+    nvol = nx * ny * nz
+    from hwave.solver.kgrid import reverse_fft_axes
+
+    # All extraction below indexes the ORIGINAL array along its own axes:
+    # slicing/fancy-indexing a contiguous source copies only the selected
+    # block, whereas operating on a moveaxis VIEW made numpy consolidate
+    # the whole tensor per block (measured 5.5x the payload, round 9).
+    if isinstance(q_axis, (tuple, list)):
+        axes = [a % arr.ndim for a in q_axis]
+        dims = [nx, ny, nz]
+        o = int(np.argmax(dims))              # largest q dim -> outer loop
+        outer_ax, n_outer = axes[o], dims[o]
+        inner = [(axes[i], dims[i]) for i in range(3) if i != o]
+        pre = (slice(None),) * outer_ax
+        # positions of the two inner q axes AFTER the outer axis is
+        # consumed by integer indexing
+        inner_block_axes = tuple(a - (a > outer_ax) for a, _ in inner)
+
+        def _finite_blocks():
+            for ix in range(n_outer):
+                yield arr[pre + (ix,)]
+
+        def _pairs():
+            for ix in range(n_outer):
+                a = np.asarray(arr[pre + (ix,)])
+                b = np.asarray(arr[pre + ((-ix) % n_outer,)])
+                yield a, reverse_fft_axes(b, inner_block_axes)
     else:
-        scale = float(np.abs(arr).max())
-    if scale == 0.0:
+        ax = q_axis % arr.ndim
+        pre = (slice(None),) * ax
+        per = max(1, int(arr.size // max(arr.shape[ax], 1)))
+        step = max(1, _MOMENTUM_SCAN_BLOCK // per)
+        ix_g, iy_g, iz_g = np.meshgrid(
+            np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
+        rev_map = ((((-ix_g) % nx) * ny + ((-iy_g) % ny)) * nz
+                   + ((-iz_g) % nz)).ravel()
+
+        def _finite_blocks():
+            for s0 in range(0, arr.shape[ax], step):
+                yield arr[pre + (slice(s0, s0 + step),)]
+
+        def _pairs():
+            for s0 in range(0, nvol, step):
+                idx = np.arange(s0, min(s0 + step, nvol))
+                yield (arr[pre + (idx,)], arr[pre + (rev_map[idx],)])
+
+    # chunked finiteness + component-scale pass; runs for MARKED files
+    # too (a marker must not authorize NaN/Inf content, round-9 review)
+    scale = 0.0
+    for block in _finite_blocks():
+        b = block
+        if not np.all(np.isfinite(b.real)) or (
+                np.iscomplexobj(b) and not np.all(np.isfinite(b.imag))):
+            raise ValueError(
+                "file '{}' contains non-finite values; regenerate the "
+                "file.".format(file_name))
+        if np.iscomplexobj(b):
+            m = max(float(np.abs(b.real).max()),
+                    float(np.abs(b.imag).max()))
+        else:
+            m = float(np.abs(b).max())
+        scale = max(scale, m)
+    if marked or scale == 0.0:
         return
-    # Normalize BEFORE differencing (round-3 review): finite values near
-    # float64.max would overflow |a - rev| and the tolerance both to inf,
-    # and inf > inf is False -- a maximally odd payload would pass. The
-    # normalization scale is clamped from below (round-4 review) so a
-    # payload whose global maximum is itself denormal is not blown up to
-    # O(1) and spuriously rejected.
     norm = max(scale, 1.0e-300)
-    arrn = arr / norm
-    revn = rev / norm
-    diff = np.abs(arrn - revn)
-    tol = 1.0e-8 * (np.abs(arrn) + np.abs(revn)) + 1.0e-15
-    if bool(np.any(diff > tol)):
-        # report the NORMALIZED deviation: multiplying back by the scale
-        # can overflow to inf for near-float64.max payloads, which would
-        # degrade the diagnostic
-        asym_rel = float(diff.max())
-        raise ValueError(
-            "file '{}' carries no momentum_convention marker and its "
-            "content is not elementwise even under q -> -q (max pair "
-            "deviation {:.3e} relative to the global scale {:.3e}): it "
-            "was written before the #133 Fourier-sign alignment and its "
-            "momentum labels are flipped relative to this build. "
-            "Regenerate the file with the current version. (Files whose "
-            "content is q-even are accepted: for them the two "
-            "conventions coincide.)".format(file_name, asym_rel, scale))
+
+    for a, b in _pairs():
+        an = a / norm
+        bn = b / norm
+        diff = np.abs(an - bn)
+        tol = 1.0e-8 * (np.abs(an) + np.abs(bn)) + 1.0e-15
+        if bool(np.any(diff > tol)):
+            asym_rel = float(diff.max())
+            raise ValueError(
+                "file '{}' carries no momentum_convention marker and its "
+                "content is not elementwise even under q -> -q (max pair "
+                "deviation {:.3e} relative to the global scale {:.3e}): "
+                "it was written before the #133 Fourier-sign alignment "
+                "and its momentum labels are flipped relative to this "
+                "build. Regenerate the file with the current version. "
+                "(Files whose content is q-even are accepted: for them "
+                "the two conventions coincide.)".format(
+                    file_name, asym_rel, scale))
+
 
 
 def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
@@ -2145,6 +2201,15 @@ class RPA:
         except Exception as e:
             logger.error("read_green failed: {}".format(e))
             sys.exit(1)
+
+        # Fourier-sign provenance (issue #133, round-9 review): validate a
+        # PRESENT marker strictly, on every branch including the
+        # green_sublattice early return below. Unmarked files stay
+        # accepted without a content check: UHFk has always written its
+        # green with the documented e^{+ikR} sign, so legacy files carry
+        # correct labels -- but a file explicitly recording a DIFFERENT
+        # convention must not be consumed.
+        check_momentum_marker(data, file_name)
 
         nvol = self.lattice.nvol
         nd = self.nd

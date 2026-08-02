@@ -553,6 +553,168 @@ class TestLoaderGates(unittest.TestCase):
         self.assertIn("#133", str(cm.exception))
 
 
+class TestRound9Hardening(unittest.TestCase):
+    """Round-9 audit: tolerance boundary pins, marked-non-finite
+    rejection, call-site integration, independent chi gates, 8D routing,
+    writer marker values, bounded memory, manifest v2 refusal."""
+
+    def _npz(self, **arrays):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, **arrays)
+        return np.load(path), path
+
+    def test_pair_tolerance_boundary_is_pinned(self):
+        """1e-8 pair-relative: 3e-9 asymmetry accepted, 3e-8 rejected
+        (pins the coefficient itself; zero or 1e-2 would flip one)."""
+        nx = 4
+        base = np.cos(2 * np.pi * np.arange(nx) / nx) + 2.0
+        for eps, ok in ((3.0e-9, True), (3.0e-8, False)):
+            with self.subTest(eps=eps):
+                payload = np.tile(base[None, :, None, None], (2, 1, 1, 1))
+                payload = payload.copy()
+                payload[0, 1] *= (1.0 + eps)
+                data, path = self._npz(chi0q=payload)
+                if ok:
+                    validate_momentum_convention(data, path,
+                                                 data["chi0q"], 1,
+                                                 (nx, 1, 1))
+                else:
+                    with self.assertRaises(ValueError):
+                        validate_momentum_convention(data, path,
+                                                     data["chi0q"], 1,
+                                                     (nx, 1, 1))
+
+    def test_marked_non_finite_payload_is_rejected(self):
+        """A valid marker must not authorize NaN/Inf content (round 9:
+        the tag early-return skipped the finiteness scan)."""
+        payload = _q_even(4).astype(float)
+        payload[0, 1] = np.nan
+        data, path = self._npz(chi0q=payload,
+                               momentum_convention=MOMENTUM_CONVENTION)
+        with self.assertRaises(ValueError) as cm:
+            validate_momentum_convention(data, path, data["chi0q"], 1,
+                                         (4, 1, 1))
+        self.assertIn("non-finite", str(cm.exception))
+
+    def test_rpa_chi0q_init_call_site_is_gated(self):
+        """Integration through the RPA solver's own read_init: removing
+        the _read_chi0q gate call must fail this test."""
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import test_rpa_fourier_sign as fs
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fs._write_chain(tmp.name, so=False, norb_phys=1)
+        solver, gi = fs._solver(tmp.name, so=False, with_v=False, nmat=8)
+        out = os.path.join(tmp.name, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        # overwrite the produced chi0q with an unmarked q-odd file
+        nx = fs.LX
+        q = np.arange(nx)
+        odd = (np.cos(2 * np.pi * q / nx)
+               + 0.3 * np.sin(2 * np.pi * q / nx))
+        chi = np.tile(odd[None, :, None, None], (8, 1, 1, 1))
+        np.savez(os.path.join(out, "chi0q.npz"), chi0q=chi)
+        with self.assertRaises(ValueError) as cm:
+            solver.read_init({"path_to_input": out,
+                              "chi0q_init": "chi0q.npz"})
+        self.assertIn("#133", str(cm.exception))
+
+    def test_chi_s_and_chi_c_gates_fire_independently(self):
+        """One valid file must not shield the other: reject when only
+        chi_c is unmarked q-odd."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        nx = 4
+        q = np.arange(nx)
+        even = np.tile(np.cos(2 * np.pi * q / nx)[None, :, None, None],
+                       (2, 1, 2, 2))
+        odd = np.tile((np.cos(2 * np.pi * q / nx)
+                       + 0.3 * np.sin(2 * np.pi * q / nx))
+                      [None, :, None, None], (2, 1, 2, 2))
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=even,
+                 momentum_convention=MOMENTUM_CONVENTION)
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=odd)
+        inp = {"mode": {"param": {"T": 1.0, "CellShape": [nx, 1, 1]}},
+               "file": {"output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._read_flex_chi_raw(inp)
+        self.assertIn("chiq_c", str(cm.exception))
+
+    def test_valid_8d_ref_layout_with_q_odd_content_is_rejected(self):
+        n = 3
+        q = np.arange(n)
+        odd = np.cos(2 * np.pi * q / n) + 0.3 * np.sin(2 * np.pi * q / n)
+        payload = np.zeros((2, 2, 2, 2, n, 1, 1, 2))
+        payload += odd[None, None, None, None, :, None, None, None]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload)
+        inp = {"mode": {"param": {"T": 1.0, "Nmat": 2,
+                                  "CellShape": [n, 1, 1]}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._load_chi0q(inp, norb=2)
+        self.assertIn("#133", str(cm.exception))
+
+    def test_rpa_writer_emits_the_exact_marker_value(self):
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import test_rpa_fourier_sign as fs
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fs._write_chain(tmp.name, so=False, norb_phys=1)
+        solver, gi = fs._solver(tmp.name, so=False, with_v=False, nmat=8)
+        out = os.path.join(tmp.name, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        solver.save_results({"path_to_output": out, "chi0q": "c.npz"}, gi)
+        with np.load(os.path.join(out, "c.npz")) as data:
+            self.assertEqual(
+                str(np.asarray(data["momentum_convention"]).ravel()[0]),
+                MOMENTUM_CONVENTION)
+
+    def test_evenness_scan_memory_is_bounded(self):
+        """The legacy scan must not materialize whole-tensor
+        temporaries (round 9: ~5.5x the payload). Peak extra allocation
+        for a 16 MiB q-even payload must stay well below the payload
+        size."""
+        import tracemalloc
+        nvol = 8192
+        base = np.cos(2 * np.pi * np.arange(nvol) / nvol)
+        payload = np.tile(base[None, :, None, None],
+                          (128, 1, 2, 2)).astype(complex)   # ~67 MB
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, chi0q=payload)
+        data = np.load(path)
+        arr = data["chi0q"]
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        validate_momentum_convention(data, path, arr, 1, (nvol, 1, 1))
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        # blocks are absolute-bounded (~30 MB here); the pre-fix
+        # whole-tensor pipeline peaked at ~5.5x the payload (~370 MB)
+        self.assertLess(peak, int(arr.nbytes * 0.6))
+
+    def test_manifest_v2_upgrade_is_refused(self):
+        import hwave.tsweep as ts
+        old_manifest = {"version": 2, "ladder": [1.0], "fingerprint": "x"}
+        with self.assertRaises(ValueError) as cm:
+            ts._validate_resume(old_manifest, [1.0], "x")
+        self.assertIn("version", str(cm.exception))
+
+
 class TestExternFourierSign(unittest.TestCase):
     """Extern's R -> k build shares the documented sign."""
 

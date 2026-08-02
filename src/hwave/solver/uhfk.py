@@ -2175,6 +2175,7 @@ class UHFk(solver_base):
                      eigenvector = evv,
                      wavevector_unit = self.kvec,
                      wavevector_index = self.wavenum_table,
+                     momentum_convention = "e_plus_ikR",
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
 
