@@ -502,3 +502,60 @@ def test_mem_reuse_untagged_full_freq_resaves_without_fabrication():
     saved = _save_chi0q(solver, gi)
     assert 'coeff_tail' not in saved
     assert 'tail_endpoint' not in saved
+
+
+def test_mem_reuse_end_to_end_chain_preserves_provenance():
+    """Legitimate chained workflow (round-8 review): solver 1 COMPUTES a
+    coeff_tail=1.0 bubble (no hand-built metadata), solver 2 reuses the
+    same green_info, and the save from solver 2 must still carry the
+    producing run's coeff_tail and endpoint marker."""
+    import hwave.qlmsio.read_input_k as read_input_k
+    d = tempfile.mkdtemp()
+    solver1 = _make_rpa(coeff_tail=1.0)
+    gi = read_input_k.QLMSkInput({
+        'path_to_input': 'tests/rpa/input',
+        'interaction': {'path_to_input': 'tests/rpa/input',
+                        'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                        'CoulombIntra': 'coulombintra.dat'},
+    }).get_param("green")
+    solver1.solve(gi, d)
+    assert gi["chi0q_freq_meta"]["tail_endpoint"] == _MARKER
+
+    solver2 = _make_rpa(coeff_tail=1.0)
+    solver2.solve(gi, d)                    # in-memory reuse route
+    saved = _save_chi0q(solver2, gi)
+    assert float(saved['coeff_tail']) == 1.0
+    assert str(saved['tail_endpoint']) == _MARKER
+
+
+@pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
+def test_mem_reuse_rejects_malformed_tail_provenance(bad):
+    """Foreign provenance must not smuggle a malformed coeff_tail past
+    the endpoint gate (round-8 review: float() normalized these)."""
+    solver = _make_rpa(coeff_tail=1.0)
+    chi0q = _mem_chi0q(solver)
+    meta = _mem_meta(solver, chi0q, bad, _MARKER)
+    with pytest.raises(ValueError, match="coeff_tail"):
+        _solve_with_mem_chi0q(solver, chi0q, meta)
+
+
+@pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
+def test_rpa_read_rejects_malformed_tail_provenance(bad):
+    solver = _make_rpa(coeff_tail=1.0)
+    d = tempfile.mkdtemp()
+    fn = _write_rpa_chi0q(solver, d, coeff_tail=bad, tail_endpoint=_MARKER)
+    with pytest.raises(ValueError, match="coeff_tail"):
+        solver._read_chi0q(fn)
+
+
+@pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
+def test_sc_load_rejects_malformed_tail_provenance(bad):
+    import hwave.sc as sc
+    d = tempfile.mkdtemp()
+    np.savez(os.path.join(d, 'chi0q.npz'),
+             chi0q=np.zeros((8, 16, 1, 1), dtype=complex),
+             freq_index=np.arange(8), nmat=8, coeff_tail=bad,
+             tail_endpoint="branch_mean_v1",
+             momentum_convention="e_plus_ikR")
+    with pytest.raises(ValueError, match="coeff_tail"):
+        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))

@@ -303,7 +303,18 @@ def _load_chi0q(input_dict, norb=None):
     # calc comparisons are not silently inconsistent. Files without the key
     # (older builds) load silently as before.
     if "coeff_tail" in data:
-        file_tail = float(data["coeff_tail"])
+        # type-strict provenance normalization, mirroring
+        # rpa._validate_chi0q_provenance (round-8 review)
+        import numbers
+        _val = np.asarray(data["coeff_tail"])
+        _item = _val[()] if _val.ndim == 0 else None
+        if (_item is None or isinstance(_item, (bool, np.bool_))
+                or not isinstance(_item, numbers.Real)
+                or not np.isfinite(float(_item))):
+            raise ValueError(
+                "chi0q file '{}': malformed coeff_tail ({!r})".format(
+                    file_name, data["coeff_tail"]))
+        file_tail = float(_item)
         config_tail = float(input_dict.get("mode", {}).get("param", {})
                             .get("coeff_tail", 0.0))
         if file_tail != config_tail:

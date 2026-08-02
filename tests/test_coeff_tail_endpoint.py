@@ -774,6 +774,9 @@ class Test3DPhysicalOracle(unittest.TestCase):
             pm = np.asarray(solver._calc_chi0q_transverse(
                 solver.green0, solver.green0_tail, BETA))
             pm = pm.reshape(nmat, nvol)
+            # the static transverse bubble of this model is real; bound
+            # the part .real discards (measured roundoff ~1e-14)
+            self.assertLess(np.abs(pm[nmat // 2].imag).max(), 1e-10)
             errs[nmat] = np.abs(pm[nmat // 2].real - exact).max()
         solver0, _ = self._solver(256, 0.0)
         pm0 = np.asarray(solver0._calc_chi0q_transverse(

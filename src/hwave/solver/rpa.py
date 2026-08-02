@@ -388,12 +388,21 @@ def _validate_chi0q_provenance(meta, nfreq, source):
         out["freq_index"] = fi
     ct = meta.get("coeff_tail")
     if ct is not None:
-        try:
-            out["coeff_tail"] = float(ct)
-        except (TypeError, ValueError):
+        # type-strict like the config validation (round-8 review):
+        # float() would also normalize booleans, numeric strings and
+        # non-finite values, letting malformed foreign provenance pass
+        # the endpoint gate and be re-saved. Unwrap the 0-d scalar an
+        # npz file stores, then require a finite non-boolean Real.
+        import numbers
+        val = np.asarray(ct)
+        item = val[()] if val.ndim == 0 else None
+        if (item is None or isinstance(item, (bool, np.bool_))
+                or not isinstance(item, numbers.Real)
+                or not np.isfinite(float(item))):
             raise ValueError(
                 "chi0q provenance from {}: malformed coeff_tail "
                 "({!r})".format(source, ct))
+        out["coeff_tail"] = float(item)
     te = meta.get("tail_endpoint")
     if te is not None:
         # npz stores strings as 0-d unicode arrays; unwrap and require a
