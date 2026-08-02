@@ -370,13 +370,19 @@ def _load_chi0q(input_dict):
         elif _is_raw:
             _qax = 1
         else:
-            # neither complete pattern matches: a partial fallback here
-            # re-opened the misroute for mismatched-grid reference shapes
-            # (round-4 review) -- let the validator fail closed (marker
-            # cannot rescue an unidentifiable layout, and a marked file
-            # with an unknown 6D layout is equally unusable downstream)
-            validate_momentum_convention(data, file_name, chi0q, None,
-                                         _grid)
+            # neither complete pattern matches: fail closed HERE,
+            # independent of provenance (round-5 review: routing through
+            # the validator let a matching marker return early, and the
+            # downstream converter then silently RESHAPED the unknown
+            # layout, reinterpreting orbital axes as data -- a marker can
+            # establish the Fourier sign, never the array layout)
+            raise ValueError(
+                "chi0q file '{}': shape {} matches neither the raw "
+                "(nfreq, nvol, norb x4) nor the reference "
+                "(norb, norb, Nx, Ny, Nz, nfreq) 6D layout for CellShape "
+                "{}; the file is malformed or from a different lattice. "
+                "Regenerate it with the current version.".format(
+                    file_name, chi0q.shape, list(_grid)))
     elif chi0q.ndim == 4:
         _qax = 1
     if _qax is not None:

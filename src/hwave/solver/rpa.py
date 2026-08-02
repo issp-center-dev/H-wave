@@ -100,7 +100,16 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
     """
     files = getattr(data, "files", data)
     if "momentum_convention" in files:
-        tag = str(np.asarray(data["momentum_convention"]).ravel()[0])
+        tag_arr = np.asarray(data["momentum_convention"]).ravel()
+        # exactly one value (round-5 review): a multi-element marker
+        # previously authorized via its first element and an empty one
+        # died on an incidental IndexError
+        if tag_arr.size != 1:
+            raise ValueError(
+                "file '{}': momentum_convention must be a single value, "
+                "got {!r}; regenerate the file.".format(
+                    file_name, np.asarray(data["momentum_convention"])))
+        tag = str(tag_arr[0])
         if tag != MOMENTUM_CONVENTION:
             raise ValueError(
                 "file '{}' records momentum_convention = '{}' but this "
@@ -108,16 +117,6 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
                     file_name, tag, MOMENTUM_CONVENTION))
         return
     from hwave.solver.kgrid import reverse_fft_axes
-    if q_axis is None:
-        # The caller could not identify the momentum axes structurally
-        # and no (matching) marker decided; without axes the evenness
-        # fallback is impossible, so fail closed.
-        raise ValueError(
-            "file '{}' carries no momentum_convention marker and its "
-            "layout does not match any known momentum-axis structure; "
-            "the #133 Fourier-sign provenance cannot be established. "
-            "Regenerate the file with the current version, which stamps "
-            "the marker.".format(file_name))
     arr = np.asarray(payload)
     # Non-finite content makes every comparison below silently False;
     # reject it here (the loaders' own finiteness gates may run later).

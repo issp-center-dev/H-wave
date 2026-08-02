@@ -260,7 +260,7 @@ class TestRound4Hardening(unittest.TestCase):
                                      + 0.3 * np.sin(2 * np.pi * q2 / 4))
         with self.assertRaises(ValueError) as cm:
             self._sc_load(payload, [2, 2, 2])
-        self.assertIn("#133", str(cm.exception))
+        self.assertIn("neither", str(cm.exception))
 
     def test_whole_payload_at_denormal_scale_is_accepted(self):
         """Global maximum itself denormal: clamping the normalization
@@ -276,6 +276,40 @@ class TestRound4Hardening(unittest.TestCase):
         data = np.load(path)
         validate_momentum_convention(data, path, data["chi0q"], 1,
                                      (nx, 1, 1))
+
+    def test_marked_unknown_6d_layout_still_fails_closed(self):
+        """A marker establishes the Fourier sign, never the layout: a
+        marked file whose 6D shape matches neither pattern was previously
+        accepted and silently reshaped downstream."""
+        payload = np.zeros((4, 8, 1, 2, 2, 4))
+        with self.assertRaises(ValueError) as cm:
+            self._sc_load(payload, [2, 2, 2],
+                          momentum_convention=MOMENTUM_CONVENTION)
+        self.assertIn("neither", str(cm.exception))
+
+    def test_malformed_marker_arrays_are_rejected(self):
+        """Exactly one marker value: a multi-element array previously
+        authorized via its first element; an empty one crashed with
+        IndexError."""
+        nx = 4
+        q = np.arange(nx)
+        odd = (np.cos(2 * np.pi * q / nx)
+               + 0.3 * np.sin(2 * np.pi * q / nx))
+        payload = np.tile(odd[None, :, None, None], (2, 1, 1, 1))
+        for label, marker in (
+                ("multi", np.array(["e_plus_ikR", "e_minus_ikR"])),
+                ("empty", np.array([], dtype=str))):
+            with self.subTest(marker=label):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                path = os.path.join(tmp.name, "x.npz")
+                np.savez(path, chi0q=payload, momentum_convention=marker)
+                data = np.load(path)
+                with self.assertRaises(ValueError) as cm:
+                    validate_momentum_convention(data, path,
+                                                 data["chi0q"], 1,
+                                                 (nx, 1, 1))
+                self.assertIn("single value", str(cm.exception))
 
     def _ir_meta(self):
         return dict(matsubara_basis="ir",
