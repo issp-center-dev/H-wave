@@ -77,6 +77,200 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
             "current RPA solver.".format(file_name, conv)
         )
 
+MOMENTUM_CONVENTION = "e_plus_ikR"
+
+
+def check_momentum_marker(data, file_name):
+    """Strictly validate a PRESENT momentum_convention marker.
+
+    Returns True when a valid marker is present, False when the file has
+    none. A malformed marker (not exactly one value) or a mismatching tag
+    raises. Consumers whose legacy files are known to already use the
+    documented sign (e.g. UHFk green outputs) call this alone, accepting
+    unmarked files without a content check.
+    """
+    files = getattr(data, "files", data)
+    if "momentum_convention" not in files:
+        return False
+    tag_arr = np.asarray(data["momentum_convention"]).ravel()
+    # exactly one value (round-5 review): a multi-element marker
+    # previously authorized via its first element and an empty one
+    # died on an incidental IndexError
+    if tag_arr.size != 1:
+        raise ValueError(
+            "file '{}': momentum_convention must be a single value, "
+            "got {!r}; regenerate the file.".format(
+                file_name, np.asarray(data["momentum_convention"])))
+    tag = str(tag_arr[0])
+    if tag != MOMENTUM_CONVENTION:
+        raise ValueError(
+            "file '{}' records momentum_convention = '{}' but this "
+            "build uses '{}'; regenerate the file.".format(
+                file_name, tag, MOMENTUM_CONVENTION))
+    return True
+
+
+# Chunk bound for the validator's scans: temporaries per processed block
+# stay at a few times this many elements, independent of the payload size
+# (round-9 review: the previous whole-tensor pipeline allocated ~5.5x the
+# payload -- ~200 GiB for a large general-scheme chi file).
+_MOMENTUM_SCAN_BLOCK = 1 << 18
+
+
+def validate_momentum_convention(data, file_name, payload, q_axis,
+                                 lattice_shape):
+    """Fail closed on momentum-convention mismatches (issue #133).
+
+    Every k/q-space NPZ written since #133 carries
+    momentum_convention = "e_plus_ikR" (the documented Wannier90-style
+    sign). Files written before the fix carry q labels of the OPPOSITE
+    sign; silently combining one with current-convention quantities would
+    mix q and -q. Legacy files without the marker are accepted ONLY when
+    the stored payload is elementwise even under q -> -q on the FFT grid
+    (then the two conventions coincide bit-for-bit -- true for every
+    centrosymmetric fixture); otherwise they are rejected with a
+    regeneration hint, following the sc_vertex_version fail-closed
+    precedent of gating on content, not age.
+
+    Both the finiteness scan (which runs for marked files too -- a valid
+    marker must not authorize NaN/Inf content) and the q/-q comparison
+    are CHUNKED: no full-size reversed, normalized, or boolean tensor is
+    materialized (round-9 review).
+
+    Parameters: payload is the stored array, q_axis its flattened
+    (nx, ny, nz) momentum axis (or a 3-tuple of explicit axes),
+    lattice_shape that grid.
+    """
+    marked = check_momentum_marker(data, file_name)
+    arr = np.asarray(payload)
+    if arr.size == 0:
+        return
+    nx, ny, nz = lattice_shape
+    nvol = nx * ny * nz
+    from hwave.solver.kgrid import reverse_fft_axes
+
+    def _num(block):
+        # signed-integer payloads overflow np.abs at INT_MIN (round-10
+        # review); cast PER BLOCK to float64 -- bounded, and a no-op for
+        # the float/complex arrays production writes
+        b = np.asarray(block)
+        if b.dtype.kind not in "fc":
+            b = b.astype(np.float64)
+        return b
+
+    # Two-level chunking (round-10 review): chunk the q axis AND, when a
+    # single q plane alone exceeds the element bound (large frequency/
+    # orbital axes, tiny grids), also the leading non-q axis. Extraction
+    # always indexes the ORIGINAL array (slices / fancy indexing copy
+    # only the selected block; operating on a moveaxis view made numpy
+    # consolidate the whole tensor). Reversed q indices are computed per
+    # chunk -- no full-size index grids.
+    def _rev_flat(idx):
+        ix = idx // (ny * nz)
+        iy = (idx // nz) % ny
+        iz = idx % nz
+        return (((-ix) % nx) * ny + ((-iy) % ny)) * nz + ((-iz) % nz)
+
+    if isinstance(q_axis, (tuple, list)):
+        axes = [a % arr.ndim for a in q_axis]
+        dims = [nx, ny, nz]
+        o = int(np.argmax(dims))
+        outer_ax, n_outer = axes[o], dims[o]
+        inner_block_axes = tuple(a - (a > outer_ax)
+                                 for i, a in enumerate(axes) if i != o)
+        q_set = set(axes)
+    else:
+        outer_ax = q_axis % arr.ndim
+        n_outer = arr.shape[outer_ax]
+        inner_block_axes = None
+        q_set = {outer_ax}
+    # lead-chunk over an axis OUTSIDE the momentum set (round-11: slicing
+    # an inner q axis would break the reversal pairing); if every axis is
+    # a momentum axis, lead chunking is disabled
+    chunk_ax = next((i for i in range(arr.ndim) if i not in q_set), None)
+    lead = arr.shape[chunk_ax] if chunk_ax is not None else 1
+    plane = max(1, arr.size // n_outer)
+
+    if plane <= _MOMENTUM_SCAN_BLOCK:
+        q_step = max(1, _MOMENTUM_SCAN_BLOCK // plane)
+        lead_step = lead
+    else:
+        q_step = 1
+        per_lead = max(1, plane // lead)
+        lead_step = max(1, _MOMENTUM_SCAN_BLOCK // per_lead)
+
+    def _lead_slices():
+        if chunk_ax is None:
+            yield slice(None)
+        else:
+            for l0 in range(0, lead, lead_step):
+                yield slice(l0, l0 + lead_step)
+
+    def _index(lsl, qsel):
+        idx = [slice(None)] * arr.ndim
+        if chunk_ax is not None:
+            idx[chunk_ax] = lsl
+        idx[outer_ax] = qsel
+        return arr[tuple(idx)]
+
+    def _finite_blocks():
+        for lsl in _lead_slices():
+            for q0 in range(0, n_outer, q_step):
+                yield _index(lsl, slice(q0, q0 + q_step))
+
+    def _pairs():
+        for lsl in _lead_slices():
+            if inner_block_axes is None:
+                for q0 in range(0, n_outer, q_step):
+                    idx = np.arange(q0, min(q0 + q_step, n_outer))
+                    yield (_index(lsl, idx),
+                           _index(lsl, _rev_flat(idx)))
+            else:
+                for ix in range(n_outer):
+                    a = np.asarray(_index(lsl, ix))
+                    b = np.asarray(_index(lsl, (-ix) % n_outer))
+                    yield a, reverse_fft_axes(b, inner_block_axes)
+
+    # chunked finiteness + component-scale pass; runs for MARKED files
+    # too (a marker must not authorize NaN/Inf content, round-9 review)
+    scale = 0.0
+    for block in _finite_blocks():
+        b = _num(block)
+        if not np.all(np.isfinite(b.real)) or (
+                np.iscomplexobj(b) and not np.all(np.isfinite(b.imag))):
+            raise ValueError(
+                "file '{}' contains non-finite values; regenerate the "
+                "file.".format(file_name))
+        if np.iscomplexobj(b):
+            m = max(float(np.abs(b.real).max()),
+                    float(np.abs(b.imag).max()))
+        else:
+            m = float(np.abs(b).max())
+        scale = max(scale, m)
+    if marked or scale == 0.0:
+        return
+    norm = max(scale, 1.0e-300)
+
+    for a, b in _pairs():
+        an = _num(a) / norm
+        bn = _num(b) / norm
+        diff = np.abs(an - bn)
+        tol = 1.0e-8 * (np.abs(an) + np.abs(bn)) + 1.0e-15
+        if bool(np.any(diff > tol)):
+            asym_rel = float(diff.max())
+            raise ValueError(
+                "file '{}' carries no momentum_convention marker and its "
+                "content is not elementwise even under q -> -q (max pair "
+                "deviation {:.3e} relative to the global scale {:.3e}): "
+                "it was written before the #133 Fourier-sign alignment "
+                "and its momentum labels are flipped relative to this "
+                "build. Regenerate the file with the current version. "
+                "(Files whose content is q-even are accepted: for them "
+                "the two conventions coincide.)".format(
+                    file_name, asym_rel, scale))
+
+
+
 def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
                       source="geom.dat"):
     """Physical orbital count from a geometry ``norb``.
@@ -501,8 +695,12 @@ class Interaction:
                 else:
                     pass  # skip spin dependence
 
-            # Fourier transform
-            tab_q = FFT.fftn(tab_r, axes=(0,1,2))
+            # Fourier transform: the documented convention (issue #133)
+            # is eps(k) = sum_R e^{+ikR} t(R) -- ifftn * nvol, matching
+            # UHFk and the spin-orbital branch above. The previous fftn
+            # computed eps(-k), i.e. every k/q label of this mode's output
+            # was globally negated for non-centrosymmetric models.
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
             self.ham_trans_r = tab_r.reshape(nvol,norb,norb)
@@ -531,8 +729,9 @@ class Interaction:
                 else:
                     pass  # skip spin dependence
 
-            # Fourier transform
-            hab_q = FFT.fftn(hab_r, axes=(0,1,2))
+            # Fourier transform: e^{+ikR}, same convention as the
+            # transfer term (issue #133)
+            hab_q = FFT.ifftn(hab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
             self.ham_extern_r = hab_r.reshape(nvol,norb,norb)
@@ -585,7 +784,8 @@ class Interaction:
             # so the table entering the vertex is the mean
             #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
             # Without this the ring read a one-sided off-site declaration as
-            # v e^{-iqR} where the operator it declares -- v n_a(i) n_a(i+R),
+            # v e^{+iqR} (the documented sign, #133) where the operator it
+            # declares -- v n_a(i) n_a(i+R),
             # even in R by the site sum -- has the exact vertex v cos(qR)
             # (measured: chiq differed by 1.2e-2 from the symmetric reading
             # of the same Hamiltonian). PairHop's partner is the HERMITIAN
@@ -778,7 +978,12 @@ class Interaction:
         logger.debug("ham_inter_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
 
         # Fourier transform W(q)^{bb'aa'}
-        ham_q = FFT.fftn(ham_r, axes=(0,1,2))
+        # e^{+iqR} (issue #133): the spin-orbital transfer already used
+        # the documented sign while this shared FFT used the opposite one,
+        # so spin-orbital chiq combined chi0(q) with W(-q) -- invisible for
+        # R-symmetric real interactions, wrong for Hermitian-closed complex
+        # off-site declarations.
+        ham_q = FFT.ifftn(ham_r, axes=(0,1,2)) * nvol
 
         logger.debug("ham_inter_q shape={}, size={}".format(ham_q.shape, ham_q.size))
         logger.debug("ham_inter_q nonzero count={}".format(ham_q[abs(ham_q) > 1.0e-8].size))
@@ -788,7 +993,7 @@ class Interaction:
 
         fierz_r = fierz_r.reshape(nx,ny,nz,*(nd,)*4)
         if np.any(fierz_r):
-            self.ham_fierz_q = FFT.fftn(fierz_r, axes=(0,1,2))
+            self.ham_fierz_q = FFT.ifftn(fierz_r, axes=(0,1,2)) * nvol
         else:
             self.ham_fierz_q = None
 
@@ -1598,6 +1803,7 @@ class RPA:
                     # unlike UHFk's interleaved (2*orb+spin) output; record it so
                     # consumers do not silently mix the two conventions.
                     index_convention = "spin_block",
+                    momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
@@ -1616,6 +1822,7 @@ class RPA:
                 wavevector_index = self.wavenum_table,
                 # spin-orbital axes are spin-block ordered (spin*norb+orb)
                 index_convention = "spin_block",
+                momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
             )
             np.savez(file_name, **save_kwargs)
@@ -1942,6 +2149,18 @@ class RPA:
 
         self._validate_chi0q_shape(chi0q, source=file_name)
 
+        # Fourier-sign provenance gate (issue #133), AFTER the IR rejection
+        # and shape validation so a malformed file gets its own diagnosis
+        # first. The q axis is chosen STRUCTURALLY from the now-validated
+        # layout, never by dimension-size search (round-2 review: a
+        # spin-diag (2, nfreq, nvol, ...) file with nfreq == nvol would
+        # otherwise be probed on its frequency axis and slip through):
+        # raw layouts put the flattened volume on axis 1, spin-diag
+        # layouts (ndim 5/7, leading 2) on axis 2.
+        _qax = 2 if (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2) else 1
+        validate_momentum_convention(data, file_name, chi0q, _qax,
+                                     self.lattice.shape)
+
         logger.info("read_chi0q: shape={}, spin_mode={}".format(chi0q.shape, self.spin_mode))
 
         return chi0q
@@ -2007,7 +2226,9 @@ class RPA:
         nvol = self.lattice.nvol
         nd = self.nd
 
-        tab_k = np.fft.fftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        # e^{+ikR} (issue #133), consistent with _make_ham_trans
+        tab_k = (np.fft.ifftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
+                 * nvol).reshape(nvol,nd,nd)
 
         return tab_k
 
@@ -2019,6 +2240,15 @@ class RPA:
         except Exception as e:
             logger.error("read_green failed: {}".format(e))
             sys.exit(1)
+
+        # Fourier-sign provenance (issue #133, round-9 review): validate a
+        # PRESENT marker strictly, on every branch including the
+        # green_sublattice early return below. Unmarked files stay
+        # accepted without a content check: UHFk has always written its
+        # green with the documented e^{+ikR} sign, so legacy files carry
+        # correct labels -- but a file explicitly recording a DIFFERENT
+        # convention must not be consumed.
+        check_momentum_marker(data, file_name)
 
         nvol = self.lattice.nvol
         nd = self.nd
@@ -2249,7 +2479,9 @@ class RPA:
                             np.eye(2)).reshape(nvol,nd,nd)
         H0r[0] += hh3
 
-        H0 = np.fft.fftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        # e^{+ikR} (issue #133), consistent with _make_ham_trans
+        H0 = (np.fft.ifftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
+              * nvol).reshape(nvol,nd,nd)
         return H0
 
     @do_profile

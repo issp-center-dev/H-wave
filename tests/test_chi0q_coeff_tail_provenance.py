@@ -164,7 +164,7 @@ def test_rpa_read_then_resave_preserves_coeff_tail():
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
              freq_index=np.arange(solver.nmat), nmat=solver.nmat,
-             coeff_tail=1.0)
+             coeff_tail=1.0, momentum_convention="e_plus_ikR")
     solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
     assert float(saved['coeff_tail']) == 1.0
@@ -178,7 +178,7 @@ def test_rpa_read_then_resave_omits_for_legacy_file():
     nvol = solver.lattice.nvol
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
-             freq_index=np.arange(solver.nmat), nmat=solver.nmat)
+             freq_index=np.arange(solver.nmat), nmat=solver.nmat, momentum_convention="e_plus_ikR")
     solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     saved = _save_chi0q(solver, {'chi0q': _stub_chi0q(solver)})
     assert 'coeff_tail' not in saved
@@ -194,7 +194,7 @@ def _write_chi0q_file(d, nmat=8, nvol=16, coeff_tail=None):
         kwargs['coeff_tail'] = coeff_tail
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((nmat, nvol, 1, 1), dtype=complex),
-             freq_index=np.arange(nmat), nmat=nmat, **kwargs)
+             freq_index=np.arange(nmat), nmat=nmat, **kwargs, momentum_convention="e_plus_ikR")
 
 
 def _sc_input(d, nmat=8, coeff_tail=None):
@@ -245,7 +245,7 @@ def test_rpa_read_chi0q_warns_on_mismatch_and_keeps_provenance(caplog):
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
              freq_index=np.arange(solver.nmat), nmat=solver.nmat,
-             coeff_tail=1.0)
+             coeff_tail=1.0, momentum_convention="e_plus_ikR")
     with caplog.at_level(logging.WARNING, logger='hwave.solver.rpa'):
         solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     assert any('coeff_tail' in m for m in _warnings(caplog))
@@ -259,7 +259,7 @@ def test_rpa_read_chi0q_silent_on_match(caplog):
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((solver.nmat, nvol, 1, 1, 1, 1), dtype=complex),
              freq_index=np.arange(solver.nmat), nmat=solver.nmat,
-             coeff_tail=1.0)
+             coeff_tail=1.0, momentum_convention="e_plus_ikR")
     with caplog.at_level(logging.WARNING, logger='hwave.solver.rpa'):
         solver._read_chi0q(os.path.join(d, 'chi0q.npz'))
     assert not any('coeff_tail' in m for m in _warnings(caplog))

@@ -34,7 +34,7 @@ chi0 = (chi0q[nmat//2, :, 0, 0, 0, 0]).reshape(nx,ny)
 for i,j in itertools.product(range(nx),range(ny)):
     print(kx[i], ky[j], chi0[i,j].real, chic[i,j].real, chis[i,j].real)
 
-X, Y = np.meshgrid(kx, ky)
+X, Y = np.meshgrid(kx, ky, indexing="ij")   # arrays are (qx, qy)
 
 
 dict_chi = {"chi0":chi0.real, "chic": chic.real, "chis":chis.real}

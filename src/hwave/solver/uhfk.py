@@ -2175,6 +2175,7 @@ class UHFk(solver_base):
                      eigenvector = evv,
                      wavevector_unit = self.kvec,
                      wavevector_index = self.wavenum_table,
+                     momentum_convention = "e_plus_ikR",
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
 
@@ -2242,9 +2243,13 @@ class UHFk(solver_base):
             # back without silently using the wrong sign. See issue #36.
             np.savez(file_name, green = green_orig,
                      green_sublattice = self.Green,
-                     green_convention = np.array("green_slot_first"))
+                     green_convention = np.array("green_slot_first"),
+                     # issue #133: UHFk always used the documented e^{+ikR}
+                     # sign; the stamp makes that machine-readable
+                     momentum_convention = "e_plus_ikR")
         else:
-            np.savez(file_name, green = self.Green)
+            np.savez(file_name, green = self.Green,
+                     momentum_convention = "e_plus_ikR")
         logger.info("save_results: save green function to file {}".format(file_name))
 
     @do_profile

@@ -23,8 +23,11 @@ def _rand(shape, seed):
 
 
 def _fft_ab_q(arr):
-    """(nx, ny, nz, a, b) real-space table -> (a, b, nx, ny, nz) with the
-    e^{-iqR} phase convention (numpy's forward FFT)."""
+    """(nx, ny, nz, a, b) real-space table -> (a, b, nx, ny, nz) via
+    numpy's forward FFT. The commutation identity under test applies the
+    SAME transform on both sides, so its sign is immaterial here; the
+    production R -> q builds use e^{+iqR} since #133 (the
+    production-anchoring test below transforms accordingly)."""
     return np.fft.fftn(arr, axes=(0, 1, 2)).transpose(3, 4, 0, 1, 2)
 
 
@@ -132,17 +135,18 @@ class TestProductionAnchoring(unittest.TestCase):
             sc._build_interaction_k(kx, kz, kz, tbl, norb))["CoulombInter"]
 
         # dense route with _build_interaction_k's layout: an entry
-        # (R, (a, b)) lands at [R, b, a] (the vertex pair transpose)
+        # (R, (a, b)) lands at [R, b, a] (the vertex pair transpose).
+        # R -> q with the documented e^{+iqR} (#133): ifftn * nvol.
         arr = np.zeros((nx, 1, 1, norb, norb), dtype=complex)
         arr[1, 0, 0, 1, 0] = 0.7
-        dense = np.fft.fftn(symmetrise_dense(arr),
-                            axes=(0, 1, 2)).transpose(3, 4, 0, 1, 2)
+        dense = (np.fft.ifftn(symmetrise_dense(arr), axes=(0, 1, 2))
+                 * nx).transpose(3, 4, 0, 1, 2)
         np.testing.assert_allclose(dense, prod, atol=1e-13)
         # and the value itself is the adjudicated one-sided reading:
-        # half weight on e^{-iq}, half on e^{+iq} at the transposed slot
+        # half weight on e^{+iq}, half on e^{-iq} at the transposed slot
         q1 = kx[1]
         self.assertAlmostEqual(
-            prod[1, 0, 1, 0, 0], 0.35 * np.exp(-1j * q1), places=13)
+            prod[1, 0, 1, 0, 0], 0.35 * np.exp(+1j * q1), places=13)
 
     def test_rpa_ring_consumes_the_shared_dense_core(self):
         """Delegation spy: the ring assembly must reach

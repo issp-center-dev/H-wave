@@ -170,7 +170,7 @@ class TestFileRouteExceptionType(unittest.TestCase):
         sv, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
         d = tempfile.mkdtemp()
         np.savez(os.path.join(d, 'chi0q_bad.npz'),
-                 chi0q=np.zeros((3, 99, 7, 8), dtype=complex))
+                 chi0q=np.zeros((3, 99, 7, 8), dtype=complex), momentum_convention="e_plus_ikR")
         with self.assertRaises(ValueError) as cm:
             sv.read_init({'path_to_input': d, 'chi0q_init': 'chi0q_bad.npz'})
         msg = str(cm.exception)
@@ -484,7 +484,7 @@ class TestRoundFourHardening(unittest.TestCase):
         try:
             np.savez(os.path.join(d, 'chi0q_part.npz'),
                      chi0q=np.asarray(g['chi0q'])[:9],
-                     freq_index=np.arange(9), nmat=32)
+                     freq_index=np.arange(9), nmat=32, momentum_convention="e_plus_ikR")
             sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
             g2 = r2.get_param("green")
             g2.update(sv2.read_init({'path_to_input': d,
@@ -591,7 +591,7 @@ class TestRoundFiveHardening(unittest.TestCase):
         try:
             np.savez(os.path.join(d, 'chi0q_badfi.npz'),
                      chi0q=np.asarray(g['chi0q'])[:9],
-                     freq_index=np.arange(5), nmat=32)
+                     freq_index=np.arange(5), nmat=32, momentum_convention="e_plus_ikR")
             sv2, _ = _make('general', {'CoulombInter': 'onsite_inter.dat'})
             with self.assertRaises(ValueError) as cm:
                 sv2.read_init({'path_to_input': d,
@@ -657,7 +657,7 @@ class TestRoundSixHardening(unittest.TestCase):
         try:
             np.savez(os.path.join(d, 'chi0q_part.npz'),
                      chi0q=np.asarray(g['chi0q'])[:9],
-                     freq_index=np.arange(12, 21), nmat=32)
+                     freq_index=np.arange(12, 21), nmat=32, momentum_convention="e_plus_ikR")
             sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
             g2 = r2.get_param("green")
             g2.update(sv2.read_init({'path_to_input': d,
@@ -681,7 +681,7 @@ class TestRoundSixHardening(unittest.TestCase):
         try:
             np.savez(os.path.join(d, 'chi0q_part.npz'),
                      chi0q=np.asarray(g['chi0q'])[:9],
-                     freq_index=np.arange(12, 21), nmat=32)
+                     freq_index=np.arange(12, 21), nmat=32, momentum_convention="e_plus_ikR")
             sv2, r2 = _make('general', {'CoulombInter': 'onsite_inter.dat'})
             g2 = r2.get_param("green")
             g2.update(sv2.read_init({'path_to_input': d,
@@ -758,7 +758,7 @@ class TestRoundSevenHardening(unittest.TestCase):
         d = tempfile.mkdtemp()
         try:
             np.savez(os.path.join(d, 'legacy.npz'),
-                     chi0q=np.asarray(g['chi0q'])[:9])
+                     chi0q=np.asarray(g['chi0q'])[:9], momentum_convention="e_plus_ikR")
             sv2, r2 = _make('general', inter)
             g2 = r2.get_param("green")
             g2.update(sv2.read_init({'path_to_input': d,

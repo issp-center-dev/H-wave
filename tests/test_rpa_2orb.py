@@ -15,8 +15,10 @@ class RPATwoOrbital:
             for idy, ky in enumerate(ky_array):
                 epsilon_k[0][0][idx][idy] = 2.0*t*np.cos(ky)
                 epsilon_k[1][1][idx][idy] = 2.0*t*np.cos(ky)
-                epsilon_k[0][1][idx][idy] = t1*(1.0+np.exp(1J*kx))
-                epsilon_k[1][0][idx][idy] = t1*(1.0+np.exp(-1J*kx))
+                # documented e^{+ikR} convention (#133): the fixture's
+                # t_{01} bonds sit at R = 0 and R = -1
+                epsilon_k[0][1][idx][idy] = t1*(1.0+np.exp(-1J*kx))
+                epsilon_k[1][0][idx][idy] = t1*(1.0+np.exp(1J*kx))
         return epsilon_k
 
     def _get_green(self, Nx, Ny, Nmat, myu, beta, epsilon_k):
@@ -161,7 +163,7 @@ class RPATwoOrbital:
             for idqy, ky in enumerate(ky_array):
                 I = np.identity(8, dtype=np.complex128)
                 chi0 = chi0q[:,:,:,:, idqx, idqy,Nmat//2]
-                Vxq = V*(1.0+np.exp(-1J*kx))
+                Vxq = V*(1.0+np.exp(1J*kx))   # e^{+iqR} (#133)
                 Vyq = 2.0*V*np.cos(ky)
                 # FULL pair-space bubble per spin block. The historical
                 # truncation to the palindromic slots ((aa), (bb)) was exact

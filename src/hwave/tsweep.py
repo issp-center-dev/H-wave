@@ -22,7 +22,11 @@ MANIFEST_NAME = "tsweep_manifest.json"
 # computed either way, so resuming it would silently mix pre- and
 # post-correction eigenvalues in one lambda_vs_T.dat ladder; the bump
 # invalidates every pre-correction manifest instead.
-_MANIFEST_VERSION = 2
+# Version 3: the #133 Fourier-sign alignment changed the momentum labels
+# of every k/q-resolved artifact for non-centrosymmetric models; a
+# version-2 manifest's rungs may have been computed with the flipped
+# convention, so resuming one would mix q and -q rungs in one ladder.
+_MANIFEST_VERSION = 3
 
 
 def build_ladder(cont):

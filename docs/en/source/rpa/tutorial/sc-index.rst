@@ -891,7 +891,10 @@ Three flags control the run:
   (``CellShape``/``SubShape``/``Nmat``/``filling``/``Ncond``/interaction
   files/``[eliashberg]`` frequency/pairing). Resuming against a different
   ladder or configuration **fails fast** rather than mixing incompatible
-  results. The summary and manifest are written atomically after every rung,
+  results; a manifest whose schema version predates the current one (bumped
+  by the #86 tail-correction and #133 Fourier-sign changes) is likewise
+  refused. The summary is written atomically after every rung and the
+  manifest when the sweep is established,
   so an interruption can never leave a truncated checkpoint. Without
   ``--resume`` a rerun starts fresh and overwrites the existing sweep
   rung-by-rung (a warning is logged when it detects an existing sweep).

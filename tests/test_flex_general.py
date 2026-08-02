@@ -536,8 +536,8 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         # write a legacy chiq file with NO chi_convention field
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr)
-        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, momentum_convention="e_plus_ikR")
         input_dict = {"file": {"output": {"path_to_output": d}},
                       "eliashberg": {}}
         _, _, _, conv = sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
@@ -550,9 +550,9 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
         # spin says myo, charge says kuroki -> must not silently combine
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, chi_convention="myo")
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, chi_convention="myo", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr,
-                 chi_convention="kuroki")
+                 chi_convention="kuroki", momentum_convention="e_plus_ikR")
         input_dict = {"file": {"output": {"path_to_output": d}},
                       "eliashberg": {}}
         with self.assertRaises(ValueError):
@@ -606,8 +606,8 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
 
     def _write_pair(self, d, meta_s=None, meta_c=None, nd=4, nmat=4, nvol=4):
         arr = np.zeros((nmat, nvol, nd, nd), dtype=complex)
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(meta_s or {}))
-        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(meta_c or {}))
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(meta_s or {}), momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(meta_c or {}), momentum_convention="e_plus_ikR")
         return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
 
     def test_writer_stamps_acbd_layout_for_orbital_pair_files_only(self):

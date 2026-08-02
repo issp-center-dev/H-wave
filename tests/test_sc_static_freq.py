@@ -229,7 +229,7 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 np.savez(os.path.join(tmp, name),
                          chiq=chiq, freq_index=freq_index, nmat=1024,
-                         chi_convention="kuroki")
+                         chi_convention="kuroki", momentum_convention="e_plus_ikR")
             input_dict = {
                 "mode": {"param": {"Nmat": 1024}},
                 "file": {"input": {"path_to_flex_output": tmp},
@@ -262,7 +262,7 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
                 chiq[i, :, 1, 1] = float(i)
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 np.savez(os.path.join(tmp, name),
-                         chiq=chiq, chi_convention="kuroki")
+                         chiq=chiq, chi_convention="kuroki", momentum_convention="e_plus_ikR")
             input_dict = {
                 "mode": {"param": {"Nmat": 1024}},
                 "file": {"input": {"path_to_flex_output": tmp},

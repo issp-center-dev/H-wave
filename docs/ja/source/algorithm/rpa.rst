@@ -33,6 +33,28 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
 を行うと、Hamiltonianは以下のように書き換えられます。
 
+.. note::
+
+   この :math:`e^{+i\bf{k}\cdot\bf{r}}` 規約（wannier90 形式の符号、
+   UHFk と共通）は、issue #133 以降 RPA モジュールのすべての実空間係数
+   構築（:math:`R \to k/q` 変換）が従う規約です：
+   :math:`\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
+   e^{+i {\bf k}\cdot{\bf R}}` および :math:`W({\bf q}) =
+   \sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}`（感受率計算
+   内部の畳み込み変換は自己逆な対であり影響を受けません）。この修正以前
+   は、非スピン軌道経路が全体で逆符号を使用しており---自己整合的な
+   :math:`{\bf k} \to -{\bf k}` の再ラベルであり、保存された
+   ``chi0q`` / ``chiq`` は、テンソルが FFT グリッド上で
+   :math:`{\bf q} \to -{\bf q}` に対して要素毎に偶でない限り、運動量
+   ラベルが反転していました---、スピン軌道経路は transfer と相互作用で
+   2 つの符号が混在し、``chiq`` が :math:`\chi_0({\bf q})` と
+   :math:`W(-{\bf q})` から解かれていました：
+   :math:`W({\bf q}) \neq W(-{\bf q})` となる相互作用（方向性ボンド）
+   では、旧スピン軌道 ``chiq`` は再ラベルではなく誤りです。この修正以降
+   に書かれる運動量空間ファイルは ``momentum_convention = "e_plus_ikR"``
+   を持ち、ローダは無印の旧ファイルを、内容が :math:`{\bf q}` 偶
+   （両規約が一致する場合）でない限り拒否します。
+
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}

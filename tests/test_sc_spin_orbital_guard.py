@@ -59,7 +59,7 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         d = tmp.name
         np.savez(os.path.join(d, "chi0q.npz"),
-                 chi0q=np.zeros((2, 1, 1, 1), dtype=complex))
+                 chi0q=np.zeros((2, 1, 1, 1), dtype=complex), momentum_convention="e_plus_ikR")
         inp = {"mode": {"enable_spin_orbital": "false",
                         "param": {"Nmat": 2}},
                "file": {"input": {"path_to_flex_output": d},

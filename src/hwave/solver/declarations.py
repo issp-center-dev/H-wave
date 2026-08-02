@@ -92,9 +92,10 @@ def symmetrise_k(inter_k):
     """Momentum-space form of the same reduction, per interaction type.
 
     The same-operator partner of ``M[b, a](q)`` is the orbital-transposed
-    entry AT ``-q`` (arrays carry ``e^{-iqR}`` phases) -- averaging with
+    entry AT ``-q`` (arrays carry ``e^{+iqR}`` phases since #133; the
+    reduction is sign-agnostic) -- averaging with
     the same-q transpose instead corrupted every off-site interaction,
-    collapsing a one-direction bond's ``V(q) = v e^{-iqR}`` to
+    collapsing a one-direction bond's ``V(q) = v e^{+iqR}`` to
     ``v cos(qR)`` (measured: the S/C entry vanished outright at
     ``q = pi/2``). The mean used here:
 

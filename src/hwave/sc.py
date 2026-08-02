@@ -262,7 +262,7 @@ def _reject_ir_native(data, file_name, hint):
             "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
 
 
-def _load_chi0q(input_dict):
+def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
     Parameters
@@ -313,6 +313,123 @@ def _load_chi0q(input_dict):
                 "NOT comparable with a chi0q_mode=\"calc\" run under this "
                 "config. Set [mode.param] coeff_tail = {} to match the "
                 "file.".format(file_name, file_tail, config_tail, file_tail))
+
+    # Unconditional marker validation (round-10 review): a PRESENT
+    # marker must be checked even when the layout/grid cannot be
+    # identified (absent CellShape, unknown shape).
+    from hwave.solver.rpa import check_momentum_marker
+    check_momentum_marker(data, file_name)
+    # Fourier-sign provenance gate (issue #133): chi0q is q-labeled; a
+    # pre-#133 file carries flipped labels. Legacy files are accepted only
+    # when the payload is elementwise q-even (see the validator). The q
+    # axes are chosen STRUCTURALLY from the accepted layouts (round-2
+    # review: a size search probed the frequency axis when nfreq == nvol,
+    # and skipped the already-expanded reference layouts entirely):
+    #   4D/6D raw  (nfreq, nvol, ...)            -> axis 1
+    #   5D/7D spin-diag (2, nfreq, nvol, ...)    -> axis 2
+    #   6D ref  (no, no, Nx, Ny, Nz, nfreq)      -> axes (2, 3, 4)
+    #   8D ref  (no, no, no, no, Nx, Ny, Nz, nfreq) -> axes (4, 5, 6)
+    from hwave.solver.rpa import validate_momentum_convention
+    _cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
+    if _cs is None:
+        # no lattice configured (unit-level callers): the grid, and with
+        # it the momentum axes, cannot be identified -- production
+        # configs always carry CellShape, so no production bypass
+        _grid = None
+    else:
+        _cs = list(_cs)
+        while len(_cs) < 3:
+            _cs.append(1)
+        _grid = tuple(int(x) for x in _cs)
+    _nvol = int(np.prod(_grid)) if _grid is not None else -1
+    # With the orbital count known (the production entry always passes
+    # it), validate the EXACT supported layouts up front (round-6 review:
+    # without norb a malformed 8D file passed both marked and unmarked;
+    # with norb the (8,8,2,2,2,2)-style raw/ref ambiguity also vanishes,
+    # since norb cannot be two values at once).
+    _qax = None
+    _resolved = False
+    if norb is not None and _grid is not None:
+        nv, no = _nvol, int(norb)
+        # Full trailing shapes for every layout (round-7 review: partial
+        # slices accepted malformed spin-diag arrays), and the layout
+        # matched HERE directly selects the q axes -- re-running the
+        # norb-blind structural routing below raised 'matches BOTH' for
+        # shapes this gate had already disambiguated.
+        if chi0q.ndim == 4 and tuple(chi0q.shape[1:]) == (nv, no, no):
+            _qax = 1
+        elif (chi0q.ndim == 6
+                and tuple(chi0q.shape[1:]) == (nv, no, no, no, no)):
+            _qax = 1
+        elif (chi0q.ndim == 6
+                and tuple(chi0q.shape[:5]) == (no, no) + _grid):
+            _qax = (2, 3, 4)
+        elif (chi0q.ndim == 8
+                and tuple(chi0q.shape[:7]) == (no,) * 4 + _grid):
+            _qax = (4, 5, 6)
+        elif (chi0q.ndim == 5 and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:]) == (nv, no, no)):
+            _qax = 2
+        elif (chi0q.ndim == 7 and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:]) == (nv, no, no, no, no)):
+            _qax = 2
+        else:
+            raise ValueError(
+                "chi0q file '{}': shape {} matches no supported layout "
+                "for norb = {} and CellShape {}; the file is malformed "
+                "or from a different system. Regenerate it with the "
+                "current version.".format(file_name, chi0q.shape, no,
+                                          list(_grid)))
+        _resolved = True
+    if _resolved or _grid is None:
+        pass
+    elif chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
+        _qax = 2
+    elif chi0q.ndim == 8:
+        _qax = (4, 5, 6)
+    elif chi0q.ndim == 6:
+        # raw (nfreq, nvol, norb x4) vs ref (norb, norb, Nx, Ny, Nz,
+        # nfreq): decide by the FULL structure of both patterns
+        # (round-3 review: testing shape[1] != nvol misrouted a ref file
+        # with norb == nvol onto the orbital axis). Truly ambiguous
+        # shapes fail closed unless the marker decides.
+        _is_ref = (chi0q.shape[0] == chi0q.shape[1]
+                   and tuple(chi0q.shape[2:5]) == _grid)
+        _is_raw = (chi0q.shape[1] == _nvol
+                   and len(set(chi0q.shape[2:6])) == 1)
+        if _is_ref and _is_raw:
+            if "momentum_convention" in getattr(data, "files", []):
+                _qax = (2, 3, 4)   # any axis: the validator accepts on tag
+            else:
+                raise ValueError(
+                    "chi0q file '{}': shape {} matches BOTH the raw and "
+                    "the reference 6D layout and carries no "
+                    "momentum_convention marker (issue #133) -- the "
+                    "momentum axes cannot be identified safely. "
+                    "Regenerate the file with the current version, which "
+                    "stamps the marker.".format(file_name, chi0q.shape))
+        elif _is_ref:
+            _qax = (2, 3, 4)
+        elif _is_raw:
+            _qax = 1
+        else:
+            # neither complete pattern matches: fail closed HERE,
+            # independent of provenance (round-5 review: routing through
+            # the validator let a matching marker return early, and the
+            # downstream converter then silently RESHAPED the unknown
+            # layout, reinterpreting orbital axes as data -- a marker can
+            # establish the Fourier sign, never the array layout)
+            raise ValueError(
+                "chi0q file '{}': shape {} matches neither the raw "
+                "(nfreq, nvol, norb x4) nor the reference "
+                "(norb, norb, Nx, Ny, Nz, nfreq) 6D layout for CellShape "
+                "{}; the file is malformed or from a different lattice. "
+                "Regenerate it with the current version.".format(
+                    file_name, chi0q.shape, list(_grid)))
+    elif chi0q.ndim == 4:
+        _qax = 1
+    if _qax is not None:
+        validate_momentum_convention(data, file_name, chi0q, _qax, _grid)
 
     freq_index, file_nmat = _read_freq_meta(data)
     # Identify the frequency axis from the array LAYOUT, never from the
@@ -577,17 +694,18 @@ def _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb):
     kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
         kx_array, ky_array, kz_array, indexing='ij'
     )
-    # Solver-core convention (rpa.py _make_ham_trans: tab_r[R,orb1,orb2] +
-    # fftn == e^{-ikR}): epsilon[a,b](k) = sum_R t_R[a,b] e^{-ikR}. This keeps
+    # Solver-core convention (rpa.py _make_ham_trans, issue #133:
+    # ifftn * nvol == e^{+ikR}, the documented Wannier90-style sign shared
+    # with UHFk): epsilon[a,b](k) = sum_R t_R[a,b] e^{+ikR}. This keeps
     # sc-built quantities element-wise consistent with arrays loaded from
-    # FLEX/RPA output files. (The previous [orb2,orb1] + e^{+ikR} form is the
-    # orbital transpose at -k; identical for real hoppings, different for
-    # complex Hermitian ones.)
+    # FLEX/RPA output files, which carry the same k labeling since the
+    # #133 alignment. (The [orb1,orb2] placement is unchanged; only the
+    # Fourier sign moved with the solver core.)
     for (irvec, orbvec), value in hr.items():
         orb1, orb2 = orbvec
         Rx, Ry, Rz = irvec
         epsilon_k[orb1, orb2, :, :, :] += value * np.exp(
-            -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+            +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
         )
     return epsilon_k
 
@@ -619,8 +737,9 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     )
 
     def _to_k(value_r, transpose=True):
-        # Same Fourier phase as the solver core, e^{-iqR}, but the ORBITAL
-        # PAIR is stored transposed: an entry (R, (a, b)) lands at [b, a].
+        # Same Fourier phase as the solver core, e^{+iqR} since the #133
+        # sign alignment, but the ORBITAL PAIR is stored transposed: an
+        # entry (R, (a, b)) lands at [b, a].
         #
         # The interaction is a four-index object, and its MATRIX form carries a
         # pair-index transpose that the one-body Hamiltonian does not. H-wave's
@@ -684,7 +803,7 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
             Rx, Ry, Rz = irvec
             i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
             val_k[i1, i2, :, :, :] += value * np.exp(
-                -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+                +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
 
@@ -1150,7 +1269,8 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         Spin vertex, shape (norb, norb, Nx, Ny, Nz).
     """
     # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
-    # so a one-sided off-site declaration entered as v e^{-iqR} while the
+    # so a one-sided off-site declaration entered as v e^{+iqR} (the
+    # documented sign, #133) while the
     # ring and the general S/C route read the same Hamiltonian as
     # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7.
     # SKIPPED when the caller proved the raw declarations partner-closed
@@ -1818,6 +1938,23 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    # unconditional (round-10): a present marker is validated even when
+    # the layout-dependent evenness gate below cannot run
+    check_momentum_marker(data_s, chi_s_path)
+    # Fourier-sign provenance (issue #133): the H-wave chi layout --
+    # uniform AND IR-native alike -- has the flattened q volume on axis 1
+    # (round-4 review: IR-native files were wrongly exempted; no IR
+    # consumer gates them).
+    _cs = list(input_dict.get("mode", {}).get("param", {}).get(
+        "CellShape", [1, 1, 1]))
+    while len(_cs) < 3:
+        _cs.append(1)
+    _grid = tuple(int(x) for x in _cs)
+    if chi_s_raw.ndim >= 2 and chi_s_raw.shape[1] == int(np.prod(_grid)):
+        validate_momentum_convention(data_s, chi_s_path, chi_s_raw, 1,
+                                     _grid)
     # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
     # The tag and the general-path MYO consumption ship together, so any
     # untagged file from a released build is necessarily a reduced/Kuroki
@@ -1836,6 +1973,10 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    check_momentum_marker(data_c, chi_c_path)
+    if chi_c_raw.ndim >= 2 and chi_c_raw.shape[1] == int(np.prod(_grid)):
+        validate_momentum_convention(data_c, chi_c_path, chi_c_raw, 1,
+                                     _grid)
     # The spin and charge files must share one convention; combining e.g. an MYO
     # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
     chi_convention_present_c = "chi_convention" in data_c
@@ -2547,6 +2688,11 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                 "match the producing FLEX run. Verify the temperatures "
                 "agree -- a mismatch silently corrupts the pair bubble.",
                 green_path, run_beta)
+    from hwave.solver.rpa import validate_momentum_convention
+    # green layout (nblock, nfreq_or_nodes, nvol, norb, norb): q axis 2,
+    # for uniform AND IR-native files alike (round-4 review)
+    validate_momentum_convention(data_g, green_path, green_raw, 2,
+                                 (Nx, Ny, Nz))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
@@ -4695,7 +4841,7 @@ def calc_eliashberg(input_dict):
             # internally computed chi0q always carries the full frequency grid
             static_index = None
         else:
-            chi0q_raw, static_index = _load_chi0q(input_dict)
+            chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
 
         # Step 8: Convert chi0q format; the frequency axis is last in the
         # reference format, so read its length after the conversion (a 6D

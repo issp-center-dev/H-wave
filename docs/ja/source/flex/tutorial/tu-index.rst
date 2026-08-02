@@ -1075,7 +1075,7 @@ FFT変換により自動的にq依存の相互作用となります:
 
 .. math::
 
-   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{-i\mathbf{q}\cdot\mathbf{r}}
+   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}
 
 例えば、最近接サイト間のクーロン相互作用を含める場合は、
 相互作用ファイルに ``(1,0,0)`` や ``(0,1,0)`` 等の格子ベクトルを持つ

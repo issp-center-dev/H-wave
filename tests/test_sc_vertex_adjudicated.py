@@ -146,7 +146,8 @@ class TestOffsiteVqPreservation(unittest.TestCase):
 
     The partner of an off-site entry (R, (a, b)) is (-R, (b, a)), which in
     momentum space is the orbital transpose AT -q. Averaging with the same-q
-    transpose instead collapses V(q) = v e^{-iqR} to v cos(qR) -- at q = pi/2
+    transpose instead collapses V(q) = v e^{+iqR} (documented sign, #133)
+    to v cos(qR) -- at q = pi/2
     the S/C entry vanished outright. Checked at a q with sin(q) != 0 so any
     cos-collapse or conjugation error changes the answer.
     """
@@ -169,10 +170,11 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         ik = sc._build_interaction_k(kx, kx, kz, self._interactions(), 2)
         S, C = sc._build_sc_matrices_all_q(ik, 2, 4, 4, 1)
         q1 = kx[1]                          # pi/2: sin(q) = 1, maximal test
-        # builder stores entry (R, (a, b)) at [b, a] with e^{-iqR}: the two
-        # cross slots carry 0.7 e^{+iq} (from [0,1]) and 0.7 e^{-iq} ([1,0])
-        want = {(1, 1): 0.7 * np.exp(+1j * q1),
-                (2, 2): 0.7 * np.exp(-1j * q1)}
+        # builder stores entry (R, (a, b)) at [b, a] with e^{+iqR} (#133):
+        # the cross slots carry 0.7 e^{-iq} (from [0,1]) and 0.7 e^{+iq}
+        # ([1,0])
+        want = {(1, 1): 0.7 * np.exp(-1j * q1),
+                (2, 2): 0.7 * np.exp(+1j * q1)}
         for (i, j), w in want.items():
             for name, M in (("S", S), ("C", C)):
                 got = M[1, 0, 0, i, j]
@@ -214,10 +216,10 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         sym = sc._symmetrise_interactions_k(ik)["PairHop"]
         np.testing.assert_allclose(sym, raw, atol=1e-13)
         # PairHop is stored UNtransposed (measured in #100): the entry
-        # (R, (a, b)) lands at [a, b], so [0, 1] carries p e^{-iqR}
+        # (R, (a, b)) lands at [a, b], so [0, 1] carries p e^{+iqR} (#133)
         q1 = kx[1]
         self.assertAlmostEqual(
-            abs(sym[0, 1, 1, 0, 0] - p * np.exp(-1j * q1)), 0.0, places=12)
+            abs(sym[0, 1, 1, 0, 0] - p * np.exp(+1j * q1)), 0.0, places=12)
 
     def test_reversal_on_mixed_odd_even_grid(self):
         # (Nx, Ny, Nz) = (5, 4, 3): odd sizes pair i <-> n-i, even sizes make
@@ -243,7 +245,8 @@ class TestOffsiteVqPreservation(unittest.TestCase):
 
     def test_one_sided_offsite_declaration_gets_the_mean(self):
         # a single-direction declaration means (jab + jba)/2 in this codebase:
-        # half the weight at e^{-iq}, half at e^{+iq} on the transposed slot
+        # half the weight at e^{+iq}, half at e^{-iq} on the transposed slot
+        # (phases follow the documented e^{+iqR} since #133)
         sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.array([0.0])
@@ -252,9 +255,9 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         sym = sc._symmetrise_interactions_k(ik)["CoulombInter"]
         q1 = kx[1]
         self.assertAlmostEqual(
-            abs(sym[1, 0, 1, 0, 0] - 0.35 * np.exp(-1j * q1)), 0.0, places=12)
+            abs(sym[1, 0, 1, 0, 0] - 0.35 * np.exp(+1j * q1)), 0.0, places=12)
         self.assertAlmostEqual(
-            abs(sym[0, 1, 1, 0, 0] - 0.35 * np.exp(+1j * q1)), 0.0, places=12)
+            abs(sym[0, 1, 1, 0, 0] - 0.35 * np.exp(-1j * q1)), 0.0, places=12)
 
 
 class TestLegacyFlexFileGuard(unittest.TestCase):
@@ -273,8 +276,8 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
     def _write(self, d, extra_s=None, extra_c=None):
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(extra_s or {}))
-        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(extra_c or {}))
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(extra_s or {}), momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(extra_c or {}), momentum_convention="e_plus_ikR")
         return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
 
     def _load(self, inp, interactions):
