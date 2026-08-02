@@ -380,6 +380,43 @@ class TestRound4Hardening(unittest.TestCase):
                        "eliashberg": {}}
                 sc._load_chi0q(inp, norb=no)   # must not raise
 
+    def test_norb_routing_selects_the_right_axes_on_a_3cubed_grid(self):
+        """Axis-selection regression on a 3x3x3 grid (on a 2-point grid
+        every momentum is self-inverse, so evenness cannot distinguish
+        the axes): an UNMARKED payload q-odd along the raw volume axis
+        must reject under the raw interpretation and accept under the
+        ref interpretation of the same ambiguous shape."""
+        n = 3
+        nvol = n ** 3
+        # ambiguous shape (27, 27, 3, 3, 3, 2): raw for norb=3? no --
+        # raw needs shape (nfreq, nvol, no x4) = (nfreq, 27, 3, 3, 3, 3);
+        # use ref (norb, norb, 3, 3, 3, nfreq) with norb=27 vs raw with
+        # norb=3: shape (27, 27, 3, 3, 3, 3) satisfies BOTH.
+        shape = (nvol, nvol, n, n, n, n)
+        q = np.arange(n)
+        odd = np.cos(2 * np.pi * q / n) + 0.3 * np.sin(2 * np.pi * q / n)
+        payload = np.zeros(shape)
+        # odd along axis 2 (the ref qx axis); constant along axis 1 (the
+        # raw flattened volume axis) -> even under the raw interpretation
+        payload += odd[None, None, :, None, None, None]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload)
+        inp = {"mode": {"param": {"T": 1.0, "Nmat": nvol,
+                                  "CellShape": [n, n, n]}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}},
+               "eliashberg": {}}
+        # ref interpretation (norb = 27): gate probes axes (2,3,4),
+        # payload is q-odd there -> reject
+        with self.assertRaises(ValueError) as cm:
+            sc._load_chi0q(inp, norb=nvol)
+        self.assertIn("#133", str(cm.exception))
+        # raw interpretation (norb = 3): gate probes axis 1, payload is
+        # constant there -> accept
+        sc._load_chi0q(inp, norb=n)
+
     def test_huge_complex_odd_payload_is_rejected(self):
         """Finite complex values whose MAGNITUDE overflows: |x+iy| = inf
         for x, y ~ 1.3e308, and an infinite scale previously normalized
