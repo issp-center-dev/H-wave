@@ -185,7 +185,25 @@ UHFk と同じ規約です。</p>
 <p><strong>形式 :</strong> float型 (デフォルトは0.0)</p>
 <p><strong>説明 :</strong> フーリエ変換の尾部の補正を行う際の、補正の大きさを指定します。
 対角化された一体Green関数に対して <span class="math notranslate nohighlight">\(\texttt{coeff\_tail}/(i \omega_n)\)</span> を引き虚時間表示にフーリエ変換した後、<span class="math notranslate nohighlight">\(-\beta/2\cdot\texttt{coeff\_tail}\)</span> を付加します。
-FLEXソルバーでは、裸の感受率 <span class="math notranslate nohighlight">\(\chi_0(q)\)</span> を計算する前に同じ尾部補正をドレスされたGreen関数に対して適用します。これにより <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は物理的な結果を変えずに振動数和の収束を加速します（FLEXの自己エネルギー畳み込みは完全なGreen関数を用いるため影響を受けません）。</p>
+FLEXソルバーでは、裸の感受率 <span class="math notranslate nohighlight">\(\chi_0(q)\)</span> を計算する前に同じ尾部補正をドレスされたGreen関数に対して適用します。これにより <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は物理的な結果を変えずに振動数和の収束を加速します（FLEXの自己エネルギー畳み込みは完全なGreen関数を用いるため影響を受けません）。
+issue #134 以降、感受率カーネルはバブルの <span class="math notranslate nohighlight">\(\tau = 0\)</span> サンプルで
+Green 関数の等時刻不連続を復元します（tail 項がジャンプを担い、サンプル
+は両側分岐の平均）。これにより <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code> は
+<span class="math notranslate nohighlight">\(O(1/N_{\rm mat}^2)\)</span> で収束します。以前の版はこの端点処理を欠いて
+おり、<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は収束を定数倍**遅く**していました（依然
+<span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>）。この修正以前に非零の <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> で生成
+された結果は、同じ <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> の現行結果と比較できません。
+値は有限の実数でなければなりません（<code class="docutils literal notranslate"><span class="pre">NaN</span></code> や無限大は拒否されます）。
+推奨値は <code class="docutils literal notranslate"><span class="pre">0.0</span></code> （無効）と <code class="docutils literal notranslate"><span class="pre">1.0</span></code> （物理的な <span class="math notranslate nohighlight">\(1/i\omega_n\)</span> 係数）
+のみです。中間の値は等時刻ジャンプを部分的にしか打ち消さず、
+<span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span> のままで、<code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0.0</span></code> より収束が
+遅くなることもあります。
+非零の <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> で書き出された <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> には端点処理を記録する
+マーカー <code class="docutils literal notranslate"><span class="pre">tail_endpoint</span> <span class="pre">=</span> <span class="pre">&quot;branch_mean_v1&quot;</span></code> が付与されます。
+<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> および <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> の chi0q ローダーは、このマーカーを
+持たない非零 tail のファイル（修正以前に生成されたもの）を拒否します。
+修正前の誤差は配列自体からは検出できないため、該当するバブルはファイルを
+再利用せず再計算してください。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>形式 :</strong> int型, list型, または str型 (デフォルトは <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
