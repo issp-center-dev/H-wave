@@ -2808,7 +2808,7 @@ class RPA:
         # a jump converges O(1/Nmat) unless the tau = 0 sample is the
         # MEAN of the two branches -- without this the tail-corrected
         # bubble was ~4.5x WORSE than the uncorrected one; with it the
-        # convergence is O(1/Nmat^2) (measured doubling ratios ~16).
+        # convergence is O(1/Nmat^2) (measured fourfold-Nmat ratios ~16).
         # No-op -- including bitwise -- when the tail is zero.
         _tail_on = bool(xp.any(green0_tail != 0))
         if _tail_on:

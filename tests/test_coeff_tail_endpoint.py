@@ -7,7 +7,7 @@ REVERSED factor's tau = 0 entry is the 0^- side, so the tail-corrected
 bubble carried an O(1) error at one tau point -- summing to an
 O(1/Nmat) error ~4.5x LARGER than the one the correction removes. With
 the jump restored on the reversed factor, coeff_tail = 1 converges at
-O(1/Nmat^2) (measured doubling ratios ~16) instead of degrading the
+O(1/Nmat^2) (measured fourfold-Nmat ratios ~16) instead of degrading the
 result.
 
 References are exact: the analytic Lindhard function of an exactly

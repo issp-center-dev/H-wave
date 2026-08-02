@@ -74,13 +74,15 @@ def test_rpa_gpu_falls_back_without_cupy(monkeypatch, caplog):
     np.testing.assert_allclose(out["chiq"], ref["chiq"], atol=1e-12)
 
 
-def test_rpa_gpu_matches_cpu():
+@pytest.mark.parametrize("coeff_tail", [0.0, 1.0])
+def test_rpa_gpu_matches_cpu(coeff_tail):
     """gpu=true on a real CUDA device must reproduce the CPU chi0q/chiq to
-    fp64 round-off, stored as host numpy arrays. coeff_tail=1 exercises the
+    fp64 round-off, stored as host numpy arrays. coeff_tail=0 covers the
+    inactive-tail branch (the prior baseline); coeff_tail=1 exercises the
     active-tail endpoint branch (issue #134) on the device path."""
     _skip_without_device()
-    ref = _run_rpa(gpu=False, coeff_tail=1.0)
-    out = _run_rpa(gpu=True, coeff_tail=1.0)
+    ref = _run_rpa(gpu=False, coeff_tail=coeff_tail)
+    out = _run_rpa(gpu=True, coeff_tail=coeff_tail)
     for key in ("chi0q", "chiq"):
         assert isinstance(out[key], np.ndarray), \
             "green_info['{}'] must be a host numpy array".format(key)
@@ -88,10 +90,12 @@ def test_rpa_gpu_matches_cpu():
                                    err_msg="RPA '{}' mismatch".format(key))
 
 
-def test_rpa_gpu_ladder_matches_cpu():
-    """The transverse (ring+ladder) channel must also match on the GPU."""
+@pytest.mark.parametrize("coeff_tail", [0.0, 1.0])
+def test_rpa_gpu_ladder_matches_cpu(coeff_tail):
+    """The transverse (ring+ladder) channel must also match on the GPU,
+    with the endpoint-correction branch both inactive and active."""
     _skip_without_device()
-    ref = _run_rpa(gpu=False, calc_type="ring+ladder", coeff_tail=1.0)
-    out = _run_rpa(gpu=True, calc_type="ring+ladder", coeff_tail=1.0)
+    ref = _run_rpa(gpu=False, calc_type="ring+ladder", coeff_tail=coeff_tail)
+    out = _run_rpa(gpu=True, calc_type="ring+ladder", coeff_tail=coeff_tail)
     np.testing.assert_allclose(out["chiq"], ref["chiq"], atol=1e-10)
     np.testing.assert_allclose(out["chiq_pm"], ref["chiq_pm"], atol=1e-10)
