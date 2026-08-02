@@ -314,6 +314,11 @@ def _load_chi0q(input_dict, norb=None):
                 "config. Set [mode.param] coeff_tail = {} to match the "
                 "file.".format(file_name, file_tail, config_tail, file_tail))
 
+    # Unconditional marker validation (round-10 review): a PRESENT
+    # marker must be checked even when the layout/grid cannot be
+    # identified (absent CellShape, unknown shape).
+    from hwave.solver.rpa import check_momentum_marker
+    check_momentum_marker(data, file_name)
     # Fourier-sign provenance gate (issue #133): chi0q is q-labeled; a
     # pre-#133 file carries flipped labels. Legacy files are accepted only
     # when the payload is elementwise q-even (see the validator). The q
@@ -1933,7 +1938,11 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
-    from hwave.solver.rpa import validate_momentum_convention
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    # unconditional (round-10): a present marker is validated even when
+    # the layout-dependent evenness gate below cannot run
+    check_momentum_marker(data_s, chi_s_path)
     # Fourier-sign provenance (issue #133): the H-wave chi layout --
     # uniform AND IR-native alike -- has the flattened q volume on axis 1
     # (round-4 review: IR-native files were wrongly exempted; no IR
@@ -1964,6 +1973,7 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    check_momentum_marker(data_c, chi_c_path)
     if chi_c_raw.ndim >= 2 and chi_c_raw.shape[1] == int(np.prod(_grid)):
         validate_momentum_convention(data_c, chi_c_path, chi_c_raw, 1,
                                      _grid)

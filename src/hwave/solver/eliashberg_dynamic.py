@@ -1131,7 +1131,9 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     # Fourier-sign provenance gate (issue #133): the seed's k labels must
     # match this run's convention; spatial axes are (2, 3, 4) BEFORE any
     # IR compression. Legacy unmarked seeds pass only if k-even.
-    from hwave.solver.rpa import validate_momentum_convention
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    check_momentum_marker(data, path)   # unconditional (round-10)
     if gap.ndim != 6:
         raise ValueError(
             "seed_eigenvector '{}' has ndim = {} but a gap file is always "

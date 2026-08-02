@@ -149,54 +149,90 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
     nvol = nx * ny * nz
     from hwave.solver.kgrid import reverse_fft_axes
 
-    # All extraction below indexes the ORIGINAL array along its own axes:
-    # slicing/fancy-indexing a contiguous source copies only the selected
-    # block, whereas operating on a moveaxis VIEW made numpy consolidate
-    # the whole tensor per block (measured 5.5x the payload, round 9).
+    def _num(block):
+        # signed-integer payloads overflow np.abs at INT_MIN (round-10
+        # review); cast PER BLOCK to float64 -- bounded, and a no-op for
+        # the float/complex arrays production writes
+        b = np.asarray(block)
+        if b.dtype.kind not in "fc":
+            b = b.astype(np.float64)
+        return b
+
+    # Two-level chunking (round-10 review): chunk the q axis AND, when a
+    # single q plane alone exceeds the element bound (large frequency/
+    # orbital axes, tiny grids), also the leading non-q axis. Extraction
+    # always indexes the ORIGINAL array (slices / fancy indexing copy
+    # only the selected block; operating on a moveaxis view made numpy
+    # consolidate the whole tensor). Reversed q indices are computed per
+    # chunk -- no full-size index grids.
+    def _rev_flat(idx):
+        ix = idx // (ny * nz)
+        iy = (idx // nz) % ny
+        iz = idx % nz
+        return (((-ix) % nx) * ny + ((-iy) % ny)) * nz + ((-iz) % nz)
+
     if isinstance(q_axis, (tuple, list)):
         axes = [a % arr.ndim for a in q_axis]
         dims = [nx, ny, nz]
-        o = int(np.argmax(dims))              # largest q dim -> outer loop
+        o = int(np.argmax(dims))
         outer_ax, n_outer = axes[o], dims[o]
-        inner = [(axes[i], dims[i]) for i in range(3) if i != o]
-        pre = (slice(None),) * outer_ax
-        # positions of the two inner q axes AFTER the outer axis is
-        # consumed by integer indexing
-        inner_block_axes = tuple(a - (a > outer_ax) for a, _ in inner)
-
-        def _finite_blocks():
-            for ix in range(n_outer):
-                yield arr[pre + (ix,)]
-
-        def _pairs():
-            for ix in range(n_outer):
-                a = np.asarray(arr[pre + (ix,)])
-                b = np.asarray(arr[pre + ((-ix) % n_outer,)])
-                yield a, reverse_fft_axes(b, inner_block_axes)
+        inner_block_axes = tuple(a - (a > outer_ax)
+                                 for i, a in enumerate(axes) if i != o)
+        lead = arr.shape[0] if outer_ax != 0 else 1
+        plane = max(1, arr.size // n_outer)
     else:
-        ax = q_axis % arr.ndim
-        pre = (slice(None),) * ax
-        per = max(1, int(arr.size // max(arr.shape[ax], 1)))
-        step = max(1, _MOMENTUM_SCAN_BLOCK // per)
-        ix_g, iy_g, iz_g = np.meshgrid(
-            np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
-        rev_map = ((((-ix_g) % nx) * ny + ((-iy_g) % ny)) * nz
-                   + ((-iz_g) % nz)).ravel()
+        outer_ax = q_axis % arr.ndim
+        n_outer = arr.shape[outer_ax]
+        inner_block_axes = None
+        lead = arr.shape[0] if outer_ax != 0 else 1
+        plane = max(1, arr.size // n_outer)
 
-        def _finite_blocks():
-            for s0 in range(0, arr.shape[ax], step):
-                yield arr[pre + (slice(s0, s0 + step),)]
+    if plane <= _MOMENTUM_SCAN_BLOCK:
+        q_step = max(1, _MOMENTUM_SCAN_BLOCK // plane)
+        lead_step = lead
+    else:
+        q_step = 1
+        per_lead = max(1, plane // lead)
+        lead_step = max(1, _MOMENTUM_SCAN_BLOCK // per_lead)
 
-        def _pairs():
-            for s0 in range(0, nvol, step):
-                idx = np.arange(s0, min(s0 + step, nvol))
-                yield (arr[pre + (idx,)], arr[pre + (rev_map[idx],)])
+    def _lead_slices():
+        if outer_ax == 0:
+            yield slice(None)
+        else:
+            for l0 in range(0, lead, lead_step):
+                yield slice(l0, l0 + lead_step)
+
+    def _index(lsl, qsel):
+        if outer_ax == 0:
+            return arr[qsel]
+        idx = [slice(None)] * arr.ndim
+        idx[0] = lsl
+        idx[outer_ax] = qsel
+        return arr[tuple(idx)]
+
+    def _finite_blocks():
+        for lsl in _lead_slices():
+            for q0 in range(0, n_outer, q_step):
+                yield _index(lsl, slice(q0, q0 + q_step))
+
+    def _pairs():
+        for lsl in _lead_slices():
+            if inner_block_axes is None:
+                for q0 in range(0, n_outer, q_step):
+                    idx = np.arange(q0, min(q0 + q_step, n_outer))
+                    yield (_index(lsl, idx),
+                           _index(lsl, _rev_flat(idx)))
+            else:
+                for ix in range(n_outer):
+                    a = np.asarray(_index(lsl, ix))
+                    b = np.asarray(_index(lsl, (-ix) % n_outer))
+                    yield a, reverse_fft_axes(b, inner_block_axes)
 
     # chunked finiteness + component-scale pass; runs for MARKED files
     # too (a marker must not authorize NaN/Inf content, round-9 review)
     scale = 0.0
     for block in _finite_blocks():
-        b = block
+        b = _num(block)
         if not np.all(np.isfinite(b.real)) or (
                 np.iscomplexobj(b) and not np.all(np.isfinite(b.imag))):
             raise ValueError(
@@ -213,8 +249,8 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
     norm = max(scale, 1.0e-300)
 
     for a, b in _pairs():
-        an = a / norm
-        bn = b / norm
+        an = _num(a) / norm
+        bn = _num(b) / norm
         diff = np.abs(an - bn)
         tol = 1.0e-8 * (np.abs(an) + np.abs(bn)) + 1.0e-15
         if bool(np.any(diff > tol)):

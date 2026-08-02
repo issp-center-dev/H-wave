@@ -707,6 +707,82 @@ class TestRound9Hardening(unittest.TestCase):
         # whole-tensor pipeline peaked at ~5.5x the payload (~370 MB)
         self.assertLess(peak, int(arr.nbytes * 0.6))
 
+    def test_bad_marker_rejected_even_without_cellshape_or_layout(self):
+        """Round-10: marker validation must be unconditional -- a file
+        recording the WRONG convention was accepted when the grid could
+        not be identified."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        chi = np.zeros((2, 3, 2, 2))
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=chi,
+                 momentum_convention="e_minus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=chi,
+                 momentum_convention=MOMENTUM_CONVENTION)
+        inp = {"mode": {"param": {"T": 1.0}},   # no CellShape
+               "file": {"output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._read_flex_chi_raw(inp)
+        self.assertIn("e_minus_ikR", str(cm.exception))
+
+    def test_int64_min_payload_is_rejected_not_overflowed(self):
+        """np.abs(INT64_MIN) is negative; the per-block float cast keeps
+        the scale finite and the q-odd payload rejects."""
+        nx = 4
+        payload = np.zeros((1, nx, 1, 1), dtype=np.int64)
+        payload[0, 1] = np.iinfo(np.int64).min
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, chi0q=payload)
+        data = np.load(path)
+        with self.assertRaises(ValueError) as cm:
+            validate_momentum_convention(data, path, data["chi0q"], 1,
+                                         (nx, 1, 1))
+        self.assertIn("#133", str(cm.exception))
+
+    def test_memory_bounded_when_one_q_plane_exceeds_the_block(self):
+        """Tiny grid, huge non-q axes: the two-level chunking must slice
+        the leading axis when a single q plane exceeds the element
+        bound."""
+        import tracemalloc
+        nvol = 2
+        lead = 1 << 21   # plane = lead * 4 elements >> block
+        base = np.ones((lead, nvol, 2, 2), dtype=complex)
+        base[:, 1] = 1.0    # q-even
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, chi0q=base)
+        data = np.load(path)
+        arr = data["chi0q"]
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        validate_momentum_convention(data, path, arr, 1, (nvol, 1, 1))
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertLess(peak, int(arr.nbytes * 0.6))
+
+    def test_memory_bounded_for_explicit_axes_with_large_lead(self):
+        import tracemalloc
+        n = 2
+        lead = 1 << 19
+        payload = np.ones((lead, n, n, n, 2), dtype=complex)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, chi0q=payload)
+        data = np.load(path)
+        arr = data["chi0q"]
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        validate_momentum_convention(data, path, arr, (1, 2, 3),
+                                     (n, n, n))
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertLess(peak, int(arr.nbytes * 0.6))
+
     def test_manifest_v2_upgrade_is_refused(self):
         import hwave.tsweep as ts
         old_manifest = {"version": 2, "ladder": [1.0], "fingerprint": "x"}
