@@ -163,14 +163,19 @@ class TestSpinConservingLimits(unittest.TestCase):
     E0, E1 = 0.10, -0.05
     V = 0.3
 
+    V = 0.3
+    # PairHop declared as a complex Hermitian pair (P, conj P): its
+    # symmetrisation conjugates (#100) and the crossing must preserve
+    # the complex phase -- a real-only fixture cannot see either
+    PHV = 0.3 * np.exp(0.4j)
     TYPES = {
-        "CoulombIntra": [(0, 0)],
-        "CoulombInter": [(0, 1), (1, 0)],
-        "Hund": [(0, 1), (1, 0)],
-        "Ising": [(0, 1), (1, 0)],
-        "Exchange": [(0, 1), (1, 0)],
-        "PairLift": [(0, 1), (1, 0)],
-        "PairHop": [(0, 1), (1, 0)],
+        "CoulombIntra": [(0, 0, 0.3)],
+        "CoulombInter": [(0, 1, 0.3), (1, 0, 0.3)],
+        "Hund": [(0, 1, 0.3), (1, 0, 0.3)],
+        "Ising": [(0, 1, 0.3), (1, 0, 0.3)],
+        "Exchange": [(0, 1, 0.3), (1, 0, 0.3)],
+        "PairLift": [(0, 1, 0.3), (1, 0, 0.3)],
+        "PairHop": [(0, 1, PHV), (1, 0, np.conj(PHV))],
     }
 
     def _write(self, d, so, eps, tname):
@@ -207,8 +212,10 @@ class TestSpinConservingLimits(unittest.TestCase):
         with open(os.path.join(d, fn), "w") as f:
             f.write("hdr\n%d\n%d\n%s\n" % (self.NORB, len(ents),
                                            " ".join("1" * len(ents))))
-            for a, b in ents:
-                f.write(" 0 0 0 %d %d %.12f 0.0\n" % (a + 1, b + 1, self.V))
+            for a, b, v in ents:
+                v = complex(v)
+                f.write(" 0 0 0 %d %d %.12f %.12f\n"
+                        % (a + 1, b + 1, v.real, v.imag))
         return {"path_to_input": d, "Geometry": "geom.dat",
                 "Transfer": "transfer.dat", tname: fn}
 
@@ -224,7 +231,12 @@ class TestSpinConservingLimits(unittest.TestCase):
         ND = 2 * NORB
         for tname in self.TYPES:
             with self.subTest(type=tname):
-                _, g0 = self._run(True, 0.0, tname)
+                # the density oracle is the genuinely NON-spin-orbital
+                # ring solve (round-1 review: an eps=0 spin-orbital run
+                # shares the spin-orbital interaction reshaping with the
+                # eps!=0 run, so a Fierz-replacement defect could cancel
+                # between them; the non-SO reader path cannot share it)
+                _, g0 = self._run(False, 0.0, tname)
                 s1, g1 = self._run(True, self.EPS, tname)
                 self.assertEqual(s1.spin_mode, "spinful")
                 c0 = np.asarray(g0["chiq"])
@@ -241,12 +253,145 @@ class TestSpinConservingLimits(unittest.TestCase):
                 pm_ref = pm_ref.reshape(nfp, LX, NORB, NORB, NORB,
                                         NORB)[nfp // 2]
                 up, dn = slice(0, NORB), slice(NORB, ND)
-                pm1 = r1[:, up, dn, up, dn]
+                # chiq_pm and the spinful spin-flip slice store the
+                # transverse correlator in pair-Hermitian-conjugate
+                # orientations: chi*_{acbd}(q) = chi_{bdac}(q) is an
+                # exact identity, the two coincide elementwise for real
+                # vertices, and only a complex vertex (the PairHop
+                # fixture) exposes the difference -- compare through the
+                # identity, not through elementwise equality
+                pm1 = np.conj(r1[:, up, dn, up, dn])
                 dev = np.abs(pm1 - pm_ref).max()
                 if tname == "PairLift":
+                    # ring+ladder drops PairLift's transverse vertex
+                    # ('outside both used blocks'); the exact-
+                    # diagonalization oracle sides with the spinful
+                    # result, so only the known gap is bounded here
                     self.assertLess(dev, 2e-2)
+                    self.assertGreater(dev, 1e-4)
                 else:
                     self.assertLess(dev, 1e-7)
+
+
+class TestExchangeTensorStructure(unittest.TestCase):
+    """Structural pins on ham_spinful_exchange itself (round-1 review):
+    the crossing must be built from PRE-fold on-site declarations only,
+    its density-pair projection must vanish for every type, and
+    non-spin-orbital runs must not construct it at all."""
+
+    LX = 4
+
+    def _solver(self, so, subshape, tname, ents, offsite_r=None,
+                norb_phys=1):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        nd = (2 * norb_phys) if so else norb_phys
+        _write_geom(d, nd)
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n%d\n2\n1 1\n" % nd)
+            for i in range(1, nd + 1):
+                f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                        % (i, i, THOP.real, THOP.imag))
+                f.write("-1 0 0 %d %d %.12f %.12f\n"
+                        % (i, i, np.conj(THOP).real, np.conj(THOP).imag))
+            if so:
+                for o in range(norb_phys):
+                    f.write(" 0 0 0 %d %d %.12f %.12f\n"
+                            % (2 * o + 1, 2 * o + 2, LSO.real, LSO.imag))
+                    f.write(" 0 0 0 %d %d %.12f %.12f\n"
+                            % (2 * o + 2, 2 * o + 1, LSO.real, -LSO.imag))
+        fn = tname.lower() + ".dat"
+        with open(os.path.join(d, fn), "w") as f:
+            f.write("hdr\n%d\n%d\n%s\n" % (norb_phys, len(ents),
+                                           " ".join("1" * len(ents))))
+            for r, a, b, v in ents:
+                v = complex(v)
+                f.write("%3d 0 0 %d %d %.12f %.12f\n"
+                        % (r, a + 1, b + 1, v.real, v.imag))
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", tname: fn}
+        param = {"T": T, "mu": MU, "CellShape": [self.LX, 1, 1],
+                 "SubShape": list(subshape), "Nmat": 16,
+                 "coeff_tail": 1.0}
+        info_mode = {"mode": "RPA", "param": param,
+                     "enable_spin_orbital": so,
+                     "calc_scheme": "general"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        return solver_rpa.RPA(io.get_param("ham"), {}, info_mode)
+
+    def test_folded_offsite_is_not_crossed(self):
+        """SubShape folding maps an off-site bond to r = 0 between
+        supercell orbitals; the crossing must stay empty (the direct
+        folded interaction itself must remain)."""
+        solver = self._solver(True, (2, 1, 1), "CoulombInter",
+                              [(1, 0, 0, 0.3), (-1, 0, 0, 0.3)])
+        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+        self.assertTrue(np.any(np.abs(solver.ham_info.ham_inter_q) > 1e-12))
+
+    def test_cell_aliased_offsite_is_not_crossed(self):
+        """A declared displacement equal to the cell length aliases onto
+        grid index zero; it is off-site by declaration and must not be
+        crossed."""
+        solver = self._solver(True, (1, 1, 1), "CoulombInter",
+                              [(self.LX, 0, 0, 0.3),
+                               (-self.LX, 0, 0, 0.3)])
+        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+
+    def test_non_spin_orbital_builds_no_exchange(self):
+        solver = self._solver(False, (1, 1, 1), "CoulombIntra",
+                              [(0, 0, 0, 0.3)])
+        self.assertIsNone(
+            getattr(solver.ham_info, "ham_spinful_exchange", None))
+
+    def test_density_projection_vanishes_all_types(self):
+        """project_density_pairs(X) == 0 structurally: the reduced and
+        squashed spinful schemes must be unaffected by the crossing."""
+        from hwave.solver.density_projection import project_density_pairs
+        cases = TestSpinConservingLimits.TYPES
+        for tname, ents in cases.items():
+            with self.subTest(type=tname):
+                solver = self._solver(
+                    True, (1, 1, 1), tname,
+                    [(0, a, b, v) for (a, b, v) in ents], norb_phys=2)
+                X = solver.ham_info.ham_spinful_exchange
+                self.assertIsNotNone(X)
+                nd = X.shape[0]
+                proj = project_density_pairs(
+                    np.tile(X, (1, 1, 1, 1, 1)).reshape(1, *(nd,) * 4),
+                    1, nd, np)
+                self.assertLess(np.abs(proj).max(), 1e-14)
+
+
+class TestNonSpinfulUnaffected(unittest.TestCase):
+    """The flag and the exchange machinery must be invisible outside
+    spinful mode: a non-spin-orbital run gives bitwise identical chiq
+    for both flag values."""
+
+    def test_bitwise(self):
+        import hwave.qlmsio.read_input_k as rk
+        results = []
+        for flag in (True, False):
+            tmp = tempfile.TemporaryDirectory()
+            self.addCleanup(tmp.cleanup)
+            d = tmp.name
+            _write_geom(d, 1)
+            with open(os.path.join(d, "transfer.dat"), "w") as f:
+                f.write("hdr\n1\n2\n1 1\n")
+                f.write(" 1 0 0 1 1 %.12f %.12f\n"
+                        % (THOP.real, THOP.imag))
+                f.write("-1 0 0 1 1 %.12f %.12f\n"
+                        % (np.conj(THOP).real, np.conj(THOP).imag))
+            with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+                f.write("hdr\n1\n1\n1\n")
+                f.write(" 0 0 0 1 1 0.3 0.0\n")
+            inter = {"path_to_input": d, "Geometry": "geom.dat",
+                     "Transfer": "transfer.dat",
+                     "CoulombIntra": "coulombintra.dat"}
+            _, gi = _run_rpa(d, inter, 4, 32, so=False, exchange=flag)
+            results.append(np.asarray(gi["chiq"]))
+        np.testing.assert_array_equal(results[0], results[1])
 
 
 class TestFirstOrderAgainstED(unittest.TestCase):
@@ -302,11 +447,25 @@ class TestFirstOrderAgainstED(unittest.TestCase):
         cls.CD = [c.conj().T for c in ops]
         cls.hop = hop
 
+    # Complex Hermitian-closed PairHop pair (P, conj P). The k-space
+    # solvers respond with the phase orientation CONJUGATE to the
+    # documented equation (issue #139, pre-existing in the direct ring
+    # path; the exchange crossing inherits the same orientation, so the
+    # two stay mutually consistent) -- the ED model below implements the
+    # code's orientation to pin the crossing against it. Real
+    # declarations are orientation-blind.
+    PHV = 0.3 * np.exp(0.4j)
+
     def _h_int(self, tname, v):
         C, CD, mode = self.C, self.CD, self._mode
         H = np.zeros((self.DIM, self.DIM), dtype=complex)
         for j in range(self.LX):
-            if tname == "CoulombIntra":
+            if tname == "PairHop":
+                A = (CD[mode(j, 0, 0)] @ C[mode(j, 1, 0)]
+                     @ CD[mode(j, 0, 1)] @ C[mode(j, 1, 1)])
+                coef = v * np.conj(self.PHV) / 0.3
+                H = H + coef * A + np.conj(coef) * A.conj().T
+            elif tname == "CoulombIntra":
                 H += v * (CD[mode(j, 0, 0)] @ C[mode(j, 0, 0)]
                           @ CD[mode(j, 0, 1)] @ C[mode(j, 0, 1)])
             elif tname == "Exchange":
@@ -390,7 +549,13 @@ class TestFirstOrderAgainstED(unittest.TestCase):
             S[r, q] += -v_ * rho[p, s]
 
         for j in range(self.LX):
-            if tname == "CoulombIntra":
+            if tname == "PairHop":
+                coef = v * np.conj(self.PHV) / 0.3
+                add(mode(j, 0, 0), mode(j, 1, 0),
+                    mode(j, 0, 1), mode(j, 1, 1), coef)
+                add(mode(j, 1, 0), mode(j, 0, 0),
+                    mode(j, 1, 1), mode(j, 0, 1), np.conj(coef))
+            elif tname == "CoulombIntra":
                 add(mode(j, 0, 0), mode(j, 0, 0),
                     mode(j, 0, 1), mode(j, 0, 1), v)
             elif tname == "Exchange":
@@ -439,6 +604,13 @@ class TestFirstOrderAgainstED(unittest.TestCase):
                 if tname == "CoulombIntra":
                     f.write("hdr\n%d\n1\n1\n" % self.NORB)
                     f.write(" 0 0 0 1 1 %.12f 0.0\n" % v)
+                elif tname == "PairHop":
+                    pv = v * self.PHV / 0.3
+                    f.write("hdr\n%d\n2\n1 1\n" % self.NORB)
+                    f.write(" 0 0 0 1 2 %.12f %.12f\n"
+                            % (pv.real, pv.imag))
+                    f.write(" 0 0 0 2 1 %.12f %.12f\n"
+                            % (pv.real, -pv.imag))
                 else:
                     f.write("hdr\n%d\n2\n1 1\n" % self.NORB)
                     f.write(" 0 0 0 1 2 %.12f 0.0\n" % v)
@@ -468,7 +640,7 @@ class TestFirstOrderAgainstED(unittest.TestCase):
         chi0_ed = self._chi_ed("CoulombIntra", 0.0)
         cal = np.abs(self._to_rpa_layout(chi0_ed) - chi0_rpa).max()
         self.assertLess(cal, 1e-5)          # layout + free-model pin
-        for tname in ("PairLift", "Exchange", "CoulombIntra"):
+        for tname in ("PairLift", "Exchange", "CoulombIntra", "PairHop"):
             with self.subTest(type=tname):
                 d_ed = self._to_rpa_layout(
                     2 * (self._chi_ed(tname, V1) - chi0_ed) / V1
@@ -485,7 +657,9 @@ class TestFirstOrderAgainstED(unittest.TestCase):
                 dev = np.abs((d_ed - d_se) - d_rpa).max()
                 scale = np.abs(d_ed - d_se).max()
                 self.assertGreater(scale, 0.05)   # oracle is nontrivial
-                self.assertLess(dev, 5e-4)
+                # measured worst case 2e-5 (CoulombIntra; finite-difference
+                # + Nmat-truncation floor); 2.5x headroom
+                self.assertLess(dev, 5e-5)
 
 
 if __name__ == "__main__":
