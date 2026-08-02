@@ -33,6 +33,23 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
 を行うと、Hamiltonianは以下のように書き換えられます。
 
+.. note::
+
+   この :math:`e^{+i\bf{k}\cdot\bf{r}}` 規約（wannier90 形式の符号、
+   UHFk と共通）は、issue #133 以降 RPA モジュール内部のすべてのフーリエ
+   変換が従う規約です： :math:`\varepsilon({\bf k}) = \sum_{\bf R}
+   t({\bf R}) e^{+i {\bf k}\cdot{\bf R}}` および :math:`W({\bf q})
+   = \sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}`。この修正
+   以前は、非スピン軌道経路が全体で逆符号を使用しており（自己整合的な
+   :math:`{\bf k} \to -{\bf k}` の再ラベルであり、反転対称性のない
+   模型の ``chi0q`` / ``chiq`` は運動量ラベルが反転して保存されていま
+   した）、スピン軌道経路は transfer と相互作用で 2 つの符号が混在し、
+   スピン軌道 ``chiq`` が :math:`\chi_0({\bf q})` と
+   :math:`W(-{\bf q})` を組み合わせていました（運動量対称な相互作用では
+   不可視、方向性ボンドでは誤り）。この修正以前に生成された反転対称性の
+   ない模型の運動量分解出力は、現在の出力に対して :math:`{\bf q}`
+   ラベルが反転しています。
+
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}

@@ -58,15 +58,17 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
     """The hwave_sc k-space builders must follow the SAME Fourier/orbital
     convention as the UHFk/RPA/FLEX solver core:
 
-        M[a, b](k) = sum_R M_R[a, b] * exp(-i k.R)
+        M[a, b](k) = sum_R M_R[a, b] * exp(+i k.R)
 
-    (rpa.py _make_ham_trans: tab_r[R, orb1, orb2] + numpy fftn == e^{-ikR}).
-    Historically sc.py built epsilon_k[orb2, orb1] with e^{+ikR}, i.e. the
-    orbital-transposed matrix at -k. For real (time-reversal-symmetric)
-    hoppings the two coincide element-wise, which masked the difference; for
-    complex Hermitian hoppings they differ, so quantities loaded from
-    FLEX/RPA files (green, chi0q) disagreed element-wise with sc-built ones.
-    These tests pin the solver convention with a complex Hermitian fixture."""
+    (the documented Wannier90-style sign; since issue #133 the whole solver
+    core -- UHFk, both RPA transfer branches, the interaction FFTs, and
+    these builders -- shares it. Historically sc.py built
+    epsilon_k[orb2, orb1] with e^{+ikR} against a e^{-ikR} core, i.e. the
+    orbital-transposed matrix at -k; then briefly the core convention
+    itself was split between modes. For real hoppings the signs coincide
+    element-wise, which masked all of it; complex Hermitian hoppings pin
+    the sign.) These tests pin the solver convention with a complex
+    Hermitian fixture."""
 
     def setUp(self):
         self.Nx, self.Ny, self.Nz = 4, 4, 1
@@ -85,13 +87,13 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         self.kz = np.linspace(0, 2 * np.pi, self.Nz, endpoint=False)
 
     def _expected(self, value_r):
-        """Direct evaluation of the solver convention sum_R M_R[a,b] e^{-ikR}."""
+        """Direct evaluation of the solver convention sum_R M_R[a,b] e^{+ikR}."""
         out = np.zeros((self.norb, self.norb, self.Nx, self.Ny, self.Nz),
                        dtype=complex)
         kxm, kym, kzm = np.meshgrid(self.kx, self.ky, self.kz, indexing='ij')
         for (irvec, (o1, o2)), v in value_r.items():
             out[o1, o2] += v * np.exp(
-                -1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
+                +1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
         return out
 
     def test_hamiltonian_k_matches_solver_convention(self):
@@ -100,7 +102,7 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         npt.assert_allclose(eps, self._expected(self.hr), atol=1e-12)
 
     def test_interaction_k_is_the_pair_transpose(self):
-        """The INTERACTION keeps the solver's e^{-iqR} phase but stores the
+        """The INTERACTION keeps the solver's e^{+iqR} phase but stores the
         orbital pair TRANSPOSED, unlike the one-body Hamiltonian above.
 
         It is a four-index object, and its matrix form carries a pair-index

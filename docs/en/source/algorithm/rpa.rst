@@ -37,6 +37,24 @@ Applying the Fourier transformation
 
 the Hamiltonian is rewritten in the following form
 
+.. note::
+
+   This :math:`e^{+i\bf{k}\cdot\bf{r}}` convention (the Wannier90-style
+   sign, shared with UHFk) is what every internal Fourier transform of the
+   RPA module follows since issue #133: :math:`\varepsilon({\bf k})
+   = \sum_{\bf R} t({\bf R}) e^{+i {\bf k}\cdot{\bf R}}` and
+   :math:`W({\bf q}) = \sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot
+   {\bf R}}`. Before that fix the non-spin-orbital path used the opposite
+   sign throughout (a self-consistent global :math:`{\bf k} \to -{\bf k}`
+   relabeling, so the stored ``chi0q``/``chiq`` of a non-centrosymmetric
+   model carried negated momentum labels), while the spin-orbital path
+   mixed the two signs between the transfer and the interaction, which
+   made the spin-orbital ``chiq`` combine :math:`\chi_0({\bf q})` with
+   :math:`W(-{\bf q})` -- invisible for momentum-symmetric interactions,
+   wrong for directional bonds. Momentum-resolved outputs of
+   non-centrosymmetric models produced before this fix flip their
+   :math:`{\bf q}` labels relative to current output.
+
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}

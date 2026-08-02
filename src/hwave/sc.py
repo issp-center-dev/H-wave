@@ -577,17 +577,18 @@ def _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb):
     kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
         kx_array, ky_array, kz_array, indexing='ij'
     )
-    # Solver-core convention (rpa.py _make_ham_trans: tab_r[R,orb1,orb2] +
-    # fftn == e^{-ikR}): epsilon[a,b](k) = sum_R t_R[a,b] e^{-ikR}. This keeps
+    # Solver-core convention (rpa.py _make_ham_trans, issue #133:
+    # ifftn * nvol == e^{+ikR}, the documented Wannier90-style sign shared
+    # with UHFk): epsilon[a,b](k) = sum_R t_R[a,b] e^{+ikR}. This keeps
     # sc-built quantities element-wise consistent with arrays loaded from
-    # FLEX/RPA output files. (The previous [orb2,orb1] + e^{+ikR} form is the
-    # orbital transpose at -k; identical for real hoppings, different for
-    # complex Hermitian ones.)
+    # FLEX/RPA output files, which carry the same k labeling since the
+    # #133 alignment. (The [orb1,orb2] placement is unchanged; only the
+    # Fourier sign moved with the solver core.)
     for (irvec, orbvec), value in hr.items():
         orb1, orb2 = orbvec
         Rx, Ry, Rz = irvec
         epsilon_k[orb1, orb2, :, :, :] += value * np.exp(
-            -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+            +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
         )
     return epsilon_k
 
@@ -619,8 +620,9 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     )
 
     def _to_k(value_r, transpose=True):
-        # Same Fourier phase as the solver core, e^{-iqR}, but the ORBITAL
-        # PAIR is stored transposed: an entry (R, (a, b)) lands at [b, a].
+        # Same Fourier phase as the solver core, e^{+iqR} since the #133
+        # sign alignment, but the ORBITAL PAIR is stored transposed: an
+        # entry (R, (a, b)) lands at [b, a].
         #
         # The interaction is a four-index object, and its MATRIX form carries a
         # pair-index transpose that the one-body Hamiltonian does not. H-wave's
@@ -684,7 +686,7 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
             Rx, Ry, Rz = irvec
             i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
             val_k[i1, i2, :, :, :] += value * np.exp(
-                -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+                +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
 

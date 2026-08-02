@@ -501,8 +501,12 @@ class Interaction:
                 else:
                     pass  # skip spin dependence
 
-            # Fourier transform
-            tab_q = FFT.fftn(tab_r, axes=(0,1,2))
+            # Fourier transform: the documented convention (issue #133)
+            # is eps(k) = sum_R e^{+ikR} t(R) -- ifftn * nvol, matching
+            # UHFk and the spin-orbital branch above. The previous fftn
+            # computed eps(-k), i.e. every k/q label of this mode's output
+            # was globally negated for non-centrosymmetric models.
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
             self.ham_trans_r = tab_r.reshape(nvol,norb,norb)
@@ -531,8 +535,9 @@ class Interaction:
                 else:
                     pass  # skip spin dependence
 
-            # Fourier transform
-            hab_q = FFT.fftn(hab_r, axes=(0,1,2))
+            # Fourier transform: e^{+ikR}, same convention as the
+            # transfer term (issue #133)
+            hab_q = FFT.ifftn(hab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
             self.ham_extern_r = hab_r.reshape(nvol,norb,norb)
@@ -778,7 +783,12 @@ class Interaction:
         logger.debug("ham_inter_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
 
         # Fourier transform W(q)^{bb'aa'}
-        ham_q = FFT.fftn(ham_r, axes=(0,1,2))
+        # e^{+iqR} (issue #133): the spin-orbital transfer already used
+        # the documented sign while this shared FFT used the opposite one,
+        # so spin-orbital chiq combined chi0(q) with W(-q) -- invisible for
+        # R-symmetric real interactions, wrong for Hermitian-closed complex
+        # off-site declarations.
+        ham_q = FFT.ifftn(ham_r, axes=(0,1,2)) * nvol
 
         logger.debug("ham_inter_q shape={}, size={}".format(ham_q.shape, ham_q.size))
         logger.debug("ham_inter_q nonzero count={}".format(ham_q[abs(ham_q) > 1.0e-8].size))
@@ -788,7 +798,7 @@ class Interaction:
 
         fierz_r = fierz_r.reshape(nx,ny,nz,*(nd,)*4)
         if np.any(fierz_r):
-            self.ham_fierz_q = FFT.fftn(fierz_r, axes=(0,1,2))
+            self.ham_fierz_q = FFT.ifftn(fierz_r, axes=(0,1,2)) * nvol
         else:
             self.ham_fierz_q = None
 
@@ -2007,7 +2017,9 @@ class RPA:
         nvol = self.lattice.nvol
         nd = self.nd
 
-        tab_k = np.fft.fftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        # e^{+ikR} (issue #133), consistent with _make_ham_trans
+        tab_k = (np.fft.ifftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
+                 * nvol).reshape(nvol,nd,nd)
 
         return tab_k
 
@@ -2249,7 +2261,9 @@ class RPA:
                             np.eye(2)).reshape(nvol,nd,nd)
         H0r[0] += hh3
 
-        H0 = np.fft.fftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        # e^{+ikR} (issue #133), consistent with _make_ham_trans
+        H0 = (np.fft.ifftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
+              * nvol).reshape(nvol,nd,nd)
         return H0
 
     @do_profile
