@@ -210,6 +210,32 @@ Parameters
   pre-fix error cannot be detected from the array itself. Recompute such
   bubbles instead of reusing the files.
 
+- ``spinful_vertex_exchange``
+
+  **Type :**
+  Boolean (default value is ``true``)
+
+  **Description :**
+  Spinful (``enable_spin_orbital``) calculations resum the susceptibility
+  with a single vertex tensor. Since issue #137 that tensor is the
+  antisymmetrized bare particle-hole vertex: the direct (ring) wiring
+  plus the exchange wiring of the on-site interaction terms. The
+  exchange part is what corrects the spin-flip pair components of
+  :math:`\chi(q)` (in non-spin-orbital calculations the analogous
+  content is provided separately by ``calc_type = "ring+ladder"``);
+  without it those components are returned as the bare bubble at any
+  interaction strength, and, because spin is not conserved, the error
+  leaks into every component. The construction was verified against
+  exact diagonalization at first order in the coupling for
+  CoulombIntra, Exchange and PairLift, and reproduces the established
+  transverse (ring+ladder) series in the spin-conserving limit.
+  Setting ``spinful_vertex_exchange = false`` restores the previous
+  ring-only vertex (results produced before this fix): use it only to
+  reproduce old runs. The exchange wiring of OFF-site interaction
+  terms depends on both fermionic momenta and is not representable in
+  this resummation; it remains excluded (as it is in the
+  non-spin-orbital ladder).
+
 - ``matsubara_frequency``
 
   **Type :**

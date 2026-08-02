@@ -245,6 +245,30 @@ nonzero-tail file without it (produced before the fix), since the
 pre-fix error cannot be detected from the array itself. Recompute such
 bubbles instead of reusing the files.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is <code class="docutils literal notranslate"><span class="pre">true</span></code>)</p>
+<p><strong>Description :</strong>
+Spinful (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>) calculations resum the susceptibility
+with a single vertex tensor. Since issue #137 that tensor is the
+antisymmetrized bare particle-hole vertex: the direct (ring) wiring
+plus the exchange wiring of the on-site interaction terms. The
+exchange part is what corrects the spin-flip pair components of
+<span class="math notranslate nohighlight">\(\chi(q)\)</span> (in non-spin-orbital calculations the analogous
+content is provided separately by <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>);
+without it those components are returned as the bare bubble at any
+interaction strength, and, because spin is not conserved, the error
+leaks into every component. The construction was verified against
+exact diagonalization at first order in the coupling for
+CoulombIntra, Exchange and PairLift, and reproduces the established
+transverse (ring+ladder) series in the spin-conserving limit.
+Setting <code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code> restores the previous
+ring-only vertex (results produced before this fix): use it only to
+reproduce old runs. The exchange wiring of OFF-site interaction
+terms depends on both fermionic momenta and is not representable in
+this resummation; it remains excluded (as it is in the
+non-spin-orbital ladder).</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>Type :</strong>
 Integer, List of Integers, or String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>

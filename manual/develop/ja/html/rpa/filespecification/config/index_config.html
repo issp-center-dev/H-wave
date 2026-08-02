@@ -205,6 +205,25 @@ Green 関数の等時刻不連続を復元します（tail 項がジャンプを
 修正前の誤差は配列自体からは検出できないため、該当するバブルはファイルを
 再利用せず再計算してください。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは <code class="docutils literal notranslate"><span class="pre">true</span></code>)</p>
+<p><strong>説明 :</strong>
+スピンフル（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>）計算では感受率をひとつの
+バーテックステンソルで再帰的に足し上げます。issue #137 以降、この
+テンソルは反対称化された裸の粒子・正孔バーテックス（direct（ring）
+配線＋オンサイト相互作用の exchange 配線）です。exchange 部分は
+<span class="math notranslate nohighlight">\(\chi(q)\)</span> のスピン反転ペア成分を補正するもので、非スピン軌道
+計算では <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> が別途担う内容に対応します。
+これがないとスピン反転成分は相互作用の大きさによらず裸のバブルの
+ままになり、さらにスピンが保存しないため誤差が全成分に混入します。
+この構成は CoulombIntra・Exchange・PairLift について結合の1次まで
+厳密対角化と照合され、スピン保存極限では既存の transverse
+（ring+ladder）級数を再現することが確認されています。
+<code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code> は修正前の ring のみの
+バーテックス（過去の結果の再現用）に戻します。オフサイト相互作用の
+exchange 配線は2つのフェルミオン運動量に依存するためこの再帰和では
+表現できず、（非スピン軌道の ladder と同様に）含まれません。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>形式 :</strong> int型, list型, または str型 (デフォルトは <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
 <p><strong>説明 :</strong> 感受率行列 <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span> を計算する松原振動数のインデックスを指定します。指定方法は以下のいずれかです。</p>
