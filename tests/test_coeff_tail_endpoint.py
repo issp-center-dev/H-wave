@@ -631,6 +631,193 @@ class TestZeroTailBitwise(unittest.TestCase):
                 np.testing.assert_array_equal(got, want)
 
 
+class Test3DPhysicalOracle(unittest.TestCase):
+    """Physical exact-reference pin with ALL THREE lattice axes
+    nontrivial and nblock=2 (round-6 review): the committed physical
+    fixtures are chains, so a 3D-only indexing defect in the correction
+    could hide behind their singleton axes. Zeeman-split complex-hopping
+    model on (3, 2, 2); exact Lindhard per spin block, longitudinal and
+    transverse."""
+
+    SHAPE = (3, 2, 2)
+    THOPS = (0.7 + 0.3j, 0.4 - 0.2j, 0.25 + 0.15j)
+
+    def _eps3(self, kx, ky, kz):
+        e = 0.0
+        for t, k, n in zip(self.THOPS, (kx, ky, kz), self.SHAPE):
+            ph = np.exp(2j * np.pi * k / n)
+            e += (t * ph + np.conj(t) * np.conj(ph)).real
+        return e
+
+    def _kiter(self):
+        nx, ny, nz = self.SHAPE
+        for kx in range(nx):
+            for ky in range(ny):
+                for kz in range(nz):
+                    yield kx, ky, kz
+
+    def _exact_block(self, sz):
+        """Static longitudinal chi0 for spin block sz (+1 up, -1 dn):
+        e_s = eps - MU + sz*HZ under H_up = H0 + h, H_dn = H0 - h."""
+        nx, ny, nz = self.SHAPE
+        nvol = nx * ny * nz
+        out = np.zeros(self.SHAPE)
+        for qx in range(nx):
+            for qy in range(ny):
+                for qz in range(nz):
+                    acc = 0.0
+                    for kx, ky, kz in self._kiter():
+                        ek = self._eps3(kx, ky, kz) - MU + sz * HZ
+                        ekq = self._eps3((kx + qx) % nx, (ky + qy) % ny,
+                                         (kz + qz) % nz) - MU + sz * HZ
+                        de = ekq - ek
+                        if abs(de) < 1e-12:
+                            acc += -BETA * _fermi(ek) * (1 - _fermi(ek))
+                        else:
+                            acc += (_fermi(ekq) - _fermi(ek)) / de
+                    out[qx, qy, qz] = acc
+        return -out.reshape(-1) / nvol
+
+    def _exact_pm3(self):
+        nx, ny, nz = self.SHAPE
+        nvol = nx * ny * nz
+        out = np.zeros(self.SHAPE)
+        for qx in range(nx):
+            for qy in range(ny):
+                for qz in range(nz):
+                    acc = 0.0
+                    for kx, ky, kz in self._kiter():
+                        edn = self._eps3(kx, ky, kz) - MU - HZ
+                        eup = self._eps3((kx + qx) % nx, (ky + qy) % ny,
+                                         (kz + qz) % nz) - MU + HZ
+                        de = eup - edn
+                        if abs(de) < 1e-12:
+                            acc += -BETA * _fermi(edn) * (1 - _fermi(edn))
+                        else:
+                            acc += (_fermi(eup) - _fermi(edn)) / de
+                    out[qx, qy, qz] = acc
+        return -out.reshape(-1) / nvol
+
+    def _write(self, d):
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
+                    "0.0 0.0 0.0\n")
+        rvecs = []
+        for ax, t in enumerate(self.THOPS):
+            for sgn, v in ((1, t), (-1, np.conj(t))):
+                r = [0, 0, 0]
+                r[ax] = sgn
+                rvecs.append((tuple(r), v))
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n1\n%d\n%s\n" % (len(rvecs),
+                                              " ".join("1" * len(rvecs))))
+            for (rx, ry, rz), v in rvecs:
+                f.write("%3d %3d %3d 1 1 %.12f %.12f\n"
+                        % (rx, ry, rz, v.real, v.imag))
+        with open(os.path.join(d, "extern.dat"), "w") as f:
+            f.write("hdr\n1\n1\n1\n")
+            f.write(" 0 0 0 1 1 1.0 0.0\n")
+
+    def _solver(self, nmat, tail):
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: None)
+        self._write(d)
+        info_mode = {"mode": "RPA",
+                     "param": {"T": T, "mu": MU,
+                               "CellShape": list(self.SHAPE),
+                               "SubShape": [1, 1, 1], "Nmat": nmat,
+                               "coeff_tail": tail, "coeff_extern": HZ},
+                     "calc_scheme": "reduced"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d,
+             "interaction": {"path_to_input": d, "Geometry": "geom.dat",
+                             "Transfer": "transfer.dat",
+                             "Extern": "extern.dat"}})
+        solver = solver_rpa.RPA(io.get_param("ham"), {}, info_mode)
+        gi = io.get_param("green")
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        return solver, gi
+
+    def test_longitudinal_blocks_second_order(self):
+        nvol = np.prod(self.SHAPE)
+        errs = {}
+        for nmat in (256, 1024):
+            for tail in (0.0, 1.0):
+                _, gi = self._solver(nmat, tail)
+                chi0 = np.asarray(gi["chi0q"])
+                self.assertEqual(chi0.shape[0], 2)
+                nfreq = chi0.shape[1]
+                stat = chi0.reshape(2, nfreq, nvol)[:, nfreq // 2].real
+                e = 0.0
+                for blk, sz in ((0, +1), (1, -1)):
+                    e = max(e, np.abs(stat[blk]
+                                      - self._exact_block(sz)).max())
+                errs[(nmat, tail)] = e
+        self.assertLess(errs[(256, 1.0)], errs[(256, 0.0)] / 10.0)
+        self.assertGreater(errs[(256, 1.0)] / errs[(1024, 1.0)], 8.0)
+
+    def test_transverse_second_order(self):
+        nvol = np.prod(self.SHAPE)
+        exact = self._exact_pm3()
+        errs = {}
+        for nmat in (256, 1024):
+            solver, _ = self._solver(nmat, 1.0)
+            pm = np.asarray(solver._calc_chi0q_transverse(
+                solver.green0, solver.green0_tail, BETA))
+            pm = pm.reshape(nmat, nvol)
+            errs[nmat] = np.abs(pm[nmat // 2].real - exact).max()
+        solver0, _ = self._solver(256, 0.0)
+        pm0 = np.asarray(solver0._calc_chi0q_transverse(
+            solver0.green0, solver0.green0_tail, BETA)).reshape(256, nvol)
+        err0 = np.abs(pm0[128].real - exact).max()
+        self.assertLess(errs[256], err0 / 10.0)
+        self.assertGreater(errs[256] / errs[1024], 8.0)
+
+
+class TestActiveTailRobustness(unittest.TestCase):
+    """Cheap round-6 robustness pins: the smallest even frequency grid
+    and sublattice folding must run the active-tail correction to a
+    finite result of the documented shape."""
+
+    def test_nmat_2_active_tail_finite(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        _write_chain(tmp.name)
+        solver, gi = _solver(tmp.name, 2, 1.0)
+        out = os.path.join(tmp.name, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        chi0 = np.asarray(gi["chi0q"])
+        self.assertEqual(chi0.shape[0], 2)
+        self.assertTrue(np.all(np.isfinite(chi0)))
+
+    def test_subshape_active_tail_finite(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        _write_chain(tmp.name)
+        inter = {"path_to_input": tmp.name, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat"}
+        info_mode = {"mode": "RPA",
+                     "param": {"T": T, "mu": MU, "CellShape": [LX, 1, 1],
+                               "SubShape": [2, 1, 1], "Nmat": 16,
+                               "coeff_tail": 1.0},
+                     "calc_scheme": "reduced"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": tmp.name, "interaction": inter})
+        solver = solver_rpa.RPA(io.get_param("ham"), {}, info_mode)
+        gi = io.get_param("green")
+        out = os.path.join(tmp.name, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        chi0 = np.asarray(gi["chi0q"])
+        self.assertTrue(np.all(np.isfinite(chi0)))
+        # folded: 2 orbitals on LX/2 cells
+        self.assertEqual(chi0.shape[-1] if chi0.ndim == 3 else
+                         chi0.shape[-2], 2)
+
+
 class TestFlexInheritsTheFix(unittest.TestCase):
 
     def test_flex_uniform_chi0_delegates_to_the_fixed_kernel(self):

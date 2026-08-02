@@ -198,6 +198,17 @@ Parameters
   (still :math:`O(1/N_{\rm mat})`); results produced with a nonzero
   ``coeff_tail`` before this fix are not comparable with current ones
   at the same ``Nmat``.
+  The value must be a finite real number; ``NaN`` and infinities are
+  rejected. Only ``0.0`` (off) and ``1.0`` (the physical :math:`1/i\omega_n`
+  coefficient) are recommended: fractional values cancel only part of the
+  equal-time jump, remain :math:`O(1/N_{\rm mat})` and can converge more
+  slowly than ``coeff_tail = 0.0``.
+  ``chi0q.npz`` files written with a nonzero ``coeff_tail`` carry a
+  ``tail_endpoint = "branch_mean_v1"`` marker recording the endpoint
+  treatment; ``chi0q_init`` and the ``hwave_sc`` chi0q loader refuse a
+  nonzero-tail file without it (produced before the fix), since the
+  pre-fix error cannot be detected from the array itself. Recompute such
+  bubbles instead of reusing the files.
 
 - ``matsubara_frequency``
 
