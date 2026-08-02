@@ -62,6 +62,30 @@ c_{i\alpha}
 e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 \end{aligned}\]</div>
 <p>the Hamiltonian is rewritten in the following form</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This <span class="math notranslate nohighlight">\(e^{+i\bf{k}\cdot\bf{r}}\)</span> convention (the Wannier90-style
+sign, shared with UHFk) is what every real-space-coefficient build
+(<span class="math notranslate nohighlight">\(R \to k/q\)</span>) of the RPA module follows since issue #133:
+<span class="math notranslate nohighlight">\(\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
+e^{+i {\bf k}\cdot{\bf R}}\)</span> and <span class="math notranslate nohighlight">\(W({\bf q}) = \sum_{\bf R}
+W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}\)</span> (the convolution transforms
+inside the susceptibility machinery are self-inverse pairs and are not
+affected). Before that fix the non-spin-orbital path used the opposite
+sign throughout – a self-consistent global <span class="math notranslate nohighlight">\({\bf k} \to
+-{\bf k}\)</span> relabeling, so its stored <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> carried negated
+momentum labels whenever the tensor is not elementwise even under
+<span class="math notranslate nohighlight">\({\bf q} \to -{\bf q}\)</span> on the FFT grid – while the
+spin-orbital path mixed the two signs between the transfer and the
+interaction, so its <code class="docutils literal notranslate"><span class="pre">chiq</span></code> was solved from <span class="math notranslate nohighlight">\(\chi_0({\bf q})\)</span>
+with <span class="math notranslate nohighlight">\(W(-{\bf q})\)</span>: for interactions with
+<span class="math notranslate nohighlight">\(W({\bf q}) \neq W(-{\bf q})\)</span> (directional bonds) the old
+spin-orbital <code class="docutils literal notranslate"><span class="pre">chiq</span></code> is wrong, not merely relabeled. Momentum-space
+files written since this fix carry <code class="docutils literal notranslate"><span class="pre">momentum_convention</span> <span class="pre">=</span>
+<span class="pre">&quot;e_plus_ikR&quot;</span></code>; loaders reject unmarked legacy files unless their
+content is <span class="math notranslate nohighlight">\({\bf q}\)</span>-even (for which the two conventions
+coincide).</p>
+</div>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-2">
 <span class="eqno">(7.13)<a class="headerlink" href="#equation-algorithm-rpa-2" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  {\cal H}&amp;=\sum_{{\bf k}\alpha\beta}

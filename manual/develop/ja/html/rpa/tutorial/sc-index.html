@@ -881,7 +881,9 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 形状・物理設定=``CellShape``/<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>/<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<code class="docutils literal notranslate"><span class="pre">filling</span></code>/<code class="docutils literal notranslate"><span class="pre">Ncond</span></code>/相互作用
 ファイル/<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> frequency・pairing のフィンガープリントを記録）で保護されます。
 異なるラダーや設定に対して resume すると、非互換な結果を混ぜずに <strong>即時停止</strong> します。
-サマリーとマニフェストは各段の後にアトミックに書かれるため、中断でチェックポイントが
+スキーマ版が現行より古いマニフェスト（#86 の tail 補正と #133 のフーリエ
+符号整列でバンプ済み）も同様に拒否されます。サマリーは各段の後に、
+マニフェストはスイープ確立時にアトミックに書かれるため、中断でチェックポイントが
 途中で切れることはありません。<code class="docutils literal notranslate"><span class="pre">--resume</span></code> 無しでの再実行は新規実行として既存の掃引を
 段ごとに上書きします（既存の掃引を検出すると警告を出します）。</p>
 </li>

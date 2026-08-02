@@ -44,6 +44,13 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> または <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>:</p>
 <p>感受率行列または既約感受率行列のデータ。データ形式は以下の節で説明します。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>:</p>
+<p>フーリエ符号の来歴マーカー <code class="docutils literal notranslate"><span class="pre">&quot;e_plus_ikR&quot;</span></code>（issue #133）。運動量
+ラベルは <span class="math notranslate nohighlight">\(M(k) = \sum_R M(R) e^{+ikR}\)</span> に従います。異なる値を
+記録したファイルはローダが拒否します。このフィールド導入前のファイル
+は、内容が <span class="math notranslate nohighlight">\(q \to -q\)</span> に対して要素毎に偶（両規約が一致する
+場合）のときに限り受理されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">freq_index</span></code>:</p>
 <p>出力する松原振動数の値または範囲はパラメータ <code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code> で指定されます。出力データの配列インデックスと、実際の松原振動数のラベルの対応付けを <code class="docutils literal notranslate"><span class="pre">freq_index</span></code> に格納します。</p>
 </li>

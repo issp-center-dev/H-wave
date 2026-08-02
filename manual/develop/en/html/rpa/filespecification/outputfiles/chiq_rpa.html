@@ -46,6 +46,13 @@ the filename is chosen as <em>chiq_str</em><code class="docutils literal notrans
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> or <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>:</p>
 <p>The susceptibility matrix or the irreducible susceptibility matrix. Their data layout is described in the following sections.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>:</p>
+<p>The Fourier-sign provenance marker, <code class="docutils literal notranslate"><span class="pre">&quot;e_plus_ikR&quot;</span></code> (issue #133): the
+momentum labels follow <span class="math notranslate nohighlight">\(M(k) = \sum_R M(R) e^{+ikR}\)</span>. Loaders
+reject files recording a different value; files written before this
+field existed are accepted only when their content is elementwise even
+under <span class="math notranslate nohighlight">\(q \to -q\)</span> (for which the two conventions coincide).</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">freq_index</span></code>:</p>
 <p>The value or the range of Matsubara frequency is specified by <code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code> parameter. The array bound to <code class="docutils literal notranslate"><span class="pre">freq_index</span></code> relates the index of the output data and the label of the actual Matsubara frequency.</p>
 </li>

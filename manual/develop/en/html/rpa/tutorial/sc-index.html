@@ -920,7 +920,10 @@ ladder and a fingerprint of the shape/physics configuration
 (<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>/<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>/<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<code class="docutils literal notranslate"><span class="pre">filling</span></code>/<code class="docutils literal notranslate"><span class="pre">Ncond</span></code>/interaction
 files/<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> frequency/pairing). Resuming against a different
 ladder or configuration <strong>fails fast</strong> rather than mixing incompatible
-results. The summary and manifest are written atomically after every rung,
+results; a manifest whose schema version predates the current one (bumped
+by the #86 tail-correction and #133 Fourier-sign changes) is likewise
+refused. The summary is written atomically after every rung and the
+manifest when the sweep is established,
 so an interruption can never leave a truncated checkpoint. Without
 <code class="docutils literal notranslate"><span class="pre">--resume</span></code> a rerun starts fresh and overwrites the existing sweep
 rung-by-rung (a warning is logged when it detects an existing sweep).</p>

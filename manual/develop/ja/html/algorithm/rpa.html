@@ -59,6 +59,28 @@ c_{i\alpha}
 e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 \end{aligned}\]</div>
 <p>を行うと、Hamiltonianは以下のように書き換えられます。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>この <span class="math notranslate nohighlight">\(e^{+i\bf{k}\cdot\bf{r}}\)</span> 規約（wannier90 形式の符号、
+UHFk と共通）は、issue #133 以降 RPA モジュールのすべての実空間係数
+構築（<span class="math notranslate nohighlight">\(R \to k/q\)</span> 変換）が従う規約です：
+<span class="math notranslate nohighlight">\(\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
+e^{+i {\bf k}\cdot{\bf R}}\)</span> および <span class="math notranslate nohighlight">\(W({\bf q}) =
+\sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}`（感受率計算
+内部の畳み込み変換は自己逆な対であり影響を受けません）。この修正以前
+は、非スピン軌道経路が全体で逆符号を使用しており---自己整合的な
+:math:`{\bf k} \to -{\bf k}\)</span> の再ラベルであり、保存された
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は、テンソルが FFT グリッド上で
+<span class="math notranslate nohighlight">\({\bf q} \to -{\bf q}\)</span> に対して要素毎に偶でない限り、運動量
+ラベルが反転していました---、スピン軌道経路は transfer と相互作用で
+2 つの符号が混在し、<code class="docutils literal notranslate"><span class="pre">chiq</span></code> が <span class="math notranslate nohighlight">\(\chi_0({\bf q})\)</span> と
+<span class="math notranslate nohighlight">\(W(-{\bf q})\)</span> から解かれていました：
+<span class="math notranslate nohighlight">\(W({\bf q}) \neq W(-{\bf q})\)</span> となる相互作用（方向性ボンド）
+では、旧スピン軌道 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は再ラベルではなく誤りです。この修正以降
+に書かれる運動量空間ファイルは <code class="docutils literal notranslate"><span class="pre">momentum_convention</span> <span class="pre">=</span> <span class="pre">&quot;e_plus_ikR&quot;</span></code>
+を持ち、ローダは無印の旧ファイルを、内容が <span class="math notranslate nohighlight">\({\bf q}\)</span> 偶
+（両規約が一致する場合）でない限り拒否します。</p>
+</div>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-2">
 <span class="eqno">(7.13)<a class="headerlink" href="#equation-algorithm-rpa-2" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  {\cal H}&amp;=\sum_{{\bf k}\alpha\beta}

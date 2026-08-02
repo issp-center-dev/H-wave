@@ -1137,7 +1137,7 @@ interactions via FFT:
 
 .. math::
 
-   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{-i\mathbf{q}\cdot\mathbf{r}}
+   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}
 
 For example, to include nearest-neighbor Coulomb interactions,
 add entries with lattice vectors ``(1,0,0)``, ``(0,1,0)``, etc.
