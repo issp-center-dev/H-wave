@@ -108,6 +108,16 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
                     file_name, tag, MOMENTUM_CONVENTION))
         return
     from hwave.solver.kgrid import reverse_fft_axes
+    if q_axis is None:
+        # The caller could not identify the momentum axes structurally
+        # and no (matching) marker decided; without axes the evenness
+        # fallback is impossible, so fail closed.
+        raise ValueError(
+            "file '{}' carries no momentum_convention marker and its "
+            "layout does not match any known momentum-axis structure; "
+            "the #133 Fourier-sign provenance cannot be established. "
+            "Regenerate the file with the current version, which stamps "
+            "the marker.".format(file_name))
     arr = np.asarray(payload)
     # Non-finite content makes every comparison below silently False;
     # reject it here (the loaders' own finiteness gates may run later).
@@ -133,24 +143,29 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
         return
     # Normalize BEFORE differencing (round-3 review): finite values near
     # float64.max would overflow |a - rev| and the tolerance both to inf,
-    # and inf > inf is False -- a maximally odd payload would pass. After
-    # division by the (finite, positive) global scale every quantity is
-    # O(1).
-    arrn = arr / scale
-    revn = rev / scale
+    # and inf > inf is False -- a maximally odd payload would pass. The
+    # normalization scale is clamped from below (round-4 review) so a
+    # payload whose global maximum is itself denormal is not blown up to
+    # O(1) and spuriously rejected.
+    norm = max(scale, 1.0e-300)
+    arrn = arr / norm
+    revn = rev / norm
     diff = np.abs(arrn - revn)
     tol = 1.0e-8 * (np.abs(arrn) + np.abs(revn)) + 1.0e-15
     if bool(np.any(diff > tol)):
-        asym = float(diff.max()) * scale
+        # report the NORMALIZED deviation: multiplying back by the scale
+        # can overflow to inf for near-float64.max payloads, which would
+        # degrade the diagnostic
+        asym_rel = float(diff.max())
         raise ValueError(
             "file '{}' carries no momentum_convention marker and its "
             "content is not elementwise even under q -> -q (max pair "
-            "deviation {:.3e}, global scale {:.3e}): it was written "
-            "before the #133 Fourier-sign alignment and its momentum "
-            "labels are flipped relative to this build. Regenerate the "
-            "file with the current version. (Files whose content is "
-            "q-even are accepted: for them the two conventions "
-            "coincide.)".format(file_name, asym, scale))
+            "deviation {:.3e} relative to the global scale {:.3e}): it "
+            "was written before the #133 Fourier-sign alignment and its "
+            "momentum labels are flipped relative to this build. "
+            "Regenerate the file with the current version. (Files whose "
+            "content is q-even are accepted: for them the two "
+            "conventions coincide.)".format(file_name, asym_rel, scale))
 
 
 def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,

@@ -325,14 +325,22 @@ def _load_chi0q(input_dict):
     #   6D ref  (no, no, Nx, Ny, Nz, nfreq)      -> axes (2, 3, 4)
     #   8D ref  (no, no, no, no, Nx, Ny, Nz, nfreq) -> axes (4, 5, 6)
     from hwave.solver.rpa import validate_momentum_convention
-    _cs = list(input_dict.get("mode", {}).get("param", {}).get(
-        "CellShape", [1, 1, 1]))
-    while len(_cs) < 3:
-        _cs.append(1)
-    _grid = tuple(int(x) for x in _cs)
-    _nvol = int(np.prod(_grid))
+    _cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
+    if _cs is None:
+        # no lattice configured (unit-level callers): the grid, and with
+        # it the momentum axes, cannot be identified -- production
+        # configs always carry CellShape, so no production bypass
+        _grid = None
+    else:
+        _cs = list(_cs)
+        while len(_cs) < 3:
+            _cs.append(1)
+        _grid = tuple(int(x) for x in _cs)
+    _nvol = int(np.prod(_grid)) if _grid is not None else -1
     _qax = None
-    if chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
+    if _grid is None:
+        pass
+    elif chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
         _qax = 2
     elif chi0q.ndim == 8:
         _qax = (4, 5, 6)
@@ -359,8 +367,16 @@ def _load_chi0q(input_dict):
                     "stamps the marker.".format(file_name, chi0q.shape))
         elif _is_ref:
             _qax = (2, 3, 4)
-        elif _is_raw or chi0q.shape[1] == _nvol:
+        elif _is_raw:
             _qax = 1
+        else:
+            # neither complete pattern matches: a partial fallback here
+            # re-opened the misroute for mismatched-grid reference shapes
+            # (round-4 review) -- let the validator fail closed (marker
+            # cannot rescue an unidentifiable layout, and a marked file
+            # with an unknown 6D layout is equally unusable downstream)
+            validate_momentum_convention(data, file_name, chi0q, None,
+                                         _grid)
     elif chi0q.ndim == 4:
         _qax = 1
     if _qax is not None:
@@ -1874,16 +1890,16 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
         _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
     from hwave.solver.rpa import validate_momentum_convention
-    from hwave.solver.ir_axis import is_ir_native as _is_irn
-    # Fourier-sign provenance (issue #133): H-wave chi layout has the
-    # flattened q volume on axis 1. IR-native files have their own layout
-    # and are gated by their consumers' IR machinery, not here.
+    # Fourier-sign provenance (issue #133): the H-wave chi layout --
+    # uniform AND IR-native alike -- has the flattened q volume on axis 1
+    # (round-4 review: IR-native files were wrongly exempted; no IR
+    # consumer gates them).
     _cs = list(input_dict.get("mode", {}).get("param", {}).get(
         "CellShape", [1, 1, 1]))
     while len(_cs) < 3:
         _cs.append(1)
     _grid = tuple(int(x) for x in _cs)
-    if not _is_irn(data_s) and chi_s_raw.ndim >= 2             and chi_s_raw.shape[1] == int(np.prod(_grid)):
+    if chi_s_raw.ndim >= 2 and chi_s_raw.shape[1] == int(np.prod(_grid)):
         validate_momentum_convention(data_s, chi_s_path, chi_s_raw, 1,
                                      _grid)
     # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
@@ -1904,7 +1920,7 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     if not allow_ir:
         _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
-    if not _is_irn(data_c) and chi_c_raw.ndim >= 2             and chi_c_raw.shape[1] == int(np.prod(_grid)):
+    if chi_c_raw.ndim >= 2 and chi_c_raw.shape[1] == int(np.prod(_grid)):
         validate_momentum_convention(data_c, chi_c_path, chi_c_raw, 1,
                                      _grid)
     # The spin and charge files must share one convention; combining e.g. an MYO
@@ -2618,11 +2634,11 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
                 "match the producing FLEX run. Verify the temperatures "
                 "agree -- a mismatch silently corrupts the pair bubble.",
                 green_path, run_beta)
-    if not is_ir_native(data_g):
-        from hwave.solver.rpa import validate_momentum_convention
-        # green layout (nblock, nfreq, nvol, norb, norb): q axis 2
-        validate_momentum_convention(data_g, green_path, green_raw, 2,
-                                     (Nx, Ny, Nz))
+    from hwave.solver.rpa import validate_momentum_convention
+    # green layout (nblock, nfreq_or_nodes, nvol, norb, norb): q axis 2,
+    # for uniform AND IR-native files alike (round-4 review)
+    validate_momentum_convention(data_g, green_path, green_raw, 2,
+                                 (Nx, Ny, Nz))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb

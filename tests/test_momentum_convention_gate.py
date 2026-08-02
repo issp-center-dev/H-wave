@@ -236,6 +236,92 @@ class TestValidatorHardening(unittest.TestCase):
         self.assertIn("#133", str(cm.exception))
 
 
+class TestRound4Hardening(unittest.TestCase):
+    """Round-4 attack surface: the removed 6D fallback, denormal-scale
+    payloads, and the IR-native bypass."""
+
+    def _sc_load(self, payload, cell, **extra):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload, **extra)
+        inp = {"mode": {"param": {"T": 1.0, "Nmat": 8, "CellShape": cell}},
+               "file": {"input": {"path_to_flex_output": d},
+                        "output": {"path_to_output": d}},
+               "eliashberg": {}}
+        return sc._load_chi0q(inp)
+
+    def test_mismatched_grid_6d_layout_fails_closed(self):
+        """Neither the raw nor the ref pattern matches: the removed
+        partial fallback previously gated the wrong axis here."""
+        payload = np.zeros((8, 8, 4, 2, 1, 2))
+        q2 = np.arange(4)
+        payload[0, 0, :, 0, 0, 0] = (np.cos(2 * np.pi * q2 / 4)
+                                     + 0.3 * np.sin(2 * np.pi * q2 / 4))
+        with self.assertRaises(ValueError) as cm:
+            self._sc_load(payload, [2, 2, 2])
+        self.assertIn("#133", str(cm.exception))
+
+    def test_whole_payload_at_denormal_scale_is_accepted(self):
+        """Global maximum itself denormal: clamping the normalization
+        scale keeps such payloads below the machine floor instead of
+        blowing them up to O(1) and rejecting."""
+        nx = 4
+        payload = np.zeros((1, nx, 1, 1))
+        payload[0, 1] = np.nextafter(0.0, 1.0)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, chi0q=payload)
+        data = np.load(path)
+        validate_momentum_convention(data, path, data["chi0q"], 1,
+                                     (nx, 1, 1))
+
+    def _ir_meta(self):
+        return dict(matsubara_basis="ir",
+                    frequency_grid="sparse_ir_nodes",
+                    ir_freq_n=np.arange(3))
+
+    def test_ir_native_q_odd_chi_is_rejected(self):
+        """IR-native chi files were wrongly exempted from the gate; their
+        q volume also sits on axis 1."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        nx = 4
+        q = np.arange(nx)
+        odd = (np.cos(2 * np.pi * q / nx)
+               + 0.3 * np.sin(2 * np.pi * q / nx))
+        chi = np.tile(odd[None, :, None, None], (3, 1, 2, 2))
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=chi,
+                 **self._ir_meta())
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=chi,
+                 **self._ir_meta())
+        inp = {"mode": {"param": {"T": 1.0, "CellShape": [nx, 1, 1]}},
+               "file": {"output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._read_flex_chi_raw(inp, allow_ir=True)
+        self.assertIn("#133", str(cm.exception))
+
+    def test_ir_native_q_odd_green_is_rejected(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        nx = 4
+        q = np.arange(nx)
+        prof = 1.0 + 0.3 * np.sin(2 * np.pi * q / nx)
+        green = np.ones((1, 3, nx, 1, 1), dtype=complex) *             prof[None, None, :, None, None]
+        np.savez(os.path.join(d, "green.npz"), green=green,
+                 **self._ir_meta())
+        inp = {"mode": {"param": {"T": 2.0}},
+               "file": {"output": {"path_to_output": d}},
+               "eliashberg": {}}
+        with self.assertRaises(ValueError) as cm:
+            sc._load_flex_green(inp, 1, nx, 1, 1, allow_ir=True)
+        self.assertIn("#133", str(cm.exception))
+
+
 class TestDynamicGapSeedGate(unittest.TestCase):
 
     def test_unmarked_k_odd_seed_is_rejected(self):
