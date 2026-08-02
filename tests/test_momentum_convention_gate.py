@@ -311,6 +311,51 @@ class TestRound4Hardening(unittest.TestCase):
                                                  (nx, 1, 1))
                 self.assertIn("single value", str(cm.exception))
 
+    def test_norb_layout_gate_rejects_malformed_shapes(self):
+        """With the orbital count supplied (as the production entry does),
+        malformed 4D/6D/8D shapes are rejected outright, marked or not
+        (round-6 review: a malformed 8D file previously passed both)."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for label, shape in (("8d", (4, 1, 2, 2, 2, 2, 2, 4)),
+                             ("4d", (4, 8, 2, 3)),
+                             ("6d", (4, 8, 2, 2, 2, 3))):
+            for marked in (False, True):
+                with self.subTest(shape=label, marked=marked):
+                    d = tempfile.mkdtemp(dir=tmp.name)
+                    extra = ({"momentum_convention": MOMENTUM_CONVENTION}
+                             if marked else {})
+                    np.savez(os.path.join(d, "chi0q.npz"),
+                             chi0q=np.zeros(shape), **extra)
+                    inp = {"mode": {"param": {"T": 1.0, "Nmat": 4,
+                                              "CellShape": [2, 2, 2]}},
+                           "file": {"input": {"path_to_flex_output": d},
+                                    "output": {"path_to_output": d}},
+                           "eliashberg": {}}
+                    with self.assertRaises(ValueError) as cm:
+                        sc._load_chi0q(inp, norb=2)
+                    self.assertIn("no supported layout",
+                                  str(cm.exception))
+
+    def test_huge_complex_odd_payload_is_rejected(self):
+        """Finite complex values whose MAGNITUDE overflows: |x+iy| = inf
+        for x, y ~ 1.3e308, and an infinite scale previously normalized
+        the asymmetry away."""
+        nx = 4
+        z = 1.3e308 + 1.3e308j
+        payload = np.zeros((1, nx, 1, 1), dtype=complex)
+        payload[0, 1] = z
+        payload[0, 3] = -z
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "x.npz")
+        np.savez(path, chi0q=payload)
+        data = np.load(path)
+        with self.assertRaises(ValueError) as cm:
+            validate_momentum_convention(data, path, data["chi0q"], 1,
+                                         (nx, 1, 1))
+        self.assertIn("#133", str(cm.exception))
+
     def _ir_meta(self):
         return dict(matsubara_basis="ir",
                     frequency_grid="sparse_ir_nodes",

@@ -137,7 +137,16 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
     # hiding under another channel's large even amplitude. Each q/-q pair
     # is compared at its own scale, with only a machine-noise absolute
     # floor tied to the global scale.
-    scale = float(np.abs(arr).max()) if arr.size else 0.0
+    # Scale from the real/imag COMPONENTS, not complex magnitudes:
+    # |x + iy| overflows to inf for finite x, y near float64.max, and an
+    # infinite scale would normalize every asymmetry away (round-6
+    # review). Component maxima are finite for any finite payload.
+    if arr.size == 0:
+        return
+    if np.iscomplexobj(arr):
+        scale = float(max(np.abs(arr.real).max(), np.abs(arr.imag).max()))
+    else:
+        scale = float(np.abs(arr).max())
     if scale == 0.0:
         return
     # Normalize BEFORE differencing (round-3 review): finite values near

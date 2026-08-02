@@ -262,7 +262,7 @@ def _reject_ir_native(data, file_name, hint):
             "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
 
 
-def _load_chi0q(input_dict):
+def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
     Parameters
@@ -337,6 +337,31 @@ def _load_chi0q(input_dict):
             _cs.append(1)
         _grid = tuple(int(x) for x in _cs)
     _nvol = int(np.prod(_grid)) if _grid is not None else -1
+    # With the orbital count known (the production entry always passes
+    # it), validate the EXACT supported layouts up front (round-6 review:
+    # without norb a malformed 8D file passed both marked and unmarked;
+    # with norb the (8,8,2,2,2,2)-style raw/ref ambiguity also vanishes,
+    # since norb cannot be two values at once).
+    if norb is not None and _grid is not None:
+        nv, no = _nvol, int(norb)
+        ok = (
+            (chi0q.ndim == 4 and tuple(chi0q.shape[1:]) == (nv, no, no))
+            or (chi0q.ndim == 6
+                and tuple(chi0q.shape[1:]) == (nv, no, no, no, no))
+            or (chi0q.ndim == 6
+                and tuple(chi0q.shape[:5]) == (no, no) + _grid)
+            or (chi0q.ndim == 8
+                and tuple(chi0q.shape[:7]) == (no,) * 4 + _grid)
+            or (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:4]) == (nv, no))
+        )
+        if not ok:
+            raise ValueError(
+                "chi0q file '{}': shape {} matches no supported layout "
+                "for norb = {} and CellShape {}; the file is malformed "
+                "or from a different system. Regenerate it with the "
+                "current version.".format(file_name, chi0q.shape, no,
+                                          list(_grid)))
     _qax = None
     if _grid is None:
         pass
@@ -4793,7 +4818,7 @@ def calc_eliashberg(input_dict):
             # internally computed chi0q always carries the full frequency grid
             static_index = None
         else:
-            chi0q_raw, static_index = _load_chi0q(input_dict)
+            chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
 
         # Step 8: Convert chi0q format; the frequency axis is last in the
         # reference format, so read its length after the conversion (a 6D
