@@ -141,6 +141,29 @@ and the irreducible susceptibility is the particle-hole bubble built from it,
 so that the two band sums it contains are independent: the particle and the
 hole may sit on different bands.
 
+.. note::
+
+   **Why the bubble is not restricted to band-diagonal terms.**
+   Keeping only :math:`\gamma=\gamma'` in the band decomposition looks like a
+   natural simplification, and it is harmless in one special case: when the
+   band label is itself a conserved quantum number.  For a single orbital with
+   a spin-independent :math:`{\cal H}_0` the two bands are the two spin
+   states, the discarded :math:`\gamma\neq\gamma'` terms are exactly the
+   spin-flip (transverse) channel, and the density response is untouched.  As
+   soon as the bands are superpositions -- hybridized orbitals, or any
+   spin-orbital mixing -- those terms also populate the density components,
+   and restricting them damages the result.
+
+   The pitfall that the restriction is sometimes introduced to avoid is a
+   different one: collapsing the matrix structure of :math:`G`, for instance
+   replacing it by the scalar :math:`G_{\uparrow}+G_{\downarrow}` before
+   forming the bubble.  The cross terms
+   :math:`G_{\uparrow}G_{\downarrow}` then enter the density response, where
+   they do not belong; for degenerate spins the result comes out exactly twice
+   too large.  Keeping :math:`G` as a matrix, as above, avoids this without
+   discarding anything: each propagator line carries its own orbital and spin
+   index, and the channels separate themselves through that index structure.
+
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
 
@@ -273,11 +296,34 @@ When the interaction Hamiltonian has a block-diagonal structure
 the RPA equation can be solved independently for each block,
 significantly reducing the computational cost.
 
-The block structure is detected automatically from the COMBINED
-connectivity of the interaction matrix and the bare susceptibility.  Both
-are needed: a block-diagonal interaction does not by itself make
-:math:`\hat{I}+\hat{X}^{(0)}\hat{W}` block diagonal if :math:`X^{(0)}`
-couples indices across blocks, as happens for spin-mixing bands.
+Which decompositions are legitimate follows from the symmetries, and two
+separate conditions have to hold.
+
+The bare susceptibility is block diagonal with respect to any quantity
+conserved by :math:`{\cal H}_0`.  Spin is the usual example: when
+:math:`[{\cal H}_0, S_z]=0` the Green's function is spin block diagonal, and
+the bubble then connects a particle-hole bilinear only to one carrying the
+opposite change of :math:`S_z`.  The density (:math:`\Delta S_z=0`) and
+spin-flip (:math:`\Delta S_z=\pm 1`) channels are therefore strictly
+decoupled, which is what allows the longitudinal (ring) and transverse
+(ladder) channels to be solved separately.  This is the same mechanism that
+makes the susceptibility diagonal in :math:`{\bf q}`: a symmetry of
+:math:`{\cal H}_0` forbids the response from connecting different sectors.
+
+That decoupling is a property of :math:`X^{(0)}` alone, and the RPA response
+inherits it only if the INTERACTION respects the same quantity.  If
+:math:`X^{(0)}` is block diagonal but :math:`\hat{W}` is not, the product
+:math:`\hat{X}^{(0)}\hat{W}` is not, so neither is the inverse: the sectors
+mix from second order in the interaction onwards.  Two situations break one
+of the two conditions -- spin-orbit coupling makes :math:`S_z` non-conserving
+and puts sector-mixing elements into :math:`X^{(0)}` itself, while
+``PairLift`` is a product of two spin-raising (or two spin-lowering)
+bilinears and so does not conserve :math:`S_z` even when
+:math:`{\cal H}_0` does.
+
+Accordingly the block structure is detected from the COMBINED connectivity of
+the interaction matrix and the bare susceptibility, not from the interaction
+alone.
 
 1. Sum the absolute values of the interaction Hamiltonian over all k-points,
    and those of the bare susceptibility over momentum and frequency, to
