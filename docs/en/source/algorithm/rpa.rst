@@ -100,10 +100,12 @@ interaction term is expressed in that basis by the exact change of basis
     \end{aligned}
 
 Each bilinear carries two independent band indices.  Keeping only its
-band-diagonal part (:math:`\gamma_1=\gamma_2`) would restrict the response to
-its density component and break SU(2) symmetry, so no such restriction is
-made; H-wave keeps the interaction in the orbital basis throughout and uses
-the diagonalization only to construct the Green's functions.
+band-diagonal part (:math:`\gamma_1=\gamma_2`) would drop the interband
+contributions and make the result depend on the choice of basis inside a
+degenerate subspace (see the discussion at the irreducible susceptibility
+below), so no such restriction is made; H-wave keeps the interaction in the
+orbital basis throughout and uses the diagonalization only to construct the
+Green's functions.
 
 Here, 
 
