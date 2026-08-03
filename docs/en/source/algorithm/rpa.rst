@@ -143,26 +143,41 @@ hole may sit on different bands.
 
 .. note::
 
-   **Why the bubble is not restricted to band-diagonal terms.**
-   Keeping only :math:`\gamma=\gamma'` in the band decomposition looks like a
-   natural simplification, and it is harmless in one special case: when the
-   band label is itself a conserved quantum number.  For a single orbital with
-   a spin-independent :math:`{\cal H}_0` the two bands are the two spin
-   states, the discarded :math:`\gamma\neq\gamma'` terms are exactly the
-   spin-flip (transverse) channel, and the density response is untouched.  As
-   soon as the bands are superpositions -- hybridized orbitals, or any
-   spin-orbital mixing -- those terms also populate the density components,
-   and restricting them damages the result.
+   **Sectors, and why the bubble is not restricted to band-diagonal terms.**
 
-   The pitfall that the restriction is sometimes introduced to avoid is a
-   different one: collapsing the matrix structure of :math:`G`, for instance
-   replacing it by the scalar :math:`G_{\uparrow}+G_{\downarrow}` before
-   forming the bubble.  The cross terms
-   :math:`G_{\uparrow}G_{\downarrow}` then enter the density response, where
-   they do not belong; for degenerate spins the result comes out exactly twice
-   too large.  Keeping :math:`G` as a matrix, as above, avoids this without
-   discarding anything: each propagator line carries its own orbital and spin
-   index, and the channels separate themselves through that index structure.
+   When :math:`{\cal H}_0` conserves a quantum number -- spin, say -- the
+   Green's function is block diagonal in it,
+   :math:`G^{(0)}_{\alpha\sigma,\beta\tau}
+   =\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}`, and the bubble above
+   carries one such label per propagator line,
+
+   .. math::
+      X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
+      = -\frac{T}{N_L}\sum_{{\bf k},n}
+        G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
+        G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).
+
+   The equal labels :math:`\sigma=\sigma'` are the longitudinal (density,
+   :math:`S_z`) channel and the unequal ones the transverse channel.
+   Selecting one of them is exact -- it picks out a channel, it does not
+   approximate the bubble -- because the two do not mix; the conditions for
+   that are given in the block-diagonal section below.
+
+   Restricting the BAND index of the eigenbasis is a different operation.  It
+   coincides with selecting :math:`\sigma=\sigma'` only when the bands ARE the
+   sectors, as for a single orbital with a spin-independent
+   :math:`{\cal H}_0`, where the two bands are the two spin states.  As soon
+   as the bands are superpositions -- orbital hybridization, or any
+   spin-orbital mixing -- the discarded terms also populate the density
+   components, and the restriction becomes an uncontrolled approximation.
+   H-wave therefore never restricts the band index.
+
+   Inside a sector, on the other hand, the matrix structure has to be kept.
+   Collapsing it -- replacing :math:`G` by the scalar
+   :math:`G_{\uparrow}+G_{\downarrow}` before forming the bubble, say -- puts
+   the cross terms :math:`G_{\uparrow}G_{\downarrow}` into the density
+   response, where they do not belong; for degenerate spins the result then
+   comes out exactly twice too large.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
