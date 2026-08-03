@@ -124,8 +124,11 @@ is obtained as follows:
 .. math::
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
-    X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+    X^{(0)\alpha\alpha', \beta\beta'}(q)
+    - \sum_{\alpha_1\alpha_1'\beta_1\beta_1'}
+    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
 Combining indices such as :math:`\alpha\alpha^\prime` into one index, they are expressed
@@ -158,10 +161,11 @@ in the matrix form. Then finally it leads to the expression:
    :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` multiplies
    :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
    c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}`, i.e. in *each* pair its
-   ordering is the reverse of the susceptibility's.  The matrix
-   :math:`\hat W(q)` entering the RPA equation is therefore obtained from
-   the interaction tensor by transposing the two indices *within each
-   pair*,
+   ordering is the reverse of the susceptibility's.  The vertex entering
+   the RPA equation above is therefore the interaction tensor with the
+   two indices of *each pair* transposed -- written there as
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}` -- i.e. as a
+   matrix,
 
    .. math::
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}

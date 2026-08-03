@@ -44,9 +44,11 @@ insertion; the ring resummation contains only the former, so the
 insertion piece (computed from the same free model) is subtracted from
 the exact side. What remains differs from the ring prediction only by
 the exchange wiring, which the ring form omits by construction -- so
-the comparison is restricted to the slots the ring can populate, and
-the exchange-only slots are asserted to be exactly the ones where the
-solvers stay silent.
+the comparison is restricted to the slots the ring can populate. The
+solver is additionally required not to populate any slot the exact
+response leaves empty, and the number of jointly populated slots is
+pinned per declaration type; the exchange-only slots themselves are
+recorded by those counts rather than by an explicit mask.
 
 Tests must be run from the repository root.
 """
@@ -548,6 +550,10 @@ class TestConversionIsAFixedPointForRealDeclarations(unittest.TestCase):
         fz = getattr(solver.ham_info, "ham_fierz_q", None)
         return w, (None if fz is None else np.asarray(fz))
 
+    # on-site declarations with a != b carry the longitudinal Fierz
+    # (cross-slot) correction; the others do not build the tensor at all
+    FIERZ_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange")
+
     def test_real_declarations_are_unchanged(self):
         for kind in self.REAL_TYPES:
             with self.subTest(type=kind):
@@ -555,9 +561,15 @@ class TestConversionIsAFixedPointForRealDeclarations(unittest.TestCase):
                 np.testing.assert_array_equal(
                     solver_rpa._to_bubble_pair_convention(w), w)
                 self.assertGreater(np.abs(w).max(), 1e-12)
-                if fz is not None:
+                if kind in self.FIERZ_TYPES:
+                    # presence asserted, so that a regression dropping
+                    # the tensor cannot pass by making it None
+                    self.assertIsNotNone(fz)
+                    self.assertGreater(np.abs(fz).max(), 1e-12)
                     np.testing.assert_array_equal(
                         solver_rpa._to_bubble_pair_convention(fz), fz)
+                else:
+                    self.assertTrue(fz is None or np.abs(fz).max() == 0.0)
 
     def test_offsite_density_declaration_is_unchanged(self):
         """Off-site density content is a fixed point as well. The
@@ -577,20 +589,26 @@ class TestConversionIsAFixedPointForRealDeclarations(unittest.TestCase):
     def test_complex_pairhop_is_conjugated_on_crossing_slots(self):
         w, _ = self._vertices("PairHop", phase=PHASE)
         conv = solver_rpa._to_bubble_pair_convention(w)
-        moved = np.abs(conv - w) > 1e-12
-        self.assertGreater(moved.sum(), 0)
-        # the conversion exchanges the Hermitian partner slots, which
-        # for this declaration means complex conjugation
-        np.testing.assert_allclose(conv[moved], np.conj(w[moved]),
-                                   atol=1e-12)
+        # mask taken from the OCCUPIED slots, not from the slots that
+        # happened to move: a partial conversion must fail here
+        occupied = np.abs(w) > 1e-12
+        self.assertEqual(int(occupied.sum()), 4 * LX)
+        np.testing.assert_allclose(conv[occupied],
+                                   np.conj(w[occupied]), atol=1e-12)
+        # and the declaration really is complex, or the pin is vacuous
+        self.assertGreater(np.abs(w[occupied].imag).max(), 1e-3)
 
 
 class TestFlexVertexNeedsNoConversion(unittest.TestCase):
     """FLEX's general path builds its spin/charge matrices directly in
     the bubble convention, so it must NOT be put through the helper as
-    well: a future 'let us make FLEX consistent' change that applies it
-    a second time would conjugate a complex declaration back. Pin the
-    agreement between FLEX's own vertex slot and RPA's converted one."""
+    well: a future "let us make FLEX consistent" change that applied it
+    a second time would conjugate a complex declaration back.
+
+    The pin builds the S/C matrices through the very helpers
+    ``FLEX._inflate_chi0q_and_ham_general`` calls and compares the slot
+    carrying a complex PairHop against the converted RPA tensor.
+    """
 
     def test_flex_sc_matches_converted_rpa_slot(self):
         from hwave.sc import _build_interaction_k
@@ -605,16 +623,33 @@ class TestFlexVertexNeedsNoConversion(unittest.TestCase):
                                "SubShape": [1, 1, 1], "Nmat": 16},
                      "calc_scheme": "general"}
         solver = solver_rpa.RPA(io.get_param("ham"), {}, info_mode)
-        w = np.asarray(solver.ham_info.ham_inter_q)
-        conv = solver_rpa._to_bubble_pair_convention(w).reshape(
-            LX, ND, ND, ND, ND)[0]
-        # up-up / down-down pair-crossing slot carrying the declaration
-        got = conv[_sb(0, 0), _sb(1, 0), _sb(1, 1), _sb(0, 1)]
-        self.assertGreater(abs(got.imag), 1e-3)
-        # the same physical coefficient, conjugated, sits in the
-        # Hermitian partner slot
-        partner = conv[_sb(1, 0), _sb(0, 0), _sb(0, 1), _sb(1, 1)]
-        np.testing.assert_allclose(partner, np.conj(got), atol=1e-12)
+        no = solver.norb
+
+        # FLEX general vertex, built exactly as the solver builds it
+        kx = np.linspace(0, 2.0 * np.pi, LX, endpoint=False)
+        k0 = np.linspace(0, 2.0 * np.pi, 1, endpoint=False)
+        inter_k = _build_interaction_k(kx, k0, k0,
+                                       solver.ham_info.param_ham, no)
+        Us, Uc = build_sc_matrices_myo(inter_k, no, LX, 1, 1)
+        Us = np.asarray(Us).reshape(LX, no * no, no * no)
+        Uc = np.asarray(Uc).reshape(LX, no * no, no * no)
+
+        # RPA vertex after the conversion
+        conv = solver_rpa._to_bubble_pair_convention(
+            np.asarray(solver.ham_info.ham_inter_q)).reshape(
+            LX, ND, ND, ND, ND)
+
+        # the declaration lives on the up/down pair-crossing slot
+        rpa_slot = conv[0, _sb(0, 0), _sb(1, 0), _sb(1, 1), _sb(0, 1)]
+        self.assertGreater(abs(rpa_slot.imag), 1e-3)
+        # ... and on FLEX's orbital pair (0,1),(1,0) slot
+        flex_slot = Us[0, 0 * no + 1, 1 * no + 0]
+        np.testing.assert_allclose(flex_slot, rpa_slot, atol=1e-12)
+        np.testing.assert_allclose(Uc[0, 0 * no + 1, 1 * no + 0],
+                                   rpa_slot, atol=1e-12)
+        # double-converting FLEX would land on the conjugate: assert the
+        # two are actually distinguishable, or the pin is vacuous
+        self.assertGreater(abs(flex_slot - np.conj(flex_slot)), 1e-3)
 
 
 class TestComplexPairHopGpuMatchesCpu(unittest.TestCase):

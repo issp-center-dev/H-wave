@@ -115,7 +115,9 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
     X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
-    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
 ここで、 :math:`\alpha \alpha'` などをまとめて一つのindexにすると行列形式で表すことができ、
@@ -148,9 +150,10 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
    :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` が掛かる演算子は
    :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
    c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}` であり、**どちらのペアでも**
-   感受率とは逆の順序になっています。したがって RPA
-   方程式に入る行列 :math:`\hat W(q)` は、相互作用テンソルの
-   **各ペア内で添字を入れ替えた** ものになります。
+   感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
+   バーテックスは、相互作用テンソルの **各ペア内で添字を入れ替えた**
+   もの（式中の :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`）
+   であり、行列としては次のように書けます。
 
    .. math::
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}

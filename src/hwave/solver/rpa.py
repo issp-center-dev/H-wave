@@ -3303,6 +3303,10 @@ class RPA:
     def _assemble_transverse_vertex(self, ham_orig):
         """Build the transverse vertex ham_pm from the interaction tensor.
 
+        ``ham_orig`` arrives in the BUBBLE-pair convention (issue
+        #139): the caller converts it, and the block reads below
+        assume that convention -- do not convert again here.
+
         The vertex draws on exactly two spin blocks of the four-index tensor.
         Measured block occupancy (on-site fixture):
 
@@ -3416,6 +3420,9 @@ class RPA:
     def _check_transverse_representable(self, ham_orig):
         """Reject input whose transverse vertex is not a function of q alone.
 
+        ``ham_orig`` is in the BUBBLE-pair convention, as supplied by
+        the caller (issue #139).
+
         Called BEFORE the longitudinal solve, so invalid input fails without
         burning the full solve or leaving a partially populated green_info.
 
@@ -3480,7 +3487,10 @@ class RPA:
         chi0q_orig : ndarray
             Original bare susceptibility (before spin inflation).
         ham_orig : ndarray
-            Original interaction Hamiltonian in spin-orbital space.
+            Interaction tensor in spin-orbital space, already in the
+            BUBBLE-pair convention (the caller passes it through
+            _to_bubble_pair_convention); this routine and the vertex
+            assembly it calls apply no further conversion.
 
         Returns
         -------
