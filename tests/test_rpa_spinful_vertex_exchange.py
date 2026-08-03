@@ -167,6 +167,12 @@ class TestSpinConservingLimits(unittest.TestCase):
     # PairHop declared as a complex Hermitian pair (P, conj P): its
     # symmetrisation conjugates (#100) and the crossing must preserve
     # the complex phase -- a real-only fixture cannot see either
+    # PairHop is declared COMPLEX (P, conj P). In solver storage the
+    # spinful spin-flip slice and chiq_pm are already in the same
+    # pair frame, so the relation between them is DIRECT equality -- an
+    # earlier revision compared them through a conjugation, which holds
+    # only for real declarations and pushed the transverse vertex into
+    # the wrong orientation before exact diagonalization caught it.
     PHV = 0.3 * np.exp(0.4j)
     TYPES = {
         "CoulombIntra": [(0, 0, 0.3)],
@@ -253,14 +259,11 @@ class TestSpinConservingLimits(unittest.TestCase):
                 pm_ref = pm_ref.reshape(nfp, LX, NORB, NORB, NORB,
                                         NORB)[nfp // 2]
                 up, dn = slice(0, NORB), slice(NORB, ND)
-                # chiq_pm and the spinful spin-flip slice store the
-                # transverse correlator in pair-Hermitian-conjugate
-                # orientations: chi*_{acbd}(q) = chi_{bdac}(q) is an
-                # exact identity, the two coincide elementwise for real
-                # vertices, and only a complex vertex (the PairHop
-                # fixture) exposes the difference -- compare through the
-                # identity, not through elementwise equality
-                pm1 = np.conj(r1[:, up, dn, up, dn])
+                # both objects are stored in the same pair frame, so
+                # they must agree elementwise (verified against exact
+                # diagonalization; a conjugation here would only hold
+                # for real declarations)
+                pm1 = r1[:, up, dn, up, dn]
                 dev = np.abs(pm1 - pm_ref).max()
                 if tname == "PairLift":
                     # ring+ladder drops PairLift's transverse vertex
@@ -560,13 +563,11 @@ class TestFirstOrderAgainstED(unittest.TestCase):
         cls.CD = [c.conj().T for c in ops]
         cls.hop = hop
 
-    # Complex Hermitian-closed PairHop pair (P, conj P). The k-space
-    # solvers respond with the phase orientation CONJUGATE to the
-    # documented equation (issue #139, pre-existing in the direct ring
-    # path; the exchange crossing inherits the same orientation, so the
-    # two stay mutually consistent) -- the ED model below implements the
-    # code's orientation to pin the crossing against it. Real
-    # declarations are orientation-blind.
+    # Complex Hermitian-closed PairHop pair (P, conj P). Since the
+    # bubble-pair convention fix (issue #139) the longitudinal ring
+    # response follows the DOCUMENTED Hamiltonian, so the ED model
+    # below uses the documented orientation. Real declarations are
+    # orientation-blind.
     PHV = 0.3 * np.exp(0.4j)
 
     def _h_int(self, tname, v):
@@ -576,7 +577,7 @@ class TestFirstOrderAgainstED(unittest.TestCase):
             if tname == "PairHop":
                 A = (CD[mode(j, 0, 0)] @ C[mode(j, 1, 0)]
                      @ CD[mode(j, 0, 1)] @ C[mode(j, 1, 1)])
-                coef = v * np.conj(self.PHV) / 0.3
+                coef = v * self.PHV / 0.3
                 H = H + coef * A + np.conj(coef) * A.conj().T
             elif tname == "CoulombIntra":
                 H += v * (CD[mode(j, 0, 0)] @ C[mode(j, 0, 0)]
@@ -663,7 +664,7 @@ class TestFirstOrderAgainstED(unittest.TestCase):
 
         for j in range(self.LX):
             if tname == "PairHop":
-                coef = v * np.conj(self.PHV) / 0.3
+                coef = v * self.PHV / 0.3
                 add(mode(j, 0, 0), mode(j, 1, 0),
                     mode(j, 0, 1), mode(j, 1, 1), coef)
                 add(mode(j, 1, 0), mode(j, 0, 0),

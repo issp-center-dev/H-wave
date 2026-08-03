@@ -425,6 +425,34 @@ def _validate_chi0q_provenance(meta, nfreq, source):
 TAIL_ENDPOINT_CONVENTION = "branch_mean_v1"
 
 
+def _to_bubble_pair_convention(ham):
+    """Intra-pair transpose taking the interaction tensor from the
+    Hamiltonian slot convention to the bubble's (issue #139).
+
+    ``_make_ham_inter`` stores ``W[..., b, b', a, a']`` as the
+    coefficient of ``c^+_a c_a' c^+_b' c_b``; the ring equation
+    contracts it against ``chi0`` whose pair slot ``(b, b')`` carries
+    ``c^+_b c_b'``. Swapping the two indices of BOTH pairs converts
+    between them. Density (pair-diagonal) content and real
+    Hermitian-closed declarations are fixed points of this map.
+
+    Applied when the LONGITUDINAL vertex is assembled, i.e. on the
+    rank-4 orbital tensor before any density projection: the reduced
+    and squashed projections keep only pair-diagonal slots, where the
+    map is the identity, so they are unaffected either way, while the
+    general scheme needs it. The transverse (ladder) assembly is NOT
+    routed through this helper: it re-pairs the tensor itself and
+    therefore consumes the Hamiltonian convention directly.
+    """
+    nlead = ham.ndim - 4
+    if nlead < 0:
+        raise ValueError(
+            "interaction tensor must carry four orbital axes, got shape "
+            "{}".format(ham.shape))
+    lead = tuple(range(nlead))
+    return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
+
+
 def _enforce_tail_endpoint(meta, source):
     """Endpoint-convention gate on NORMALIZED chi0q provenance.
 
@@ -1748,14 +1776,21 @@ class RPA:
                 # replaces the Fierz-corrected tensor entirely, and
                 # building + device-transferring it there would allocate
                 # a large temporary that is immediately discarded
-                # (round-1 review)
+                # (round-1 review). The result is handed to the ring
+                # solve in the BUBBLE's pair convention (issue #139).
                 if fierz_q is None:
-                    return ham_inter_q
+                    return _to_bubble_pair_convention(ham_inter_q)
                 fz = xp.asarray(fierz_q) if gpu_active else fierz_q
-                return ham_inter_q + fz
+                return _to_bubble_pair_convention(ham_inter_q + fz)
 
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
+                # The transverse (ladder) assembly re-pairs the tensor
+                # itself, so it must receive the HAMILTONIAN convention,
+                # NOT the bubble one the ring solve needs (issue #139):
+                # converting here as well conjugated a complex PairHop's
+                # ladder vertex (exact diagonalization on a three-site
+                # ring: relative error 1.2 against 2e-7 unconverted).
                 ham_orig = ham_inter_q
                 ham_long = None
                 # Antisymmetrized vertex (issue #137): resum with
@@ -1771,7 +1806,8 @@ class RPA:
                 exch = getattr(self.ham_info, "ham_spinful_exchange", None)
                 if exch is not None and self.spinful_vertex_exchange:
                     exch = xp.asarray(exch) if gpu_active else exch
-                    ham_long = ham_inter_q + exch[None, ...]
+                    ham_long = _to_bubble_pair_convention(
+                        ham_inter_q + exch[None, ...])
                 else:
                     ham_long = _fierz_long()
 
@@ -3267,6 +3303,11 @@ class RPA:
     def _assemble_transverse_vertex(self, ham_orig):
         """Build the transverse vertex ham_pm from the interaction tensor.
 
+        ``ham_orig`` is in the HAMILTONIAN convention (the tensor as
+        ``_make_ham_inter`` builds it), NOT the bubble-pair convention
+        the ring solve consumes: the block reads and the crossing done
+        below already re-pair it (issue #139).
+
         The vertex draws on exactly two spin blocks of the four-index tensor.
         Measured block occupancy (on-site fixture):
 
@@ -3380,6 +3421,9 @@ class RPA:
     def _check_transverse_representable(self, ham_orig):
         """Reject input whose transverse vertex is not a function of q alone.
 
+        ``ham_orig`` is in the HAMILTONIAN convention, as built by
+        ``_make_ham_inter`` (issue #139).
+
         Called BEFORE the longitudinal solve, so invalid input fails without
         burning the full solve or leaving a partially populated green_info.
 
@@ -3444,7 +3488,10 @@ class RPA:
         chi0q_orig : ndarray
             Original bare susceptibility (before spin inflation).
         ham_orig : ndarray
-            Original interaction Hamiltonian in spin-orbital space.
+            Interaction tensor in spin-orbital space, in the
+            HAMILTONIAN convention as built by _make_ham_inter: the
+            transverse assembly re-pairs it itself, so it must NOT be
+            pre-converted to the bubble-pair convention (issue #139).
 
         Returns
         -------

@@ -691,6 +691,13 @@ class TestRPALadder(unittest.TestCase):
 
         got = captured["ham_pm"][0]
         want = np.zeros_like(got)
+        # Phase orientation adjudicated directly against exact
+        # diagonalization (see
+        # tests/test_rpa_vs_ed_oracle.py::TestTransverseComplexPairHop):
+        # the transverse assembly consumes the HAMILTONIAN convention,
+        # re-pairing the tensor itself, so the bubble-pair conversion
+        # the ring solve applies (issue #139) must NOT be applied to
+        # its input.
         want[0, 1, 1, 0] = -(0.7 + 0.4j)
         want[1, 0, 0, 1] = -(0.7 - 0.4j)
         np.testing.assert_allclose(got, want, atol=1e-10)
