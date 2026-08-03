@@ -167,6 +167,10 @@ class TestSpinConservingLimits(unittest.TestCase):
     # PairHop declared as a complex Hermitian pair (P, conj P): its
     # symmetrisation conjugates (#100) and the crossing must preserve
     # the complex phase -- a real-only fixture cannot see either
+    # PairHop is declared COMPLEX (P, conj P): both the longitudinal
+    # and the transverse assembly consume the interaction tensor in the
+    # bubble-pair convention (issue #139), so the two channels share an
+    # orientation and a complex declaration must still line up.
     PHV = 0.3 * np.exp(0.4j)
     TYPES = {
         "CoulombIntra": [(0, 0, 0.3)],
@@ -560,13 +564,11 @@ class TestFirstOrderAgainstED(unittest.TestCase):
         cls.CD = [c.conj().T for c in ops]
         cls.hop = hop
 
-    # Complex Hermitian-closed PairHop pair (P, conj P). The k-space
-    # solvers respond with the phase orientation CONJUGATE to the
-    # documented equation (issue #139, pre-existing in the direct ring
-    # path; the exchange crossing inherits the same orientation, so the
-    # two stay mutually consistent) -- the ED model below implements the
-    # code's orientation to pin the crossing against it. Real
-    # declarations are orientation-blind.
+    # Complex Hermitian-closed PairHop pair (P, conj P). Since the
+    # bubble-pair convention fix (issue #139) the longitudinal ring
+    # response follows the DOCUMENTED Hamiltonian, so the ED model
+    # below uses the documented orientation. Real declarations are
+    # orientation-blind.
     PHV = 0.3 * np.exp(0.4j)
 
     def _h_int(self, tname, v):
@@ -576,7 +578,7 @@ class TestFirstOrderAgainstED(unittest.TestCase):
             if tname == "PairHop":
                 A = (CD[mode(j, 0, 0)] @ C[mode(j, 1, 0)]
                      @ CD[mode(j, 0, 1)] @ C[mode(j, 1, 1)])
-                coef = v * np.conj(self.PHV) / 0.3
+                coef = v * self.PHV / 0.3
                 H = H + coef * A + np.conj(coef) * A.conj().T
             elif tname == "CoulombIntra":
                 H += v * (CD[mode(j, 0, 0)] @ C[mode(j, 0, 0)]
@@ -663,7 +665,7 @@ class TestFirstOrderAgainstED(unittest.TestCase):
 
         for j in range(self.LX):
             if tname == "PairHop":
-                coef = v * np.conj(self.PHV) / 0.3
+                coef = v * self.PHV / 0.3
                 add(mode(j, 0, 0), mode(j, 1, 0),
                     mode(j, 0, 1), mode(j, 1, 1), coef)
                 add(mode(j, 1, 0), mode(j, 0, 0),

@@ -425,6 +425,34 @@ def _validate_chi0q_provenance(meta, nfreq, source):
 TAIL_ENDPOINT_CONVENTION = "branch_mean_v1"
 
 
+def _to_bubble_pair_convention(ham):
+    """Intra-pair transpose taking the interaction tensor from the
+    Hamiltonian slot convention to the bubble's (issue #139).
+
+    ``_make_ham_inter`` stores ``W[..., b, b', a, a']`` as the
+    coefficient of ``c^+_a c_a' c^+_b' c_b``; the ring equation
+    contracts it against ``chi0`` whose pair slot ``(b, b')`` carries
+    ``c^+_b c_b'``. Swapping the two indices of BOTH pairs converts
+    between them. Density (pair-diagonal) content and real
+    Hermitian-closed declarations are fixed points of this map.
+
+    Applied when the LONGITUDINAL vertex is assembled, i.e. on the
+    rank-4 orbital tensor before any density projection: the reduced
+    and squashed projections keep only pair-diagonal slots, where the
+    map is the identity, so they are unaffected either way, while the
+    general scheme needs it. The transverse (ladder) assembly consumes
+    ``ham_inter_q`` in its own convention and is deliberately left
+    untouched here.
+    """
+    nlead = ham.ndim - 4
+    if nlead < 0:
+        raise ValueError(
+            "interaction tensor must carry four orbital axes, got shape "
+            "{}".format(ham.shape))
+    lead = tuple(range(nlead))
+    return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
+
+
 def _enforce_tail_endpoint(meta, source):
     """Endpoint-convention gate on NORMALIZED chi0q provenance.
 
@@ -1748,15 +1776,21 @@ class RPA:
                 # replaces the Fierz-corrected tensor entirely, and
                 # building + device-transferring it there would allocate
                 # a large temporary that is immediately discarded
-                # (round-1 review)
+                # (round-1 review). The result is handed to the ring
+                # solve in the BUBBLE's pair convention (issue #139).
                 if fierz_q is None:
-                    return ham_inter_q
+                    return _to_bubble_pair_convention(ham_inter_q)
                 fz = xp.asarray(fierz_q) if gpu_active else fierz_q
-                return ham_inter_q + fz
+                return _to_bubble_pair_convention(ham_inter_q + fz)
 
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
-                ham_orig = ham_inter_q
+                # transverse (ladder) assembly consumes the vertex in
+                # the same bubble-pair convention as the ring solve
+                # (issue #139): its bubble chi0_+-[a,c,b,d] has the
+                # identical slot structure, so the conversion applies
+                # to both channels.
+                ham_orig = _to_bubble_pair_convention(ham_inter_q)
                 ham_long = None
                 # Antisymmetrized vertex (issue #137): resum with
                 # Gamma = D + crossed(D)|on-site so the spin-flip pair
@@ -1771,7 +1805,8 @@ class RPA:
                 exch = getattr(self.ham_info, "ham_spinful_exchange", None)
                 if exch is not None and self.spinful_vertex_exchange:
                     exch = xp.asarray(exch) if gpu_active else exch
-                    ham_long = ham_inter_q + exch[None, ...]
+                    ham_long = _to_bubble_pair_convention(
+                        ham_inter_q + exch[None, ...])
                 else:
                     ham_long = _fierz_long()
 
@@ -1787,7 +1822,7 @@ class RPA:
 
             elif self.spin_mode == "spin-diag":
                 chi0q_orig = chi0q
-                ham_orig = ham_inter_q
+                ham_orig = _to_bubble_pair_convention(ham_inter_q)
                 ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
@@ -1841,7 +1876,7 @@ class RPA:
             elif self.spin_mode == "spin-free":
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
-                ham_orig = ham_inter_q
+                ham_orig = _to_bubble_pair_convention(ham_inter_q)
                 ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":

@@ -691,8 +691,17 @@ class TestRPALadder(unittest.TestCase):
 
         got = captured["ham_pm"][0]
         want = np.zeros_like(got)
-        want[0, 1, 1, 0] = -(0.7 + 0.4j)
-        want[1, 0, 0, 1] = -(0.7 - 0.4j)
+        # Phase orientation of the two slots follows the bubble-pair
+        # convention (issue #139): the vertex reaches the channel
+        # assembly after the intra-pair transpose that makes the ring
+        # and ladder contractions consume the interaction in chi0's
+        # pair convention. The resulting orientation is the one exact
+        # diagonalization of the documented PairHop Hamiltonian
+        # selects, via the spinful general path
+        # (tests/test_rpa_spinful_vertex_exchange.py) and its pinned
+        # agreement with this transverse series.
+        want[0, 1, 1, 0] = -(0.7 - 0.4j)
+        want[1, 0, 0, 1] = -(0.7 + 0.4j)
         np.testing.assert_allclose(got, want, atol=1e-10)
         # the load-bearing part: the imaginary component survives
         self.assertGreater(float(np.max(np.abs(got.imag))), 0.39)
