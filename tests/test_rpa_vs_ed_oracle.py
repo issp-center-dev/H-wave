@@ -860,6 +860,30 @@ class TestTransverseComplexPairHop(unittest.TestCase):
         nf = arr.shape[0]
         return arr.reshape(nf, LX, NORB, NORB, NORB, NORB)[nf // 2]
 
+    def test_pair_slot_map_is_the_one_kubo_symmetry_selects(self):
+        """Pin the CHOICE of map algebraically.
+
+        On the two-site fixture below the pair-slot map and the
+        longitudinal intra-pair map happen to agree to round-off
+        (every momentum is self-inverse there), so the numerical
+        comparison cannot show which one is right. The relation they
+        differ on is exact and needs no lattice: for the transverse
+        tensor, static Kubo symmetry gives R[a,c,b,d] = L[b,d,a,c],
+        i.e. the solver frame is reached by swapping the two PAIR
+        slots. A generic tensor carrying that symmetry satisfies the
+        relation under the pair-slot map only."""
+        rng = np.random.RandomState(139)
+        n = NORB
+        r = (rng.randn(LX, n, n, n, n) + 1j * rng.randn(LX, n, n, n, n))
+        # impose the Kubo/pair-Hermiticity structure R[a,c,b,d] taken to
+        # the solver frame L by the pair-slot swap
+        L = np.transpose(r, (0, 3, 4, 1, 2))
+        np.testing.assert_allclose(
+            np.transpose(L, (0, 3, 4, 1, 2)), r, atol=1e-14)
+        # the longitudinal intra-pair map does NOT reproduce it
+        wrong = np.transpose(r, (0, 2, 1, 4, 3))
+        self.assertGreater(np.abs(wrong - L).max(), 1e-3)
+
     def test_ladder_uses_the_hamiltonian_convention(self):
         c0 = self._solver_pm(1e-9, PHASE)
         sol = (2 * (self._solver_pm(V1, PHASE) - c0) / V1
@@ -867,11 +891,20 @@ class TestTransverseComplexPairHop(unittest.TestCase):
         ed_decl = self._ed_first_order_pm(PHASE)
         ed_conj = self._ed_first_order_pm(np.conj(PHASE))
         shared = (np.abs(ed_decl) > 1e-6) & (np.abs(sol) > 1e-6)
-        self.assertGreater(shared.sum(), 0)
+        # pinned so that a solver returning only a couple of correct
+        # elements cannot satisfy the comparison by shrinking the mask
+        self.assertEqual(int(shared.sum()), 32)
         scale = np.abs(ed_decl).max()
         self.assertGreater(scale, 1e-3)
         dev = np.abs((ed_decl - sol)[shared]).max()
         self.assertLess(dev, 5e-3 * scale)
+        # and it must not invent slots the exact response leaves empty,
+        # nor drop ones it fills
+        only_sol = (np.abs(sol) > 1e-6) & (np.abs(ed_decl) <= 1e-6)
+        self.assertLess(np.abs(sol[only_sol]).max(initial=0.0),
+                        5e-3 * scale)
+        missing = (np.abs(ed_decl) > 1e-3 * scale) & (np.abs(sol) <= 1e-6)
+        self.assertEqual(int(missing.sum()), 0)
         # the conjugate model must be clearly excluded, or the pin says
         # nothing about the orientation
         shared_c = (np.abs(ed_conj) > 1e-6) & (np.abs(sol) > 1e-6)
