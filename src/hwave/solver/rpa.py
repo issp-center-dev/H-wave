@@ -440,10 +440,9 @@ def _to_bubble_pair_convention(ham):
     rank-4 orbital tensor before any density projection: the reduced
     and squashed projections keep only pair-diagonal slots, where the
     map is the identity, so they are unaffected either way, while the
-    general scheme needs it. The input to the transverse (ladder)
-    assembly passes through the same conversion, so both channels
-    resum the interaction in one orientation; the assembly itself adds
-    no further conversion.
+    general scheme needs it. The transverse (ladder) assembly is NOT
+    routed through this helper: it re-pairs the tensor itself and
+    therefore consumes the Hamiltonian convention directly.
     """
     nlead = ham.ndim - 4
     if nlead < 0:
@@ -1786,12 +1785,13 @@ class RPA:
 
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
-                # transverse (ladder) assembly consumes the vertex in
-                # the same bubble-pair convention as the ring solve
-                # (issue #139): its bubble chi0_+-[a,c,b,d] has the
-                # identical slot structure, so the conversion applies
-                # to both channels.
-                ham_orig = _to_bubble_pair_convention(ham_inter_q)
+                # The transverse (ladder) assembly re-pairs the tensor
+                # itself, so it must receive the HAMILTONIAN convention,
+                # NOT the bubble one the ring solve needs (issue #139):
+                # converting here as well conjugated a complex PairHop's
+                # ladder vertex (exact diagonalization on a three-site
+                # ring: relative error 1.2 against 2e-7 unconverted).
+                ham_orig = ham_inter_q
                 ham_long = None
                 # Antisymmetrized vertex (issue #137): resum with
                 # Gamma = D + crossed(D)|on-site so the spin-flip pair
@@ -1823,7 +1823,7 @@ class RPA:
 
             elif self.spin_mode == "spin-diag":
                 chi0q_orig = chi0q
-                ham_orig = _to_bubble_pair_convention(ham_inter_q)
+                ham_orig = ham_inter_q
                 ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
@@ -1877,7 +1877,7 @@ class RPA:
             elif self.spin_mode == "spin-free":
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
-                ham_orig = _to_bubble_pair_convention(ham_inter_q)
+                ham_orig = ham_inter_q
                 ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
@@ -3303,9 +3303,10 @@ class RPA:
     def _assemble_transverse_vertex(self, ham_orig):
         """Build the transverse vertex ham_pm from the interaction tensor.
 
-        ``ham_orig`` arrives in the BUBBLE-pair convention (issue
-        #139): the caller converts it, and the block reads below
-        assume that convention -- do not convert again here.
+        ``ham_orig`` is in the HAMILTONIAN convention (the tensor as
+        ``_make_ham_inter`` builds it), NOT the bubble-pair convention
+        the ring solve consumes: the block reads and the crossing done
+        below already re-pair it (issue #139).
 
         The vertex draws on exactly two spin blocks of the four-index tensor.
         Measured block occupancy (on-site fixture):
@@ -3420,8 +3421,8 @@ class RPA:
     def _check_transverse_representable(self, ham_orig):
         """Reject input whose transverse vertex is not a function of q alone.
 
-        ``ham_orig`` is in the BUBBLE-pair convention, as supplied by
-        the caller (issue #139).
+        ``ham_orig`` is in the HAMILTONIAN convention, as built by
+        ``_make_ham_inter`` (issue #139).
 
         Called BEFORE the longitudinal solve, so invalid input fails without
         burning the full solve or leaving a partially populated green_info.
@@ -3487,10 +3488,10 @@ class RPA:
         chi0q_orig : ndarray
             Original bare susceptibility (before spin inflation).
         ham_orig : ndarray
-            Interaction tensor in spin-orbital space, already in the
-            BUBBLE-pair convention (the caller passes it through
-            _to_bubble_pair_convention); this routine and the vertex
-            assembly it calls apply no further conversion.
+            Interaction tensor in spin-orbital space, in the
+            HAMILTONIAN convention as built by _make_ham_inter: the
+            transverse assembly re-pairs it itself, so it must NOT be
+            pre-converted to the bubble-pair convention (issue #139).
 
         Returns
         -------

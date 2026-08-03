@@ -652,6 +652,123 @@ class TestFlexVertexNeedsNoConversion(unittest.TestCase):
         self.assertGreater(abs(flex_slot - np.conj(flex_slot)), 1e-3)
 
 
+class TestTransverseComplexPairHop(unittest.TestCase):
+    """The transverse (ladder) channel adjudicated DIRECTLY against
+    exact diagonalization for a complex PairHop.
+
+    The ring solve consumes the interaction in the bubble-pair
+    convention (issue #139), but the transverse assembly re-pairs the
+    tensor itself and must receive the HAMILTONIAN convention. The two
+    routes are easy to conflate -- relating the spinful spin-flip slice
+    to chiq_pm through an assumed pair-Hermiticity relation suggests the
+    opposite answer -- so this pins the transverse channel on its own:
+    chiq_pm's first-order response is compared against the exact
+    transverse response of the declared Hamiltonian.
+
+    chi_+-(q) = <(c^+_up c_dn)(q) ; (c^+_dn c_up)(-q)>, whose slots the
+    solver stores as [q, a, c, b, d] with the same pair convention the
+    longitudinal bubble uses, so the derived map of this module applies
+    to the spin-flip block.
+    """
+
+    def _chi_pm_ed(self, hint=None, h1=None):
+        """Static transverse chi[q, a, c, b, d] over ORBITAL indices,
+        built from the spin-flip bilinears directly."""
+        H = np.zeros((DIM, DIM), dtype=complex)
+        h1m = H1 if h1 is None else h1
+        for p_ in range(NMODE):
+            for q_ in range(NMODE):
+                if h1m[p_, q_] != 0:
+                    H += h1m[p_, q_] * (CD[p_] @ C[q_])
+        if hint is not None:
+            H = H + hint
+        N = sum(CD[p_] @ C[p_] for p_ in range(NMODE))
+        with np.errstate(all="ignore"):
+            ev, V = np.linalg.eigh(H - MU * N)
+        ev = ev - ev.min()
+        w = np.exp(-BETA * ev)
+        w /= w.sum()
+        # O_pm[a, c] = sum_j e^{iqr} c^+_{j a up} c_{j c dn}
+        # O_mp[d, b] = sum_j e^{-iqr} c^+_{j d dn} c_{j b up}
+        Opm, Omp = {}, {}
+        for qi in range(LX):
+            for a in range(NORB):
+                for c in range(NORB):
+                    op = np.zeros((DIM, DIM), dtype=complex)
+                    om = np.zeros((DIM, DIM), dtype=complex)
+                    for j in range(LX):
+                        ph = np.exp(2j * np.pi * qi * j / LX)
+                        op += ph * (CD[_mode(j, a, 0)] @ C[_mode(j, c, 1)])
+                        om += np.conj(ph) * (CD[_mode(j, a, 1)]
+                                             @ C[_mode(j, c, 0)])
+                    Opm[(qi, a, c)] = V.conj().T @ op @ V
+                    Omp[(qi, a, c)] = V.conj().T @ om @ V
+        dE = ev[None, :] - ev[:, None]
+        dw = w[:, None] - w[None, :]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            K = np.where(np.abs(dE) > 1e-10, dw / dE, BETA * w[:, None])
+        out = np.zeros((LX, NORB, NORB, NORB, NORB), dtype=complex)
+        for qi in range(LX):
+            for a in range(NORB):
+                for c in range(NORB):
+                    A = Opm[(qi, a, c)]
+                    for b in range(NORB):
+                        for d in range(NORB):
+                            B = Omp[(qi, d, b)]
+                            out[qi, a, c, b, d] = (K * A * B.T).sum()
+        return out / LX
+
+    def _ed_first_order_pm(self, phase):
+        base = self._chi_pm_ed()
+        full = (2 * (self._chi_pm_ed(_h_int("PairHop", V1, phase)) - base)
+                / V1
+                - (self._chi_pm_ed(_h_int("PairHop", V2, phase)) - base)
+                / V2)
+        ins = (2 * (self._chi_pm_ed(h1=_hf_h1("PairHop", V1, phase))
+                    - base) / V1
+               - (self._chi_pm_ed(h1=_hf_h1("PairHop", V2, phase))
+                  - base) / V2)
+        return np.transpose(full - ins, (0, 2, 1, 4, 3))
+
+    def _solver_pm(self, v, phase):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        inter = _write_inputs(tmp.name, "PairHopComplex", v, phase)
+        info_mode = {"mode": "RPA",
+                     "param": {"T": T, "mu": MU, "CellShape": [LX, 1, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 512,
+                               "coeff_tail": 1.0},
+                     "calc_scheme": "general", "calc_type": "ring+ladder"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": tmp.name, "interaction": inter})
+        solver = solver_rpa.RPA(io.get_param("ham"), {}, info_mode)
+        gi = io.get_param("green")
+        out = os.path.join(tmp.name, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        arr = np.asarray(gi["chiq_pm"])
+        nf = arr.shape[0]
+        return arr.reshape(nf, LX, NORB, NORB, NORB, NORB)[nf // 2]
+
+    def test_ladder_uses_the_hamiltonian_convention(self):
+        c0 = self._solver_pm(1e-9, PHASE)
+        sol = (2 * (self._solver_pm(V1, PHASE) - c0) / V1
+               - (self._solver_pm(V2, PHASE) - c0) / V2)
+        ed_decl = self._ed_first_order_pm(PHASE)
+        ed_conj = self._ed_first_order_pm(np.conj(PHASE))
+        shared = (np.abs(ed_decl) > 1e-6) & (np.abs(sol) > 1e-6)
+        self.assertGreater(shared.sum(), 0)
+        scale = np.abs(ed_decl).max()
+        self.assertGreater(scale, 1e-3)
+        dev = np.abs((ed_decl - sol)[shared]).max()
+        self.assertLess(dev, 5e-3 * scale)
+        # the conjugate model must be clearly excluded, or the pin says
+        # nothing about the orientation
+        shared_c = (np.abs(ed_conj) > 1e-6) & (np.abs(sol) > 1e-6)
+        self.assertGreater(np.abs((ed_conj - sol)[shared_c]).max(),
+                           1e-1 * scale)
+
+
 class TestComplexPairHopGpuMatchesCpu(unittest.TestCase):
     """The conversion must behave identically on the device path. The
     committed GPU tests use real declarations, on which it is the

@@ -167,11 +167,17 @@ class TestSpinConservingLimits(unittest.TestCase):
     # PairHop declared as a complex Hermitian pair (P, conj P): its
     # symmetrisation conjugates (#100) and the crossing must preserve
     # the complex phase -- a real-only fixture cannot see either
-    # PairHop is declared COMPLEX (P, conj P): both the longitudinal
-    # and the transverse assembly consume the interaction tensor in the
-    # bubble-pair convention (issue #139), so the two channels share an
-    # orientation and a complex declaration must still line up.
-    PHV = 0.3 * np.exp(0.4j)
+    # PairHop is declared REAL here. This fixture relates the spinful
+    # spin-flip slice to the TRANSVERSE series through an assumed
+    # pair-Hermiticity relation, and that relation is what a complex
+    # declaration would have to validate -- but the two channels reach
+    # their vertices by different routes (the ring solve converts the
+    # tensor to the bubble-pair convention, the ladder assembly
+    # re-pairs it itself), so the cross-channel relation for a complex
+    # vertex is not established here. Each channel's complex-PairHop
+    # orientation is pinned DIRECTLY against exact diagonalization
+    # instead: the longitudinal one in tests/test_rpa_vs_ed_oracle.py
+    # and the transverse one by its transverse regression there.
     TYPES = {
         "CoulombIntra": [(0, 0, 0.3)],
         "CoulombInter": [(0, 1, 0.3), (1, 0, 0.3)],
@@ -179,7 +185,7 @@ class TestSpinConservingLimits(unittest.TestCase):
         "Ising": [(0, 1, 0.3), (1, 0, 0.3)],
         "Exchange": [(0, 1, 0.3), (1, 0, 0.3)],
         "PairLift": [(0, 1, 0.3), (1, 0, 0.3)],
-        "PairHop": [(0, 1, PHV), (1, 0, np.conj(PHV))],
+        "PairHop": [(0, 1, 0.3), (1, 0, 0.3)],
     }
 
     def _write(self, d, so, eps, tname):

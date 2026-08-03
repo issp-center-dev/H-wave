@@ -153,8 +153,8 @@ in the matrix form. Then finally it leads to the expression:
 
    .. math::
       X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
-      \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(q)\;;\;
-      \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(-q)\Big\rangle ,
+      \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+      \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle ,
 
    which is what the Green-function product :math:`G^{\alpha\beta}(k+q)
    G^{\beta'\alpha'}(k)` above encodes. The interaction
@@ -181,9 +181,12 @@ in the matrix form. Then finally it leads to the expression:
    only for a *complex* pair-crossing interaction -- a complex
    Hermitian-closed ``PairHop`` -- where omitting it returns the
    susceptibility of the complex-conjugate Hamiltonian.  H-wave applies
-   the conversion when it assembles the vertex for the ring and ladder
-   solves; the stored ``chiq``/``chi0q`` and the interaction files keep
-   the conventions documented in their own sections.
+   the conversion when it assembles the vertex for the ring solve.  The
+   transverse (ladder) assembly is *not* routed through it: that
+   assembly re-pairs the interaction tensor itself and therefore
+   consumes the Hamiltonian convention directly.  The stored
+   ``chiq``/``chi0q`` and the interaction files keep the conventions
+   documented in their own sections.
 
 In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,
