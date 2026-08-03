@@ -35,8 +35,22 @@ def main():
     QX, QY = np.meshgrid(qx, qy, indexing='ij')
 
     # --- Fig 1: Spin susceptibility chi_s(q) ---
-    chi_s_total = sum(chi_s[iv0, :, a, a].real for a in range(nd))
-    chi_c_total = sum(chi_c[iv0, :, a, a].real for a in range(nd))
+    # calc_scheme is 'auto' in this sample: with Exchange in the input it
+    # resolves to 'general', whose chiq_s/chiq_c come as the rank-4
+    # orbital tensor [a, c, b, d]; the physical response sums the density
+    # sector (aa), (bb). The 4-dim branch keeps the script usable with
+    # reduced-layout files.
+    if chi_s.ndim == 6:
+        chi_s_total = sum(chi_s[iv0, :, a, a, b, b].real
+                          for a in range(nd) for b in range(nd))
+        chi_c_total = sum(chi_c[iv0, :, a, a, b, b].real
+                          for a in range(nd) for b in range(nd))
+    else:
+        # reduced layout: (nvol, norb, norb) density-pair matrix; the
+        # physical response sums the WHOLE matrix (the diagonal alone
+        # would omit the inter-orbital density correlations)
+        chi_s_total = chi_s[iv0].real.sum(axis=(-2, -1))
+        chi_c_total = chi_c[iv0].real.sum(axis=(-2, -1))
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 

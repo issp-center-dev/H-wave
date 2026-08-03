@@ -131,11 +131,18 @@ charge/orbital fluctuations driven by two spin fluctuations are important
 
 In addition, the default ``calc_scheme = "reduced"`` and ``"squashed"``
 schemes decompose the interaction via its density--density part for the
-spin/charge vertices; off-diagonal (spin-flip Hund, pair-hopping) vertices
-are reduced to their density--density component (a warning is emitted when
-``Exchange``/``PairHop`` interactions are supplied). Accordingly, in these
-schemes "FLEX" means *not exact*: it is the density--density, AL/MT-free
-fluctuation-exchange level of approximation.
+spin/charge vertices. ``Exchange`` and ``PairHop`` have **no**
+density--density vertex content at all, so these schemes cannot even
+approximate them: supplying either under ``reduced``/``squashed`` raises a
+``ValueError`` directing you to ``calc_scheme = "general"`` (in earlier
+development builds this input was accepted with a warning while the
+interaction silently had zero effect). ``calc_scheme = "auto"`` selects
+``general`` automatically when ``Exchange`` or ``PairHop`` is present.
+``PairLift`` is accepted everywhere: its particle-hole vertex is exactly
+zero, so omitting it from the susceptibility channels is exact, not an
+approximation. Accordingly, in these schemes "FLEX" means *not exact*: it
+is the density--density, AL/MT-free fluctuation-exchange level of
+approximation.
 
 The alternative ``calc_scheme = "general"`` instead **retains** the full
 off-diagonal Kanamori vertices. It is a paramagnetic full-vertex
@@ -298,11 +305,14 @@ earlier FLEX run instead seeds the loop from that self-energy:
 
 .. warning::
 
-   Do not seed from a multi-orbital ``sigma.npz`` produced by
-   ``calc_scheme = "general"`` before the orbital-pair transpose fix: such a
-   file is wrong off the orbital diagonal and the SCF loop will converge to the
-   same wrong solution. Regenerate the seed first -- see
-   :ref:`the migration warning <flex_general_transpose_fix>`.
+   A multi-orbital ``sigma.npz`` produced by ``calc_scheme = "general"``
+   before the orbital-pair transpose fix is wrong off the orbital diagonal.
+   The corrected solver converges to the corrected fixed point regardless of
+   the seed, so such a file does not poison the result, but it is a poor warm
+   start -- it can slow convergence or steer the iteration towards a different
+   solution branch, which defeats the purpose of seeding. Prefer regenerating
+   it, and note that the run's other outputs must be regenerated in any case --
+   see :ref:`the migration warning <flex_general_transpose_fix>`.
 
 .. code-block:: toml
 
@@ -535,12 +545,28 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 - ``chiq_s`` / ``chiq_c``: Spin / charge susceptibility,
   same shape as ``chi0q``.
-- ``chi_convention``: orbital-layout tag, ``"kuroki"`` for the
-  reduced/squashed schemes (spin-orbital reduced layout) or ``"myo"`` for the
-  general full-vertex scheme (orbital-pair layout). The Eliashberg loader
-  (``hwave_sc``) uses this tag to interpret the orbital indices; it is
-  essential for two-orbital systems, where the spin-orbital and orbital-pair
-  dimensions coincide (both ``4``) and shape alone is ambiguous.
+- ``chi_convention``: which spin/charge vertex the susceptibilities are meant
+  to be paired with, and which shape family they have: ``"kuroki"`` for the
+  reduced/squashed schemes (spin-orbital shape, ``nd = norb * ns``) or
+  ``"myo"`` for the general full-vertex scheme (orbital-pair shape,
+  ``nd = norb^2``; the historical MYO-vs-Kuroki difference in the
+  ``C(ab,ab)`` charge vertex was resolved by the exact-diagonalization
+  adjudication of the per-type vertex content, so the two builders now
+  coincide). The
+  Eliashberg loader (``hwave_sc``) uses this tag to interpret the orbital
+  indices; it is essential for two-orbital systems, where the spin-orbital and
+  orbital-pair dimensions coincide (both ``4``) and shape alone is ambiguous.
+- ``chi_orbital_layout``: written by the **general** scheme only, value
+  ``"acbd"`` — the four orbital legs are stored as the pairs ``(a,c)`` (row)
+  and ``(b,d)`` (column). Reduced/squashed files do not carry it: their axes
+  are spin-orbital (``s*norb + a``), not four orbital legs, so the loader has
+  to extract a spin block before the array is an orbital-pair object at all.
+  The marker exists so that a file written by a pre-fix build of the
+  general path — which stored the arrays orbital-pair transposed under the same
+  ``"myo"`` tag, and is indistinguishable by tag alone — is rejected on load
+  with a regenerate message instead of silently producing a transposed pairing
+  vertex, and so that any future layout change fails fast rather than being
+  misread.
 
 ``sigma.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -551,10 +577,11 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 .. note::
 
-   Multi-orbital ``sigma.npz`` files written by ``calc_scheme = "general"``
-   *before* the orbital-pair transpose fix are wrong off the orbital diagonal
-   and must be regenerated -- including any that are still being consumed as
-   ``sigma_init`` seeds or by ``hwave_sc``. See
+   Multi-orbital ``sigma.npz`` and ``green.npz`` files written by
+   ``calc_scheme = "general"`` *before* the orbital-pair transpose fix are wrong
+   off the orbital diagonal and must be regenerated -- including any that are
+   still being consumed as ``sigma_init`` seeds or fed to ``hwave_sc`` via
+   ``bond_green``. The ``chiq_s``/``chiq_c`` of such a run are unaffected. See
    :ref:`the migration warning <flex_general_transpose_fix>`.
 
 ``green.npz``
@@ -741,19 +768,20 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
    The FLEX solver accepts ``calc_scheme`` in ``"reduced"``, ``"squashed"``,
    or ``"general"``. The ``"reduced"`` and ``"squashed"`` schemes consume the
-   reduced-shape susceptibility and reduce the interaction to its
-   density-density part. The ``"general"`` scheme is the paramagnetic
+   reduced-shape susceptibility and solve with the density-density part of
+   the interaction; they **reject** ``Exchange`` and ``PairHop`` (whose
+   vertex has no density-density content — the input would silently have
+   zero effect). The ``"general"`` scheme is the paramagnetic
    full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
-   :ref:`above <flex_scope>`) and suppresses the density-density reduction
-   warning, but it is **spin-free only** — it raises a ``ValueError`` for
-   ``spin_mode = "spin-diag"`` or ``"spinful"`` and rejects
-   ``enable_spin_orbital``. It is also **on-site only**: every two-body term
-   (``CoulombIntra``/``CoulombInter``/``Hund``/``Exchange``/``PairHop``/``Ising``)
-   must have ``irvec = (0,0,0)``; an off-site entry raises a ``ValueError``
-   (the MYO S/C matrices are built as q-independent constants). ``Exchange`` and
-   ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme), but
-   ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
-   **inert** (ignored with a warning). The general path writes ``chiq_s``/
+   :ref:`above <flex_scope>`), but it is **spin-free only** — it raises a
+   ``ValueError`` for ``spin_mode = "spin-diag"`` or ``"spinful"`` and
+   rejects ``enable_spin_orbital``. Off-site input is accepted only for
+   ``CoulombInter`` with equal orbitals (a == b) and no sublattice folding
+   — the class measured element-complete equal to the RPA ring; every
+   other off-site entry raises a ``ValueError``. ``Exchange`` and
+   ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme),
+   but ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
+   **inert** (accepted with a note that it is exactly zero). The general path writes ``chiq_s``/
    ``chiq_c`` in the MYO convention (tagged ``chi_convention="myo"``), which
    ``hwave_sc`` reads back automatically. In all schemes
    ``calc_type = "ring+ladder"`` is **not** supported (the solver raises a
@@ -763,36 +791,38 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
    .. warning::
 
-      **Result change for** ``calc_scheme = "general"``. Up to and including
-      the previous release, the general path applied a spurious orbital-pair
-      transpose when building its effective interaction. This transposed the
-      self-energy in the orbital indices, so ``sigma.npz`` — and everything
-      derived from it (occupations, energies, Eliashberg eigenvalues) — was
-      wrong **off the orbital diagonal**. Single-orbital runs are unaffected
-      (the transpose is the identity there); multi-orbital runs are affected
-      whenever the Green function has orbital off-diagonal weight. For a
+      **Result change for** ``calc_scheme = "general"``. Until this fix the
+      general path applied a spurious orbital-pair transpose when building its
+      effective interaction, so the self-energy was built from the transposed
+      bubble: ``sigma.npz`` — and everything derived from it (occupations,
+      energies, Eliashberg eigenvalues) — was correct on the orbital diagonal
+      and wrong **off** it. The scheme has only ever existed in development
+      builds, so this affects work done on ``develop``, not any released
+      version. Single-orbital runs are unaffected (the transpose is the
+      identity there); multi-orbital runs are affected whenever the Green
+      function has orbital off-diagonal weight. For a
       density-only interaction (``CoulombIntra`` alone) the general and reduced
       schemes now agree on the self-energy to machine precision, as they must.
 
-      The saved ``chiq_s``/``chiq_c`` are **unchanged** as long as the on-site
-      interaction parameters are symmetric in their orbital indices —
-      ``U'[a,b] = U'[b,a]``, ``J[a,b] = J[b,a]``, and likewise for
-      ``Exchange``, ``PairHop`` and ``Ising`` — which is the physical case.
-      The old and new expressions are then algebraically identical and differ
-      only by floating-point error of the matrix products and the channel
-      linear solve (~10⁻¹⁵ relative on the well-conditioned regression fixture;
-      expect more where ``1 ∓ χ⁰U`` is close to singular, i.e. near an RPA
-      instability). If an interaction file specifies an asymmetric orbital
-      matrix, the saved susceptibilities change too, and the new value is the
-      consistent one: it applies the interaction matrices in the same
-      orbital-pair index order that the RPA solver and ``hwave_sc`` use. (Only
-      that index order is shared — the general path deliberately keeps the MYO
-      value of the ``C(ab,ab)`` charge vertex, which differs from ``hwave_sc``.)
-      H-wave does not currently check interaction files for this symmetry.
+      The saved susceptibilities do **not** change. ``chi0q.npz`` was already
+      transposed back at the output boundary, and ``chiq_s``/``chiq_c`` were
+      already corrected separately (the ``chi_orbital_layout`` marker and the
+      ``[a,c,b,d]`` write order). Removing the transpose at its source makes
+      those output-boundary corrections unnecessary rather than changing their
+      result: measured on a 2-orbital Kanamori model the saved ``chi0q`` is
+      bit-identical and ``chiq_s``/``chiq_c`` agree to ~10⁻¹⁴ relative, the
+      residual being floating-point error of the matrix products and the
+      channel linear solve. That equivalence is exact algebra only while the
+      spin/charge interaction matrices are symmetric under the orbital-pair
+      transpose, which holds whenever the on-site interaction parameters are
+      symmetric in their orbital indices — the physical case. H-wave does not
+      currently check interaction files for that symmetry.
 
-      Multi-orbital results produced with ``calc_scheme = "general"`` before
-      this fix should be recomputed. ``calc_scheme = "reduced"`` and
-      ``"squashed"`` were never affected.
+      **What to regenerate.** ``sigma.npz`` and ``green.npz`` from any
+      multi-orbital ``calc_scheme = "general"`` run made before this fix, plus
+      anything derived from them. ``chi0q``/``chiq_s``/``chiq_c`` do not need
+      regenerating on this account. Single-orbital runs are unaffected, and
+      ``calc_scheme = "reduced"`` and ``"squashed"`` were never affected.
 
    **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see
    above) works with ``calc_scheme = "general"``, but IR only compresses the
@@ -960,13 +990,15 @@ Sample 3b: Full-vertex (general) variant
 -----------------------------------------
 
 The iron pnictide model above is also provided as a full-vertex variant
-that selects ``calc_scheme = "general"``. It uses the **same** model and
-interaction files (``CoulombIntra``, ``CoulombInter``, ``Hund``,
-``Exchange``), but retains the full off-diagonal Kanamori vertices (the
-spin-flip Hund and pair-hopping / exchange terms) instead of reducing them
-to their density--density part. This is the paramagnetic full-vertex MYO
-formulation [3]_ (corroborated by THU [4]_), and the density--density
-reduction warning is therefore suppressed.
+that selects ``calc_scheme = "general"`` explicitly. Since ``Exchange`` is
+present in the interaction files, Sample 3's ``calc_scheme = "auto"`` now
+resolves to the **same** general scheme automatically — the two samples run
+the identical full-vertex path, and this variant differs only in making the
+choice explicit. It uses the **same** model and interaction files
+(``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``) and retains
+the full off-diagonal Kanamori vertices (the spin-flip Hund and
+pair-hopping / exchange terms). This is the paramagnetic full-vertex MYO
+formulation [3]_ (corroborated by THU [4]_).
 
 This variant is appropriate for multi-orbital models in which the
 Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
@@ -982,9 +1014,10 @@ The sample files are in
 
 .. literalinclude:: ../sample/iron_2orb_general/input.toml
 
-The only essential change from Sample 3 is ``calc_scheme = "general"`` in
-the ``[mode]`` section; the geometry, transfer, and interaction files are
-identical.
+The only difference from Sample 3 is the explicit
+``calc_scheme = "general"`` in the ``[mode]`` section (Sample 3's
+``"auto"`` resolves to the same scheme); the geometry, transfer, and
+interaction files are identical, and so are the results.
 
 
 Tips
@@ -1018,14 +1051,27 @@ Tips
 
   .. note::
 
+     On the ``reduced``/``squashed`` route only the density-density
+     susceptibility :math:`\chi_{(a,a),(b,b)}` is stored, so the pairing vertex
+     is FLEX-dressed in full **only** for ``CoulombIntra``-only models (or
+     ``norb = 1``). With ``CoulombInter``, ``Hund`` or ``Ising`` the
+     off-density channels enter undressed and the solver warns.
+     ``Exchange`` and ``PairHop`` are **rejected** with a reduced
+     susceptibility: they have no density-diagonal vertex content at all, so
+     nothing of them would be dressed -- and the schemes refuse them at the
+     FLEX/RPA stage anyway. Use ``calc_scheme = "general"`` for the complete
+     vertex. See
+     :ref:`the Eliashberg supported-interactions note <sc_supported_inter>`.
+
+  .. note::
+
      ``chi0q_mode = "flex"`` is **rejected** together with
      ``[eliashberg] bond_channels = true``: the bond-resolved path builds its
      own bond-resolved :math:`\bar\chi` bubble directly from the Green
-     function, so it never reads a ``chi0q``/``chiq`` file and FLEX
-     susceptibility ingestion is unsupported there. To feed a FLEX-dressed
-     Green function into the bond path instead, run FLEX to convergence and
-     point ``[eliashberg] bond_green`` at its ``green.npz`` output; see the
-     ``bond_green`` parameter in :doc:`/rpa/tutorial/sc-index`.
+     function, so it never reads a ``chi0q``/``chiq`` file. To feed a
+     FLEX-dressed Green function into the bond path, run FLEX to convergence
+     and point ``[eliashberg] bond_green`` at its ``green.npz`` output; see
+     the ``bond_green`` parameter in :doc:`/rpa/tutorial/sc-index`.
 
 
 Implementation details and limitations
@@ -1053,20 +1099,23 @@ The FLEX solver supports the following interaction types:
      - Yes
      - Hund's coupling :math:`J`
    * - ``Exchange``
-     - Partial
-     - Exchange interaction :math:`J'` (density-density part only;
-       off-diagonal spin-flip/pair vertices are dropped)
+     - general only
+     - Exchange interaction :math:`J'` (no density-density vertex
+       content: rejected under ``reduced``/``squashed``; ``auto``
+       selects ``general``)
    * - ``Ising``
      - Yes
      - Ising-type interaction
    * - ``PairLift``
-     - Partial
-     - Pair lifting interaction (density-density part only;
-       off-diagonal vertices are dropped)
+     - Inert
+     - Pair lifting interaction (particle-hole vertex exactly zero;
+       accepted in every scheme, with no effect on the
+       susceptibility channels)
    * - ``PairHop``
-     - Partial
-     - Pair hopping interaction (density-density part only;
-       off-diagonal vertices are dropped)
+     - general only
+     - Pair hopping interaction (no density-density vertex content:
+       rejected under ``reduced``/``squashed``; ``auto`` selects
+       ``general``)
    * - ``InterAll``
      - **No**
      - Arbitrary 4-body interaction (UHFr solver only)
@@ -1098,7 +1147,7 @@ interactions via FFT:
 
 .. math::
 
-   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{-i\mathbf{q}\cdot\mathbf{r}}
+   W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}
 
 For example, to include nearest-neighbor Coulomb interactions,
 add entries with lattice vectors ``(1,0,0)``, ``(0,1,0)``, etc.
@@ -1133,11 +1182,12 @@ where :math:`W_{\mathrm{same}}` is the same-spin interaction and
 This contraction is exact for **density-density type interactions**.
 ``CoulombIntra``, ``CoulombInter``, ``Hund``, and ``Ising``
 are all density-density type and are handled correctly.
-``Exchange``, ``PairLift``, and ``PairHop`` are **not** purely
-density-density: only their density-density part is retained, while
-their off-diagonal (spin-flip / pair-scattering) vertices are dropped
-in the reduction. The solver emits a warning when such interactions are
-present, so the user is aware of this approximation.
+``Exchange`` and ``PairHop`` have **no** density-density vertex content,
+so this reduction cannot represent them at all: the solver rejects them
+under ``reduced``/``squashed`` with a ``ValueError`` pointing to
+``calc_scheme = "general"`` (``auto`` selects it for you).
+``PairLift``'s particle-hole vertex is exactly zero, so it is accepted
+in every scheme and its absence from the channels is exact.
 
 
 Spin degrees of freedom (spin-free mode)

@@ -58,15 +58,18 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
     """The hwave_sc k-space builders must follow the SAME Fourier/orbital
     convention as the UHFk/RPA/FLEX solver core:
 
-        M[a, b](k) = sum_R M_R[a, b] * exp(-i k.R)
+        M[a, b](k) = sum_R M_R[a, b] * exp(+i k.R)
 
-    (rpa.py _make_ham_trans: tab_r[R, orb1, orb2] + numpy fftn == e^{-ikR}).
-    Historically sc.py built epsilon_k[orb2, orb1] with e^{+ikR}, i.e. the
-    orbital-transposed matrix at -k. For real (time-reversal-symmetric)
-    hoppings the two coincide element-wise, which masked the difference; for
-    complex Hermitian hoppings they differ, so quantities loaded from
-    FLEX/RPA files (green, chi0q) disagreed element-wise with sc-built ones.
-    These tests pin the solver convention with a complex Hermitian fixture."""
+    (the documented Wannier90-style sign; since issue #133 the whole solver
+    core -- UHFk, both RPA transfer branches, the interaction FFTs, and
+    these builders -- shares it. Historically sc.py built
+    epsilon_k[orb2, orb1] with e^{+ikR} against a e^{-ikR} core, i.e. the
+    orbital-transposed matrix at -k; then briefly the core convention
+    itself was split between modes. For hoppings whose k-space matrix is
+    elementwise even under k -> -k -- e.g. R-symmetric real bonds -- the
+    signs coincide, which masked all of it; complex Hermitian directional
+    hoppings pin the sign.) These tests pin the solver convention with a
+    complex Hermitian fixture."""
 
     def setUp(self):
         self.Nx, self.Ny, self.Nz = 4, 4, 1
@@ -85,13 +88,13 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         self.kz = np.linspace(0, 2 * np.pi, self.Nz, endpoint=False)
 
     def _expected(self, value_r):
-        """Direct evaluation of the solver convention sum_R M_R[a,b] e^{-ikR}."""
+        """Direct evaluation of the solver convention sum_R M_R[a,b] e^{+ikR}."""
         out = np.zeros((self.norb, self.norb, self.Nx, self.Ny, self.Nz),
                        dtype=complex)
         kxm, kym, kzm = np.meshgrid(self.kx, self.ky, self.kz, indexing='ij')
         for (irvec, (o1, o2)), v in value_r.items():
             out[o1, o2] += v * np.exp(
-                -1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
+                +1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
         return out
 
     def test_hamiltonian_k_matches_solver_convention(self):
@@ -99,7 +102,20 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
                                    self.norb)
         npt.assert_allclose(eps, self._expected(self.hr), atol=1e-12)
 
-    def test_interaction_k_matches_solver_convention(self):
+    def test_interaction_k_is_the_pair_transpose(self):
+        """The INTERACTION keeps the solver's e^{+iqR} phase but stores the
+        orbital pair TRANSPOSED, unlike the one-body Hamiltonian above.
+
+        It is a four-index object, and its matrix form carries a pair-index
+        transpose: H-wave's own paper (arXiv:2308.00324) Eq.(21) defines the
+        matrix entering the RPA equation as ``[W(q)]^{ab} = W_q^{ba}``, so a
+        density-density term ``W^{aabb} = V_ab(R)`` gives
+        ``[W(q)]^{(aa),(bb)} = V_ba(q)``.  ``rpa.py::_make_ham_inter`` builds
+        that; this builder must agree (issue #96).
+
+        An earlier revision aligned this builder to the one-body convention,
+        which is why the assertion below is the transpose of ``_expected``.
+        """
         # complex Hermitian off-site "CoulombInter" exercises both the
         # orbital-index order and the Fourier phase sign
         vr = {
@@ -110,8 +126,13 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         }
         inter_k = _build_interaction_k(self.kx, self.ky, self.kz,
                                        {"CoulombInter": vr}, self.norb)
-        npt.assert_allclose(inter_k["CoulombInter"], self._expected(vr),
-                            atol=1e-12)
+        expected = self._expected(vr)
+        npt.assert_allclose(inter_k["CoulombInter"],
+                            expected.transpose(1, 0, 2, 3, 4), atol=1e-12)
+        # ...and not vacuously: the fixture is orbital-asymmetric, so the
+        # transpose really is a different matrix
+        self.assertGreater(
+            np.max(np.abs(expected - expected.transpose(1, 0, 2, 3, 4))), 1e-6)
 
 
 class TestGreenFunction(unittest.TestCase):
@@ -1369,9 +1390,9 @@ class TestFlexVertexMYOConvention(unittest.TestCase):
                                           convention="kuroki")
         v_myo = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                        convention="myo")
-        self.assertGreater(
-            np.linalg.norm(v_myo - v_kuroki), 1e-8,
-            "MYO and Kuroki pairing vertices must differ when Hund J != 0")
+        # Adjudicated by exact diagonalization (issue #113): the per-type
+        # values make the two builders identical, so the vertices must AGREE.
+        npt.assert_allclose(v_myo, v_kuroki, atol=1e-12)
 
     def test_myo_matches_myo_sc_formula(self):
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
@@ -2062,10 +2083,14 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_mat[0, 0], U_val, atol=1e-10)
         npt.assert_allclose(C_mat[0, 0], U_val, atol=1e-10)
 
-        # (l1=0,l2=1,l3=0,l4=1) -> l1=l3!=l2=l4: S=U', C=-U'+J
+        # (l1=0,l2=1,l3=0,l4=1) -> l1=l3!=l2=l4:
+        #   S = U' - J + J' (= U' for J = J'),  C = -U' + J + J'
+        # (adjudicated by exact diagonalization, issue #113)
         idx_01 = 0 * norb + 1  # = 1
-        npt.assert_allclose(S_mat[idx_01, idx_01], Up_val, atol=1e-10)
-        npt.assert_allclose(C_mat[idx_01, idx_01], -Up_val + J_val, atol=1e-10)
+        npt.assert_allclose(S_mat[idx_01, idx_01],
+                            Up_val - J_val + Jp_val, atol=1e-10)
+        npt.assert_allclose(C_mat[idx_01, idx_01],
+                            -Up_val + J_val + Jp_val, atol=1e-10)
 
         # (l1=0,l2=0,l3=1,l4=1) -> l1=l2!=l3=l4: S=J, C=2U'-J
         idx_00 = 0 * norb + 0  # = 0
@@ -2073,17 +2098,18 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_mat[idx_00, idx_11], J_val, atol=1e-10)
         npt.assert_allclose(C_mat[idx_00, idx_11], 2 * Up_val - J_val, atol=1e-10)
 
-        # (l1=0,l2=1,l3=1,l4=0) -> l1=l4!=l2=l3: S=J', C=J'
+        # (l1=0,l2=1,l3=1,l4=0) -> l1=l4!=l2=l3: Exchange moved to the
+        # (ab,ab) slots (issue #113); with no PairHop these are zero.
         idx_01 = 0 * norb + 1  # = 1
         idx_10 = 1 * norb + 0  # = 2
-        npt.assert_allclose(S_mat[idx_01, idx_10], Jp_val, atol=1e-10)
-        npt.assert_allclose(C_mat[idx_01, idx_10], Jp_val, atol=1e-10)
+        npt.assert_allclose(S_mat[idx_01, idx_10], 0.0, atol=1e-10)
+        npt.assert_allclose(C_mat[idx_01, idx_10], 0.0, atol=1e-10)
 
     def test_ising_interaction(self):
         """Test S, C for 2 orbitals with Ising interaction.
 
         Ising contributes to cross and dens channels:
-        cross (l1=l3,l2=l4): S = -I, C = -I
+        cross (l1=l3,l2=l4): S = +I (sign per issue #113), C = -I
         dens  (l1=l2,l3=l4): S = -2I, C = 0
         """
         norb = 2
@@ -2097,9 +2123,10 @@ class TestSCMatrices(unittest.TestCase):
         inter_k = {"Ising": I_k}
         S_mat, C_mat = _build_sc_matrices(inter_k, norb, 0, 0, 0)
 
-        # cross (l1=0,l2=1,l3=0,l4=1): S = -I, C = -I
+        # cross (l1=0,l2=1,l3=0,l4=1): S = +I, C = -I. The S sign was
+        # adjudicated by exact diagonalization (issue #113).
         idx_01 = 0 * norb + 1
-        npt.assert_allclose(S_mat[idx_01, idx_01], -I_val, atol=1e-10)
+        npt.assert_allclose(S_mat[idx_01, idx_01], +I_val, atol=1e-10)
         npt.assert_allclose(C_mat[idx_01, idx_01], -I_val, atol=1e-10)
 
         # dens (l1=0,l2=0,l3=1,l4=1): S = -2I, C = 0
@@ -2206,10 +2233,12 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_full[0, 0], U, atol=1e-10)
         npt.assert_allclose(C_full[0, 0], U, atol=1e-10)
 
-        # cross: S = V - I, C = -V + J - I
+        # cross: S = V + I - J + J', C = -V + J + J' - I  (issue #113)
         idx_01 = 0 * norb + 1
-        npt.assert_allclose(S_full[idx_01, idx_01], V - I_val, atol=1e-10)
-        npt.assert_allclose(C_full[idx_01, idx_01], -V + J - I_val, atol=1e-10)
+        npt.assert_allclose(S_full[idx_01, idx_01],
+                            V + I_val - J + Jp, atol=1e-10)
+        npt.assert_allclose(C_full[idx_01, idx_01],
+                            -V + J + Jp - I_val, atol=1e-10)
 
         # dens: S = J - 2I, C = 2V - J
         idx_00 = 0 * norb + 0
@@ -2217,11 +2246,11 @@ class TestSCMatrices(unittest.TestCase):
         npt.assert_allclose(S_full[idx_00, idx_11], J - 2 * I_val, atol=1e-10)
         npt.assert_allclose(C_full[idx_00, idx_11], 2 * V - J, atol=1e-10)
 
-        # exch: S = Jp + P, C = Jp + P
+        # exch: PairHop only (Exchange moved to (ab,ab), issue #113)
         idx_01 = 0 * norb + 1
         idx_10 = 1 * norb + 0
-        npt.assert_allclose(S_full[idx_01, idx_10], Jp + P, atol=1e-10)
-        npt.assert_allclose(C_full[idx_01, idx_10], Jp + P, atol=1e-10)
+        npt.assert_allclose(S_full[idx_01, idx_10], P, atol=1e-10)
+        npt.assert_allclose(C_full[idx_01, idx_10], P, atol=1e-10)
 
 
 class TestTripletPairing(unittest.TestCase):
@@ -2500,7 +2529,7 @@ class TestChi0qInternal(unittest.TestCase):
 
             # Save it as npz file
             chi0q_file = os.path.join(output_dir, "chi0q.npz")
-            np.savez(chi0q_file, chi0q=chi0q_calc)
+            np.savez(chi0q_file, chi0q=chi0q_calc, momentum_convention="e_plus_ikR")
 
             # Load it back
             from hwave.sc import _load_chi0q
@@ -2675,7 +2704,15 @@ class TestChi0q4Index(unittest.TestCase):
         self.assertEqual(Vs_q.shape, (norb, norb, norb, norb, Nx, Ny, Nz))
 
     def test_vertex_4index_vs_2index_differ(self):
-        """Test that 4-index chi0q gives different vertex than 2-index diagonal approx."""
+        """A 2-index (reduced) chi0q keeps only the density-density block, so it
+        agrees with the 4-index vertex exactly when the interaction lives on
+        that block (CoulombIntra only), and differs once a term reaches the
+        off-density blocks (here Hund).
+
+        Before the density-pair embedding fix, the reduced chi0q was scattered
+        as kron(chi0_2d, I_norb), which made even the CoulombIntra-only case
+        disagree with the 4-index reference -- the disagreement this test used
+        to assert."""
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             input_dir, output_dir = self._create_2orb_test_files(tmpdir)
@@ -2697,18 +2734,37 @@ class TestChi0q4Index(unittest.TestCase):
             U_k[1, 1] = 3.0
             inter_k = {"CoulombIntra": U_k}
 
-            # Compute vertex with 4-index (correct)
+            # CoulombIntra only: S and C are confined to the density-pair block
+            # (_build_sc_matrices_all_q case 1), so the off-density components
+            # of the 4-index chi0q never enter S @ chi @ S. The reduced chi0q
+            # loses nothing that the vertex reads, and the two must agree.
             Vs_4idx = _compute_vertices_general(
                 chi0q_gen_ref, inter_k, norb, Nx, Ny, Nz, nmat)
-
-            # Compute vertex with 2-index (approximate)
             Vs_2idx = _compute_vertices_general(
                 chi0q_red_ref, inter_k, norb, Nx, Ny, Nz, nmat)
+            np.testing.assert_allclose(
+                Vs_2idx, Vs_4idx, rtol=1e-9, atol=1e-11,
+                err_msg="for CoulombIntra only the reduced chi0q carries every "
+                        "component the vertex reads, so it must reproduce the "
+                        "4-index vertex exactly")
 
-            # They should differ because off-diagonal chi0q components matter
-            diff = np.max(np.abs(Vs_4idx - Vs_2idx))
-            self.assertGreater(diff, 1e-3,
-                               "4-index and 2-index vertices should differ for 2-orbital system")
+            # Add Hund: S/C now also populate the off-density blocks
+            # S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)], where the reduced chi0q has
+            # nothing. The 4-index vertex dresses those channels, the reduced
+            # one leaves them bare -- so now they genuinely differ.
+            J_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+            J_k[0, 1] = 0.7
+            J_k[1, 0] = 0.7
+            inter_k_J = dict(inter_k, Hund=J_k)
+            Vs_4idx_J = _compute_vertices_general(
+                chi0q_gen_ref, inter_k_J, norb, Nx, Ny, Nz, nmat)
+            Vs_2idx_J = _compute_vertices_general(
+                chi0q_red_ref, inter_k_J, norb, Nx, Ny, Nz, nmat)
+            diff = np.max(np.abs(Vs_4idx_J - Vs_2idx_J))
+            self.assertGreater(
+                diff, 1e-3,
+                "with Hund the reduced chi0q is missing the off-density "
+                "components the vertex reads, so the vertices must differ")
 
 
 class TestKanamoriInteraction(unittest.TestCase):
@@ -2755,6 +2811,17 @@ class TestKanamoriInteraction(unittest.TestCase):
             "kx": kx, "ky": ky, "kz": kz,
             "green_kw": green_kw,
         }
+
+    @staticmethod
+    def _embed4(chi0q, norb, Nx, Ny, Nz, nmat):
+        """Density-pair embedding of a 2-index chi0q into the four-index
+        form (out[(a,a),(b,b)] = X[a,b], everything else zero)."""
+        out = np.zeros((norb, norb, norb, norb, Nx, Ny, Nz, nmat),
+                       dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                out[a, a, b, b] = chi0q[a, b]
+        return out
 
     def _make_inter_k(self, norb, Nx, Ny, Nz, U=0.0, Up=0.0, J=0.0, Jp=0.0):
         """Create interaction dict for Kanamori-type interactions."""
@@ -2880,28 +2947,37 @@ class TestKanamoriInteraction(unittest.TestCase):
         npt.assert_allclose(S_all[0, 0], U, atol=1e-10)
         npt.assert_allclose(S_all[3, 3], U, atol=1e-10)
         # cross (l1=l3 != l2=l4): S = U'
-        npt.assert_allclose(S_all[1, 1], Up, atol=1e-10)  # (01, 01)
-        npt.assert_allclose(S_all[2, 2], Up, atol=1e-10)  # (10, 10)
+        npt.assert_allclose(S_all[1, 1], Up - J + Jp, atol=1e-10)  # (01, 01)
+        npt.assert_allclose(S_all[2, 2], Up - J + Jp, atol=1e-10)  # (10, 10)
         # dens (l1=l2 != l3=l4): S = J
         npt.assert_allclose(S_all[0, 3], J, atol=1e-10)   # (00, 11)
         npt.assert_allclose(S_all[3, 0], J, atol=1e-10)   # (11, 00)
         # exch (l1=l4 != l2=l3): S = J'
-        npt.assert_allclose(S_all[1, 2], Jp, atol=1e-10)  # (01, 10)
-        npt.assert_allclose(S_all[2, 1], Jp, atol=1e-10)  # (10, 01)
+        npt.assert_allclose(S_all[1, 2], 0.0, atol=1e-10)  # (01, 10) #113
+        npt.assert_allclose(S_all[2, 1], 0.0, atol=1e-10)  # (10, 01)
 
         # Check C matrix
         # diag: C = U
         npt.assert_allclose(C_all[0, 0], U, atol=1e-10)
         # cross: C = -U' + J
-        npt.assert_allclose(C_all[1, 1], -Up + J, atol=1e-10)
+        npt.assert_allclose(C_all[1, 1], -Up + J + Jp, atol=1e-10)  # #113
         # dens: C = 2U' - J
         npt.assert_allclose(C_all[0, 3], 2 * Up - J, atol=1e-10)
         # exch: C = J'
-        npt.assert_allclose(C_all[1, 2], Jp, atol=1e-10)
+        npt.assert_allclose(C_all[1, 2], 0.0, atol=1e-10)  # #113
 
-        # Now verify RPA susceptibility computation
-        # Use a small chi0 so the series converges
-        chi0 = np.eye(nd, dtype=complex) * 0.05
+        # Now verify RPA susceptibility computation (full Kanamori,
+        # including J': the code path below receives the FOUR-index
+        # embedded chi0q, which the reduced-chi rejection does not police).
+        # Use a small chi0 so the series converges, and make it
+        # DENSITY-DIAGONAL (nonzero only at [(a,a),(b,b)]) so the manual
+        # nd x nd reference and the four-index embedded code path compare
+        # the same physics exactly.
+        chi0 = np.zeros((nd, nd), dtype=complex)
+        _dens_block = np.array([[0.05, 0.01], [0.01, 0.04]], dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                chi0[a * norb + a, b * norb + b] = _dens_block[a, b]
 
         # Manual computation
         I_mat = np.eye(nd, dtype=complex)
@@ -2926,10 +3002,15 @@ class TestKanamoriInteraction(unittest.TestCase):
             for b in range(norb):
                 chi0q[a, b, 0, 0, 0, nmat // 2] = chi0[a * norb + a, b * norb + b]
 
+        # four-index embedding: full Kanamori (including J') is retained
+        # -- the reduced-chi rejection polices only 2-index input, and this
+        # doubles as proof that four-index input is not falsely rejected
+        chi0q4 = self._embed4(chi0q, norb, Nx, Ny, Nz, nmat)
+
         Vs_singlet = _compute_vertices_general(
-            chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
+            chi0q4, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
         Vs_triplet = _compute_vertices_general(
-            chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="triplet")
+            chi0q4, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="triplet")
 
         # Compare at q=(0,0,0)
         V_s_code = Vs_singlet[:, :, :, :, 0, 0, 0].reshape(nd, nd)
@@ -2973,6 +3054,12 @@ class TestKanamoriInteraction(unittest.TestCase):
                     fftn(prod, axes=(0, 1, 2)), axes=(0, 1, 2)
                 ) * (Nx * Ny * Nz) / beta
 
+        # embed the density chi0q into the four-index form: full Kanamori
+        # (including J' = J) is retained -- four-index input is not policed
+        # by the reduced-chi rejection, and this also proves it is not
+        # falsely rejected
+        chi0q = self._embed4(chi0q, norb, Nx, Ny, Nz, nmat)
+
         # General mode (4-index vertex) is required with Hund/Exchange
         Vs_q = _compute_vertices(
             chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
@@ -2989,6 +3076,9 @@ class TestKanamoriInteraction(unittest.TestCase):
             max_iter=200, alpha=0.5, tol=1e-5)
         self.assertEqual(sigma_iter.shape, (norb, norb, Nx, Ny, Nz))
         self.assertGreater(n_iter, 0, "Should iterate at least once")
+        self.assertTrue(converged,
+                        "the docstring claims convergence; without it the "
+                        "eigenvalue comparison below would be meaningless")
 
         # Test eigenvalue
         eigenvalues, eigvecs = _solve_eigenvalue(
@@ -3002,7 +3092,8 @@ class TestKanamoriInteraction(unittest.TestCase):
                 err_msg="Leading eigenvalue from eigs should match iteration")
 
     def test_kanamori_singlet_vs_triplet(self):
-        """Singlet and triplet channels should give different eigenvalues with J."""
+        """Singlet and triplet channels should give different eigenvalues
+        with the full Kanamori interactions (J and J' = J)."""
         params = self._setup_2orb_model(Nx=4, Ny=4, Nz=1, nmat=16, beta=5.0)
         norb, Nx, Ny, Nz, nmat, beta = (
             params[k] for k in ["norb", "Nx", "Ny", "Nz", "nmat", "beta"])
@@ -3025,6 +3116,10 @@ class TestKanamoriInteraction(unittest.TestCase):
                 chi0q[a, b] = -ifftn(
                     fftn(prod, axes=(0, 1, 2)), axes=(0, 1, 2)
                 ) * (Nx * Ny * Nz) / beta
+
+        # four-index embedding: full Kanamori including J' = J is retained
+        # (four-index input is not policed by the reduced-chi rejection)
+        chi0q = self._embed4(chi0q, norb, Nx, Ny, Nz, nmat)
 
         Vs_singlet = _compute_vertices(
             chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
@@ -3068,7 +3163,7 @@ class TestKanamoriInteraction(unittest.TestCase):
         npt.assert_allclose(S_diag, U, atol=1e-10)
         npt.assert_allclose(S_cross, Up, atol=1e-10)
         npt.assert_allclose(S_dens, J, atol=1e-10)
-        npt.assert_allclose(S_exch, J, atol=1e-10)
+        npt.assert_allclose(S_exch, 0.0, atol=1e-10)  # Exchange moved (#113)
         # U' = U - 2J
         npt.assert_allclose(S_cross, S_diag - 2 * S_dens, atol=1e-10,
                             err_msg="Kanamori relation U'=U-2J should hold in S matrix")
@@ -3080,12 +3175,17 @@ class TestKanamoriInteraction(unittest.TestCase):
         C_exch = C_mat[1, 2]       # J' = J
 
         npt.assert_allclose(C_diag, U, atol=1e-10)
-        npt.assert_allclose(C_cross, -Up + J, atol=1e-10)
+        # C_cross = -U' + J + J' = -U' + 2J for J = J' -- the standard
+        # Kanamori value, from the corrected per-type split (#113)
+        npt.assert_allclose(C_cross, -Up + 2 * J, atol=1e-10)
         npt.assert_allclose(C_dens, 2 * Up - J, atol=1e-10)
-        npt.assert_allclose(C_exch, J, atol=1e-10)
+        npt.assert_allclose(C_exch, 0.0, atol=1e-10)
 
     def test_kanamori_with_ising_pairhop_eliashberg(self):
-        """End-to-end test with all interaction types: U, U', J, J', Ising, PairHop."""
+        """End-to-end with every type a 2-index chi0q supports: U, U', J
+        (Hund), Ising -- and a pinned REJECTION for Exchange/PairHop, which
+        have no density-diagonal vertex and are refused with this chi0q
+        form (#120 alignment)."""
         params = self._setup_2orb_model(Nx=4, Ny=4, Nz=1, nmat=16, beta=5.0)
         norb, Nx, Ny, Nz, nmat, beta = (
             params[k] for k in ["norb", "Nx", "Ny", "Nz", "nmat", "beta"])
@@ -3120,8 +3220,11 @@ class TestKanamoriInteraction(unittest.TestCase):
             "CoulombIntra": U_k,
             "CoulombInter": V_k,
             "Hund": J_k,
-            "Exchange": Jp_k,
             "Ising": I_k,
+        }
+        inter_k_rejected = {
+            "CoulombIntra": U_k,
+            "Exchange": Jp_k,
             "PairHop": PH_k,
         }
 
@@ -3142,6 +3245,11 @@ class TestKanamoriInteraction(unittest.TestCase):
             chi0q, inter_k, norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
         self.assertEqual(Vs_q.ndim, 7)
 
+        with self.assertRaises(ValueError) as cm:
+            _compute_vertices(chi0q, inter_k_rejected, norb, Nx, Ny, Nz,
+                              nmat, pairing_type="singlet")
+        self.assertIn("general", str(cm.exception))
+
         G2 = _calc_g2(green_kw, beta)
         sigma_init = _initialize_gap("cos", norb, params["kx"], params["ky"],
                                      params["kz"])
@@ -3158,12 +3266,18 @@ class TestKanamoriInteraction(unittest.TestCase):
         for ev in eigenvalues:
             self.assertTrue(np.isfinite(ev), "All eigenvalues should be finite")
 
-    def test_rpa_chi_vs_rpa_solver(self):
-        """Compare RPA susceptibility from sc.py S/C matrices vs rpa.py solver.
+    def test_rpa_chi_from_sc_matrices_is_finite_on_rpa_solver_chi0q(self):
+        """Smoke test: feed a REAL reduced chi0q from the RPA solver through
+        sc.py's S/C dressing and check both channels stay finite.
 
-        For a system with CoulombIntra + Hund, verify that the spin-channel
-        RPA susceptibility computed via S/C matrices matches the RPA solver.
-        """
+        NOTE: this does NOT compare against the RPA solver's own chi_s/chi_c --
+        it was previously named as if it did. It builds chi0q with the solver,
+        embeds it at the density-pair positions, and solves
+        [I -+ chi0 S/C]^{-1} chi0 here, asserting only that no q-point diverges
+        for a small U. A genuine cross-implementation comparison would be
+        valuable, but the reduced RPA solve and sc.py's general S/C formulation
+        do not treat Hund identically, so what the two should agree on has to be
+        established first rather than assumed."""
         import tempfile
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.rpa as sol_rpa
@@ -3276,11 +3390,16 @@ class TestKanamoriInteraction(unittest.TestCase):
 
             # chi0 at static limit
             chi0_static = chi0q_ref[:, :, :, :, :, nmat // 2]
-            # Expand 2-index to 4-index for matrix formulation
+            # Expand 2-index to 4-index for the matrix formulation, using the
+            # SAME density-pair placement as production: a reduced chi0 is the
+            # density-density diagonal, so chi0_2d[a,b] belongs at
+            # [(a,a),(b,b)]. (This mirrored the old kron(chi0_2d, I_norb)
+            # scatter, which modelled different susceptibility data than the
+            # solver actually builds.)
             chi0_2d = chi0_static.transpose(2, 3, 4, 0, 1).copy()
             chi0_expanded = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-            for l2 in range(norb):
-                chi0_expanded[:, :, :, l2::norb, l2::norb] = chi0_2d
+            _dens = np.arange(norb) * norb + np.arange(norb)
+            chi0_expanded[..., _dens[:, None], _dens[None, :]] = chi0_2d
 
             I_mat = np.eye(nd, dtype=complex)
 

@@ -802,19 +802,16 @@ def _validate_green_beta(green, beta, label):
     return green
 
 
-def _g2_from_green(green, beta):
+def _g2_from_green(green, beta, tail=False):
     """Static two-particle bubble ``G2[i,j,l,m](k) = (T) sum_n
     G_{ij}(k, iw_n) G_{lm}(-k, -iw_n)`` (``T = 1/beta``).
 
-    The SINGLE shared implementation (roll+flip for ``G(-k, -w_n)``, per-site
-    batched GEMM over the Matsubara axis) used by both this module
-    (:func:`make_bond_kernel` / :func:`pair_weight`) and ``hwave.sc``, which
-    imports it as ``bond_channels._g2_from_green`` and exposes it under the
-    pre-existing name ``sc._calc_g2`` (review fix: this used to be a verbatim
-    copy kept "to avoid a circular import" -- that justification did not
-    hold, since ``bond_channels`` never imports ``sc``; only ``sc`` imports
-    ``bond_channels``, so hoisting the implementation here and having ``sc``
-    delegate to it introduces no cycle).
+    This is the bond-kernel implementation (roll+flip for ``G(-k, -w_n)``,
+    per-site batched GEMM over the Matsubara axis). With ``tail=True`` it adds
+    the same analytic ``1/wn**2`` window-complement correction as
+    :func:`hwave.sc._calc_g2`; the default remains the historical raw-window
+    behavior for direct callers, while the top-level solver forwards its
+    ``[eliashberg] g2_tail`` setting explicitly.
     """
     norb = green.shape[0]
     Nx, Ny, Nz, nmat = green.shape[2], green.shape[3], green.shape[4], green.shape[5]
@@ -827,11 +824,23 @@ def _g2_from_green(green, beta):
     Bs = np.moveaxis(Bm, 1, 0)
     G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)  # (norb^2, norb^2, nvol)
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
-    return G2 / beta
+    G2 = G2 / beta
+    if tail:
+        if nmat <= 0 or nmat % 2 != 0:
+            raise ValueError(
+                "the Matsubara tail correction (g2_tail) requires an even, "
+                "positive number of frequencies on the centered fermionic "
+                "grid; the Green function has nmat = {}".format(nmat))
+        r = 2.0 * np.arange(nmat) + 1.0 - nmat
+        coeff = beta * (0.25 - np.sum(1.0 / r**2) / np.pi**2)
+        di = np.arange(norb)
+        G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
+    return G2
 
 
 def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
-                     green, bond_set, pairing_type, beta, part="full"):
+                     green, bond_set, pairing_type, beta, part="full",
+                     g2_tail=False):
     """Build the two-part bond-resolved linearized Eliashberg operator (spec
     S4.5) as a scipy :class:`~scipy.sparse.linalg.LinearOperator`.
 
@@ -892,6 +901,10 @@ def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
         Selects ``F_s``/``Vpp_s`` (singlet) or ``F_t``/``Vpp_t`` (triplet).
     beta : float
         Inverse temperature (the ``T = 1/beta`` factor in ``G2``).
+    g2_tail : bool, optional
+        Apply the analytic high-frequency Matsubara correction to ``G2``.
+        Direct library calls default to the historical raw-window sum; the
+        top-level solver passes its configured value explicitly.
 
     part : {"full", "fluctuation", "instantaneous"}, optional
         Which piece of ``K = K^fl + K^pp`` the returned operator applies.
@@ -909,7 +922,7 @@ def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
     """
     ops, vec_size = _bond_kernel_operators(
         chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green, bond_set,
-        pairing_type, beta)
+        pairing_type, beta, g2_tail=g2_tail)
     if part not in ops:
         raise ValueError(
             "make_bond_kernel: unknown part '{}'. Use one of {}.".format(
@@ -918,7 +931,8 @@ def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 
 
 def make_bond_kernel_parts(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
-                           green, bond_set, pairing_type, beta):
+                           green, bond_set, pairing_type, beta, *,
+                           g2_tail=False):
     """Build the bond Eliashberg operator together with its two parts.
 
     Same arguments as :func:`make_bond_kernel`. The three operators share one
@@ -936,12 +950,13 @@ def make_bond_kernel_parts(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
     """
     ops, vec_size = _bond_kernel_operators(
         chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green, bond_set,
-        pairing_type, beta)
+        pairing_type, beta, g2_tail=g2_tail)
     return ops["full"], ops["fluctuation"], ops["instantaneous"], vec_size
 
 
 def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
-                           green, bond_set, pairing_type, beta):
+                           green, bond_set, pairing_type, beta, *,
+                           g2_tail=False):
     """Shared builder behind :func:`make_bond_kernel` /
     :func:`make_bond_kernel_parts`; returns ``({part: LinearOperator},
     vec_size)`` with parts ``"full"``, ``"fluctuation"``, ``"instantaneous"``.
@@ -981,7 +996,7 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 
     # --- invariants (hoisted out of the per-matvec closure) ---------------
     # X_{cd}(k) = sum_{ef} G2p[(cd),(ef),k] phi_{ef}(k), cd = c*norb+d.
-    G2 = _g2_from_green(green, beta)                      # (i,j,l,m,Nx,Ny,Nz)
+    G2 = _g2_from_green(green, beta, tail=g2_tail)       # (i,j,l,m,Nx,Ny,Nz)
     G2p = G2.transpose(0, 2, 1, 3, 4, 5, 6).reshape(nd, nd, N)  # [(c,d),(e,f),k]
 
     # Real-space fluctuation vertex F_hat[r, m, ab, m', cd] = IFFT_q F_q.
@@ -1272,7 +1287,7 @@ def bond_bubble(green, bond_set, beta):
 #     ``<v~|K~|v~>/<v~|v~> = <v|W K|v>/<v|W|v>``,
 #     which is what :func:`attribute_lambda` evaluates for each part.
 
-def pair_weight(green, beta):
+def pair_weight(green, beta, *, g2_tail=False):
     """Static pair weight ``w = GG`` as the Hermitian metric of the kernel.
 
     This is the SAME object the Eliashberg operator applies to the gap before
@@ -1300,7 +1315,7 @@ def pair_weight(green, beta):
     norb = green.shape[0]
     nd = norb * norb
     Nx, Ny, Nz = green.shape[2], green.shape[3], green.shape[4]
-    G2 = _g2_from_green(green, beta)          # (i,j,l,m,Nx,Ny,Nz)
+    G2 = _g2_from_green(green, beta, tail=g2_tail)  # (i,j,l,m,Nx,Ny,Nz)
     W = G2.transpose(0, 2, 1, 3, 4, 5, 6).reshape(nd, nd, Nx, Ny, Nz)
     return np.moveaxis(W, (0, 1), (3, 4)).copy()
 

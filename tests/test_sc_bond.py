@@ -219,7 +219,7 @@ def test_compute_vertices_general_dressing_is_bit_identical():
     assert np.array_equal(got, ref)
 
 
-def _ill_conditioned_general_case(target=5.0e-3):
+def _ill_conditioned_general_case(target=1.0e-3):
     """Build a DEFAULT-path ``_compute_vertices_general`` input whose spin RPA
     denominator ``I - chi0 @ S`` is invertible but badly conditioned
     (``sigma_min/sigma_max <= 1e-3``).
@@ -659,7 +659,7 @@ def test_bond_kernel_reduces_to_standard_kernel_when_V_is_zero():
     chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
     A_bond, n_bond = make_bond_kernel(chi_s, chi_c, S_bond, C_bond,
                                       Vpp_s, Vpp_t, green, bond_set,
-                                      "singlet", beta)
+                                      "singlet", beta, g2_tail=True)
 
     # standard path fed the SAME bubble (the m=m'=0 block of chi_bar)
     chi0q = chi_bar[:, :, :, 0, 0].transpose(0, 1, 2).reshape(
@@ -2340,7 +2340,7 @@ def test_bond_diagnostics_harmonics_match_the_library_helper(tmpout):
     beta = 1.0 / inp["mode"]["param"]["T"]
     mu = sc._determine_mu(ev, beta, inp["mode"]["param"]["filling"], 1)
     green = sc._calc_green(ev, evec, mu, beta, inp["mode"]["param"]["Nmat"])
-    weight = bc.pair_weight(green, beta)
+    weight = bc.pair_weight(green, beta, g2_tail=True)
 
     ref = bc.harmonic_decomposition([vec.ravel()], basis, weight)
     assert set(emitted) == set(ref)

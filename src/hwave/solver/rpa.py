@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 #import read_input_k
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.qlmsio.wan90 as wan90
+from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
+from hwave.solver.kgrid import reverse_fft_axes
+from hwave.solver.declarations import symmetrise_dense
+from hwave.solver.density_projection import (
+    project_density_pairs, project_density_squashed)
 from . import backend as _bk
 from . import fold
 from . import matsubara as _ms
@@ -72,6 +77,200 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
             "current RPA solver.".format(file_name, conv)
         )
 
+MOMENTUM_CONVENTION = "e_plus_ikR"
+
+
+def check_momentum_marker(data, file_name):
+    """Strictly validate a PRESENT momentum_convention marker.
+
+    Returns True when a valid marker is present, False when the file has
+    none. A malformed marker (not exactly one value) or a mismatching tag
+    raises. Consumers whose legacy files are known to already use the
+    documented sign (e.g. UHFk green outputs) call this alone, accepting
+    unmarked files without a content check.
+    """
+    files = getattr(data, "files", data)
+    if "momentum_convention" not in files:
+        return False
+    tag_arr = np.asarray(data["momentum_convention"]).ravel()
+    # exactly one value (round-5 review): a multi-element marker
+    # previously authorized via its first element and an empty one
+    # died on an incidental IndexError
+    if tag_arr.size != 1:
+        raise ValueError(
+            "file '{}': momentum_convention must be a single value, "
+            "got {!r}; regenerate the file.".format(
+                file_name, np.asarray(data["momentum_convention"])))
+    tag = str(tag_arr[0])
+    if tag != MOMENTUM_CONVENTION:
+        raise ValueError(
+            "file '{}' records momentum_convention = '{}' but this "
+            "build uses '{}'; regenerate the file.".format(
+                file_name, tag, MOMENTUM_CONVENTION))
+    return True
+
+
+# Chunk bound for the validator's scans: temporaries per processed block
+# stay at a few times this many elements, independent of the payload size
+# (round-9 review: the previous whole-tensor pipeline allocated ~5.5x the
+# payload -- ~200 GiB for a large general-scheme chi file).
+_MOMENTUM_SCAN_BLOCK = 1 << 18
+
+
+def validate_momentum_convention(data, file_name, payload, q_axis,
+                                 lattice_shape):
+    """Fail closed on momentum-convention mismatches (issue #133).
+
+    Every k/q-space NPZ written since #133 carries
+    momentum_convention = "e_plus_ikR" (the documented Wannier90-style
+    sign). Files written before the fix carry q labels of the OPPOSITE
+    sign; silently combining one with current-convention quantities would
+    mix q and -q. Legacy files without the marker are accepted ONLY when
+    the stored payload is elementwise even under q -> -q on the FFT grid
+    (then the two conventions coincide bit-for-bit -- true for every
+    centrosymmetric fixture); otherwise they are rejected with a
+    regeneration hint, following the sc_vertex_version fail-closed
+    precedent of gating on content, not age.
+
+    Both the finiteness scan (which runs for marked files too -- a valid
+    marker must not authorize NaN/Inf content) and the q/-q comparison
+    are CHUNKED: no full-size reversed, normalized, or boolean tensor is
+    materialized (round-9 review).
+
+    Parameters: payload is the stored array, q_axis its flattened
+    (nx, ny, nz) momentum axis (or a 3-tuple of explicit axes),
+    lattice_shape that grid.
+    """
+    marked = check_momentum_marker(data, file_name)
+    arr = np.asarray(payload)
+    if arr.size == 0:
+        return
+    nx, ny, nz = lattice_shape
+    nvol = nx * ny * nz
+    from hwave.solver.kgrid import reverse_fft_axes
+
+    def _num(block):
+        # signed-integer payloads overflow np.abs at INT_MIN (round-10
+        # review); cast PER BLOCK to float64 -- bounded, and a no-op for
+        # the float/complex arrays production writes
+        b = np.asarray(block)
+        if b.dtype.kind not in "fc":
+            b = b.astype(np.float64)
+        return b
+
+    # Two-level chunking (round-10 review): chunk the q axis AND, when a
+    # single q plane alone exceeds the element bound (large frequency/
+    # orbital axes, tiny grids), also the leading non-q axis. Extraction
+    # always indexes the ORIGINAL array (slices / fancy indexing copy
+    # only the selected block; operating on a moveaxis view made numpy
+    # consolidate the whole tensor). Reversed q indices are computed per
+    # chunk -- no full-size index grids.
+    def _rev_flat(idx):
+        ix = idx // (ny * nz)
+        iy = (idx // nz) % ny
+        iz = idx % nz
+        return (((-ix) % nx) * ny + ((-iy) % ny)) * nz + ((-iz) % nz)
+
+    if isinstance(q_axis, (tuple, list)):
+        axes = [a % arr.ndim for a in q_axis]
+        dims = [nx, ny, nz]
+        o = int(np.argmax(dims))
+        outer_ax, n_outer = axes[o], dims[o]
+        inner_block_axes = tuple(a - (a > outer_ax)
+                                 for i, a in enumerate(axes) if i != o)
+        q_set = set(axes)
+    else:
+        outer_ax = q_axis % arr.ndim
+        n_outer = arr.shape[outer_ax]
+        inner_block_axes = None
+        q_set = {outer_ax}
+    # lead-chunk over an axis OUTSIDE the momentum set (round-11: slicing
+    # an inner q axis would break the reversal pairing); if every axis is
+    # a momentum axis, lead chunking is disabled
+    chunk_ax = next((i for i in range(arr.ndim) if i not in q_set), None)
+    lead = arr.shape[chunk_ax] if chunk_ax is not None else 1
+    plane = max(1, arr.size // n_outer)
+
+    if plane <= _MOMENTUM_SCAN_BLOCK:
+        q_step = max(1, _MOMENTUM_SCAN_BLOCK // plane)
+        lead_step = lead
+    else:
+        q_step = 1
+        per_lead = max(1, plane // lead)
+        lead_step = max(1, _MOMENTUM_SCAN_BLOCK // per_lead)
+
+    def _lead_slices():
+        if chunk_ax is None:
+            yield slice(None)
+        else:
+            for l0 in range(0, lead, lead_step):
+                yield slice(l0, l0 + lead_step)
+
+    def _index(lsl, qsel):
+        idx = [slice(None)] * arr.ndim
+        if chunk_ax is not None:
+            idx[chunk_ax] = lsl
+        idx[outer_ax] = qsel
+        return arr[tuple(idx)]
+
+    def _finite_blocks():
+        for lsl in _lead_slices():
+            for q0 in range(0, n_outer, q_step):
+                yield _index(lsl, slice(q0, q0 + q_step))
+
+    def _pairs():
+        for lsl in _lead_slices():
+            if inner_block_axes is None:
+                for q0 in range(0, n_outer, q_step):
+                    idx = np.arange(q0, min(q0 + q_step, n_outer))
+                    yield (_index(lsl, idx),
+                           _index(lsl, _rev_flat(idx)))
+            else:
+                for ix in range(n_outer):
+                    a = np.asarray(_index(lsl, ix))
+                    b = np.asarray(_index(lsl, (-ix) % n_outer))
+                    yield a, reverse_fft_axes(b, inner_block_axes)
+
+    # chunked finiteness + component-scale pass; runs for MARKED files
+    # too (a marker must not authorize NaN/Inf content, round-9 review)
+    scale = 0.0
+    for block in _finite_blocks():
+        b = _num(block)
+        if not np.all(np.isfinite(b.real)) or (
+                np.iscomplexobj(b) and not np.all(np.isfinite(b.imag))):
+            raise ValueError(
+                "file '{}' contains non-finite values; regenerate the "
+                "file.".format(file_name))
+        if np.iscomplexobj(b):
+            m = max(float(np.abs(b.real).max()),
+                    float(np.abs(b.imag).max()))
+        else:
+            m = float(np.abs(b).max())
+        scale = max(scale, m)
+    if marked or scale == 0.0:
+        return
+    norm = max(scale, 1.0e-300)
+
+    for a, b in _pairs():
+        an = _num(a) / norm
+        bn = _num(b) / norm
+        diff = np.abs(an - bn)
+        tol = 1.0e-8 * (np.abs(an) + np.abs(bn)) + 1.0e-15
+        if bool(np.any(diff > tol)):
+            asym_rel = float(diff.max())
+            raise ValueError(
+                "file '{}' carries no momentum_convention marker and its "
+                "content is not elementwise even under q -> -q (max pair "
+                "deviation {:.3e} relative to the global scale {:.3e}): "
+                "it was written before the #133 Fourier-sign alignment "
+                "and its momentum labels are flipped relative to this "
+                "build. Regenerate the file with the current version. "
+                "(Files whose content is q-even are accepted: for them "
+                "the two conventions coincide.)".format(
+                    file_name, asym_rel, scale))
+
+
+
 def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
                       source="geom.dat"):
     """Physical orbital count from a geometry ``norb``.
@@ -91,6 +290,198 @@ def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
             "spin-orbital mode requires an even Geometry norb (the spin-orbital "
             "count = 2 * physical orbitals); got {} in {}".format(cn, source))
     return geom_norb // 2
+
+
+def _chi0q_fingerprint(arr):
+    """Content binding for chi0q provenance.
+
+    Provenance metadata travels in a caller-owned dict, so a caller can
+    replace the array while keeping the metadata; shape checks alone
+    cannot see a same-shaped replacement. The FULL canonical byte content
+    is hashed -- a strided sample was shown to miss single-element edits
+    of unsampled positions (round-6 review). blake2b throughput makes the
+    cost linear but small next to the solve itself; a non-contiguous view
+    or a device-backed array is converted first, which may copy.
+    Legitimate copies hash equal.
+    """
+    import hashlib
+
+    from . import backend as _bk_local
+
+    a = np.ascontiguousarray(_bk_local.to_host(arr))
+    h = hashlib.blake2b(digest_size=16)
+    h.update(str(a.shape).encode())
+    h.update(str(a.dtype).encode())
+    h.update(memoryview(a).cast("B"))
+    return h.hexdigest()
+
+
+def _validate_chi0q_provenance(meta, nfreq, source):
+    """Validate and NORMALIZE a chi0q provenance mapping.
+
+    Shared by the in-memory reuse route and the chi0q_init file route so
+    neither can smuggle malformed provenance past the other (round-5
+    review: nmat was validated only when freq_index was present, a
+    fractional nmat was written back unnormalized, and a non-mapping
+    value raised AttributeError instead of the promised ValueError).
+
+    Returns {"freq_index": int ndarray or None, "nmat": int or None,
+    "coeff_tail": float or None, "tail_endpoint": str or None}. Raises
+    ValueError on any defect.
+    """
+    import operator
+    from collections.abc import Mapping
+
+    if not isinstance(meta, Mapping):
+        raise ValueError(
+            "chi0q provenance from {} must be a mapping, got {}".format(
+                source, type(meta).__name__))
+    out = {"freq_index": None, "nmat": None, "coeff_tail": None,
+           "tail_endpoint": None}
+    m_nmat = meta.get("nmat")
+    if m_nmat is not None:
+        # strict integral scalar: operator.index accepts int and NumPy
+        # integer scalars (including the 0-d arrays npz files store) and
+        # rejects floats, strings, complex, containers and booleans --
+        # every one of which slipped past size-1 coercion (round 6)
+        try:
+            val = np.asarray(m_nmat)
+            if val.ndim != 0:
+                raise TypeError("not a scalar")
+            item = val[()]
+            if isinstance(item, (bool, np.bool_)):
+                raise TypeError("boolean")
+            n = operator.index(item)
+        except TypeError:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be an integral "
+                "scalar, got {!r}".format(source, m_nmat))
+        if n <= 0:
+            raise ValueError(
+                "chi0q provenance from {}: nmat must be positive, got "
+                "{}".format(source, n))
+        out["nmat"] = n
+    fi = meta.get("freq_index")
+    if fi is not None:
+        fi = np.asarray(fi)
+        if fi.ndim != 1 or not np.issubdtype(fi.dtype, np.integer):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index must be a "
+                "one-dimensional integer array, got dtype {} with shape "
+                "{}".format(source, fi.dtype, fi.shape))
+        if len(fi) != nfreq:
+            raise ValueError(
+                "chi0q provenance from {} does not describe the supplied "
+                "chi0q (freq_index of length {} for a {}-frequency "
+                "array); the metadata is stale -- recompute or drop "
+                "it.".format(source, len(fi), nfreq))
+        if len(np.unique(fi)) != len(fi):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index carries duplicate "
+                "entries".format(source))
+        if (out["nmat"] is not None and len(fi) > 0
+                and (fi.min() < 0 or fi.max() >= out["nmat"])):
+            raise ValueError(
+                "chi0q provenance from {}: freq_index range [{}, {}] "
+                "exceeds nmat = {}".format(
+                    source, int(fi.min()), int(fi.max()), out["nmat"]))
+        out["freq_index"] = fi
+    ct = meta.get("coeff_tail")
+    if ct is not None:
+        # type-strict like the config validation (round-8 review):
+        # float() would also normalize booleans, numeric strings and
+        # non-finite values, letting malformed foreign provenance pass
+        # the endpoint gate and be re-saved. Unwrap the 0-d scalar an
+        # npz file stores, then require a finite non-boolean Real.
+        import numbers
+        val = np.asarray(ct)
+        item = val[()] if val.ndim == 0 else None
+        if (item is None or isinstance(item, (bool, np.bool_))
+                or not isinstance(item, numbers.Real)
+                or not np.isfinite(float(item))):
+            raise ValueError(
+                "chi0q provenance from {}: malformed coeff_tail "
+                "({!r})".format(source, ct))
+        out["coeff_tail"] = float(item)
+    te = meta.get("tail_endpoint")
+    if te is not None:
+        # npz stores strings as 0-d unicode arrays; unwrap and require a
+        # plain string (np.str_ passes the isinstance check)
+        val = np.asarray(te)
+        item = val[()] if val.ndim == 0 else None
+        if not isinstance(item, str):
+            raise ValueError(
+                "chi0q provenance from {}: malformed tail_endpoint "
+                "({!r})".format(source, te))
+        out["tail_endpoint"] = str(item)
+    return out
+
+
+# Equal-time endpoint convention of the coeff_tail machinery (issue #134).
+# chi0q computed with a NONZERO coeff_tail before the branch-mean endpoint
+# fix carries an O(1/Nmat) error that a current recomputation at the same
+# Nmat does not; files stamp this marker so loaders can tell the two
+# apart. Bump the value if the endpoint treatment ever changes again.
+TAIL_ENDPOINT_CONVENTION = "branch_mean_v1"
+
+
+def _to_bubble_pair_convention(ham):
+    """Intra-pair transpose taking the interaction tensor from the
+    Hamiltonian slot convention to the bubble's (issue #139).
+
+    ``_make_ham_inter`` stores ``W[..., b, b', a, a']`` as the
+    coefficient of ``c^+_a c_a' c^+_b' c_b``; the ring equation
+    contracts it against ``chi0`` whose pair slot ``(b, b')`` carries
+    ``c^+_b c_b'``. Swapping the two indices of BOTH pairs converts
+    between them. Density (pair-diagonal) content and real
+    Hermitian-closed declarations are fixed points of this map.
+
+    Applied when the LONGITUDINAL vertex is assembled, i.e. on the
+    rank-4 orbital tensor before any density projection: the reduced
+    and squashed projections keep only pair-diagonal slots, where the
+    map is the identity, so they are unaffected either way, while the
+    general scheme needs it. The transverse (ladder) assembly is NOT
+    routed through this helper: it re-pairs the tensor itself and
+    therefore consumes the Hamiltonian convention directly.
+    """
+    nlead = ham.ndim - 4
+    if nlead < 0:
+        raise ValueError(
+            "interaction tensor must carry four orbital axes, got shape "
+            "{}".format(ham.shape))
+    lead = tuple(range(nlead))
+    return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
+
+
+def _enforce_tail_endpoint(meta, source):
+    """Endpoint-convention gate on NORMALIZED chi0q provenance.
+
+    Fail-closed for any nonzero-coeff_tail bubble whose endpoint
+    treatment is absent (pre-#134) or unrecognized -- nothing in the
+    array itself can reveal which treatment produced it. Zero-tail
+    bubbles and unknown-tail (no coeff_tail record) bubbles pass:
+    the endpoint is vacuous respectively unknowable there. One gate is
+    shared by the chi0q_init file reader and the in-memory reuse route
+    (round-7 review: the in-memory route bypassed the file gate).
+    """
+    tail = meta.get("coeff_tail")
+    if tail is None or tail == 0.0:
+        return
+    te = meta.get("tail_endpoint")
+    if te is None:
+        raise ValueError(
+            "chi0q provenance from {} records coeff_tail = {} but no "
+            "tail_endpoint marker: the bubble was produced before the "
+            "equal-time endpoint fix (issue #134) and its tail-corrected "
+            "values carry the pre-fix O(1/Nmat) endpoint error. Recompute "
+            "the bubble with this version instead of reusing it.".format(
+                source, tail))
+    if te != TAIL_ENDPOINT_CONVENTION:
+        raise ValueError(
+            "chi0q provenance from {} carries unrecognized tail_endpoint "
+            "= {!r} (this build implements {!r}); refusing to reuse a "
+            "bubble whose endpoint treatment is unknown.".format(
+                source, te, TAIL_ENDPOINT_CONVENTION))
 
 
 class Lattice:
@@ -262,13 +653,18 @@ class Interaction:
             self.param_ham_orig = copy.deepcopy(self.param_ham)
 
             # replace by sublatticed versions
+            # dispatch on the NORMALIZED name (PR #128 round 7, fifth
+            # surfacing of the case-defect class): param_ham is a
+            # CaseInsensitiveDict that PRESERVES the declared case, so a
+            # lowercase 'geometry' key fell into _reshape_interaction and
+            # crashed unpacking the geometry table
             for type in self.param_ham.keys():
-                if type in ["Initial"]:
+                if type.lower() == "initial":
                     pass
-                elif type in ["Geometry"]:
+                elif type.lower() == "geometry":
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
-                elif type in ["Transfer"]:
+                elif type.lower() == "transfer":
                     tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
                     self.param_ham[type] = tbl
                 else:
@@ -388,8 +784,12 @@ class Interaction:
                 else:
                     pass  # skip spin dependence
 
-            # Fourier transform
-            tab_q = FFT.fftn(tab_r, axes=(0,1,2))
+            # Fourier transform: the documented convention (issue #133)
+            # is eps(k) = sum_R e^{+ikR} t(R) -- ifftn * nvol, matching
+            # UHFk and the spin-orbital branch above. The previous fftn
+            # computed eps(-k), i.e. every k/q label of this mode's output
+            # was globally negated for non-centrosymmetric models.
+            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
             self.ham_trans_r = tab_r.reshape(nvol,norb,norb)
@@ -418,8 +818,9 @@ class Interaction:
                 else:
                     pass  # skip spin dependence
 
-            # Fourier transform
-            hab_q = FFT.fftn(hab_r, axes=(0,1,2))
+            # Fourier transform: e^{+ikR}, same convention as the
+            # transfer term (issue #133)
+            hab_q = FFT.ifftn(hab_r, axes=(0,1,2)) * nvol
 
             # N.B. spin degree of freedom not included
             self.ham_extern_r = hab_r.reshape(nvol,norb,norb)
@@ -442,25 +843,68 @@ class Interaction:
         #   H = W(r)^{\beta\beta^\prime\alpha\alpah^\prime}
         #        * c_{i\alpha}^\dagger c_{i\alpha^\prime} c_{j\beta^\prime}^\dagger c_{j\beta}
         ham_r = np.zeros((nx,ny,nz,*(ns,norb)*4), dtype=np.complex128)
+        # Longitudinal Fierz (cross-slot) corrections live in a SEPARATE
+        # tensor: the ring's longitudinal solve consumes ham_inter_q +
+        # ham_fierz_q, while the transverse (ladder) assembly reads
+        # ham_inter_q alone. The two channels were adjudicated against exact
+        # diagonalization independently (#105 transverse, #113 longitudinal),
+        # and the cross-spin Exchange correction would otherwise land in the
+        # very tensor block the transverse assembly reads via the crossing
+        # relation, doubling the adjudicated ladder vertex (measured: the
+        # extracted Exchange coupling went -0.7 -> -1.4 when the correction
+        # shared the tensor).
+        fierz_r = np.zeros_like(ham_r)
 
-        # spin(a,ap,bp,b)  0: up, 1: down
-        spin_table = {
-            'CoulombIntra': { (0,0,1,1): 1, (1,1,0,0): 1 },
-            'CoulombInter': { (0,0,0,0): 1, (1,1,1,1): 1, (0,0,1,1): 1, (1,1,0,0): 1 },
-            'Hund':         { (0,0,0,0): -1, (1,1,1,1): -1 },
-            'Ising':        { (0,0,0,0): 1, (1,1,1,1): 1, (0,0,1,1): -1, (1,1,0,0): -1 },
-            'PairLift':     { (0,1,0,1): 1, (1,0,1,0): 1 },
-            'Exchange':     { (0,1,1,0): -1, (1,0,0,1): -1 },
-            #--
-            'PairHop':      { (0,0,1,1): 1, (1,1,0,0): 1 },
-        }
+        # spin(a,ap,bp,b)  0: up, 1: down -- derived per type from the
+        # adjudicated vertex table (density slots via the channel
+        # decomposition, spin-flip slots from the #105 transverse data)
+        # instead of hand-coded here; hwave.solver.vertex_table is the one
+        # source of this content.
+        spin_table = {t: ring_spin_table(t)
+                      for t in ('CoulombIntra', 'CoulombInter', 'Hund',
+                                'Ising', 'PairLift', 'Exchange', 'PairHop')}
 
         # coulomb-type interactions
+        def _symmetrised(type, tbl):
+            # Reduce each declaration to its physical symmetric coefficient,
+            # the same reading as uhfk.py and hwave.sc (#106/#113/#114): the
+            # two declarations of one bond are (R, a, b) and (-R, b, a), and
+            # for every type except PairHop they multiply the SAME operator,
+            # so the table entering the vertex is the mean
+            #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
+            # Without this the ring read a one-sided off-site declaration as
+            # v e^{+iqR} (the documented sign, #133) where the operator it
+            # declares -- v n_a(i) n_a(i+R),
+            # even in R by the site sum -- has the exact vertex v cos(qR)
+            # (measured: chiq differed by 1.2e-2 from the symmetric reading
+            # of the same Hamiltonian). PairHop's partner is the HERMITIAN
+            # entry, so its mean conjugates and its complex phase survives.
+            #
+            # The reversal is done on a dense (nx, ny, nz) array with the
+            # same shared FFT-grid reversal uhfk.py uses (kgrid, index
+            # i -> (-i) mod n), NOT by a
+            # sign-flipped dictionary-key lookup: table keys may sit in a
+            # wrapped canonical form ((n-1, 0, 0) for a -x bond, and folded
+            # tables in particular store canonicalized displacements), where
+            # a (-R) key lookup would silently miss the partner and halve
+            # the coefficient.
+            arr = np.zeros((nx, ny, nz, norb, norb), dtype=np.complex128)
+            for (irvec, orbvec), v in tbl.items():
+                arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
+                     *orbvec)] += v
+            sym = symmetrise_dense(arr, hermitian=(type == "PairHop"))
+            out = {}
+            for ix, iy, iz, a, b in zip(*np.nonzero(sym)):
+                out[((int(ix), int(iy), int(iz)), (int(a), int(b)))] = \
+                    sym[ix, iy, iz, a, b]
+            return out
+
         def _append_inter(type, tbl=None):
             logger.debug("_append_inter {}".format(type))
             spins = spin_table[type]
             if tbl is None:
                 tbl = self.param_ham[type]
+            tbl = _symmetrised(type, tbl)
             for (irvec,orbvec), v in tbl.items():
                 a, b = orbvec
                 for spinvec, w in spins.items():
@@ -476,7 +920,8 @@ class Interaction:
         #        + (up <-> down)
         def _append_pairhop(type):
             spins = spin_table[type]
-            for (irvec,orbvec), v in self.param_ham[type].items():
+            tbl = _symmetrised(type, self.param_ham[type])
+            for (irvec,orbvec), v in tbl.items():
                 # take account of same-site interaction only
                 if (irvec == (0,0,0)):
                     a, b = orbvec
@@ -485,6 +930,115 @@ class Interaction:
                         # beta beta' alpha alpha'
                         orb = (s4, b, s3, a, s1, a, s2, b)
                         ham_r[(*irvec, *orb)] += v * w
+
+        # Pre-fold on-site direct tensor feeding the spinful exchange
+        # crossing (issue #137). Locality is judged on the PRE-fold
+        # declarations, exactly like the Fierz builder below: sublattice
+        # folding maps off-site bonds to r = 0 between supercell
+        # orbitals, and reading ham_r[0, 0, 0] after folding would cross
+        # off-site content that the ring-form resummation cannot
+        # represent (round-1 review; the same trap the Fierz builder
+        # documents). Only built for spin-orbital runs -- no other mode
+        # consumes it.
+        # (getattr: tests drive _make_ham_inter on __new__-built stubs
+        # without __init__, the same pattern save_results documents)
+        onsite_r = (np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
+                    if getattr(self, "enable_spin_orbital", False)
+                    else None)
+
+        def _append_onsite_direct(type, tbl=None, pairhop=False):
+            if onsite_r is None:
+                return
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            if tbl is None:
+                if has_sub:
+                    tbl = self.param_ham_orig.get(type, {})
+                else:
+                    tbl = self.param_ham.get(type, {})
+            filtered = {}
+            for (irvec, orbvec), v in tbl.items():
+                if tuple(irvec) == (0, 0, 0):
+                    filtered[(irvec, orbvec)] = v
+            if not filtered:
+                return
+            if has_sub:
+                filtered = self._reshape_interaction(filtered, False)
+            filtered = _symmetrised(type, filtered)
+            spins = spin_table[type]
+            for (irvec, orbvec), v in filtered.items():
+                if tuple(irvec) != (0, 0, 0):
+                    continue
+                a, b = orbvec
+                for spinvec, w in spins.items():
+                    s1, s2, s3, s4 = spinvec
+                    # same slot layouts as the ham_r builders above
+                    orb = ((s4, b, s3, a, s1, a, s2, b) if pairhop
+                           else (s4, b, s3, b, s1, a, s2, a))
+                    onsite_r[orb] += v * w
+
+        def _append_inter_cross(type, tbl=None):
+            # Longitudinal cross-slot (Fierz) content, adjudicated against
+            # exact diagonalization in #113: the ring's W carried the
+            # density (aa,bb) slots of each type but not the (ab,ab)
+            # pair-cross slots, which is why its effective spin vertex was
+            # diag(U0, 0, 0, U1) where the adjudicated table (and the
+            # spin/charge builders in hwave.sc) have diag(U0, U', U', U1)
+            # (#104; measured 1e-2 in chiq). Restricted to ON-SITE entries
+            # with a != b: that is the adjudicated domain -- off-site
+            # cross-orbital content is not representable by a q-only vertex
+            # (#105 measurement) and stays as it was.
+            # `tbl`, when given, must be a PRE-fold table. Locality is
+            # judged BEFORE sublattice folding: folding maps an off-site
+            # bond to (0,0,0) between supercell orbitals, which would
+            # smuggle unadjudicated off-site content into the correction
+            # (measured: a one-orbital +-x bond folded with SubShape=[2,1,1]
+            # produced a spurious Fierz tensor of magnitude V). The pre-fold
+            # table is filtered to its on-site a != b entries, and only the
+            # filtered table is folded.
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            if tbl is None:
+                if has_sub:
+                    tbl = self.param_ham_orig.get(type, {})
+                else:
+                    tbl = self.param_ham.get(type, {})
+            filtered = {}
+            for (irvec, orbvec), v in tbl.items():
+                if tuple(irvec) == (0, 0, 0) and orbvec[0] != orbvec[1]:
+                    filtered[(irvec, orbvec)] = v
+            if not filtered:
+                return
+            if has_sub:
+                filtered = self._reshape_interaction(filtered, False)
+            filtered = _symmetrised(type, filtered)
+            # spin-resolved coefficients DERIVED from the adjudicated S/C
+            # table via the channel decomposition W_same = (C - S)/2,
+            # W_cross = (C + S)/2 (hwave.solver.vertex_table) -- the values
+            # previously hand-coded here per type now have one source
+            w_same, w_cross = fierz_coefficients(type)
+            spins = {}
+            if w_same != 0.0:
+                spins[(0, 0, 0, 0)] = w_same
+                spins[(1, 1, 1, 1)] = w_same
+            if w_cross != 0.0:
+                spins[(0, 0, 1, 1)] = w_cross
+                spins[(1, 1, 0, 0)] = w_cross
+            if not spins:
+                return
+            for (irvec, orbvec), v in filtered.items():
+                if tuple(irvec) != (0, 0, 0):
+                    continue
+                a, b = orbvec
+                if a == b:
+                    continue
+                for spinvec, w in spins.items():
+                    s1, s2, s3, s4 = spinvec
+                    # pair-diagonal placement -- bilinear (a,b) coupled to
+                    # bilinear (a,b) -- selected by measurement: it makes
+                    # the ring's chiq equal the FLEX channel solve to 3e-16
+                    # in every adjudicated cell, while the pair-antidiagonal
+                    # placement reproduces the old 1e-2 deficiency
+                    orb = (s4, a, s3, b, s1, a, s2, b)
+                    fierz_r[(*irvec, *orb)] += v * w
 
         if 'Coulomb' in self.param_ham.keys():
             # The aggregate 'Coulomb' input provides both the intra and inter
@@ -503,41 +1057,60 @@ class Interaction:
 
             _append_inter('CoulombIntra', coulomb_intra)
             _append_inter('CoulombInter', coulomb_inter)
+            if getattr(self.lattice, "has_sublattice", False):
+                _pre_intra, _pre_inter = wan90.split_coulomb(
+                    self.param_ham_orig['Coulomb'])
+            else:
+                _pre_intra, _pre_inter = coulomb_intra, coulomb_inter
+            _append_inter_cross('CoulombInter', tbl=_pre_inter)
+            _append_onsite_direct('CoulombIntra', tbl=_pre_intra)
+            _append_onsite_direct('CoulombInter', tbl=_pre_inter)
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'CoulombIntra' in self.param_ham.keys():
             _append_inter('CoulombIntra')
+            _append_onsite_direct('CoulombIntra')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'CoulombInter' in self.param_ham.keys():
             _append_inter('CoulombInter')
+            _append_inter_cross('CoulombInter')
+            _append_onsite_direct('CoulombInter')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Hund' in self.param_ham.keys():
             _append_inter('Hund')
+            _append_inter_cross('Hund')
+            _append_onsite_direct('Hund')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'Ising' in self.param_ham.keys():
             _append_inter('Ising')
+            _append_inter_cross('Ising')
+            _append_onsite_direct('Ising')
             self._has_interaction = True
             self._has_interaction_coulomb = True
 
         if 'PairLift' in self.param_ham.keys():
             _append_inter('PairLift')
+            _append_onsite_direct('PairLift')
             self._has_interaction = True
             self._has_interaction_exchange = True
 
         if 'Exchange' in self.param_ham.keys():
             _append_inter('Exchange')
+            _append_inter_cross('Exchange')
+            _append_onsite_direct('Exchange')
             self._has_interaction = True
             self._has_interaction_exchange = True
 
         if 'PairHop' in self.param_ham.keys():
             _append_pairhop('PairHop')
+            _append_onsite_direct('PairHop', pairhop=True)
             self._has_interaction = True
             self._has_interaction_pairhop = True
 
@@ -548,13 +1121,49 @@ class Interaction:
         logger.debug("ham_inter_r nonzero count={}".format(ham_r[abs(ham_r) > 1.0e-8].size))
 
         # Fourier transform W(q)^{bb'aa'}
-        ham_q = FFT.fftn(ham_r, axes=(0,1,2))
+        # e^{+iqR} (issue #133): the spin-orbital transfer already used
+        # the documented sign while this shared FFT used the opposite one,
+        # so spin-orbital chiq combined chi0(q) with W(-q) -- invisible for
+        # R-symmetric real interactions, wrong for Hermitian-closed complex
+        # off-site declarations.
+        ham_q = FFT.ifftn(ham_r, axes=(0,1,2)) * nvol
 
         logger.debug("ham_inter_q shape={}, size={}".format(ham_q.shape, ham_q.size))
         logger.debug("ham_inter_q nonzero count={}".format(ham_q[abs(ham_q) > 1.0e-8].size))
 
         self.ham_inter_r = ham_r
         self.ham_inter_q = ham_q
+
+        fierz_r = fierz_r.reshape(nx,ny,nz,*(nd,)*4)
+        if np.any(fierz_r):
+            self.ham_fierz_q = FFT.ifftn(fierz_r, axes=(0,1,2)) * nvol
+        else:
+            self.ham_fierz_q = None
+
+        # Spinful exchange content (issue #137). The spinful general solve
+        # resums chi = [1 - chi0 W]^-1 chi0 with ONE vertex tensor; the
+        # physically complete first order is the ANTISYMMETRIZED bare
+        # particle-hole vertex Gamma = D + X, where X is the crossed
+        # (exchange) wiring of the same interaction. Re-pairing the on-site
+        # two-body term
+        #     W^{b b' a a'} c^+_a c_a' c^+_b' c_b
+        #       = - W^{b b' a a'} c^+_a c_b c^+_b' c_a' + (one-body)
+        # shows the crossed wiring is the direct wiring of the coefficient
+        # tensor with the b and a' slots swapped and negated:
+        #     X[b, b', a, a'] = - D[a', b', a, b]   (on-site block only).
+        # Off-site exchange depends on both fermionic momenta and cannot be
+        # written as W(q); it stays outside the ring-form resummation (the
+        # same limitation the non-spin-orbital ladder has). In the
+        # spin-conserving limit X reproduces the adjudicated transverse
+        # (ring+ladder) vertex; ED confirmed Gamma = D + X for CoulombIntra
+        # (issue #137 reproduction).
+        if onsite_r is not None:
+            exch_onsite = -np.transpose(
+                onsite_r.reshape(*(nd,) * 4), (3, 1, 2, 0))
+            self.ham_spinful_exchange = (exch_onsite
+                                         if np.any(exch_onsite) else None)
+        else:
+            self.ham_spinful_exchange = None
 
 class RPA:
     """
@@ -599,17 +1208,54 @@ class RPA:
                     # ladder diagrams require general scheme (full rank-4 tensor)
                     self.calc_scheme = "general"
                     logger.info("auto mode for calc_scheme: set to general (ring+ladder)")
-                elif self.ham_info.has_interaction_exchange():
-                    self.calc_scheme = "squashed"
-                    logger.info("auto mode for calc_scheme: set to squashed")
+                elif any(self.param_ham.get(t)
+                         for t in ("Exchange", "PairHop")):
+                    # Exchange and PairHop carry NO density-diagonal vertex
+                    # content: only the general scheme represents them. The
+                    # historical auto choice was 'squashed', which silently
+                    # dropped them entirely (#107).
+                    self.calc_scheme = "general"
+                    logger.info(
+                        "auto mode for calc_scheme: set to general "
+                        "(Exchange/PairHop have no density-diagonal vertex)")
                 else:
+                    # PairLift alone does not need the general scheme: its
+                    # particle-hole vertex is exactly zero everywhere.
                     self.calc_scheme = "reduced"
                     logger.info("auto mode for calc_scheme: set to reduced")
 
-        # consistency check
-        if self.calc_scheme == "reduced" and self.ham_info.has_interaction_exchange():
-            logger.error("calc_scheme=reduced is not compatible with exchange-type interaction.")
-            sys.exit(1)
+        # consistency check. The reduced/squashed schemes solve with the
+        # density-diagonal part of the interaction, and the adjudicated
+        # particle-hole vertex of Exchange and PairHop has NO
+        # density-diagonal content (hwave.solver.vertex_table: their
+        # entries live on the cross and antidiagonal slot families). The
+        # projection therefore does not approximate them -- it drops them
+        # entirely, with exactly zero effect on the result. That was three
+        # different policies before #107: reduced rejected exchange-type
+        # input, squashed accepted it silently, FLEX warned of an
+        # 'approximation'. One policy now, for both solvers (FLEX inherits
+        # this check): reject with a pointer to the scheme that keeps them.
+        if self.calc_scheme in ("reduced", "squashed"):
+            dropped = [t for t in ("Exchange", "PairHop")
+                       if self.param_ham.get(t)]
+            if dropped:
+                raise ValueError(
+                    "calc_scheme='{}' solves with the density-diagonal "
+                    "part of the interaction, and the particle-hole vertex "
+                    "of {} has no density-diagonal content: the interaction "
+                    "would have exactly zero effect (not an approximation). "
+                    "Use calc_scheme='general', which carries the full "
+                    "vertex. (Note: FLEX's general scheme is spin-free "
+                    "only; with enable_spin_orbital or a spin-polarized "
+                    "setup no current FLEX scheme supports these "
+                    "interactions.)".format(
+                        self.calc_scheme, ", ".join(dropped)))
+            if self.param_ham.get("PairLift"):
+                logger.warning(
+                    "PairLift's particle-hole vertex is exactly zero "
+                    "(adjudicated against exact diagonalization), so it "
+                    "has no effect on the susceptibility channels in any "
+                    "scheme.")
         if self.calc_type == "ring+ladder" and self.calc_scheme != "general":
             logger.error("calc_type='ring+ladder' requires calc_scheme='general' or 'auto'.")
             sys.exit(1)
@@ -635,7 +1281,37 @@ class RPA:
         self.ns = 2  # spin dof
         self.nd = self.norb * self.ns
 
-        self.coeff_tail = self.param_mod.get("coeff_tail", 0.0)
+        # finite-real validation (issue #134 deep review): NaN/inf were
+        # accepted and silently produced non-finite susceptibilities; large
+        # values cause catastrophic cancellation. Booleans are rejected --
+        # float(True) == 1.0 would silently enable the correction.
+        # Spinful antisymmetrized vertex (issue #137): default ON; False
+        # reproduces the pre-#137 ring-only spinful numbers. Strict bool
+        # (the g2_tail/#83 lesson: coercion turns "false" into True).
+        _sve = self.param_mod.get("spinful_vertex_exchange", True)
+        if not isinstance(_sve, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] spinful_vertex_exchange must be a boolean, "
+                "got {!r}".format(_sve))
+        self.spinful_vertex_exchange = bool(_sve)
+
+        import numbers
+        _ct = self.param_mod.get("coeff_tail", 0.0)
+        # type-strict, not coercive (round-7 review): float() would also
+        # accept numeric strings (a quoted TOML number), booleans and 0-d
+        # arrays. numbers.Real keeps Python and NumPy real scalars;
+        # booleans are excluded explicitly -- float(True) == 1.0 would
+        # silently enable the correction.
+        if (isinstance(_ct, (bool, np.bool_))
+                or not isinstance(_ct, numbers.Real)):
+            raise ValueError(
+                "[mode.param] coeff_tail must be a real number, got "
+                "{!r}".format(_ct))
+        _ct = float(_ct)
+        if not np.isfinite(_ct):
+            raise ValueError(
+                "[mode.param] coeff_tail must be finite, got {}".format(_ct))
+        self.coeff_tail = _ct
         self.ext = self.param_mod.get("coeff_extern", 0.0)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
@@ -827,6 +1503,15 @@ class RPA:
         """
         logger.info("Start RPA calculations")
 
+        # A reused green_info must not carry results from a previous solve:
+        # a stale chiq / chiq_pm would survive into save_results and be
+        # labelled as part of this result. Dropped at ENTRY -- before any
+        # validation and regardless of calc_chiq -- so a failed validation
+        # or a chi0q-only run cannot leave them behind either (adversarial
+        # review, round 3).
+        green_info.pop("chiq", None)
+        green_info.pop("chiq_pm", None)
+
         beta = 1.0/self.T
 
         # GPU (CuPy) execution: resolve the backend once. The heavy work --
@@ -838,10 +1523,145 @@ class RPA:
                                          required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
-            # use chi0q input
+            # use chi0q input; a green_info stored by a previous solve
+            # arrives here, so establish spin_mode from the shape exactly
+            # as the file-based chi0q_init route does (issue #109)
             chi0q = green_info["chi0q"]
-            if chi0q.shape[0] != self.nmat:
-                logger.info("partial range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
+            if not gpu_active:
+                # normalize a device array to the selected (host) backend
+                # FIRST: real device arrays forbid the implicit conversion
+                # a NumPy-based dtype probe would attempt
+                chi0q = _bk.to_host(chi0q)
+                green_info["chi0q"] = chi0q
+            if not np.issubdtype(chi0q.dtype, np.number):
+                raise ValueError(
+                    "chi0q from green_info has non-numeric dtype {}".format(
+                        chi0q.dtype))
+            self._validate_chi0q_shape(chi0q, source="green_info")
+            # spin-diag arrays carry the spin-block axis first; the
+            # frequency axis is shape[1] there (shape[0] == 2 == nblock,
+            # which used to be misreported as a partial frequency range)
+            nfreq = (chi0q.shape[1] if self.spin_mode == "spin-diag"
+                     else chi0q.shape[0])
+            # Frequency provenance for save_results: inherit the axis of
+            # the run that PRODUCED this chi0q. Priority: metadata stored
+            # by a previous in-memory solve; else metadata already set by
+            # the chi0q_init file reader on this instance; else -- an
+            # untagged partial array -- fall back to the ambiguous 0..n-1
+            # labeling rather than fabricating a full-axis claim.
+            mem_meta = green_info.get("chi0q_freq_meta")
+            if mem_meta is not None:
+                # Validate the provenance against the array and this solver
+                # (shared validator; round-3/5 reviews): a caller can
+                # replace chi0q while leaving the previous solve's metadata
+                # behind, and trusting it silently would mislabel saved
+                # output or solve a semantically different tensor.
+                norm = _validate_chi0q_provenance(
+                    mem_meta, nfreq, source="green_info")
+                # the validator has already guaranteed a Mapping, so read
+                # the fingerprint unconditionally -- a dict-only check let
+                # a UserDict's stale fingerprint pass unverified
+                fp = mem_meta.get("fingerprint")
+                if fp is not None and fp != _chi0q_fingerprint(chi0q):
+                    raise ValueError(
+                        "chi0q_freq_meta does not belong to the supplied "
+                        "chi0q (content fingerprint mismatch): the array "
+                        "was replaced while the previous solve's metadata "
+                        "was kept. The metadata is stale -- recompute or "
+                        "drop the key.")
+                m_norb = mem_meta.get("norb")
+                if m_norb is not None and int(m_norb) != int(self.norb):
+                    raise ValueError(
+                        "chi0q was produced with norb = {} but this solver "
+                        "has norb = {}; the bubble does not describe this "
+                        "system.".format(m_norb, self.norb))
+                m_scheme = mem_meta.get("calc_scheme")
+                if m_scheme is not None:
+                    # reduced and squashed share one bubble representation
+                    # (the reduced 'kab' layout; measured: a reduced-produced
+                    # bubble solved under squashed matches an internal
+                    # squashed recomputation exactly), so only the
+                    # REPRESENTATION class must agree
+                    rep = {"reduced": "reduced", "squashed": "reduced"}
+                    if (rep.get(m_scheme, m_scheme)
+                            != rep.get(self.calc_scheme, self.calc_scheme)):
+                        raise ValueError(
+                            "chi0q was produced under calc_scheme = '{}' "
+                            "whose bubble representation is incompatible "
+                            "with this solver's '{}'.".format(
+                                m_scheme, self.calc_scheme))
+                m_spin = mem_meta.get("spin_mode")
+                if m_spin is not None and m_spin != self.spin_mode:
+                    # the producer knows its spin structure; shape inference
+                    # cannot separate spin-free norb-orbital from spinful
+                    # norb/2-orbital input, so a declared mismatch is fatal
+                    raise ValueError(
+                        "chi0q was produced in spin mode '{}' but its shape "
+                        "reads as '{}' for this solver's configuration; "
+                        "refusing to solve a semantically different "
+                        "tensor.".format(m_spin, self.spin_mode))
+                # endpoint gate on the SAME normalized form the file
+                # route checks (round-7 review: this route accepted a
+                # nonzero-tail bubble without or with an unknown marker)
+                _enforce_tail_endpoint(norm, "green_info chi0q_freq_meta")
+                self._chi0q_init_meta = dict(norm)
+            elif getattr(self, "_chi0q_init_meta", None) is not None:
+                # metadata set by the chi0q_init file reader on this
+                # instance: verify it still describes THIS array before
+                # trusting it (the caller may have replaced info["chi0q"]
+                # between read_init and solve)
+                file_fp = self._chi0q_init_meta.get("fingerprint")
+                if (file_fp is not None
+                        and file_fp != _chi0q_fingerprint(chi0q)):
+                    raise ValueError(
+                        "the chi0q_init metadata on this solver does not "
+                        "belong to the supplied chi0q (content fingerprint "
+                        "mismatch): the array was replaced after the file "
+                        "was read. Recompute or re-read the file.")
+            else:
+                # untagged external tensor -- full-frequency included
+                # (round-7 review: a full-Nmat external array previously
+                # fell through with no metadata, and save_results then
+                # stamped the CURRENT run's coeff_tail and endpoint
+                # marker onto data of unknown provenance)
+                self._chi0q_init_meta = {
+                    "freq_index": None, "nmat": None, "coeff_tail": None,
+                    "tail_endpoint": None,
+                }
+            # Write the normalized provenance back so a CHAIN of reuses --
+            # including a bubble that entered through the chi0q_init file
+            # route -- keeps its producing axis (round-3 review).
+            eff = getattr(self, "_chi0q_init_meta", None)
+            if eff is not None:
+                fi_eff = eff.get("freq_index")
+                green_info["chi0q_freq_meta"] = {
+                    "freq_index": (None if fi_eff is None
+                                   else list(np.asarray(fi_eff))),
+                    "nmat": eff.get("nmat"),
+                    "coeff_tail": eff.get("coeff_tail"),
+                    "tail_endpoint": eff.get("tail_endpoint"),
+                    "spin_mode": self.spin_mode,
+                    "norb": int(self.norb),
+                    "calc_scheme": self.calc_scheme,
+                    "fingerprint": _chi0q_fingerprint(chi0q),
+                }
+            # must_fix 6 guard state: the spin-diag transverse channel needs
+            # Green functions bound to THIS bubble; an externally supplied
+            # chi0q has none (a same-instance green0 may belong to an older
+            # bubble)
+            self._chi0q_external = True
+            if (getattr(self, "calc_type", "ring") == "ring+ladder"
+                    and self.spin_mode == "spin-diag"):
+                # fail HERE, before the longitudinal solve populates chiq:
+                # rejecting inside the transverse build would leave a fresh
+                # chiq in green_info from a run that then failed
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be "
+                    "combined with an externally supplied chi0q: the "
+                    "channel needs the Green's functions that produced "
+                    "this exact bubble. Recompute chi0q internally.")
+            if nfreq != self.nmat:
+                logger.info("partial range in matsubara frequency: {} in {}".format(nfreq, self.nmat))
                 #self.nmat = chi0q.shape[0]
             if gpu_active:
                 # VRAM preflight for the externally-supplied chi0q path: the
@@ -886,6 +1706,10 @@ class RPA:
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
+            self._chi0q_external = False
+            # a previous chi0q_init on this instance must not relabel the
+            # axis of a bubble THIS run computes
+            self._chi0q_init_meta = None
 
             chi0q = self._calc_chi0q(green0, green0_tail, beta)
 
@@ -894,26 +1718,98 @@ class RPA:
                 chi0q = chi0q[:,self.freq_index]
                 logger.info("filter range in matsubara frequency: {} in {}".format(chi0q.shape[0], self.nmat))
 
-            # nblock
+            # nblock: defense in depth behind the kernel's structural
+            # check -- under python -O the former asserts vanished and a
+            # wrong block count was silently truncated (round-5 review)
             if self.spin_mode in [ "spin-free", "spinful" ]:
-                assert chi0q.shape[0] == 1
+                if chi0q.shape[0] != 1:
+                    raise ValueError(
+                        "chi0q block count {} does not match spin_mode "
+                        "'{}' (expected 1)".format(
+                            chi0q.shape[0], self.spin_mode))
                 chi0q = chi0q[0]
             else:
-                assert chi0q.shape[0] == 2
-                pass
+                if chi0q.shape[0] != 2:
+                    raise ValueError(
+                        "chi0q block count {} does not match spin_mode "
+                        "'{}' (expected 2)".format(
+                            chi0q.shape[0], self.spin_mode))
 
             green_info["chi0q"] = _bk.to_host(chi0q)
+            # Record the producing run's frequency metadata alongside: a
+            # later solver reusing this green_info (issue #109) must label
+            # its outputs with THIS axis, exactly as the file route does via
+            # _chi0q_init_meta -- stamping the reusing run's own
+            # freq_index/nmat mislabeled a partial-range bubble as a full
+            # axis (measured: 9 frequencies saved with freq_index 0..31).
+            green_info["chi0q_freq_meta"] = {
+                "freq_index": list(self.freq_index),
+                "nmat": int(self.nmat),
+                "coeff_tail": float(getattr(self, "coeff_tail", 0.0)),
+                "tail_endpoint": TAIL_ENDPOINT_CONVENTION,
+                # producer identity: shape-only spin detection cannot
+                # distinguish a spin-free two-orbital bubble from a spinful
+                # one-orbital one, so the consumer validates against these
+                "spin_mode": self.spin_mode,
+                "norb": int(self.norb),
+                "calc_scheme": self.calc_scheme,
+                # content binding: a same-shaped replacement of the array
+                # must not inherit this metadata (round-5 review)
+                "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
+            }
 
         if self.calc_chiq:
             # ham_inter_q is built on the host at init; mirror it to chi0q's
             # backend so the inflation einsums and the solve stay on one device.
             ham_inter_q = self.ham_info.ham_inter_q
+            # The longitudinal channels solve with the Fierz-corrected
+            # tensor; ham_inter_q itself stays as the transverse assembly's
+            # input (see _make_ham_inter). The correction's (a,b,a,b) slots
+            # sit off the 'kaabb' diagonal, so the reduced/squashed reads
+            # below are unaffected by construction.
+            fierz_q = getattr(self.ham_info, "ham_fierz_q", None)
             if gpu_active:
                 ham_inter_q = xp.asarray(ham_inter_q)
 
+            def _fierz_long():
+                # assembled lazily: the spinful antisymmetrized branch
+                # replaces the Fierz-corrected tensor entirely, and
+                # building + device-transferring it there would allocate
+                # a large temporary that is immediately discarded
+                # (round-1 review). The result is handed to the ring
+                # solve in the BUBBLE's pair convention (issue #139).
+                if fierz_q is None:
+                    return _to_bubble_pair_convention(ham_inter_q)
+                fz = xp.asarray(fierz_q) if gpu_active else fierz_q
+                return _to_bubble_pair_convention(ham_inter_q + fz)
+
             if self.spin_mode == "spinful":
                 chi0q_orig = chi0q
+                # The transverse (ladder) assembly re-pairs the tensor
+                # itself, so it must receive the HAMILTONIAN convention,
+                # NOT the bubble one the ring solve needs (issue #139):
+                # converting here as well conjugated a complex PairHop's
+                # ladder vertex (exact diagonalization on a three-site
+                # ring: relative error 1.2 against 2e-7 unconverted).
                 ham_orig = ham_inter_q
+                ham_long = None
+                # Antisymmetrized vertex (issue #137): resum with
+                # Gamma = D + crossed(D)|on-site so the spin-flip pair
+                # slots are corrected (ring-only left them at the bare
+                # bubble). The longitudinal Fierz tensor is the DENSITY-
+                # slot projection of the same crossing (built for the
+                # non-spin-orbital solver, which has no spin-flip slots),
+                # so it must NOT be added on top -- that double-counts
+                # every on-site cross-orbital slot. Opt-out via
+                # [mode.param] spinful_vertex_exchange = false reproduces
+                # the pre-#137 ring-only numbers (ham_inter + fierz).
+                exch = getattr(self.ham_info, "ham_spinful_exchange", None)
+                if exch is not None and self.spinful_vertex_exchange:
+                    exch = xp.asarray(exch) if gpu_active else exch
+                    ham_long = _to_bubble_pair_convention(
+                        ham_inter_q + exch[None, ...])
+                else:
+                    ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
                     # Treat combined spin-orbital indices as general orbitals.
@@ -921,14 +1817,14 @@ class RPA:
                     # exploited by _find_block_diagonal inside _solve_rpa.
                     nvol = self.lattice.nvol
                     nd = self.nd
-                    ham = xp.einsum('kaabb->kab',
-                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
                 else:
-                    ham = ham_orig
+                    ham = ham_long
 
             elif self.spin_mode == "spin-diag":
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
+                ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
                     nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
@@ -942,8 +1838,7 @@ class RPA:
                                       chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
-                    ham = xp.einsum('kaabb->kab',
-                                    ham_orig.reshape(nvol,*(nd,)*4)).reshape(nvol,*(nd,)*2)
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
 
                 elif self.calc_scheme == "squashed":
                     nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
@@ -960,8 +1855,8 @@ class RPA:
                                       chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
 
-                    ham = xp.einsum('ksauatbvb->ksuatvb',
-                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+                    ham = project_density_squashed(ham_long, nvol, ns,
+                                                   norb, xp)
 
                 else:
                     nblock,nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
@@ -977,12 +1872,13 @@ class RPA:
                     chi0q = xp.einsum('glkabcd,gtuv->lkgatbucvd',
                                       chi0q_orig,
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
-                    ham = ham_orig
+                    ham = ham_long
 
             elif self.spin_mode == "spin-free":
                 # introduce spin degree of freedom
                 chi0q_orig = chi0q
                 ham_orig = ham_inter_q
+                ham_long = _fierz_long()
 
                 if self.calc_scheme == "reduced":
                     # alpha=alpha', beta=beta' case
@@ -997,8 +1893,9 @@ class RPA:
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
-                    ham = xp.einsum('ksasatbtb->ksatb',
-                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(nd,)*2)
+                    # same spin-major extraction as the combined-index
+                    # pair diagonal (verified bitwise); shared projection
+                    ham = project_density_pairs(ham_long, nvol, nd, xp)
 
                 elif self.calc_scheme == "squashed":
                     # norb**2 squash
@@ -1016,8 +1913,8 @@ class RPA:
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
 
-                    ham = xp.einsum('ksauatbvb->ksuatvb',
-                                    ham_orig.reshape(nvol,*(ns,norb)*4)).reshape(nvol,*(ns,ns,norb)*2)
+                    ham = project_density_squashed(ham_long, nvol, ns,
+                                                   norb, xp)
 
                 else:
                     # general nd**4 case
@@ -1034,7 +1931,13 @@ class RPA:
                     chi0q = xp.einsum('lkabcd,stuv->lksatbucvd',
                                       chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
                                       spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
-                    ham = ham_orig
+                    ham = ham_long
+
+            # For ring+ladder, validate the transverse channel BEFORE the
+            # longitudinal solve: an unrepresentable input should fail here,
+            # not after the expensive solve has already populated chiq.
+            if self.calc_type == "ring+ladder":
+                self._check_transverse_representable(ham_orig)
 
             # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
@@ -1095,6 +1998,13 @@ class RPA:
         # the metadata of the file that produced the chi0q -- stamping the
         # CURRENT run's values would mislabel the axis.
         def _freq_meta_kwargs(arr):
+            # the frequency axis of a spin-diag bare bubble is axis 1
+            # (axis 0 is the two-spin block); every other saved array
+            # leads with frequency
+            if arr.ndim in (5, 7) and arr.shape[0] == 2:
+                nfreq_arr = arr.shape[1]
+            else:
+                nfreq_arr = arr.shape[0]
             init_meta = getattr(self, "_chi0q_init_meta", None)
             if init_meta is None:
                 # coeff_tail provenance (issue #80): the tail correction
@@ -1103,7 +2013,9 @@ class RPA:
                 # would recompute with a different setting. (getattr: tests
                 # drive save_results on __new__-built stubs without __init__.)
                 return {"freq_index": self.freq_index, "nmat": self.nmat,
-                        "coeff_tail": getattr(self, "coeff_tail", 0.0)}
+                        "coeff_tail": getattr(self, "coeff_tail", 0.0),
+                        # endpoint convention of THIS build (issue #134)
+                        "tail_endpoint": TAIL_ENDPOINT_CONVENTION}
             kwargs = {}
             if init_meta["freq_index"] is not None:
                 kwargs["freq_index"] = init_meta["freq_index"]
@@ -1113,7 +2025,7 @@ class RPA:
                 # axis (0..n-1) without fabricating an nmat claim; a
                 # downstream loader then treats the file explicitly as
                 # ambiguous unless its config Nmat matches.
-                kwargs["freq_index"] = np.arange(arr.shape[0])
+                kwargs["freq_index"] = np.arange(nfreq_arr)
             if init_meta["nmat"] is not None:
                 kwargs["nmat"] = init_meta["nmat"]
             # pass-through: re-save the INPUT file's coeff_tail (stamping the
@@ -1121,6 +2033,10 @@ class RPA:
             # compute); omit the key when the input did not record one.
             if init_meta.get("coeff_tail") is not None:
                 kwargs["coeff_tail"] = init_meta["coeff_tail"]
+            # same pass-through for the endpoint marker: never fabricate
+            # one for data this run did not compute
+            if init_meta.get("tail_endpoint") is not None:
+                kwargs["tail_endpoint"] = init_meta["tail_endpoint"]
             return kwargs
 
         if "chiq" in info_outputfile.keys():
@@ -1134,6 +2050,7 @@ class RPA:
                     # unlike UHFk's interleaved (2*orb+spin) output; record it so
                     # consumers do not silently mix the two conventions.
                     index_convention = "spin_block",
+                    momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
@@ -1152,6 +2069,7 @@ class RPA:
                 wavevector_index = self.wavenum_table,
                 # spin-orbital axes are spin-block ordered (spin*norb+orb)
                 index_convention = "spin_block",
+                momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
             )
             np.savez(file_name, **save_kwargs)
@@ -1250,6 +2168,146 @@ class RPA:
 
         return info
 
+    def _validate_chi0q_shape(self, chi0q, source):
+        """Validate a supplied chi0q against the lattice/scheme and set
+        spin_mode from its shape.
+
+        Shared by every route that accepts a chi0q the solver did not
+        compute itself: the file-based ``chi0q_init`` reader and the
+        in-memory reuse of a ``green_info`` stored by a previous solve.
+        The latter used to run NO validation, so a fresh solver reached
+        the spin_mode dispatch unset and crashed with AttributeError
+        (issue #109).
+        """
+        if not np.issubdtype(chi0q.dtype, np.number):
+            raise ValueError(
+                "chi0q from {}: non-numeric dtype {}".format(
+                    source, chi0q.dtype))
+        if self.calc_scheme == "general":
+            if len(chi0q.shape) == 6:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
+                cs = chi0q.shape
+                if not (cs[1] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[2]
+                if not (nd == self.nd or nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[2] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[3] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[5] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[5] (shape {})".format(
+                            source, chi0q.shape))
+
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 7:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
+                cs = chi0q.shape
+                if not (cs[0] == 2):
+                    raise ValueError(
+                        "chi0q from {}: spin block (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[2] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[3]
+                if not (nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[5] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[5] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[6] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[6] (shape {})".format(
+                            source, chi0q.shape))
+
+                self.spin_mode = "spin-diag"
+            else:
+                raise ValueError(
+                    "chi0q from {}: unexpected shape for general scheme: "
+                    "{}".format(source, chi0q.shape))
+
+        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+            if len(chi0q.shape) == 4:
+                # spin-free or spinful
+                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
+                cs = chi0q.shape
+                if not (cs[1] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[2]
+                if not (nd == self.nd or nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[2] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[3] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+
+                if nd == self.nd:
+                    self.spin_mode = "spinful"
+                else:
+                    self.spin_mode = "spin-free"
+            elif len(chi0q.shape) == 5:
+                # spin-diagonal
+                #   shape = (nblock,nmat,nvol,norb,norb)
+                cs = chi0q.shape
+                if not (cs[0] == 2):
+                    raise ValueError(
+                        "chi0q from {}: spin block (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[2] == self.lattice.nvol):
+                    raise ValueError(
+                        "chi0q from {}: lattice volume (shape {})".format(
+                            source, chi0q.shape))
+                nd = cs[3]
+                if not (nd == self.norb):
+                    raise ValueError(
+                        "chi0q from {}: shape[3] (shape {})".format(
+                            source, chi0q.shape))
+                if not (cs[4] == nd):
+                    raise ValueError(
+                        "chi0q from {}: shape[4] (shape {})".format(
+                            source, chi0q.shape))
+
+                self.spin_mode = "spin-diag"
+            else:
+                raise ValueError(
+                    "chi0q from {}: unexpected shape for reduced scheme: "
+                    "{}".format(source, chi0q.shape))
+        else:
+            raise ValueError(
+                "unknown scheme: {}".format(self.calc_scheme))
+
+        logger.debug("chi0q from {}: shape={}, spin_mode={}".format(
+            source, chi0q.shape, self.spin_mode))
+
     def _read_chi0q(self, file_name):
         """Read chi0q from file and validate its shape.
 
@@ -1265,8 +2323,12 @@ class RPA:
 
         Raises
         ------
-        AssertionError
-            If the loaded data doesn't match expected dimensions or format.
+        ValueError
+            If the loaded chi0q's SHAPE doesn't match the lattice and
+            calculation scheme. (Standardized by the #109 validation
+            rework: this previously surfaced as a bare AssertionError,
+            which python -O silently disabled.) File-open and missing-key
+            failures are reported separately and terminate the run.
 
         Notes
         -----
@@ -1306,12 +2368,22 @@ class RPA:
         # solve() passes an input chi0q through untouched, so save_results
         # must not relabel its axis with the current run's freq_index/nmat.
         # coeff_tail rides along for the same reason (issue #80).
-        self._chi0q_init_meta = {
-            "freq_index": data["freq_index"] if "freq_index" in data else None,
-            "nmat": int(data["nmat"]) if "nmat" in data else None,
-            "coeff_tail": (float(data["coeff_tail"])
-                           if "coeff_tail" in data else None),
-        }
+        nfreq_file = (chi0q.shape[1]
+                      if (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2)
+                      else chi0q.shape[0])
+        self._chi0q_init_meta = _validate_chi0q_provenance(
+            {"freq_index": (data["freq_index"]
+                            if "freq_index" in data else None),
+             "nmat": data["nmat"] if "nmat" in data else None,
+             "coeff_tail": (data["coeff_tail"]
+                            if "coeff_tail" in data else None),
+             "tail_endpoint": (data["tail_endpoint"]
+                               if "tail_endpoint" in data else None)},
+            nfreq_file, source=file_name)
+        # bind the metadata to the LOADED tensor: if the caller replaces
+        # info["chi0q"] with a same-shaped array before solve(), the file's
+        # axis must not be inherited by the replacement (round-6 review)
+        self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).
@@ -1323,70 +2395,25 @@ class RPA:
                 "keeps the file's tail treatment, which is NOT comparable "
                 "with a recomputation under this config.".format(
                     file_name, file_tail, self.coeff_tail))
+        # Endpoint-convention gate (issue #134, fail-closed like the
+        # momentum-convention gate); shared with the in-memory reuse
+        # route -- see _enforce_tail_endpoint.
+        _enforce_tail_endpoint(self._chi0q_init_meta,
+                               "file '{}'".format(file_name))
 
-        # check size
-        if self.calc_scheme == "general":
-            if len(chi0q.shape) == 6:
-                # spin-free or spinful
-                #   shape = (nmat,nvol,nd,nd,nd,nd) where nd = norb or norb*nspin
-                cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
+        self._validate_chi0q_shape(chi0q, source=file_name)
 
-                if nd == self.nd:
-                    self.spin_mode = "spinful"
-                else:
-                    self.spin_mode = "spin-free"
-            elif len(chi0q.shape) == 7:
-                # spin-diagonal
-                #   shape = (nblock,nmat,nvol,norb,norb,norb,norb)
-                cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
-                nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-                assert cs[5] == nd, "shape[5]"
-                assert cs[6] == nd, "shape[6]"
-
-                self.spin_mode = "spin-diag"
-            else:
-                assert False, "unexpected shape for general scheme: {}".format(chi0q.shape)
-
-        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
-            # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
-            if len(chi0q.shape) == 4:
-                # spin-free or spinful
-                #   shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
-                cs = chi0q.shape
-                assert cs[1] == self.lattice.nvol, "lattice volume"
-                nd = cs[2]
-                assert nd == self.nd or nd == self.norb, "shape[2]"
-                assert cs[3] == nd, "shape[3]"
-
-                if nd == self.nd:
-                    self.spin_mode = "spinful"
-                else:
-                    self.spin_mode = "spin-free"
-            elif len(chi0q.shape) == 5:
-                # spin-diagonal
-                #   shape = (nblock,nmat,nvol,norb,norb)
-                cs = chi0q.shape
-                assert cs[0] == 2, "spin block"
-                assert cs[2] == self.lattice.nvol, "lattice volume"
-                nd = cs[3]
-                assert nd == self.norb, "shape[3]"
-                assert cs[4] == nd, "shape[4]"
-
-                self.spin_mode = "spin-diag"
-            else:
-                assert False, "unexpected shape for reduced scheme: {}".format(chi0q.shape)
-        else:
-            assert False, "unknown scheme: {}".format(self.calc_scheme)
+        # Fourier-sign provenance gate (issue #133), AFTER the IR rejection
+        # and shape validation so a malformed file gets its own diagnosis
+        # first. The q axis is chosen STRUCTURALLY from the now-validated
+        # layout, never by dimension-size search (round-2 review: a
+        # spin-diag (2, nfreq, nvol, ...) file with nfreq == nvol would
+        # otherwise be probed on its frequency axis and slip through):
+        # raw layouts put the flattened volume on axis 1, spin-diag
+        # layouts (ndim 5/7, leading 2) on axis 2.
+        _qax = 2 if (chi0q.ndim in (5, 7) and chi0q.shape[0] == 2) else 1
+        validate_momentum_convention(data, file_name, chi0q, _qax,
+                                     self.lattice.shape)
 
         logger.info("read_chi0q: shape={}, spin_mode={}".format(chi0q.shape, self.spin_mode))
 
@@ -1453,7 +2480,9 @@ class RPA:
         nvol = self.lattice.nvol
         nd = self.nd
 
-        tab_k = np.fft.fftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        # e^{+ikR} (issue #133), consistent with _make_ham_trans
+        tab_k = (np.fft.ifftn(tab_r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
+                 * nvol).reshape(nvol,nd,nd)
 
         return tab_k
 
@@ -1465,6 +2494,15 @@ class RPA:
         except Exception as e:
             logger.error("read_green failed: {}".format(e))
             sys.exit(1)
+
+        # Fourier-sign provenance (issue #133, round-9 review): validate a
+        # PRESENT marker strictly, on every branch including the
+        # green_sublattice early return below. Unmarked files stay
+        # accepted without a content check: UHFk has always written its
+        # green with the documented e^{+ikR} sign, so legacy files carry
+        # correct labels -- but a file explicitly recording a DIFFERENT
+        # convention must not be consumed.
+        check_momentum_marker(data, file_name)
 
         nvol = self.lattice.nvol
         nd = self.nd
@@ -1695,7 +2733,9 @@ class RPA:
                             np.eye(2)).reshape(nvol,nd,nd)
         H0r[0] += hh3
 
-        H0 = np.fft.fftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2)).reshape(nvol,nd,nd)
+        # e^{+ikR} (issue #133), consistent with _make_ham_trans
+        H0 = (np.fft.ifftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
+              * nvol).reshape(nvol,nd,nd)
         return H0
 
     @do_profile
@@ -1950,8 +2990,50 @@ class RPA:
         #nvol = self.lattice.nvol
 
         nblock,nmat,nvol,nd,nd2 = green_kw.shape
-        assert nvol == self.lattice.nvol
-        assert nmat == self.nmat
+        # ValueError, not assert (issue #125, the longitudinal analogue of
+        # the transverse block-count fix): these validate INPUT array data,
+        # and a bare assert disappears under python -O. A wrong frequency
+        # count would then proceed into the kernel and produce
+        # plausible-looking wrong output; a wrong volume fails later at
+        # the lattice reshape, but with a diagnostic that names neither
+        # the axis nor the expectation.
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "chi0q kernel: Green's function volume axis ({}) does not "
+                "match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "chi0q kernel: Green's function frequency axis ({}) does "
+                "not match Nmat ({})".format(nmat, self.nmat))
+        if nblock not in (1, 2):
+            # 1 = spin-free/spinful, 2 = spin-diag. Anything else is
+            # malformed input: nblock=0 returned a finite EMPTY result
+            # and nblock=3 a finite three-block one, which the caller's
+            # block handling would then silently truncate (round-5
+            # review reproduced both).
+            raise ValueError(
+                "chi0q kernel: Green's function block axis ({}) must be "
+                "1 (spin-free/spinful) or 2 (spin-diag)".format(nblock))
+        if nd != nd2 or nd < 1:
+            raise ValueError(
+                "chi0q kernel: orbital axes must be square and nonempty, "
+                "got ({}, {})".format(nd, nd2))
+        if green0_tail.shape != green_kw.shape:
+            # STRUCTURAL pairing check only: shape equality cannot prove
+            # the tail came from the same _calc_green call (a stale
+            # same-shaped tail passes and shifts chi0q). Provenance
+            # machinery is deliberately out of scope here -- unlike
+            # chi0q reuse (#116), this pair never crosses the
+            # green_info/file boundary: every caller passes the two
+            # arrays one _calc_green call returned together. The guard
+            # exists because a same-SIZE tail of a different shape would
+            # be silently reshaped below and corrupt chi0q with finite,
+            # plausible-looking values (round-3 review reproduced it).
+            raise ValueError(
+                "chi0q kernel: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
 
         # Fourier transform from Matsubara freq to imaginary time
         green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
@@ -1965,7 +3047,46 @@ class RPA:
             axes=(2, 3, 4), workers=workers)
 
         # calculate chi0 in real space and imaginary time
-        green_rev = xp.flip(xp.roll(green_rt, -1, axis=(1, 2, 3, 4)), axis=(1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+        green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
+
+        # Equal-time endpoint correction (issue #134). The tail piece
+        # aa/(i w_n) carries G's equal-time jump: its tau-space branches
+        # are -aa/2 for 0 < tau < beta and +aa/2 for tau < 0, i.e.
+        # G(0^-) = G(0^+) + aa * VV^dag (= twice the subtracted
+        # green0_tail constant in these kt units). Subtracting
+        # green0_tail above reconstructs the 0^+ branch at EVERY tau
+        # slot (exactly so at tau = 0 only for coeff_tail = 1; a
+        # fractional coefficient cancels only part of the jump, leaves a
+        # scaled-down discontinuity and stays first order -- use 0 or
+        # 1), but the bubble chi(tau) is DISCONTINUOUS at tau = 0
+        # whenever the two factors differ (different spins, or asymmetric
+        # multi-orbital structure): chi(0^+) uses (G_fwd(0^+), G_rev(0^-))
+        # and chi(0^-) the opposite pair. A discrete Fourier transform of
+        # a jump converges O(1/Nmat) unless the tau = 0 sample is the
+        # MEAN of the two branches -- without this the tail-corrected
+        # bubble was ~4.5x WORSE than the uncorrected one; with it the
+        # convergence is O(1/Nmat^2) (measured fourfold-Nmat ratios ~16).
+        # No-op -- including bitwise -- when the tail is zero. The
+        # predicate inspects only frequency slice 0: that is the ONLY
+        # slice the correction reads (the tail is frequency-constant by
+        # construction), and reducing the full repeated tensor would
+        # force a device synchronization over nmat times the data on the
+        # GPU path (round-6 review).
+        _tail_on = bool(xp.any(
+            green0_tail.reshape(nblock, nmat, -1)[:, 0] != 0))
+        if _tail_on:
+            tail_kt0 = green0_tail.reshape(
+                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
+            jump_f = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
+                                       workers=workers)
+            # the reversed factor lives at -r: its jump is the spatial
+            # reversal of the forward one
+            jump_r_rev = reverse_fft_axes(jump_f, (2, 3, 4))
+            jump_f = jump_f.reshape(nblock, nvol, nd, nd)
+            jump_r_rev = jump_r_rev.reshape(nblock, nvol, nd, nd)
+            fwd0_p = green_rt.reshape(
+                nblock, nmat, nvol, nd, nd)[:, 0].copy()
+            rev0_p = green_rev[:, 0].copy()
 
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
@@ -1977,6 +3098,12 @@ class RPA:
             chi0_rt = (green_rt_5d
                        * green_rev.swapaxes(-2, -1)
                        * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
+            if _tail_on:
+                # mean of the two equal-time branches (sgn[0] = +1)
+                chi0_rt[:, 0] = 0.5 * (
+                    fwd0_p * (rev0_p + jump_r_rev).swapaxes(-2, -1)
+                    + (fwd0_p + jump_f)
+                    * rev0_p.swapaxes(-2, -1))
             nd_shape = (nd, nd)
             nds = nd ** 2
         else:
@@ -1991,6 +3118,16 @@ class RPA:
                        * green_rev[:, :, :, np.newaxis, :, np.newaxis, :])
             # shape: (g,l,r,a,d,b,c) -> need (g,l,r,a,c,b,d)
             chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
+            if _tail_on:
+                # mean of the two equal-time branches (sgn[0] = +1),
+                # same outer-product layout as the bulk slice
+                def _slice(gf, gr):
+                    x = (gf[:, :, :, np.newaxis, :, np.newaxis]
+                         * gr[:, :, np.newaxis, :, np.newaxis, :])
+                    return x.transpose(0, 1, 2, 5, 4, 3)
+                chi0_rt[:, 0] = 0.5 * (
+                    _slice(fwd0_p, rev0_p + jump_r_rev)
+                    + _slice(fwd0_p + jump_f, rev0_p))
             nd_shape = (nd, nd, nd, nd)
             nds = nd ** 4
 
@@ -2036,7 +3173,34 @@ class RPA:
 
         nx, ny, nz = self.lattice.shape
         nblock, nmat, nvol, nd, nd2 = green_kw.shape
-        assert nblock == 2, "Transverse chi0 requires spin-diag (nblock=2)"
+        if nblock != 2:
+            # ValueError, not assert: an assert disappears under python -O,
+            # and a wrong block count here would silently ignore the extra
+            # blocks (measured: nblock=3 was accepted with the third block
+            # dropped) -- plausible-looking wrong output.
+            raise ValueError(
+                "transverse chi0 requires a spin-diag Green's function with "
+                "exactly 2 spin blocks (G_up, G_down), got nblock={}".format(
+                    nblock))
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "transverse chi0: Green's function volume axis ({}) does "
+                "not match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "transverse chi0: Green's function frequency axis ({}) "
+                "does not match Nmat ({})".format(nmat, self.nmat))
+        if nd != nd2 or nd < 1:
+            raise ValueError(
+                "transverse chi0: orbital axes must be square and "
+                "nonempty, got ({}, {})".format(nd, nd2))
+        if green0_tail.shape != green_kw.shape:
+            # same paired-tail invariant as the longitudinal kernel
+            raise ValueError(
+                "transverse chi0: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
 
         # Fourier transform from Matsubara freq to imaginary time
         omg = xp.exp(-1j * np.pi * (1.0/nmat - 1.0) * xp.arange(nmat))
@@ -2049,14 +3213,52 @@ class RPA:
         # Fourier transform from k-space to real space
         green_rt = _bk.spatial_ifftn(
             green_kt.reshape(nblock, nmat, nx, ny, nz, nd*nd),
-            axes=(2, 3, 4), workers=workers).reshape(nblock, nmat, nvol, nd, nd)
+            axes=(2, 3, 4), workers=workers)
 
-        # G_↓(-r,-τ): flip r and τ, then shift
-        green_dn_rev = xp.flip(xp.roll(green_rt[1:2], -1, axis=(1, 2, 3, 4)),
-                               axis=(1, 2, 3, 4)).reshape(nmat, nvol, nd, nd)
+        # G_↓(-r,-τ): reverse τ and EACH spatial axis separately, exactly as
+        # the longitudinal _calc_chi0q does (the shared FFT-grid reversal is
+        # negation indexing, i -> (-i) mod n, per axis). Reversing after
+        # flattening to nvol was wrong twice over: modular negation of the
+        # flat C-order index is not coordinate-wise negation on a
+        # multidimensional lattice, and the two orbital axes were being
+        # reversed as well -- invisible for nd <= 2, where the map is the
+        # identity, which is why the one- and two-orbital fixtures never
+        # saw it.
+        green_dn_rev = reverse_fft_axes(
+            green_rt[1], (0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
 
         # G_↑(r,τ)
         green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
+
+        # Equal-time endpoint correction (issue #134), transverse form.
+        # chi_+-(tau) = -G_up(tau) G_dn(-tau) is DISCONTINUOUS at tau = 0
+        # whenever up and down differ (any spin splitting): the discrete
+        # bosonic transform of a jump converges O(1/Nmat) unless the
+        # tau = 0 sample is the MEAN of the two branches
+        # (G_up(0^+), G_dn(0^-)) and (G_up(0^-), G_dn(0^+)); the branch
+        # difference is the tail piece's jump aa * VV^dag per spin
+        # block (see the longitudinal kernel).
+        # slice-0 predicate for the same reasons as the longitudinal
+        # kernel: it is the only slice the correction reads, and the full
+        # reduction costs a GPU sync over the whole repeated tensor
+        _tail_on = bool(xp.any(
+            green0_tail.reshape(nblock, nmat, -1)[:, 0] != 0))
+        if _tail_on:
+            tail_kt0 = green0_tail.reshape(
+                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
+            jump = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
+                                     workers=workers)
+            jump_up = jump[0].reshape(nvol, nd, nd)
+            # the reversed down factor lives at -r. Index the spin block
+            # OUT (jump[1], not jump[1:2]) so the reversal axes (1, 2, 3)
+            # are (x, y, z): with the spin axis retained they would be
+            # (singleton tau, x, y), silently leaving z unreversed --
+            # invisible on every nz = 1 fixture (round-2 review, caught
+            # on a (1, 1, 3) lattice).
+            jump_dn_rev = reverse_fft_axes(
+                jump[1], (1, 2, 3)).reshape(nvol, nd, nd)
+            up0_p = green_up_rt[0].copy()
+            dn0_p = green_dn_rev[0].copy()
 
         sgn = xp.full(nmat, -1)
         sgn[0] = 1
@@ -2067,12 +3269,22 @@ class RPA:
             chi0_rt = (green_up_rt
                        * green_dn_rev.swapaxes(-2, -1)
                        * sgn[:, np.newaxis, np.newaxis, np.newaxis])
+            if _tail_on:
+                chi0_rt[0] = 0.5 * (
+                    up0_p * (dn0_p + jump_dn_rev).swapaxes(-2, -1)
+                    + (up0_p + jump_up) * dn0_p.swapaxes(-2, -1))
             nd_shape = (nd, nd)
             nds = nd**2
         else:
             # chi0_+-[l,r,a,c,b,d] = G_↑[l,r,a,b] * G_↓_rev[l,r,d,c] * sgn[l]
             chi0_rt = xp.einsum('lrab,lrdc,l->lracbd',
                                 green_up_rt, green_dn_rev, sgn)
+            if _tail_on:
+                chi0_rt[0] = 0.5 * (
+                    xp.einsum('rab,rdc->racbd', up0_p,
+                              dn0_p + jump_dn_rev)
+                    + xp.einsum('rab,rdc->racbd', up0_p + jump_up,
+                                dn0_p))
             nd_shape = (nd, nd, nd, nd)
             nds = nd**4
 
@@ -2087,6 +3299,175 @@ class RPA:
             axis=0).reshape(nmat, nvol, *nd_shape) * (-1.0/beta)
 
         return chi0_qw
+
+    def _assemble_transverse_vertex(self, ham_orig):
+        """Build the transverse vertex ham_pm from the interaction tensor.
+
+        ``ham_orig`` is in the HAMILTONIAN convention (the tensor as
+        ``_make_ham_inter`` builds it), NOT the bubble-pair convention
+        the ring solve consumes: the block reads and the crossing done
+        below already re-pair it (issue #139).
+
+        The vertex draws on exactly two spin blocks of the four-index tensor.
+        Measured block occupancy (on-site fixture):
+
+            CoulombIntra   uudd, dduu        Hund       uuuu, dddd
+            CoulombInter   uuuu/uudd/dduu/dddd
+            Exchange       udud, dudu        PairLift   uddu, duud
+            Ising          uuuu/uudd/dduu/dddd          PairHop    uudd, dduu
+
+        The same-spin blocks must NOT enter: a same-spin interaction cannot
+        connect the up and down propagators of the transverse loop, so it
+        contributes self-energy but no vertex (measured: 1.4e-5 against 0.63
+        for the cross-spin part). PairLift sits outside both used blocks, but
+        harmlessly -- its transverse vertex vanishes identically.
+
+        Each block is averaged over the two redundant declarations of the same
+        operator, with the MEAN, which is what an interaction file already
+        means in this codebase (`uhfk.py` builds every two-body table as
+        `(jab_r + jba)/2`; the two solvers agree exactly on symmetric input
+        and diverge only on asymmetric declarations, #106). Without it, an
+        on-site CoulombInter with V_01 = +1, V_10 = -1 -- an identically ZERO
+        Hamiltonian, since n_a n_b = n_b n_a -- produced a vertex of +-1.
+
+        The partner in the mean is decided PER SLOT FAMILY, not per block,
+        because the redundancy being quotiented is a property of the slots:
+
+        * PALINDROMIC pairs, ((a,a),(b,b)): the two declarations multiply the
+          SAME operator (n_a n_b = n_b n_a for the density types; X_ab = X_ba
+          for Exchange, since different-spin bilinears commute). The physical
+          coefficient is the sum, real for any Hermitian declaration, and the
+          declared imaginary parts multiply the null operator -- so the mean
+          must NOT conjugate, which is exactly what drops them. A conjugated
+          mean wrongly kept an imaginary part both for complex Hermitian-closed
+          Exchange (spin-flip block) and for complex Hermitian-closed
+          CoulombInter / Ising (cross block): measured -0.7 -/+ 0.4i in each
+          case where the physical coupling is -0.7 (or +0.7 for Ising).
+
+        * HETEROGENEOUS pairs, ((a,b),(b,a)) with a != b: the two declarations
+          are coefficients of HERMITIAN-PARTNER operators (PairHop:
+          Y_ab^dagger = Y_ba), the complex phase is physical, and the mean must
+          conjugate -- that keeps a complex Hermitian-closed PairHop
+          (P, conj(P)) at its full complex value (issue #100); a plain mean
+          collapsed it to Re(P).
+
+        A per-block rule looked sufficient at first because PairHop is the only
+        heterogeneous occupant, but density-density types live on the SAME
+        cross block in palindromic slots, so the block is not the right
+        granularity.
+
+        Resulting vertices, verified against exact diagonalization end to end
+        with one common scale across all seven types (residuals at the
+        imaginary-time discretisation floor):
+
+            CoulombIntra  -U            Ising     +I
+            CoulombInter  -U'           PairLift   0
+            Hund           0            PairHop   -P
+            Exchange      -(J + J^T)/2
+
+        A non-Hermitian-closed TABLE reaching this builder directly (a
+        reader-bypassing internal path) is projected onto its Hermitian
+        part; FILE input cannot reach here unclosed since the #93
+        read-time validation.
+
+        The orbital ordering is one of two the measurements cannot separate;
+        they agree exactly on every physically valid on-site input and differ
+        only for off-site terms (rejected) and non-Hermitian declarations.
+        """
+        xp = _bk.array_module_of(ham_orig)
+        norb = self.norb
+        nd = self.norb * self.ns
+        nvol = self.lattice.nvol
+        ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
+        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]
+        spin_flip_block = ham_4d[:, :norb, norb:, :norb, norb:]
+        pair_swap = (0, 3, 4, 1, 2)
+
+        # slot-family mask over (i, j, k, l): True where both pairs are
+        # palindromic (i == j and k == l)
+        oi = xp.arange(norb)
+        palin = ((oi[:, None, None, None] == oi[None, :, None, None])
+                 & (oi[None, None, :, None] == oi[None, None, None, :]))[None]
+
+        # Swapping the two bilinears of an OFF-SITE term also reverses the
+        # displacement, r -> -r, so the same-operator partner lives at -q. At
+        # fixed q the plain swap manufactured false cancellations: the
+        # off-site declaration V_ab(+r) = +1, V_ba(+r) = -1 -- a genuinely
+        # NONZERO Hamiltonian, since its redundancy partner would be
+        # V_ba(-r) -- assembled to an identically zero vertex, slipped
+        # through the guard, and its physics was silently dropped, while the
+        # truly redundant pair (+r, a, b) / (-r, b, a) was rejected. The
+        # heterogeneous (Hermitian-partner) family needs no q reversal:
+        # conj at fixed q is the Fourier image of {conjugate, r -> -r}, which
+        # is exactly the h.c. redundancy. On-site input is q-independent and
+        # unaffected either way.
+        nx, ny, nz = self.lattice.shape
+
+        def _mean(block):
+            swapped = block.transpose(*pair_swap)
+            # q -> -q on the flattened q axis: unflatten, apply the shared
+            # FFT-grid map, flatten back (same gather as the historical
+            # coordinate-wise index computation).
+            swapped_rev = reverse_fft_axes(
+                swapped.reshape(nx, ny, nz, *swapped.shape[1:]),
+                (0, 1, 2)).reshape(swapped.shape)
+            return 0.5 * (block
+                          + xp.where(palin, swapped_rev, xp.conj(swapped)))
+
+        cross_sym = _mean(cross_block)
+        flip_sym = _mean(spin_flip_block)
+        return -cross_sym.transpose(0, 2, 4, 1, 3) + flip_sym
+
+    def _check_transverse_representable(self, ham_orig):
+        """Reject input whose transverse vertex is not a function of q alone.
+
+        ``ham_orig`` is in the HAMILTONIAN convention, as built by
+        ``_make_ham_inter`` (issue #139).
+
+        Called BEFORE the longitudinal solve, so invalid input fails without
+        burning the full solve or leaving a partially populated green_info.
+
+        The criterion is the q-dependence of the ASSEMBLED vertex -- the same
+        `ham_pm` the channel will use -- not of the raw blocks. An off-site
+        term makes the transverse pair c+_(i a up) c_(j b down) non-local, so
+        its vertex cannot be a q-only matrix: measured, the extracted vertex
+        for off-site CoulombInter / Ising / Exchange is not proportional to
+        V(q) at all (residuals 1.0 / 1.0 / 0.33), while off-site Hund and
+        PairLift give no vertex and are therefore fine. Checking the assembled
+        vertex also means an internal TABLE whose off-site parts cancel in the
+        symmetrised sum is accepted, which is correct: what the channel uses
+        is then well-defined. (File input never reaches here unclosed: since
+        #93 the readers reject declarations that are not Hermitian-closed.) (`_append_pairhop` silently discards off-site
+        PairHop before this point; see the documentation warning.)
+        """
+        nvol = self.lattice.nvol
+        if nvol <= 1:
+            return
+        xp = _bk.array_module_of(ham_orig)
+        ham_pm = self._assemble_transverse_vertex(ham_orig)
+        spread = float(_bk.to_host(xp.max(xp.abs(ham_pm - ham_pm[0:1]))))
+        scale = float(_bk.to_host(xp.max(xp.abs(ham_pm))))
+        # RELATIVE tolerance, with no absolute floor: a floor of max(scale, 1)
+        # let a purely q-dependent vertex of small amplitude (< 1e-10) through,
+        # and it would then be used by the unsupported calculation. Roundoff
+        # from the Fourier transform sits at ~1e-16 relative, so 1e-10 relative
+        # separates it cleanly from genuine q-dependence at ANY amplitude.
+        # scale == 0 (no interaction reaching these blocks) implies spread == 0
+        # and passes.
+        if spread > 1e-10 * scale:
+            logger.error(
+                "calc_type='ring+ladder' requires the transverse vertex to be "
+                "independent of q, which fails when a two-body interaction "
+                "with a nonzero cross-spin or spin-flip part is off-site: the "
+                "transverse pair c+_(i a up) c_(j b down) is then non-local "
+                "and its vertex is not a function of q alone. Found "
+                "q-dependence {:.3e} on a scale of {:.3e}. Use "
+                "calc_type='ring', or restrict those two-body terms to "
+                "on-site. (Off-site Hund and PairLift are accepted: their "
+                "transverse vertex vanishes.)".format(spread, scale))
+            raise ValueError(
+                "calc_type='ring+ladder' does not support off-site "
+                "cross-spin/spin-flip two-body interactions")
 
     def _build_transverse_channel(self, chi0q_orig, ham_orig):
         """Build transverse (ladder) channel for RPA.
@@ -2107,7 +3488,10 @@ class RPA:
         chi0q_orig : ndarray
             Original bare susceptibility (before spin inflation).
         ham_orig : ndarray
-            Original interaction Hamiltonian in spin-orbital space.
+            Interaction tensor in spin-orbital space, in the
+            HAMILTONIAN convention as built by _make_ham_inter: the
+            transverse assembly re-pairs it itself, so it must NOT be
+            pre-converted to the bubble-pair convention (issue #139).
 
         Returns
         -------
@@ -2126,24 +3510,40 @@ class RPA:
         # For paramagnetic and spin-diagonal cases, chi0_+- = chi0_orb
         # (same numerical values, just interpreted as transverse bubble)
         if self.spin_mode == "spin-free":
-            # chi0q_orig shape: (nfreq, nvol, norb, norb, norb, norb) for general
-            # or (nfreq, nvol, norb, norb) for reduced
-            if chi0q_orig.ndim == 4:
-                # reduced: expand to general
-                # chi0q_pm[:, :, l1, l2, l3, l2] = chi0q_orig[:, :, l1, l3]
-                # i.e., delta_{l2,l4} structure
-                nfreq, nvol_c, n1, n2 = chi0q_orig.shape
-                chi0q_pm = xp.zeros((nfreq, nvol_c, norb, norb, norb, norb),
-                                    dtype=np.complex128)
-                # Vectorized: broadcast chi0q_orig into diagonal l2=l4 positions
-                for l2 in range(norb):
-                    chi0q_pm[:, :, :, l2, :, l2] = chi0q_orig
-            else:
-                chi0q_pm = chi0q_orig.copy()
+            # chi0q_orig shape: (nfreq, nvol, norb, norb, norb, norb).
+            # The ladder channel is reachable only with calc_scheme="general"
+            # (_set_scheme sys.exit()s otherwise), so enable_reduced is always
+            # False here and chi0q is always the full rank-4 orbital tensor.
+            if chi0q_orig.ndim != 6:
+                # ValueError, consistently with the spinful malformed-rank
+                # guard below: both protect the same normally unreachable
+                # boundary (a round-3 review found the earlier
+                # AssertionError here rested on no real distinction; the
+                # spin-diag checks are different -- they reject reachable
+                # runtime/provenance conditions, not malformed ranks).
+                raise ValueError(
+                    "transverse channel expects a general (rank-4 orbital) "
+                    "chi0q, got ndim={}. calc_type='ring+ladder' requires "
+                    "calc_scheme='general'; if that constraint is ever relaxed, "
+                    "a reduced chi0q must be embedded at its DENSITY-PAIR "
+                    "positions chi0_+-[a,a,b,b] = chi0_red[a,b] -- NOT scattered "
+                    "as delta_{{l2,l4}}, which drops the very components the "
+                    "vertex reads (see sc._expand_flex_chi).".format(
+                        chi0q_orig.ndim))
+            chi0q_pm = chi0q_orig.copy()
 
         elif self.spin_mode == "spin-diag":
             # Compute exact chi0_+- from G_↑ and G_↓ Green's functions.
             # chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+            if getattr(self, "_chi0q_external", False):
+                # A same-instance green0 may belong to an OLDER bubble than
+                # the externally supplied chi0q; silently pairing them gives
+                # a chiq_pm from different physics (round-3 review).
+                raise ValueError(
+                    "spin-diag transverse (ladder) channel cannot be "
+                    "combined with an externally supplied chi0q: the "
+                    "channel needs the Green's functions that produced "
+                    "this exact bubble. Recompute chi0q internally.")
             if hasattr(self, 'green0') and self.green0 is not None:
                 chi0q_pm_full = self._calc_chi0q_transverse(
                     self.green0, self.green0_tail, 1.0 / self.T)
@@ -2152,15 +3552,10 @@ class RPA:
                     chi0q_pm = chi0q_pm_full[self.freq_index]
                 else:
                     chi0q_pm = chi0q_pm_full
-                # Expand reduced to general if needed for vertex contraction
-                if self.enable_reduced and chi0q_pm.ndim == 4:
-                    nfreq, nvol_c, n1, n2 = chi0q_pm.shape
-                    chi0q_pm_gen = xp.zeros(
-                        (nfreq, nvol_c, norb, norb, norb, norb),
-                        dtype=np.complex128)
-                    for l2 in range(norb):
-                        chi0q_pm_gen[:, :, :, l2, :, l2] = chi0q_pm
-                    chi0q_pm = chi0q_pm_gen
+                # No reduced-to-general expansion here either: the ladder
+                # channel forces calc_scheme="general", so _calc_chi0q_transverse
+                # returns the full rank-4 orbital tensor (see the spin-free
+                # branch above for what a reduced chi0q would require).
             else:
                 # The transverse bubble chi0_+- = -G_up * G_down cannot be
                 # reconstructed from the longitudinal chi0q alone (which carries
@@ -2209,30 +3604,46 @@ class RPA:
                         chi0q_orig.shape))
 
         # --- Build W_+- (transverse vertex) ---
-        # The transverse vertex for the +- (spin-flip) channel:
-        #   W_+-[a,c,b,d] = ham[↑a,↑c,↑b,↑d] - ham[↓d,↓b,↑c,↑a]
+        # The transverse vertex comes from the CROSS-SPIN block alone. The
+        # same-spin block must not appear: a same-spin interaction cannot
+        # connect the up and down propagators of the transverse loop, so it
+        # produces only self-energy and no vertex at all. That is measured, not
+        # argued -- diagonalizing an explicit model with the same-spin part of
+        # an interaction switched on, and removing the O(lambda) self-energy
+        # exactly (it is the linear response to the Hartree-Fock one-body
+        # potential built from the non-interacting density matrix), leaves a
+        # vertex of 0 to 1e-6, while the cross-spin part leaves the full value.
         #
-        # First term: same-spin (↑↑↑↑) block of the Hartree vertex
-        # Second term: cross-spin (↓↓↑↑) block (subtracted)
+        # This used to be `up_block - cross_block.transpose(0, 4, 3, 2, 1)`,
+        # which is wrong twice over (issue #90): the `up_block` term should not
+        # be there, and the reordering of the cross block was not the right one.
+        # For CoulombInter the two errors combined into the antisymmetric
+        # remainder V(q) - V(q)^T, which vanishes only when V(q) happens to be
+        # symmetric under the orbital-pair transpose -- so one-orbital fixtures
+        # never saw it.
         #
-        # Verification for each interaction type:
-        #   CoulombIntra U: ham[↑↑↑↑]=0, ham[↓↓↑↑]=U  → W_+-= -U  (correct)
-        #   CoulombInter V: ham[↑↑↑↑]=V, ham[↓↓↑↑]=V  → W_+-=  0  (SU(2) correct)
-        #   Exchange J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
-        #   PairLift J:     ham[↑↑↑↑]=0, ham[↓↓↑↑]=0   → W_+-=  0  (SU(2) correct)
-        #   Hund J:         ham[↑↑↑↑]=-J, ham[↓↓↑↑]=0  → W_+-= -J  (not SU(2) alone)
-        #   Ising J:        ham[↑↑↑↑]=J, ham[↓↓↑↑]=-J  → W_+-= 2J  (not SU(2) alone)
-        #   Full Kanamori:  W_+- = -(U-2J) = W_zz  (SU(2) correct)
-        ham_4d = ham_orig.reshape(nvol, nd, nd, nd, nd)
-
-        # Vectorized extraction using index arrays (replaces norb^4 Python loop)
-        # Same-spin block: ham[(↑,a),(↑,c),(↑,b),(↑,d)]
-        up_block = ham_4d[:, :norb, :norb, :norb, :norb]  # (nvol, norb, norb, norb, norb)
-        # Cross-spin block: ham[(↓,d),(↓,b),(↑,c),(↑,a)] with index reordering
-        cross_block = ham_4d[:, norb:, norb:, :norb, :norb]  # (nvol, norb, norb, norb, norb)
-        # cross_block[:, d, b, c, a] -> need to transpose to match ham_pm[:, a, c, b, d]
-        cross_reordered = cross_block.transpose(0, 4, 3, 2, 1)  # (nvol, a, c, b, d)
-        ham_pm = up_block - cross_reordered
+        # Measured vertices, by exact diagonalization, all interactions on-site:
+        #
+        #   CoulombIntra U : -U at (a,a)x(a,a)      table said -U   correct
+        #   CoulombInter U': -U' at (a,b)x(b,a)     table said 0    WRONG
+        #   Hund J         :  0                     table said -J   WRONG
+        #   Ising J        : +J                     table said 2J   WRONG
+        #   Exchange J     : -J at (a,a)x(b,b)      table said 0    WRONG
+        #   PairLift J     :  0                     table said 0    correct
+        #   PairHop J      : -J at (a,b)x(a,b)      table had no entry
+        #
+        # Every case is q-independent to better than 1e-6, which is the
+        # diagnostic that the extraction is clean: an on-site interaction
+        # cannot produce a q-dependent vertex. The CoulombInter row is
+        # additionally confirmed end to end in chi0's own labels, with a
+        # residual that tracks the imaginary-time discretisation (8.9e-3 ->
+        # 4.4e-3 -> 2.2e-3 over grids of 192 -> 384 -> 768) while the previous
+        # behaviour sits at 1.00.
+        #
+        # Vertex assembly (and all measurement provenance) lives in
+        # _assemble_transverse_vertex; representability was already validated
+        # before the longitudinal solve.
+        ham_pm = self._assemble_transverse_vertex(ham_orig)
 
         logger.info("ring+ladder: built transverse channel "
                     "(chi0_pm shape={}, ham_pm shape={})".format(

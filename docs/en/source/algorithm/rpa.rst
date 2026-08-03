@@ -37,6 +37,30 @@ Applying the Fourier transformation
 
 the Hamiltonian is rewritten in the following form
 
+.. note::
+
+   This :math:`e^{+i\bf{k}\cdot\bf{r}}` convention (the Wannier90-style
+   sign, shared with UHFk) is what every real-space-coefficient build
+   (:math:`R \to k/q`) of the RPA module follows since issue #133:
+   :math:`\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
+   e^{+i {\bf k}\cdot{\bf R}}` and :math:`W({\bf q}) = \sum_{\bf R}
+   W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}` (the convolution transforms
+   inside the susceptibility machinery are self-inverse pairs and are not
+   affected). Before that fix the non-spin-orbital path used the opposite
+   sign throughout -- a self-consistent global :math:`{\bf k} \to
+   -{\bf k}` relabeling, so its stored ``chi0q``/``chiq`` carried negated
+   momentum labels whenever the tensor is not elementwise even under
+   :math:`{\bf q} \to -{\bf q}` on the FFT grid -- while the
+   spin-orbital path mixed the two signs between the transfer and the
+   interaction, so its ``chiq`` was solved from :math:`\chi_0({\bf q})`
+   with :math:`W(-{\bf q})`: for interactions with
+   :math:`W({\bf q}) \neq W(-{\bf q})` (directional bonds) the old
+   spin-orbital ``chiq`` is wrong, not merely relabeled. Momentum-space
+   files written since this fix carry ``momentum_convention =
+   "e_plus_ikR"``; loaders reject unmarked legacy files unless their
+   content is :math:`{\bf q}`-even (for which the two conventions
+   coincide).
+
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}
@@ -100,8 +124,11 @@ is obtained as follows:
 .. math::
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
-    X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+    X^{(0)\alpha\alpha', \beta\beta'}(q)
+    - \sum_{\alpha_1\alpha_1'\beta_1\beta_1'}
+    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
 Combining indices such as :math:`\alpha\alpha^\prime` into one index, they are expressed
@@ -112,6 +139,54 @@ in the matrix form. Then finally it leads to the expression:
      \hat{X}(q)&=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
      &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
     \end{aligned}
+
+.. note::
+
+   **Index-pair convention between the interaction and the susceptibility.**
+   The two objects above label their index pairs with opposite orderings
+   inside each pair, and converting between them is part of the RPA
+   equation, not an afterthought.
+
+   The two pair slots of the bare susceptibility carry the bilinears
+   below -- the left pair with its creation index *second*, the right
+   pair with its creation index *first* --
+
+   .. math::
+      X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
+      \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+      \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle ,
+
+   which is what the Green-function product :math:`G^{\alpha\beta}(k+q)
+   G^{\beta'\alpha'}(k)` above encodes. The interaction
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` multiplies
+   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
+   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}`, i.e. in *each* pair its
+   ordering is the reverse of the susceptibility's.  The vertex entering
+   the RPA equation above is therefore the interaction tensor with the
+   two indices of *each pair* transposed -- written there as
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}` -- i.e. as a
+   matrix,
+
+   .. math::
+      \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
+      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q},
+
+   the same reordering that appears between Eqs. (16) and (20) of the
+   H-wave paper (`arXiv:2308.00324 [cond-mat.str-el]
+   <https://arxiv.org/abs/2308.00324>`_).  Both index pairs are affected.
+
+   The conversion is the identity on density (pair-diagonal) components
+   and, more generally, on any real Hermitian-closed declaration, since
+   the transposed slot then carries the same value.  It is observable
+   only for a *complex* pair-crossing interaction -- a complex
+   Hermitian-closed ``PairHop`` -- where omitting it returns the
+   susceptibility of the complex-conjugate Hamiltonian.  H-wave applies
+   the conversion when it assembles the vertex for the ring solve.  The
+   transverse (ladder) assembly is *not* routed through it: that
+   assembly re-pairs the interaction tensor itself and therefore
+   consumes the Hamiltonian convention directly.  The stored
+   ``chiq``/``chi0q`` and the interaction files keep the conventions
+   documented in their own sections.
 
 In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,
@@ -245,16 +320,69 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 
    W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
 
-For the standard Kanamori interactions, the transverse vertex takes the form:
+The transverse vertex is built from the cross-spin and spin-flip blocks of
+the interaction tensor only. The same-spin block does not enter: a same-spin
+interaction cannot connect the up and down propagators of the transverse loop,
+so it contributes self-energy but no vertex.
+
+Each orbital pair is symmetrised with the mean of the two declarations, since
+an interaction file may write the same operator either way
+(:math:`n_a n_b = n_b n_a`, and :math:`X_{ab} = X_{ba}` for Exchange).
+This matches the convention UHFk uses. The partner in the mean depends on the
+interaction type (equivalently, on the slot family the type occupies):
+density-density types and Exchange average with the plain transpose,
+while PairHop averages with the conjugated transpose, because its two
+declarations are Hermitian partners (:math:`P_{ba} = P_{ab}^{*}`) rather than
+the same coefficient. For a complex Hermitian-closed Exchange the physical
+coupling :math:`(J_{01} + J_{10})/2` is therefore real, while a complex
+Hermitian-closed PairHop keeps its full complex value.
+
+The resulting vertex, for on-site interactions:
 
 - ``CoulombIntra`` :math:`U`: :math:`W_{+-} = -U`
-- ``CoulombInter`` :math:`V`: :math:`W_{+-} = 0`
-- ``Hund`` :math:`J`: :math:`W_{+-} = -J`
-- ``Ising`` :math:`I`: :math:`W_{+-} = 2I`
+- ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
+- ``Hund`` :math:`J`: :math:`W_{+-} = 0`
+- ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
+- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (all Wannier90-like k-space solvers now read
+  the Ising file in this normalization -- the UHFk factor-1/4 discrepancy
+  was resolved with issue #106; the separate real-space UHFr reader keeps
+  its S^z convention)
+- ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
+- ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
 
-The full Kanamori interaction (:math:`U, V = U-2J, J, J' = J`)
-satisfies :math:`W_{+-} = -(U - 2J) = W_{zz}` (SU(2) symmetry),
-which implies :math:`\chi_{+-} = \chi_{zz}` for paramagnetic systems.
+.. note::
+
+   These values differ from those published before H-wave's transverse channel
+   was checked against exact diagonalization; four of the earlier entries were
+   incorrect and one type was missing. Transverse susceptibilities produced by
+   earlier versions with ``CoulombInter``, ``Hund``, ``Ising`` or ``Exchange``
+   should be recomputed. Only ``chiq_pm`` is affected -- it does not feed
+   ``chiq``, the self-energy, or the Eliashberg vertex.
+
+``calc_type = "ring+ladder"`` validates, before the longitudinal solve, that
+the **assembled transverse vertex is independent of** :math:`q` on the
+(sublattice-folded) lattice, to a relative tolerance of :math:`10^{-10}`;
+input failing this is rejected. The transverse pair
+:math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` is non-local for an
+off-site term, so such a term's vertex is not a function of :math:`q` alone
+and cannot be represented. In practice this rejects off-site
+``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
+``PairLift`` are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
+rejected earlier, at read time (issue #93: declaration files must be
+Hermitian-closed); an inter-site pair that folds into the supercell under
+``SubShape`` becomes an intra-cell orbital pair and is representable. The
+longitudinal (``ring``) channel is unaffected.
+
+.. warning::
+
+   Off-site ``PairHop`` entries are silently discarded when the interaction is
+   read, before this check runs, so they are neither rejected nor included.
+   Do not rely on off-site ``PairHop`` in any RPA calculation. A DIAGONAL
+   PairHop entry (equal orbitals) denotes the density term
+   :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
+   with coefficient :math:`P` rather than :math:`2P`, consistently in both the
+   longitudinal and transverse channels. Validation of such degenerate entries
+   is tracked separately.
 
 The transverse RPA susceptibility is obtained as
 
@@ -267,6 +395,15 @@ The transverse RPA susceptibility is obtained as
 To enable the transverse channel calculation, set ``calc_type = "ring+ladder"``
 in the input TOML file. This requires the ``general`` calculation scheme
 (automatically selected).
+
+.. note::
+
+   In the spin-orbital mode, when the Hamiltonian genuinely mixes spins
+   (e.g. spin-orbit coupling), the transverse channel extracts only the
+   :math:`S_z`-conserving block :math:`G_\uparrow G_\downarrow` of the
+   bubble; the spin-mixing cross terms are not included, and a warning
+   is emitted. The transverse susceptibility of a spin-mixing system is
+   therefore an approximation in the current implementation.
 
 
 Spin-orbital mode

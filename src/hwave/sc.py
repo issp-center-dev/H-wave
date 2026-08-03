@@ -18,6 +18,10 @@ import logging
 import zipfile
 
 import numpy as np
+
+from hwave.solver.vertex_table import sc_coefficients
+from hwave.solver.kgrid import reverse_fft_axes
+from hwave.solver.declarations import symmetrise_k
 from numpy.fft import fftn, ifftn
 from scipy.optimize import bisect
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
@@ -639,7 +643,8 @@ def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
 def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
                          norb, kx_array, ky_array, kz_array, beta,
                          pairing_type, *, bond_max_shells, bond_memory_cap_gb,
-                         precondition_opts=None, green_source=None):
+                         precondition_opts=None, green_source=None,
+                         g2_tail=False):
     """Run the bond-resolved physics chain and return the Eliashberg operator.
 
     bond_bubble -> Case-2 corrected m=0 blocks -> bare_bond_vertices ->
@@ -707,14 +712,14 @@ def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
                 "(pairing_type=%s)...", pairing_type)
     A, A_fl, A_pp, vec_size = bond_channels.make_bond_kernel_parts(
         chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green_kw, bond_set,
-        pairing_type, beta)
+        pairing_type, beta, g2_tail=g2_tail)
 
     # v1 runtime preconditions of the Hermitian static path (spec S4.5): the
     # pair weight w = GG must be real (Hermitian) and >= 0 and the symmetrized
     # kernel K~ = -sqrt(w) Gamma sqrt(w) Hermitian, else the reported lambda is
     # not a real eigenvalue/Rayleigh quotient. Violations RAISE -- there is no
     # non-Hermitian biorthogonal fallback in v1.
-    weight = bond_channels.pair_weight(green_kw, beta)
+    weight = bond_channels.pair_weight(green_kw, beta, g2_tail=g2_tail)
     diagnostics = bond_channels.check_hermitian_preconditions(
         A, weight, label="eliashberg bond_channels",
         parts={"pp": A_pp, "fl": A_fl},
@@ -744,6 +749,7 @@ def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
         "bond_max_shells": ("all" if bond_max_shells is None
                             else int(bond_max_shells)),
         "bond_memory_cap_gb": float(bond_memory_cap_gb),
+        "g2_tail": bool(g2_tail),
         "approximation": (
             "static RPA-ladder bond dressing on "
             + ("an EXTERNAL Green function supplied via [eliashberg] "
@@ -913,7 +919,7 @@ def _reject_ir_native(data, file_name, hint):
             "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
 
 
-def _load_chi0q(input_dict):
+def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
     Parameters
@@ -942,8 +948,7 @@ def _load_chi0q(input_dict):
         "FLEX with [mode.param] write_densified = true, or switch to "
         "frequency = \"dynamic\" with [eliashberg] matsubara_basis = "
         "\"ir\".")
-    enable_spin_orbital = input_dict.get("mode", {}).get(
-        "enable_spin_orbital", False)
+    enable_spin_orbital = _resolve_spin_orbital_flag(input_dict)
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
@@ -955,7 +960,18 @@ def _load_chi0q(input_dict):
     # calc comparisons are not silently inconsistent. Files without the key
     # (older builds) load silently as before.
     if "coeff_tail" in data:
-        file_tail = float(data["coeff_tail"])
+        # type-strict provenance normalization, mirroring
+        # rpa._validate_chi0q_provenance (round-8 review)
+        import numbers
+        _val = np.asarray(data["coeff_tail"])
+        _item = _val[()] if _val.ndim == 0 else None
+        if (_item is None or isinstance(_item, (bool, np.bool_))
+                or not isinstance(_item, numbers.Real)
+                or not np.isfinite(float(_item))):
+            raise ValueError(
+                "chi0q file '{}': malformed coeff_tail ({!r})".format(
+                    file_name, data["coeff_tail"]))
+        file_tail = float(_item)
         config_tail = float(input_dict.get("mode", {}).get("param", {})
                             .get("coeff_tail", 0.0))
         if file_tail != config_tail:
@@ -965,6 +981,149 @@ def _load_chi0q(input_dict):
                 "NOT comparable with a chi0q_mode=\"calc\" run under this "
                 "config. Set [mode.param] coeff_tail = {} to match the "
                 "file.".format(file_name, file_tail, config_tail, file_tail))
+        # Endpoint-convention gate (issue #134): a nonzero-tail chi0q
+        # produced before the branch-mean endpoint fix carries a pre-fix
+        # O(1/Nmat) error indistinguishable from the array itself; refuse
+        # it rather than feed it to the Eliashberg solver. Zero-tail files
+        # and legacy files without the coeff_tail key are exempt (same
+        # policy as the RPA chi0q_init reader).
+        if file_tail != 0.0:
+            from hwave.solver.rpa import TAIL_ENDPOINT_CONVENTION
+            te = None
+            if "tail_endpoint" in data:
+                val = np.asarray(data["tail_endpoint"])
+                te = str(val[()]) if val.ndim == 0 else repr(val)
+            if te is None:
+                raise ValueError(
+                    "chi0q file '{}' records coeff_tail = {} but no "
+                    "tail_endpoint marker: it was produced before the "
+                    "equal-time endpoint fix (issue #134) and its "
+                    "tail-corrected values carry the pre-fix O(1/Nmat) "
+                    "endpoint error. Recompute the bubble with this "
+                    "version.".format(file_name, file_tail))
+            if te != TAIL_ENDPOINT_CONVENTION:
+                raise ValueError(
+                    "chi0q file '{}' carries unrecognized tail_endpoint = "
+                    "{!r} (this build implements {!r}); refusing to use a "
+                    "bubble whose endpoint treatment is unknown.".format(
+                        file_name, te, TAIL_ENDPOINT_CONVENTION))
+
+    # Unconditional marker validation (round-10 review): a PRESENT
+    # marker must be checked even when the layout/grid cannot be
+    # identified (absent CellShape, unknown shape).
+    from hwave.solver.rpa import check_momentum_marker
+    check_momentum_marker(data, file_name)
+    # Fourier-sign provenance gate (issue #133): chi0q is q-labeled; a
+    # pre-#133 file carries flipped labels. Legacy files are accepted only
+    # when the payload is elementwise q-even (see the validator). The q
+    # axes are chosen STRUCTURALLY from the accepted layouts (round-2
+    # review: a size search probed the frequency axis when nfreq == nvol,
+    # and skipped the already-expanded reference layouts entirely):
+    #   4D/6D raw  (nfreq, nvol, ...)            -> axis 1
+    #   5D/7D spin-diag (2, nfreq, nvol, ...)    -> axis 2
+    #   6D ref  (no, no, Nx, Ny, Nz, nfreq)      -> axes (2, 3, 4)
+    #   8D ref  (no, no, no, no, Nx, Ny, Nz, nfreq) -> axes (4, 5, 6)
+    from hwave.solver.rpa import validate_momentum_convention
+    _cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
+    if _cs is None:
+        # no lattice configured (unit-level callers): the grid, and with
+        # it the momentum axes, cannot be identified -- production
+        # configs always carry CellShape, so no production bypass
+        _grid = None
+    else:
+        _cs = list(_cs)
+        while len(_cs) < 3:
+            _cs.append(1)
+        _grid = tuple(int(x) for x in _cs)
+    _nvol = int(np.prod(_grid)) if _grid is not None else -1
+    # With the orbital count known (the production entry always passes
+    # it), validate the EXACT supported layouts up front (round-6 review:
+    # without norb a malformed 8D file passed both marked and unmarked;
+    # with norb the (8,8,2,2,2,2)-style raw/ref ambiguity also vanishes,
+    # since norb cannot be two values at once).
+    _qax = None
+    _resolved = False
+    if norb is not None and _grid is not None:
+        nv, no = _nvol, int(norb)
+        # Full trailing shapes for every layout (round-7 review: partial
+        # slices accepted malformed spin-diag arrays), and the layout
+        # matched HERE directly selects the q axes -- re-running the
+        # norb-blind structural routing below raised 'matches BOTH' for
+        # shapes this gate had already disambiguated.
+        if chi0q.ndim == 4 and tuple(chi0q.shape[1:]) == (nv, no, no):
+            _qax = 1
+        elif (chi0q.ndim == 6
+                and tuple(chi0q.shape[1:]) == (nv, no, no, no, no)):
+            _qax = 1
+        elif (chi0q.ndim == 6
+                and tuple(chi0q.shape[:5]) == (no, no) + _grid):
+            _qax = (2, 3, 4)
+        elif (chi0q.ndim == 8
+                and tuple(chi0q.shape[:7]) == (no,) * 4 + _grid):
+            _qax = (4, 5, 6)
+        elif (chi0q.ndim == 5 and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:]) == (nv, no, no)):
+            _qax = 2
+        elif (chi0q.ndim == 7 and chi0q.shape[0] == 2
+                and tuple(chi0q.shape[2:]) == (nv, no, no, no, no)):
+            _qax = 2
+        else:
+            raise ValueError(
+                "chi0q file '{}': shape {} matches no supported layout "
+                "for norb = {} and CellShape {}; the file is malformed "
+                "or from a different system. Regenerate it with the "
+                "current version.".format(file_name, chi0q.shape, no,
+                                          list(_grid)))
+        _resolved = True
+    if _resolved or _grid is None:
+        pass
+    elif chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
+        _qax = 2
+    elif chi0q.ndim == 8:
+        _qax = (4, 5, 6)
+    elif chi0q.ndim == 6:
+        # raw (nfreq, nvol, norb x4) vs ref (norb, norb, Nx, Ny, Nz,
+        # nfreq): decide by the FULL structure of both patterns
+        # (round-3 review: testing shape[1] != nvol misrouted a ref file
+        # with norb == nvol onto the orbital axis). Truly ambiguous
+        # shapes fail closed unless the marker decides.
+        _is_ref = (chi0q.shape[0] == chi0q.shape[1]
+                   and tuple(chi0q.shape[2:5]) == _grid)
+        _is_raw = (chi0q.shape[1] == _nvol
+                   and len(set(chi0q.shape[2:6])) == 1)
+        if _is_ref and _is_raw:
+            if "momentum_convention" in getattr(data, "files", []):
+                _qax = (2, 3, 4)   # any axis: the validator accepts on tag
+            else:
+                raise ValueError(
+                    "chi0q file '{}': shape {} matches BOTH the raw and "
+                    "the reference 6D layout and carries no "
+                    "momentum_convention marker (issue #133) -- the "
+                    "momentum axes cannot be identified safely. "
+                    "Regenerate the file with the current version, which "
+                    "stamps the marker.".format(file_name, chi0q.shape))
+        elif _is_ref:
+            _qax = (2, 3, 4)
+        elif _is_raw:
+            _qax = 1
+        else:
+            # neither complete pattern matches: fail closed HERE,
+            # independent of provenance (round-5 review: routing through
+            # the validator let a matching marker return early, and the
+            # downstream converter then silently RESHAPED the unknown
+            # layout, reinterpreting orbital axes as data -- a marker can
+            # establish the Fourier sign, never the array layout)
+            raise ValueError(
+                "chi0q file '{}': shape {} matches neither the raw "
+                "(nfreq, nvol, norb x4) nor the reference "
+                "(norb, norb, Nx, Ny, Nz, nfreq) 6D layout for CellShape "
+                "{}; the file is malformed or from a different lattice. "
+                "Regenerate it with the current version.".format(
+                    file_name, chi0q.shape, list(_grid)))
+    elif chi0q.ndim == 4:
+        _qax = 1
+    if _qax is not None:
+        validate_momentum_convention(data, file_name, chi0q, _qax, _grid)
 
     freq_index, file_nmat = _read_freq_meta(data)
     # Identify the frequency axis from the array LAYOUT, never from the
@@ -1058,10 +1217,16 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         # because their S/C matrices have off-diagonal elements that
         # couple to chi0q off-diagonal components.
         # With CoulombIntra only, S is block-diagonal and reduced is exact.
-        files = info_inputfile.get("interaction", {})
+        # CaseInsensitiveDict, like _read_interaction_files (round-5
+        # review): an exact-case check classified a 'coulombinter' run as
+        # reduced, silently omitting the very components the comment
+        # above says inter-orbital interactions require. 'Coulomb' counts
+        # too -- its split can produce a CoulombInter part.
+        from requests.structures import CaseInsensitiveDict
+        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
         has_interorbital = any(k in files for k in
                               ["Hund", "Exchange", "CoulombInter",
-                               "Ising", "PairHop"])
+                               "Ising", "PairHop", "Coulomb"])
         if has_interorbital:
             calc_scheme = "general"
         else:
@@ -1073,6 +1238,11 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     info_mode_rpa = dict(info_mode)
     info_mode_rpa["calc_scheme"] = calc_scheme
+    # Forward the RESOLVED boolean, not the raw value: RPA mixes truthiness
+    # and == True checks on this flag, so a string "false" would diverge
+    # internally (round-1 review of #83's guard).
+    info_mode_rpa["enable_spin_orbital"] = _resolve_spin_orbital_flag(
+        input_dict)
 
     logger.info("Computing chi0q internally (calc_scheme={})...".format(calc_scheme))
 
@@ -1140,7 +1310,14 @@ def _read_interaction_files(input_dict):
     interactions : dict
         Dictionary of interaction parameters keyed by type name.
     """
-    files = input_dict["file"]["input"]["interaction"]
+    # Case-insensitive on purpose (round-4 review): the FLEX reader stores
+    # these keys in a CaseInsensitiveDict, so a run configured with e.g.
+    # 'coulombinter' PRODUCES a susceptibility with that interaction while
+    # an exact-case lookup here would silently read an EMPTY interaction
+    # set -- the compatibility gate and the pairing vertex would both be
+    # built from nothing.
+    from requests.structures import CaseInsensitiveDict
+    files = CaseInsensitiveDict(input_dict["file"]["input"]["interaction"])
     path_to_input = files.get("path_to_input", "")
 
     geom_file = os.path.join(path_to_input, files["Geometry"])
@@ -1153,11 +1330,17 @@ def _read_interaction_files(input_dict):
     interaction_types = ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                         "Ising", "PairLift", "PairHop"]
     interactions = {}
+    from hwave.solver.declarations import validate_hermitian_closure
+
     for itype in interaction_types:
         if itype in files:
             f = os.path.join(path_to_input, files[itype])
             logger.info("Reading {} from {}".format(itype, f))
-            interactions[itype] = wan90.read_w90(f)
+            tbl = wan90.read_w90(f)
+            # issue #93: fail fast on non-Hermitian-closed declarations,
+            # with the same rule and tolerance as the k-space reader
+            validate_hermitian_closure(itype, tbl, source=f)
+            interactions[itype] = tbl
 
     # combined 'Coulomb' input: same decomposition as UHFk/RPA
     # (wan90.split_coulomb; r=0 diagonal -> CoulombIntra, rest -> CoulombInter)
@@ -1168,7 +1351,9 @@ def _read_interaction_files(input_dict):
                 "CoulombIntra or CoulombInter")
         f = os.path.join(path_to_input, files["Coulomb"])
         logger.info("Reading Coulomb from {}".format(f))
-        coulomb_intra, coulomb_inter = wan90.split_coulomb(wan90.read_w90(f))
+        _coulomb_tbl = wan90.read_w90(f)
+        validate_hermitian_closure("Coulomb", _coulomb_tbl, source=f)
+        coulomb_intra, coulomb_inter = wan90.split_coulomb(_coulomb_tbl)
         if coulomb_intra:
             interactions["CoulombIntra"] = coulomb_intra
         if coulomb_inter:
@@ -1203,17 +1388,18 @@ def _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb):
     kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
         kx_array, ky_array, kz_array, indexing='ij'
     )
-    # Solver-core convention (rpa.py _make_ham_trans: tab_r[R,orb1,orb2] +
-    # fftn == e^{-ikR}): epsilon[a,b](k) = sum_R t_R[a,b] e^{-ikR}. This keeps
+    # Solver-core convention (rpa.py _make_ham_trans, issue #133:
+    # ifftn * nvol == e^{+ikR}, the documented Wannier90-style sign shared
+    # with UHFk): epsilon[a,b](k) = sum_R t_R[a,b] e^{+ikR}. This keeps
     # sc-built quantities element-wise consistent with arrays loaded from
-    # FLEX/RPA output files. (The previous [orb2,orb1] + e^{+ikR} form is the
-    # orbital transpose at -k; identical for real hoppings, different for
-    # complex Hermitian ones.)
+    # FLEX/RPA output files, which carry the same k labeling since the
+    # #133 alignment. (The [orb1,orb2] placement is unchanged; only the
+    # Fourier sign moved with the solver core.)
     for (irvec, orbvec), value in hr.items():
         orb1, orb2 = orbvec
         Rx, Ry, Rz = irvec
         epsilon_k[orb1, orb2, :, :, :] += value * np.exp(
-            -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+            +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
         )
     return epsilon_k
 
@@ -1244,15 +1430,74 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
         kx_array, ky_array, kz_array, indexing='ij'
     )
 
-    def _to_k(value_r):
-        # same solver-core convention as _build_hamiltonian_k:
-        # V[a,b](q) = sum_R V_R[a,b] e^{-iqR}
+    def _to_k(value_r, transpose=True):
+        # Same Fourier phase as the solver core, e^{+iqR} since the #133
+        # sign alignment, but the ORBITAL PAIR is stored transposed: an
+        # entry (R, (a, b)) lands at [b, a].
+        #
+        # The interaction is a four-index object, and its MATRIX form carries a
+        # pair-index transpose that the one-body Hamiltonian does not. H-wave's
+        # own paper (arXiv:2308.00324) makes this explicit: Eq.(12) defines the
+        # tensor W_ij^{aa'bb'} with the first pair at site i and the second at
+        # site j, Eq.(16) puts the first pair at momentum +q, and Eq.(21) then
+        # defines the matrix used in the RPA equation as
+        #     [W(q)]^{ab} = W_q^{ba}
+        # so for a density-density term W^{aabb} = V_ab(R) the matrix element is
+        # [W(q)]^{(aa),(bb)} = V_ba(q), i.e. the matrix is V(q)^T.
+        #
+        # `rpa.py::_make_ham_inter` has always built that (it stores the entry's
+        # first orbital in the SECOND pair slot); this builder did not, so the
+        # susceptibility was solved with one orientation and the pairing vertex
+        # assembled from the other (issue #96).
+        #
+        # Both consumers need the transpose, confirmed by exact
+        # diagonalization on a bond set with V_ab(R) != V_ba(R):
+        #   * the RPA ladder [I + chi0 W]^-1 chi0 -- solved here too, in
+        #     _compute_vertices_simple -- selects V^T with a residual that
+        #     scales linearly in V (pure O(V^2) truncation), against 98% for V;
+        #   * the bare pair-scattering amplitude
+        #     <k' a up, -k' b down| H_int |k a up, -k b down>, which is exact at
+        #     first order, matches V^T to 6e-16, against 99% for V.
+        #
+        # NOTE: `_build_hamiltonian_k` is a one-body object and correctly keeps
+        # the plain [a, b] placement. Do not "align" this builder to it.
+        #
+        # PairHop is EXCLUDED (transpose=False below), and unlike the rest that
+        # is now a MEASURED result rather than a gap. It is the one type
+        # `rpa.py` does not place through `_append_inter`: `_append_pairhop`
+        # uses the slots (b, a, a, b) rather than the density-density
+        # (b, b, a, a), and in the S/C matrices it lands in the pair-ANTIdiagonal
+        # Case 4 rather than Case 1/3, so the density-density determination
+        # above says nothing about it.
+        #
+        # Issue #100 settled it end to end (TestPairHopEndToEnd in
+        # tests/test_vertex_orientation.py), with no index reasoning anywhere
+        # between the input file and the answer: feed this builder an on-site
+        # PairHop matrix, build S from it, form the solver's own linear-order
+        # response -chi0 . S . chi0 with chi0 from `rpa.py`'s kernel and an
+        # EXACT Green function, and compare against the cross-spin response of
+        # the same Hamiltonian by exact diagonalization. The untransposed
+        # placement -- i.e. S[(a,b),(b,a)] = P[a,b] -- reproduces it, and the
+        # test locates the residual by checking chi0 against the exact bubble
+        # in the same run, so what is left is the imaginary-time grid. Refining
+        # that grid off-line, 192 -> 384 -> 768 points, takes the residual
+        # 2.3e-3 -> 1.1e-3 -> 5.5e-4 (the test itself runs only the first);
+        # transposing PairHop sits at 0.55 and does not move.
+        #
+        # Beware the plausible-looking derivation that says otherwise. The
+        # vertex sits BETWEEN two chi0 factors, so its row index lives in
+        # chi0's COLUMN convention and its column index in chi0's ROW
+        # convention. chi0's row pair is reversed relative to its bilinear and
+        # its column pair is not, so the reversal lands on the vertex's COLUMN
+        # side. Applying it to the row side instead gives the transpose, and is
+        # wrong.
         val_k = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
         for (irvec, orbvec), value in value_r.items():
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
-            val_k[orb1, orb2, :, :, :] += value * np.exp(
-                -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+            i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
+            val_k[i1, i2, :, :, :] += value * np.exp(
+                +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
 
@@ -1260,7 +1505,8 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     for itype in ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                   "Ising", "PairLift", "PairHop"]:
         if itype in interactions:
-            inter_k[itype] = _to_k(interactions[itype])
+            inter_k[itype] = _to_k(interactions[itype],
+                                   transpose=(itype != "PairHop"))
 
     return inter_k
 
@@ -1389,7 +1635,41 @@ def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
 # RPA vertices
 # ---------------------------------------------------------------------------
 
-def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
+def _symmetrise_interactions_k(inter_k):
+    """Reduce each interaction to its physical symmetric coefficient.
+
+    Thin delegation: the reduction and its full derivation -- the
+    momentum-space form of the reversed-bond partner, the PairHop
+    Hermitian rule, and the UHFk-relation adjudication note -- are
+    single-sourced in :func:`hwave.solver.declarations.symmetrise_k`
+    (#108). Idempotent, so it is safe that both the all-q and per-q
+    builders apply it.
+    """
+    return symmetrise_k(inter_k)
+
+
+def _accumulate_coeff(dst, coeff, value):
+    """dst += coeff * value with IEEE-preserving forms.
+
+    NumPy evaluates ``1.0 * (Inf+0j)`` as ``Inf+NaNj`` (a full complex
+    multiply), while a direct add preserves the zero imaginary part, so
+    the +-1 coefficients of the vertex table must use direct add/subtract
+    to keep the pre-table behavior for non-finite couplings. Zero
+    coefficients suppress the contribution entirely (0.0 * Inf is NaN).
+    ``dst`` must be an ndarray or writeable view; the update is in place.
+    """
+    if coeff == 0.0:
+        return
+    if coeff == 1.0:
+        dst += value
+    elif coeff == -1.0:
+        dst -= value
+    else:
+        dst += coeff * value
+
+
+def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
+                             _presymmetrised=False):
     """Build spin (S) and charge (C) interaction matrices for all q-points at once.
 
     Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
@@ -1415,6 +1695,13 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     S_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
     C_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
 
+    # _presymmetrised is set by the per-q wrapper, which has already
+    # symmetrised on the FULL grid: the -q partner of an off-site entry is
+    # unreachable from a single-point slice, so re-symmetrising here would
+    # average with the wrong (same-q) partner and corrupt off-site input.
+    if not _presymmetrised:
+        inter_k = _symmetrise_interactions_k(inter_k)
+
     def _get(itype):
         if itype in inter_k:
             return inter_k[itype]  # (norb, norb, Nx, Ny, Nz)
@@ -1438,139 +1725,155 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz):
     idx34 = l3f * norb + l4f
 
     # Case 1: l1 == l2 == l3 == l4
+    # Accumulate rather than assign: this element is also reached by Case 3
+    # below (which now includes l1 == l3), where an inter-site same-orbital
+    # CoulombInter contributes 2 V_aa(q) to the charge channel.
     mask1 = (l1f == l2f) & (l2f == l3f) & (l3f == l4f)
     if U_mat is not None and np.any(mask1):
+        sU, cU = sc_coefficients("CoulombIntra", "diag")
         for i in np.where(mask1)[0]:
             _l = l1f[i]
-            S_all[:, :, :, idx12[i], idx34[i]] = U_mat[_l, _l]
-            C_all[:, :, :, idx12[i], idx34[i]] = U_mat[_l, _l]
+            _accumulate_coeff(S_all[:, :, :, idx12[i], idx34[i]],
+                              sU, U_mat[_l, _l])
+            _accumulate_coeff(C_all[:, :, :, idx12[i], idx34[i]],
+                              cU, U_mat[_l, _l])
 
     # Case 2: l1==l3, l2==l4, l1!=l2
+    # Coefficients come from the single adjudicated table
+    # (hwave.solver.vertex_table). Signs, slots and per-type factors were
+    # established against exact diagonalization in #113 (Ising sign, the
+    # previously missing Hund S term, Exchange moved here from the
+    # pair-antidiagonal Case 4); the SU(2) Kanamori consistency check --
+    # Hund + Exchange at equal J giving S(ab,ab) without J and
+    # C(ab,ab) = -U' + 2J -- is pinned in the tests.
     mask2 = (l1f == l3f) & (l2f == l4f) & (l1f != l2f)
+    cross_terms = [(Up_mat, "CoulombInter"), (I_mat, "Ising"),
+                   (J_mat, "Hund"), (Jp_mat, "Exchange")]
     for i in np.where(mask2)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l2 = l1f[i], l2f[i]
-        if Up_mat is not None:
-            s_q += Up_mat[_l1, _l2]
-            c_q -= Up_mat[_l1, _l2]
-        if I_mat is not None:
-            s_q -= I_mat[_l1, _l2]
-            c_q -= I_mat[_l1, _l2]
-        if J_mat is not None:
-            c_q += J_mat[_l1, _l2]
+        for mat, itype in cross_terms:
+            if mat is not None:
+                sco, cco = sc_coefficients(itype, "cross")
+                _accumulate_coeff(s_q, sco, mat[_l1, _l2])
+                _accumulate_coeff(c_q, cco, mat[_l1, _l2])
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
-    # Case 3: l1==l2, l3==l4, l1!=l3
-    mask3 = (l1f == l2f) & (l3f == l4f) & (l1f != l3f)
+    # Case 3: l1==l2, l3==l4 -- INCLUDING l1 == l3, but for CoulombInter ONLY.
+    # The l1 != l3 exclusion dropped the inter-site same-orbital CoulombInter
+    # from the charge diagonal C[(a,a),(a,a)], which must be U_a + 2 V_aa(q)
+    # (issue #95); the simple two-index formulation used by chi0q_mode="load"
+    # builds exactly that (`Wc = U_k + 2 V_k`, _compute_vertices_simple).
+    # Case 1 above writes U_a into the same element, so both accumulate.
+    # Hund and Ising stay restricted to l1 != l3: an orbital has no Hund or
+    # Ising coupling with itself, and letting a stray diagonal entry through
+    # here would silently move S as well.
+    mask3 = (l1f == l2f) & (l3f == l4f)
     for i in np.where(mask3)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l3 = l1f[i], l3f[i]
-        if J_mat is not None:
-            s_q += J_mat[_l1, _l3]
-            c_q -= J_mat[_l1, _l3]
-        if I_mat is not None:
-            s_q -= 2.0 * I_mat[_l1, _l3]
+        if _l1 != _l3:
+            for mat, itype in ((J_mat, "Hund"), (I_mat, "Ising")):
+                if mat is not None:
+                    sco, cco = sc_coefficients(itype, "density")
+                    _accumulate_coeff(s_q, sco, mat[_l1, _l3])
+                    _accumulate_coeff(c_q, cco, mat[_l1, _l3])
         if Up_mat is not None:
-            c_q += 2.0 * Up_mat[_l1, _l3]
-        S_all[:, :, :, idx12[i], idx34[i]] = s_q
-        C_all[:, :, :, idx12[i], idx34[i]] = c_q
+            sco, cco = sc_coefficients("CoulombInter", "density")
+            _accumulate_coeff(s_q, sco, Up_mat[_l1, _l3])
+            _accumulate_coeff(c_q, cco, Up_mat[_l1, _l3])
+        S_all[:, :, :, idx12[i], idx34[i]] += s_q
+        C_all[:, :, :, idx12[i], idx34[i]] += c_q
 
     # Case 4: l1==l4, l2==l3, l1!=l2
     mask4 = (l1f == l4f) & (l2f == l3f) & (l1f != l2f)
     for i in np.where(mask4)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
+        c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l2 = l1f[i], l2f[i]
-        if Jp_mat is not None:
-            s_q += Jp_mat[_l1, _l2]
+        # Exchange used to sit here; exact diagonalization (issue #113) puts
+        # its vertex on the pair-DIAGONAL slot family (Case 2), and end to end
+        # the antidiagonal placement produced the right magnitude at the wrong
+        # slots in both channels. Only PairHop belongs here (#100/#102).
         if PH_mat is not None:
-            s_q += PH_mat[_l1, _l2]
+            sco, cco = sc_coefficients("PairHop", "antidiag")
+            _accumulate_coeff(s_q, sco, PH_mat[_l1, _l2])
+            _accumulate_coeff(c_q, cco, PH_mat[_l1, _l2])
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
-        C_all[:, :, :, idx12[i], idx34[i]] = s_q  # S = C for this channel
+        C_all[:, :, :, idx12[i], idx34[i]] = c_q
 
     return S_all, C_all
 
 
 def _build_sc_matrices(inter_k, norb, ix, iy, iz):
-    """Build spin (S) and charge (C) interaction matrices at a given q-point.
+    """Spin (S) and charge (C) matrices at a single q-point.
 
-    Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
-        S_{l1l2,l3l4}, C_{l1l2,l3l4} for multi-orbital systems.
-
-    The composite index maps as (l1,l2) -> l1*norb + l2,
-    giving norb^2 x norb^2 matrices.
-
-    Parameters
-    ----------
-    inter_k : dict
-        Interactions in k-space from _build_interaction_k.
-    norb : int
-        Number of orbitals.
-    ix, iy, iz : int
-        q-point indices.
-
-    Returns
-    -------
-    S_mat : ndarray
-        Spin interaction matrix, shape (norb^2, norb^2).
-    C_mat : ndarray
-        Charge interaction matrix, shape (norb^2, norb^2).
+    Delegates to :func:`_build_sc_matrices_all_q` and slices, so there is ONE
+    implementation of the S/C content. The previous hand-maintained copy had
+    already drifted from the all-q builder once; after the issue #113 vertex
+    corrections a second parallel copy would be a liability.
     """
-    nd = norb * norb
-    S_mat = np.zeros((nd, nd), dtype=complex)
-    C_mat = np.zeros((nd, nd), dtype=complex)
+    # Symmetrise on the FULL grid first -- the same-operator partner of an
+    # off-site entry lives at -q, so slicing before symmetrising would discard
+    # it -- then slice the (small, norb^2 per point) interaction arrays down to
+    # the requested q and delegate on a 1x1x1 grid, so the (nd^2 per point) S/C
+    # matrices are never built for the whole grid. Indexing goes through
+    # np.arange so numpy negative indices keep their usual meaning and
+    # out-of-range indices raise instead of returning empty slices.
+    inter_sym = _symmetrise_interactions_k(inter_k)
+    inter_1 = {}
+    for t, M in inter_sym.items():
+        jx = np.arange(M.shape[2])[ix]
+        jy = np.arange(M.shape[3])[iy]
+        jz = np.arange(M.shape[4])[iz]
+        inter_1[t] = np.ascontiguousarray(
+            M[:, :, jx:jx+1, jy:jy+1, jz:jz+1])
+    S_all, C_all = _build_sc_matrices_all_q(inter_1, norb, 1, 1, 1,
+                                            _presymmetrised=True)
+    return S_all[0, 0, 0], C_all[0, 0, 0]
 
-    # Extract interaction values at this q-point
-    def _get(itype):
-        if itype in inter_k:
-            return inter_k[itype][:, :, ix, iy, iz]
-        return np.zeros((norb, norb), dtype=complex)
+def _declarations_partner_closed(interactions, Nx, Ny, Nz, norb):
+    """True iff every CoulombIntra/CoulombInter declaration table is
+    EXACTLY closed under the reversed-bond partner (R,a,b) <-> (-R,b,a).
 
-    U_mat = _get("CoulombIntra")    # U_mm (intra-orbital)
-    Up_mat = _get("CoulombInter")   # U'_mm' (inter-orbital)
-    J_mat = _get("Hund")            # J_mm' (Hund's coupling)
-    Jp_mat = _get("Exchange")       # J'_mm' (pair-hopping)
-    I_mat = _get("Ising")           # I_mm' (Ising S^z S^z)
-    PH_mat = _get("PairHop")        # P_mm' (pair hopping)
-
-    for l1 in range(norb):
-        for l2 in range(norb):
-            idx12 = l1 * norb + l2
-            for l3 in range(norb):
-                for l4 in range(norb):
-                    idx34 = l3 * norb + l4
-
-                    s_val = 0.0 + 0.0j
-                    c_val = 0.0 + 0.0j
-
-                    if l1 == l2 == l3 == l4:
-                        # Same orbital: S = U, C = U
-                        s_val = U_mat[l1, l1]
-                        c_val = U_mat[l1, l1]
-                    elif l1 == l3 and l2 == l4 and l1 != l2:
-                        # l1=l3 != l2=l4 (cross): S = U' - I, C = -U' + J - I
-                        s_val = Up_mat[l1, l2] - I_mat[l1, l2]
-                        c_val = (-Up_mat[l1, l2] + J_mat[l1, l2]
-                                 - I_mat[l1, l2])
-                    elif l1 == l2 and l3 == l4 and l1 != l3:
-                        # l1=l2 != l3=l4 (dens): S = J - 2I, C = 2U' - J
-                        s_val = J_mat[l1, l3] - 2.0 * I_mat[l1, l3]
-                        c_val = 2.0 * Up_mat[l1, l3] - J_mat[l1, l3]
-                    elif l1 == l4 and l2 == l3 and l1 != l2:
-                        # l1=l4 != l2=l3 (exch): S = J' + P, C = J' + P
-                        s_val = Jp_mat[l1, l2] + PH_mat[l1, l2]
-                        c_val = Jp_mat[l1, l2] + PH_mat[l1, l2]
-
-                    S_mat[idx12, idx34] = s_val
-                    C_mat[idx12, idx34] = c_val
-
-    return S_mat, C_mat
+    Decided on the RAW tables, before any exponential transform, with
+    bitwise comparison: a both-ends declaration carries identical
+    literals, and 0.5*(x + x) == x exactly in IEEE, so closure detection
+    is exact -- while the k-space arrays of a closed table are only
+    ALGEBRAICALLY symmetric (the +R and -R exponentials are evaluated
+    independently and differ by roundoff), which is why the decision
+    cannot be made after the transform (PR #129 round 5: re-averaging a
+    closed configuration changed saved artifacts at the 1e-18 level).
+    Non-finite input reads as not closed (explicitly, before any
+    comparison), which fails toward symmetrising. The closure test
+    compares the table DIRECTLY with its reversed/transposed partner --
+    no mean is formed, so a closed coefficient above float64.max / 2
+    cannot overflow into a false 'open' (PR #129 round 6 reproduced
+    exactly that with the earlier mean-based comparison)."""
+    for itype in ("CoulombIntra", "CoulombInter"):
+        tbl = interactions.get(itype) if interactions else None
+        if not tbl:
+            continue
+        arr = np.zeros((Nx, Ny, Nz, norb, norb), dtype=complex)
+        for (irvec, orbvec), v in tbl.items():
+            arr[(irvec[0] % Nx, irvec[1] % Ny, irvec[2] % Nz,
+                 *orbvec)] += v
+        if not np.all(np.isfinite(arr)):
+            return False
+        rev = np.transpose(reverse_fft_axes(arr, (0, 1, 2)),
+                           (0, 1, 2, 4, 3))
+        if not (np.array_equal(arr.real, rev.real)
+                and np.array_equal(arr.imag, rev.imag)):
+            return False
+    return True
 
 
 def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                      pairing_type="singlet", static_index=None):
+                      pairing_type="singlet", static_index=None,
+                      declarations_closed=False):
     """Compute effective pairing interaction V(q).
 
     Supports two modes:
@@ -1634,11 +1937,13 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                 "chi0q (general mode) for the full Kuroki S/C treatment.")
         return _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                         pairing_type=pairing_type,
-                                        static_index=static_index)
+                                        static_index=static_index,
+                                        declarations_closed=declarations_closed)
 
 
 def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
-                             pairing_type="singlet", static_index=None):
+                             pairing_type="singlet", static_index=None,
+                             declarations_closed=False):
     """Compute vertices using simple Wc=U+2V, Ws=-U formulation.
 
     For singlet:
@@ -1657,6 +1962,21 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     Ps_q : ndarray
         Spin vertex, shape (norb, norb, Nx, Ny, Nz).
     """
+    # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
+    # so a one-sided off-site declaration entered as v e^{+iqR} (the
+    # documented sign, #133) while the
+    # ring and the general S/C route read the same Hamiltonian as
+    # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7.
+    # SKIPPED when the caller proved the raw declarations partner-closed
+    # (round 5): the reduction is only ALGEBRAICALLY idempotent after the
+    # exponential transform -- re-averaging a closed configuration mixed
+    # independently rounded +R/-R exponentials and changed saved
+    # artifacts at the 1e-18 level, violating byte parity for
+    # previously-working symmetric runs.
+    if not declarations_closed:
+        inter_k = _symmetrise_interactions_k(
+            {k: inter_k[k] for k in ("CoulombIntra", "CoulombInter")
+             if k in inter_k})
     U_k = inter_k.get("CoulombIntra", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
     V_k = inter_k.get("CoulombInter", np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex))
 
@@ -1737,15 +2057,43 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         # (norb, norb, Nx, Ny, Nz, nmat) -> expand to (Nx, Ny, Nz, nd, nd)
         chi0_2d = chi0q[:, :, :, :, :, si].transpose(2, 3, 4, 0, 1).copy()
         # chi0_2d shape: (Nx, Ny, Nz, norb, norb)
+        # The guard runs for EVERY 2-index input, including norb == 1: the
+        # rejection of Exchange/PairHop applies there too (the one-orbital
+        # builder gives them zero weight, so accepting them silently omits
+        # the interaction -- the norb shortcut below bypassed the helper
+        # entirely, round 8). Only the partial-dressing warning is
+        # norb-gated, inside the helper.
+        _warn_reduced_flex_missing_components(
+            inter_k, norb, Nx, Ny, Nz, source="a reduced 2-index chi0q",
+            sc_matrices=(S_all, C_all))
         if norb == 1:
             chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
         else:
-            # Expand: chi0_{l1*norb+l2, l3*norb+l2} = chi0_2d[l1, l3]
+            # A 2-index (reduced/squashed) chi0q is the density-density diagonal
+            # of the susceptibility: chi0_2d[a, b] IS chi0_{(a,a),(b,b)} (the
+            # matching interaction reduction is einsum('kaabb->kab', ...) in
+            # RPA._inflate_chi0q_and_ham).  With the orbital-pair flat index
+            # (l1,l2) -> l1*norb + l2 used by _build_sc_matrices_all_q, it
+            # therefore belongs at the density-pair positions:
+            #
+            #     chi0_{(a,a),(b,b)} = chi0_2d[a, b],  everything else zero.
+            #
+            # The historical placement chi0_{(l1,l2),(l3,l2)} = chi0_2d[l1,l3]
+            # (a delta_{l2,l4} scatter, i.e. kron(chi0_2d, I_norb)) read the
+            # density-pair index as an ordinary orbital index: it dropped the
+            # inter-orbital density coupling chi0_{(0,0),(1,1)} and scattered
+            # chi0_2d onto pair indices the reduced scheme never computed.  This
+            # is the same defect that _expand_flex_chi carried on the
+            # chi0q_mode="flex" route.
+            #
+            # Off-density rows/columns stay exactly zero.  For the interaction
+            # terms that put S/C weight there (CoulombInter, Hund, Ising,
+            # Exchange, PairHop) those channels are then undressed -- an honest
+            # reflection of what a reduced chi0q contains, rather than a
+            # fabricated dressing.
             chi0_static = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-            for l2 in range(norb):
-                chi0_static[:, :, :,
-                            l2::norb,
-                            l2::norb] = chi0_2d
+            dens = np.arange(norb) * norb + np.arange(norb)
+            chi0_static[..., dens[:, None], dens[None, :]] = chi0_2d
 
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0
@@ -1782,25 +2130,223 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     return Vs_q
 
 
+#: Interaction terms whose Kuroki S/C matrices have entries OUTSIDE the
+#: density-pair block, keyed by the _build_sc_matrices_all_q case that puts
+#: them there.  Case 2 is S/C[(a,b),(a,b)] and case 4 is S/C[(a,b),(b,a)], both
+#: with a != b; a reduced/squashed run never computes chi on those pair indices,
+#: so the corresponding fluctuation dressing is missing from the vertex.
+#: Types whose vertex is PARTIALLY represented by a reduced chi: their
+#: density-slot content is dressed, their cross-slot content is not.
+_REDUCED_FLEX_PARTIAL = ("CoulombInter", "Hund", "Ising")
+#: Types with NO density-diagonal vertex content at all
+#: (hwave.solver.vertex_table): with a reduced chi nothing of them is
+#: dressed, and since the #120 policy no reduced/squashed FLEX or RPA run
+#: can even be produced with them -- such input is stale or mismatched,
+#: and is REJECTED rather than warned about.
+_REDUCED_FLEX_REJECTED = ("Exchange", "PairHop")
+
+
+
+def _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz, sc_matrices=None):
+    """Largest |S| or |C| on the blocks a reduced chi cannot dress.
+
+    The reduced susceptibility is zero on every pair index (a,b) with a != b, so
+    the vertex is undressed exactly where S or C is nonzero there --
+    S/C[(a,b),(a,b)] (case 2) and S/C[(a,b),(b,a)] (case 4) of
+    :func:`_build_sc_matrices_all_q`.
+
+    This inspects the COMBINED matrices rather than testing each configured term
+    on its own. Those blocks are sums: under the adjudicated slot table
+    (#113) case 2 mixes CoulombInter, Ising, Hund AND Exchange, and case 4
+    carries PairHop alone. Terms can cancel there (equal CoulombInter and
+    Hund cancel case 2 exactly in both channels), and a per-term test would
+    then announce missing dressing that does not exist.
+    """
+    # Reuse the caller's matrices when it already has them: at the full grid
+    # these are O(Nq * norb^4) each, and building a second pair while the first
+    # is live doubles the allocation for what is only a diagnostic.
+    if sc_matrices is not None:
+        S_all, C_all = sc_matrices
+    else:
+        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    nd = norb * norb
+    density = np.zeros(nd, dtype=bool)
+    density[np.arange(norb) * norb + np.arange(norb)] = True
+    off = ~density
+    if not off.any():
+        return 0.0
+    weight = 0.0
+    for M in (S_all, C_all):
+        # anything outside the density x density sub-block, over all q
+        weight = max(weight,
+                     float(np.max(np.abs(M[..., off, :]))),
+                     float(np.max(np.abs(M[..., :, off]))))
+    return weight
+
+
+def _build_vertex_sc_matrices(convention, inter_k, norb, Nx, Ny, Nz):
+    """Build the (S, C) interaction matrices for the given orbital convention.
+
+    Single dispatcher shared by :func:`_compute_vertices_flex` and its
+    callers, so a dynamic run can build the frequency-INDEPENDENT matrices
+    once and pass them to every per-frequency contraction instead of
+    rebuilding ~nmat identical full-grid pairs.
+    """
+    conv = str(convention).lower()
+    if conv == "myo":
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        return build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
+    if conv == "kuroki":
+        return _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    raise ValueError(
+        "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
+
+
+def _reject_reduced_flex_unsupported(inter_k, convention="kuroki",
+                                     source=None):
+    """Reject Exchange/PairHop wherever a Kuroki-convention vertex is built.
+
+    This is the cheap half of :func:`_warn_reduced_flex_missing_components`:
+    a dict scan with no S/C construction, so it can (and must) run at EVERY
+    Kuroki vertex boundary -- :func:`_compute_vertices_flex` itself, hence
+    also ``eliashberg_dynamic._instantaneous_vertex`` and every
+    per-frequency dynamic contraction -- making the rejection an enforced
+    invariant rather than an ordering artifact of which builder the
+    orchestrator happens to call first (round-9 review: the IR
+    instantaneous route silently accepted both terms and returned a zero
+    vertex when called directly).
+
+    Exchange and PairHop carry NO density-diagonal vertex content
+    (hwave.solver.vertex_table), so a Kuroki (reduced-origin) chi dresses
+    none of it and the result would silently omit the interaction; the
+    general (myo) convention represents them fully and is not restricted.
+    """
+    if str(convention).lower() != "kuroki":
+        return
+    rejected = [k for k in _REDUCED_FLEX_REJECTED
+                if k in inter_k and np.any(np.asarray(inter_k[k]) != 0)]
+    if rejected:
+        raise ValueError(
+            "the Eliashberg vertex cannot be built from {} together with "
+            "{}: those interactions have no density-diagonal vertex "
+            "content at all (hwave.solver.vertex_table), so reduced "
+            "(density-only) data dresses none of it and the result would "
+            "silently omit the interaction. (H-wave's own reduced/squashed "
+            "runs cannot even be produced with these terms since the "
+            "unified scheme policy.) Provide a general (four-index) "
+            "susceptibility instead -- for a FLEX source, re-run with "
+            "calc_scheme='general'.".format(
+                source or ("a REDUCED (calc_scheme='reduced' or "
+                           "'squashed') FLEX susceptibility"),
+                ", ".join(rejected)))
+
+
+def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
+                                          convention="kuroki",
+                                          source=None, sc_matrices=None):
+    """Warn when a reduced (kuroki) FLEX chi cannot support the interaction.
+
+    Call this ONCE per run, from the place that is about to build the pairing
+    vertex -- NOT from inside ``_compute_vertices_flex``. That function is
+    invoked once per bosonic Matsubara frequency by the dynamic kernel (so the
+    warning would repeat ``Nmat`` times, ~1000 in production runs), and again by
+    ``eliashberg_dynamic._instantaneous_vertex`` with chi = 0, where the
+    message would be doubly misleading. The Exchange/PairHop REJECTION, by
+    contrast, is enforced inside ``_compute_vertices_flex`` on every call
+    (:func:`_reject_reduced_flex_unsupported`) -- it is a cheap scan and
+    must hold on every route, not just the orchestrated one.
+
+    A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
+    density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
+    Kuroki S/C matrices built from CoulombIntra alone live entirely on that
+    density-pair block, so the reduced treatment is exact.  CoulombInter,
+    Hund and Ising also populate the off-density block S/C[(a,b),(a,b)]
+    with a != b -- and there chi is identically zero simply because the
+    reduced run never computed it.  Those channels then keep only the bare
+    0.5*(S+C) term with no fluctuation dressing: a silent approximation
+    rather than a solver error, hence the WARNING.  Exchange and PairHop
+    carry NO density-diagonal vertex content at all (vertex_table), so a
+    reduced chi dresses nothing of them; combined with the #120 scheme
+    policy (no reduced/squashed run can be produced with them) that
+    combination is REJECTED rather than warned about.
+
+    This is a genuine limitation of the stored data, not of the loader: it
+    cannot be repaired on the Eliashberg side.  The universal remedy is a
+    general (four-index) susceptibility; for a FLEX source that means
+    re-running with ``calc_scheme="general"`` (which stores the full
+    orbital-pair chi).
+    """
+    if str(convention).lower() != "kuroki":
+        # Only the reduced/squashed route stores a density-only chi; the
+        # general (myo) path carries the full orbital-pair susceptibility.
+        return
+    # The rejection must run BEFORE the norb == 1 shortcut: a one-orbital
+    # Exchange/PairHop has zero S/C weight in this builder too, so the
+    # interaction would be silently omitted rather than represented --
+    # exactly what the rejection exists to prevent (round-7 review; the
+    # bypass returned zero vertices for both terms on both routes).
+    _reject_reduced_flex_unsupported(inter_k, convention, source)
+    if norb <= 1:
+        # norb == 1 has no off-density pair index, so no PARTIAL dressing
+        # can be missing (the rejection above still applies).
+        return
+    configured = [k for k in _REDUCED_FLEX_PARTIAL if k in inter_k]
+    if not configured:
+        return
+    # Ask the assembled S/C matrices, not the individual terms: the off-density
+    # blocks are sums and the configured terms can cancel there (e.g. equal
+    # CoulombInter and Hund cancel case 2 in both channels under the
+    # adjudicated table). Only a nonzero combined block means dressing is
+    # actually missing.
+    if _off_density_sc_weight(inter_k, norb, Nx, Ny, Nz,
+                              sc_matrices) == 0.0:
+        return
+    # Decision above is on the assembled matrices; attribution here is per term,
+    # so an inert term that happens to be configured is not named as a cause.
+    # Attribute through the same assembled-and-symmetrised path as the
+    # decision: a raw declaration that symmetrises to zero (#112) must not
+    # be named as a cause.
+    missing = [k for k in configured
+               if _off_density_sc_weight({k: inter_k[k]}, norb,
+                                         Nx, Ny, Nz) != 0.0] or configured
+    logger.warning(
+        "The Eliashberg vertex is being built from %s, which carries only the "
+        "density-density components chi_{(a,a),(b,b)}, together with "
+        "inter-orbital interaction(s) %s. Together those terms give the S/C "
+        "matrices nonzero "
+        "off-density components S/C[(a,b),(a,b)] and S/C[(a,b),(b,a)] (a != b) "
+        "for which the reduced run computed no susceptibility, so those "
+        "channels enter the pairing vertex undressed (bare 0.5*(S+C) only) and "
+        "the resulting lambda is an approximation. calc_scheme='general' stores "
+        "the full orbital-pair chi and removes this gap; note its off-site "
+        "support is limited to same-orbital CoulombInter without sublattice "
+        "folding -- for a model with off-site INTER-orbital interactions "
+        "there is currently no FLEX-dressed vertex without this "
+        "approximation.",
+        source or ("a REDUCED (calc_scheme='reduced' or 'squashed') FLEX "
+                   "susceptibility"),
+        ", ".join(missing))
+
+
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
-                           pairing_type="singlet", convention="kuroki"):
+                           pairing_type="singlet", convention="kuroki",
+                           sc_matrices=None):
     """Compute pairing vertex from pre-computed FLEX susceptibilities.
 
     Uses the same formula as _compute_vertices_general but takes
     chi_s and chi_c directly instead of computing them from chi0q via RPA.
     This allows using dressed susceptibilities from the FLEX solver.
 
-    ``convention`` selects the S/C interaction matrices applied to the
-    susceptibilities: "kuroki" (default, arXiv:0902.3691, used by the reduced
-    FLEX path and the rest of the Eliashberg solver) or "myo"
-    (cond-mat/0407094). The two differ ONLY in the charge ``C(ab,ab) = -U'+2J``
-    vs ``-U'+J`` element; they share the native [a,c,b,d] orbital-pair index
-    layout. Susceptibilities produced by the general (full-vertex) FLEX path
-    were computed with the MYO S/C and MUST be paired with ``convention='myo'``
-    so the vertex stays self-consistent (mixing them with Kuroki S/C silently
-    changes the physics in the C(ab,ab) channel). ``convention`` is a S/C-charge
-    selector, not an index-layout flag: ``chis``/``chic`` are expected in the
-    native [a,c,b,d] orbital-pair order regardless (issue #78).
+    ``convention`` records which FLEX path produced the susceptibilities:
+    "kuroki" (default; reduced path) or "myo" (general full-vertex path). The
+    two S/C builders historically differed in the charge ``C(ab,ab)`` element
+    (``-U'+2J`` vs ``-U'+J``); the exact-diagonalization adjudication of the
+    per-type vertex content (issue #113: Hund ``+J`` and Exchange ``+J'``
+    there) made them IDENTICAL, so the flag no longer selects different
+    matrices -- it remains a provenance / layout discriminator, and legacy
+    files are guarded by ``sc_vertex_version`` instead. ``chis``/``chic`` are
+    expected in the native [a,c,b,d] orbital-pair order regardless
+    (issue #78).
 
     Parameters
     ----------
@@ -1817,6 +2363,12 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
         Grid dimensions.
     pairing_type : str
         "singlet" or "triplet".
+    sc_matrices : tuple of ndarray, optional
+        Precomputed ``(S_all, C_all)`` for this convention
+        (:func:`_build_vertex_sc_matrices`). The matrices are
+        frequency-independent, so a dynamic run passes one pair to every
+        per-frequency call instead of rebuilding ~nmat identical full-grid
+        pairs (round-9 review).
 
     Returns
     -------
@@ -1830,15 +2382,26 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
             "PairLift is configured but does not contribute to the S/C pairing "
             "vertex (S=C=0); it is ignored in the Eliashberg calculation.")
 
-    conv = convention.lower()
-    if conv == "myo":
-        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
-        S_all, C_all = build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz)
-    elif conv == "kuroki":
-        S_all, C_all = _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
-    else:
+    # Validate the convention BEFORE the cache branch: with precomputed
+    # sc_matrices the dispatcher below is skipped, and an unknown tag would
+    # otherwise be silently treated as "not kuroki" = unrestricted
+    # (round-10 review reproduced convention="invalid" returning a vertex).
+    conv = str(convention).lower()
+    if conv not in ("kuroki", "myo"):
         raise ValueError(
-            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(convention))
+            "Unknown convention: '{}'. Use 'kuroki' or 'myo'.".format(
+                convention))
+
+    # Enforced at THIS boundary (not only in the orchestrator): every Kuroki
+    # vertex construction -- including chi = 0 via _instantaneous_vertex --
+    # must reject Exchange/PairHop, or the interaction is silently omitted.
+    _reject_reduced_flex_unsupported(inter_k, conv)
+
+    if sc_matrices is not None:
+        S_all, C_all = sc_matrices
+    else:
+        S_all, C_all = _build_vertex_sc_matrices(conv, inter_k,
+                                                 norb, Nx, Ny, Nz)
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -1881,7 +2444,7 @@ def _resolve_flex_paths(input_dict):
 
 
 def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
-                                     allow_ir=False):
+                                     allow_ir=False, interactions=None):
     """Load FLEX-computed susceptibilities from NPZ files (full frequency axis).
 
     Parameters
@@ -1908,7 +2471,8 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         Provenance/S-C-convention tag of chis_w/chic_w: "myo" (general
         full-vertex FLEX) or "kuroki" (reduced FLEX / legacy files). It selects
         which S/C interaction matrices _compute_vertices_flex pairs the
-        susceptibilities with (they differ only in the C(ab,ab) charge value)
+        susceptibilities with (one implementation since the #113
+        adjudication; the tag is a layout/provenance discriminator)
         and which orbital-pair shape family the file uses (orbital-pair
         nd=norb^2 for "myo", spin-orbital nd=norb*ns for "kuroki"). It is NOT an
         index-layout flag: chis_w/chic_w are returned in the public RPA
@@ -1919,12 +2483,15 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
         ("green" absent when there is no green file). Mixed encodings raise.
     """
     if not allow_ir:
-        chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+        (chi_s_raw, chi_c_raw, chi_convention,
+         legacy_tags) = _read_flex_chi_raw(
+            input_dict, interactions=interactions)
         ir_meta = None
         green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
     else:
-        chi_s_raw, chi_c_raw, chi_convention, ir_meta = _read_flex_chi_raw(
-            input_dict, allow_ir=True)
+        (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+         legacy_tags) = _read_flex_chi_raw(
+            input_dict, allow_ir=True, interactions=interactions)
         green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
                                                allow_ir=True)
         if green_w is not None and (green_meta is None) != (ir_meta is None):
@@ -1939,6 +2506,13 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
 
     # Expand the FULL frequency axis (the static slice is selected by the
     # caller). The frequency axis is moved from leading to trailing position.
+    legacy_s, legacy_c = legacy_tags
+    if _accept_up_block_only(input_dict):
+        legacy_s = legacy_c = "config_override"
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
+                                legacy_s)
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
+                                legacy_c)
     chis_w = np.moveaxis(
         _expand_flex_chi(chi_s_raw, norb, Nx, Ny, Nz, chi_convention), 0, -1)
     chic_w = np.moveaxis(
@@ -1955,14 +2529,102 @@ _STATIC_IR_HINT = (
     "\"dynamic\" with [eliashberg] matsubara_basis = \"ir\".")
 
 
-def _read_flex_chi_raw(input_dict, allow_ir=False):
+def _accept_up_block_only(input_dict):
+    """Whether ``[eliashberg] accept_up_block_only`` asserts the layout.
+
+    The file tag is the better signal, but files written before this check
+    existed cannot carry one -- so without a configuration route the escape
+    hatch would be unreachable for exactly the files that need it. The user
+    takes responsibility here rather than the loader guessing from values it
+    cannot disambiguate.
+    """
+    eli = input_dict.get("eliashberg", {})
+    value = eli.get("accept_up_block_only", False)
+    if isinstance(value, bool):
+        return value
+    # Not bool(value): a TOML typo like the string "false" is truthy in Python,
+    # and silently enabling an override that relaxes a correctness guard is the
+    # worst possible reading of a malformed value.
+    raise ValueError(
+        "[eliashberg] accept_up_block_only must be a boolean (true/false), "
+        "got {!r}.".format(value))
+
+
+def _legacy_up_block_only(data):
+    """Whether an npz declares the legacy single-populated-block layout.
+
+    Opt-in only: the values cannot distinguish "the other blocks were never
+    filled" from "this run is fully polarized", so the file has to say so.
+    """
+    if "chi_spin_blocks" not in data:
+        return False
+    return str(data["chi_spin_blocks"]).strip().lower() == "up_only"
+
+
+def _onsite_transpose_asymmetry(table):
+    """Max |X[0,(a,b)] - X[0,(b,a)]| over the on-site entries of a raw
+    declaration table. Off-site entries are ignored on purpose: their
+    same-operator partner lives at -R (and possibly under a wrapped
+    canonical key), and the general FLEX path rejects off-site two-body
+    terms anyway -- the reachable orientation-sensitive case (#101) is
+    an asymmetric ON-SITE inter-orbital entry."""
+    worst = 0.0
+    for (irvec, orbvec), v in table.items():
+        if tuple(irvec) != (0, 0, 0):
+            continue
+        a, b = orbvec
+        if a == b:
+            continue
+        partner = table.get((tuple(irvec), (b, a)), 0.0)
+        diff = abs(complex(v) - complex(partner))
+        if not np.isfinite(diff):
+            # fail CLOSED: max() drops NaN (nan > x is False), so a
+            # non-finite declaration would otherwise read as symmetric
+            return float("inf")
+        worst = max(worst, diff)
+    return worst
+
+
+def _onsite_hermitian_pair_mismatch(table):
+    """Max |X[0,(a,b)] - conj(X[0,(b,a)])| over on-site entries.
+
+    PairHop's two declarations of one pair are HERMITIAN partners, so its
+    orientation never depended on the #99 transpose -- but the version-2
+    stamp introduced the conjugated-mean symmetrisation of those
+    declarations, and a pair that is NOT Hermitian-closed was read
+    differently by older builds (round-4 review measured |dS| = 0.15 in
+    the myo matrices for a real asymmetric declaration). Fails closed on
+    non-finite values like the transpose helper."""
+    worst = 0.0
+    for (irvec, orbvec), v in table.items():
+        if tuple(irvec) != (0, 0, 0):
+            continue
+        a, b = orbvec
+        if a == b:
+            continue
+        partner = table.get((tuple(irvec), (b, a)), 0.0)
+        diff = abs(complex(v) - np.conj(complex(partner)))
+        if not np.isfinite(diff):
+            return float("inf")
+        worst = max(worst, diff)
+    return worst
+
+
+def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
     """Read the raw FLEX chi_s / chi_c NPZ arrays and their orbital convention.
 
-    Returns ``(chi_s_raw, chi_c_raw, chi_convention)`` in the H-wave layout
+    Returns ``(chi_s_raw, chi_c_raw, chi_convention, legacy_tags)`` in the
+    H-wave layout. ``legacy_tags`` is the pair of ``chi_spin_blocks`` flags read
+    from the SAME open handles as the arrays: reopening the files afterwards
+    would let a tagged replacement authorize the untagged -- possibly polarized
+    -- array already in memory. No values from the replacement would be used,
+    but the wrong ones would be accepted in silence.
     ``(nfreq, nvol, nd, nd)`` -- no reshape/expansion, so callers that only
     need one static frequency can slice before expanding.
 
-    With ``allow_ir=True`` (the dynamic Eliashberg caller) the return value
+    The tuple is ``(chi_s_raw, chi_c_raw, chi_convention, legacy_tags)``; with
+    ``allow_ir=True`` it is ``(chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+    legacy_tags)``. In that case the return value
     gains a fourth element ``ir_meta``: ``None`` for uniform files, or
     ``{"chis": meta, "chic": meta}`` for IR-native ones (each file carries
     its own node set; the caller refits both independently). The arity
@@ -1977,6 +2639,23 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     if not allow_ir:
         _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    # unconditional (round-10): a present marker is validated even when
+    # the layout-dependent evenness gate below cannot run
+    check_momentum_marker(data_s, chi_s_path)
+    # Fourier-sign provenance (issue #133): the H-wave chi layout --
+    # uniform AND IR-native alike -- has the flattened q volume on axis 1
+    # (round-4 review: IR-native files were wrongly exempted; no IR
+    # consumer gates them).
+    _cs = list(input_dict.get("mode", {}).get("param", {}).get(
+        "CellShape", [1, 1, 1]))
+    while len(_cs) < 3:
+        _cs.append(1)
+    _grid = tuple(int(x) for x in _cs)
+    if chi_s_raw.ndim >= 2 and chi_s_raw.shape[1] == int(np.prod(_grid)):
+        validate_momentum_convention(data_s, chi_s_path, chi_s_raw, 1,
+                                     _grid)
     # Orbital convention tag (general FLEX writes "myo", reduced "kuroki").
     # The tag and the general-path MYO consumption ship together, so any
     # untagged file from a released build is necessarily a reduced/Kuroki
@@ -1995,6 +2674,10 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
     if not allow_ir:
         _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
+    check_momentum_marker(data_c, chi_c_path)
+    if chi_c_raw.ndim >= 2 and chi_c_raw.shape[1] == int(np.prod(_grid)):
+        validate_momentum_convention(data_c, chi_c_path, chi_c_raw, 1,
+                                     _grid)
     # The spin and charge files must share one convention; combining e.g. an MYO
     # chi_s with a Kuroki chi_c would build a meaningless pairing vertex.
     chi_convention_present_c = "chi_convention" in data_c
@@ -2005,6 +2688,114 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "FLEX chi_s and chi_c have different conventions ('{}' vs '{}'); "
             "they must come from the same run. Check flex_chi_s/flex_chi_c.".format(
                 chi_convention, chi_convention_c))
+
+    # S/C vertex-content versioning (#113). The Hund / Exchange / Ising vertex
+    # entries were corrected against exact diagonalization; susceptibilities
+    # computed with the OLD entries must not be paired with the corrected
+    # matrices when the interaction set contains an affected type -- the
+    # kernel would silently mix two different interactions. U/V-only inputs
+    # are provably unchanged, so legacy files stay usable there.
+    if interactions is not None:
+        # activation requires actual CONTENT, not key presence: an explicitly
+        # configured but empty Hund/Exchange/Ising file contributes nothing
+        affected = [t for t in ("Hund", "Exchange", "Ising")
+                    if interactions.get(t)]
+        # #101: a SECOND independent reason a no-version file is unusable.
+        # PR #99 changed the orbital orientation _build_interaction_k stores
+        # (which the general/myo S/C matrices consume), and version-2 files
+        # are necessarily post-#99 (the version tag came later), so for a
+        # myo file the version requirement doubles as the orientation
+        # marker. Orientation only matters when an interaction is not
+        # invariant under the orbital transpose. PairHop is excluded (its
+        # declaration partner is the HERMITIAN entry, a different pairing);
+        # PairLift is excluded because its particle-hole S/C contribution
+        # is exactly zero on both the producer and consumer sides -- an
+        # asymmetric PairLift cannot change either the stored chi or the
+        # vertex, so rejecting on it would be a pure false positive.
+        orientation = []
+        resym = []
+        if str(chi_convention).lower() == "myo":
+            orientation = [
+                t for t in ("CoulombInter", "Hund", "Ising", "Exchange")
+                if interactions.get(t)
+                and _onsite_transpose_asymmetry(interactions[t]) > 0.0]
+            # PairHop is NOT exempt wholesale: its orientation never
+            # changed, but the conjugated-mean reading of its Hermitian-
+            # partner declarations arrived with the version stamp, so a
+            # non-Hermitian-closed declaration has unverifiable
+            # symmetrisation semantics in an unversioned file.
+            if (interactions.get("PairHop")
+                    and _onsite_hermitian_pair_mismatch(
+                        interactions["PairHop"]) > 0.0):
+                resym = ["PairHop"]
+        if affected or orientation or resym:
+            versions = {}
+            for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
+                if "sc_vertex_version" not in data:
+                    reasons = []
+                    if affected:
+                        reasons.append(
+                            "the interaction set contains {} whose vertex "
+                            "content changed in the #113 corrections".format(
+                                ", ".join(affected)))
+                    if resym:
+                        reasons.append(
+                            "PairHop declares on-site entries that are "
+                            "not Hermitian partners, whose symmetrised "
+                            "reading cannot be verified for a file this "
+                            "old: the conjugated-mean reading of PairHop "
+                            "declarations arrived with the version stamp "
+                            "(#101)")
+                    if orientation:
+                        reasons.append(
+                            "{} declare(s) an asymmetric on-site "
+                            "inter-orbital coupling, whose orientation and "
+                            "symmetrisation semantics cannot be verified "
+                            "for a file this old: the interaction "
+                            "orientation changed in #99 and the "
+                            "declaration symmetrisation arrived with the "
+                            "version-2 stamp, so an unversioned file may "
+                            "pair either or both differently from the "
+                            "current vertex (#101)".format(
+                                ", ".join(orientation)))
+                    raise ValueError(
+                        "FLEX susceptibility file '{}' predates the current "
+                        "vertex conventions (no sc_vertex_version field), "
+                        "and {}. Pairing the old susceptibilities with the "
+                        "current vertices would silently mix two different "
+                        "interactions -- regenerate the susceptibilities "
+                        "with the current code.".format(
+                            path, "; and ".join(reasons)))
+                # strict decode: the tag must be a single integral scalar.
+                # A plain int() would silently truncate (2.9 -> 2, accepted)
+                # and non-finite values would escape as OverflowError.
+                try:
+                    arr = np.asarray(data["sc_vertex_version"])
+                    if arr.size != 1:
+                        raise ValueError("not a scalar")
+                    val = complex(arr.reshape(())[()])
+                    if val.imag != 0.0 or not (
+                            np.isfinite(val.real)
+                            and float(val.real).is_integer()):
+                        raise ValueError("not an integer")
+                    versions[path] = int(val.real)
+                except (TypeError, ValueError, OverflowError):
+                    raise ValueError(
+                        "FLEX susceptibility file '{}' carries a malformed "
+                        "sc_vertex_version field ({!r}).".format(
+                            path, data["sc_vertex_version"]))
+            if len(set(versions.values())) != 1:
+                raise ValueError(
+                    "FLEX chi_s and chi_c carry different sc_vertex_version "
+                    "values ({}); they must come from the same run.".format(
+                        versions))
+            ver = next(iter(versions.values()))
+            if ver != 2:
+                raise ValueError(
+                    "FLEX susceptibility files carry sc_vertex_version = {} "
+                    "but this code supports version 2 (the #113 exact-"
+                    "diagonalization vertex content); regenerate the "
+                    "susceptibilities with the current code.".format(ver))
     # Self-describing index-order marker (issue #78 follow-up). Current files
     # always store [a,c,b,d]; the marker exists so a pre-#78 dev output (the
     # general path stored MYO-transposed arrays under the SAME "myo" tag,
@@ -2028,7 +2819,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
                 "vertex. Re-run FLEX with the current build to regenerate "
                 "it.".format(path))
     if not allow_ir:
-        return chi_s_raw, chi_c_raw, chi_convention
+        return (chi_s_raw, chi_c_raw, chi_convention,
+                (_legacy_up_block_only(data_s),
+                 _legacy_up_block_only(data_c)))
 
     native_s, native_c = is_ir_native(data_s), is_ir_native(data_c)
     if native_s != native_c:
@@ -2047,7 +2840,222 @@ def _read_flex_chi_raw(input_dict, allow_ir=False):
             "tags chi_convention, or re-tag the npz explicitly.")
     ir_meta = ({"chis": ir_native_meta(data_s),
                 "chic": ir_native_meta(data_c)} if native_s else None)
-    return chi_s_raw, chi_c_raw, chi_convention, ir_meta
+    return (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
+            (_legacy_up_block_only(data_s),
+             _legacy_up_block_only(data_c)))
+
+
+#: Relative size, against the kept spin-up block, below which discarded spin
+#: content is attributed to round-off rather than physics.
+#:
+#: A few hundred ulp of double precision. This is a NARROW MARGIN, not a
+#: validated error bound: the error a linear solve can accumulate depends on
+#: dimension, conditioning, backend and operation order, and near a
+#: susceptibility pole a legitimate paramagnetic producer could exceed it. The
+#: claim it rests on is only the measured one -- every producer exercised here
+#: (CPU, uniform and IR axes, static and dynamic, plus production multi-orbital
+#: output) is bit-exact, so the margin is never used in practice and exists so
+#: that a backend whose solve is not bit-symmetric degrades to a warning rather
+#: than aborting.
+#:
+#: It is NOT a claim about how weak a physical field can be. An earlier draft
+#: used 1e-8, justified by a measured Zeeman case at ratio ~1.6 -- which sets no
+#: lower bound at all, and would have relabelled a genuinely weak field as
+#: round-off. If a supported backend is ever found to exceed this margin
+#: legitimately, widen it deliberately with that measurement in hand rather than
+#: treating the constant as already covering it.
+_SPIN_DISCARD_ROUNDOFF_RATIO = 256 * np.finfo(float).eps
+
+
+def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
+                                legacy_up_block_only=False):
+    """Reject, or at minimum report, spin content the embedding would drop.
+
+    The reduced spin-orbital index is spin-block ordered ``s*norb + a``, and the
+    embedding below keeps ONLY the spin-up block ``[:norb, :norb]``. Everything
+    else -- the down block and both cross-spin blocks -- is dropped, because
+    nothing downstream carries spin: the Kuroki S/C matrices and the
+    singlet/triplet vertex formulas are norb^2-sized and paramagnetic.
+
+    Dropping it is lossless exactly when it is redundant: the down block equals
+    the up block and the cross blocks are zero. That holds bit-for-bit for a
+    paramagnetic run -- the inflation writes the same array into both spin
+    blocks and never touches the cross blocks
+    (``FLEX._inflate_chi0q_and_ham``), and the channel vertices are spin-block
+    diagonal, so the RPA solve preserves both properties.
+
+    When it does not hold the discarded data is real and the eigenvalue is not a
+    controlled approximation of anything, so this RAISES rather than warning:
+    a spin-polarized model is outside what this formulation can express, and
+    returning a number for it is worse than refusing.
+
+    The test is on the DISCARDED DATA, not on the run's spin mode. Inferring
+    "spin-polarized" from unequal diagonal blocks would be wrong in both
+    directions: a spinful/spin-orbit run can have unequal blocks while still
+    being time-reversal symmetric, and it can equally have equal diagonal blocks
+    with nonzero cross-spin blocks -- discarded just the same. The stored npz
+    records no ``spin_mode``, so the data is the only signal available.
+
+    Two severities, because a false positive costs very different amounts:
+    anything nonzero is reported, but only content above
+    ``_SPIN_DISCARD_ROUNDOFF_RATIO`` -- a few hundred ulp of double precision --
+    aborts. Exact bit-equality was confirmed on the uniform and IR axes, static
+    and dynamic, and on production multi-orbital output, so the window is there
+    purely so a backend whose solve is not bit-symmetric (a GPU batched solve,
+    say) degrades to a warning instead of killing a legitimate paramagnetic run.
+    It is deliberately anchored to machine precision and not to any assumption
+    about how weak a physical field can be.
+    """
+    if str(convention).lower() != "kuroki":
+        # Only the reduced/squashed layout has spin blocks to compare.
+        return
+    ns = 2
+    chi = np.asarray(chi_raw)
+    if norb <= 0:
+        return
+    if chi.ndim != 4 or chi.shape[-1] != chi.shape[-2]:
+        # Rank AND squareness, before any dimension-based early return. Checking
+        # only the last axis let a rectangular array such as (nfreq, nvol, 2, 8)
+        # slip past -- its last dimension is not norb*ns, so the check returned,
+        # and _expand_flex_chi then flattened 2*8 = 16, took sqrt, and
+        # reinterpreted the rectangle as a 4x4 susceptibility.
+        raise ValueError(
+            "spin-block check expects a (nfreq, nvol, nd, nd) susceptibility "
+            "with a square trailing matrix, got shape {}.".format(chi.shape))
+    if chi.shape[-1] != norb * ns:
+        # Not the reduced spin-orbital layout; _expand_flex_chi gives a better
+        # diagnostic for this (it can recognise the spin-orbital-mode case).
+        return
+    up = chi[..., :norb, :norb]
+    if up.size == 0:
+        return
+    down = chi[..., norb:, norb:]
+    cross_ud = chi[..., :norb, norb:]
+    cross_du = chi[..., norb:, :norb]
+
+    # Accumulate per frequency rather than over the whole axis. Keeping the
+    # whole-axis POLICY (see the loaders) does not require whole-axis
+    # TEMPORARIES: abs(up), up-down and abs(up-down) at full size are each of
+    # the order of the stored array, which on a production file would add
+    # multi-GB allocations and could fail a valid file on memory alone.
+    nfreq = chi.shape[0]
+
+    # Per-frequency RATIOS, not a global difference over a global scale. The
+    # ratio decides acceptance, and a single global pair lets a large redundant
+    # frequency mask a small completely non-redundant one: with frequency 0
+    # redundant at scale 1e14 and frequency 1 holding up=1, down=0, the true
+    # mismatch is 100% while the global ratio is 1e-14 -- under the threshold.
+    #
+    # Non-finite values are rejected outright here rather than folded into the
+    # maxima: max(0.0, nan) is 0.0 in Python, so a NaN in a discarded block
+    # would leave the running maximum untouched and the array would be accepted
+    # as exactly redundant.
+    scale = d_down = d_cross = 0.0
+    worst_ratio = 0.0
+    worst_at = (0, 0.0, 0.0, 0.0)
+    any_down = any_cross = False
+    for w in range(nfreq):
+        u, dn = up[w], down[w]
+        cu, cd = cross_ud[w], cross_du[w]
+        for name, blk in (("up", u), ("down", dn),
+                          ("up-down cross", cu), ("down-up cross", cd)):
+            if blk.size and not np.all(np.isfinite(blk)):
+                raise ValueError(
+                    "The reduced FLEX susceptibility {} has non-finite values "
+                    "(NaN or Inf) in its {} block at frequency index {}. NaN "
+                    "compares false against everything, so without this check "
+                    "it would leave the redundancy maxima untouched and the "
+                    "array would be accepted as exactly "
+                    "redundant.".format(label, name, w))
+        w_scale = float(np.max(np.abs(u)))
+        w_down = float(np.max(np.abs(u - dn)))
+        w_cross = max(float(np.max(np.abs(cu))), float(np.max(np.abs(cd))))
+        scale = max(scale, w_scale)
+        d_down = max(d_down, w_down)
+        d_cross = max(d_cross, w_cross)
+        w_ratio = max(w_down, w_cross) / max(w_scale, np.finfo(float).tiny)
+        if w_ratio > worst_ratio:
+            worst_ratio = w_ratio
+            worst_at = (w, w_scale, w_down, w_cross)
+        any_down = any_down or bool(np.any(dn))
+        any_cross = any_cross or bool(np.any(cu)) or bool(np.any(cd))
+
+    if d_down == 0.0 and d_cross == 0.0:
+        return
+
+    # An all-zero down/cross block is NOT a reliable marker of the legacy
+    # single-populated representation: a saturated or projected spin sector, or
+    # externally produced spin-resolved data, can look exactly the same. Absent
+    # data and fully polarized data are indistinguishable from the values alone,
+    # so the file has to SAY which it is. Accept it only when it does.
+    if scale > 0.0 and not any_down and not any_cross:
+        if legacy_up_block_only:
+            # Name the actual source of the authorization: a file tag and a user
+            # override carry different weight, and reporting one as the other
+            # would misrepresent who vouched for the data.
+            via = ("the [eliashberg] accept_up_block_only setting"
+                   if legacy_up_block_only == "config_override"
+                   else "the file's chi_spin_blocks='up_only' tag")
+            logger.warning(
+                "The reduced FLEX susceptibility %s has an all-zero down-spin "
+                "block and all-zero cross-spin blocks. Per %s this is read as "
+                "the layout in which only the block the Eliashberg step "
+                "consumes was ever populated -- not as a spin-polarized run -- "
+                "and the up-spin block is used.", label, via)
+            return
+        raise ValueError(
+            "The reduced FLEX susceptibility {} has a nonzero up-spin block "
+            "with an identically zero down-spin block and zero cross-spin "
+            "blocks. That is either a file in which only the consumed block was "
+            "ever populated, or a fully spin-polarized/projected susceptibility "
+            "-- the values alone cannot tell them apart, and the second is not "
+            "something this paramagnetic formulation can use. If you know it is "
+            "the former, say so: set [eliashberg] accept_up_block_only = true, "
+            "or tag the file itself with chi_spin_blocks='up_only'. Files "
+            "written before this check existed carry no tag, so the "
+            "configuration flag is the route for them.".format(label))
+
+    # Describe the frequency that decided it: acceptance is a per-frequency
+    # ratio, so quoting global maxima could pair a small tail's mismatch with a
+    # huge unrelated scale from elsewhere on the axis.
+    w_at, scale, d_down, d_cross = worst_at
+    parts = []
+    if d_down != 0.0:
+        parts.append("the down-spin block differs from the up-spin block "
+                     "by {:.3e}".format(d_down))
+    if d_cross != 0.0:
+        parts.append("the cross-spin blocks are nonzero "
+                     "(max {:.3e})".format(d_cross))
+    detail = " and ".join(parts)
+    ratio = worst_ratio
+
+    if ratio <= _SPIN_DISCARD_ROUNDOFF_RATIO:
+        logger.warning(
+            "The reduced FLEX susceptibility %s is not exactly spin-redundant: "
+            "%s, against an up-block scale of %.3e at frequency index %d. "
+            "That is %.1e of the kept block there -- within round-off of "
+            "double precision, so it is treated as noise and the calculation "
+            "continues using the up-spin block. Please report it: every tested "
+            "path produces "
+            "bit-identical spin blocks.", label, detail, scale, w_at, ratio)
+        return
+
+    raise ValueError(
+        "The reduced FLEX susceptibility {} is SPIN-RESOLVED: {}, against an "
+        "up-block scale of {:.3e} at frequency index {}. The Eliashberg "
+        "pairing vertex here is "
+        "paramagnetic -- the Kuroki S/C matrices carry no spin index and the "
+        "singlet/triplet decomposition assumes spin-rotational symmetry -- so "
+        "only the up-spin block could be used and the rest would be discarded. "
+        "That is not a controlled approximation of the spin-resolved problem, "
+        "so it is refused rather than silently returning a number. If you meant "
+        "to run a paramagnetic calculation and a field such as coeff_extern is "
+        "the only source of the splitting, drop it and re-run FLEX. If the spin "
+        "structure is intrinsic to your model, this solver cannot describe it: "
+        "a spin-resolved treatment needs an S_z-resolved vertex and the "
+        "transverse susceptibility chi^(+-), which FLEX does not compute at all "
+        "(calc_type='ring+ladder' is rejected on every FLEX scheme).".format(
+            label, detail, scale, w_at))
 
 
 def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
@@ -2061,9 +3069,12 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     - ``"myo"`` (general full-vertex FLEX) is already in orbital-pair space
       ``nd_chi = norb^2``; passed through unchanged.
     - ``"kuroki"`` (reduced / squashed FLEX) is in spin-orbital reduced space
-      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``); the spin-up
-      orbital block ``[:norb, :norb]`` is extracted and diagonally expanded to
-      ``norb^2 x norb^2``.
+      ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``), and its matrix
+      index is a DENSITY PAIR: ``X[a, b]`` is ``chi_{(a,a),(b,b)}``.  The
+      spin-up block ``[:norb, :norb]`` is extracted and embedded at the
+      density-pair positions ``[a*norb + a, b*norb + b]`` of the
+      ``norb^2 x norb^2`` orbital-pair space, with every off-density component
+      left exactly zero (see the body for why any other placement is wrong).
 
     Whether the spin-orbital block must be extracted is decided by ``nd_chi``:
     ``nd_chi == norb*ns`` means spin-orbital (extract), ``nd_chi == norb^2``
@@ -2088,9 +3099,25 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     nd = norb * norb          # orbital-pair dimension
     nd_so = norb * ns         # spin-orbital reduced dimension
     nfreq = chi_raw.shape[0]
-    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, -1)
-    nd_chi = int(np.sqrt(chi_full.shape[-1]))
-    chi_full = chi_full.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
+    # Derive nd_chi from the trailing AXES, not from sqrt of the flattened
+    # element count: the latter accepts any rectangle whose product happens to
+    # be a perfect square -- (nfreq, nvol, 2, 8) has 16 trailing elements and
+    # was silently reshaped into a 4x4 susceptibility.
+    #
+    # Two layouts arrive here: the reduced/kuroki one is (nfreq, nvol, nd, nd),
+    # the general/myo one is (nfreq, nvol, norb, norb, norb, norb) -- an
+    # orbital-pair matrix stored with its pair indices unflattened.
+    tail = chi_raw.shape[2:]
+    if len(tail) == 2 and tail[0] == tail[1]:
+        nd_chi = tail[0]
+    elif len(tail) == 4 and len(set(tail)) == 1:
+        nd_chi = tail[0] * tail[1]
+    else:
+        raise ValueError(
+            "FLEX chi must be (nfreq, nvol, nd, nd) or "
+            "(nfreq, nvol, norb, norb, norb, norb); got shape {}.".format(
+                chi_raw.shape))
+    chi_full = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_chi, nd_chi)
 
     if nd_chi == nd and nd_chi == nd_so:
         # ambiguous (norb == 2): the convention tag is the only disambiguator,
@@ -2137,20 +3164,59 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
                     nd_chi, norb, nd, nd_so, convention))
         is_spin_orbital = False
     else:
+        hint = ""
+        if nd_chi == norb and norb % 2 == 0:
+            # The spin-orbital case. FLEX writes chi in its reduced spin-orbital
+            # space, nd = norb_phys * ns; with geom.dat's norb being the
+            # spin-orbital count (= 2 * norb_phys) that lands on nd_chi == norb.
+            # Say so -- the bare dimensions look like a malformed file.
+            hint = (" nd_chi == norb, which is what a "
+                    "spin-orbital FLEX run (mode.enable_spin_orbital = true) "
+                    "produces: FLEX writes chi with the PHYSICAL orbital count "
+                    "while hwave_sc reads norb from geom.dat, where "
+                    "spin-orbital mode stores the spin-orbital count "
+                    "(= 2 x physical). The Eliashberg step does not support "
+                    "spin-orbital / spin-mixing models -- its pairing vertex is "
+                    "paramagnetic -- so this combination is not usable rather "
+                    "than merely misconfigured.")
         raise ValueError(
             "FLEX chi dimension nd_chi={} matches neither the orbital-pair "
-            "size norb^2={} nor the spin-orbital size norb*ns={}.".format(
-                nd_chi, nd, nd_so))
+            "size norb^2={} nor the spin-orbital size norb*ns={} (norb={})."
+            "{}".format(nd_chi, nd, nd_so, norb, hint))
 
     if not is_spin_orbital:
         return chi_full
 
     # Spin-orbital reduced (spin-block ordered s*norb+a): extract the spin-up
-    # orbital block and scatter it diagonally into norb^2 x norb^2.
+    # block and embed it at the DENSITY-PAIR positions of the orbital-pair
+    # space.
+    #
+    # The reduced/squashed scheme keeps only the density-density diagonal of the
+    # susceptibility: the stored X[a, b] IS chi_{(a,a),(b,b)} (its companion
+    # interaction reduction in FLEX._inflate_chi0q_and_ham is
+    # einsum('ksasatbtb->ksatb', ...), the density-density diagonal of the
+    # vertex).  With the orbital-pair flat index (l1,l2) -> l1*norb + l2 used by
+    # the S/C builders, the one faithful embedding is therefore
+    #
+    #     out[(a,a), (b,b)] = X[a, b],   every other component zero.
+    #
+    # The historical placement out[(l1,l2), (l3,l2)] = X[l1, l3] (a delta_{l2,l4}
+    # "spectator" scatter, i.e. kron(X, I_norb)) instead read the density-pair
+    # index as an ordinary orbital index.  That dropped the genuine
+    # inter-orbital density coupling chi_{(0,0),(1,1)} -- which S @ chi @ S does
+    # reference -- and scattered X into pair positions the reduced scheme never
+    # computed, so chi0q_mode="flex" on a reduced run disagreed with the
+    # equivalent "load" run for identical Sigma=0 physics.
+    #
+    # Off-density rows/columns stay exactly zero: a reduced run carries no
+    # information about pair indices (a,b) with a != b, and fabricating them
+    # from the density block is what caused the mismatch.  See
+    # _compute_vertices_flex, which warns when the interaction actually needs
+    # those missing components.
     chi_orb = chi_full[:, :, :, :, :norb, :norb]
     out = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        out[:, :, :, :, l2::norb, l2::norb] = chi_orb
+    dens = np.arange(norb) * norb + np.arange(norb)   # flat index of (a,a)
+    out[..., dens[:, None], dens[None, :]] = chi_orb
     return out
 
 
@@ -2338,7 +3404,163 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
     green_raw = data_g["green"]
     # H-wave format: (nblock, nfreq, nvol, norb, norb)
+    if green_raw.ndim != 5:
+        raise ValueError(
+            "green file '{}': expected a rank-5 array (nblock, nfreq, "
+            "nvol, norb, norb), got shape {}.".format(
+                green_path, green_raw.shape))
     nblock, nmat_g, nvol, norb1, norb2 = green_raw.shape
+    # Validate every dimension BEFORE any use: an element-count-compatible
+    # but misshapen file would otherwise be silently reinterpreted by the
+    # reshape below (measured: (1, 3, 1, 4, 4) on a 4-site 2-orbital
+    # system was accepted and scrambled), an empty frequency axis would
+    # contract to an all-zero kernel and return a bogus eigenvalue, and a
+    # zero-block file died on an incidental IndexError.
+    expected_nvol = Nx * Ny * Nz
+    if nblock < 1 or nmat_g < 1:
+        raise ValueError(
+            "green file '{}': needs at least one spin block and one "
+            "frequency, got shape {}.".format(green_path, green_raw.shape))
+    if nvol != expected_nvol or norb1 != norb or norb2 != norb:
+        raise ValueError(
+            "green file '{}': shape {} does not match this run "
+            "(nvol = Nx*Ny*Nz = {}, norb = {}).".format(
+                green_path, green_raw.shape, expected_nvol, norb))
+    # A spin-diag FLEX run writes TWO blocks, G_up and G_down. Taking block 0
+    # would discard the down-spin propagator exactly as the reduced chi loader
+    # used to discard the down-spin susceptibility -- and the pair bubble built
+    # from it feeds the Eliashberg kernel directly. The susceptibility guard
+    # normally rejects such a run first, but relying on that is fragile: it is
+    # a different file, and a run whose chi happens to be redundant while its
+    # Green functions are not would slip straight through. (The dynamic loader
+    # even reads the Green function BEFORE the susceptibility check.) So the
+    # same policy applies here: discarding the other blocks is lossless
+    # exactly when they are redundant; when they are not, the pair bubble
+    # cannot represent the stored physics and the loader RAISES unless the
+    # user takes responsibility via [eliashberg] accept_up_block_only.
+    # Non-finite content is rejected up front (below); the block
+    # comparison then runs on finite data with plain component equality.
+    # Non-finite content is rejected at the file boundary, as the
+    # susceptibility loader already does: a NaN/Inf dressed Green function
+    # reaches the pair bubble G2 directly, and the iteration solver can
+    # turn the resulting non-finite norm into a SAVED zero eigenvalue with
+    # converged=False (round-7 review). Per-frequency scan, bounded
+    # temporaries.
+    for b in range(nblock):
+        for f in range(nmat_g):
+            if not np.all(np.isfinite(green_raw[b, f])):
+                raise ValueError(
+                    "green file '{}' contains non-finite values (block "
+                    "{}, frequency index {}); a NaN/Inf dressed Green "
+                    "function cannot feed the pair bubble. Re-run the "
+                    "producing FLEX calculation.".format(green_path, b, f))
+
+    if nblock > 1:
+        def _differs(b):
+            # Per-frequency, per-component comparison (finiteness is
+            # already established above, so plain equality suffices);
+            # frequency-sliced scanning bounds the comparison temporaries
+            # to one (nvol, norb, norb) slice. .real/.imag are views.
+            for f in range(green_raw.shape[1]):
+                gb = green_raw[b, f]
+                g0 = green_raw[0, f]
+                if not (np.array_equal(gb.real, g0.real)
+                        and np.array_equal(gb.imag, g0.imag)):
+                    return True
+            return False
+
+        for b in range(1, nblock):
+            if _differs(b):
+                if _accept_up_block_only(input_dict):
+                    logger.warning(
+                        "green file '%s' carries %d spin blocks with "
+                        "DIFFERING content; [eliashberg] "
+                        "accept_up_block_only is set, so the up block "
+                        "alone feeds the pair bubble and the discarded "
+                        "spin content is the user's responsibility.",
+                        green_path, nblock)
+                    break
+                raise ValueError(
+                    "green file '{}' carries {} spin blocks whose contents "
+                    "differ (block {} != block 0). The Eliashberg pair "
+                    "bubble is built from the up block only, so a "
+                    "spin-resolved dressed Green function cannot be "
+                    "represented -- the discarded block is real physics, "
+                    "not redundancy. Re-run FLEX paramagnetically, or set "
+                    "[eliashberg] accept_up_block_only = true to take "
+                    "responsibility for the approximation.".format(
+                        green_path, nblock, b))
+    # Grid/temperature provenance (round-3 review). The consumer rebuilds
+    # the Matsubara frequencies from ITS OWN beta and assumes the file holds
+    # the full centered fermionic grid, so a Green function produced at a
+    # different temperature -- or a densified/restricted frequency axis --
+    # would be consumed silently with a wrong grid, and the tail correction
+    # would then apply a wrong analytic complement. Uniform files written
+    # since this change carry beta; older files get a warning, not an error.
+    if not is_ir_native(data_g):
+        # An odd uniform axis cannot be a centered fermionic grid (it
+        # contains wn = 0); reject at the file boundary, before any vertex
+        # or pair-bubble construction (round-6 review).
+        if nmat_g % 2 != 0:
+            raise ValueError(
+                "green file '{}': the frequency axis has {} points, which "
+                "cannot be a centered fermionic Matsubara grid (even count "
+                "required). Re-run the producing FLEX calculation.".format(
+                    green_path, nmat_g))
+        if "freq_index" in data_g:
+            fi = np.asarray(data_g["freq_index"]).ravel()
+            if fi.size != nmat_g or not np.array_equal(
+                    fi, np.arange(nmat_g)):
+                raise ValueError(
+                    "green file '{}': freq_index does not describe the "
+                    "full centered frequency grid of the stored axis "
+                    "({} entries for {} frequencies); the pair bubble "
+                    "needs the full fermionic grid. Re-run the producing "
+                    "FLEX calculation with the full grid.".format(
+                        green_path, fi.size, nmat_g))
+        run_T = input_dict.get("mode", {}).get("param", {}).get("T")
+        run_beta = None if run_T is None else _coerce_run_beta(run_T)
+        if "beta" in data_g:
+            # One REAL-NUMERIC finite positive scalar, validated on the
+            # NARROWED float64 (see _finite_positive_float64): NaN/Inf make
+            # every tolerance comparison False (silently "matching"), an
+            # empty array would die on an incidental IndexError, a vector
+            # would silently use its first element, float() would silently
+            # discard a complex value's imaginary part, booleans would read
+            # as 0/1, a string would raise an incidental TypeError, and a
+            # wider-than-binary64 longdouble could pass elementwise checks
+            # yet narrow to inf.
+            file_beta = _finite_positive_float64(data_g["beta"])
+            if file_beta is None:
+                raise ValueError(
+                    "green file '{}': beta metadata must be a single "
+                    "finite positive real scalar, got {!r}. Regenerate "
+                    "the file.".format(green_path,
+                                       np.asarray(data_g["beta"])))
+            # Explicitly symmetric relative tolerance (max of both
+            # magnitudes), no absolute floor: an absolute term would wave
+            # through large relative mismatches at small beta (high
+            # temperature), where the grid differs the most.
+            if run_beta is not None and abs(file_beta - run_beta) \
+                    > 1.0e-8 * max(abs(file_beta), abs(run_beta)):
+                raise ValueError(
+                    "green file '{}' was produced at beta = {} but this "
+                    "run uses beta = {}; the Matsubara grid (and the tail "
+                    "correction built on it) would be inconsistent. Use "
+                    "the producing run's temperature or regenerate the "
+                    "file.".format(green_path, file_beta, run_beta))
+        elif run_beta is not None:
+            logger.warning(
+                "green file '%s' carries no beta metadata (written before "
+                "this field existed); the run's beta = %g is assumed to "
+                "match the producing FLEX run. Verify the temperatures "
+                "agree -- a mismatch silently corrupts the pair bubble.",
+                green_path, run_beta)
+    from hwave.solver.rpa import validate_momentum_convention
+    # green layout (nblock, nfreq_or_nodes, nvol, norb, norb): q axis 2,
+    # for uniform AND IR-native files alike (round-4 review)
+    validate_momentum_convention(data_g, green_path, green_raw, 2,
+                                 (Nx, Ny, Nz))
     # Convert to sc.py format: (norb, norb, Nx, Ny, Nz, nfreq)
     green = green_raw[0].reshape(
         nmat_g, Nx, Ny, Nz, norb, norb
@@ -2349,7 +3571,8 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     return green, meta
 
 
-def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
+def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
+                                interactions=None):
     """Load FLEX-computed susceptibilities at the static (zero bosonic
     frequency) limit from NPZ files.
 
@@ -2379,7 +3602,9 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     # so the static slice is taken before the spin-orbital expansion -- the full
     # loader would otherwise allocate the whole Nmat-long expanded array only to
     # keep one frequency (a memory regression proportional to Nmat).
-    chi_s_raw, chi_c_raw, chi_convention = _read_flex_chi_raw(input_dict)
+    (chi_s_raw, chi_c_raw, chi_convention,
+     legacy_tags) = _read_flex_chi_raw(
+        input_dict, interactions=interactions)
 
     # The zero bosonic frequency is located via the freq_index/nmat metadata
     # (RPA chiq files can carry a restricted matsubara_frequency axis whose
@@ -2403,6 +3628,23 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
     center_c = _static_center(chi_c_path, chi_c_raw.shape[0])
 
     # Slice the static frequency FIRST, then expand only that single slice.
+    # Check the WHOLE stored axis, not just the slice consumed here.
+    #
+    # Both choices have a failure mode and neither case is common: validating
+    # only the static slice lets through a run that is redundant at omega=0 and
+    # polarized elsewhere, which then returns a paramagnetic eigenvalue in
+    # silence; validating everything rejects a file whose unused frequencies are
+    # malformed. The first failure is silent and the second is loud and
+    # diagnosable, so the axis is checked in full. Paramagnetism is a property
+    # of the producing run rather than of one frequency, which is the same
+    # reason.
+    legacy_s, legacy_c = legacy_tags
+    if _accept_up_block_only(input_dict):
+        legacy_s = legacy_c = "config_override"
+    _check_spin_block_discarded(chi_s_raw, norb, chi_convention, "chi_s",
+                                legacy_s)
+    _check_spin_block_discarded(chi_c_raw, norb, chi_convention, "chi_c",
+                                legacy_c)
     chis = _expand_flex_chi(chi_s_raw[center_s:center_s + 1],
                             norb, Nx, Ny, Nz, chi_convention)[0]
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
@@ -2416,12 +3658,191 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz):
 # G2 and Eliashberg kernel
 # ---------------------------------------------------------------------------
 
-def _calc_g2(green_kw, beta):
+def _finite_positive_float64(value):
+    """Convert a declared real-numeric scalar to float64 and validate the
+    CONVERTED value; return it, or None if the value is structurally or
+    numerically unacceptable.
+
+    Conversion must happen BEFORE the finite/positive checks (round-9
+    review): on platforms where np.longdouble is wider than binary64, a
+    finite extended-precision value can pass an elementwise isfinite test
+    and then narrow to inf (or a positive one to 0.0) in the float64 the
+    computation actually uses -- recreating the fail-open comparisons these
+    gates exist to prevent. Validating the narrowed float64 closes that.
+    """
+    if isinstance(value, (list, tuple)):
+        # the contract is a SCALAR: [2.0] or [[2.0]] silently passing an
+        # asarray-based gate would bless container-typed configs
+        return None
+    arr = np.asarray(value)
+    # ndim == 0, not size == 1: np.array([2.0]) and np.array([[2.0]]) are
+    # containers too, and NPZ metadata arrives as ndarray already
+    if arr.ndim != 0 or arr.dtype.kind not in "iuf":
+        return None
+    v = float(arr.item())
+    if not np.isfinite(v) or not v > 0:
+        return None
+    return v
+
+
+# Numerically safe upper bound for beta in the pair bubble: the batched
+# GEMM forms ~beta^2 intermediates before the division by beta, so a
+# physically meaningless beta (T < 1e-75) would overflow them to NaN.
+_G2_BETA_MAX = 1.0e75
+
+
+def _coerce_run_beta(T):
+    """Validate the run temperature and return beta = 1/T.
+
+    The provenance gate compares the FILE's beta against the run's, and a
+    NaN/Inf run temperature makes every tolerance comparison False -- i.e.
+    an invalid run would slip through as 'matching' and calc_eliashberg
+    would then build the whole Matsubara grid from beta = NaN (round-6
+    review). Same real-numeric/finite/positive contract as the file-side
+    beta gate.
+    """
+    t = _finite_positive_float64(T)
+    if t is None:
+        raise ValueError(
+            "mode.param T must be a single finite positive real scalar, "
+            "got {!r}.".format(T))
+    beta = 1.0 / t
+    # A subnormal T passes the checks above but its reciprocal overflows
+    # to inf, recreating exactly the fail-open comparison this helper
+    # exists to prevent (round-7 review) -- gate the RESULT too.
+    if not np.isfinite(beta) or not beta > 0:
+        raise ValueError(
+            "mode.param T = {!r} yields a non-finite beta = 1/T; use a "
+            "physically meaningful temperature.".format(T))
+    return beta
+
+
+def _coerce_config_bool(value, name):
+    """Strictly parse a physics-relevant boolean config switch.
+
+    backend.as_bool reads any unrecognized string ("ture", "garbage") as
+    False and any nonzero integer as True -- for a switch that changes the
+    physics (or gates a rejection), a spelling error must fail loudly
+    instead of silently flipping the behavior. Accepted: real booleans,
+    integers 0/1, and the strings true/false/yes/no/on/off/0/1 (case- and
+    whitespace-insensitive).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "yes", "on", "1"):
+            return True
+        if v in ("false", "no", "off", "0"):
+            return False
+    raise ValueError(
+        "{} = {!r} is not a recognized boolean; use "
+        "true/false (or yes/no, on/off, 0/1).".format(name, value))
+
+
+def _coerce_g2_tail(value):
+    """Strictly parse the [eliashberg] g2_tail switch (round-3 review)."""
+    return _coerce_config_bool(value, "[eliashberg] g2_tail")
+
+
+def _resolve_spin_orbital_flag(input_dict):
+    """Resolve [mode] enable_spin_orbital to a real boolean, strictly.
+
+    One resolver for every consumer in this module: the raw value used to
+    be forwarded as-is, so a string "false" was truthy at the chi0q
+    convention check and internally inconsistent inside RPA (its orbital
+    counting uses truthiness while the transfer remap tests == True).
+    Case-insensitive key lookup (config layers disagree on case handling;
+    PR #128 sweep); unrecognized values raise.
+    """
+    from requests.structures import CaseInsensitiveDict
+    return _coerce_config_bool(
+        CaseInsensitiveDict(input_dict.get("mode", {})).get(
+            "enable_spin_orbital", False),
+        "[mode] enable_spin_orbital")
+
+
+# Threshold for the asymptotic-regime diagnostic below: at the window edge
+# |i wn G(k, i wn) - I| measures how far the Green function still is from
+# its leading 1/(i wn) tail. 0.5 flags the regime where the neglected
+# scales are at least comparable to the largest retained frequency.
+_G2_TAIL_EDGE_DEV_THRESHOLD = 0.5
+
+
+def _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta):
+    """Warn when the tail correction's asymptotic premise looks violated.
+
+    The correction subtracts the model I/(i wn) x -I/(i wn) inside the
+    window and adds its exact full sum, which IMPROVES the result only when
+    the largest retained frequency exceeds the relevant energy/self-energy
+    scales -- otherwise the model does not describe the summand anywhere in
+    the window and the added beta/4-complement can overshoot (measured:
+    H = diag(1, -1), beta = 10, Nmat = 2 makes the corrected cross-orbital
+    channel WORSE than the bare sum while staying PSD, so the positivity
+    diagnostic alone cannot catch it). The same check flags a loaded Green
+    function whose leading coefficient is not the identity (e.g. a scaled
+    or truncation-damaged file): for those the fixed unit-coefficient
+    correction is wrong by construction.
+
+    Returns the measured edge deviation max_k |i wn G(k, i wn) - I| over
+    both window endpoints.
+    """
+    norb = green_kw.shape[0]
+    nmat = green_kw.shape[-1]
+    if nmat < 1 or green_kw.size == 0:
+        # Nothing to measure on an empty axis (or norb = 0); return
+        # neutrally so the public ordering (this diagnostic, then
+        # _calc_g2) surfaces the actionable even-grid ValueError instead
+        # of an IndexError/max-of-empty here.
+        return 0.0
+    eye = np.eye(norb).reshape(norb, norb, 1, 1, 1)
+    dev = 0.0
+    for idx in (0, nmat - 1):
+        wn = (2.0 * idx + 1.0 - nmat) * np.pi / beta
+        dev = max(dev, float(np.abs(1j * wn * green_kw[..., idx]
+                                    - eye).max()))
+    if dev > _G2_TAIL_EDGE_DEV_THRESHOLD:
+        logger.warning(
+            "g2_tail: at the largest retained Matsubara frequency the Green "
+            "function deviates from its asymptotic tail I/(i wn) by %.2f "
+            "(threshold %.2f). The tail correction is asymptotic and can "
+            "OVERSHOOT in this regime; the result may be less accurate than "
+            "the bare sum, and passing the positivity check does not certify "
+            "accuracy. Increase Nmat until the window edge exceeds the "
+            "relevant energy scales, or check the loaded Green function's "
+            "normalization/provenance.",
+            dev, _G2_TAIL_EDGE_DEV_THRESHOLD)
+    return dev
+
+
+def _calc_g2(green_kw, beta, tail=True):
     """Calculate G2 = T * sum_n G(k, wn) G(-k+q, -wn).
 
     The temperature factor T = 1/beta is included so that the
     Eliashberg kernel correctly computes:
         lambda * sigma(k) = -(T/N_L) sum_{k',n'} P(k-k') G(k') G(-k') sigma(k')
+
+    With ``tail=True`` (the default) the truncated Matsubara sum gets the
+    analytic high-frequency tail correction (issue #86). The summand's exact
+    leading tail is delta_ij delta_lm / wn^2 -- the 1/(i wn) coefficient of
+    G is the identity by completeness of the eigenbasis, and a self-energy
+    only enters at the next order, so this holds for dressed (FLEX) Green
+    functions too, with no free coefficient (unlike chi0q's user-tunable
+    ``coeff_tail``). Subtracting that model inside the window and adding its
+    exact full sum (1/beta) sum_{n in Z} 1/wn^2 = beta/4 amounts to adding
+
+        c = beta/4 - (1/beta) sum_{n in window} 1/wn^2   (> 0)
+
+    to G2[i,i,l,l], i.e. c times the identity on the (il) gap space. This
+    reduces the truncation error from O(1/Nmat) to the next order and in
+    practice restores the positive semi-definiteness of G2 that makes the
+    static Eliashberg kernel similar to a Hermitian matrix (real spectrum);
+    the higher-order remainder can still leave a small exact eigenvalue
+    negative, which _warn_if_g2_indefinite reports. The bare truncated sum
+    can be slightly indefinite, which then injects spurious imaginary parts
+    into the reported eigenvalues at small Nmat.
 
     Parameters
     ----------
@@ -2434,18 +3855,164 @@ def _calc_g2(green_kw, beta):
     -------
     G2 : ndarray
         Shape (norb, norb, norb, norb, Nx, Ny, Nz).
-
-    Notes
-    -----
-    Thin alias for ``hwave.solver.bond_channels._g2_from_green`` (review fix:
-    this used to be a verbatim ~20-line copy of that function; the two are
-    bit-for-bit identical by construction now that only one implementation
-    exists). ``sc.py`` already imports ``bond_channels``, and ``bond_channels``
-    never imports ``sc``, so there is no circular-import obstacle to sharing
-    it here -- kept as ``sc._calc_g2`` only for the existing public call
-    sites/tests (``tests/test_sc_bond.py`` calls ``sc._calc_g2`` directly).
     """
-    return bond_channels._g2_from_green(green_kw, beta)
+    norb = green_kw.shape[0]
+    Nx, Ny, Nz, nmat = (green_kw.shape[2], green_kw.shape[3],
+                        green_kw.shape[4], green_kw.shape[5])
+    nvol = Nx * Ny * Nz
+
+    # beta gate (round-6 review): a non-finite or non-positive beta poisons
+    # every frequency below, and a finite but astronomically large one
+    # overflows the batched GEMM's ~beta^2 intermediates to NaN before the
+    # division by beta -- measured: beta = 1e200 turns the whole pair
+    # bubble into NaN while G itself is finite. beta values beyond
+    # _G2_BETA_MAX have no physical meaning (T < 1e-75), so reject rather
+    # than restructure the arithmetic (the tail=False stream must stay
+    # bit-identical to the pre-correction implementation for valid input).
+    beta_f = _finite_positive_float64(beta)
+    if beta_f is None:
+        raise ValueError(
+            "beta must be a single finite positive real scalar, got "
+            "{!r}.".format(beta))
+    beta = beta_f
+    if beta > _G2_BETA_MAX:
+        raise ValueError(
+            "beta = {!r} exceeds the numerically safe range (<= {!r}): "
+            "the pair-bubble accumulation would overflow to NaN. Check "
+            "the temperature.".format(beta, _G2_BETA_MAX))
+    # Grid gate BEFORE any O(norb^2 nvol nmat) work (round-6 review: the
+    # guard previously ran after the GEMM, which emitted overflow warnings
+    # from data the call then rejected). The centered grid
+    # wn = (2n + 1 - nmat) * pi / beta is only fermionic for EVEN nmat: an
+    # odd nmat puts wn = 0 in the window, and nmat <= 0 would return the
+    # bare analytic shift beta/4 with no Green-function samples at all.
+    if tail and (nmat <= 0 or nmat % 2 != 0):
+        raise ValueError(
+            "the Matsubara tail correction (g2_tail) requires an even, "
+            "positive number of frequencies on the centered fermionic "
+            "grid; the Green function has nmat = {}. Fix the frequency "
+            "axis of the input Green function (or Nmat), or set "
+            "[eliashberg] g2_tail = false.".format(nmat))
+    # Promote reduced-precision (e.g. complex64 file) input once so the
+    # accumulation runs in complex128; a no-op for complex128 input, which
+    # keeps the tail=False bit-parity with the pre-correction code.
+    if green_kw.dtype != np.complex128:
+        green_kw = np.ascontiguousarray(green_kw, dtype=np.complex128)
+
+    # G(-k, -wn): centered-Matsubara flip on the frequency axis, then the
+    # shared FFT-grid map k -> -k on the spatial axes.
+    green_kw_inv = reverse_fft_axes(green_kw[..., ::-1], (2, 3, 4))
+    # einsum("ijpqsk, lmpqsk -> ijlmpqs") sums over k (nmat dimension)
+    # Reshape to use tensordot for BLAS: contract last axis (nmat) after
+    # merging spatial dims
+    # A: (norb, norb, nvol, nmat) -> (norb^2, nvol*nmat) -- but need per-site sum
+    # Better: reshape to (norb*norb, nvol, nmat) then per-site outer product
+    A = green_kw.reshape(norb * norb, nvol, nmat)       # (ij, site, k)
+    B = green_kw_inv.reshape(norb * norb, nvol, nmat)   # (lm, site, k)
+    # G2[ij, lm, site] = sum_k A[ij, site, k] * B[lm, site, k]
+    # Per-site batched GEMM over the Matsubara axis n. numpy.einsum does NOT
+    # lower 'isn,jsn->ijs' to BLAS GEMM; move site to the batch axis and matmul:
+    #   As[s] @ Bs[s].T -> [i, j] per site; moveaxis(...,0,2) -> (i, j, s).
+    As = np.moveaxis(A, 1, 0)             # (nvol, norb^2, nmat)
+    Bs = np.moveaxis(B, 1, 0)             # (nvol, norb^2, nmat)
+    G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)  # (norb^2, norb^2, nvol)
+    G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
+    G2 = G2 / beta
+    if tail:
+        # Dimensionless form of the window complement: with
+        # wn = r * pi / beta for the odd integers r = 2n + 1 - nmat,
+        # beta/4 - (1/beta) sum 1/wn^2 = beta * (1/4 - (1/pi^2) sum 1/r^2).
+        # Working in r keeps every intermediate O(1) regardless of beta
+        # (the wn-based form underflows wn^2 to 0 for extreme beta).
+        r = 2.0 * np.arange(nmat) + 1.0 - nmat
+        coeff = beta * (0.25 - np.sum(1.0 / r**2) / np.pi**2)
+        di = np.arange(norb)
+        # G2[i, i, l, l] += coeff for every (i, l), all k
+        G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
+    # Fail-fast on a non-finite bubble (round-6 review): downstream
+    # diagnostics may legitimately SKIP on size, and the solvers would then
+    # propagate NaN into saved eigenvalues silently. Scan in bounded chunks
+    # (round-9 review): a whole-tensor np.isfinite allocates a G2-sized
+    # Boolean mask -- ~6% of the tensor again, enough to tip a large run
+    # that otherwise fits into OOM.
+    # ravel(order="K") flattens in MEMORY order and shares storage with
+    # the (non-contiguous, ufunc-'K'-layout) G2; reshape(-1) would copy
+    # the whole tensor here -- worse than the mask it replaced.
+    flat = G2.ravel(order="K")
+    step = 1 << 20
+    for start in range(0, flat.size, step):
+        if not np.all(np.isfinite(flat[start:start + step])):
+            raise ValueError(
+                "G2 (pair bubble) contains non-finite values; check the "
+                "input Green function and beta.")
+    return G2
+
+
+# _warn_if_g2_indefinite skip thresholds (module-level so tests can patch
+# them): eigvalsh work scales as (norb^2)^3 per k-point, i.e. norb^6 * nvol
+# flops up to a constant. The peak memory is ~three full complex copies of
+# the (nvol, norb^2, norb^2) view (the transpose/reshape materializes one,
+# the residual |M - M^dag| evaluation another, the Hermitized matrix a
+# third; tracemalloc-measured peak ~1.5x the two-copy figure), each
+# 16 * norb^4 * nvol bytes.
+_G2_CHECK_MAX_WORK = 20_000_000_000
+_G2_CHECK_MAX_BYTES = 2_000_000_000
+
+
+def _warn_if_g2_indefinite(G2, norb, tail_enabled):
+    """Warn when the pair bubble G2 has a significantly negative eigenvalue.
+
+    G2 viewed as a matrix on the (i,l) gap space, M[(i,l),(j,m)] = G2[i,j,l,m],
+    is Hermitian positive semi-definite in the exact Matsubara sum; that is
+    what makes the static kernel K = -Gamma W similar to a Hermitian matrix
+    and its spectrum real. Truncation breaks positivity (issue #86), and
+    users then see complex eigenvalues that look like a broken symmetry.
+    Point them at Nmat / g2_tail instead of leaving that misread silent.
+
+    A significantly non-Hermitian G2 gets its own warning first (a loaded
+    Green function can be malformed, non-causal, or on the wrong grid;
+    silently Hermitizing would hide exactly that defect), and the PSD test
+    then runs on the Hermitian part. The check diagonalizes an
+    (norb^2 x norb^2) block per k-point, so it is skipped (with a log line)
+    when the eigensolver work estimate norb^6 * nvol or the temporaries'
+    size would rival the solve itself.
+    """
+    nvol = int(np.prod(G2.shape[4:]))
+    work = norb**6 * nvol
+    nbytes = 3 * 16 * norb**4 * nvol
+    if work > _G2_CHECK_MAX_WORK or nbytes > _G2_CHECK_MAX_BYTES:
+        logger.info("G2 positivity check skipped (work estimate norb^6 * "
+                    "nvol = %d, temporaries = %d bytes).", work, nbytes)
+        return None
+    M = G2.reshape(norb, norb, norb, norb, nvol)
+    M = M.transpose(4, 0, 2, 1, 3).reshape(nvol, norb * norb, norb * norb)
+    scale = float(np.abs(M).max()) if M.size else 0.0
+    herm_residual = (float(np.abs(M - np.conj(M.transpose(0, 2, 1))).max())
+                     if M.size else 0.0)
+    if herm_residual > 1.0e-8 * max(scale, 1.0e-300):
+        logger.warning(
+            "G2 (pair bubble) is significantly non-Hermitian on the gap "
+            "space: max |M - M^dag| = %.3e against max |M| = %.3e. The "
+            "exact pair bubble is Hermitian, so check the input Green "
+            "function's provenance (grid, temperature, causality); the "
+            "positivity diagnostic below uses only the Hermitian part.",
+            herm_residual, scale)
+    M = 0.5 * (M + np.conj(M.transpose(0, 2, 1)))
+    ev = np.linalg.eigvalsh(M)
+    min_ev, max_ev = ev.min(), ev.max()
+    if min_ev < -1.0e-6 * max(max_ev, 1.0e-300):
+        hint = ("increase Nmat" if tail_enabled
+                else "increase Nmat or re-enable the tail correction "
+                     "([eliashberg] g2_tail = true)")
+        logger.warning(
+            "G2 (pair bubble) is not positive semi-definite: min eigenvalue "
+            "= %.3e (max = %.3e). The most likely cause is Matsubara "
+            "truncation error rather than a broken symmetry, and complex "
+            "Eliashberg eigenvalues reported below are then spurious at "
+            "this level -- %s. If the Green function was loaded from file, "
+            "also check that its grid and temperature match this run.",
+            min_ev, max_ev, hint)
+    return min_ev
 
 
 def _eliashberg_kernel_fft(V_q, G2, sigma_old, norb):
@@ -3157,8 +4724,7 @@ def _reverse_k_and_orbital(gap):
     ndarray
         Delta_{ba}(-k), same shape.
     """
-    rev = gap[:, :, ::-1, ::-1, ::-1]
-    rev = np.roll(rev, 1, axis=(2, 3, 4))   # index i -> (N - i) % N
+    rev = reverse_fft_axes(gap, (2, 3, 4))  # k -> -k on the FFT grid
     rev = np.swapaxes(rev, 0, 1)            # orbital transpose a <-> b
     return rev
 
@@ -4501,6 +6067,32 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 # Main calculation
 # ---------------------------------------------------------------------------
 
+def reject_spin_orbital_mode(input_dict):
+    """Raise when [mode] enable_spin_orbital is set: the Eliashberg module
+    does not support it, and until issue #83 it RAN anyway and printed
+    eigenvalues built on four internal inconsistencies (norb never halved
+    to the physical count; the internally computed chi0q in interleaved
+    order against spin-block consumers -- measured 27% off, exactly a
+    [0,2,1,3] permutation; interaction files read at the spin-orbital
+    dimension, so U landed on (orb0, up)/(orb0, down) as two 'orbitals'
+    and orbital 1 got none; paramagnetic orbital-space S/C rules applied
+    to spin-orbital indices). A silent wrong result, not an approximation.
+
+    Resolution is strict (shared _resolve_spin_orbital_flag): recognized
+    false forms proceed as non-SO, unrecognized values raise -- a user who
+    misspells "true" must not silently get a non-SO run that then
+    misreads spin-orbital-formatted inputs.
+    """
+    if _resolve_spin_orbital_flag(input_dict):
+        raise ValueError(
+            "[mode] enable_spin_orbital = true is not supported by the "
+            "Eliashberg module (hwave_sc): the pairing vertex is "
+            "paramagnetic and the internal index/orbital-count "
+            "conventions are not spin-orbital aware, so a run would "
+            "produce silently wrong eigenvalues (issue #83). Use the "
+            "UHFk/RPA/FLEX solvers for spin-orbital models.")
+
+
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
@@ -4516,11 +6108,41 @@ def calc_eliashberg(input_dict):
         Parsed TOML configuration dictionary.
     """
     # --- Parse parameters ---
+    reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
-    beta = 1.0 / T
+    beta = _coerce_run_beta(T)
     cell_shape = mode_param["CellShape"]
-    sub_shape = mode_param.get("SubShape", cell_shape)
+    # Resolve SubShape by the PACKAGE convention (documented default:
+    # CellShape, i.e. the whole cell as one supercell) and guard the
+    # RESOLVED value: a guard keyed on the explicit key alone let an
+    # omitted SubShape default to a fully folded configuration and reach
+    # the file reader with the very mismatch the guard exists to stop
+    # (round-7 review).
+    if isinstance(cell_shape, (list, tuple)):
+        _cs = list(cell_shape)
+    else:
+        _cs = [cell_shape]
+    while len(_cs) < 3:
+        _cs.append(1)
+    _ss = list(mode_param.get("SubShape", _cs))
+    while len(_ss) < 3:
+        _ss.append(1)
+    if _ss != [1, 1, 1]:
+        # supported nowhere in this module: the geometry and
+        # interactions are consumed UNFOLDED here, so a folded
+        # susceptibility mismatches the expected orbital count and an
+        # off-site bond would fold onto an on-site supercell entry
+        # (round-4 review); failing late produced an unhelpful shape
+        # error instead of this actionable one
+        raise ValueError(
+            "SubShape (sublattice folding) is not supported by the "
+            "Eliashberg module: fold the model into the unit cell "
+            "yourself, or set SubShape = [1, 1, 1] explicitly. (Note: "
+            "omitting SubShape defaults it to CellShape -- the whole "
+            "cell as one supercell -- per the package convention, so it "
+            "must be set explicitly here.)")
+    sub_shape = _ss
     nmat = mode_param.get("Nmat", _DEFAULT_NMAT)
 
     # Filling
@@ -4586,6 +6208,9 @@ def calc_eliashberg(input_dict):
     # chi0q/FLEX data is touched.
     (use_bond_channels, bond_green, bond_max_shells, bond_memory_cap_gb,
      bond_precondition_opts, bond_diagnostics) = _read_bond_config(eli_param)
+    from requests.structures import CaseInsensitiveDict
+    g2_tail = _coerce_g2_tail(
+        CaseInsensitiveDict(eli_param).get("g2_tail", True))
     gap_file = eli_param.get("output_gap", "gap.dat")
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
 
@@ -4665,7 +6290,7 @@ def calc_eliashberg(input_dict):
         logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
         chis, chic, green_dressed, chi_convention = _load_flex_susceptibilities(
-            input_dict, norb, Nx, Ny, Nz)
+            input_dict, norb, Nx, Ny, Nz, interactions=interactions)
         logger.info("FLEX susceptibility convention: {}".format(chi_convention))
 
         # Use dressed Green's function if available, otherwise use bare
@@ -4678,9 +6303,23 @@ def calc_eliashberg(input_dict):
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
+        # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
+        # unsupported calculation must not allocate heavily on its way to
+        # the validation error (round-10 review).
+        _reject_reduced_flex_unsupported(inter_k, chi_convention)
+        # One S/C build for the run: the pair feeds the missing-component
+        # diagnostic AND the vertex contraction (round-9 review; previously
+        # each built its own full-grid pair).
+        sc_mats = _build_vertex_sc_matrices(chi_convention, inter_k,
+                                            norb, Nx, Ny, Nz)
+        _warn_reduced_flex_missing_components(
+            inter_k, norb, Nx, Ny, Nz, chi_convention,
+            sc_matrices=(sc_mats if str(chi_convention).lower() == "kuroki"
+                         else None))
         Vs_q = _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type=pairing_type,
-                                      convention=chi_convention)
+                                      convention=chi_convention,
+                                      sc_matrices=sc_mats)
         logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
 
     elif use_bond_channels:
@@ -4755,13 +6394,19 @@ def calc_eliashberg(input_dict):
         else:
             logger.info("Calculating Green's function G(k, iwn)...")
             green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+        logger.info("g2_tail = %s (Matsubara tail correction for the pair "
+                    "bubble); Green frequency axis = %d points", g2_tail,
+                    green_kw.shape[-1])
+        if g2_tail:
+            _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
         bond_operator, bond_provenance, bond_attribution = _build_bond_operator(
             bond_set, green_kw, interactions, inter_k, geom_info, norb,
             kx_array, ky_array, kz_array, beta, pairing_type,
             bond_max_shells=bond_max_shells,
             bond_memory_cap_gb=bond_memory_cap_gb,
             precondition_opts=bond_precondition_opts,
-            green_source=bond_green)
+            green_source=bond_green,
+            g2_tail=g2_tail)
         Vs_q = None
 
     else:
@@ -4778,7 +6423,7 @@ def calc_eliashberg(input_dict):
             # internally computed chi0q always carries the full frequency grid
             static_index = None
         else:
-            chi0q_raw, static_index = _load_chi0q(input_dict)
+            chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
 
         # Step 8: Convert chi0q format; the frequency axis is last in the
         # reference format, so read its length after the conversion (a 6D
@@ -4789,9 +6434,11 @@ def calc_eliashberg(input_dict):
 
         # Step 9: Compute RPA vertices
         logger.info("Computing RPA vertices (pairing_type={})...".format(pairing_type))
-        vertex_result = _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
-                                          pairing_type=pairing_type,
-                                          static_index=static_index)
+        vertex_result = _compute_vertices(
+            chi0q, inter_k, norb, Nx, Ny, Nz, nmat_chi0q,
+            pairing_type=pairing_type, static_index=static_index,
+            declarations_closed=_declarations_partner_closed(
+                interactions, Nx, Ny, Nz, norb))
         if isinstance(vertex_result, tuple):
             Pc_q, Ps_q = vertex_result
             Vs_q = Pc_q + Ps_q
@@ -4802,13 +6449,24 @@ def calc_eliashberg(input_dict):
 
     # --- Step 10: Compute G2 ---
     # The bond operator carries its own pair bubble (the same construction as
-    # _calc_g2, applied inside bond_channels.make_bond_kernel), so G2 is not
+    # the finite-window part of _calc_g2, applied inside
+    # bond_channels.make_bond_kernel), so G2 is not
     # needed -- and must not be built -- on that path.
     if use_bond_channels:
         G2 = None
     else:
         logger.info("Computing G2...")
-        G2 = _calc_g2(green_kw, beta)
+        # New config keys are read case-insensitively (the config layers
+        # disagree on case handling; see the PR #128 sweep) and through the
+        # strict parser: a misspelled value must fail, not silently flip the
+        # physics.
+        logger.info("g2_tail = %s (Matsubara tail correction for the pair "
+                    "bubble); Green frequency axis = %d points", g2_tail,
+                    green_kw.shape[-1])
+        if g2_tail:
+            _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
+        G2 = _calc_g2(green_kw, beta, tail=g2_tail)
+        _warn_if_g2_indefinite(G2, norb, g2_tail)
 
     # --- Step 11: Initialize gap function ---
     sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)

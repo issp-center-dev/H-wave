@@ -16,7 +16,17 @@ import numpy as np
 logger = logging.getLogger("qlms").getChild("tsweep")
 
 MANIFEST_NAME = "tsweep_manifest.json"
-_MANIFEST_VERSION = 1
+# Version 2: the G2 Matsubara tail correction (issue #86) changed the
+# resolved physics of a config with no explicit g2_tail key from tail-off
+# to tail-on. A version-1 manifest's fingerprint cannot distinguish rungs
+# computed either way, so resuming it would silently mix pre- and
+# post-correction eigenvalues in one lambda_vs_T.dat ladder; the bump
+# invalidates every pre-correction manifest instead.
+# Version 3: the #133 Fourier-sign alignment changed the momentum labels
+# of every k/q-resolved artifact for non-centrosymmetric models; a
+# version-2 manifest's rungs may have been computed with the flipped
+# convention, so resuming one would mix q and -q rungs in one ladder.
+_MANIFEST_VERSION = 3
 
 
 def build_ladder(cont):
@@ -97,6 +107,12 @@ def preflight(base, cont):
                 "eigenpair from the eigenvalue-analysis block, which is only "
                 "written for solver_mode 'eigenvalue' or 'both'. Set "
                 "[eliashberg] solver_mode = \"eigenvalue\"." % smode)
+        # The Eliashberg solver rejects spin-orbital mode (#83); fail in
+        # preflight rather than after every expensive FLEX rung has run
+        # (with keep_going, ALL rungs would run before ALL rejections).
+        # FLEX-only sweeps (run_eliashberg = false) stay allowed.
+        from hwave.sc import reject_spin_orbital_mode
+        reject_spin_orbital_mode(base)
 
 
 def make_rung_dicts(base, T, rung_out, run_eliashberg,
@@ -259,11 +275,19 @@ def config_fingerprint(base, run_eli, base_dir="."):
     Geometry/Transfer/Coulomb/... file also invalidates the resume."""
     param = dict(base.get("mode", {}).get("param", {}))
     param.pop("T", None)                       # per-rung; excluded
+    # The raw g2_tail key is EXCLUDED from the hashed mapping: equivalent
+    # spellings (omitted / true / "on" / differently-cased) must fingerprint
+    # identically, so only the canonical resolved boolean below enters.
     eli = {k: v for k, v in base.get("eliashberg", {}).items()
-           if k not in _ELI_OPERATIONAL_KEYS}
+           if k not in _ELI_OPERATIONAL_KEYS and k.lower() != "g2_tail"}
     cont = base.get("continuation", {})
     fin = base.get("file", {}).get("input", {})
-    inter = fin.get("interaction", {})
+    # CaseInsensitiveDict (third surfacing of this defect class): a
+    # lowercase 'coulombinter' key EXECUTES correctly but a case-sensitive
+    # lookup here omitted it from the fingerprint -- the resume would then
+    # silently reuse results computed with a DIFFERENT interaction file.
+    from requests.structures import CaseInsensitiveDict
+    inter = CaseInsensitiveDict(fin.get("interaction", {}))
     ipath = _abspath(base_dir,
                      inter.get("path_to_input", fin.get("path_to_input", ".")))
     digests = {}
@@ -271,10 +295,28 @@ def config_fingerprint(base, run_eli, base_dir="."):
         fn = inter.get(key)
         if fn:
             digests[key] = _file_digest(_abspath(ipath, fn))
+    # The RESOLVED tail switch, not just the raw [eliashberg] dict: with the
+    # key omitted the dict is identical across package versions while the
+    # physics default is not, so any future default flip must change the
+    # fingerprint through this entry (the current flip is covered by the
+    # _MANIFEST_VERSION bump). Resolution shares sc.py's strict parser, so
+    # an invalid value fails here exactly as the run itself would -- but
+    # only when the STATIC Eliashberg solver actually runs: a FLEX-only or
+    # dynamic-frequency sweep must not fail on a switch it never consumes
+    # (None marks those states and still fingerprints distinctly from
+    # True/False).
+    if run_eli and eliashberg_frequency(base) != "dynamic":
+        from hwave.sc import _coerce_g2_tail
+        g2_tail_resolved = _coerce_g2_tail(
+            CaseInsensitiveDict(base.get("eliashberg", {})).get(
+                "g2_tail", True))
+    else:
+        g2_tail_resolved = None
     src = {
         "mode": base.get("mode", {}).get("mode"),
         "param": param,                        # full mode.param minus T
         "eliashberg": eli,                     # full eliashberg minus operational
+        "g2_tail_resolved": g2_tail_resolved,
         "run_eliashberg": bool(run_eli),
         "warm_start": cont.get("warm_start", True),
         "seed_gap": cont.get("seed_gap", True),
@@ -446,13 +488,20 @@ def run(input_dict, base_dir=".", keep_going=False, dry_run=False,
     sigma_name = resolve_sigma_name(input_dict)
     gap_name = resolve_gap_name(input_dict)
 
-    # resolve base input paths to absolute so CWD does not matter
+    # resolve base input paths to absolute so CWD does not matter. The
+    # key match is case-insensitive (sixth surfacing of this defect
+    # class): the reader and the fingerprint accept 'Path_To_Input', so
+    # an exact-case check here hashed the right file while the solver
+    # executed against the UNRESOLVED relative path.
+    def _absolutize_path_key(mapping):
+        for k in list(mapping.keys()):
+            if k.lower() == "path_to_input":
+                mapping[k] = _abspath(base_dir, mapping[k])
+
     fin = input_dict.setdefault("file", {}).setdefault("input", {})
-    if "path_to_input" in fin:
-        fin["path_to_input"] = _abspath(base_dir, fin["path_to_input"])
+    _absolutize_path_key(fin)
     inter = fin.get("interaction", {})
-    if "path_to_input" in inter:
-        inter["path_to_input"] = _abspath(base_dir, inter["path_to_input"])
+    _absolutize_path_key(inter)
 
     os.makedirs(out_dir, exist_ok=True)
     summary_path = os.path.join(out_dir, summary_file)

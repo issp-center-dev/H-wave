@@ -189,6 +189,52 @@ Parameters
   This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
   After Fourier transforming the diagonalized one-body Green function to the imaginary time representation by subtracting :math:`\texttt{coeff\_tail}/(i \omega_n)`, the term :math:`-\beta/2\cdot\texttt{coeff\_tail}` is added to the one-body Green function.
   In the FLEX solver the same tail treatment is applied to the *dressed* Green function before the bare susceptibility :math:`\chi_0(q)` is computed, so that ``coeff_tail`` accelerates the frequency summation without changing the physical result. (The FLEX self-energy convolution keeps the full Green function and is unaffected.)
+  Since issue #134 the susceptibility kernels also restore the Green
+  function's equal-time discontinuity at the bubble's :math:`\tau = 0`
+  sample (the tail piece carries the jump; the sample is the mean of the
+  two branches), which makes ``coeff_tail = 1.0`` converge at
+  :math:`O(1/N_{\rm mat}^2)`. Earlier versions omitted this endpoint and
+  ``coeff_tail`` then *slowed* the convergence by a constant factor
+  (still :math:`O(1/N_{\rm mat})`); results produced with a nonzero
+  ``coeff_tail`` before this fix are not comparable with current ones
+  at the same ``Nmat``.
+  The value must be a finite real number; ``NaN`` and infinities are
+  rejected. Only ``0.0`` (off) and ``1.0`` (the physical :math:`1/i\omega_n`
+  coefficient) are recommended: fractional values cancel only part of the
+  equal-time jump, remain :math:`O(1/N_{\rm mat})` and can converge more
+  slowly than ``coeff_tail = 0.0``.
+  ``chi0q.npz`` files written with a nonzero ``coeff_tail`` carry a
+  ``tail_endpoint = "branch_mean_v1"`` marker recording the endpoint
+  treatment; ``chi0q_init`` and the ``hwave_sc`` chi0q loader refuse a
+  nonzero-tail file without it (produced before the fix), since the
+  pre-fix error cannot be detected from the array itself. Recompute such
+  bubbles instead of reusing the files.
+
+- ``spinful_vertex_exchange``
+
+  **Type :**
+  Boolean (default value is ``true``)
+
+  **Description :**
+  Spinful (``enable_spin_orbital``) calculations resum the susceptibility
+  with a single vertex tensor. Since issue #137 that tensor is the
+  antisymmetrized bare particle-hole vertex: the direct (ring) wiring
+  plus the exchange wiring of the on-site interaction terms. The
+  exchange part is what corrects the spin-flip pair components of
+  :math:`\chi(q)` (in non-spin-orbital calculations the analogous
+  content is provided separately by ``calc_type = "ring+ladder"``);
+  without it those components are returned as the bare bubble at any
+  interaction strength, and, because spin is not conserved, the error
+  leaks into every component. The construction was verified against
+  exact diagonalization at first order in the coupling for
+  CoulombIntra, Exchange and PairLift, and reproduces the established
+  transverse (ring+ladder) series in the spin-conserving limit.
+  Setting ``spinful_vertex_exchange = false`` restores the previous
+  ring-only vertex (results produced before this fix): use it only to
+  reproduce old runs. The exchange wiring of OFF-site interaction
+  terms depends on both fermionic momenta and is not representable in
+  this resummation; it remains excluded (as it is in the
+  non-spin-orbital ladder).
 
 - ``matsubara_frequency``
 

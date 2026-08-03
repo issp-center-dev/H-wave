@@ -1,0 +1,10 @@
+# Report precision (PR #126). Two decimals make the DISPLAYED totals and
+# the --cov-fail-under comparison finer-grained, but any finite precision
+# still rounds: the HARD floor is enforced separately by
+# tests/_coverage_floor.py, which compares the integer line counts from
+# coverage.xml exactly. Kept in .coveragerc (ini format, read
+# unconditionally) rather than pyproject.toml so the setting does not
+# depend on how coverage's TOML support is provided in a given
+# environment.
+[report]
+precision = 2

@@ -5,6 +5,7 @@ import os
 from .base import solver_base
 from .perf import do_profile
 from . import fold
+from .kgrid import reverse_fft_axes
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -763,7 +764,7 @@ class UHFk(solver_base):
 
             t = np.conjugate(
                     np.transpose(
-                        np.flip(np.roll(tab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        reverse_fft_axes(tab_r, (0, 1, 2)),
                         (0,1,2,4,3)
                     )
                 )
@@ -1100,7 +1101,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             vba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(vab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(vab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1144,7 +1145,7 @@ class UHFk(solver_base):
 
                 vba = np.conjugate(
                     np.transpose(
-                        np.flip(np.roll(vab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                        reverse_fft_axes(vab_r, (0, 1, 2)),
                         (0,1,2,4,3)
                     )
                 )
@@ -1170,7 +1171,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1196,13 +1197,18 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
 
-            # interaction coeffs: J_ij Sz_i Sz_j where Sz = 1/2 sigma, sigma=+1,-1
-            self.inter_table["Ising"] = (jab_r + jba)/2 / 4
+            # interaction coeffs -- no 1/4: the documented Hamiltonian is
+            # J (n_up - n_down)(n_up - n_down), and the RPA/FLEX vertex
+            # content was adjudicated by exact diagonalization against
+            # exactly that operator (#106); the historical /4 read the
+            # file as J S^z S^z instead, so the same Ising file meant
+            # couplings differing by 4 between UHFk and RPA/FLEX
+            self.inter_table["Ising"] = (jab_r + jba)/2
             # spin combination
             self.spin_table["Ising"] = np.zeros((2,2,2,2), dtype=int)
             self.spin_table["Ising"][0,0,0,0] = 1
@@ -1224,7 +1230,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1250,7 +1256,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -1276,7 +1282,7 @@ class UHFk(solver_base):
             # J~ab(r) = Jab(r) + Jba(-r)
             jba = np.conjugate(
                 np.transpose(
-                    np.flip(np.roll(jab_r, -1, axis=(0,1,2)), axis=(0,1,2)),
+                    reverse_fft_axes(jab_r, (0, 1, 2)),
                     (0,1,2,4,3)
                 )
             )
@@ -2169,6 +2175,7 @@ class UHFk(solver_base):
                      eigenvector = evv,
                      wavevector_unit = self.kvec,
                      wavevector_index = self.wavenum_table,
+                     momentum_convention = "e_plus_ikR",
                      )
             logger.info("save_results: save eigenvalues and eigenvectors in file {}".format(file_name))
 
@@ -2236,9 +2243,13 @@ class UHFk(solver_base):
             # back without silently using the wrong sign. See issue #36.
             np.savez(file_name, green = green_orig,
                      green_sublattice = self.Green,
-                     green_convention = np.array("green_slot_first"))
+                     green_convention = np.array("green_slot_first"),
+                     # issue #133: UHFk always used the documented e^{+ikR}
+                     # sign; the stamp makes that machine-readable
+                     momentum_convention = "e_plus_ikR")
         else:
-            np.savez(file_name, green = self.Green)
+            np.savez(file_name, green = self.Green,
+                     momentum_convention = "e_plus_ikR")
         logger.info("save_results: save green function to file {}".format(file_name))
 
     @do_profile

@@ -62,7 +62,15 @@ Simple mode
 
 When only ``CoulombIntra`` (:math:`U`) and ``CoulombInter`` (:math:`V`)
 are present, the pairing vertex is computed using the spin (:math:`W_s`)
-and charge (:math:`W_c`) channels:
+and charge (:math:`W_c`) channels. :math:`U` and :math:`V` enter as the
+symmetrised reading of the declaration file -- the mean with the
+reversed-bond partner :math:`(R, a, b) \leftrightarrow (-R, b, a)` --
+matching every other route in the package: real declarations that contain both directions are
+read unchanged, bit for bit; a Hermitian-closed complex pair has its
+inert imaginary part folded to the real coefficient. (Since issue #93 a one-sided declaration
+-- an entry with no Hermitian partner -- is rejected at read time, so
+only closed files reach this point; earlier versions of the simple mode
+read a one-sided file with the raw one-sided phase.):
 
 .. math::
 
@@ -125,16 +133,51 @@ The matrix elements are:
      - :math:`U`
    * - :math:`l_1 = l_3 \neq l_2 = l_4`
      - Cross
-     - :math:`U' - I`
-     - :math:`-U' + J - I`
+     - :math:`U' + I - J + J'`
+     - :math:`-U' - I + J + J'`
    * - :math:`l_1 = l_2 \neq l_3 = l_4`
      - Density
      - :math:`J - 2I`
      - :math:`2U' - J`
    * - :math:`l_1 = l_4 \neq l_2 = l_3`
-     - Exchange
-     - :math:`J' + P`
-     - :math:`J' + P`
+     - Pair hop
+     - :math:`P`
+     - :math:`P`
+
+.. note::
+
+   The Cross-row entries for :math:`J`, :math:`J'` and :math:`I`, and the
+   placement of :math:`J'` in the Cross row rather than the last row, follow
+   the exact-diagonalization adjudication of the interaction vertices: the
+   Hund term contributes :math:`S \mathrel{-}= J`, :math:`C \mathrel{+}= J`,
+   the Exchange term :math:`S \mathrel{+}= J'`, :math:`C \mathrel{+}= J'`,
+   and the Ising term enters :math:`S` with :math:`+I`. For the
+   SU(2)-symmetric Kanamori combination (:math:`J' = J`) these reproduce the
+   standard literature matrices (no :math:`J` in the Cross :math:`S` entry and
+   :math:`-U' + 2J` in the Cross :math:`C` entry). Susceptibility files
+   produced before this correction carry no ``sc_vertex_version`` field and
+   are rejected when the interaction set contains Hund, Exchange or Ising.
+   For general-scheme (``myo``) files, an unversioned file is also rejected
+   when CoulombInter, Hund, Ising or Exchange declares an asymmetric
+   on-site inter-orbital coupling (:math:`X_{ab} \neq X_{ba}`): the
+   orbital orientation in which the interaction enters the vertex and
+   the symmetrised reading of such declarations both differ between
+   historical builds and the current one, and an unversioned file does
+   not record which semantics it was produced with. PairHop is checked
+   against its HERMITIAN partner instead of the plain transpose (its two
+   declarations are Hermitian partners, so its orientation never changed
+   -- but an on-site declaration that is not Hermitian-closed is also
+   rejected, because the conjugated-mean reading of PairHop declarations
+   arrived together with the version stamp). PairLift is exempt (its
+   particle-hole vertex contribution is exactly zero, so neither the
+   orientation nor the symmetrised reading can matter).
+   The unaffected cases, stated per rule: for the four
+   transpose-checked interactions, transpose-symmetric declarations
+   (:math:`X_{ab} = X_{ba}`) -- every physically ordinary input; for
+   PairHop, Hermitian-closed declarations
+   (:math:`P_{ba} = P_{ab}^{*}`) -- the physically valid form, which
+   need not be transpose-symmetric. Reduced-scheme files never depended
+   on this orientation.
 
 The RPA susceptibilities are
 
@@ -190,8 +233,8 @@ Only positive eigenvalues are physically relevant for the SC transition.
 Two-particle Green's function
 -----------------------------
 
-The Matsubara frequency summation is performed analytically to obtain
-the two-particle Green's function:
+The Matsubara frequency summation is carried out over the finite grid of
+``Nmat`` frequencies to obtain the two-particle Green's function:
 
 .. math::
 
@@ -202,6 +245,38 @@ the two-particle Green's function:
 
 This reduces the Eliashberg kernel to a convolution in k-space,
 which is efficiently computed using the Fast Fourier Transform (FFT).
+
+.. note::
+
+   **Matsubara tail correction (issue #86).** The bare truncated sum
+   misses the leading positive identity tail of the exact two-particle
+   Green's function, an :math:`O(1/N_{\rm mat})` error: the summand's exact high-frequency tail is
+   :math:`\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2` (the
+   :math:`1/i\omega_n` coefficient of :math:`G` is the identity by
+   completeness of the eigenbasis, for dressed FLEX Green's functions as
+   well). By default the solver subtracts this model inside the frequency
+   window and adds its exact full sum
+   :math:`T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4`, which amounts
+   to adding a positive multiple of the identity on the gap space. In
+   practice this restores the positive semi-definiteness of
+   :math:`G^{(2)}` that makes the kernel spectrum real (the higher-order
+   truncation remainder can still leave a tiny negative eigenvalue, which
+   the solver reports): without the correction, small-``Nmat`` multi-orbital runs
+   can report spuriously complex eigenvalues that are then easily mistaken
+   for a broken symmetry. Set ``g2_tail = false`` in the ``[eliashberg]`` section to
+   reproduce results computed before this correction was introduced.
+   With the leading :math:`1/\omega_n^2` term removed and the odd inverse
+   powers cancelling on the symmetric grid, the omitted-sum error scales as
+   :math:`O(N_{\rm mat}^{-3})` (assuming the conventional integer-power
+   high-frequency expansion). The correction is asymptotic: when the
+   largest retained frequency does not exceed the relevant energy and
+   self-energy scales it can overshoot, and the solver warns when the
+   Green function still deviates from :math:`I/(i\omega_n)` at the window
+   edge by more than 0.5 in maximum elementwise deviation. The solver additionally warns whenever the computed
+   :math:`G^{(2)}` has a significantly negative eigenvalue, pointing at
+   ``Nmat`` -- a structural diagnostic of the kernel's real-spectrum
+   property, not an error estimate. The dynamic (frequency-resolved)
+   solver never takes this frequency sum and is unaffected.
 
 
 FFT-based kernel evaluation

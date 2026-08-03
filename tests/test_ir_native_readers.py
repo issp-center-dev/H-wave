@@ -103,7 +103,7 @@ def test_densified_files_still_load_everywhere(tmp_path):
     assert static_index == 64 // 2
     input_dict2 = {"file": {"input": {"path_to_flex_output": out}},
                    "eliashberg": {}}
-    chi_s, chi_c, conv = sc._read_flex_chi_raw(input_dict2)
+    chi_s, chi_c, conv, _tags = sc._read_flex_chi_raw(input_dict2)
     assert conv == "kuroki"
     assert chi_s.shape[0] == 64
 

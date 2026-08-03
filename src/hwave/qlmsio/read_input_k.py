@@ -79,8 +79,10 @@ class QLMSkInput():
         self.ham_param = CaseInsensitiveDict()
         self.green = CaseInsensitiveDict()
 
-        # file.input.interaction
-        files = info_inputfile.get("interaction", {})
+        # file.input.interaction -- normalized ONCE so every lookup
+        # (path_to_input here, validation and dispatch below) shares the
+        # same case-insensitive semantics
+        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
         interaction_file_dir = files.get("path_to_input", "")
 
         # check if keyword is valid
@@ -94,16 +96,37 @@ class QLMSkInput():
             exit(1)
 
         for k, v in files.items():
-            if k == "path_to_input":
+            # dispatch on the NORMALIZED key: validation above is
+            # case-insensitive, so 'geometry' was accepted here and then
+            # fell through to the interaction branch, where read_w90
+            # failed on the geometry format
+            if k.lower() == "path_to_input":
                 pass
-            elif k == "Geometry":
+            elif k.lower() == "geometry":
                 f = os.path.join(interaction_file_dir, v)
                 logger.info("QLMSkInput: read Gemoetry from {}".format(f))
                 self.ham_param[k] = wan90.read_geom(f)
             else:
                 f = os.path.join(interaction_file_dir, v)
                 logger.info("QLMSkInput: read interaction {} from {}".format(k, f))
-                self.ham_param[k] = wan90.read_w90(f)
+                tbl = wan90.read_w90(f)
+                # issue #93: fail fast on a declaration table that is not
+                # Hermitian-closed (X_ab(R) = conj(X_ba(-R))) -- every
+                # solver used to do something different with such input.
+                # Transfer keeps its own Hermiticity handling; the
+                # two-body types (and the Coulomb aggregate, which is
+                # U/V-like) are validated here, once, for every consumer
+                # of this reader.
+                _VALIDATED = ("coulomb", "coulombintra", "coulombinter",
+                              "hund", "exchange", "ising", "pairlift",
+                              "pairhop")
+                if k.lower() in _VALIDATED:
+                    from hwave.solver.declarations import (
+                        validate_hermitian_closure)
+                    canonical = ("CoulombIntra" if k.lower() == "coulombintra"
+                                 else k)
+                    validate_hermitian_closure(canonical, tbl, source=f)
+                self.ham_param[k] = tbl
 
         # file.input
         input_file_dir = info_inputfile.get("path_to_input", "")

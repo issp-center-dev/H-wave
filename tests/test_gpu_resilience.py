@@ -189,10 +189,14 @@ def test_rpa_external_chi0q_preflight_warns(monkeypatch, caplog, tmp_path):
     (warning before the device transfer), not only the computed-chi0q path."""
     _install_fake_backend(monkeypatch, _fake_cupy(free_bytes=1, total_bytes=2))
     solver, green_info = _make_solver("RPA")
-    # supply a chi0q so the `if "chi0q" in green_info` branch runs; the fake
-    # device array does not support the subsequent indexing/inflation, so the
-    # solve raises right after the preflight -- which is all we need to assert.
-    green_info["chi0q"] = np.zeros((solver.nmat, 4), dtype=complex)
+    # supply a SHAPE-VALID chi0q so the `if "chi0q" in green_info` branch
+    # runs past the #109 shape validation (an arbitrary junk shape now fails
+    # fast there, before the preflight); the fake device array still does not
+    # support the subsequent indexing/inflation, so the solve raises right
+    # after the preflight -- which is all we need to assert. Reduced scheme:
+    # (nmat, nvol, norb, norb) with the one-orbital fixture.
+    nvol = solver.lattice.nvol
+    green_info["chi0q"] = np.zeros((solver.nmat, nvol, 1, 1), dtype=complex)
 
     with caplog.at_level(logging.WARNING, logger="qlms"):
         with pytest.raises(Exception):

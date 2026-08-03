@@ -32,7 +32,9 @@ except ImportError:
 import logging
 logger = logging.getLogger(__name__)
 
-from .rpa import RPA, Lattice, Interaction
+from .rpa import RPA, Lattice, Interaction, MOMENTUM_CONVENTION
+from .density_projection import project_density_pairs
+from .kgrid import reverse_fft_axes
 from . import backend as _bk
 from . import matsubara as _ms
 
@@ -233,22 +235,11 @@ class FLEX(RPA):
                        "'general', got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        if not self._flex_general and (
-                self.ham_info.has_interaction_exchange()
-                or self.ham_info.has_interaction_pairhop()):
-            # FLEX reduces the vertex via the density-density diagonal
-            # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
-            # are dropped.  This is a deliberate (common) approximation, but
-            # warn so it is not silent (cf. the inherited reduced+exchange
-            # guard, which does not cover the squashed scheme).  Exchange and
-            # PairLift set the exchange flag; PairHop sets a separate flag, so
-            # both are checked here to cover all off-diagonal interaction types.
-            logger.warning(
-                "FLEX uses the density-density reduction; exchange- and "
-                "pair-hopping-type interactions (Exchange, PairLift, PairHop) "
-                "are approximated by their density-density part "
-                "(off-diagonal vertices are dropped). "
-                "Use calc_scheme='general' to keep them.")
+        # Exchange/PairHop under reduced/squashed are rejected by the
+        # consistency check inherited from RPA (one policy for both
+        # solvers, #107): their vertex has no density-diagonal content, so
+        # the schemes would drop them entirely -- the former warning here
+        # called that an 'approximation', which for those types it is not.
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
@@ -371,7 +362,16 @@ class FLEX(RPA):
                 "from the array shape alone.".format(
                     file_name, list(self.lattice.shape)))
         meta = ir_native_meta(data) if is_ir_native(data) else None
-        return data["sigma"], meta
+        # Fourier-sign provenance gate (issue #133): sigma is a k-labeled
+        # quantity; a pre-#133 file carries flipped labels. Legacy files
+        # are accepted only when the payload is q-even (see the validator).
+        from hwave.solver.rpa import validate_momentum_convention
+        sig = data["sigma"]
+        # layout (nblock, nmat_or_nodes, nvol, nd, nd): nvol is axis 2 --
+        # do NOT search by size, nmat == nvol collisions are realistic
+        validate_momentum_convention(data, file_name, sig, 2,
+                                     self.lattice.shape)
+        return sig, meta
 
     @do_profile
     def solve(self, green_info, path_to_output):
@@ -822,7 +822,8 @@ class FLEX(RPA):
         chi0_{ab}(r,tau) = -G_{ab}(r,tau) * G_{ba}(-r,-tau) with the
         fermionic anti-periodicity G(-tau) = -G(beta - tau) realized as a
         pure tau-node index reversal (symmetric node sets); the spatial
-        r -> -r is the same reverse+roll map as the uniform path. The
+        r -> -r is the shared FFT-grid reversal (kgrid.reverse_fft_axes),
+        identical to the uniform path. The
         product lives on the BOSONIC tau nodes (chi0 is periodic), where G
         is evaluated exactly from its fermionic coefficients. All IR
         transforms are physical (the tau -> i nu step is the integral over
@@ -849,9 +850,8 @@ class FLEX(RPA):
 
         # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
         # plain tau reversal (with the global fermionic -1); r -> -r is
-        # reverse+roll on the k grid (identical to the uniform path).
-        g_rev = -xp.flip(
-            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        # the shared FFT-grid reversal (identical to the uniform path).
+        g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
         g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
         g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
 
@@ -874,8 +874,9 @@ class FLEX(RPA):
         # guard, which is why this one has no analogous check).
         r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
         (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
-        coefficients on the bosonic tau nodes; tau flip-only reversal, spatial
-        roll(-1)+flip; physical transforms, no 1/beta); the orbital product is
+        coefficients on the bosonic tau nodes; tau flip-only reversal, the
+        shared spatial FFT-grid reversal; physical transforms, no 1/beta);
+        the orbital product is
         the full (a,c,b,d) form of the uniform general `_calc_chi0q`
         (rpa.py): chi0[a,c,b,d] = -G[a,b](r,tau) * G[d,c](-r,-tau).
         """
@@ -893,10 +894,10 @@ class FLEX(RPA):
             nblock, ntB, nx, ny, nz, nd * nd)
         g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
 
-        # G(-r,-tau): tau flip-only (j -> nt-1-j), spatial roll(-1)+flip, and
-        # the leading -1 folds in the fermionic antiperiodicity.
-        g_rev = -xp.flip(
-            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
+        # G(-r,-tau): tau flip-only (j -> nt-1-j), the shared spatial
+        # FFT-grid reversal, and the leading -1 folds in the fermionic
+        # antiperiodicity.
+        g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
         g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
         g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
 
@@ -1738,36 +1739,42 @@ class FLEX(RPA):
         # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
         # what the public output and the Eliashberg loader expect: the loader
         # (_compute_vertices_flex) builds S @ chi @ S with S/C matrices in that
-        # native layout (build_sc_matrices_myo shares the layout with the Kuroki
-        # builder; convention='myo' only changes the C(ab,ab) charge value), so a
-        # transposed chi here would build a transposed pairing vertex and a wrong
-        # static lambda (issue #78).  The "myo" chi_convention tag still marks
-        # these as general-path (orbital-pair shape + MYO S/C charge convention).
+        # native layout (the two builders are one implementation since the #113
+        # adjudication), so a transposed chi here would build a transposed
+        # pairing vertex and a wrong static lambda (issue #78).  The "myo"
+        # chi_convention tag marks these as general-path (orbital-pair shape).
         #
-        # This used to transpose the pair axes on the way IN and transpose them
-        # back here on the way OUT (issue #91).  Both transposes are gone.
+        # This used to transpose the pair axes on the way IN, which is what
+        # issue #91 was: the transpose reached V_eff, so Sigma was built from
+        # the transposed bubble -- Sigma_mn came out as chi0_nm G_mn instead of
+        # chi0_mn G_mn, i.e. right on the orbital diagonal and wrong off it.
+        # (Sigma itself is NOT simply transposed: G stays in its own slots.)  It is gone, so there is nothing left
+        # to undo here either.
         #
-        # Effect on the PUBLIC output.  chi0q_out is unaffected (the round trip
-        # was exact).  For the channels the old public value was
-        #     transpose(solve(transpose(chi0), U)) = solve(chi0, transpose(U))
-        # (push-through identity), against solve(chi0, U) now.  These coincide
-        # exactly when the S/C matrices are symmetric under the orbital-pair
-        # transpose, which holds whenever the on-site interaction parameters are
-        # symmetric in their orbital indices (U'_ab = U'_ba, J_ab = J_ba, ...) --
-        # the physical case, and the only one the S/C construction is meant for.
-        # The two forms are then ALGEBRAICALLY identical and differ only by
-        # floating-point error of the matmuls and the channel linear solve
-        # (~1e-15 relative on the well-conditioned regression fixture; the solve
-        # error grows with the conditioning of 1 -/+ chi0.U, so expect more near
-        # an RPA instability).  Only V_eff (hence Sigma) genuinely changes.
+        # Effect on the SAVED output, relative to the previous behaviour:
+        #   chi0q  unchanged -- it was already transposed back at this boundary.
+        #   chi_s / chi_c  unchanged.  Issue #78 had been fixed at this same
+        #     boundary, by solving from the transposed chi0 and transposing the
+        #     channels back: transpose(solve(transpose(chi0), U)).  Removing the
+        #     transpose at its source gives solve(chi0, U) with no compensation,
+        #     and the push-through identity makes the two equal -- so this
+        #     retires the compensation rather than changing its result.  The
+        #     identity needs S/C symmetric under the orbital-pair transpose,
+        #     which holds whenever the on-site interaction parameters are
+        #     symmetric in their orbital indices (U'_ab = U'_ba, J_ab = J_ba,
+        #     ...): the physical case, and the only one the S/C construction is
+        #     meant for.
+        #   Sigma  changed off the orbital diagonal.  This is issue #91, and the
+        #     part the output-boundary fix could not reach: V_eff is built from
+        #     chi0 INSIDE this function, so a transposed chi0 reaches Sigma no
+        #     matter what the boundary does.
         #
-        # For an ASYMMETRIC interaction file the public channels do change, and
-        # the new value is the consistent one: solve(chi0, U) applies the S/C
-        # matrices in the same native orbital-pair index order that RPA and the
-        # Eliashberg loader's S @ chi @ S use.  (Only the index ORDER is shared;
-        # build_sc_matrices_myo still differs from hwave.sc in the C(ab,ab)
-        # charge value.)  Note that H-wave does not currently validate that the
-        # interaction files are orbital-symmetric.
+        # Note that since issue #93 the READERS reject non-Hermitian-closed
+        # files; an asymmetric TABLE reaches here only via internal
+        # construction. For such a table the
+        # two forms differ, and solve(chi0, U) is the consistent value because
+        # it applies the S/C matrices in the same index order that RPA and the
+        # Eliashberg loader's S @ chi @ S use.
         return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
@@ -1813,9 +1820,11 @@ class FLEX(RPA):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_src
 
-            ham = xp.einsum('ksasatbtb->ksatb',
-                            ham_orig.reshape(nvol, *(ns, norb) * 4)
-                            ).reshape(nvol, nd, nd)
+            # 'ksasatbtb->ksatb' through the (ns, norb) factorized view
+            # picks the same entries as the combined-index pair diagonal
+            # and lands them in the same spin-major (nd, nd) layout, so it
+            # routes through the shared projection
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         elif self.spin_mode == "spin-diag":
             # chi0q_raw shape: (nblock=2, nmat, nvol, norb, norb) for reduced
@@ -1830,17 +1839,17 @@ class FLEX(RPA):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_raw[s]
 
-            ham = xp.einsum('ksasatbtb->ksatb',
-                            ham_orig.reshape(nvol, *(ns, norb) * 4)
-                            ).reshape(nvol, nd, nd)
+            # 'ksasatbtb->ksatb' through the (ns, norb) factorized view
+            # picks the same entries as the combined-index pair diagonal
+            # and lands them in the same spin-major (nd, nd) layout, so it
+            # routes through the shared projection
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         elif self.spin_mode == "spinful":
             # chi0q_raw shape: (nmat, nvol, nd, nd) for reduced
             chi0q = chi0q_raw
 
-            ham = xp.einsum('kaabb->kab',
-                            ham_orig.reshape(nvol, *(nd,) * 4)
-                            ).reshape(nvol, nd, nd)
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         return chi0q, ham
 
@@ -1870,7 +1879,8 @@ class FLEX(RPA):
         Earlier revisions applied an "RPA -> MYO" orbital-pair transpose here
         (and undid it on the way out).  That was wrong (issue #91): the
         round-trip left the public susceptibilities untouched but transposed
-        ``V_eff``, so the orbital OFF-diagonal of Sigma came out transposed.  The
+        ``V_eff``, so Sigma was built from the transposed bubble and came out
+        wrong off the orbital diagonal.  The
         index order is now pinned by a ground truth independent of this codebase
         -- the O(U^2) self-energy of an exactly-diagonalized 3-orbital model, see
         ``tests/test_flex_sopt_index_order.py``.
@@ -1937,9 +1947,11 @@ class FLEX(RPA):
         chi0q = chi0q_raw
         assert chi0q.ndim == 6
 
-        # MYO S/C matrices are q-independent constants for on-site Kanamori, so
-        # build them once and cache across SCF iterations. The chi0 transpose
-        # above stays OUTSIDE the cache (chi0 changes every iteration).
+        # The MYO S/C matrices depend only on the interaction (q-resolved for
+        # off-site entries, constant over q for on-site Kanamori), never on the
+        # SCF state, so build them once and cache across iterations. The chi0
+        # transpose above stays OUTSIDE the cache (chi0 changes every
+        # iteration).
         cache = getattr(self, "_myo_sc_cache", None)
         if cache is None:
             from hwave.sc import _build_interaction_k
@@ -1957,37 +1969,127 @@ class FLEX(RPA):
                     "pairing vertex (S=C=0); it is ignored in the general FLEX "
                     "calculation.")
 
-            # Fail-fast: the general (full-vertex) path builds the MYO S/C
-            # matrices on a uniform k-grid that is NOT the FFT q-grid used by
-            # _calc_chi0q.  For ON-SITE Kanamori interactions the S/C matrices
-            # are q-independent constants so this is exact; but an OFF-SITE
-            # interaction entry (irvec != (0,0,0)) makes them genuinely
-            # q-dependent on the wrong grid -> silently wrong physics.  v1 of
-            # the general path is on-site-only, so reject off-site entries.
+            # OFF-SITE entries are allowed ONLY where FLEX at one iteration
+            # is MEASURED equal to the RPA ring, element-complete: CoulombInter
+            # with SAME-orbital pairs (a == b), without sublattice folding.
+            # For that class the vertex is V(q) on the density slots alone and
+            # the equivalence holds to 1e-16 at one and two orbitals, on 4x4,
+            # non-cubic 4x6 and 3D 4x4x2 lattices including a z-direction bond.
+            #
+            # Everything else stays rejected, each for a measured reason:
+            #
+            #   * CoulombInter with a != b off-site, Hund, Ising -- the MYO
+            #     S/C builder applies the full on-site Kanamori slot mapping,
+            #     which places q-dependent values into the Fierz (Case 2)
+            #     inter-orbital slots; for R != 0 the particle-hole pair
+            #     behind those slots is NON-LOCAL and not representable by a
+            #     q-only matrix (the locality argument measured for the
+            #     transverse channel). Off-site Hund / Ising differ from the
+            #     ring by 3e-2 / 7e-2 even at ONE orbital, where no
+            #     inter-orbital slot exists to blame -- an unadjudicated
+            #     vertex-content disagreement, not a grid issue.
+            #   * off-site combined with sublattice folding -- folding turns
+            #     part of an a == b bond into intra-cell inter-orbital
+            #     coupling, and the two solvers then differ by 2e-2 (the
+            #     folded analogue of the #104 content); the equivalence claim
+            #     no longer holds, so it is deferred to the #107 unification.
+            #   * Exchange, PairHop -- non-local particle-hole pair off-site.
+            #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component
+            #     (#106).
+            def _normalized(tbl_dict):
+                # The aggregate 'Coulomb' input carries CoulombIntra (the
+                # r = 0 orbital-diagonal entries) and CoulombInter
+                # (everything else) in one table; wan90.split_coulomb is the
+                # shared decomposition. Without this normalization an
+                # aggregate declaration silently produced a ZERO vertex in
+                # this path -- neither the guard below nor
+                # _build_interaction_k knows the 'Coulomb' key (measured:
+                # chiq_s off by 1e-1 against the identical explicit
+                # declaration).
+                if "Coulomb" not in tbl_dict:
+                    return tbl_dict
+                if ("CoulombIntra" in tbl_dict
+                        or "CoulombInter" in tbl_dict):
+                    raise ValueError(
+                        "Coulomb cannot be specified together with "
+                        "CoulombIntra or CoulombInter")
+                from hwave.qlmsio import wan90
+                intra, inter = wan90.split_coulomb(tbl_dict["Coulomb"])
+                out = {k: v for k, v in tbl_dict.items() if k != "Coulomb"}
+                out["CoulombIntra"] = intra
+                out["CoulombInter"] = inter
+                return out
+
+            has_fold = tuple(getattr(self.lattice, "subshape",
+                                     (1, 1, 1))) != (1, 1, 1)
+            # Under folding the guard must scan the PRE-fold table:
+            # _init_interaction canonicalizes displacements modulo the folded
+            # grid, and a folded dimension of size one maps every off-site
+            # displacement to (0,0,0) -- e.g. CellShape=[4,4,1] with
+            # SubShape=[4,1,1] turns +-x bonds into zero-displacement
+            # inter-sublattice entries, which the folded table cannot
+            # distinguish from genuinely on-site input.
+            scan_ham = self.ham_info.param_ham
+            if has_fold:
+                # fail CLOSED: validating off-site input against the folded
+                # table is exactly the bypass this scan exists to prevent
+                scan_ham = getattr(self.ham_info, "param_ham_orig", None)
+                if scan_ham is None:
+                    raise ValueError(
+                        "sublattice folding is active but the pre-fold "
+                        "interaction table (param_ham_orig) is missing, so "
+                        "off-site input cannot be validated (the folded "
+                        "table canonicalizes displacements and can hide "
+                        "off-site entries).")
+            scan_ham = _normalized(scan_ham)
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising"):
-                if itype in self.ham_info.param_ham:
-                    for (irvec, orbvec) in self.ham_info.param_ham[itype]:
-                        if tuple(irvec) != (0, 0, 0):
-                            raise ValueError(
-                                "FLEX calc_scheme='general' (v1) supports "
-                                "on-site interactions only; interaction '{}' "
-                                "has an off-site entry irvec={}. Off-site "
-                                "two-body interactions are not yet supported "
-                                "by the general full-vertex path.".format(
-                                    itype, tuple(irvec)))
+                if itype not in scan_ham:
+                    continue
+                for (irvec, orbvec) in scan_ham[itype]:
+                    if tuple(irvec) == (0, 0, 0):
+                        continue
+                    ok = (itype == "CoulombInter"
+                          and orbvec[0] == orbvec[1]
+                          and not has_fold)
+                    if not ok:
+                        raise ValueError(
+                            "FLEX calc_scheme='general' accepts off-site "
+                            "entries only for CoulombInter with equal "
+                            "orbitals (a == b) and without sublattice "
+                            "folding; interaction '{}' has an off-site "
+                            "entry irvec={}, orbvec={}{}. For that entry "
+                            "class the general path is measured equal to "
+                            "the RPA ring; other off-site classes are not "
+                            "representable by a q-only vertex or carry "
+                            "unadjudicated vertex content.".format(
+                                itype, tuple(irvec), tuple(orbvec),
+                                ", with sublattice folding" if has_fold
+                                else ""))
+                    # (Reader-bypassing internal tables only: file input
+                    # rejects one-sided declarations since #93.)
+                    # One-sided TABLES are fine: BOTH solvers reduce
+                    # a declaration to its reversal-symmetric part (the
+                    # physical coefficient of n_a(i) n_a(i+R), even in R by
+                    # the site sum) -- the S/C builders since #114, and the
+                    # ring's _make_ham_inter since the same reading was
+                    # given to rpa.py. Measured: one-sided v and v/2 at
+                    # both ends give bit-identical chiq in both solvers.
 
             no = self.norb
             nx, ny, nz = self.lattice.shape
 
-            # Build k-space interactions from the raw real-space param_ham. The
-            # k-array ordering is irrelevant for on-site Kanamori terms (constant
-            # over q), so a simple uniform grid suffices for v1.
+            # Build k-space interactions from the raw real-space param_ham.
+            # The grid contract: linspace(0, 2pi, n, endpoint=False) per axis,
+            # C-order flattened -- the same points, order and flattening as
+            # chi0's spatial FFT axis, verified by the element-complete
+            # equivalence with the RPA ring for off-site (q-dependent)
+            # entries. On-site terms are constant over q.
             kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
             ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
             kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
-            inter_k = _build_interaction_k(kx, ky, kz,
-                                           self.ham_info.param_ham, no)
+            inter_k = _build_interaction_k(
+                kx, ky, kz, _normalized(self.ham_info.param_ham), no)
 
             # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
             Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
@@ -2594,14 +2696,18 @@ class FLEX(RPA):
             # key rather than claim a correction that did not happen. This
             # covers IR-native AND densified-IR output. (getattr: tests drive
             # save_results on __new__-built stubs without __init__.)
+            from hwave.solver.rpa import TAIL_ENDPOINT_CONVENTION
             tail_meta = ({} if getattr(self, "use_ir", False)
-                         else {"coeff_tail": getattr(self, "coeff_tail", 0.0)})
+                         else {"coeff_tail": getattr(self, "coeff_tail", 0.0),
+                               # endpoint convention marker (issue #134)
+                               "tail_endpoint": TAIL_ENDPOINT_CONVENTION})
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
                      # full grid size: lets consumers locate the zero bosonic
                      # frequency (index nmat//2) unambiguously (run
                      # provenance only on IR-native files)
                      nmat=self.nmat,
+                     momentum_convention=MOMENTUM_CONVENTION,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      # FLEX chi0q comes from the same spin-block-ordered RPA
@@ -2614,28 +2720,44 @@ class FLEX(RPA):
 
         # Save susceptibilities (spin and charge channels separately for
         # Eliashberg). The chi_convention tag tells the downstream consumer
-        # (_load_flex_susceptibilities / _compute_vertices_flex) which S/C
-        # matrices to pair the susceptibilities with: "myo" (general full-vertex
-        # path) selects build_sc_matrices_myo, "kuroki" (reduced path) the
-        # default builder; the two differ only in the C(ab,ab) charge value.
-        # NOTE: the arrays themselves are stored in the public RPA [a,c,b,d]
-        # orbital-pair index order for BOTH paths (see _flex_compute_veff_general,
-        # issue #78) -- the tag selects the S/C charge convention, not the index
-        # layout. It also marks the general path's orbital-pair shape
-        # (nd = norb^2) vs the reduced path's spin-orbital shape (nd = norb*ns).
+        # (_load_flex_susceptibilities / _compute_vertices_flex) how to
+        # interpret the array layout: "myo" marks the general full-vertex
+        # path's orbital-pair shape (nd = norb^2), "kuroki" the reduced path's
+        # spin-orbital shape (nd = norb*ns). (The two builders' S/C VALUES
+        # were unified by the #113 adjudication; the tag remains a layout /
+        # provenance discriminator.)
+        #
+        # sc_vertex_version records which S/C vertex content the run used, so
+        # a downstream Eliashberg run cannot silently pair these
+        # susceptibilities with vertices from a different adjudication.
+        # Version 2 = the #113 exact-diagonalization values (Hund / Exchange /
+        # Ising corrected); files without the field predate #113.
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
-                           # Explicit self-describing index-order marker: both
-                           # paths store [a,c,b,d]. Lets the reader distinguish
-                           # these files from pre-#78 dev outputs (which stored
-                           # the general path's chi MYO-transposed under the
-                           # same "myo" tag) and fail fast on any future layout
-                           # change instead of silently misreading.
-                           chi_orbital_layout="acbd",
+                           sc_vertex_version=2,
+                           # Fourier-sign provenance (issue #133): q labels
+                           # follow the documented e^{+iqR} convention
+                           momentum_convention=MOMENTUM_CONVENTION,
                            **_freq_meta("B"))
+        if self._flex_general:
+            # Self-describing index-order marker for the ORBITAL-PAIR files
+            # only: their axes are the pairs (a,c) and (b,d), stored in that
+            # order. It lets the reader tell these files from pre-fix general
+            # outputs, which stored the same arrays orbital-pair TRANSPOSED
+            # under the same "myo" tag and are otherwise indistinguishable, and
+            # makes any future layout change fail fast instead of being
+            # silently misread.
+            #
+            # Deliberately NOT stamped on reduced/squashed files: those axes are
+            # spin-orbital (s*norb + a), not four orbital legs -- the loader has
+            # to extract a spin block before the array becomes an orbital-pair
+            # object at all (see sc._to_orbital_pair). Calling them "acbd" would
+            # be false machine-readable metadata. The reader accepts
+            # marker-less "kuroki" files; only "myo" requires the marker.
+            common_meta["chi_orbital_layout"] = "acbd"
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
@@ -2667,6 +2789,7 @@ class FLEX(RPA):
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
+                     momentum_convention=MOMENTUM_CONVENTION,
                      **_freq_meta("F"))
             logger.info("save_results: save sigma in file {}".format(file_name))
 
@@ -2682,6 +2805,13 @@ class FLEX(RPA):
                      green=green_info.get("green"),
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
+                     # temperature provenance (issue #86): the Eliashberg
+                     # consumer rebuilds the Matsubara grid from its own
+                     # beta and validates it against this field, so a file
+                     # from a different temperature fails fast instead of
+                     # silently corrupting the pair bubble
+                     beta=1.0 / self.T,
+                     momentum_convention=MOMENTUM_CONVENTION,
                      **green_extra,
                      **_freq_meta("F"))
             logger.info("save_results: save green in file {}".format(file_name))

@@ -33,6 +33,28 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 
 を行うと、Hamiltonianは以下のように書き換えられます。
 
+.. note::
+
+   この :math:`e^{+i\bf{k}\cdot\bf{r}}` 規約（wannier90 形式の符号、
+   UHFk と共通）は、issue #133 以降 RPA モジュールのすべての実空間係数
+   構築（:math:`R \to k/q` 変換）が従う規約です：
+   :math:`\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
+   e^{+i {\bf k}\cdot{\bf R}}` および :math:`W({\bf q}) =
+   \sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}`（感受率計算
+   内部の畳み込み変換は自己逆な対であり影響を受けません）。この修正以前
+   は、非スピン軌道経路が全体で逆符号を使用しており---自己整合的な
+   :math:`{\bf k} \to -{\bf k}` の再ラベルであり、保存された
+   ``chi0q`` / ``chiq`` は、テンソルが FFT グリッド上で
+   :math:`{\bf q} \to -{\bf q}` に対して要素毎に偶でない限り、運動量
+   ラベルが反転していました---、スピン軌道経路は transfer と相互作用で
+   2 つの符号が混在し、``chiq`` が :math:`\chi_0({\bf q})` と
+   :math:`W(-{\bf q})` から解かれていました：
+   :math:`W({\bf q}) \neq W(-{\bf q})` となる相互作用（方向性ボンド）
+   では、旧スピン軌道 ``chiq`` は再ラベルではなく誤りです。この修正以降
+   に書かれる運動量空間ファイルは ``momentum_convention = "e_plus_ikR"``
+   を持ち、ローダは無印の旧ファイルを、内容が :math:`{\bf q}` 偶
+   （両規約が一致する場合）でない限り拒否します。
+
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}
@@ -93,7 +115,9 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
     X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
-    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
 ここで、 :math:`\alpha \alpha'` などをまとめて一つのindexにすると行列形式で表すことができ、
@@ -106,6 +130,50 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
     \end{aligned}
 
     
+.. note::
+
+   **相互作用と感受率の添字対の規約について。**
+   上の2つの量は、各ペアの内部で互いに逆向きの添字順序を用いており、
+   その変換は RPA 方程式の一部です。
+
+   既約感受率の2つのペアスロットには以下の双一次形式が対応します。
+   左のペアは生成演算子の添字が **後**、右のペアは生成演算子の添字が
+   **前** です。
+
+   .. math::
+      X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
+      \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+      \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle
+
+   これは上の Green 関数の積 :math:`G^{\alpha\beta}(k+q)
+   G^{\beta'\alpha'}(k)` が表すものです。一方、相互作用
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` が掛かる演算子は
+   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
+   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}` であり、**どちらのペアでも**
+   感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
+   バーテックスは、相互作用テンソルの **各ペア内で添字を入れ替えた**
+   もの（式中の :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`）
+   であり、行列としては次のように書けます。
+
+   .. math::
+      \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
+      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}
+
+   これは H-wave の論文 (`arXiv:2308.00324 [cond-mat.str-el]
+   <https://arxiv.org/abs/2308.00324>`_) の式 (16) と (20) の間に現れる
+   並べ替えと同じもので、2つのペアの両方が対象です。
+
+   この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
+   実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
+   同じ値を持つため）。効いてくるのは **複素の** ペア交差型相互作用、
+   すなわち複素のエルミート閉じた ``PairHop`` の場合だけで、変換を省くと
+   複素共役なハミルトニアンに対する感受率が得られてしまいます。
+   H-wave は ring の求解でバーテックスを組み立てる際にこの変換を適用します。
+   transverse (ladder) の組み立てはこの変換を通しません。こちらは相互作用
+   テンソル自身を組み替えるため、ハミルトニアン規約のまま受け取ります。
+   保存される ``chiq``/``chi0q`` と相互作用ファイルの規約は、それぞれの節に
+   記載のとおりで変わりません。
+
 上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
 
@@ -227,16 +295,60 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 
    W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
 
-標準的なカナモリ相互作用に対して、横方向の頂点は以下の形を取ります:
+横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
+から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
+ループの上向き伝播関数と下向き伝播関数を結べないため、自己エネルギーは生じ
+ますが頂点は生じません。
+
+軌道ペアは2つの宣言の平均で対称化されます。相互作用ファイルでは同一の演算子
+を2通りに書けるためです （ :math:`n_a n_b = n_b n_a` 、Exchange では
+:math:`X_{ab} = X_{ba}` ）。これは UHFk が用いている規約と同じです。平均を取る
+相手は相互作用型ごと（同値には、その型が占めるスロット族ごと）に異なります。密度-密度型と Exchange は単純な転置との平均、
+PairHop は共役転置との平均です。PairHop の2つの宣言は同一係数ではなくエルミート
+共役の組 （ :math:`P_{ba} = P_{ab}^{*}` ）だからです。したがって複素エルミート
+閉じの Exchange の物理的結合 :math:`(J_{01} + J_{10})/2` は実数になり、複素
+エルミート閉じの PairHop は完全な複素値を保ちます。
+
+オンサイト相互作用に対する頂点は以下のとおりです:
 
 - ``CoulombIntra`` :math:`U` : :math:`W_{+-} = -U`
-- ``CoulombInter`` :math:`V` : :math:`W_{+-} = 0`
-- ``Hund`` :math:`J` : :math:`W_{+-} = -J`
-- ``Ising`` :math:`I` : :math:`W_{+-} = 2I`
+- ``CoulombInter`` :math:`V` : :math:`W_{+-} = -V`
+- ``Hund`` :math:`J` : :math:`W_{+-} = 0`
+- ``Exchange`` :math:`J` : :math:`W_{+-} = -(J + J^{\rm T})/2`
+- ``Ising`` :math:`I` : :math:`W_{+-} = +I` （wannier90 形式の k 空間ソルバーはすべてこの規格化で Ising ファイル
+  を読みます。UHFk の因子 1/4 の不一致は issue #106 で解消済みです。
+  別系統の実空間 UHFr リーダーは S^z 規約を保持します）
+- ``PairLift`` :math:`J` : :math:`W_{+-} = 0`
+- ``PairHop`` :math:`J` : :math:`W_{+-} = -J`
 
-完全なカナモリ相互作用 （ :math:`U, V = U-2J, J, J' = J` ）では
-:math:`W_{+-} = -(U - 2J) = W_{zz}` （SU(2)対称性）が成り立ち、
-常磁性系では :math:`\chi_{+-} = \chi_{zz}` となります。
+.. note::
+
+   これらの値は、横方向チャネルを厳密対角化と照合する前に公開されていた値とは
+   異なります。従来の記載は7種のうち4種が誤りで、1種が欠落していました。
+   ``CoulombInter`` 、 ``Hund`` 、 ``Ising`` 、 ``Exchange`` を含む計算で得られた
+   横方向帯磁率は再計算してください。影響を受けるのは ``chiq_pm`` のみで、
+   ``chiq`` 、自己エネルギー、Eliashberg 頂点には波及しません。
+
+``calc_type = "ring+ladder"`` では、縦方向の計算より前に、 **組み立てられた
+横方向頂点が** （副格子で折り畳んだ格子上で） :math:`q` **に依存しないこと**
+を相対許容値 :math:`10^{-10}` で検証し、満たさない入力を拒否します。横方向の
+ペア :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` はオフサイト項に
+対して非局所となり、その頂点は :math:`q` のみの関数では表現できないためです。
+実際にはオフサイトの ``CoulombInter`` 、 ``Ising`` 、 ``Exchange`` が拒否され、
+オフサイトの ``Hund`` と ``PairLift`` は横方向頂点が消えるため受理されます。
+なお、互いに打ち消し合う・値が食い違う宣言の組は、より早い読み込み時に
+拒否されます（issue #93: 宣言ファイルはエルミート共役で閉じている必要が
+あります）。また ``SubShape`` による折り畳みでスーパーセル内に収まる
+サイト間ペアはセル内軌道ペアとなり、表現可能として受理されます。縦方向（ ``ring`` ）チャネルは影響を受けません。
+
+.. warning::
+
+   オフサイトの ``PairHop`` は相互作用の読み込み時にこの検査より前に暗黙に
+   破棄されるため、拒否も反映もされません。RPA 計算でオフサイトの
+   ``PairHop`` に依存しないでください。また、対角（同一軌道）の PairHop は
+   密度項 :math:`2P\, n_\uparrow n_\downarrow` を意味しますが、読み込み時の
+   係数は :math:`2P` ではなく :math:`P` として（縦・横チャネルで一貫して）
+   扱われます。この縮退エントリの検証は別途追跡されています。
 
 横方向のRPA感受率は
 
@@ -249,6 +361,14 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 横チャネルの計算を有効にするには、入力TOMLファイルで
 ``calc_type = "ring+ladder"`` と設定します。
 これには ``general`` 計算スキームが必要です（自動選択されます）。
+
+.. note::
+
+   スピン軌道モードでハミルトニアンが本当にスピンを混合する場合
+   （スピン軌道相互作用など）、横チャネルはバブルの :math:`S_z`
+   保存ブロック :math:`G_\uparrow G_\downarrow` のみを抽出します。
+   スピン混合のクロス項は含まれず、警告が出力されます。したがって
+   スピン混合系の横感受率は、現在の実装では近似となります。
 
 
 スピン軌道モード

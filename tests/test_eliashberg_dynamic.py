@@ -58,10 +58,10 @@ def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     # "myo" convention; tag it so the loader treats it as orbital-pair (no
     # spin-orbital block extraction).
     np.savez(tmp_path/"chiq_s.npz", chiq_s=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo", chi_orbital_layout="acbd")
+             chi_convention="myo", chi_orbital_layout="acbd", momentum_convention="e_plus_ikR")
     np.savez(tmp_path/"chiq_c.npz", chiq_c=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo", chi_orbital_layout="acbd")
-    np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)))
+             chi_convention="myo", chi_orbital_layout="acbd", momentum_convention="e_plus_ikR")
+    np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
@@ -81,7 +81,7 @@ def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
     from hwave.solver import eliashberg_dynamic as ed
     m = _write_flex_fixture(tmp_path, nmat=8)
     # overwrite green with a different nmat
-    np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)))
+    np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)), momentum_convention="e_plus_ikR")
     inp = {"mode": {"param": {"Nmat": 8}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}
@@ -165,9 +165,19 @@ def _write_flex_so_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)))
+    def paramagnetic():
+        """Spin-redundant, the way a paramagnetic reduced run really stores it:
+        identical spin blocks, zero cross blocks. The loader refuses anything
+        else, since only the up-spin block survives the embedding."""
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
@@ -175,8 +185,13 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
     """A norb=2 reduced (kuroki) FLEX chi has nd_chi = norb*ns = 4 = norb^2, so
     the spin-orbital layout is INDISTINGUISHABLE from an orbital-pair layout by
     shape alone. _expand_flex_chi must use the 'kuroki' convention to extract
-    the spin-up orbital block and diagonally expand it -- not treat the raw 4x4
-    spin-orbital matrix as an orbital-pair susceptibility."""
+    the spin-up block and embed it at the DENSITY-PAIR positions -- not treat
+    the raw 4x4 spin-orbital matrix as an orbital-pair susceptibility.
+
+    The reduced index is a density pair, so the extracted X[a,b] is
+    chi_{(a,a),(b,b)} and belongs at flat position [a*norb+a, b*norb+b]. See
+    tests/test_flex_reduced_eliashberg.py for the placement rationale and the
+    physical regression that pins it."""
     import hwave.sc as sc
     norb, ns, Nx, Ny, Nz, nfreq = 2, 2, 2, 2, 1, 3
     nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
@@ -186,12 +201,13 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
 
     out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
-    # expected: extract up-spin orbital block [:norb, :norb], scatter diagonally
+    # expected: extract up-spin block [:norb, :norb], embed at density pairs
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
     expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     np.testing.assert_allclose(out, expected)
     # and it must NOT equal the raw 4x4 (the buggy orbital-pair interpretation)
     assert not np.allclose(out, chi6)
@@ -284,8 +300,9 @@ def test_expand_flex_chi_unambiguous_spin_orbital_tagged_kuroki_still_works(
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
     expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     assert out.shape == (nfreq, Nx, Ny, Nz, nd, nd)
     np.testing.assert_allclose(out, expected)
 
@@ -319,9 +336,18 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
+    def paramagnetic():
+        # Spin-redundant, as a real paramagnetic reduced run stores it; the
+        # loader refuses anything else.
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
     # no chi_convention tag -> _read_flex_chi_raw defaults to "kuroki"
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic(), momentum_convention="e_plus_ikR")
     inp = {"mode": {"param": {"Nmat": nmat}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}
@@ -334,8 +360,9 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     chi6 = raw_s.reshape(nmat, Nx, Ny, Nz, nd_so, nd_so)[nmat // 2]
     orb = chi6[:, :, :, :norb, :norb]
     expected = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     np.testing.assert_allclose(chis, expected)
 
 
@@ -381,6 +408,60 @@ def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
 
     assert seen and max(seen) == 1, \
         "static loader expanded {} frequencies (want 1)".format(max(seen))
+
+
+def test_full_loader_embeds_kuroki_chi_on_density_pairs(tmp_path):
+    """The DYNAMIC loader must apply the same density-pair embedding as the
+    static one, on EVERY frequency.
+
+    The dynamic Eliashberg kernel reads chi through
+    _load_flex_susceptibilities_full, so a reduced (kuroki) chi mis-embedded
+    here corrupts the pairing vertex at all frequencies -- and unlike the static
+    case there is no 'load' route to cross-check it against. See
+    tests/test_flex_reduced_eliashberg.py for why the density-pair placement is
+    the only faithful one."""
+    import hwave.sc as sc
+    # norb=2: with the default norb=1 the old and new embeddings coincide and
+    # the off-density assertion below iterates over an EMPTY index list, so this
+    # regression asserted nothing about the placement it advertises.
+    m = _write_flex_so_fixture(tmp_path, nmat=6, norb=2)
+    inp = _flex_input(tmp_path, m["nmat"])
+    norb, Nx, Ny, Nz = m["norb"], m["Nx"], m["Ny"], m["Nz"]
+    nd, nd_so = norb * norb, norb * 2
+
+    chis_w, chic_w, _, conv = sc._load_flex_susceptibilities_full(
+        inp, norb, Nx, Ny, Nz)
+    assert conv == "kuroki"
+
+    raw = np.load(tmp_path / "chiq_s.npz")["chiq_s"]
+    chi6 = raw.reshape(m["nmat"], Nx, Ny, Nz, nd_so, nd_so)
+    for w in range(m["nmat"]):
+        X = chi6[w, :, :, :, :norb, :norb]
+        for a in range(norb):
+            for b in range(norb):
+                np.testing.assert_allclose(
+                    chis_w[..., a * norb + a, b * norb + b, w], X[..., a, b],
+                    err_msg="frequency {} density pair ({},{})".format(w, a, b))
+    # off-density components must be exactly zero at every frequency
+    density = [a * norb + a for a in range(norb)]
+    off = [i for i in range(nd) if i not in density]
+    if off:
+        assert np.max(np.abs(chis_w[..., off, :, :])) == 0.0
+        assert np.max(np.abs(chic_w[..., :, off, :])) == 0.0
+
+
+def test_expand_flex_chi_returns_host_numpy(tmp_path):
+    """GPU safety: the expansion is the SINGLE shared implementation and runs on
+    host numpy before anything is moved to the device (the static path builds
+    Vs_q first and transfers afterwards). Returning a host ndarray is what makes
+    the GPU and CPU runs bit-identical here, so pin it."""
+    import hwave.sc as sc
+    norb, Nx, Ny, Nz, nfreq = 2, 2, 1, 1, 2
+    nd_so = norb * 2
+    chi_raw = np.zeros((nfreq, Nx * Ny * Nz, nd_so, nd_so), dtype=complex)
+    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+    assert isinstance(out, np.ndarray)
+    assert type(out).__module__ == "numpy"
 
 
 def test_check_memory_aborts_over_limit():
@@ -531,7 +612,10 @@ def test_g2_dynamic_sums_to_static(norb):
     beta = 10.0
     g2w = ed.calc_g2_dynamic(green, beta)
     assert g2w.shape == (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-    g2_static = sc._calc_g2(green, beta)
+    # tail=False: the summand pin is about the shared construction, and the
+    # static tail correction (issue #86) is a property of the frequency SUM,
+    # which the dynamic path never takes.
+    g2_static = sc._calc_g2(green, beta, tail=False)
     assert np.allclose(g2w.sum(axis=-1), g2_static, atol=1e-12)
     # component check (independent of the sum): reproduce a single element
     green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
@@ -1070,7 +1154,8 @@ def test_outputs_written(tmp_path):
     npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
     assert set(npz.files) == {
         "gap", "iomega", "T", "pairing_type", "frequency",
-        "eigenvalue", "axis_order", "normalization"}, \
+        "eigenvalue", "axis_order", "normalization",
+        "momentum_convention"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
     assert str(npz["frequency"]) == "dynamic"
     assert npz["iomega"].shape == (m["nmat"],)

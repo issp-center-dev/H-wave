@@ -11,6 +11,7 @@ import numpy as np
 
 from hwave.solver import backend
 from hwave.solver import matsubara as ms
+from hwave.solver.kgrid import reverse_fft_axes
 # Shared spatial-FFT helpers (scipy-parallel on CPU, cuFFT on GPU) live in
 # backend.py so RPA/FLEX use the same implementations; keep the module-local
 # names used throughout this file and by the tests.
@@ -79,13 +80,13 @@ def _reverse_kw_and_orbital(gap_w):
     -------
     ndarray
         ``Delta_{ba}(-k, -iw_n)``, same shape. Spatial ``k -> -k`` is the
-        FFT-grid index map ``i -> (N - i) % N`` (reverse + roll-by-1, matching
+        shared FFT-grid reversal ``i -> (N - i) % N``
+        (``kgrid.reverse_fft_axes``, matching
         ``sc._reverse_k_and_orbital``); the centered fermionic Matsubara
         partner of index ``n`` is ``nmat - 1 - n`` (a plain reversal, no roll);
         the two orbital indices are swapped.
     """
-    rev = gap_w[:, :, ::-1, ::-1, ::-1, :]
-    rev = np.roll(rev, 1, axis=(2, 3, 4))   # k -> -k on the FFT grid
+    rev = reverse_fft_axes(gap_w, (2, 3, 4))  # k -> -k on the FFT grid
     rev = rev[..., ::-1]                     # iw_n -> -iw_n (centered fermionic)
     rev = np.swapaxes(rev, 0, 1)             # orbital transpose a <-> b
     return rev
@@ -381,7 +382,8 @@ def _npz_is_ir_native(path):
         return False
 
 
-def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
+def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
+                          interactions=None):
     import hwave.sc as sc
     cfg_nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
     if cfg_nmat % 2 != 0:
@@ -449,10 +451,12 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     if allow_ir:
         chis_w, chic_w, green_w, chi_convention, ir_meta = \
             sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
-                                                allow_ir=True)
+                                                allow_ir=True,
+                                                interactions=interactions)
     else:
         chis_w, chic_w, green_w, chi_convention = \
-            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz)
+            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
+                                                interactions=interactions)
         ir_meta = None
     # Belt-and-suspenders: the header check above already rejected a mismatch,
     # but keep a post-load assertion in case the loader reshapes unexpectedly.
@@ -481,7 +485,8 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
 
 
 def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
-                                  Nx, Ny, Nz, pairing_type, convention):
+                                  Nx, Ny, Nz, pairing_type, convention,
+                                  sc_matrices=None):
     """Full-frequency pairing vertex: apply sc._compute_vertices_flex per
     bosonic Matsubara frequency and stack along the trailing axis.
 
@@ -510,10 +515,31 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     import hwave.sc as sc
     nmat = chis_w.shape[-1]
 
+    # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
+    # unsupported calculation must not allocate heavily on its way to the
+    # validation error (round-10 review).
+    sc._reject_reduced_flex_unsupported(inter_k, convention)
+
+    # The S/C matrices are frequency-independent: build ONE pair for the
+    # whole run (or take the caller's) and hand it to the diagnostic and to
+    # every per-frequency contraction. Previously each of the ~nmat calls
+    # rebuilt an identical full-grid pair (round-9 review).
+    if sc_matrices is None:
+        sc_matrices = sc._build_vertex_sc_matrices(convention, inter_k,
+                                                   norb, Nx, Ny, Nz)
+
+    # Once for the whole run: _compute_vertices_flex below is called per
+    # frequency, so warning inside it would repeat nmat (~1000) times.
+    sc._warn_reduced_flex_missing_components(
+        inter_k, norb, Nx, Ny, Nz, convention,
+        sc_matrices=(sc_matrices if str(convention).lower() == "kuroki"
+                     else None))
+
     def _one(l):
         return sc._compute_vertices_flex(
             chis_w[..., l], chic_w[..., l], inter_k, norb, Nx, Ny, Nz,
-            pairing_type=pairing_type, convention=convention)
+            pairing_type=pairing_type, convention=convention,
+            sc_matrices=sc_matrices)
 
     v0 = _one(0)
     out = np.empty(v0.shape + (nmat,), dtype=v0.dtype)
@@ -529,10 +555,14 @@ def calc_g2_dynamic(green_kw, beta):
 
     sc._calc_g2 computes G2[i,j,l,m,x,y,z] = (1/beta) * sum_n
     green_kw[i,j,x,y,z,n] * green_kw_inv[l,m,x,y,z,n], where green_kw_inv is
-    G(-k,-wn) built via roll+flip. This function drops the sum over n and
+    G(-k,-wn) built via the shared FFT-grid reversal (kgrid.reverse_fft_axes,
+    i -> (N - i) % N). This function drops the sum over n and
     returns the per-frequency summand, so calc_g2_dynamic(...).sum(axis=-1)
-    reproduces sc._calc_g2(...) to machine precision (see
+    reproduces sc._calc_g2(..., tail=False) to machine precision (see
     tests/test_eliashberg_dynamic.py::test_g2_dynamic_sums_to_static).
+    The static path's Matsubara tail correction (issue #86) is a property of
+    taking the frequency sum, so it has no per-frequency counterpart here;
+    the dynamic kernel keeps the bare summand.
 
     Parameters
     ----------
@@ -550,11 +580,9 @@ def calc_g2_dynamic(green_kw, beta):
     Nx, Ny, Nz, nmat = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4], green_kw.shape[5]
     nvol = Nx * Ny * Nz
 
-    # G(-k, -wn) via roll+flip -- SAME construction as sc._calc_g2.
-    green_kw_inv = np.roll(
-        green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
-        (1, 1, 1), (2, 3, 4)
-    )
+    # G(-k, -wn) via the shared FFT-grid reversal -- SAME construction
+    # as sc._calc_g2.
+    green_kw_inv = reverse_fft_axes(green_kw[..., ::-1], (2, 3, 4))
     # Same reshape/index layout as sc._calc_g2's A/B (ij, site, n) and
     # (lm, site, n), but keep the per-frequency product instead of summing
     # (matmul-)contracting over n.
@@ -781,6 +809,8 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         eigenvalue=eigenvalue,
         axis_order=axis_order,
         normalization=normalization,
+        # Fourier-sign provenance (issue #133): the gap is k-resolved
+        momentum_convention="e_plus_ikR",  # = rpa.MOMENTUM_CONVENTION
         **(extra_meta or {}),
     )
 
@@ -1017,18 +1047,24 @@ def _ir_vertex_to_rtau(V_nodes, axB, axF, workers=1):
 
 
 def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
-                          convention):
+                          convention, sc_matrices=None):
     """The frequency-INDEPENDENT part of the pairing vertex: the bare
     ``0.5*(S+C)``-type term of ``sc._compute_vertices_flex``, obtained by
     evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
     (CoulombIntra-only) model in the Kuroki convention this cancels
     exactly (S+C = U-U = 0), which is why the issue-#57 defect stayed
-    invisible on the CoulombIntra-only test fixtures."""
+    invisible on the CoulombIntra-only test fixtures.
+
+    The Kuroki Exchange/PairHop rejection is enforced by the delegate
+    itself (``sc._reject_reduced_flex_unsupported``), so this route is
+    guarded even when called directly. ``sc_matrices`` forwards a
+    precomputed (S, C) pair so the run's single build is reused."""
     import hwave.sc as sc
     zero = np.zeros((Nx, Ny, Nz, norb ** 2, norb ** 2), dtype=complex)
     return sc._compute_vertices_flex(zero, zero, inter_k, norb, Nx, Ny, Nz,
                                      pairing_type=pairing_type,
-                                     convention=convention)
+                                     convention=convention,
+                                     sc_matrices=sc_matrices)
 
 
 def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
@@ -1090,7 +1126,21 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     path = eli_param.get("seed_eigenvector")
     if not path:
         return None
-    gap = np.asarray(np.load(path)["gap"])   # (norb,norb,Nx,Ny,Nz,Nmat)
+    data = np.load(path)
+    gap = np.asarray(data["gap"])   # (norb,norb,Nx,Ny,Nz,Nmat)
+    # Fourier-sign provenance gate (issue #133): the seed's k labels must
+    # match this run's convention; spatial axes are (2, 3, 4) BEFORE any
+    # IR compression. Legacy unmarked seeds pass only if k-even.
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    check_momentum_marker(data, path)   # unconditional (round-10)
+    if gap.ndim != 6:
+        raise ValueError(
+            "seed_eigenvector '{}' has ndim = {} but a gap file is always "
+            "(norb, norb, Nx, Ny, Nz, Nmat); the file is malformed or not "
+            "a gap file.".format(path, gap.ndim))
+    validate_momentum_convention(data, path, gap, (2, 3, 4),
+                                 tuple(gap.shape[2:5]))
     if gap.shape[-1] != nmat:
         raise ValueError(
             "seed_eigenvector has Nmat={} but this run uses Nmat={}; "
@@ -1128,11 +1178,45 @@ def solve_dynamic(input_dict):
 
     import hwave.sc as sc
 
+    # spin-orbital mode is unsupported here exactly as on the static path;
+    # solve_dynamic is publicly callable, so guard both entries (issue #83)
+    sc.reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
-    beta = 1.0 / T
+    # shared validated conversion (round-7 review): an unchecked 1/T here
+    # let a subnormal T reach the dynamic solver as beta = inf
+    beta = sc._coerce_run_beta(T)
     cell_shape = mode_param["CellShape"]
-    sub_shape = mode_param.get("SubShape", cell_shape)
+    # Resolve SubShape by the PACKAGE convention (documented default:
+    # CellShape, i.e. the whole cell as one supercell) and guard the
+    # RESOLVED value: a guard keyed on the explicit key alone let an
+    # omitted SubShape default to a fully folded configuration and reach
+    # the file reader with the very mismatch the guard exists to stop
+    # (round-7 review).
+    if isinstance(cell_shape, (list, tuple)):
+        _cs = list(cell_shape)
+    else:
+        _cs = [cell_shape]
+    while len(_cs) < 3:
+        _cs.append(1)
+    _ss = list(mode_param.get("SubShape", _cs))
+    while len(_ss) < 3:
+        _ss.append(1)
+    if _ss != [1, 1, 1]:
+        # supported nowhere in this module: the geometry and
+        # interactions are consumed UNFOLDED here, so a folded
+        # susceptibility mismatches the expected orbital count and an
+        # off-site bond would fold onto an on-site supercell entry
+        # (round-4 review); failing late produced an unhelpful shape
+        # error instead of this actionable one
+        raise ValueError(
+            "SubShape (sublattice folding) is not supported by the "
+            "Eliashberg module: fold the model into the unit cell "
+            "yourself, or set SubShape = [1, 1, 1] explicitly. (Note: "
+            "omitting SubShape defaults it to CellShape -- the whole "
+            "cell as one supercell -- per the package convention, so it "
+            "must be set explicitly here.)")
+    sub_shape = _ss
     if isinstance(cell_shape, list):
         cell_shape = list(cell_shape)
         while len(cell_shape) < 3:
@@ -1188,10 +1272,10 @@ def solve_dynamic(input_dict):
     if use_ir:
         chis_w, chic_w, green_w, chi_convention, ir_file_meta = \
             load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz,
-                                  allow_ir=True)
+                                  allow_ir=True, interactions=interactions)
     else:
         chis_w, chic_w, green_w, chi_convention = load_flex_chi_dynamic(
-            input_dict, norb, Nx, Ny, Nz)
+            input_dict, norb, Nx, Ny, Nz, interactions=interactions)
         ir_file_meta = None
     if green_w is None:
         raise ValueError(
@@ -1300,9 +1384,16 @@ def solve_dynamic(input_dict):
     # --- Vertex and pair bubble on the frequency axis ---
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
                 "convention=%s)...", pairing_type, chi_convention)
+    # Reject before allocating the O(Nq * norb^4) pair (round-10 review).
+    sc._reject_reduced_flex_unsupported(inter_k, chi_convention)
+    # One S/C build for the whole solve: reused by every per-frequency
+    # contraction and by the IR instantaneous vertex below (round-9 review).
+    sc_mats = sc._build_vertex_sc_matrices(chi_convention, inter_k,
+                                           norb, Nx, Ny, Nz)
     Vs_q_w = compute_vertices_flex_dynamic(
         chis_w, chic_w, inter_k, norb, Nx, Ny, Nz,
-        pairing_type=pairing_type, convention=chi_convention)
+        pairing_type=pairing_type, convention=chi_convention,
+        sc_matrices=sc_mats)
     logger.info("Computing frequency-resolved pair bubble G2...")
     G2_w = calc_g2_dynamic(green_w, beta)
 
@@ -1360,7 +1451,8 @@ def solve_dynamic(input_dict):
         # analytically (see eliashberg_kernel_ir).
         V_inst = _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
                                        pairing_type=pairing_type,
-                                       convention=chi_convention)
+                                       convention=chi_convention,
+                                       sc_matrices=sc_mats)
         inst_scale = float(np.abs(V_inst).max())
         if inst_scale > 0.0:
             logger.info("IR: instantaneous vertex part split off "

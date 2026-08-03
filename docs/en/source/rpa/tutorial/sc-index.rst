@@ -169,14 +169,13 @@ This section controls the Eliashberg solver. Key parameters:
   .. warning::
 
      **Inputs from a pre-fix** ``calc_scheme = "general"`` **FLEX run.** That
-     path used to produce a self-energy transposed in the orbital indices (see
-     :ref:`the migration warning <flex_general_transpose_fix>`). The
-     susceptibilities it wrote are unaffected, so ``chi0q_mode = "flex"`` can
-     still consume an old ``chiq_s``/``chiq_c`` pair. Anything derived from its
-     *self-energy* cannot: a multi-orbital ``green.npz`` from such a run (fed to
-     the bond path via ``bond_green``, see below) is wrong off the orbital
-     diagonal and must be regenerated. Single-orbital runs and the
-     ``"reduced"``/``"squashed"`` schemes are unaffected.
+     path built its self-energy from an orbital-pair-transposed bubble, so its
+     ``sigma.npz`` and ``green.npz`` are wrong off the orbital diagonal for a
+     multi-orbital model. ``chi0q_mode = "flex"`` is not affected — it consumes
+     the susceptibilities, which are not — but ``bond_green`` is: it takes the
+     FLEX ``green.npz``, so regenerate that from a fixed build. Single-orbital
+     runs and the ``"reduced"``/``"squashed"`` schemes are unaffected. See
+     :ref:`the migration warning <flex_general_transpose_fix>`.
 - ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
   evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki
   Eq. 9 static approximation) and gives a frequency-independent gap.
@@ -193,13 +192,7 @@ This section controls the Eliashberg solver. Key parameters:
   ``"cos"``, ``"s"``, ``"s_ext"``, ``"s_ext_2d"``, ``"d_x2y2"``,
   ``"d_y2z2"`` (:math:`\cos k_y - \cos k_z`),
   ``"d_xy"``, ``"d_xz"``, ``"d_yz"``, ``"d_z2"``,
-  ``"p_x"``, ``"p_y"``, ``"p_z"``,
-  ``"f_x"`` (:math:`\sin k_x (\cos k_x - \cos k_y)`),
-  ``"f_y"`` (:math:`\sin k_y (\cos k_y - \cos k_x)`), and ``"random"``.
-  The two :math:`f`-like seeds are odd (triplet parity) higher harmonics;
-  on a square lattice they span an odd two-dimensional representation
-  together with ``"p_x"``/``"p_y"``, so they are seeds, not a point-group
-  separation.
+  ``"p_x"``, ``"p_y"``, ``"p_z"``, and ``"random"``.
   For a quasi-two-dimensional cell ``CellShape = [1, Ny, Nz]``
   (:math:`k_x = 0`) the seeds built from :math:`\sin k_x`
   (``"p_x"``, ``"d_xy"``, ``"d_xz"``) vanish identically; use
@@ -212,13 +205,27 @@ This section controls the Eliashberg solver. Key parameters:
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
+  bubble :math:`G^{(2)}` (default ``true``; issue #86). The bare truncated
+  frequency sum misses the leading identity tail (an
+  :math:`O(1/N_{\rm mat})` error) and can be slightly indefinite, which
+  injects spurious imaginary parts into the reported eigenvalues at small
+  ``Nmat``. The correction is asymptotic: it helps when the largest
+  retained frequency exceeds the relevant energy scales (the solver warns
+  when the Green function still deviates strongly from its tail at the
+  window edge -- in that regime the correction can overshoot and passing
+  the positivity check does not certify accuracy). Because the added term
+  is the identity only at the pair-bubble stage -- not a scalar shift of
+  the assembled kernel -- enabling it can legitimately change which
+  eigenvalue leads or its distance from a shift-invert target; that is
+  corrected physics, not a solver defect. ``false`` reproduces
+  results computed before the correction existed.
 - ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
   :math:`\sigma` are found first. Ignored (with a warning) for the plain
   ``"arnoldi"`` method -- use ``spectral_shift`` there instead.
-- ``spectral_shift`` (``eigenvalue_method = "arnoldi"``, and
-  ``solver_mode = "iteration"``): a positive number, or ``"auto"``. The default
-  ARPACK selection (``which='LM'``) returns the
+- ``spectral_shift`` (``eigenvalue_method = "arnoldi"`` only): a positive number,
+  or ``"auto"``. The default ARPACK selection (``which='LM'``) returns the
   eigenvalues of largest *magnitude*; far from a pairing instability, a small
   positive (attractive) leading eigenvalue can be masked by much larger negative
   (repulsive) eigenvalues, so the reported leading value comes out negative and
@@ -233,246 +240,6 @@ This section controls the Eliashberg solver. Key parameters:
   Recommended whenever the leading eigenvalue comes out negative or you scan
   weakly-pairing systems (low pressure, quasi-1D). Note this differs from
   ``sigma_shift`` above (a shift-invert *target*, not a spectral shift).
-
-  ``spectral_shift`` also applies to the **power iteration**
-  (``solver_mode = "iteration"``, including ``"both"``, and the dynamic
-  solver's iteration path). A *repulsive-dominant* kernel — the usual case for
-  the bond-resolved path (``bond_channels = true``) — has a **negative**
-  dominant eigenvalue, so the power iterate flips sign at every step: the
-  convergence measure :math:`\|\sigma_{n+1}/\|\sigma_{n+1}\| - \sigma_n\|`
-  stays at :math:`\approx 2` and the iteration can never converge, no matter
-  how large ``max_iter`` is. With a shift, the iteration runs on
-  :math:`K + \sigma I`, whose dominant eigenvalue is positive, and
-  :math:`\sigma` is subtracted back afterwards, so the number written to
-  ``eigenvalue.dat`` is the **signed** eigenvalue :math:`\lambda` of the
-  original kernel (it may legitimately be negative) and the gap/eigenvector is
-  unchanged by the shift.
-
-  That identification only holds once the iterate is an eigenvector of
-  :math:`K` whose *shifted* eigenvalue is positive real, which an explicit
-  (possibly too small) :math:`\sigma`, an ``"auto"`` estimate, or a run that
-  stopped at ``max_iter`` do **not** guarantee. The solver therefore validates
-  the result: it evaluates the signed Rayleigh quotient
-  :math:`\lambda = \langle v|K|v\rangle / \langle v|v\rangle` on the
-  **unshifted** kernel (one extra matrix-vector product) together with the
-  residual :math:`\|Kv-\lambda v\|/\|v\|`. If the residual is within tolerance,
-  that Rayleigh value is what is reported and ``eigenvalue.dat`` says the
-  number was ``VALIDATED``. If it is not, the file states explicitly that the
-  number is a **shifted iterate-norm estimate**
-  :math:`\|(K+\sigma I)v\| - \sigma`, **not** an eigenvalue of :math:`K`, and
-  the run warns — raise ``max_iter``, raise ``spectral_shift``, or use
-  ``solver_mode = "eigenvalue"``. A shift that turns out to be too small (the
-  selected mode has :math:`\lambda + \sigma < 0`, i.e. the iteration locked
-  onto the largest-*magnitude* rather than the algebraically largest mode) is
-  warned about separately, both in the log and in the output note.
-
-  As on the arnoldi path, the mode selected is the
-  *algebraically largest* eigenvalue (the physical SC eigenvalue) of the sector
-  the seed and the parity projection live in — not the largest-magnitude
-  (repulsive) one. ``"auto"`` estimates the spectral radius
-  :math:`\rho` of the kernel with a few power-iteration probes (from the initial
-  gap and from a deterministic random vector, both passed through the same
-  parity projection as the iteration itself) and uses
-  :math:`\sigma = 1.05\,\rho_\mathrm{est} + 10^{-6}`, i.e. just above the
-  estimated radius. Keep :math:`\sigma` as small as the criterion allows: a
-  larger shift compresses the *relative* eigenvalue gaps and slows the power
-  iteration down, so a strongly over-sized shift may need a larger
-  ``max_iter``. The chosen :math:`\sigma` is logged at INFO level together with
-  a reminder that the reported :math:`\lambda` is un-shifted.
-- ``bond_channels``: ``true`` / ``false`` (default ``false``). Opt-in
-  bond-resolved interaction channels: the inter-site :math:`V_{ab}(R)` is kept
-  as an enlarged :math:`(Z+1)\times(Z+1)` bond-channel matrix instead of being
-  collapsed into the single :math:`\Delta r = 0` (density) channel, so the
-  Fock/exchange and bare-pair (Cooper) structure of :math:`V` enters the
-  pairing vertex. Requires a ``CoulombInter`` term (a declared-but-zero
-  :math:`V` is allowed and keeps the channel topology fixed across a
-  :math:`V` sweep). Restrictions in this release: single orbital
-  (``norb = 1``) only, real inversion-symmetric ``CoulombInter`` only,
-  ``frequency = "static"`` only, and **not** with ``chi0q_mode = "flex"``
-  (that mode ingests a FLEX *chi*, which carries no bond structure -- to use a
-  FLEX *Green function* see ``bond_green`` below); each of these raises a
-  clear error. The path builds its own bond-resolved
-  bubble from the Green function, so ``chi0q_mode``/``chi0q_tensor`` are not
-  used (no chi0q file is read). It is a static RPA-ladder dressing, **not** a
-  conserving FLEX result, so absolute :math:`\lambda` values are not
-  comparable with FLEX/dynamic references; the eigenvalue file records this
-  approximation level and the channel list as ``#`` comment lines.
-
-  Minimal valid ``[eliashberg]`` example for a static, single-orbital bond
-  run (the bond kernel is repulsive-dominant, so ``spectral_shift = "auto"``
-  is needed with ``solver_mode = "iteration"``; see the ``spectral_shift``
-  note above):
-
-  .. code-block:: toml
-
-     [mode]
-     mode = "RPA"
-
-     [mode.param]
-     T         = 0.02
-     CellShape = [16, 16, 1]
-     Nmat      = 256
-     filling   = 0.7
-
-     [file]
-     [file.input]
-     path_to_input = "."
-
-     [file.input.interaction]
-     path_to_input = "."
-     Geometry      = "geom.dat"       # norb = 1
-     Transfer      = "transfer.dat"
-     CoulombIntra  = "coulombintra.dat"
-     CoulombInter  = "coulombinter.dat"  # required by bond_channels; a
-                                          # declared-but-zero V is allowed
-
-     [file.output]
-     path_to_output = "output"
-
-     [eliashberg]
-     frequency      = "static"        # bond_channels requires static
-     solver_mode    = "iteration"
-     spectral_shift = "auto"          # repulsive-dominant bond kernel
-     bond_channels  = true
-
-- ``bond_diagnostics``: ``true`` / ``false`` (default ``false``, and
-  ``bond_channels = true`` only). Opt-in **character analysis of the leading
-  state**, emitted as extra ``#`` comment lines in the eigenvalue file (purely
-  additive — the numeric rows are untouched and every existing reader is
-  unaffected; with the flag off the output is byte-for-byte what it was
-  before). It reports
-
-  * ``bond_diagnostics_harmonics`` — the decomposition of the returned
-    (leading) gap onto the odd harmonic basis
-    :math:`\{\sin k_x,\ \sin k_y,\ \sin k_x(\cos k_x - \cos k_y),\
-    \sin k_y(\cos k_y - \cos k_x)\}` in the :math:`\sqrt{GG}` pair-weight
-    metric. Each number is the fraction of that harmonic captured by the
-    state, in :math:`[0, 1]`. This is what makes a *V* sweep interpretable:
-    the tracked state's f-character is a physical observable of the bond
-    mechanism (in the single-band Onari case it grows from :math:`\approx 21\%`
-    at :math:`V = 0` to :math:`\approx 68\%` at :math:`V = 1.2`). Note that
-    ``p_x``/``p_y`` and ``f_x``/``f_y`` span the *same* odd two-dimensional
-    representation on a square lattice, so this is a character report, not a
-    point-group separation.
-  * ``bond_diagnostics_eigenvalue_clusters`` — the near-degenerate grouping of
-    the computed eigenvalues (single linkage on
-    :math:`|\lambda_i - \lambda_j| \le` ``deg_tol``, default :math:`10^{-3}`,
-    also recorded), as index lists into the numeric rows below, ordered by
-    descending :math:`\mathrm{Re}\,\lambda`. Alongside it,
-    ``bond_diagnostics_leading_cluster`` (and its size) is the group containing
-    **row 0** — the eigenpair this run actually returns after the
-    channel-parity promotion, which need not be the largest-:math:`\lambda`
-    cluster — so you can see directly whether the reported state is a
-    **doublet** (the odd :math:`E` doublet of the square lattice) or a
-    non-degenerate branch. Only present when a spectrum was actually computed,
-    i.e. ``solver_mode`` includes ``"eigenvalue"``; the iteration path returns
-    a single vector and no spectrum, and reports the harmonics only.
-  * the existing ``lambda_pp`` / ``lambda_fl`` attribution, which is written
-    for every bond run regardless of this flag, sits in the same block.
-
-  Following ONE invariant subspace *across* a sweep (rather than
-  characterizing one solve) is a multi-point operation and therefore lives in
-  the library, not in the solver: use
-  ``hwave.solver.bond_channels.track_subspace`` from a sweep driver,
-  feeding it the per-point eigenpairs (one eigenvector per **row** —
-  ``scipy.sparse.linalg.eigs`` returns them as columns).
-- ``bond_green`` (``bond_channels = true`` only): path to an externally
-  supplied Green function ``npz`` (the H-wave ``green`` array of shape
-  ``(nblock, nfreq, nvol, norb, norb)``, i.e. what FLEX/UHF write), used
-  **instead of** the bare Green function built from the transfer Hamiltonian.
-  This is how a FLEX-dressed, self-consistent green is fed to the bond path --
-  the Onari milestone numbers are only reproducible this way, since the bare
-  RPA spin channel is already past its instability at those parameters. Legal
-  with ``chi0q_mode = "calc"`` or ``"load"`` (neither is used on this path);
-  ``chi0q_mode = "flex"`` remains an error because it ingests a FLEX *chi*.
-  The file's frequency count wins over ``Nmat`` (it defines the grid the bond
-  bubble is built on) and a mismatch is reported; the resource preflight below
-  is run with the FILE's frequency count -- read from the ``npz`` header
-  before the array itself is loaded -- so an over-large ``Nmat`` cannot refuse
-  a run that actually fits. A missing file, a file without a ``green`` array,
-  or a grid/orbital mismatch raises. The path
-  actually used is recorded in the eigenvalue file as ``bond_green`` together
-  with the matching ``approximation`` wording.
-- ``bond_max_shells`` (``bond_channels = true`` only): keep neighbour shells
-  ``0..n`` (shell 0 = the on-site :math:`\Delta r = 0` point, shell 1 = first
-  neighbours, ...). Omitted = all declared shells. The same filtered
-  interaction feeds the Hartree, Fock and Cooper terms, so no mixed truncation
-  can arise. ``0`` with a nonzero inter-site :math:`V` declared is an error
-  (use ``bond_channels = false`` for a genuinely local model).
-- ``bond_memory_cap_gb`` (``bond_channels = true`` only): peak-memory ceiling
-  in GB for the bond path (default ``8.0``). A preflight estimates the
-  :math:`N_q \times ND \times ND` arrays (:math:`ND = n_{\rm orb}^2 B`) and
-  raises, naming the offending channel count, rather than allocating a runaway
-  matrix.
-- ``bond_precondition_atol`` / ``bond_precondition_rtol`` /
-  ``bond_precondition_dense_limit`` (``bond_channels = true`` only): tolerances
-  and the dense/probe switch of the runtime Hermiticity precondition check
-  (defaults ``1e-8`` / ``1e-8`` / ``1024``). The residual is measured on
-  :math:`W K` but both it and the scale it is compared against are referred to
-  the symmetrized kernel by the exact rescaling
-  :math:`\tilde K = W^{-1/2} (W K) W^{-1/2}`, so ``bond_precondition_rtol`` is
-  a *relative* asymmetry of :math:`\tilde K`: the criterion does not tighten as
-  :math:`\min w` shrinks with :math:`\beta`, while a violation living on a
-  small-:math:`w` index (suppressed by :math:`w_i w_j` on :math:`W K` but only
-  by :math:`\sqrt{w_i w_j}` on :math:`\tilde K`) is still caught. Both numbers
-  are recorded in the eigenvalue file (``kernel_hermiticity_residual`` and
-  ``..._residual_ktilde``). ``bond_precondition_dense_limit = 0`` forces the
-  randomized probe estimator on a grid too large for the exact dense residual.
-
-  **Cost of the dense check.** Below ``bond_precondition_dense_limit`` the
-  check builds the FULL kernel densely (``vec_size`` bond-kernel matvecs) AND,
-  separately, each of its ``pp``/``fl`` parts (``vec_size`` matvecs each), for
-  a total of :math:`3 \times` ``vec_size`` bond-kernel matvecs run up front,
-  before the eigensolve even starts. With the default
-  ``bond_precondition_dense_limit = 1024``, a 32x32 single-band grid
-  (``vec_size`` :math:`= n_{\rm orb}^2 N_x N_y N_z = 1024`) sits *exactly* at
-  the limit, so this precondition check alone costs about 3072 bond-kernel
-  matvecs -- each an :math:`O(B)` FFT-factorized operation, not a cheap dense
-  matrix-vector product. It is a one-time cost per solve (not per SCF/
-  eigensolver iteration), but it is not negligible at that grid size; lower
-  ``bond_precondition_dense_limit`` to switch to the cheaper randomized-probe
-  estimator if this matters for your workflow.
-
-  **Off-instability guard.** Before the enlarged RPA dressing, the bond path
-  checks the conditioning of the two solve matrices
-  :math:`I - \bar\chi S` and :math:`I + \bar\chi C` at every :math:`q`, using
-  the relative criterion :math:`\sigma_\mathrm{min}/\sigma_\mathrm{max}` with a
-  floor of :math:`10^{-3}`. A run that has entered the magnetic/charge
-  instability region stops with an error naming the channel (spin or charge),
-  the :math:`q`-point and the ratio, instead of crashing with a bare
-  ``LinAlgError`` (exactly singular) or silently returning enormous,
-  meaningless vertices (nearly singular). This check exists on the bond path
-  only; ``bond_channels = false`` is unaffected.
-
-  All bond options are ignored with a warning when ``bond_channels = false``.
-
-  Bond option VALUES are validated strictly. ``bond_channels`` and
-  ``bond_diagnostics`` accept only ``true``/``false`` (or the strings
-  ``true``/``yes``/``on``/``1`` and ``false``/``no``/``off``/``0``): a
-  misspelling such as ``"ture"`` raises naming the key, instead of being read
-  as ``false`` and silently switching off both the feature and its guards.
-  ``bond_max_shells`` and ``bond_precondition_dense_limit`` require an actual
-  non-negative integer -- a non-integral value such as ``1.5`` is refused
-  rather than truncated, and a boolean is refused rather than read as 0/1 --
-  and an unparsable numeric option raises naming the offending
-  ``[eliashberg]`` key.
-
-.. note::
-
-   Use ``solver_mode = "eigenvalue"`` with ``bond_channels = true``, or
-   ``solver_mode = "iteration"`` **together with** ``spectral_shift``. Plain
-   power iteration reports :math:`\|A\sigma\|`, an **unsigned** norm, and
-   a repulsive-dominant bond kernel has a **negative** dominant eigenvalue, so
-   the iterate flips sign at every step and the iteration can never converge
-   regardless of ``max_iter``. On that path the run warns, the eigenvalue file
-   labels the number as an unconverged unsigned iterate norm, and the signed
-   physical quantity is the ``lambda_rayleigh`` provenance entry. Adding
-   ``spectral_shift = "auto"`` removes that failure: the iteration then runs on
-   :math:`K + \sigma I`, converges, and reports the signed :math:`\lambda` of
-   the original kernel, which agrees with ``solver_mode = "eigenvalue"`` and
-   with ``lambda_rayleigh`` -- but only when the shifted run's Rayleigh check
-   validates it; if it does not, the eigenvalue file says so explicitly and the
-   number must not be quoted as :math:`\lambda` (see ``spectral_shift`` above).
 - ``gpu``: ``true`` runs the kernel-apply (matvec/matmat, the FFT convolution)
   on the GPU (CuPy) for **both** ``frequency = "dynamic"`` and
   ``frequency = "static"`` (default ``false``). The eigensolver itself (ARPACK
@@ -481,10 +248,7 @@ This section controls the Eliashberg solver. Key parameters:
   vector crosses to the device per iteration. Without a usable CuPy/CUDA device
   the run falls back to CPU with a warning (see the
   :ref:`GPU-execution section <sc_dynamic_gpu_en>` below). ``fft_workers`` is
-  ignored on the GPU path. With ``bond_channels = true`` this flag is ignored
-  outright: the bond-resolved kernel is CPU-only in v1, so the solver logs a
-  warning ("gpu=true is ignored for bond_channels=true") and runs on the CPU
-  -- it does **not** raise.
+  ignored on the GPU path.
 - ``gpu_required``: Set ``true`` to make ``gpu = true`` strict -- the solver
   raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
   (default ``false``). Honored by the dynamic Eliashberg solver (set it in
@@ -731,148 +495,6 @@ parity (a physical singlet/triplet gap) and ``0`` for a spurious opposite-parity
 mode (see the parity note above). Older output files without this column are
 read unchanged.
 
-Bond-channel provenance (``bond_channels = true``)
-""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-When ``[eliashberg] bond_channels = true``, ``eigenvalue.dat`` carries extra
-``# key = value`` comment lines above the numeric table (purely additive:
-``np.loadtxt`` and every other existing reader skips ``#`` lines and is
-unaffected). They record:
-
-- ``bond_channels = True``, ``bond_n_channels`` (:math:`B`, the number of
-  resolved bond channels including the on-site one) and ``bond_delta_r`` (the
-  list of :math:`\Delta r_m` shell vectors, one per channel, in the same order
-  as ``bond_n_channels``).
-- ``bond_max_shells`` (the configured cutoff, or ``"all"``) and
-  ``bond_memory_cap_gb`` (the configured cap): echoed for reproducibility, not
-  because they still affect anything at this point -- the shell filtering and
-  the resource preflight already happened before the operator was built.
-- ``approximation`` -- free text naming exactly what ran: a static RPA-ladder
-  bond dressing on either the bare Green function built from the transfer
-  Hamiltonian, or (when ``bond_green`` was set) the externally supplied Green
-  function named there, plus a reminder that neither is a conserving FLEX
-  result, so absolute :math:`\lambda` is not comparable across approximation
-  levels.
-- ``bond_green`` -- present only when ``[eliashberg] bond_green`` was set: the
-  path of the external Green function actually consumed.
-- ``collapsed_to_pure_hubbard = True`` -- present only when
-  ``bond_n_channels == 1`` (no channel beyond the on-site one was resolved,
-  e.g. ``bond_max_shells = 0`` with no off-site :math:`V` declared), flagging
-  that the run is numerically the pure-Hubbard (collapsed-bond) limit despite
-  ``bond_channels = true``.
-- ``kernel_hermiticity_residual`` / ``kernel_hermiticity_residual_ktilde`` /
-  ``kernel_hermiticity_relative_ktilde`` / ``kernel_hermiticity_method`` -- the
-  runtime Hermiticity precondition diagnostics (see ``bond_precondition_atol``
-  / ``bond_precondition_rtol`` / ``bond_precondition_dense_limit`` above): the
-  raw and symmetrized-kernel (:math:`\tilde K`) residuals, the *relative*
-  :math:`\tilde K` residual, and which check (``"dense"`` or
-  ``"randomized-probe"``) produced them.
-- ``pair_weight_min_eigenvalue`` -- the smallest eigenvalue of the
-  :math:`\sqrt{GG}` pair-weight metric found during the precondition check; it
-  must be positive for the Rayleigh-quotient attribution below to be well
-  defined.
-
-**The** :math:`\lambda = \lambda^{\rm pp} + \lambda^{\rm fl}` **attribution.**
-This is the bond path's headline diagnostic, written for every bond run
-regardless of ``bond_diagnostics``:
-
-- ``lambda_rayleigh`` -- the SIGNED Rayleigh quotient of the full symmetrized
-  kernel :math:`\tilde K`, evaluated at the gap the run returns (agrees with
-  the solver's own eigenvalue only when that gap is a converged eigenvector;
-  see ``lambda_rayleigh_solver_mode``/``lambda_rayleigh_converged`` below).
-- ``lambda_pp`` -- the Rayleigh quotient of the **bare particle-particle
-  (instantaneous) part** of the kernel: the direct Cooper vertex
-  :math:`\tfrac12 V^{\rm pp}`, with no fluctuation dressing.
-- ``lambda_fl`` -- the Rayleigh quotient of the **fluctuation-mediated part**:
-  the particle-hole ladder (spin- and charge-susceptibility) contribution to
-  the pairing vertex.
-- ``lambda_attribution`` -- free text restating
-  :math:`\lambda = \lambda^{\rm pp} + \lambda^{\rm fl}` as real Rayleigh
-  quotients of :math:`\tilde K`, both evaluated at the *returned* gap.
-- ``lambda_rayleigh_solver_mode`` -- which solver (``"iteration"``,
-  ``"eigenvalue"``, or ``"both"``) produced the gap the quotients were
-  evaluated at.
-- ``lambda_rayleigh_converged`` -- on the iteration path, whether that gap had
-  converged (``"True"``/``"False"``); ``"n/a"`` in eigenvalue mode.
-
-**Reading the attribution.** For a repulsive inter-site interaction
-:math:`V > 0`, the bare particle-particle vertex is itself repulsive in the
-pairing channel, so :math:`\lambda^{\rm pp} \le 0`. A :math:`\lambda` that
-rises (and can eventually turn attractive) as :math:`V` increases is
-therefore **entirely fluctuation-driven**, carried by :math:`\lambda^{\rm
-fl}` -- the bond mechanism is "V drives the spin/charge fluctuations that
-pair the electrons", not "V pairs the electrons directly". Watching
-``lambda_pp``/``lambda_fl`` separately (e.g. across a :math:`V` sweep) is how
-to tell these two mechanisms apart instead of only seeing their sum.
-
-**Opt-in character analysis (** ``bond_diagnostics = true`` **).** When
-enabled, three more groups of keys appear (see the ``bond_diagnostics``
-parameter description above for the full physics of each):
-
-- ``bond_diagnostics_harmonics`` and ``bond_diagnostics_harmonics_note`` -- the
-  odd-harmonic decomposition of the returned gap onto the
-  :math:`\{\sin k_x,\ \sin k_y,\ \sin k_x(\cos k_x-\cos k_y),\
-  \sin k_y(\cos k_y-\cos k_x)\}` basis, each a fraction in :math:`[0, 1]`.
-- ``bond_diagnostics_eigenvalue_clusters``,
-  ``bond_diagnostics_leading_cluster``, ``bond_diagnostics_leading_cluster_size``
-  and ``bond_diagnostics_deg_tol`` -- the near-degenerate grouping of the
-  computed eigenvalue spectrum and the size of the group containing the
-  returned state (present only when ``solver_mode`` includes
-  ``"eigenvalue"``; the iteration path reports the harmonics only).
-- ``bond_diagnostics_clusters_note`` -- free text describing the clustering
-  convention (single-linkage on :math:`|\lambda_i-\lambda_j|\le` ``deg_tol``).
-
-**Scientific caveats (single-band Onari milestone).** The following are
-established for the specific acceptance case exercised by
-``tests/test_bond_onari_milestone.py`` (single-band square lattice, C4v,
-:math:`U = 4`, :math:`n = 0.7`); they are reported here, hedged accordingly,
-because they affect how any ``bond_channels = true`` result should be read:
-
-- Only **about 63%** of the observed rise of the leading triplet eigenvalue
-  :math:`\lambda_t` with :math:`V` is bond-channel-specific; the remaining
-  **~37%** comes from the collapsed density (:math:`\Delta r = 0`)
-  contribution that the scalar (non-bond) path already carries. This was
-  established by a control that zeros the :math:`m \neq 0` bond blocks and
-  exactly reproduces the scalar-path result.
-- Increasing :math:`V` **inflates the entire odd-parity sector**, not only
-  the tracked state: sub-leading odd eigenvalues rise by comparable factors
-  over the same :math:`V` range. This is therefore **not** evidence of a
-  selective f-wave pairing instability, but of a broader odd-sector
-  enhancement.
-- The tracked state's f-character (``bond_diagnostics_harmonics``) **grows**
-  from :math:`\approx 21\%` at :math:`V = 0` to :math:`\approx 68\%` at
-  :math:`V = 1.2`, while its p-content stays :math:`\le 0.3\%` throughout.
-  In other words, the state is an odd, non-p state that *acquires* f
-  character as :math:`V` increases -- it is not f-like across the whole
-  sweep.
-- This path is a **static, non-conserving** RPA-ladder dressing, not a
-  conserving FLEX calculation, so its absolute :math:`\lambda` values are
-  **not quantitatively comparable** to dynamic/FLEX references -- including
-  Onari, Arita, Kuroki, and Aoki's Fig. 3 (cond-mat/0312314 / PRB 70, 094523
-  (2004)), which is fully dynamic. No quantitative comparison with the
-  literature is claimed; the milestone only checks the qualitative trend
-  (:math:`\lambda_t` rising with :math:`V`) and the internal
-  :math:`\lambda^{\rm pp} + \lambda^{\rm fl}` bookkeeping above.
-
-**Developer note: regenerating the milestone's L = 32 fixtures.** The
-acceptance milestone above is backed by FLEX ``green.npz`` fixtures under
-``tests/sc/onari_bond/``. Only the **L = 16** grid is committed to the
-repository; the **L = 32** grid used by the single grid-convergence check
-(``test_grid_convergence_16_to_32``) is *not* committed (regenerating it is
-expensive) and is regenerated on demand by
-``tests/sc/onari_bond/generate_fixtures.py``. That test is marked
-``@pytest.mark.slow`` and is **skipped by default** -- a plain ``pytest`` run
-never needs it. To run it explicitly::
-
-    HWAVE_RUN_SLOW_FIXTURES=1 pytest tests/test_bond_onari_milestone.py -k grid_convergence
-    # equivalently, select the marker (registered in pytest.ini):
-    pytest -m slow tests/test_bond_onari_milestone.py
-
-See the module docstrings of ``tests/test_bond_onari_milestone.py`` and
-``tests/sc/onari_bond/generate_fixtures.py`` for the regeneration details
-(output directory, environment override, and why the regenerated files are
-verified but not hash-pinned).
-
 
 Physical interpretation
 ----------------------------
@@ -992,6 +614,35 @@ into the directory read by the Eliashberg step:
    as orbital-pair, corrupting the pairing vertex; Eliashberg eigenvalues and
    gap functions for such runs are **corrected (and therefore change)** in this
    version. Single-orbital and general (myo) results are unaffected.
+
+.. warning::
+
+   **Results may change for multi-orbital reduced/squashed FLEX runs.**
+   The matrix index of a reduced (kuroki) susceptibility is a *density pair*:
+   the stored :math:`X[a,b]` is :math:`\chi_{(a,a),(b,b)}`. Earlier versions
+   embedded it into the :math:`n_\text{orb}^2` orbital-pair space as
+   :math:`\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]`, which dropped the
+   inter-orbital density coupling :math:`\chi_{(0,0),(1,1)}` -- a component the
+   pairing vertex :math:`S \chi S` genuinely references -- and scattered
+   :math:`X` onto pair indices the reduced scheme never computed. This version
+   embeds it correctly, as
+   :math:`\text{out}[(a,a),(b,b)] = X[a,b]` with every other component zero.
+
+   Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
+   for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"`` or
+   ``"squashed"``. Two independent effects contribute, so a vanishing
+   inter-orbital density component is not enough to be safe: the old placement
+   both dropped :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b`, and -- when
+   the interaction reaches the off-density blocks -- fabricated dressing there
+   out of the diagonal :math:`\chi_{(a,a),(a,a)}`. Treat every such stored
+   eigenvalue and gap function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
+   (both placements coincide), as are all general (myo) results. With the fix,
+   a ``CoulombIntra``-only reduced run reproduces the equivalent
+   ``chi0q_mode = "load"`` and general-scheme results exactly **for identical
+   :math:`\Sigma = 0` physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
+   before the fix it did not. This is a statement about the pairing vertex
+   only. It does not imply the two schemes are interchangeable at full
+   self-consistency, where they also differ in how the self-energy is built.
 
    As of this version, IR-native susceptibility files (``write_densified =
    false``) must carry this ``chi_convention`` tag, and the loader also
@@ -1240,7 +891,10 @@ Three flags control the run:
   (``CellShape``/``SubShape``/``Nmat``/``filling``/``Ncond``/interaction
   files/``[eliashberg]`` frequency/pairing). Resuming against a different
   ladder or configuration **fails fast** rather than mixing incompatible
-  results. The summary and manifest are written atomically after every rung,
+  results; a manifest whose schema version predates the current one (bumped
+  by the #86 tail-correction and #133 Fourier-sign changes) is likewise
+  refused. The summary is written atomically after every rung and the
+  manifest when the sweep is established,
   so an interruption can never leave a truncated checkpoint. Without
   ``--resume`` a rerun starts fresh and overwrites the existing sweep
   rung-by-rung (a warning is logged when it detects an existing sweep).
@@ -1323,6 +977,18 @@ Example
       run_eliashberg = true
       warm_start     = true
       seed_gap       = true
+
+.. note::
+
+   With ``CoulombInter`` and no explicit ``calc_scheme``, this example runs the
+   default ``reduced`` scheme, so the Eliashberg step **will** print the
+   approximation warning described in
+   :ref:`Supported interactions <sc_supported_inter>`. That is expected here and
+   not a misconfiguration: ``reduced`` supports the general off-site
+   ``CoulombInter`` this workflow uses, whereas ``general`` accepts off-site
+   entries only for same-orbital ``CoulombInter`` without sublattice folding
+   (and on-site terms otherwise). Use ``general`` when your interactions
+   allow it and you need the inter-orbital channels dressed as well.
 
 This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
@@ -1472,6 +1138,8 @@ transfers the gap vector. The result is numerically identical to the CPU run
   and :math:`N_{\mathrm{mat}}=2048` give roughly a 16x per-matvec speedup over
   the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).
 
+.. _sc_supported_inter:
+
 Supported interactions
 ----------------------------
 
@@ -1489,6 +1157,198 @@ interactions, the solver automatically uses the generalized
 :math:`S`/:math:`C` matrix formulation (Kuroki et al., PRB 79, 224511)
 with four-index vertex structure.
 
+.. note::
+
+   **Caveat for** ``chi0q_mode = "flex"`` **with a reduced/squashed FLEX run.**
+   A reduced (``calc_scheme = "reduced"`` or ``"squashed"``) FLEX run stores
+   only the density-density components :math:`\chi_{(a,a),(b,b)}`. For
+   ``CoulombIntra`` alone the :math:`S`/:math:`C` matrices live entirely on
+   that density-pair block, so the reduced route is exact.
+   ``CoulombInter``, ``Hund`` and ``Ising`` also put weight on the
+   off-density blocks :math:`S/C[(a,b),(a,b)]` with :math:`a \neq b`,
+   where the reduced run computed no susceptibility at all: those channels
+   then enter the pairing vertex **undressed** (the bare
+   :math:`\tfrac{1}{2}(S+C)` term only), so :math:`\lambda` is an
+   approximation, and the solver emits a warning naming the offending
+   terms. ``Exchange`` and ``PairHop`` have **no** density-diagonal vertex
+   content at all -- nothing of them would be dressed -- and are
+   **rejected** with a reduced susceptibility (consistently with the
+   FLEX/RPA scheme policy, which refuses to produce such runs).
+
+   This is a limitation of the stored data, not of the loader, and cannot be
+   repaired on the Eliashberg side. Re-run FLEX with
+   ``calc_scheme = "general"`` (which stores the full orbital-pair
+   susceptibility) for the complete vertex. Note that ``chi0q_mode =
+   "load"`` is **not** an escape unless the chi0q it reads is itself a
+   general (four-index) one: a reduced two-index chi0q is missing exactly
+   the same off-density components.
+   Single-orbital models are unaffected -- there is no off-density pair index.
+
+.. note::
+
+   **The Eliashberg step assumes a paramagnetic background.** The Kuroki
+   :math:`S`/:math:`C` matrices carry no spin index, so a reduced FLEX
+   susceptibility is consumed by keeping only its spin-up block. That is
+   exact for a paramagnetic run, where the discarded blocks are redundant
+   (the down block equals the up block and the cross-spin blocks vanish).
+   A spin-polarized run -- ``spin_mode`` is auto-detected, so an ``Extern``
+   field with ``coeff_extern`` is enough -- generally does not satisfy it.
+   The solver inspects the STORED DATA rather than classifying the run
+   (the file records no ``spin_mode``). Any non-redundancy is reported; if it
+   exceeds a few hundred ulp of double precision relative to the kept block,
+   the run is **refused** rather than returning an eigenvalue that would not
+   approximate the spin-resolved problem. A file whose
+   down-spin and cross-spin blocks are identically zero is ambiguous -- it may be
+   a legacy layout in which only the consumed block was ever populated, or a
+   fully polarized sector -- so it is refused unless it is
+   declared to be the former -- either by the file itself
+   (``chi_spin_blocks = "up_only"``) or, for files written before this check
+   existed and which therefore cannot carry a tag, by setting
+   ``[eliashberg] accept_up_block_only = true``.
+
+   The same setting also authorizes the **dressed Green's function** loader:
+   a ``green.npz`` whose spin blocks genuinely differ is otherwise refused
+   (the pair bubble is built from the up block only, so the discarded block
+   is real physics), and with ``accept_up_block_only = true`` it proceeds
+   with a warning. Unlike the legacy-layout case above, this is an
+   **uncontrolled approximation** -- the option authorizes discarding real
+   spin-resolved content, and the responsibility is the user's.
+
+
+What each mode accepts
+----------------------------
+
+Consolidated from the constraints the solvers actually enforce. Every cell below
+was checked by running the combination.
+
+``calc_scheme`` (FLEX)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * -
+     - ``reduced`` / ``squashed``
+     - ``general``
+     - note
+   * - two-body range
+     - on-site and **off-site**
+     - on-site; off-site only for same-orbital ``CoulombInter``
+     - other off-site entries raise ``ValueError`` on the general path
+       (and sublattice folding disables its off-site support)
+   * - spin structure
+     - spin-free, spin-diag, spinful
+     - **spin-free only**
+     - general raises for a polarized one-body Hamiltonian
+   * - ``enable_spin_orbital``
+     - accepted by FLEX
+     - rejected
+     - ``hwave_sc`` refuses the configuration outright (issue #83); see
+       *Spin structure* below
+   * - susceptibility stored
+     - density-density only, ``chi_{(a,a),(b,b)}``
+     - full orbital-pair
+     - ``reduced`` and ``squashed`` store the same shape and index layout
+
+``calc_type``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * -
+     - ``ring`` (default)
+     - ``ring+ladder``
+   * - RPA
+     - every ``calc_scheme``
+     - ``calc_scheme = "general"`` only; adds ``chiq_pm``, leaves ``chiq`` untouched
+   * - FLEX
+     - every ``calc_scheme``
+     - **not supported on any scheme**
+
+For a paramagnetic system no susceptibility content is lost by omitting the
+separate transverse channel: SU(2) symmetry makes the transverse and
+longitudinal spin susceptibilities equal, and the ``3/2 * chi_s`` factor in the
+FLEX effective interaction is exactly the count of one longitudinal and two
+transverse components. (Running ``ring+ladder`` in RPA is not free -- it solves
+and stores an additional ``chiq_pm`` -- but it adds no information in the
+paramagnetic case.) The ladder channel becomes distinct only once the spins are
+split.
+
+Interactions reaching the Eliashberg vertex
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 34 36
+
+   * - susceptibility supplied
+     - ``CoulombIntra`` only
+     - with ``CoulombInter`` / ``Hund`` / ``Ising``
+   * - reduced / squashed
+     - exact
+     - approximate, and warned about: the off-density S/C blocks have no
+       susceptibility to dress them. ``Exchange``/``PairHop`` are
+       **rejected** instead (no density-diagonal vertex content at all)
+   * - general (four-index)
+     - exact
+     - exact
+
+``PairLift`` contributes ``S = C = 0`` to the particle-hole vertex and is inert
+on every route (ignored with a warning).
+
+
+Spin structure
+----------------------------
+
+The Eliashberg pairing vertex is **paramagnetic**: the Kuroki :math:`S`/:math:`C`
+matrices are :math:`n_\text{orb}^2`-sized and carry no spin index, and the
+singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
+a spin-polarized or spin-mixing model is therefore not a matter of
+configuration.
+
+``spin_mode`` below is **not an input parameter** -- there is no such key in the
+TOML file. It is determined internally from the Hamiltonian: from whether the
+transfer term has spin-off-diagonal blocks (in ``enable_spin_orbital`` mode) and
+from whether an external field is present. It is also **independent of**
+``calc_scheme``, which selects the orbital tensor rank rather than the spin
+structure; the one link between them is that ``calc_scheme = "general"`` FLEX
+accepts ``spin-free`` only and rejects the other two outright.
+
+
+- **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
+  FLEX susceptibility stores its two spin blocks bit-identically with zero
+  cross-spin blocks, so keeping only the spin-up block is exact.
+
+- **Spin-polarized without spin mixing** (``spin_mode = "spin-diag"``; e.g. an
+  ``Extern`` field with ``coeff_extern``) -- **refused.** Only the spin-up block
+  would survive the embedding, so the eigenvalue would not approximate the
+  spin-resolved problem at all; the loader raises rather than returning a
+  number. (Content at the floating-point round-off scale -- at or below
+  ``256 * eps`` relative to the kept block, about ``6e-14`` -- is reported as
+  round-off and
+  allowed through, so a backend rounding asymmetry cannot abort a genuinely
+  paramagnetic run.)
+
+- **Spin-orbital representation** (``mode.enable_spin_orbital = true``,
+  whatever spin mode the Hamiltonian then classifies as -- a spin-diagonal
+  or even spin-free model can be written in this representation) --
+  **not supported.** ``hwave_sc`` rejects the configuration up front with
+  an explicit error, on both the static and the dynamic entry, and
+  ``hwave_tsweep`` rejects it in preflight before any FLEX rung runs
+  (issue #83): before this guard, the internally computed :math:`\chi_0`
+  path ran to completion and printed eigenvalues built on inconsistent
+  index/orbital-count conventions -- a silently wrong result, not an
+  approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
+  files remains in the low-level loader for direct helper calls and
+  malformed input; it is no longer reachable through the guarded public
+  entries.)
+
+Supporting either spin-polarized case would require an
+:math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
+gap function), together with the transverse susceptibility
+:math:`\chi^{+-}`, which the reduced scheme does not store. That is a feature
+addition rather than a configuration change.
+
 
 Tips
 ----------------------------
@@ -1502,12 +1362,5 @@ Tips
 - Different ``init_gap`` symmetries can be used to target
   specific pairing channels in iteration mode.
   The eigenvalue mode finds all leading symmetries automatically.
-  This does **not** carry over to the bond-resolved path
-  (``bond_channels = true``): its kernel is repulsive-dominant, so plain
-  power iteration cannot converge there at all (see the ``spectral_shift``
-  note above) -- set ``spectral_shift`` first, and be aware that with it the
-  ``init_gap`` seed still decides *which* branch/parity sector the iteration
-  finds, since the seed is not scanned automatically the way eigenvalue mode
-  scans the whole spectrum.
 - The ``pairing_type = "triplet"`` option analyzes triplet
   pairing instabilities using the appropriate vertex.

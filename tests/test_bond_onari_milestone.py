@@ -426,7 +426,7 @@ def _bond_point(L, V, declare_inter=True):
     (A, vec_size), provenance, attribution = sc._build_bond_operator(
         bond_set, green, it, inter_k, {"norb": 1, "rvec": np.eye(3)}, 1,
         kx, ky, kz, BETA, "triplet",
-        bond_max_shells=None, bond_memory_cap_gb=0.0)
+        bond_max_shells=None, bond_memory_cap_gb=0.0, g2_tail=False)
 
     # the guard quantities (chi_bar / S / C) are diagnostics, rebuilt from the
     # same public chain the operator used
@@ -469,7 +469,7 @@ def _baseline_point(L, V):
         "vertex means _compute_vertices took the general branch, which drops "
         "V entirely at norb=1")
     Pc_q, Ps_q = vertex
-    G2 = sc._calc_g2(green, BETA)
+    G2 = sc._calc_g2(green, BETA, tail=False)
     A, vec_size = sc._make_kernel_operator(Pc_q + Ps_q, G2, 1, L, L, 1)
     W = bc.pair_weight(green, BETA)
     evals, vecs = _odd_spectrum(A, vec_size, W, L)
@@ -878,6 +878,7 @@ def test_milestone_lambda_is_reproducible_from_the_toml_entry_point(tmp_path):
                  "output": {"path_to_output": outdir}},
         "eliashberg": {"chi0q_mode": "calc",
                        "bond_channels": True,
+                       "g2_tail": False,
                        "bond_green": os.path.abspath(_fixture_path(L, V)),
                        "pairing_type": "triplet",
                        "init_gap": "f_x",

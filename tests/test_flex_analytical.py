@@ -1018,10 +1018,11 @@ class TestFLEXSchemeGuards(unittest.TestCase):
     """FLEX-specific compatibility guards.
 
     The default reduced/squashed FLEX path consumes the reduced-shape (4-dim)
-    chi0q and reduces the interaction via the density-density diagonal
-    'kaabb->kab' (off-diagonal vertices dropped with a warning). The
-    calc_scheme='general' path keeps the full Kanamori vertices (paramagnetic
-    full-vertex MYO formulation, spin-free only).
+    chi0q and solves with the density-density diagonal 'kaabb->kab' of the
+    interaction; Exchange and PairHop carry no density-diagonal vertex and
+    are REJECTED there (one policy since #107). The calc_scheme='general'
+    path keeps the full Kanamori vertices (paramagnetic full-vertex MYO
+    formulation, spin-free only).
     """
 
     # transfer-format body that registers as an Exchange interaction
@@ -1038,50 +1039,99 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         self.assertTrue(solver._flex_general)
         self.assertEqual(solver.calc_scheme, 'general')
 
-    def test_exchange_interaction_warns(self):
-        """Exchange under 'squashed' is approximated by its density-density
-        part; FLEX must warn (not silently drop) and still construct."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
+    def test_exchange_interaction_is_rejected(self):
+        """Exchange under 'squashed' is REJECTED (one policy since #107):
+        its vertex has no density-diagonal content, so the scheme would
+        drop it entirely -- zero effect, not an approximation. The old
+        behavior accepted it with a warning that called it approximated."""
+        with self.assertRaises(ValueError) as cm:
+            _make_flex_solver_with(
                 calc_scheme='squashed',
                 interactions={'Exchange': self._EXCHANGE_BODY})
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output),
-            "expected a warning about the density-density approximation")
-        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertIn('general', str(cm.exception))
 
-    def test_pairhop_interaction_warns(self):
-        """PairHop sets a separate flag from Exchange/PairLift, but its
-        off-diagonal vertices are also dropped by the density-density reduction,
-        so FLEX must warn for it too."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
+    def test_pairhop_interaction_is_rejected(self):
+        """PairHop likewise: its antidiagonal-slot vertex has no
+        density-diagonal content."""
+        with self.assertRaises(ValueError) as cm:
+            _make_flex_solver_with(
                 calc_scheme='squashed',
                 interactions={'PairHop': self._PAIRHOP_BODY})
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output),
-            "expected a density-density approximation warning for PairHop")
-        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertIn('general', str(cm.exception))
 
     def test_reduced_density_density_ok(self):
         """The standard reduced + density-density path must still construct."""
         solver = _make_flex_solver_with(calc_scheme='reduced')
         self.assertEqual(solver.calc_scheme, 'reduced')
 
-    def test_auto_scheme_exchange_warns(self):
-        """auto + exchange resolves to squashed (inherited RPA logic) and FLEX
-        must warn about the density-density approximation, not error."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
-                calc_scheme='auto',
-                interactions={
-                    'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
-                                    "   0    0    0    1    1   1.0   0.0\n",
-                    'Exchange': self._EXCHANGE_BODY,
-                })
-        self.assertEqual(solver.calc_scheme, 'squashed')
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output))
+    def test_auto_scheme_exchange_selects_general(self):
+        """auto + exchange resolves to GENERAL (the only scheme carrying
+        the Exchange vertex; the historical auto choice was squashed,
+        which silently dropped it -- #107)."""
+        solver = _make_flex_solver_with(
+            calc_scheme='auto',
+            interactions={
+                'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
+                                "   0    0    0    1    1   1.0   0.0\n",
+                'Exchange': self._EXCHANGE_BODY,
+            })
+        self.assertEqual(solver.calc_scheme, 'general')
+
+    def test_direct_rpa_rejects_exchange_and_pairhop(self):
+        """The policy lives in the shared consistency check; pin it on RPA
+        directly, not only through the inherited FLEX construction."""
+        import numpy as np
+
+        import hwave.solver.rpa as rpa_mod
+
+        for itype in ("Exchange", "PairHop"):
+            for scheme in ("reduced", "squashed"):
+                with self.subTest(interaction=itype, scheme=scheme):
+                    param_ham = {
+                        'Geometry': {'norb': 2, 'rvec': np.eye(3),
+                                     'center': [[0, 0, 0]] * 2},
+                        'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                        itype: {((0, 0, 0), (0, 1)): 0.3,
+                                ((0, 0, 0), (1, 0)): 0.3}}
+                    info = {'mode': 'RPA',
+                            'param': {'T': 2.0, 'filling': 0.5,
+                                      'CellShape': [2, 2, 1],
+                                      'SubShape': [1, 1, 1], 'Nmat': 4},
+                            'enable_spin_orbital': False,
+                            'calc_scheme': scheme, 'calc_type': 'ring'}
+                    with self.assertRaises(ValueError) as cm:
+                        rpa_mod.RPA(param_ham, {}, info)
+                    self.assertIn('general', str(cm.exception))
+
+    def test_auto_selection_matrix(self):
+        """auto: PairHop-only -> general; PairLift-only -> reduced (its
+        vertex is exactly zero, dropping is exact); empty Exchange table
+        -> reduced (content-based detection, not key presence)."""
+        import numpy as np
+
+        import hwave.solver.rpa as rpa_mod
+
+        def make(extra):
+            param_ham = {
+                'Geometry': {'norb': 2, 'rvec': np.eye(3),
+                             'center': [[0, 0, 0]] * 2},
+                'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                'CoulombIntra': {((0, 0, 0), (0, 0)): 1.0,
+                                 ((0, 0, 0), (1, 1)): 1.0}}
+            param_ham.update(extra)
+            info = {'mode': 'RPA',
+                    'param': {'T': 2.0, 'filling': 0.5,
+                              'CellShape': [2, 2, 1],
+                              'SubShape': [1, 1, 1], 'Nmat': 4},
+                    'enable_spin_orbital': False,
+                    'calc_scheme': 'auto', 'calc_type': 'ring'}
+            return rpa_mod.RPA(param_ham, {}, info).calc_scheme
+
+        entries = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}
+        self.assertEqual(make({'PairHop': entries}), 'general')
+        self.assertEqual(make({'PairLift': entries}), 'reduced')
+        self.assertEqual(make({'Exchange': {}}), 'reduced')
+        self.assertEqual(make({}), 'reduced')
 
     def test_auto_ring_ladder_rejected_with_clear_message(self):
         """auto + calc_type='ring+ladder' resolves to general (inherited), which

@@ -8,7 +8,7 @@ Why this file exists
 The general (full-vertex) FLEX path and its brute-force reference
 (``tests/flex_bruteforce_ref.py``) share one convention: the orbital-pair index
 order of the bare bubble.  Validating one against the other is therefore
-circular, and it stayed circular long enough to ship a transposed self-energy
+circular, and it stayed circular long enough for a wrongly-wired self-energy
 (issue #91): for a density-only interaction the reduced and general schemes
 produced self-energies that agreed on the orbital diagonal but differed by
 ~20% of the diagonal scale off it, while both susceptibilities still matched to
