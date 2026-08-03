@@ -30,8 +30,9 @@ The tabulated :math:`W` is complete under the exchange of its two bilinears --
 an on-site Coulomb term, for instance, occupies both the up-down and the
 down-up slots -- so the unrestricted sum over sites and over all four indices
 contains each pair ordering twice, which is what the :math:`1/2` removes.  The
-transfer table is likewise Hermitian-closed (both :math:`R` and :math:`-R` are
-present), so :math:`{\cal H}_0` carries no separate Hermitian conjugate.
+transfer table is likewise required to be Hermitian-closed, i.e. to satisfy
+:math:`t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}`, so :math:`{\cal H}_0`
+carries no separate Hermitian conjugate.
 
 Applying the Fourier transformation
 
@@ -140,9 +141,12 @@ and the irreducible susceptibility is the particle-hole bubble built from it,
     \end{aligned}
 
 so that the two band sums it contains are independent: the particle and the
-hole may sit on different bands.  Restricting them to a common band would
-project the response onto its density part and break SU(2) symmetry, so no
-such restriction is made.
+hole may sit on different bands.  Tying them to a common band would drop the
+interband particle-hole transitions -- on a two-orbital chain that is 60% of
+the bubble -- and, since the band basis is not unique inside a degenerate
+subspace, the projection is not even basis independent there; for
+spin-degenerate bands it removes the spin-flip channel and so breaks SU(2)
+symmetry.  No such restriction is made.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
@@ -321,8 +325,8 @@ The transverse bare susceptibility is
 
    X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
    = -\frac{T}{N_L} \sum_{\mathbf{k},n}
-     G^{(0)}_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\epsilon_n)\,
-     G^{(0)}_{\delta\gamma,\downarrow}(\mathbf{k}, i\epsilon_n)
+     G^{(0)}_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\epsilon_{n})\,
+     G^{(0)}_{\delta\gamma,\downarrow}(\mathbf{k}, i\epsilon_{n})
 
 The transverse vertex :math:`W_{+-}` is obtained by crossing the
 Hartree (Fock exchange) vertex from the longitudinal channel:
@@ -330,6 +334,12 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 .. math::
 
    W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
+
+The interaction tensor enters this assembly in the HAMILTONIAN convention:
+the index-pair conversion the ring solve applies (see the note in the
+previous section) must NOT be applied here, because the crossing above
+re-pairs the tensor itself.  The exact permutation is the one implemented in
+``_assemble_transverse_vertex``.
 
 The transverse vertex is built from the cross-spin and spin-flip blocks of
 the interaction tensor only. The same-spin block does not enter: a same-spin
