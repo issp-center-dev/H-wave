@@ -19,12 +19,19 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:
 .. math::
     \begin{aligned}
      {\cal H}&={\cal H}_0+{\cal H}_{\rm int},\\
-     {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
-      (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
-      c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
+     {\cal H}_0&=\sum_{i\alpha;j\beta}
+      t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
+      c_{j\beta}^{\mathstrut},\\
      {\cal H}_{\rm int}&=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
       c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
+
+The tabulated :math:`W` is complete under the exchange of its two bilinears --
+an on-site Coulomb term, for instance, occupies both the up-down and the
+down-up slots -- so the unrestricted sum over sites and over all four indices
+contains each pair ordering twice, which is what the :math:`1/2` removes.  The
+transfer table is likewise Hermitian-closed (both :math:`R` and :math:`-R` are
+present), so :math:`{\cal H}_0` carries no separate Hermitian conjugate.
 
 Applying the Fourier transformation
 
@@ -64,8 +71,8 @@ the Hamiltonian is rewritten in the following form
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}
-     (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
-     c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
+     \varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
+     c_{{\bf k}\beta}^{\mathstrut} \nonumber\\
     &+\frac{1}{2N_L}\sum_{{\bf k} {\bf k}'{\bf q}}\sum_{\alpha\beta\alpha'\beta'}
      W^{\beta\beta',\alpha\alpha'}_{{\bf q}}
      c_{{\bf k}+{\bf q},\alpha}^{\dagger}
@@ -269,11 +276,15 @@ When the interaction Hamiltonian has a block-diagonal structure
 the RPA equation can be solved independently for each block,
 significantly reducing the computational cost.
 
-The block structure is detected automatically by analyzing
-the connectivity of the interaction matrix:
+The block structure is detected automatically from the COMBINED
+connectivity of the interaction matrix and the bare susceptibility.  Both
+are needed: a block-diagonal interaction does not by itself make
+:math:`\hat{I}+\hat{X}^{(0)}\hat{W}` block diagonal if :math:`X^{(0)}`
+couples indices across blocks, as happens for spin-mixing bands.
 
-1. Sum the absolute values of the interaction Hamiltonian over all k-points
-   to obtain a connectivity pattern matrix.
+1. Sum the absolute values of the interaction Hamiltonian over all k-points,
+   and those of the bare susceptibility over momentum and frequency, to
+   obtain a connectivity pattern matrix.
 2. Build an adjacency graph from non-zero off-diagonal entries (threshold: :math:`10^{-12}`).
 3. Find connected components via label propagation (union-find algorithm).
 
@@ -319,10 +330,6 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 .. math::
 
    W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
-
-where the crossing exchanges the two index pairs, i.e.
-:math:`\left[W^{\rm cross-spin}\right]^{\rm crossed}_{ac;bd}
-= W^{\rm cross-spin}_{bd;ac}`.
 
 The transverse vertex is built from the cross-spin and spin-flip blocks of
 the interaction tensor only. The same-spin block does not enter: a same-spin
@@ -413,8 +420,11 @@ in the input TOML file. This requires the ``general`` calculation scheme
 Spin-orbital mode
 *****************************
 
-H-wave supports a spin-orbital mode where spin and orbital indices
-are interleaved rather than block-separated.
+H-wave supports a spin-orbital mode, in which the input files index spin
+and orbital in interleaved rather than block-separated form.  The solver
+remaps that input to its internal spin-block order, which is also the
+order the stored susceptibilities carry (they are marked
+``index_convention = "spin_block"``).
 
 In the normal mode, the combined index is :math:`i = s \cdot n_{\rm orb} + a`
 (spin-block first), where :math:`s = 0, 1` is the spin index and

@@ -15,12 +15,19 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 .. math::
     \begin{aligned}
      {\cal H}&={\cal H}_0+{\cal H}_{\rm int},\\
-     {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
-      (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
-      c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
+     {\cal H}_0&=\sum_{i\alpha;j\beta}
+      t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
+      c_{j\beta}^{\mathstrut},\\
      {\cal H}_{\rm int}&=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
       c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
+
+表に与える :math:`W` は2つの双一次形式の入れ替えについて完全です（例えばオンサイト
+クーロン項は up-down と down-up の両方のスロットを占めます）。したがってサイトと
+4つの添字にわたる制限のない和は各ペア順序を2度含むことになり、 :math:`1/2` は
+それを打ち消します。トランスファーの表も同様にエルミート閉じており（ :math:`R` と
+:math:`-R` の両方が存在します）、 :math:`{\cal H}_0` に別途エルミート共役項は
+付きません。
 
 ここで、以下のフーリエ変換
 
@@ -58,8 +65,8 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}
-     (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
-     c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
+     \varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
+     c_{{\bf k}\beta}^{\mathstrut} \nonumber\\
     &+\frac{1}{2N_L}\sum_{{\bf k} {\bf k}'{\bf q}}\sum_{\alpha\beta\alpha'\beta'}
      W^{\beta\beta',\alpha\alpha'}_{{\bf q}}
      c_{{\bf k}+{\bf q},\alpha}^{\dagger}
@@ -244,9 +251,13 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 RPA方程式を各ブロックで独立に解くことができ、
 計算コストを大幅に削減できます。
 
-ブロック構造は相互作用行列の接続性を解析して自動検出されます:
+ブロック構造は、相互作用行列と裸の感受率の **両方** の接続性から自動検出されます。
+両方が必要です。相互作用がブロック対角であっても、 :math:`X^{(0)}` がブロックを
+またいで添字を結んでいる場合（スピン混成バンドなど）、
+:math:`\hat{I}+\hat{X}^{(0)}\hat{W}` はブロック対角になりません。
 
-1. 全k点にわたって相互作用ハミルトニアンの絶対値を合計し、接続パターン行列を得る。
+1. 全k点にわたって相互作用ハミルトニアンの絶対値を、また運動量と振動数にわたって
+   裸の感受率の絶対値を合計し、接続パターン行列を得る。
 2. 非ゼロの非対角要素（閾値: :math:`10^{-12}` ）から隣接グラフを構築する。
 3. ラベル伝播（union-findアルゴリズム）により連結成分を求める。
 
@@ -292,10 +303,6 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 .. math::
 
    W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
-
-ここで crossing は2つの添字対の入れ替えを表します。すなわち
-:math:`\left[W^{\rm cross-spin}\right]^{\rm crossed}_{ac;bd}
-= W^{\rm cross-spin}_{bd;ac}` です。
 
 横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
 から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
@@ -376,8 +383,10 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 スピン軌道モード
 *****************************
 
-H-waveはスピンと軌道のインデックスが
-ブロック分離ではなくインターリーブされるスピン軌道モードをサポートしています。
+H-wave はスピン軌道モードをサポートしています。このモードでは入力ファイルの
+スピン・軌道インデックスがブロック分離ではなくインターリーブされた形で与えられます。
+ソルバーは読み込み時に内部のスピンブロック順へ並べ替えており、保存される感受率も
+その順序です（ ``index_convention = "spin_block"`` として記録されます）。
 
 通常モードでは、複合インデックスは :math:`i = s \cdot n_{\rm orb} + a`
 （スピンブロック優先）であり、
