@@ -76,19 +76,26 @@ the Hamiltonian is rewritten in the following form
 
 In the random phase approximation, the density fluctuation by the effect of electron correlation
 is detected with respect to :math:`{\cal H}_0`.
-The scattering by the interaction must therefore be considered on the basis
-where :math:`{\cal H}_0` is diagonalize, and thus the interaction term is approximated as
+The one-body part is diagonalized to build the Green's functions, and the
+interaction term is expressed in that basis by the exact change of basis
 
 .. math::
     \begin{aligned}
     &W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
     c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
-    &\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
-    u_{\alpha \gamma, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma}^{\dagger}
-    u_{\alpha' \gamma, \bf{k}} d_{\bf{k},\gamma}^{\mathstrut}
-    u_{\beta' \gamma', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma'}^{\dagger}
-    u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}.
+    &= W^{\beta\beta',\alpha\alpha'}_{\bf{q}}
+    \sum_{\gamma_1 \gamma_2 \gamma_1' \gamma_2'}
+    u_{\alpha \gamma_1, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma_1}^{\dagger}
+    u_{\alpha' \gamma_2, \bf{k}} d_{\bf{k},\gamma_2}^{\mathstrut}
+    u_{\beta' \gamma_1', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma_1'}^{\dagger}
+    u_{\beta  \gamma_2', \bf{k}'}d_{\bf{k}',\gamma_2'}^{\mathstrut}.
     \end{aligned}
+
+Each bilinear carries two independent band indices.  Keeping only its
+band-diagonal part (:math:`\gamma_1=\gamma_2`) would restrict the response to
+its density component and break SU(2) symmetry, so no such restriction is
+made; H-wave keeps the interaction in the orbital basis throughout and uses
+the diagonalization only to construct the Green's functions.
 
 Here, 
 

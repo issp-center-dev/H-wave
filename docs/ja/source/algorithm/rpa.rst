@@ -69,18 +69,24 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
     \end{aligned}
 
 RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密度揺らぎの効果を考慮します。
-具体的には、 :math:`{\cal H}_0` が対角化されるような軌道・スピンの混成基底を用いて、相互作用の項を以下のように近似します。
+具体的には、 :math:`{\cal H}_0` が対角化されるような軌道・スピンの混成基底を用いると、相互作用の項は厳密な基底変換により以下のように書けます。
 
 .. math::
     \begin{aligned}
     &W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
     c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
-    &\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
-    (u_{\alpha \gamma, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma}^{\dagger}
-    u_{\alpha' \gamma, \bf{k}} d_{\bf{k},\gamma}^{\mathstrut})
-    (u_{\beta' \gamma', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma'}^{\dagger}
-    u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}) .
+    &= W^{\beta\beta',\alpha\alpha'}_{\bf{q}}
+    \sum_{\gamma_1 \gamma_2 \gamma_1' \gamma_2'}
+    (u_{\alpha \gamma_1, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma_1}^{\dagger}
+    u_{\alpha' \gamma_2, \bf{k}} d_{\bf{k},\gamma_2}^{\mathstrut})
+    (u_{\beta' \gamma_1', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma_1'}^{\dagger}
+    u_{\beta  \gamma_2', \bf{k}'}d_{\bf{k}',\gamma_2'}^{\mathstrut}) .
     \end{aligned}
+
+各双一次形式は2つの独立なバンド添字を持ちます。ここでバンド対角成分
+（ :math:`\gamma_1=\gamma_2` ）のみを残すと、応答が密度成分に制限され SU(2)
+対称性を破ってしまうため、そのような制限は行いません。H-wave は相互作用を
+一貫して軌道基底で扱い、対角化は Green 関数の構成にのみ用います。
 
 ここで、
 
