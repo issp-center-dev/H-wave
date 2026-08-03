@@ -22,8 +22,8 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:
      {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
       (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
       c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
-     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}\left(
-      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}+\mbox{H.c.}\right)
+     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
+      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
 
 Applying the Fourier transformation
@@ -106,17 +106,29 @@ Then, the irreducible one-body Green's function is written as
       \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
     \end{aligned}
 
-The irreducible susceptibility is given in the following form, as it must be closed
-within the diagnoalized elements:
+The full one-body Green's function is the sum of these band contributions,
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta'\alpha'}_{\gamma}({\bf k}, i\epsilon_{n}),
+     G^{(0)\alpha\beta}({\bf k}, i\epsilon_{n})
+      = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n}),
     \end{aligned}
+
+and the irreducible susceptibility is the particle-hole bubble built from it,
+
+.. math::
+    \begin{aligned}
+     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)=
+      -\frac{T}{N_L}
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta'\alpha'}({\bf k}, i\epsilon_{n}),
+    \end{aligned}
+
+so that the two band sums it contains are independent: the particle and the
+hole may sit on different bands.  Restricting them to a common band would
+project the response onto its density part and break SU(2) symmetry, so no
+such restriction is made.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
@@ -190,7 +202,7 @@ in the matrix form. Then finally it leads to the expression:
 
 In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,
-the susceptibility ( :math:`X^{(0)\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)`, :math:`X^{\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)`) is the largest multidimensional array,
+the susceptibility ( :math:`X^{(0)\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_m)`, :math:`X^{\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_m)`) is the largest multidimensional array,
 given by :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}`, where the memory cost and computational complexity increase as the size increases.
 As explained below, the size of the multidimensional array of susceptibilities can be reduced by separating orbits and spins:
 for the two-body interactions handled in H-wave's RPA mode, separating orbits and spins results in
@@ -201,16 +213,16 @@ for the two-body interactions handled in H-wave's RPA mode, separating orbits an
     c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}.
     \end{aligned}
 
-Since the scattering is on the same diagonalized general orbital,
-the irreducible susceptibility becomes
+Since the scattering keeps the orbital index, the irreducible
+susceptibility becomes
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_m)=
       -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}).
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}).
     \end{aligned}
 
 The array size can be reduced to :math:`N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}`.
@@ -219,8 +231,12 @@ Then susceptibility matrix by RPA is obtained as follows:
 .. math::
     \begin{aligned}
     X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&=
-    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
+    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)
+    - \sum_{\alpha_2,\alpha_3}
+      \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
+    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
+    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
     \end{aligned}
 
 If :math:`\alpha\sigma\sigma'` is regarded as a single index,
@@ -234,40 +250,18 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
 
 The above formula is the general formula for the RPA method.
 
-In the above formula, the calculation of the irreducible susceptibility is performed as follows:
+In the above formula, the irreducible susceptibility is again the bubble of
+the full Green's functions,
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
-    \end{aligned}
-
-In this case, the sum of the diagonalized components is required, which is computationally more expensive.
-In many previous studies, the one body Green's function is calculated as follows:
-
-.. math::
-    \begin{aligned}
-     G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
-    \end{aligned}
-
-The irreducible susceptibility is calculated as follows:
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_m)=
       -\frac{T}{N_L}
       \sum_{{\bf k},n}
       G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
       G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}).\nonumber
     \end{aligned}
 
-Though this method may lead to poor accuracy when the diagonalized components are mixed,
-there is an advantage that there is no need for technical consideration for :math:`\gamma` due to band intersections.
-In order to make comparisons with previous studies,
-H-Wave has adopted this approach (a mode for correctly handling the Green's functions and susceptibilities will also be implemented).
 It is noted that the vertex correction may be taken into account as a means to consider
 higher order correlations. See, for example, reference [1]_ for the details.
 
@@ -301,8 +295,19 @@ Transverse susceptibility (ladder diagram)
 
 In addition to the standard (ring diagram) RPA susceptibility,
 H-wave can compute the transverse susceptibility
-:math:`\chi_{+-}(\mathbf{q})`, which describes spin-flip correlations
-:math:`\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle`.
+:math:`\chi_{+-}(\mathbf{q})`, which describes spin-flip correlations.
+Writing it with the bilinears themselves avoids the ambiguity of the
+:math:`S^{\pm}` labels: the stored array holds
+
+.. math::
+
+   \chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
+   \Big\langle \big(c^{\dagger}_{\gamma\downarrow}
+   c^{\mathstrut}_{\alpha\uparrow}\big)(-\mathbf{q}) \;;\;
+   \big(c^{\dagger}_{\beta\uparrow}
+   c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle ,
+
+with the same index-pair convention as the longitudinal susceptibility.
 
 The transverse bare susceptibility is
 
@@ -318,7 +323,7 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 
 .. math::
 
-   W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
+   W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
 
 The transverse vertex is built from the cross-spin and spin-flip blocks of
 the interaction tensor only. The same-spin block does not enter: a same-spin

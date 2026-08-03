@@ -18,8 +18,8 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
      {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
       (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
       c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
-     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}\left(
-      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}+\mbox{H.c.}\right)
+     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
+      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
 
 ここで、以下のフーリエ変換
@@ -98,16 +98,28 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
       \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
     \end{aligned}
 
-既約感受率は対角化された成分で閉じる必要があるため、以下のように与えられます。
+完全な一体 Green 関数はこれらのバンド寄与の和
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta'\alpha'}_{\gamma}({\bf k}, i\epsilon_{n}),
+     G^{(0)\alpha\beta}({\bf k}, i\epsilon_{n})
+      = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n}),
     \end{aligned}
+
+であり、既約感受率はこれから作られる粒子・正孔バブル
+
+.. math::
+    \begin{aligned}
+     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)=
+      -\frac{T}{N_L}
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta'\alpha'}({\bf k}, i\epsilon_{n}),
+    \end{aligned}
+
+として与えられます。ここに含まれる2つのバンド和は独立で、バブルの粒子と正孔は
+異なるバンドに乗ることができます。これらを同一バンドに制限すると応答が密度部分に
+射影され SU(2) 対称性を破ってしまうため、そのような制限は行いません。
 
 この既約感受率を用いることで、RPAで得られる感受率が以下のように得られます。
 
@@ -174,7 +186,7 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
    保存される ``chiq``/``chi0q`` と相互作用ファイルの規約は、それぞれの節に
    記載のとおりで変わりません。
 
-上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
+上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
 
 .. math::
@@ -186,11 +198,11 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_m)=
       -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}),
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}),
     \end{aligned}
 
 となり、 :math:`N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}` にサイズを抑えることができます。このとき、RPAで得られる感受率は
@@ -198,8 +210,12 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 .. math::
     \begin{aligned}
     X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&=
-    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
+    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)
+    - \sum_{\alpha_2,\alpha_3}
+      \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
+    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
+    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
     \end{aligned}
 
 となります。 :math:`\alpha\sigma\sigma'` を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
@@ -212,40 +228,6 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 
 と書けることがわかります。以上が一般的なRPAの定式化になります。
 
-上述の近似では既約感受率の計算を
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
-    \end{aligned}
-
-として行っています。この場合、対角化した成分の和が必要となり、計算コストが多くかかってしまいます。
-そのため、先行研究の多くは一体グリーン関数を
-
-.. math::
-    \begin{aligned}
-     G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n})
-    \end{aligned}
-
-のように近似し、既約感受率を
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
-    \end{aligned}
-
-として計算して高速化する場合が多いです。
-この既約感受率を用いた計算では、対角化成分が混在してしまう状況で近似精度が悪くなりますが、
-バンド交差による :math:`\gamma` への技術的な対応を行う必要がないというメリットもあります。
-先行研究との比較をするためにも、H-Waveではこの手法を採用しています(グリーン関数と既約感受率を正しく取り扱うモードについても実装する予定です)。
 なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 [1]_ を参考にしてください。
 
 ブロック対角化最適化
@@ -276,8 +258,18 @@ RPA方程式を各ブロックで独立に解くことができ、
 
 標準的な（リングダイアグラム）RPA感受率に加えて、
 H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
-これはスピン反転相関
-:math:`\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle` を記述します。
+これはスピン反転相関を記述します。 :math:`S^{\pm}` の記法は曖昧さを伴うため、
+双一次形式そのもので書くと、格納される配列は
+
+.. math::
+
+   \chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
+   \Big\langle \big(c^{\dagger}_{\gamma\downarrow}
+   c^{\mathstrut}_{\alpha\uparrow}\big)(-\mathbf{q}) \;;\;
+   \big(c^{\dagger}_{\beta\uparrow}
+   c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle
+
+であり、添字対の規約は縦感受率と同じです。
 
 横方向の裸感受率は
 
@@ -293,7 +285,7 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 
 .. math::
 
-   W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
+   W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
 
 横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
 から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
