@@ -167,17 +167,13 @@ class TestSpinConservingLimits(unittest.TestCase):
     # PairHop declared as a complex Hermitian pair (P, conj P): its
     # symmetrisation conjugates (#100) and the crossing must preserve
     # the complex phase -- a real-only fixture cannot see either
-    # PairHop is declared REAL here. This fixture relates the spinful
-    # spin-flip slice to the TRANSVERSE series through an assumed
-    # pair-Hermiticity relation, and that relation is what a complex
-    # declaration would have to validate -- but the two channels reach
-    # their vertices by different routes (the ring solve converts the
-    # tensor to the bubble-pair convention, the ladder assembly
-    # re-pairs it itself), so the cross-channel relation for a complex
-    # vertex is not established here. Each channel's complex-PairHop
-    # orientation is pinned DIRECTLY against exact diagonalization
-    # instead: the longitudinal one in tests/test_rpa_vs_ed_oracle.py
-    # and the transverse one by its transverse regression there.
+    # PairHop is declared COMPLEX (P, conj P). In solver storage the
+    # spinful spin-flip slice and chiq_pm are already in the same
+    # pair frame, so the relation between them is DIRECT equality -- an
+    # earlier revision compared them through a conjugation, which holds
+    # only for real declarations and pushed the transverse vertex into
+    # the wrong orientation before exact diagonalization caught it.
+    PHV = 0.3 * np.exp(0.4j)
     TYPES = {
         "CoulombIntra": [(0, 0, 0.3)],
         "CoulombInter": [(0, 1, 0.3), (1, 0, 0.3)],
@@ -185,7 +181,7 @@ class TestSpinConservingLimits(unittest.TestCase):
         "Ising": [(0, 1, 0.3), (1, 0, 0.3)],
         "Exchange": [(0, 1, 0.3), (1, 0, 0.3)],
         "PairLift": [(0, 1, 0.3), (1, 0, 0.3)],
-        "PairHop": [(0, 1, 0.3), (1, 0, 0.3)],
+        "PairHop": [(0, 1, PHV), (1, 0, np.conj(PHV))],
     }
 
     def _write(self, d, so, eps, tname):
@@ -263,14 +259,11 @@ class TestSpinConservingLimits(unittest.TestCase):
                 pm_ref = pm_ref.reshape(nfp, LX, NORB, NORB, NORB,
                                         NORB)[nfp // 2]
                 up, dn = slice(0, NORB), slice(NORB, ND)
-                # chiq_pm and the spinful spin-flip slice store the
-                # transverse correlator in pair-Hermitian-conjugate
-                # orientations: chi*_{acbd}(q) = chi_{bdac}(q) is an
-                # exact identity, the two coincide elementwise for real
-                # vertices, and only a complex vertex (the PairHop
-                # fixture) exposes the difference -- compare through the
-                # identity, not through elementwise equality
-                pm1 = np.conj(r1[:, up, dn, up, dn])
+                # both objects are stored in the same pair frame, so
+                # they must agree elementwise (verified against exact
+                # diagonalization; a conjugation here would only hold
+                # for real declarations)
+                pm1 = r1[:, up, dn, up, dn]
                 dev = np.abs(pm1 - pm_ref).max()
                 if tname == "PairLift":
                     # ring+ladder drops PairLift's transverse vertex

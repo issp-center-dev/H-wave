@@ -28,13 +28,18 @@ The documented bare susceptibility
 
 is the correlator of the bilinears
 
-    O1 = c^+_{a'} c_{a}  at +q      and     O2 = c^+_{b} c_{b'}  at -q,
+    O1 = c^+_{a'} c_{a}  at -q      and     O2 = c^+_{b} c_{b'}  at +q,
 
-so a Lehmann evaluation storing ed[a, c, b, d] = <(c^+_a c_c)(q);
-(c^+_d c_b)(-q)> maps onto the solver's slots by swapping the two
-indices of each pair. That single derived map (never a scan) is
+so a Lehmann evaluation storing ed[a, c, b, d] = <(c^+_a c_c);
+(c^+_d c_b)> maps onto the solver's slots by swapping the two indices
+of each pair. That single derived map (never a scan) is
 ``_to_solver_slots`` below; it is verified against the solver's own
 chi0q at zero coupling, where it must hold to round-off.
+
+The main fixture uses two sites, where q and -q coincide and the
+momentum assignment above is therefore untestable; a separate
+three-site calibration (``TestMomentumFrame``) pins it where the two
+differ.
 
 What is compared
 ----------------
@@ -381,6 +386,103 @@ class TestFrameCalibration(unittest.TestCase):
         self.assertLess(np.abs(chi0 - ref).max(), 1e-6)
 
 
+class TestMomentumFrame(unittest.TestCase):
+    """Pin the momentum assignment where q and -q actually differ.
+
+    The main fixture has two sites, so every grid momentum satisfies
+    q = -q. Even on a larger lattice a single band cannot settle the
+    question: the static Lindhard kernel is symmetric under exchanging
+    its two states, which makes chi0(q) even in q for one orbital. The
+    q-odd content lives in the orbital off-diagonal slots, so this
+    calibration uses a three-site ring with TWO orbitals and complex
+    inter-orbital hopping, and compares the solver's bare bubble with
+    an analytic Lindhard evaluation written with the documented
+    assignment; the reversed assignment must be excluded."""
+
+    L3 = 3
+    HOP = {(0, 0): 0.7 + 0.3j, (1, 1): 0.5 - 0.2j,
+           (0, 1): 0.25 + 0.15j, (1, 0): 0.25 + 0.15j}
+    EPS = (0.10, -0.05)
+
+    def _hk(self, k):
+        h = np.zeros((2, 2), dtype=complex)
+        ph = np.exp(2j * np.pi * k / self.L3)
+        for (a, b), t in self.HOP.items():
+            h[a, b] += t * ph + np.conj(self.HOP[(b, a)]) * np.conj(ph)
+        for o, e in enumerate(self.EPS):
+            h[o, o] += e
+        return h
+
+    def _lindhard(self, reversed_frame):
+        ev = np.zeros((self.L3, 2))
+        U = np.zeros((self.L3, 2, 2), dtype=complex)
+        for k in range(self.L3):
+            w, v = np.linalg.eigh(self._hk(k))
+            ev[k], U[k] = w - MU, v
+
+        def f(e):
+            return 1.0 / (np.exp(np.clip(BETA * e, -500, 500)) + 1.0)
+
+        out = np.zeros((self.L3, 2, 2, 2, 2), dtype=complex)
+        for q in range(self.L3):
+            for k in range(self.L3):
+                kq = (k - q) % self.L3 if reversed_frame \
+                    else (k + q) % self.L3
+                for m in range(2):
+                    for n in range(2):
+                        de = ev[kq][m] - ev[k][n]
+                        if abs(de) < 1e-12:
+                            w0 = -BETA * f(ev[k][n]) * (1 - f(ev[k][n]))
+                        else:
+                            w0 = (f(ev[kq][m]) - f(ev[k][n])) / de
+                        out[q] += (-w0 / self.L3) * np.einsum(
+                            "a,b,B,A->aAbB", U[kq][:, m], U[kq][:, m].conj(),
+                            U[k][:, n], U[k][:, n].conj())
+        return out
+
+    def test_documented_assignment(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n"
+                    "0.0 0.0 0.0\n0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n2\n3\n1 1 1\n")
+            for (a, b), t in self.HOP.items():
+                f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                        % (a + 1, b + 1, t.real, t.imag))
+                f.write("-1 0 0 %d %d %.12f %.12f\n"
+                        % (a + 1, b + 1, np.conj(self.HOP[(b, a)]).real,
+                           np.conj(self.HOP[(b, a)]).imag))
+            for o, e in enumerate(self.EPS):
+                f.write(" 0 0 0 %d %d %.12f 0.0\n" % (o + 1, o + 1, e))
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat"}
+        info_mode = {"mode": "RPA",
+                     "param": {"T": T, "mu": MU,
+                               "CellShape": [self.L3, 1, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 2048,
+                               "coeff_tail": 1.0},
+                     "calc_scheme": "general"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        solver = solver_rpa.RPA(io.get_param("ham"), {}, info_mode)
+        gi = io.get_param("green")
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        solver.solve(gi, out)
+        chi0 = np.asarray(gi["chi0q"])
+        nf = chi0.shape[0]
+        got = chi0.reshape(nf, self.L3, 2, 2, 2, 2)[nf // 2]
+        ref = self._lindhard(False)
+        rev = self._lindhard(True)
+        # the two assignments must be distinguishable at all
+        self.assertGreater(np.abs(ref - rev).max(), 1e-3)
+        self.assertLess(np.abs(got - ref).max(), 1e-4)
+        self.assertGreater(np.abs(got - rev).max(), 1e-3)
+
+
 class TestRPAGeneralVsED(unittest.TestCase):
     """Density and pair-crossing declarations, general scheme, against
     exact diagonalization: the solver must reproduce the exact
@@ -665,10 +767,10 @@ class TestTransverseComplexPairHop(unittest.TestCase):
     chiq_pm's first-order response is compared against the exact
     transverse response of the declared Hamiltonian.
 
-    chi_+-(q) = <(c^+_up c_dn)(q) ; (c^+_dn c_up)(-q)>, whose slots the
-    solver stores as [q, a, c, b, d] with the same pair convention the
-    longitudinal bubble uses, so the derived map of this module applies
-    to the spin-flip block.
+    The Lehmann tensor built here and the solver's spin-flip block are
+    related by a PAIR-SLOT swap (see ``_ed_first_order_pm``), which is a
+    different map from the longitudinal one -- reusing the longitudinal
+    helper here is exactly the mistake this docstring exists to prevent.
     """
 
     def _chi_pm_ed(self, hint=None, h1=None):
@@ -728,7 +830,15 @@ class TestTransverseComplexPairHop(unittest.TestCase):
                     - base) / V1
                - (self._chi_pm_ed(h1=_hf_h1("PairHop", V2, phase))
                   - base) / V2)
-        return np.transpose(full - ins, (0, 2, 1, 4, 3))
+        # The Lehmann tensor above is
+        #   R[a,c,b,d] = <(c+_{a up} c_{c dn})(q); (c+_{d dn} c_{b up})(-q)>
+        # while the solver's spin-flip block is
+        #   L[a,c,b,d] = <(c+_{c dn} c_{a up})(-q); (c+_{b up} c_{d dn})(q)>.
+        # Static Kubo symmetry gives R[a,c,b,d] = L[b,d,a,c], so the
+        # conversion is the PAIR-SLOT swap -- not the intra-pair swap the
+        # longitudinal map uses (the two coincide only under accidental
+        # symmetries, which a two-site fixture has).
+        return np.transpose(full - ins, (0, 3, 4, 1, 2))
 
     def _solver_pm(self, v, phase):
         tmp = tempfile.TemporaryDirectory()
