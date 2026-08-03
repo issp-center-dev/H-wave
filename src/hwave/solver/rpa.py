@@ -440,9 +440,10 @@ def _to_bubble_pair_convention(ham):
     rank-4 orbital tensor before any density projection: the reduced
     and squashed projections keep only pair-diagonal slots, where the
     map is the identity, so they are unaffected either way, while the
-    general scheme needs it. The transverse (ladder) assembly consumes
-    ``ham_inter_q`` in its own convention and is deliberately left
-    untouched here.
+    general scheme needs it. The input to the transverse (ladder)
+    assembly passes through the same conversion, so both channels
+    resum the interaction in one orientation; the assembly itself adds
+    no further conversion.
     """
     nlead = ham.ndim - 4
     if nlead < 0:

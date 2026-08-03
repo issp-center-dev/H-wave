@@ -144,8 +144,9 @@ in the matrix form. Then finally it leads to the expression:
    inside each pair, and converting between them is part of the RPA
    equation, not an afterthought.
 
-   The bare susceptibility assigns to a pair slot the bilinear whose
-   *annihilation* index comes second,
+   The two pair slots of the bare susceptibility carry the bilinears
+   below -- the left pair with its creation index *second*, the right
+   pair with its creation index *first* --
 
    .. math::
       X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
@@ -153,10 +154,11 @@ in the matrix form. Then finally it leads to the expression:
       \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(-q)\Big\rangle ,
 
    which is what the Green-function product :math:`G^{\alpha\beta}(k+q)
-   G^{\beta'\alpha'}(k)` above encodes, whereas the interaction
+   G^{\beta'\alpha'}(k)` above encodes. The interaction
    :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` multiplies
    :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
-   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}`.  The matrix
+   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}`, i.e. in *each* pair its
+   ordering is the reverse of the susceptibility's.  The matrix
    :math:`\hat W(q)` entering the RPA equation is therefore obtained from
    the interaction tensor by transposing the two indices *within each
    pair*,
