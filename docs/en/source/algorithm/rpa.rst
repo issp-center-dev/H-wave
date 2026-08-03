@@ -144,10 +144,15 @@ and the irreducible susceptibility is the particle-hole bubble built from it,
 
 so that the two band sums it contains are independent: the particle and the
 hole may sit on different bands.  Tying them to a common band would drop the
-interband particle-hole transitions -- on a two-orbital chain that is 60% of
-the bubble -- and, since the band basis is not unique inside a degenerate
-subspace, the projection is not even basis independent there; for
-spin-degenerate bands it removes the spin-flip channel and so breaks SU(2)
+interband particle-hole transitions, which carry most of the response away
+from :math:`{\bf q}=0`.  On a six-site two-orbital chain the density response
+is unchanged at :math:`{\bf q}=0` -- there the total density operator is
+exactly band diagonal -- but loses 29% at :math:`q=\pi/3`, 71% at
+:math:`2\pi/3`, and at the zone boundary the band-diagonal bubble is
+essentially zero (0.004 against 0.788), because the states at :math:`k` and
+:math:`k+q` are then nearly orthogonal within a band.  The restriction is
+also not basis independent inside a degenerate subspace, and for
+spin-degenerate bands it removes the spin-flip channel, breaking SU(2)
 symmetry.  No such restriction is made.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
