@@ -115,7 +115,9 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
     X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
-    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
 ここで、 :math:`\alpha \alpha'` などをまとめて一つのindexにすると行列形式で表すことができ、
@@ -128,6 +130,50 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
     \end{aligned}
 
     
+.. note::
+
+   **相互作用と感受率の添字対の規約について。**
+   上の2つの量は、各ペアの内部で互いに逆向きの添字順序を用いており、
+   その変換は RPA 方程式の一部です。
+
+   既約感受率の2つのペアスロットには以下の双一次形式が対応します。
+   左のペアは生成演算子の添字が **後**、右のペアは生成演算子の添字が
+   **前** です。
+
+   .. math::
+      X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
+      \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+      \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle
+
+   これは上の Green 関数の積 :math:`G^{\alpha\beta}(k+q)
+   G^{\beta'\alpha'}(k)` が表すものです。一方、相互作用
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` が掛かる演算子は
+   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
+   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}` であり、**どちらのペアでも**
+   感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
+   バーテックスは、相互作用テンソルの **各ペア内で添字を入れ替えた**
+   もの（式中の :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`）
+   であり、行列としては次のように書けます。
+
+   .. math::
+      \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
+      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}
+
+   これは H-wave の論文 (`arXiv:2308.00324 [cond-mat.str-el]
+   <https://arxiv.org/abs/2308.00324>`_) の式 (16) と (20) の間に現れる
+   並べ替えと同じもので、2つのペアの両方が対象です。
+
+   この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
+   実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
+   同じ値を持つため）。効いてくるのは **複素の** ペア交差型相互作用、
+   すなわち複素のエルミート閉じた ``PairHop`` の場合だけで、変換を省くと
+   複素共役なハミルトニアンに対する感受率が得られてしまいます。
+   H-wave は ring の求解でバーテックスを組み立てる際にこの変換を適用します。
+   transverse (ladder) の組み立てはこの変換を通しません。こちらは相互作用
+   テンソル自身を組み替えるため、ハミルトニアン規約のまま受け取ります。
+   保存される ``chiq``/``chi0q`` と相互作用ファイルの規約は、それぞれの節に
+   記載のとおりで変わりません。
+
 上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
 

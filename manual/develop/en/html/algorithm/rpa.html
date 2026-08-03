@@ -139,8 +139,11 @@ is obtained as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-7">
 <span class="eqno">(7.18)<a class="headerlink" href="#equation-algorithm-rpa-7" title="Link to this equation">¶</a></span>\[\begin{aligned}
 X^{\alpha\alpha', \beta\beta'}(q)&amp;=
-X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1'\beta_1'}
-X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+X^{(0)\alpha\alpha', \beta\beta'}(q)
+- \sum_{\alpha_1\alpha_1'\beta_1\beta_1'}
+X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
 \end{aligned}\]</div>
 <p>Combining indices such as <span class="math notranslate nohighlight">\(\alpha\alpha^\prime\)</span> into one index, they are expressed
 in the matrix form. Then finally it leads to the expression:</p>
@@ -149,21 +152,62 @@ in the matrix form. Then finally it leads to the expression:</p>
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Index-pair convention between the interaction and the susceptibility.</strong>
+The two objects above label their index pairs with opposite orderings
+inside each pair, and converting between them is part of the RPA
+equation, not an afterthought.</p>
+<p>The two pair slots of the bare susceptibility carry the bilinears
+below – the left pair with its creation index <em>second</em>, the right
+pair with its creation index <em>first</em> –</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
+<span class="eqno">(7.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Link to this equation">¶</a></span>\[X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
+\Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+\big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle ,\]</div>
+<p>which is what the Green-function product <span class="math notranslate nohighlight">\(G^{\alpha\beta}(k+q)
+G^{\beta'\alpha'}(k)\)</span> above encodes. The interaction
+<span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q}\)</span> multiplies
+<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
+c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}\)</span>, i.e. in <em>each</em> pair its
+ordering is the reverse of the susceptibility’s.  The vertex entering
+the RPA equation above is therefore the interaction tensor with the
+two indices of <em>each pair</em> transposed – written there as
+<span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}\)</span> – i.e. as a
+matrix,</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
+<span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
+= W^{\beta'\beta,\,\alpha'\alpha}_{\bf q},\]</div>
+<p>the same reordering that appears between Eqs. (16) and (20) of the
+H-wave paper (<a class="reference external" href="https://arxiv.org/abs/2308.00324">arXiv:2308.00324 [cond-mat.str-el]</a>).  Both index pairs are affected.</p>
+<p>The conversion is the identity on density (pair-diagonal) components
+and, more generally, on any real Hermitian-closed declaration, since
+the transposed slot then carries the same value.  It is observable
+only for a <em>complex</em> pair-crossing interaction – a complex
+Hermitian-closed <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> – where omitting it returns the
+susceptibility of the complex-conjugate Hamiltonian.  H-wave applies
+the conversion when it assembles the vertex for the ring solve.  The
+transverse (ladder) assembly is <em>not</em> routed through it: that
+assembly re-pairs the interaction tensor itself and therefore
+consumes the Hamiltonian convention directly.  The stored
+<code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and the interaction files keep the conventions
+documented in their own sections.</p>
+</div>
 <p>In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,
 the susceptibility ( <span class="math notranslate nohighlight">\(X^{(0)\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)\)</span>, <span class="math notranslate nohighlight">\(X^{\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)\)</span>) is the largest multidimensional array,
 given by <span class="math notranslate nohighlight">\(N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}\)</span>, where the memory cost and computational complexity increase as the size increases.
 As explained below, the size of the multidimensional array of susceptibilities can be reduced by separating orbits and spins:
 for the two-body interactions handled in H-wave’s RPA mode, separating orbits and spins results in</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
-<span class="eqno">(7.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
+<span class="eqno">(7.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\begin{aligned}
 &amp; W^{\beta\sigma_1\sigma_1',\alpha\sigma\sigma'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha \sigma}^{\dagger}c_{\bf{k},\alpha \sigma'}^{\mathstrut}
 c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}.
 \end{aligned}\]</div>
 <p>Since the scattering is on the same diagonalized general orbital,
 the irreducible susceptibility becomes</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
-<span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-12">
+<span class="eqno">(7.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -172,23 +216,23 @@ the irreducible susceptibility becomes</p>
 \end{aligned}\]</div>
 <p>The array size can be reduced to <span class="math notranslate nohighlight">\(N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}\)</span>.
 Then susceptibility matrix by RPA is obtained as follows:</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
-<span class="eqno">(7.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-13">
+<span class="eqno">(7.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="Link to this equation">¶</a></span>\[\begin{aligned}
 X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&amp;=
 X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
 X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
 \end{aligned}\]</div>
 <p>If <span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span> is regarded as a single index,
 it can be put into matrix form and, as in the case of generalised orbitals, can be used as a</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-12">
-<span class="eqno">(7.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
+<span class="eqno">(7.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>The above formula is the general formula for the RPA method.</p>
 <p>In the above formula, the calculation of the irreducible susceptibility is performed as follows:</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-13">
-<span class="eqno">(7.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
+<span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -197,13 +241,13 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
 \end{aligned}\]</div>
 <p>In this case, the sum of the diagonalized components is required, which is computationally more expensive.
 In many previous studies, the one body Green’s function is calculated as follows:</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
-<span class="eqno">(7.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
+<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[\begin{aligned}
  G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
 \end{aligned}\]</div>
 <p>The irreducible susceptibility is calculated as follows:</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
-<span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
+<span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{{\bf k},n}
@@ -243,15 +287,15 @@ H-wave can compute the transverse susceptibility
 <span class="math notranslate nohighlight">\(\chi_{+-}(\mathbf{q})\)</span>, which describes spin-flip correlations
 <span class="math notranslate nohighlight">\(\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle\)</span>.</p>
 <p>The transverse bare susceptibility is</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
-<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
+<span class="eqno">(7.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
 = -\frac{T}{N_L} \sum_{\mathbf{k},n}
   G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
   G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)\]</div>
 <p>The transverse vertex <span class="math notranslate nohighlight">\(W_{+-}\)</span> is obtained by crossing the
 Hartree (Fock exchange) vertex from the longitudinal channel:</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
-<span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-19">
+<span class="eqno">(7.30)<a class="headerlink" href="#equation-algorithm-rpa-19" title="Link to this equation">¶</a></span>\[W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}\]</div>
 <p>The transverse vertex is built from the cross-spin and spin-flip blocks of
 the interaction tensor only. The same-spin block does not enter: a same-spin
 interaction cannot connect the up and down propagators of the transverse loop,
@@ -314,8 +358,8 @@ longitudinal and transverse channels. Validation of such degenerate entries
 is tracked separately.</p>
 </div>
 <p>The transverse RPA susceptibility is obtained as</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
-<span class="eqno">(7.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-20">
+<span class="eqno">(7.31)<a class="headerlink" href="#equation-algorithm-rpa-20" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
 = \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
   \hat{X}^{(0)}_{+-}(\mathbf{q})\]</div>
 <p>To enable the transverse channel calculation, set <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>

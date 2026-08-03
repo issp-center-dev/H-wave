@@ -124,8 +124,11 @@ is obtained as follows:
 .. math::
     \begin{aligned}
     X^{\alpha\alpha', \beta\beta'}(q)&=
-    X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+    X^{(0)\alpha\alpha', \beta\beta'}(q)
+    - \sum_{\alpha_1\alpha_1'\beta_1\beta_1'}
+    X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
 Combining indices such as :math:`\alpha\alpha^\prime` into one index, they are expressed
@@ -136,6 +139,54 @@ in the matrix form. Then finally it leads to the expression:
      \hat{X}(q)&=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
      &=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
     \end{aligned}
+
+.. note::
+
+   **Index-pair convention between the interaction and the susceptibility.**
+   The two objects above label their index pairs with opposite orderings
+   inside each pair, and converting between them is part of the RPA
+   equation, not an afterthought.
+
+   The two pair slots of the bare susceptibility carry the bilinears
+   below -- the left pair with its creation index *second*, the right
+   pair with its creation index *first* --
+
+   .. math::
+      X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
+      \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+      \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle ,
+
+   which is what the Green-function product :math:`G^{\alpha\beta}(k+q)
+   G^{\beta'\alpha'}(k)` above encodes. The interaction
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` multiplies
+   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
+   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}`, i.e. in *each* pair its
+   ordering is the reverse of the susceptibility's.  The vertex entering
+   the RPA equation above is therefore the interaction tensor with the
+   two indices of *each pair* transposed -- written there as
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}` -- i.e. as a
+   matrix,
+
+   .. math::
+      \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
+      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q},
+
+   the same reordering that appears between Eqs. (16) and (20) of the
+   H-wave paper (`arXiv:2308.00324 [cond-mat.str-el]
+   <https://arxiv.org/abs/2308.00324>`_).  Both index pairs are affected.
+
+   The conversion is the identity on density (pair-diagonal) components
+   and, more generally, on any real Hermitian-closed declaration, since
+   the transposed slot then carries the same value.  It is observable
+   only for a *complex* pair-crossing interaction -- a complex
+   Hermitian-closed ``PairHop`` -- where omitting it returns the
+   susceptibility of the complex-conjugate Hamiltonian.  H-wave applies
+   the conversion when it assembles the vertex for the ring solve.  The
+   transverse (ladder) assembly is *not* routed through it: that
+   assembly re-pairs the interaction tensor itself and therefore
+   consumes the Hamiltonian convention directly.  The stored
+   ``chiq``/``chi0q`` and the interaction files keep the conventions
+   documented in their own sections.
 
 In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,

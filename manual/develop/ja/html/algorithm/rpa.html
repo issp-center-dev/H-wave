@@ -131,7 +131,9 @@ c_{\bf{k},\alpha} = \sum_{\gamma} u_{\alpha \gamma, \bf{k}} d_{\bf{k}, \gamma}
 <span class="eqno">(7.18)<a class="headerlink" href="#equation-algorithm-rpa-7" title="Link to this equation">¶</a></span>\[\begin{aligned}
 X^{\alpha\alpha', \beta\beta'}(q)&amp;=
 X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
-X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_{\bf q}X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
+X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
+W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
 \end{aligned}\]</div>
 <p>ここで、 <span class="math notranslate nohighlight">\(\alpha \alpha'\)</span> などをまとめて一つのindexにすると行列形式で表すことができ、
 最終的には以下のような形式で感受率を得ることができます。</p>
@@ -140,15 +142,52 @@ X^{(0)\alpha\alpha', \beta_1\beta_1'}(q) W^{\beta_1\beta_1', \alpha_1\alpha_1'}_
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>相互作用と感受率の添字対の規約について。</strong>
+上の2つの量は、各ペアの内部で互いに逆向きの添字順序を用いており、
+その変換は RPA 方程式の一部です。</p>
+<p>既約感受率の2つのペアスロットには以下の双一次形式が対応します。
+左のペアは生成演算子の添字が <strong>後</strong>、右のペアは生成演算子の添字が
+<strong>前</strong> です。</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
+<span class="eqno">(7.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Link to this equation">¶</a></span>\[X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
+\Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
+\big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle\]</div>
+<p>これは上の Green 関数の積 <span class="math notranslate nohighlight">\(G^{\alpha\beta}(k+q)
+G^{\beta'\alpha'}(k)\)</span> が表すものです。一方、相互作用
+<span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q}\)</span> が掛かる演算子は
+<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
+c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}\)</span> であり、<strong>どちらのペアでも</strong>
+感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
+バーテックスは、相互作用テンソルの <strong>各ペア内で添字を入れ替えた</strong>
+もの（式中の <span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}\)</span>）
+であり、行列としては次のように書けます。</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
+<span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
+= W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}\]</div>
+<p>これは H-wave の論文 (<a class="reference external" href="https://arxiv.org/abs/2308.00324">arXiv:2308.00324 [cond-mat.str-el]</a>) の式 (16) と (20) の間に現れる
+並べ替えと同じもので、2つのペアの両方が対象です。</p>
+<p>この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
+実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
+同じ値を持つため）。効いてくるのは <strong>複素の</strong> ペア交差型相互作用、
+すなわち複素のエルミート閉じた <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> の場合だけで、変換を省くと
+複素共役なハミルトニアンに対する感受率が得られてしまいます。
+H-wave は ring の求解でバーテックスを組み立てる際にこの変換を適用します。
+transverse (ladder) の組み立てはこの変換を通しません。こちらは相互作用
+テンソル自身を組み替えるため、ハミルトニアン規約のまま受け取ります。
+保存される <code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と相互作用ファイルの規約は、それぞれの節に
+記載のとおりで変わりません。</p>
+</div>
 <p>上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( <span class="math notranslate nohighlight">\(X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)\)</span> )が一番大きなサイズの多次元配列となり、そのサイズは <span class="math notranslate nohighlight">\(N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}\)</span> で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
-<span class="eqno">(7.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
+<span class="eqno">(7.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\begin{aligned}
 &amp; W^{\beta\sigma_1\sigma_1',\alpha\sigma\sigma'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha \sigma}^{\dagger}c_{\bf{k},\alpha \sigma'}^{\mathstrut}
 c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}    \end{aligned}\]</div>
 <p>と書けます。軌道に対しては同一の軌道での散乱となるため、既約感受率は</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
-<span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-12">
+<span class="eqno">(7.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -156,22 +195,22 @@ c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstru
   G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}),
 \end{aligned}\]</div>
 <p>となり、 <span class="math notranslate nohighlight">\(N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}\)</span> にサイズを抑えることができます。このとき、RPAで得られる感受率は</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
-<span class="eqno">(7.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-13">
+<span class="eqno">(7.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="Link to this equation">¶</a></span>\[\begin{aligned}
 X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&amp;=
 X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
 X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
 \end{aligned}\]</div>
 <p>となります。 <span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span> を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-12">
-<span class="eqno">(7.23)<a class="headerlink" href="#equation-algorithm-rpa-12" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
+<span class="eqno">(7.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>と書けることがわかります。以上が一般的なRPAの定式化になります。</p>
 <p>上述の近似では既約感受率の計算を</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-13">
-<span class="eqno">(7.24)<a class="headerlink" href="#equation-algorithm-rpa-13" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
+<span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
@@ -180,13 +219,13 @@ X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_
 \end{aligned}\]</div>
 <p>として行っています。この場合、対角化した成分の和が必要となり、計算コストが多くかかってしまいます。
 そのため、先行研究の多くは一体グリーン関数を</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
-<span class="eqno">(7.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
+<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[\begin{aligned}
  G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n})
 \end{aligned}\]</div>
 <p>のように近似し、既約感受率を</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
-<span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\begin{aligned}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
+<span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[\begin{aligned}
  X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
   -\frac{T}{N_L}
   \sum_{{\bf k},n}
@@ -224,15 +263,15 @@ H-waveは横感受率 <span class="math notranslate nohighlight">\(\chi_{+-}(\ma
 これはスピン反転相関
 <span class="math notranslate nohighlight">\(\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle\)</span> を記述します。</p>
 <p>横方向の裸感受率は</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
-<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
+<span class="eqno">(7.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
 = -\frac{T}{N_L} \sum_{\mathbf{k},n}
   G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
   G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)\]</div>
 <p>横方向の頂点 <span class="math notranslate nohighlight">\(W_{+-}\)</span> は、
 縦チャネルのハートリー（フォック交換）頂点の交差から得られます:</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
-<span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-19">
+<span class="eqno">(7.30)<a class="headerlink" href="#equation-algorithm-rpa-19" title="Link to this equation">¶</a></span>\[W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}\]</div>
 <p>横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
 から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
 ループの上向き伝播関数と下向き伝播関数を結べないため、自己エネルギーは生じ
@@ -286,8 +325,8 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 扱われます。この縮退エントリの検証は別途追跡されています。</p>
 </div>
 <p>横方向のRPA感受率は</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
-<span class="eqno">(7.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-20">
+<span class="eqno">(7.31)<a class="headerlink" href="#equation-algorithm-rpa-20" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
 = \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
   \hat{X}^{(0)}_{+-}(\mathbf{q})\]</div>
 <p>横チャネルの計算を有効にするには、入力TOMLファイルで
