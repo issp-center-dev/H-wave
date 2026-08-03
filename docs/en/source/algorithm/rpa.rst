@@ -22,7 +22,7 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:
      {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
       (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
       c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
-     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
+     {\cal H}_{\rm int}&=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
       c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
 
@@ -109,7 +109,7 @@ Then, the irreducible one-body Green's function is written as
 
 .. math::
     \begin{aligned}
-     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})=
+     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n})=
       \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
     \end{aligned}
 
@@ -257,18 +257,6 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
 
 The above formula is the general formula for the RPA method.
 
-In the above formula, the irreducible susceptibility is again the bubble of
-the full Green's functions,
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_m)=
-      -\frac{T}{N_L}
-      \sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}).\nonumber
-    \end{aligned}
-
 It is noted that the vertex correction may be taken into account as a means to consider
 higher order correlations. See, for example, reference [1]_ for the details.
 
@@ -320,10 +308,10 @@ The transverse bare susceptibility is
 
 .. math::
 
-   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
    = -\frac{T}{N_L} \sum_{\mathbf{k},n}
-     G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
-     G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)
+     G^{(0)}_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\epsilon_n)\,
+     G^{(0)}_{\delta\gamma,\downarrow}(\mathbf{k}, i\epsilon_n)
 
 The transverse vertex :math:`W_{+-}` is obtained by crossing the
 Hartree (Fock exchange) vertex from the longitudinal channel:
@@ -331,6 +319,10 @@ Hartree (Fock exchange) vertex from the longitudinal channel:
 .. math::
 
    W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
+
+where the crossing exchanges the two index pairs, i.e.
+:math:`\left[W^{\rm cross-spin}\right]^{\rm crossed}_{ac;bd}
+= W^{\rm cross-spin}_{bd;ac}`.
 
 The transverse vertex is built from the cross-spin and spin-flip blocks of
 the interaction tensor only. The same-spin block does not enter: a same-spin

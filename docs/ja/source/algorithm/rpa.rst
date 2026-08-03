@@ -18,7 +18,7 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
      {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
       (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
       c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
-     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
+     {\cal H}_{\rm int}&=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
       c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
 
@@ -100,7 +100,7 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
 
 .. math::
     \begin{aligned}
-     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})=
+     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n})=
       \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
     \end{aligned}
 
@@ -281,10 +281,10 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 
 .. math::
 
-   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
    = -\frac{T}{N_L} \sum_{\mathbf{k},n}
-     G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
-     G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)
+     G^{(0)}_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\epsilon_n)\,
+     G^{(0)}_{\delta\gamma,\downarrow}(\mathbf{k}, i\epsilon_n)
 
 横方向の頂点 :math:`W_{+-}` は、
 縦チャネルのハートリー（フォック交換）頂点の交差から得られます:
@@ -292,6 +292,10 @@ H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
 .. math::
 
    W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
+
+ここで crossing は2つの添字対の入れ替えを表します。すなわち
+:math:`\left[W^{\rm cross-spin}\right]^{\rm crossed}_{ac;bd}
+= W^{\rm cross-spin}_{bd;ac}` です。
 
 横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
 から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
