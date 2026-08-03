@@ -99,13 +99,9 @@ interaction term is expressed in that basis by the exact change of basis
     u_{\beta  \gamma_2', \bf{k}'}d_{\bf{k}',\gamma_2'}^{\mathstrut}.
     \end{aligned}
 
-Each bilinear carries two independent band indices.  Keeping only its
-band-diagonal part (:math:`\gamma_1=\gamma_2`) would drop the interband
-contributions and make the result depend on the choice of basis inside a
-degenerate subspace (see the discussion at the irreducible susceptibility
-below), so no such restriction is made; H-wave keeps the interaction in the
-orbital basis throughout and uses the diagonalization only to construct the
-Green's functions.
+Each bilinear carries two independent band indices.  H-wave keeps the
+interaction in the orbital basis throughout and uses the diagonalization only
+to construct the Green's functions.
 
 Here, 
 
@@ -143,17 +139,7 @@ and the irreducible susceptibility is the particle-hole bubble built from it,
     \end{aligned}
 
 so that the two band sums it contains are independent: the particle and the
-hole may sit on different bands.  Tying them to a common band would drop the
-interband particle-hole transitions, which carry most of the response away
-from :math:`{\bf q}=0`.  On a six-site two-orbital chain the density response
-is unchanged at :math:`{\bf q}=0` -- there the total density operator is
-exactly band diagonal -- but loses 29% at :math:`q=\pi/3`, 71% at
-:math:`2\pi/3`, and at the zone boundary the band-diagonal bubble is
-essentially zero (0.004 against 0.788), because the states at :math:`k` and
-:math:`k+q` are then nearly orthogonal within a band.  The restriction is
-also not basis independent inside a degenerate subspace, and for
-spin-degenerate bands it removes the spin-flip channel, breaking SU(2)
-symmetry.  No such restriction is made.
+hole may sit on different bands.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
