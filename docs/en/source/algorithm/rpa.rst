@@ -99,9 +99,7 @@ interaction term is expressed in that basis by the exact change of basis
     u_{\beta  \gamma_2', \bf{k}'}d_{\bf{k}',\gamma_2'}^{\mathstrut}.
     \end{aligned}
 
-Each bilinear carries two independent band indices.  H-wave keeps the
-interaction in the orbital basis throughout and uses the diagonalization only
-to construct the Green's functions.
+Each bilinear carries two independent band indices.
 
 Here, 
 
@@ -127,6 +125,43 @@ The full one-body Green's function is the sum of these band contributions,
       = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n}),
     \end{aligned}
 
+Why both band sums are retained
+*********************************
+
+The bubble built from the full Green's functions contains a double band sum
+with independent :math:`\gamma` and :math:`\gamma'`.  Restricting it to the
+diagonal :math:`\gamma=\gamma'` -- that is, building the response out of band
+densities alone and discarding the interband bilinears -- is exact only when
+the band label is itself a quantity conserved by :math:`{\cal H}_0`, because
+only a conservation law can forbid an interband transition.  Away from that
+case the restriction behaves as follows.
+
+* If a filled band lies well away from the Fermi level and hybridises only
+  weakly with the bands crossing it, the restriction is a controlled
+  approximation, with an error of order :math:`(v/\Delta)^2` in the
+  hybridisation :math:`v` and the level separation :math:`\Delta`.
+* For strongly hybridised orbitals at the Fermi level the interband terms are
+  comparable to the intraband ones, and the error is large.
+* For a fully gapped insulator every band is completely filled or completely
+  empty, so the intraband terms vanish identically and the whole response is
+  interband: the restriction returns zero.  A wider gap does not help, since
+  the magnitude of the response is set by the interband matrix elements rather
+  than by the gap.
+* Where bands touch, the restriction is not even well defined.  Any
+  orthonormal basis of a degenerate subspace is an admissible eigenbasis, and
+  the diagonal part depends on that arbitrary choice whereas the full sum does
+  not.
+
+Selecting a *sector*, described below, is a different operation and stays
+exact; only the band-diagonal restriction is at issue here.
+
+H-wave therefore retains both band sums.  This is also the simpler
+implementation: the band index is contracted away as soon as it appears, so
+no band ordering, no continuity condition across the Brillouin zone and no
+special handling of degeneracies is required anywhere.  The interaction is
+kept in the orbital basis throughout, and the diagonalization is used only to
+construct the Green's functions.
+
 and the irreducible susceptibility is the particle-hole bubble built from it,
 
 .. math::
@@ -140,44 +175,6 @@ and the irreducible susceptibility is the particle-hole bubble built from it,
 
 so that the two band sums it contains are independent: the particle and the
 hole may sit on different bands.
-
-.. note::
-
-   **Sectors, and why the bubble is not restricted to band-diagonal terms.**
-
-   When :math:`{\cal H}_0` conserves a quantum number -- spin, say -- the
-   Green's function is block diagonal in it,
-   :math:`G^{(0)}_{\alpha\sigma,\beta\tau}
-   =\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}`, and the bubble above
-   carries one such label per propagator line,
-
-   .. math::
-      X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
-      = -\frac{T}{N_L}\sum_{{\bf k},n}
-        G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
-        G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).
-
-   The equal labels :math:`\sigma=\sigma'` are the longitudinal (density,
-   :math:`S_z`) channel and the unequal ones the transverse channel.
-   Selecting one of them is exact -- it picks out a channel, it does not
-   approximate the bubble -- because the two do not mix; the conditions for
-   that are given in the block-diagonal section below.
-
-   Restricting the BAND index of the eigenbasis is a different operation.  It
-   coincides with selecting :math:`\sigma=\sigma'` only when the bands ARE the
-   sectors, as for a single orbital with a spin-independent
-   :math:`{\cal H}_0`, where the two bands are the two spin states.  As soon
-   as the bands are superpositions -- orbital hybridization, or any
-   spin-orbital mixing -- the discarded terms also populate the density
-   components, and the restriction becomes an uncontrolled approximation.
-   H-wave therefore never restricts the band index.
-
-   Inside a sector, on the other hand, the matrix structure has to be kept.
-   Collapsing it -- replacing :math:`G` by the scalar
-   :math:`G_{\uparrow}+G_{\downarrow}` before forming the bubble, say -- puts
-   the cross terms :math:`G_{\uparrow}G_{\downarrow}` into the density
-   response, where they do not belong; for degenerate spins the result then
-   comes out exactly twice too large.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
@@ -303,16 +300,52 @@ It is noted that the vertex correction may be taken into account as a means to c
 higher order correlations. See, for example, reference [1]_ for the details.
 
 
-Block-diagonal optimization
-*****************************
+Sector structure and block decomposition
+*****************************************
 
-When the interaction Hamiltonian has a block-diagonal structure
-(e.g., due to spin conservation or orbital decoupling),
-the RPA equation can be solved independently for each block,
-significantly reducing the computational cost.
+The condition established above -- that what licenses a decomposition is a
+conserved quantity -- is the general principle, and it is that conserved
+quantity, rather than the band index, by which H-wave organises the
+calculation.  A quantity is useful here only if it is conserved *and*
+distinguishes the bilinears: the particle number is conserved by everything
+but every particle-hole bilinear carries :math:`\Delta N=0`, so it yields a
+single block and no decomposition at all, whereas :math:`S_z` separates the
+density and spin-flip channels.  When the problem does decompose, the RPA
+equation is solved independently for each block, which also reduces the
+computational cost substantially.
 
-Which decompositions are legitimate follows from the symmetries, and two
-separate conditions have to hold.
+When :math:`{\cal H}_0` conserves such a quantity -- spin, say -- the Green's
+function is block diagonal in it,
+:math:`G^{(0)}_{\alpha\sigma,\beta\tau}
+=\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}`, and the bubble carries one
+such label per propagator line,
+
+.. math::
+   X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
+   = -\frac{T}{N_L}\sum_{{\bf k},n}
+     G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
+     G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).
+
+The equal labels :math:`\sigma=\sigma'` are the longitudinal (density,
+:math:`S_z`) channel and the unequal ones the transverse channel.  Selecting
+one of them is exact -- it picks out a channel, it does not approximate the
+bubble -- provided the two do not mix, which is what the conditions below
+decide.
+
+This is a different operation from restricting the band index.  The two
+coincide only when the bands ARE the sectors, as for a single orbital with a
+spin-independent :math:`{\cal H}_0`, where the two bands are the two spin
+states.  Sector selection stays exact when they differ; the band-diagonal
+restriction does not.
+
+Inside a sector, on the other hand, the matrix structure has to be kept.
+Collapsing it -- replacing :math:`G` by the scalar
+:math:`G_{\uparrow}+G_{\downarrow}` before forming the bubble, say -- puts
+the cross terms :math:`G_{\uparrow}G_{\downarrow}` into the density response,
+where they do not belong; for degenerate spins the result then comes out
+exactly twice too large.
+
+Two separate conditions have to hold.
 
 The bare susceptibility is block diagonal with respect to any quantity
 conserved by :math:`{\cal H}_0`.  Spin is the usual example: when
@@ -503,7 +536,7 @@ in the input TOML file. In this mode:
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
   ``Ising``, ``PairLift``, ``PairHop``) are supported.
-- Block-diagonal optimization is applied automatically when possible.
+- The block decomposition is applied automatically when possible.
 - The ``squashed`` calculation scheme is also supported for spin-orbital systems.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital
   count** (= 2 × the number of physical orbitals = Wannier90 ``num_wann``), the same
