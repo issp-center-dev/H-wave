@@ -125,56 +125,10 @@ The full one-body Green's function is the sum of these band contributions,
       = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n}),
     \end{aligned}
 
-Why both band sums are retained
-*********************************
-
-The bubble built from the full Green's functions contains a double band sum
-with independent :math:`\gamma` and :math:`\gamma'`.  Restricting it to the
-diagonal :math:`\gamma=\gamma'` -- that is, building the response out of band
-densities alone and discarding the interband bilinears -- is exact only when
-the band label is itself a quantity conserved by :math:`{\cal H}_0`, because
-only a conservation law can forbid an interband transition.  Away from that
-case the restriction behaves as follows.
-
-* If a filled band lies well away from the Fermi level and hybridises only
-  weakly with the bands crossing it, the restriction is a controlled
-  approximation, with an error of order :math:`(v/\Delta)^2` in the
-  hybridisation :math:`v` and the level separation :math:`\Delta`.
-* For strongly hybridised orbitals at the Fermi level the interband terms are
-  comparable to the intraband ones, and the error is large.
-* For a fully gapped insulator every band is completely filled or completely
-  empty, so the intraband terms vanish identically and the whole response is
-  interband: the restriction returns zero.  A wider gap does not help, since
-  the magnitude of the response is set by the interband matrix elements rather
-  than by the gap.
-* Where bands touch, the restriction is not even well defined.  Any
-  orthonormal basis of a degenerate subspace is an admissible eigenbasis, and
-  the diagonal part depends on that arbitrary choice whereas the full sum does
-  not.
-
-Selecting a *sector*, described below, is a different operation and stays
-exact; only the band-diagonal restriction is at issue here.
-
-H-wave therefore retains both band sums.  This is also the simpler
-implementation: the band index is contracted away as soon as it appears, so
-no band ordering, no continuity condition across the Brillouin zone and no
-special handling of degeneracies is required anywhere.  The interaction is
-kept in the orbital basis throughout, and the diagonalization is used only to
-construct the Green's functions.
-
-and the irreducible susceptibility is the particle-hole bubble built from it,
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)=
-      -\frac{T}{N_L}
-      \sum_{{\bf k},n}
-      G^{(0)\alpha\beta}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta'\alpha'}({\bf k}, i\epsilon_{n}),
-    \end{aligned}
-
-so that the two band sums it contains are independent: the particle and the
-hole may sit on different bands.
+H-wave retains both sums.  The band index is contracted away as soon as it
+appears, so the interaction is kept in the orbital basis throughout and the
+diagonalization is used only to construct the Green's functions; no band
+ordering, and no special handling of degeneracies, is required anywhere.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
@@ -331,12 +285,6 @@ The equal labels :math:`\sigma=\sigma'` are the longitudinal (density,
 one of them is exact -- it picks out a channel, it does not approximate the
 bubble -- provided the two do not mix, which is what the conditions below
 decide.
-
-This is a different operation from restricting the band index.  The two
-coincide only when the bands ARE the sectors, as for a single orbital with a
-spin-independent :math:`{\cal H}_0`, where the two bands are the two spin
-states.  Sector selection stays exact when they differ; the band-diagonal
-restriction does not.
 
 Inside a sector, on the other hand, the matrix structure has to be kept.
 Collapsing it -- replacing :math:`G` by the scalar
