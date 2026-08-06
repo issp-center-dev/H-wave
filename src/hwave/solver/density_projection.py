@@ -1,11 +1,16 @@
 """Density-diagonal projections of the rank-4 interaction tensor.
 
 The ``reduced`` and ``squashed`` calculation schemes solve with the
-density-density diagonal of the interaction: exchange-, spin-flip- and
-pair-type off-diagonal vertices are dropped (a deliberate, documented
-approximation -- the callers warn about it). The two solvers used to
-carry their own copies of these einsum reductions; per issue #107 the
-projections live here once.
+density-density diagonal of the interaction. Where the particle-hole
+vertex is itself density diagonal this is exact, not an approximation:
+the RPA series closes on precisely those slots, so the projection
+discards nothing. Interactions with no density-diagonal content --
+Exchange and PairHop -- are *refused* by the callers, with a pointer to
+``calc_scheme='general'``, rather than being silently dropped, and the
+auto selection picks ``general`` when they are present; PairLift is
+accepted with a warning, its particle-hole vertex being zero in every
+scheme. The two solvers used to carry their own copies of these einsum
+reductions; per issue #107 the projections live here once.
 
 Layout conventions:
 
