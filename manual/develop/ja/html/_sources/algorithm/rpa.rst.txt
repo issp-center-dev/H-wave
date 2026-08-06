@@ -15,12 +15,19 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 .. math::
     \begin{aligned}
      {\cal H}&={\cal H}_0+{\cal H}_{\rm int},\\
-     {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
-      (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
-      c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
-     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}\left(
-      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}+\mbox{H.c.}\right)
+     {\cal H}_0&=\sum_{i\alpha;j\beta}
+      t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
+      c_{j\beta}^{\mathstrut},\\
+     {\cal H}_{\rm int}&=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
+      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
+
+表に与える :math:`W` は2つの双一次形式の入れ替えについて完全です（例えばオンサイト
+クーロン項は up-down と down-up の両方のスロットを占めます）。したがってサイトと
+4つの添字にわたる制限のない和は各ペア順序を2度含むことになり、 :math:`1/2` は
+それを打ち消します。トランスファーの表も同様にエルミート閉じていること、すなわち
+:math:`t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}` を満たすことが要求されます。
+そのため :math:`{\cal H}_0` に別途エルミート共役項は付きません。
 
 ここで、以下のフーリエ変換
 
@@ -58,8 +65,8 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}
-     (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
-     c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
+     \varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
+     c_{{\bf k}\beta}^{\mathstrut} \nonumber\\
     &+\frac{1}{2N_L}\sum_{{\bf k} {\bf k}'{\bf q}}\sum_{\alpha\beta\alpha'\beta'}
      W^{\beta\beta',\alpha\alpha'}_{{\bf q}}
      c_{{\bf k}+{\bf q},\alpha}^{\dagger}
@@ -69,18 +76,21 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。
     \end{aligned}
 
 RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密度揺らぎの効果を考慮します。
-具体的には、 :math:`{\cal H}_0` が対角化されるような軌道・スピンの混成基底を用いて、相互作用の項を以下のように近似します。
+具体的には、 :math:`{\cal H}_0` が対角化されるような軌道・スピンの混成基底を用いると、相互作用の項は厳密な基底変換により以下のように書けます。
 
 .. math::
     \begin{aligned}
     &W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
     c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
-    &\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
-    (u_{\alpha \gamma, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma}^{\dagger}
-    u_{\alpha' \gamma, \bf{k}} d_{\bf{k},\gamma}^{\mathstrut})
-    (u_{\beta' \gamma', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma'}^{\dagger}
-    u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}) .
+    &= W^{\beta\beta',\alpha\alpha'}_{\bf{q}}
+    \sum_{\gamma_1 \gamma_2 \gamma_1' \gamma_2'}
+    (u_{\alpha \gamma_1, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma_1}^{\dagger}
+    u_{\alpha' \gamma_2, \bf{k}} d_{\bf{k},\gamma_2}^{\mathstrut})
+    (u_{\beta' \gamma_1', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma_1'}^{\dagger}
+    u_{\beta  \gamma_2', \bf{k}'}d_{\bf{k}',\gamma_2'}^{\mathstrut}) .
     \end{aligned}
+
+各双一次形式は2つの独立なバンド添字を持ちます。
 
 ここで、
 
@@ -94,20 +104,35 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
 
 .. math::
     \begin{aligned}
-     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})=
+     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n})=
       \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
     \end{aligned}
 
-既約感受率は対角化された成分で閉じる必要があるため、以下のように与えられます。
+完全な一体 Green 関数はこれらのバンド寄与の和
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta'\alpha'}_{\gamma}({\bf k}, i\epsilon_{n}),
+     G^{(0)\alpha\beta}({\bf k}, i\epsilon_{n})
+      = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n}),
     \end{aligned}
+
+であり、既約感受率はこれから作られる粒子・正孔バブル
+
+.. math::
+    \begin{aligned}
+     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)=
+      -\frac{T}{N_L}
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta'\alpha'}({\bf k}, i\epsilon_{n}),
+    \end{aligned}
+
+として与えられます。ここに含まれる2つのバンド和は独立で、バブルの粒子と正孔は
+異なるバンドに乗ることができます。
+
+H-wave は両方の和を保持します。バンド添字は現れた直後に和を取って消えるため、
+相互作用は一貫して軌道基底で扱われ、対角化は Green 関数の構成にのみ用いられます。
+バンド順序の追跡も、縮退の特別扱いも、どこにも必要ありません。
 
 この既約感受率を用いることで、RPAで得られる感受率が以下のように得られます。
 
@@ -174,7 +199,7 @@ RPAでは :math:`{\cal H}_0` に対して、電子間相互作用を介した密
    保存される ``chiq``/``chi0q`` と相互作用ファイルの規約は、それぞれの節に
    記載のとおりで変わりません。
 
-上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
+上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)` )が一番大きなサイズの多次元配列となり、そのサイズは :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}` で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
 
 .. math::
@@ -186,11 +211,11 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_m)=
       -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}),
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}),
     \end{aligned}
 
 となり、 :math:`N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}` にサイズを抑えることができます。このとき、RPAで得られる感受率は
@@ -198,8 +223,12 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 .. math::
     \begin{aligned}
     X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&=
-    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
+    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)
+    - \sum_{\alpha_2,\alpha_3}
+      \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
+    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
+    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
     \end{aligned}
 
 となります。 :math:`\alpha\sigma\sigma'` を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
@@ -212,53 +241,67 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
 
 と書けることがわかります。以上が一般的なRPAの定式化になります。
 
-上述の近似では既約感受率の計算を
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
-    \end{aligned}
-
-として行っています。この場合、対角化した成分の和が必要となり、計算コストが多くかかってしまいます。
-そのため、先行研究の多くは一体グリーン関数を
-
-.. math::
-    \begin{aligned}
-     G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n})
-    \end{aligned}
-
-のように近似し、既約感受率を
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n})\nonumber
-    \end{aligned}
-
-として計算して高速化する場合が多いです。
-この既約感受率を用いた計算では、対角化成分が混在してしまう状況で近似精度が悪くなりますが、
-バンド交差による :math:`\gamma` への技術的な対応を行う必要がないというメリットもあります。
-先行研究との比較をするためにも、H-Waveではこの手法を採用しています(グリーン関数と既約感受率を正しく取り扱うモードについても実装する予定です)。
 なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 [1]_ を参考にしてください。
 
-ブロック対角化最適化
+セクター構造とブロック分解
 *****************************
 
-相互作用ハミルトニアンがブロック対角構造を持つ場合
-（例：スピン保存や軌道間結合がない場合）、
-RPA方程式を各ブロックで独立に解くことができ、
-計算コストを大幅に削減できます。
+上で述べた条件、すなわち分解を正当化するのは保存量であるという原理が一般形で
+あり、H-wave が計算を整理する際に用いるのはバンド添字ではなくこの保存量です。
+ここで有用な量とは、保存されており **かつ** 双一次形式を区別するものです。
+粒子数はあらゆる場合に保存されますが、粒子・正孔双一次形式はどれも
+:math:`\Delta N=0` を運ぶためブロックが1つになり、分解になりません。一方
+:math:`S_z` は密度チャネルとスピン反転チャネルを分離します。分解が成り立つ場合、
+RPA方程式を各ブロックで独立に解くことができ、計算コストも大幅に削減できます。
 
-ブロック構造は相互作用行列の接続性を解析して自動検出されます:
+:math:`{\cal H}_0` がそのような量（例えばスピン）を保存する場合、Green 関数は
+それについてブロック対角になり
+:math:`G^{(0)}_{\alpha\sigma,\beta\tau}
+=\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}` と書けます。このとき
+バブルは、2本の伝播関数それぞれにセクターのラベルを持ちます。
 
-1. 全k点にわたって相互作用ハミルトニアンの絶対値を合計し、接続パターン行列を得る。
+.. math::
+   X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
+   = -\frac{T}{N_L}\sum_{{\bf k},n}
+     G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
+     G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).
+
+ラベルが等しい :math:`\sigma=\sigma'` は縦型（密度・ :math:`S_z` ）チャネル、
+異なる場合は横型チャネルです。どちらか一方を選ぶことは **厳密** です。
+バブルを近似しているのではなくチャネルを取り出しているだけであり、両者が
+混ざらない限り成り立ちます。その条件が以下の2つです。
+
+一方、セクターの **内部** では行列構造を保つ必要があります。これを潰すこと、
+例えばバブルを作る前に :math:`G` をスカラー
+:math:`G_{\uparrow}+G_{\downarrow}` に置き換えることをすると、交差項
+:math:`G_{\uparrow}G_{\downarrow}` が本来属さない密度応答に混入します。
+スピンが縮退していれば結果はちょうど2倍になります。
+
+どの分解が正当かは対称性から決まり、2つの条件がともに満たされる必要があります。
+
+裸の感受率は、 :math:`{\cal H}_0` が保存する量についてブロック対角になります。
+典型例はスピンです。 :math:`[{\cal H}_0, S_z]=0` なら Green 関数はスピンについて
+ブロック対角になり、バブルはある粒子・正孔双一次形式を、逆向きの :math:`S_z`
+変化を持つものとしか結びません。したがって密度（ :math:`\Delta S_z=0` ）と
+スピン反転（ :math:`\Delta S_z=\pm 1` ）のチャネルは厳密に分離され、これが縦型
+（ring）と横型（ladder）を別々に解ける根拠になります。感受率が :math:`{\bf q}`
+について対角になるのと同じ機構で、 :math:`{\cal H}_0` の対称性が異なるセクター間の
+結合を禁じています。
+
+この分離は :math:`X^{(0)}` だけの性質であり、RPA の応答がそれを受け継ぐのは
+**相互作用** が同じ量を保存する場合に限られます。 :math:`X^{(0)}` がブロック
+対角でも :math:`\hat{W}` がそうでなければ、積 :math:`\hat{X}^{(0)}\hat{W}` は
+ブロック対角ではなく、逆行列もそうではありません。相互作用の2次以降でセクターが
+混ざります。2つの条件のいずれかが破れる状況として、スピン軌道相互作用は
+:math:`S_z` を保存させなくするため :math:`X^{(0)}` 自体にセクター混合要素を
+生じさせ、 ``PairLift`` はスピン上昇（あるいは下降）双一次形式の積であるため
+:math:`{\cal H}_0` が保存していても相互作用の側が :math:`S_z` を保存しません。
+
+以上より、ブロック構造は相互作用のみからではなく、相互作用行列と裸の感受率の
+**両方** の接続性から検出されます。
+
+1. 全k点にわたって相互作用ハミルトニアンの絶対値を、また運動量と振動数にわたって
+   裸の感受率の絶対値を合計し、接続パターン行列を得る。
 2. 非ゼロの非対角要素（閾値: :math:`10^{-12}` ）から隣接グラフを構築する。
 3. ラベル伝播（union-findアルゴリズム）により連結成分を求める。
 
@@ -276,24 +319,39 @@ RPA方程式を各ブロックで独立に解くことができ、
 
 標準的な（リングダイアグラム）RPA感受率に加えて、
 H-waveは横感受率 :math:`\chi_{+-}(\mathbf{q})` を計算できます。
-これはスピン反転相関
-:math:`\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle` を記述します。
+これはスピン反転相関を記述します。 :math:`S^{\pm}` の記法は曖昧さを伴うため、
+双一次形式そのもので書くと、格納される配列は
+
+.. math::
+
+   \chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
+   \Big\langle \big(c^{\dagger}_{\gamma\downarrow}
+   c^{\mathstrut}_{\alpha\uparrow}\big)(-\mathbf{q}) \;;\;
+   \big(c^{\dagger}_{\beta\uparrow}
+   c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle
+
+であり、添字対の規約は縦感受率と同じです。
 
 横方向の裸感受率は
 
 .. math::
 
-   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
    = -\frac{T}{N_L} \sum_{\mathbf{k},n}
-     G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
-     G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)
+     G^{(0)}_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\epsilon_{n})\,
+     G^{(0)}_{\delta\gamma,\downarrow}(\mathbf{k}, i\epsilon_{n})
 
 横方向の頂点 :math:`W_{+-}` は、
 縦チャネルのハートリー（フォック交換）頂点の交差から得られます:
 
 .. math::
 
-   W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
+   W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
+
+このバーテックスの組み立てに入る相互作用テンソルは **ハミルトニアン規約** の
+ままです。ring の求解が適用する添字対の変換（前節の注記を参照）をここに適用しては
+いけません。上の crossing がテンソル自身を組み替えるためです。厳密な置換は
+``_assemble_transverse_vertex`` の実装が定義します。
 
 横方向の頂点は、相互作用テンソルの異スピンブロックとスピン反転ブロックのみ
 から構成されます。同スピンブロックは寄与しません。同スピン相互作用は横方向
@@ -374,8 +432,10 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 スピン軌道モード
 *****************************
 
-H-waveはスピンと軌道のインデックスが
-ブロック分離ではなくインターリーブされるスピン軌道モードをサポートしています。
+H-wave はスピン軌道モードをサポートしています。このモードでは入力ファイルの
+スピン・軌道インデックスがブロック分離ではなくインターリーブされた形で与えられます。
+ソルバーは読み込み時に内部のスピンブロック順へ並べ替えており、保存される感受率も
+その順序です（ ``index_convention = "spin_block"`` として記録されます）。
 
 通常モードでは、複合インデックスは :math:`i = s \cdot n_{\rm orb} + a`
 （スピンブロック優先）であり、
@@ -391,7 +451,7 @@ H-waveはスピンと軌道のインデックスが
   完全な :math:`2n_{\rm orb} \times 2n_{\rm orb}` 空間で構成されます。
 - 全ての相互作用型（ ``CoulombIntra`` 、 ``CoulombInter`` 、 ``Hund`` 、 ``Exchange`` 、
   ``Ising`` 、 ``PairLift`` 、 ``PairHop`` ）がサポートされます。
-- 可能な場合、ブロック対角化最適化が自動的に適用されます。
+- 可能な場合、ブロック分解が自動的に適用されます。
 - ``squashed`` 計算スキームもスピン軌道系で利用可能です。
 - 幾何情報ファイル（``geom.dat``）の ``Norbit`` はスピン軌道の総数
   （= 物理軌道数 × 2 = Wannier90 の ``num_wann``）を表し、UHFk と同じ規約です。
