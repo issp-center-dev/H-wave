@@ -19,12 +19,20 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:
 .. math::
     \begin{aligned}
      {\cal H}&={\cal H}_0+{\cal H}_{\rm int},\\
-     {\cal H}_0&=\sum_{\langle i\alpha;j\beta \rangle}
-      (t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
-      c_{j\beta}^{\mathstrut}+\mbox{H.c.}),\\
-     {\cal H}_{\rm int}&=\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}\left(
-      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}+\mbox{H.c.}\right)
+     {\cal H}_0&=\sum_{i\alpha;j\beta}
+      t_{ij}^{\alpha \beta}c_{i\alpha}^{\dagger}
+      c_{j\beta}^{\mathstrut},\\
+     {\cal H}_{\rm int}&=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
+      c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
+
+The tabulated :math:`W` is complete under the exchange of its two bilinears --
+an on-site Coulomb term, for instance, occupies both the up-down and the
+down-up slots -- so the unrestricted sum over sites and over all four indices
+contains each pair ordering twice, which is what the :math:`1/2` removes.  The
+transfer table is likewise required to be Hermitian-closed, i.e. to satisfy
+:math:`t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}`, so :math:`{\cal H}_0`
+carries no separate Hermitian conjugate.
 
 Applying the Fourier transformation
 
@@ -64,8 +72,8 @@ the Hamiltonian is rewritten in the following form
 .. math::
     \begin{aligned}
      {\cal H}&=\sum_{{\bf k}\alpha\beta}
-     (\varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
-     c_{{\bf k}\beta}^{\mathstrut}+\mbox{H.c.}) \nonumber\\
+     \varepsilon_{\alpha\beta}({\bf k})c_{{\bf k}\alpha}^{\dagger}
+     c_{{\bf k}\beta}^{\mathstrut} \nonumber\\
     &+\frac{1}{2N_L}\sum_{{\bf k} {\bf k}'{\bf q}}\sum_{\alpha\beta\alpha'\beta'}
      W^{\beta\beta',\alpha\alpha'}_{{\bf q}}
      c_{{\bf k}+{\bf q},\alpha}^{\dagger}
@@ -76,19 +84,22 @@ the Hamiltonian is rewritten in the following form
 
 In the random phase approximation, the density fluctuation by the effect of electron correlation
 is detected with respect to :math:`{\cal H}_0`.
-The scattering by the interaction must therefore be considered on the basis
-where :math:`{\cal H}_0` is diagonalize, and thus the interaction term is approximated as
+The one-body part is diagonalized to build the Green's functions, and the
+interaction term is expressed in that basis by the exact change of basis
 
 .. math::
     \begin{aligned}
     &W^{\beta\beta',\alpha\alpha'}_{\bf{q}}c_{\bf{k}+\bf{q},\alpha}^{\dagger}c_{\bf{k},\alpha'}^{\mathstrut}
     c_{\bf{k}'-\bf{q},\beta'}^{\dagger} c_{\bf{k}',\beta}^{\mathstrut}\nonumber\\
-    &\sim W^{\beta\beta',\alpha\alpha'}_{\bf{q}} \sum_{\gamma, \gamma'}
-    u_{\alpha \gamma, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma}^{\dagger}
-    u_{\alpha' \gamma, \bf{k}} d_{\bf{k},\gamma}^{\mathstrut}
-    u_{\beta' \gamma', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma'}^{\dagger}
-    u_{\beta  \gamma', \bf{k}'}d_{\bf{k}',\gamma'}^{\mathstrut}.
+    &= W^{\beta\beta',\alpha\alpha'}_{\bf{q}}
+    \sum_{\gamma_1 \gamma_2 \gamma_1' \gamma_2'}
+    u_{\alpha \gamma_1, \bf{k}+\bf{q}}^* d_{\bf{k}+\bf{q},\gamma_1}^{\dagger}
+    u_{\alpha' \gamma_2, \bf{k}} d_{\bf{k},\gamma_2}^{\mathstrut}
+    u_{\beta' \gamma_1', \bf{k}'-\bf{q}}^* d_{\bf{k}'-\bf{q},\gamma_1'}^{\dagger}
+    u_{\beta  \gamma_2', \bf{k}'}d_{\bf{k}',\gamma_2'}^{\mathstrut}.
     \end{aligned}
+
+Each bilinear carries two independent band indices.
 
 Here, 
 
@@ -102,21 +113,22 @@ Then, the irreducible one-body Green's function is written as
 
 .. math::
     \begin{aligned}
-     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\omega_{n})=
+     G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n})=
       \frac{u^{\alpha\gamma}({\bf k})u^{*\beta\gamma}({\bf k})}{i\epsilon_{n}-\xi^{\gamma}({\bf k})+\mu}.
     \end{aligned}
 
-The irreducible susceptibility is given in the following form, as it must be closed
-within the diagnoalized elements:
+The full one-body Green's function is the sum of these band contributions,
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta'\alpha'}_{\gamma}({\bf k}, i\epsilon_{n}),
+     G^{(0)\alpha\beta}({\bf k}, i\epsilon_{n})
+      = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\gamma}({\bf k}, i\epsilon_{n}),
     \end{aligned}
+
+H-wave retains both sums.  The band index is contracted away as soon as it
+appears, so the interaction is kept in the orbital basis throughout and the
+diagonalization is used only to construct the Green's functions; no band
+ordering, and no special handling of degeneracies, is required anywhere.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
@@ -190,7 +202,7 @@ in the matrix form. Then finally it leads to the expression:
 
 In the above formula, orbitals and spins were treated as unified generalised orbitals.
 Of the arrays needed to perform the calculations,
-the susceptibility ( :math:`X^{(0)\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)`, :math:`X^{\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_n)`) is the largest multidimensional array,
+the susceptibility ( :math:`X^{(0)\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_m)`, :math:`X^{\alpha\alpha^\prime, \beta\beta^\prime}({\bf q},i\omega_m)`) is the largest multidimensional array,
 given by :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}`, where the memory cost and computational complexity increase as the size increases.
 As explained below, the size of the multidimensional array of susceptibilities can be reduced by separating orbits and spins:
 for the two-body interactions handled in H-wave's RPA mode, separating orbits and spins results in
@@ -201,16 +213,16 @@ for the two-body interactions handled in H-wave's RPA mode, separating orbits an
     c_{\bf{k}'-\bf{q},\beta\sigma_1'}^{\dagger} c_{\bf{k}',\beta\sigma_1}^{\mathstrut}.
     \end{aligned}
 
-Since the scattering is on the same diagonalized general orbital,
-the irreducible susceptibility becomes
+Since the scattering keeps the orbital index, the irreducible
+susceptibility becomes
 
 .. math::
     \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
+     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_m)=
       -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n}).
+      \sum_{{\bf k},n}
+      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
+      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}).
     \end{aligned}
 
 The array size can be reduced to :math:`N_{\rm orb}^2 N_{\rm spin}^4 N_k N_{\omega}`.
@@ -219,8 +231,12 @@ Then susceptibility matrix by RPA is obtained as follows:
 .. math::
     \begin{aligned}
     X^{\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)&=
-    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q) - \sum_{\alpha_1'\beta_1'}
-    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q) W^{\alpha_2, \alpha_3}_{\sigma_2\sigma_2', \sigma_3\sigma_3'}({\bf q})X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
+    X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)
+    - \sum_{\alpha_2,\alpha_3}
+      \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
+    X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
+    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
     \end{aligned}
 
 If :math:`\alpha\sigma\sigma'` is regarded as a single index,
@@ -234,57 +250,80 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
 
 The above formula is the general formula for the RPA method.
 
-In the above formula, the calculation of the irreducible susceptibility is performed as follows:
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{\gamma=1}^{n_{\rm orb}}\sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1', \gamma}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma', \gamma}({\bf k}, i\epsilon_{n})\nonumber
-    \end{aligned}
-
-In this case, the sum of the diagonalized components is required, which is computationally more expensive.
-In many previous studies, the one body Green's function is calculated as follows:
-
-.. math::
-    \begin{aligned}
-     G^{(0)\alpha\beta}_{\sigma\sigma'}({\bf k}, i\omega_{n}) = \sum_{\gamma=1}^{n_{\rm orb}} G^{(0)\alpha\beta}_{\sigma\sigma', \gamma}({\bf k}, i\omega_{n}).
-    \end{aligned}
-
-The irreducible susceptibility is calculated as follows:
-
-.. math::
-    \begin{aligned}
-     X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}({\bf q},i\omega_n)=
-      -\frac{T}{N_L}
-      \sum_{{\bf k},n}
-      G^{(0)\alpha\beta}_{\sigma\sigma_1'}({\bf k}+{\bf q}, i\omega_m+ i\epsilon_{n})
-      G^{(0)\beta\alpha}_{\sigma_1\sigma'}({\bf k}, i\epsilon_{n}).\nonumber
-    \end{aligned}
-
-Though this method may lead to poor accuracy when the diagonalized components are mixed,
-there is an advantage that there is no need for technical consideration for :math:`\gamma` due to band intersections.
-In order to make comparisons with previous studies,
-H-Wave has adopted this approach (a mode for correctly handling the Green's functions and susceptibilities will also be implemented).
 It is noted that the vertex correction may be taken into account as a means to consider
 higher order correlations. See, for example, reference [1]_ for the details.
 
 
-Block-diagonal optimization
-*****************************
+Sector structure and block decomposition
+*****************************************
 
-When the interaction Hamiltonian has a block-diagonal structure
-(e.g., due to spin conservation or orbital decoupling),
-the RPA equation can be solved independently for each block,
-significantly reducing the computational cost.
+The condition established above -- that what licenses a decomposition is a
+conserved quantity -- is the general principle, and it is that conserved
+quantity, rather than the band index, by which H-wave organises the
+calculation.  A quantity is useful here only if it is conserved *and*
+distinguishes the bilinears: the particle number is conserved by everything
+but every particle-hole bilinear carries :math:`\Delta N=0`, so it yields a
+single block and no decomposition at all, whereas :math:`S_z` separates the
+density and spin-flip channels.  When the problem does decompose, the RPA
+equation is solved independently for each block, which also reduces the
+computational cost substantially.
 
-The block structure is detected automatically by analyzing
-the connectivity of the interaction matrix:
+When :math:`{\cal H}_0` conserves such a quantity -- spin, say -- the Green's
+function is block diagonal in it,
+:math:`G^{(0)}_{\alpha\sigma,\beta\tau}
+=\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}`, and the bubble carries one
+such label per propagator line,
 
-1. Sum the absolute values of the interaction Hamiltonian over all k-points
-   to obtain a connectivity pattern matrix.
+.. math::
+   X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
+   = -\frac{T}{N_L}\sum_{{\bf k},n}
+     G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
+     G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).
+
+The equal labels :math:`\sigma=\sigma'` are the longitudinal (density,
+:math:`S_z`) channel and the unequal ones the transverse channel.  Selecting
+one of them is exact -- it picks out a channel, it does not approximate the
+bubble -- provided the two do not mix, which is what the conditions below
+decide.
+
+Inside a sector, on the other hand, the matrix structure has to be kept.
+Collapsing it -- replacing :math:`G` by the scalar
+:math:`G_{\uparrow}+G_{\downarrow}` before forming the bubble, say -- puts
+the cross terms :math:`G_{\uparrow}G_{\downarrow}` into the density response,
+where they do not belong; for degenerate spins the result then comes out
+exactly twice too large.
+
+Two separate conditions have to hold.
+
+The bare susceptibility is block diagonal with respect to any quantity
+conserved by :math:`{\cal H}_0`.  Spin is the usual example: when
+:math:`[{\cal H}_0, S_z]=0` the Green's function is spin block diagonal, and
+the bubble then connects a particle-hole bilinear only to one carrying the
+opposite change of :math:`S_z`.  The density (:math:`\Delta S_z=0`) and
+spin-flip (:math:`\Delta S_z=\pm 1`) channels are therefore strictly
+decoupled, which is what allows the longitudinal (ring) and transverse
+(ladder) channels to be solved separately.  This is the same mechanism that
+makes the susceptibility diagonal in :math:`{\bf q}`: a symmetry of
+:math:`{\cal H}_0` forbids the response from connecting different sectors.
+
+That decoupling is a property of :math:`X^{(0)}` alone, and the RPA response
+inherits it only if the INTERACTION respects the same quantity.  If
+:math:`X^{(0)}` is block diagonal but :math:`\hat{W}` is not, the product
+:math:`\hat{X}^{(0)}\hat{W}` is not, so neither is the inverse: the sectors
+mix from second order in the interaction onwards.  Two situations break one
+of the two conditions -- spin-orbit coupling makes :math:`S_z` non-conserving
+and puts sector-mixing elements into :math:`X^{(0)}` itself, while
+``PairLift`` is a product of two spin-raising (or two spin-lowering)
+bilinears and so does not conserve :math:`S_z` even when
+:math:`{\cal H}_0` does.
+
+Accordingly the block structure is detected from the COMBINED connectivity of
+the interaction matrix and the bare susceptibility, not from the interaction
+alone.
+
+1. Sum the absolute values of the interaction Hamiltonian over all k-points,
+   and those of the bare susceptibility over momentum and frequency, to
+   obtain a connectivity pattern matrix.
 2. Build an adjacency graph from non-zero off-diagonal entries (threshold: :math:`10^{-12}`).
 3. Find connected components via label propagation (union-find algorithm).
 
@@ -301,24 +340,41 @@ Transverse susceptibility (ladder diagram)
 
 In addition to the standard (ring diagram) RPA susceptibility,
 H-wave can compute the transverse susceptibility
-:math:`\chi_{+-}(\mathbf{q})`, which describes spin-flip correlations
-:math:`\langle S^+(\mathbf{q}) S^-(-\mathbf{q}) \rangle`.
+:math:`\chi_{+-}(\mathbf{q})`, which describes spin-flip correlations.
+Writing it with the bilinears themselves avoids the ambiguity of the
+:math:`S^{\pm}` labels: the stored array holds
+
+.. math::
+
+   \chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
+   \Big\langle \big(c^{\dagger}_{\gamma\downarrow}
+   c^{\mathstrut}_{\alpha\uparrow}\big)(-\mathbf{q}) \;;\;
+   \big(c^{\dagger}_{\beta\uparrow}
+   c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle ,
+
+with the same index-pair convention as the longitudinal susceptibility.
 
 The transverse bare susceptibility is
 
 .. math::
 
-   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_n)
+   X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
    = -\frac{T}{N_L} \sum_{\mathbf{k},n}
-     G_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\varepsilon_n)\,
-     G_{\delta\gamma,\downarrow}(\mathbf{k}, i\varepsilon_n)
+     G^{(0)}_{\alpha\beta,\uparrow}(\mathbf{k}+\mathbf{q}, i\omega_m + i\epsilon_{n})\,
+     G^{(0)}_{\delta\gamma,\downarrow}(\mathbf{k}, i\epsilon_{n})
 
 The transverse vertex :math:`W_{+-}` is obtained by crossing the
 Hartree (Fock exchange) vertex from the longitudinal channel:
 
 .. math::
 
-   W_{+-} = W_{\uparrow\uparrow\uparrow\uparrow} - W_{\downarrow\downarrow\uparrow\uparrow}^{\rm crossed}
+   W_{+-} = W^{\rm spin-flip} - \left[W^{\rm cross-spin}\right]^{\rm crossed}
+
+The interaction tensor enters this assembly in the HAMILTONIAN convention:
+the index-pair conversion the ring solve applies (see the note in the
+previous section) must NOT be applied here, because the crossing above
+re-pairs the tensor itself.  The exact permutation is the one implemented in
+``_assemble_transverse_vertex``.
 
 The transverse vertex is built from the cross-spin and spin-flip blocks of
 the interaction tensor only. The same-spin block does not enter: a same-spin
@@ -409,8 +465,11 @@ in the input TOML file. This requires the ``general`` calculation scheme
 Spin-orbital mode
 *****************************
 
-H-wave supports a spin-orbital mode where spin and orbital indices
-are interleaved rather than block-separated.
+H-wave supports a spin-orbital mode, in which the input files index spin
+and orbital in interleaved rather than block-separated form.  The solver
+remaps that input to its internal spin-block order, which is also the
+order the stored susceptibilities carry (they are marked
+``index_convention = "spin_block"``).
 
 In the normal mode, the combined index is :math:`i = s \cdot n_{\rm orb} + a`
 (spin-block first), where :math:`s = 0, 1` is the spin index and
@@ -425,7 +484,7 @@ in the input TOML file. In this mode:
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
   ``Ising``, ``PairLift``, ``PairHop``) are supported.
-- Block-diagonal optimization is applied automatically when possible.
+- The block decomposition is applied automatically when possible.
 - The ``squashed`` calculation scheme is also supported for spin-orbital systems.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital
   count** (= 2 × the number of physical orbitals = Wannier90 ``num_wann``), the same
