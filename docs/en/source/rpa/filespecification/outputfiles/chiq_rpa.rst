@@ -19,7 +19,7 @@ The file contains several arrays bound to the following keys:
 
 - ``momentum_convention``:
 
-  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (issue #133): the
+  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (as of version 2.0): the
   momentum labels follow :math:`M(k) = \sum_R M(R) e^{+ikR}`. Loaders
   reject files recording a different value; files written before this
   field existed are accepted only when their content is elementwise even

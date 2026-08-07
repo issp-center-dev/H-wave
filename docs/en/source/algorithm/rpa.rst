@@ -26,13 +26,14 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:
       c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
     \end{aligned}
 
-The tabulated :math:`W` is complete under the exchange of its two bilinears --
-an on-site Coulomb term, for instance, occupies both the up-down and the
-down-up slots -- so the unrestricted sum over sites and over all four indices
-contains each pair ordering twice, which is what the :math:`1/2` removes.  The
-transfer table is likewise required to be Hermitian-closed, i.e. to satisfy
-:math:`t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}`, so :math:`{\cal H}_0`
-carries no separate Hermitian conjugate.
+The input table lists each interaction in both of its orderings: an on-site
+Coulomb term, for instance, fills the up-down slot and the down-up slot alike.
+Since the sum above runs over all four indices without restriction, it counts
+every such term twice, and the :math:`1/2` cancels that.  The transfer table is
+given in the same way, satisfying
+:math:`t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}`; both directions being
+present already, no separate Hermitian conjugate is added to
+:math:`{\cal H}_0`.
 
 Applying the Fourier transformation
 
@@ -47,14 +48,14 @@ the Hamiltonian is rewritten in the following form
 
 .. note::
 
-   This :math:`e^{+i\bf{k}\cdot\bf{r}}` convention (the Wannier90-style
-   sign, shared with UHFk) is what every real-space-coefficient build
-   (:math:`R \to k/q`) of the RPA module follows since issue #133:
+   Every real-space-coefficient build (:math:`R \to k/q`) of the RPA
+   module follows this :math:`e^{+i\bf{k}\cdot\bf{r}}` convention (the
+   Wannier90-style sign, shared with UHFk):
    :math:`\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
    e^{+i {\bf k}\cdot{\bf R}}` and :math:`W({\bf q}) = \sum_{\bf R}
    W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}` (the convolution transforms
    inside the susceptibility machinery are self-inverse pairs and are not
-   affected). Before that fix the non-spin-orbital path used the opposite
+   affected). In 1.0.x the non-spin-orbital path used the opposite
    sign throughout -- a self-consistent global :math:`{\bf k} \to
    -{\bf k}` relabeling, so its stored ``chi0q``/``chiq`` carried negated
    momentum labels whenever the tensor is not elementwise even under
@@ -127,8 +128,7 @@ The full one-body Green's function is the sum of these band contributions,
 
 H-wave retains both sums.  The band index is contracted away as soon as it
 appears, so the interaction is kept in the orbital basis throughout and the
-diagonalization is used only to construct the Green's functions; no band
-ordering, and no special handling of degeneracies, is required anywhere.
+diagonalization is used only to construct the Green's functions.
 
 By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:
@@ -183,9 +183,7 @@ in the matrix form. Then finally it leads to the expression:
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
       = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q},
 
-   the same reordering that appears between Eqs. (16) and (20) of the
-   H-wave paper (`arXiv:2308.00324 [cond-mat.str-el]
-   <https://arxiv.org/abs/2308.00324>`_).  Both index pairs are affected.
+   with both index pairs reordered.
 
    The conversion is the identity on density (pair-diagonal) components
    and, more generally, on any real Hermitian-closed declaration, since
@@ -257,69 +255,29 @@ higher order correlations. See, for example, reference [1]_ for the details.
 Sector structure and block decomposition
 *****************************************
 
-The condition established above -- that what licenses a decomposition is a
-conserved quantity -- is the general principle, and it is that conserved
-quantity, rather than the band index, by which H-wave organises the
-calculation.  A quantity is useful here only if it is conserved *and*
-distinguishes the bilinears: the particle number is conserved by everything
-but every particle-hole bilinear carries :math:`\Delta N=0`, so it yields a
-single block and no decomposition at all, whereas :math:`S_z` separates the
-density and spin-flip channels.  When the problem does decompose, the RPA
-equation is solved independently for each block, which also reduces the
-computational cost substantially.
+When the susceptibility decomposes into several blocks, the RPA equation can be
+solved independently for each of them, which reduces the computational cost
+substantially.
 
-When :math:`{\cal H}_0` conserves such a quantity -- spin, say -- the Green's
-function is block diagonal in it,
-:math:`G^{(0)}_{\alpha\sigma,\beta\tau}
-=\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}`, and the bubble carries one
-such label per propagator line,
+If :math:`{\cal H}_0` has a conserved quantity, the Green's function is block
+diagonal in it and the susceptibility separates into blocks carrying the same
+label.  Spin is the usual example: when :math:`[{\cal H}_0, S_z]=0` the density
+(:math:`\Delta S_z=0`) and spin-flip (:math:`\Delta S_z=\pm 1`) channels are
+strictly decoupled, which is what allows the longitudinal (ring) and transverse
+(ladder) channels to be solved separately.  Solving block by block is not an
+approximation: it returns the same result as solving the whole.
 
-.. math::
-   X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
-   = -\frac{T}{N_L}\sum_{{\bf k},n}
-     G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
-     G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).
+The decomposition holds only if the **interaction respects the same quantity**.
+If :math:`X^{(0)}` is block diagonal but :math:`\hat{W}` is not, neither
+:math:`\hat{X}^{(0)}\hat{W}` nor its inverse is, and the sectors mix from
+second order in the interaction onwards.  Spin-orbit coupling makes
+:math:`S_z` non-conserving and so puts mixing into :math:`X^{(0)}` itself,
+while ``PairLift`` breaks the conservation on the interaction side even when
+:math:`{\cal H}_0` preserves it.
 
-The equal labels :math:`\sigma=\sigma'` are the longitudinal (density,
-:math:`S_z`) channel and the unequal ones the transverse channel.  Selecting
-one of them is exact -- it picks out a channel, it does not approximate the
-bubble -- provided the two do not mix, which is what the conditions below
-decide.
-
-Inside a sector, on the other hand, the matrix structure has to be kept.
-Collapsing it -- replacing :math:`G` by the scalar
-:math:`G_{\uparrow}+G_{\downarrow}` before forming the bubble, say -- puts
-the cross terms :math:`G_{\uparrow}G_{\downarrow}` into the density response,
-where they do not belong; for degenerate spins the result then comes out
-exactly twice too large.
-
-Two separate conditions have to hold.
-
-The bare susceptibility is block diagonal with respect to any quantity
-conserved by :math:`{\cal H}_0`.  Spin is the usual example: when
-:math:`[{\cal H}_0, S_z]=0` the Green's function is spin block diagonal, and
-the bubble then connects a particle-hole bilinear only to one carrying the
-opposite change of :math:`S_z`.  The density (:math:`\Delta S_z=0`) and
-spin-flip (:math:`\Delta S_z=\pm 1`) channels are therefore strictly
-decoupled, which is what allows the longitudinal (ring) and transverse
-(ladder) channels to be solved separately.  This is the same mechanism that
-makes the susceptibility diagonal in :math:`{\bf q}`: a symmetry of
-:math:`{\cal H}_0` forbids the response from connecting different sectors.
-
-That decoupling is a property of :math:`X^{(0)}` alone, and the RPA response
-inherits it only if the INTERACTION respects the same quantity.  If
-:math:`X^{(0)}` is block diagonal but :math:`\hat{W}` is not, the product
-:math:`\hat{X}^{(0)}\hat{W}` is not, so neither is the inverse: the sectors
-mix from second order in the interaction onwards.  Two situations break one
-of the two conditions -- spin-orbit coupling makes :math:`S_z` non-conserving
-and puts sector-mixing elements into :math:`X^{(0)}` itself, while
-``PairLift`` is a product of two spin-raising (or two spin-lowering)
-bilinears and so does not conserve :math:`S_z` even when
-:math:`{\cal H}_0` does.
-
-Accordingly the block structure is detected from the COMBINED connectivity of
-the interaction matrix and the bare susceptibility, not from the interaction
-alone.
+H-wave therefore does not assume a block structure but detects it numerically,
+from the connectivity of **both** the interaction matrix and the bare
+susceptibility.
 
 1. Sum the absolute values of the interaction Hamiltonian over all k-points,
    and those of the bare susceptibility over momentum and frequency, to
@@ -393,18 +351,54 @@ the same coefficient. For a complex Hermitian-closed Exchange the physical
 coupling :math:`(J_{01} + J_{10})/2` is therefore real, while a complex
 Hermitian-closed PairHop keeps its full complex value.
 
-The resulting vertex, for on-site interactions:
+:math:`W_{+-}` is a matrix in the orbital pairs, and each interaction
+contributes only to the slots it occupies.  The vertex draws on just two spin
+blocks of the interaction tensor: the **cross-spin** block
+(:math:`\uparrow\uparrow\downarrow\downarrow` and
+:math:`\downarrow\downarrow\uparrow\uparrow`) and the **spin-flip** block
+(:math:`\uparrow\downarrow\uparrow\downarrow` and
+:math:`\downarrow\uparrow\downarrow\uparrow`).  The same-spin blocks do not
+contribute: a same-spin interaction cannot connect the up and down propagators
+of the transverse loop, so it produces self-energy but no vertex.
 
-- ``CoulombIntra`` :math:`U`: :math:`W_{+-} = -U`
-- ``CoulombInter`` :math:`V`: :math:`W_{+-} = -V`
-- ``Hund`` :math:`J`: :math:`W_{+-} = 0`
-- ``Exchange`` :math:`J`: :math:`W_{+-} = -(J + J^{\rm T})/2`
-- ``Ising`` :math:`I`: :math:`W_{+-} = +I` (all Wannier90-like k-space solvers now read
-  the Ising file in this normalization -- the UHFk factor-1/4 discrepancy
-  was resolved with issue #106; the separate real-space UHFr reader keeps
-  its S^z convention)
-- ``PairLift`` :math:`J`: :math:`W_{+-} = 0`
-- ``PairHop`` :math:`J`: :math:`W_{+-} = -J`
+For on-site interactions the components are
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 34 24
+
+   * - interaction
+     - block occupied
+     - component of :math:`W_{+-}`
+   * - ``CoulombIntra`` :math:`U`
+     - cross-spin
+     - :math:`-U`
+   * - ``CoulombInter`` :math:`V`
+     - cross-spin and same-spin (the latter unused)
+     - :math:`-V`
+   * - ``Ising`` :math:`I`
+     - as above
+     - :math:`+I`
+   * - ``PairHop`` :math:`J`
+     - cross-spin
+     - :math:`-J`
+   * - ``Exchange`` :math:`J`
+     - spin-flip
+     - :math:`-(J + J^{\rm T})/2`
+   * - ``Hund`` :math:`J`
+     - same-spin only
+     - :math:`0`
+   * - ``PairLift`` :math:`J`
+     - neither
+     - :math:`0`
+
+``Hund`` and ``PairLift`` vanish not because the coupling is weak but because
+their components lie outside the two blocks the vertex uses.
+
+On the ``Ising`` normalization: all Wannier90-like k-space solvers read the
+Ising file this way; the UHFk factor-1/4 discrepancy was resolved in version
+2.0, while the separate real-space UHFr reader keeps its :math:`S^z`
+convention.
 
 .. note::
 
@@ -424,7 +418,7 @@ off-site term, so such a term's vertex is not a function of :math:`q` alone
 and cannot be represented. In practice this rejects off-site
 ``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
 ``PairLift`` are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
-rejected earlier, at read time (issue #93: declaration files must be
+rejected earlier, at read time (as of version 2.0: declaration files must be
 Hermitian-closed); an inter-site pair that folds into the supercell under
 ``SubShape`` becomes an intra-cell orbital pair and is representable. The
 longitudinal (``ring``) channel is unaffected.

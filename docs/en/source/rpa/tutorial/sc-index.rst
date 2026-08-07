@@ -206,7 +206,7 @@ This section controls the Eliashberg solver. Key parameters:
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
-  bubble :math:`G^{(2)}` (default ``true``; issue #86). The bare truncated
+  bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
   frequency sum misses the leading identity tail (an
   :math:`O(1/N_{\rm mat})` error) and can be slightly indefinite, which
   injects spurious imaginary parts into the reported eigenvalues at small
@@ -1243,7 +1243,7 @@ was checked by running the combination.
    * - ``enable_spin_orbital``
      - accepted by FLEX
      - rejected
-     - ``hwave_sc`` refuses the configuration outright (issue #83); see
+     - ``hwave_sc`` refuses the configuration outright (as of version 2.0); see
        *Spin structure* below
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
@@ -1335,7 +1335,7 @@ accepts ``spin-free`` only and rejects the other two outright.
   **not supported.** ``hwave_sc`` rejects the configuration up front with
   an explicit error, on both the static and the dynamic entry, and
   ``hwave_tsweep`` rejects it in preflight before any FLEX rung runs
-  (issue #83): before this guard, the internally computed :math:`\chi_0`
+  (as of version 2.0): before this guard, the internally computed :math:`\chi_0`
   path ran to completion and printed eigenvalues built on inconsistent
   index/orbital-count conventions -- a silently wrong result, not an
   approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
