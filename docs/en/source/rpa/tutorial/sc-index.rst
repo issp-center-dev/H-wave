@@ -638,8 +638,8 @@ into the directory read by the Eliashberg step:
    eigenvalue and gap function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
    (both placements coincide), as are all general (myo) results. With the fix,
    a ``CoulombIntra``-only reduced run reproduces the equivalent
-   ``chi0q_mode = "load"`` and general-scheme results exactly **for identical
-   :math:`\Sigma = 0` physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
+   ``chi0q_mode = "load"`` and general-scheme results exactly **for identical**
+   :math:`\Sigma = 0` **physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
    before the fix it did not. This is a statement about the pairing vertex
    only. It does not imply the two schemes are interchangeable at full
    self-consistency, where they also differ in how the self-energy is built.
@@ -1091,9 +1091,9 @@ re-run FLEX with ``write_densified = true``.
 
 .. warning::
 
-   Dynamic IR results computed with H-wave versions BEFORE the issue-#57
-   fix are incorrect for any model whose pairing vertex has a nonzero
-   frequency-independent part — in particular anything with off-site
+   Dynamic IR results computed with H-wave 1.0.x are incorrect for any
+   model whose pairing vertex has a nonzero frequency-independent
+   part — in particular anything with off-site
    ``CoulombInter`` (pure on-site-``CoulombIntra`` models were
    unaffected: their bare vertex term cancels exactly). Recompute such
    runs; large changes in lambda are expected (they were the bug, not a

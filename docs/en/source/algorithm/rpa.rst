@@ -259,9 +259,13 @@ When the susceptibility decomposes into several blocks, the RPA equation can be
 solved independently for each of them, which reduces the computational cost
 substantially.
 
-If :math:`{\cal H}_0` has a conserved quantity, the Green's function is block
-diagonal in it and the susceptibility separates into blocks carrying the same
-label.  Spin is the usual example: when :math:`[{\cal H}_0, S_z]=0` the density
+If :math:`{\cal H}_0` has a conserved quantity :math:`Q`, the Green's function is
+block diagonal in it and the susceptibility separates into blocks carrying the
+same label.  The label of each side of the correlator is the change
+:math:`\Delta Q` its bilinear produces, the left-hand side being read as
+:math:`A^{\dagger}` and labelled by :math:`A`; with that convention the selection
+rule reads :math:`\Delta Q_{\rm L} = \Delta Q_{\rm R}`.  Spin is the usual
+example: when :math:`[{\cal H}_0, S_z]=0` the density
 (:math:`\Delta S_z=0`) and spin-flip (:math:`\Delta S_z=\pm 1`) channels are
 strictly decoupled, which is what allows the longitudinal (ring) and transverse
 (ladder) channels to be solved separately.  Solving block by block is not an
@@ -389,7 +393,7 @@ For on-site interactions the components are
      - same-spin only
      - :math:`0`
    * - ``PairLift`` :math:`J`
-     - neither
+     - double spin flip (not used by :math:`W_{+-}`)
      - :math:`0`
 
 ``Hund`` and ``PairLift`` vanish not because the coupling is weak but because
