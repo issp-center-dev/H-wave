@@ -359,12 +359,20 @@ all, not a choice of approximation for the longitudinal one.
    symmetry holds this reproduces ``chiq_pm`` exactly, so the ladder is not
    needed for it.
 
-   The relation fails as soon as SU(2) is broken.  On a single-orbital square
-   lattice (:math:`U = 4`, :math:`T = 0.5`, :math:`4\times 4`) at a Zeeman
-   splitting of :math:`h = 0.35` the inference overestimates the peak
-   transverse response by about 2 percent, and only the ladder returns the
-   correct value.  Under a field, a magnetic order parameter, or spin-orbit
-   coupling, the transverse channel has to be computed.
+   The relation fails as soon as SU(2) is broken, and it fails without a
+   small parameter: the discrepancy is not a correction that can be estimated
+   and tolerated.  On a single-orbital square lattice (:math:`U = 4`,
+   :math:`4\times 4`, :math:`N_{\rm mat} = 64`) with ``coeff_extern = 0.35``
+   -- a splitting of :math:`0.7` between the two spin species -- the static
+   inferred response deviates from ``chiq_pm`` at the peak wavevector by
+   :math:`+2\%` at :math:`T = 0.5`, :math:`-4\%` at :math:`T = 1.0`,
+   :math:`-25\%` at :math:`T = 0.3` and :math:`-37\%` at :math:`T = 0.2`.  It
+   errs in both directions, it grows as the temperature falls, and at
+   :math:`{\bf q} = 0`, :math:`T = 0.2` it is wrong by more than a factor of
+   two.  At :math:`T = 0.3` the inferred maximum sits at a different
+   wavevector from the true one, so even the position of the peak is not
+   safe.  Under a field, a magnetic order parameter, or spin-orbit coupling,
+   the transverse channel has to be computed.
 
 The transverse bare susceptibility is
 
