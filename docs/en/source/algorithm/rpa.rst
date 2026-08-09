@@ -316,6 +316,56 @@ Writing it with the bilinears themselves avoids the ambiguity of the
 
 with the same index-pair convention as the longitudinal susceptibility.
 
+.. _rpa_which_array:
+
+Which array holds which channel
+--------------------------------
+
+:math:`\chi_{+-}` is delivered in its own array, ``chiq_pm``, and only when
+``calc_type = "ring+ladder"`` (which requires ``calc_scheme = "general"``).
+The array ``chiq`` always holds the longitudinal (ring) result.
+
+``chiq`` is indexed by pairs that each carry a spin, so it has slots in which
+a pair is spin-off-diagonal.  **Those slots are not the transverse
+susceptibility, and with the default** ``calc_type = "ring"`` **they are not
+computed.**  Whenever the spin structure is introduced by inflating a
+spin-free or spin-diagonal bubble -- that is, in every calculation without
+``enable_spin_orbital`` -- the inflation builds only the same-spin slots, so
+the spin-off-diagonal ones come out identically zero.  A zero in a
+susceptibility array reads naturally as a computed result; here it is an
+absence.  On a two-orbital on-site model the longitudinal slots reach
+:math:`\max|\chi| = 1.53` while every slot with a spin-off-diagonal pair is
+exactly :math:`0`.
+
+Adding the ladder does not change the longitudinal answer.  On identical
+input the ``chiq`` of ``"ring"`` and of ``"ring+ladder"`` agree bit for bit;
+what ``"ring+ladder"`` adds is the separate ``chiq_pm``.  So the choice of
+``calc_type`` is a choice of whether the transverse channel is computed at
+all, not a choice of approximation for the longitudinal one.
+
+.. note::
+
+   In an SU(2)-symmetric paramagnet the transverse response follows from the
+   longitudinal one by symmetry, :math:`\chi_{+-} = 2\chi_{zz}`, with
+   :math:`\chi_{zz}` formed from the longitudinal result --
+
+   .. math::
+
+      \chi_{zz} = \frac{1}{4}\sum_{\sigma\sigma'}\sigma\sigma'\,
+      \chi^{\sigma\sigma'} ,\qquad \sigma,\sigma' = \pm 1 ,
+
+   where :math:`\chi^{\sigma\sigma'}` are the spin-diagonal-pair slots -- and
+   not read off the spin-off-diagonal slots, which are empty.  Where the
+   symmetry holds this reproduces ``chiq_pm`` exactly, so the ladder is not
+   needed for it.
+
+   The relation fails as soon as SU(2) is broken.  On a single-orbital square
+   lattice (:math:`U = 4`, :math:`T = 0.5`, :math:`4\times 4`) at a Zeeman
+   splitting of :math:`h = 0.35` the inference overestimates the peak
+   transverse response by about 2 percent, and only the ladder returns the
+   correct value.  Under a field, a magnetic order parameter, or spin-orbit
+   coupling, the transverse channel has to be computed.
+
 The transverse bare susceptibility is
 
 .. math::

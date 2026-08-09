@@ -95,7 +95,9 @@ Data format of ``chiq`` takes the following form depending on the value of ``cal
 
 - When ``calc_scheme = squashed``, the array format takes the form of ``ndarray(l,q,s1,s2,a,s3,s4,b)``, where ``a`` and ``b`` correspond to the orbital indices :math:`\alpha` and :math:`\beta`, respectively, and ``s1``, ``s2``, ``s3``, ``s4`` denote spin indices :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime`, respectively. See :ref:`Algorithm<Algorithm_sec>` section for the notation.
 
-When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)` and has the same array layout as ``chiq``.
+``chiq`` holds the longitudinal (ring) susceptibility. It has slots in which a pair of indices is spin-off-diagonal, but those slots are **not** the transverse susceptibility, and with the default ``calc_type = ring`` they are **not computed**: in every calculation that does not use ``enable_spin_orbital`` the spin structure is introduced by inflating a spin-free or spin-diagonal bubble, and the inflation builds only the same-spin slots, leaving the rest identically zero. Do not read those zeros as a computed transverse response. See :ref:`Algorithm<rpa_which_array>` for how to obtain the transverse channel.
+
+When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)`. Its layout is ``ndarray(l,q,a,ap,b,bp)`` where ``a``, ``ap``, ``b``, ``bp`` are **orbital** indices :math:`\alpha`, :math:`\gamma`, :math:`\beta`, :math:`\delta` that do *not* include the spin degree of freedom -- the spin structure is fixed by the :math:`+-` labels. It is therefore smaller than ``chiq``, whose corresponding axes run over the generalized (spin-orbital) indices. The longitudinal ``chiq`` is unaffected by the presence of the ladder: on identical input it is bit-identical to the ``calc_type = ring`` result.
 
 
 Example for reading data
