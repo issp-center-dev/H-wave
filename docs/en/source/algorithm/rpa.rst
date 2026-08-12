@@ -325,17 +325,28 @@ Which array holds which channel
 ``calc_type = "ring+ladder"`` (which requires ``calc_scheme = "general"``).
 The array ``chiq`` always holds the longitudinal (ring) result.
 
-``chiq`` is indexed by pairs that each carry a spin, so it has slots in which
-a pair is spin-off-diagonal.  **Those slots are not the transverse
-susceptibility, and with the default** ``calc_type = "ring"`` **they are not
-computed.**  Whenever the spin structure is introduced by inflating a
-spin-free or spin-diagonal bubble -- that is, in every calculation without
-``enable_spin_orbital`` -- the inflation builds only the same-spin slots, so
-the spin-off-diagonal ones come out identically zero.  A zero in a
-susceptibility array reads naturally as a computed result; here it is an
+Under ``calc_scheme = "general"`` and ``"squashed"``, ``chiq`` is indexed by
+pairs that each carry a spin, so it has slots in which a pair is
+spin-off-diagonal.  (``calc_scheme = "reduced"`` stores density-pair
+components only and has no such slots at all.)
+
+**Those slots are not the transverse susceptibility, and whenever the bubble
+is obtained by inflating a spin-free or spin-diagonal one they are not
+computed: they are identically zero.**  The inflation builds only the
+same-spin slots.  This covers every calculation without
+``enable_spin_orbital``, and also an ``enable_spin_orbital`` calculation whose
+one-body Hamiltonian the solver detects as spin-free or spin-diagonal -- what
+decides the question is the detected spin structure, not the setting.  A zero
+in a susceptibility array reads naturally as a computed result; here it is an
 absence.  On a two-orbital on-site model the longitudinal slots reach
 :math:`\max|\chi| = 1.53` while every slot with a spin-off-diagonal pair is
 exactly :math:`0`.
+
+A genuinely spinful calculation is the exception: with ``enable_spin_orbital``
+and a Hamiltonian that actually mixes the spins, the bubble is built directly
+on the generalized orbital index, so these slots are computed and are in
+general nonzero.  Even then the transverse susceptibility is what
+``chiq_pm`` holds, not what these slots hold.
 
 Adding the ladder does not change the longitudinal answer.  On identical
 input the ``chiq`` of ``"ring"`` and of ``"ring+ladder"`` agree bit for bit;
@@ -356,8 +367,9 @@ all, not a choice of approximation for the longitudinal one.
 
    where :math:`\chi^{\sigma\sigma'}` are the spin-diagonal-pair slots -- and
    not read off the spin-off-diagonal slots, which are empty.  Where the
-   symmetry holds this reproduces ``chiq_pm`` exactly, so the ladder is not
-   needed for it.
+   symmetry holds this reproduces ``chiq_pm`` to floating-point precision
+   (measured: largest relative difference :math:`4\times 10^{-16}` over the
+   whole array), so the ladder is not needed for it.
 
    The relation fails as soon as SU(2) is broken, and it fails without a
    small parameter: the discrepancy is not a correction that can be estimated
@@ -373,6 +385,28 @@ all, not a choice of approximation for the longitudinal one.
    wavevector from the true one, so even the position of the peak is not
    safe.  Under a field, a magnetic order parameter, or spin-orbit coupling,
    the transverse channel has to be computed.
+
+.. admonition:: Reproducing the figures quoted above
+   :class: note
+
+   Both runs use ``calc_scheme = "general"``, ``mu = 0.0``,
+   ``CellShape = [4, 4, 1]``, ``SubShape = [1, 1, 1]`` and ``Nmat = 64``,
+   comparing ``calc_type = "ring"`` with ``calc_type = "ring+ladder"`` on
+   otherwise identical input.
+
+   The two-orbital figures use ``tests/rpa/input_2orb`` (``geom.dat``,
+   ``transfer.dat``, ``coulombintra.dat``) at :math:`T = 0.5`.  Take
+   ``CoulombIntra`` only: an off-site ``CoulombInter`` is rejected by
+   ``calc_type = "ring+ladder"``.  The field figures use ``tests/rpa/input``
+   (``geom.dat``, ``transfer.dat``, ``coulombintra.dat``, ``extern.dat``)
+   with ``coeff_extern = 0.35``.
+
+   Read the static response at Matsubara index :math:`N_{\rm mat}/2 = 32`,
+   not at index :math:`0`: the frequency axis is
+   :math:`\omega_n = (2n - N_{\rm mat})\pi/\beta`, so index :math:`0` is the
+   most negative frequency.  The percentages are
+   :math:`(\chi^{\rm inferred} - \chi_{+-})/\chi_{+-}` evaluated at the
+   wavevector where :math:`\chi_{+-}` itself peaks.
 
 The transverse bare susceptibility is
 
