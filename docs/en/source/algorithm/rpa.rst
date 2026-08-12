@@ -325,10 +325,13 @@ Which array holds which channel
 ``calc_type = "ring+ladder"`` (which requires ``calc_scheme = "general"``).
 The array ``chiq`` always holds the longitudinal (ring) result.
 
-Under ``calc_scheme = "general"`` and ``"squashed"``, ``chiq`` is indexed by
-pairs that each carry a spin, so it has slots in which a pair is
-spin-off-diagonal.  (``calc_scheme = "reduced"`` stores density-pair
-components only and has no such slots at all.)
+Whether ``chiq`` has such slots at all depends on the scheme.  Under
+``calc_scheme = "general"`` it is indexed by pairs that each carry a spin, so
+it always has slots in which a pair is spin-off-diagonal.  ``"squashed"`` has
+them too when the bubble is inflated, its layout then carrying explicit spin
+axes.  ``"reduced"`` stores density-pair components only and has no such slots
+at all -- and neither does ``"squashed"`` in a genuinely spinful calculation,
+where it degenerates to the reduced layout.
 
 **Those slots are not the transverse susceptibility, and whenever the bubble
 is obtained by inflating a spin-free or spin-diagonal one they are not
@@ -342,11 +345,11 @@ absence.  On a two-orbital on-site model the longitudinal slots reach
 :math:`\max|\chi| = 1.53` while every slot with a spin-off-diagonal pair is
 exactly :math:`0`.
 
-A genuinely spinful calculation is the exception: with ``enable_spin_orbital``
-and a Hamiltonian that actually mixes the spins, the bubble is built directly
-on the generalized orbital index, so these slots are computed and are in
-general nonzero.  Even then the transverse susceptibility is what
-``chiq_pm`` holds, not what these slots hold.
+A genuinely spinful calculation under ``calc_scheme = "general"`` is the
+exception: with ``enable_spin_orbital`` and a Hamiltonian that actually mixes
+the spins, the bubble is built directly on the generalized orbital index, so
+these slots are computed and are in general nonzero.  Even then the transverse
+susceptibility is what ``chiq_pm`` holds, not what these slots hold.
 
 Adding the ladder does not change the longitudinal answer.  On identical
 input the ``chiq`` of ``"ring"`` and of ``"ring+ladder"`` agree bit for bit;
@@ -367,9 +370,10 @@ all, not a choice of approximation for the longitudinal one.
 
    where :math:`\chi^{\sigma\sigma'}` are the spin-diagonal-pair slots -- and
    not read off the spin-off-diagonal slots, which are empty.  Where the
-   symmetry holds this reproduces ``chiq_pm`` to floating-point precision
-   (measured: largest relative difference :math:`4\times 10^{-16}` over the
-   whole array), so the ladder is not needed for it.
+   symmetry holds this reproduces ``chiq_pm`` to floating-point round-off
+   (measured on the fixture below: largest **absolute** elementwise difference
+   :math:`2.2\times 10^{-16}`, against a peak :math:`\chi_{+-}` of
+   :math:`1.4`), so the ladder is not needed for it.
 
    The relation fails as soon as SU(2) is broken, and it fails without a
    small parameter: the discrepancy is not a correction that can be estimated
