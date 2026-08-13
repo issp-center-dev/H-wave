@@ -302,15 +302,32 @@ class TestBondPairCorrelatorApi(ApproxTestCase):
         # c^dag_{j,a,sigma} c_{j,a,sigma} is LITERALLY chi_connected's
         # density operator O(q, x, x) with generalized index
         # x = sigma*norb + a (the a = s*norb+o convention pinned in the
-        # plan's Global Constraints). bond_correlator's <B; B^dagger> and
+        # plan's Global Constraints).
+        #
+        # SAME-SPIN (sigma == sigma'): bond_correlator's <B; B^dagger> and
         # chi_connected's <(c^dag_a c_c)(q); (c^dag_d c_b)(-q)> both reduce,
         # at a=c=b=d=x, to sum_{m,n} K[m,n] O(q,x,x)[m,n] conj(O(q,x,x)[m,n])
         # minus the SAME disconnected piece beta*|<O(q,x,x)>|^2 -- because
         # O(-q,x,x)[n,m] = conj(O(q,x,x)[m,n]) exactly for any Hermitian
         # single-site density operator's Fourier transform (a q -> -q
-        # conjugation identity, independent of the fixture). Both use the
-        # SAME 1/L normalization, so the slots match at round-off for ANY
-        # interaction, not just V=0.
+        # conjugation identity, independent of the fixture).
+        #
+        # CROSS-SPIN (sigma != sigma', review-derived): the SAME
+        # Hermiticity identity applies independently to EACH leg, since it
+        # only needs a single-index density operator, not a==c between
+        # the two legs. With A = B_{0,a,a,sigma}(q) = O(q, x_sigma, x_sigma)
+        # and B = B_{0,a,a,sigma'}(q) = O(q, x_sigma', x_sigma'):
+        #   B^dagger(q) = O(-q, x_sigma', x_sigma')
+        #   B[m,n]^dagger's matrix element conj(B(q)[m,n])
+        #     = O(-q, x_sigma', x_sigma')[n,m]   (same identity, x = x_sigma')
+        # so Xph[q,sigma,sigma',I,I]
+        #   = sum K[m,n] O(q,x_sigma,x_sigma)[m,n] O(-q,x_sigma',x_sigma')[n,m]
+        #   = chi[q, x_sigma, x_sigma, x_sigma', x_sigma']
+        # (matching chi_connected's out[qi, a, c, b, d] slot with
+        # a=c=x_sigma, b=d=x_sigma'), and the disconnected pieces coincide
+        # by the same per-leg conjugation identity applied to the average.
+        # Both use the SAME 1/L normalization, so the slots match at
+        # round-off for ANY interaction, not just V=0.
         fx = fx3()
         terms = ed_oracle_util.canonical_density_terms(fx, [(0, 1, 1, V1)])
         sector = ed_oracle_util.SectorED(fx, terms=terms)
@@ -319,17 +336,24 @@ class TestBondPairCorrelatorApi(ApproxTestCase):
         chi = sector.chi_connected()
         for i, (r, a, b) in enumerate(channels):
             for sigma in range(2):
-                x = sigma * fx.norb + a
-                assert_approx_array(
-                    xph[:, sigma, sigma, i, i], chi[:, x, x, x, x],
-                    rel=0, abs=1e-11)
+                for sigmap in range(2):
+                    x_sigma = sigma * fx.norb + a
+                    x_sigmap = sigmap * fx.norb + a
+                    assert_approx_array(
+                        xph[:, sigma, sigmap, i, i],
+                        chi[:, x_sigma, x_sigma, x_sigmap, x_sigmap],
+                        rel=0, abs=1e-11)
 
     def test_pair_correlator_smoke(self):
+        # channels includes an R != 0 entry (fx2 is L=2, so R=1 is the one
+        # nontrivial displacement) so _apply_pair's (j+R) % L offset path
+        # actually executes at least once -- with only R=0 channels the
+        # offset was dead code (review finding, #151 Task 4 fix loop).
         fx = fx2()
         sector = ed_oracle_util.SectorED(fx)
-        channels = [(0, 0, 0), (0, 1, 1), (0, 0, 1)]
+        channels = [(0, 0, 0), (0, 1, 1), (0, 0, 1), (1, 0, 0)]
         xpp = sector.pair_correlator(channels)
-        self.assertEqual(xpp.shape, (fx.L, 3, 3))
+        self.assertEqual(xpp.shape, (fx.L, 4, 4))
         self.assertTrue(np.all(np.isfinite(xpp)))
         self.assertTrue(np.any(xpp != 0))
         # Xpp[q] is Hermitian AT FIXED q (not a q <-> -q relation): both
@@ -340,6 +364,21 @@ class TestBondPairCorrelatorApi(ApproxTestCase):
         # (the static Lehmann kernel is real and symmetric by construction
         # -- see _static_kernel), so term-by-term
         # Xpp[q,j,i] = conj(Xpp[q,i,j]).
+        #
+        # CAUTION (review finding, #151 Task 4 fix loop): this identity is
+        # ALGEBRAICALLY VACUOUS as a correctness check on Delta itself --
+        # it holds for ANY family of operators {A_i} sharing one sector
+        # shift, against ANY real-symmetric kernel, regardless of whether
+        # Delta's site offset, up/down leg assignment or annihilation-
+        # order sign are right. It is a (cheap, worth keeping) structural
+        # sanity check on _lehmann_dagger/_pair_kernel, not a numerical
+        # pin on the pair path. The pair path's actual correctness --
+        # including the mu-sensitive cross-sector Lehmann denominator this
+        # (N_up-1, N_dn-1) operator is the only in-repo path to exercise
+        # (chi_connected's cross-sector slots are all Delta-N = 0, where mu
+        # cancels between the legs) -- is deferred to Task 7's pin 3b
+        # (eigenbasis_pair_bubble vs pair_correlator at V=0), which is
+        # therefore LOAD-BEARING and must not be weakened to a diagnostic.
         for qi in range(fx.L):
             assert_approx_array(xpp[qi], xpp[qi].conj().T, rel=0, abs=1e-11)
 

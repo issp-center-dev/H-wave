@@ -394,6 +394,16 @@ class SectorED:
         self.fx = fx
         self.terms = list(terms)
         self.h1 = fx.build_h1() if h1 is None else h1
+        self._kernel_cache = {}   # (key_m, key_n) -> _pair_kernel result;
+                                   # the kernel depends only on the sector
+                                   # pair, not on which (a, c, b, d)/channel
+                                   # asked for it, so every caller in a
+                                   # chi_connected()/bond_correlator()/
+                                   # pair_correlator() run shares one copy
+                                   # per sector pair instead of rebuilding
+                                   # it per cell (review finding, #151 Task
+                                   # 4 fix loop: was previously rebuilt
+                                   # O(nd^4) times per q on case M).
         self._build_sectors()
 
     # -- sector bookkeeping ------------------------------------------------
@@ -547,13 +557,25 @@ class SectorED:
         slice the cross block. When key_m == key_n this is elementwise
         identical to ``_static_kernel`` on that one sector alone (both
         halves of the concatenation read off the same (ev, w) by index),
-        so the in-sector case is not special-cased."""
+        so the in-sector case is not special-cased.
+
+        Depends ONLY on the (key_m, key_n) sector pair -- not on which
+        bilinear or which (q, a, c, b, d)/channel cell is asking for it --
+        so it is memoized on the instance (review finding: chi_connected's
+        nd**4 cells per q were each rebuilding this from scratch, most of
+        them for a sector pair some earlier cell had already built)."""
+        cache_key = (key_m, key_n)
+        cached = self._kernel_cache.get(cache_key)
+        if cached is not None:
+            return cached
         ev_m, w_m = self._ev[key_m], self._w[key_m]
         ev_n, w_n = self._ev[key_n], self._w[key_n]
         ev_cat = np.concatenate([ev_m, ev_n])
         w_cat = np.concatenate([w_m, w_n])
         M = len(ev_m)
-        return _static_kernel(ev_cat, w_cat, self.fx.beta)[:M, M:]
+        K = _static_kernel(ev_cat, w_cat, self.fx.beta)[:M, M:]
+        self._kernel_cache[cache_key] = K
+        return K
 
     def _lehmann_transpose(self, opA, deltaA, opB, deltaB):
         """sum_{m,n} K[m,n] A[m,n] B[n,m], for A: ket n -> bra n+deltaA,
@@ -653,7 +675,17 @@ class SectorED:
         (0, 0)) regardless of sigma -- bond bilinears never leave their
         sector, unlike chi_connected's mixed-spin entries. 1/L-normalized,
         matching chi_connected (see the (m=0, a=b) internal-consistency
-        pin in tests/test_bond_vs_ed_oracle.py)."""
+        pin, both same-spin and cross-spin, in
+        tests/test_bond_vs_ed_oracle.py).
+
+        The (j+R) % fx.L site-offset direction and which leg carries the
+        +q vs -q phase are NOT independently re-derived or cross-checked
+        by anything in this module -- they are pinned by construction
+        against ``chi_connected`` only at R=0 (where the offset is a
+        no-op). The R != 0 orientation is deliberately left to Task 5's
+        ``ed_to_solver_bond_map`` pin (full (m, m') matrix, zero coupling,
+        orientation-exact against ``bond_bubble``), which is therefore the
+        LOAD-BEARING check for this convention, not a redundant one."""
         fx = self.fx
         n_i = len(channels)
         out = np.zeros((fx.L, 2, 2, n_i, n_i), dtype=complex)
@@ -692,7 +724,27 @@ class SectorED:
         ``[(R, a, b), ...]`` (``[(R,)]`` at norb=1). NO disconnected piece
         -- <Delta> is exactly 0 by number conservation, so it is not
         computed at all (rather than subtracted as a measured zero). 1/L-
-        normalized, matching chi_connected/bond_correlator."""
+        normalized, matching chi_connected/bond_correlator.
+
+        NOT independently numerically pinned by this module: the
+        Xpp[q] = Xpp[q]^dagger check in
+        tests/test_bond_vs_ed_oracle.py's pair_correlator smoke test is a
+        property of ``_lehmann_dagger``'s real-symmetric-kernel structure
+        (holds for ANY pair of operators sharing a sector shift, by a
+        K[m,n] = K[n,m] argument -- see that test's comment), not evidence
+        that the Delta operator itself (site offset, up/down leg
+        assignment, annihilation-order sign) is built correctly. The
+        cross-sector Lehmann sum here also uses ``mu`` through each
+        sector's grand-canonical K, but every OTHER cross-sector path this
+        module currently exercises (chi_connected's mixed-spin slots) has
+        Delta-N = 0, where mu cancels between the two legs -- pair_correlator
+        is the only in-repo path where mu enters a Delta-N != 0 Lehmann
+        denominator, and nothing here checks that it is being subtracted
+        correctly. Numerical correctness of this (N_up-1, N_dn-1) pair path
+        -- including the mu-sensitive cross-sector denominator -- is
+        PINNED BY TASK 7's pin 3b (eigenbasis_pair_bubble vs
+        pair_correlator at V=0), which is therefore load-bearing and must
+        NOT be weakened to a diagnostic-only comparison."""
         fx = self.fx
         n_i = len(channels)
         out = np.zeros((fx.L, n_i, n_i), dtype=complex)
