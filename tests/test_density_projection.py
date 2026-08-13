@@ -11,8 +11,7 @@ import unittest
 
 import numpy as np
 
-from hwave.solver.density_projection import (
-    project_density_pairs, project_density_squashed)
+from hwave.solver.density_projection import project_density_pairs
 
 
 class TestDensityProjections(unittest.TestCase):
@@ -43,18 +42,9 @@ class TestDensityProjections(unittest.TestCase):
         got = project_density_pairs(self.h, self.nvol, self.nd, np)
         np.testing.assert_array_equal(got, want)
 
-    def test_squashed_matches_its_original_form(self):
-        want = np.einsum(
-            'ksauatbvb->ksuatvb',
-            self.h.reshape(self.nvol, *(self.ns, self.norb) * 4)
-        ).reshape(self.nvol, *(self.ns, self.ns, self.norb) * 2)
-        got = project_density_squashed(self.h, self.nvol, self.ns,
-                                       self.norb, np)
-        np.testing.assert_array_equal(got, want)
-
 
 class TestLayoutsAndDegenerateShapes(unittest.TestCase):
-    """The helpers are pure element selections and must be layout- and
+    """The helper is a pure element selection and must be layout- and
     shape-agnostic: Fortran order, non-contiguous views, and degenerate
     dimensions all reduce to the same values as a fresh C-order copy."""
 
@@ -65,7 +55,6 @@ class TestLayoutsAndDegenerateShapes(unittest.TestCase):
         h = (rng.standard_normal(shape)
              + 1j * rng.standard_normal(shape))
         want_p = project_density_pairs(h.copy(), nvol, nd, np)
-        want_s = project_density_squashed(h.copy(), nvol, ns, norb, np)
         for label, variant in (
                 ("fortran", np.asfortranarray(h)),
                 ("noncontig", np.ascontiguousarray(
@@ -74,9 +63,6 @@ class TestLayoutsAndDegenerateShapes(unittest.TestCase):
             with self.subTest(layout=label, ns=ns, norb=norb, nvol=nvol):
                 np.testing.assert_array_equal(
                     project_density_pairs(variant, nvol, nd, np), want_p)
-                np.testing.assert_array_equal(
-                    project_density_squashed(variant, nvol, ns, norb, np),
-                    want_s)
 
     def test_layout_and_shape_matrix(self):
         for ns, norb, nvol in ((2, 1, 1), (2, 1, 4), (2, 3, 2), (1, 2, 3)):

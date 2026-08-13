@@ -283,12 +283,15 @@ class TestRPALadder(unittest.TestCase):
             read_io = read_input_k.QLMSkInput(info_file_input)
             return rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
 
-        # reduced/squashed exit before any solve. This pins the CURRENT
-        # legacy contract (logger.error + sys.exit(1)); if _set_scheme is
-        # ever modernized to raise ValueError, this test should change
-        # WITH it, deliberately. Exit code and message are asserted so an
-        # unrelated SystemExit cannot satisfy the check.
-        for scheme in ("reduced", "squashed"):
+        # reduced exits before any solve (calc_scheme='squashed' was
+        # removed in H-wave 2.0, #144, and is rejected even earlier, at
+        # construction, by a separate ValueError guard -- see
+        # tests/test_squashed_retired.py). This pins the CURRENT legacy
+        # contract for reduced (logger.error + sys.exit(1)); if
+        # _set_scheme is ever modernized to raise ValueError, this test
+        # should change WITH it, deliberately. Exit code and message are
+        # asserted so an unrelated SystemExit cannot satisfy the check.
+        for scheme in ("reduced",):
             with self.subTest(scheme=scheme):
                 with self.assertLogs("hwave.solver.rpa",
                                      level="ERROR") as logcm:

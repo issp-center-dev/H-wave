@@ -4,9 +4,9 @@
 RPA is the one-shot limit of FLEX (one iteration, no self-energy feedback,
 bare Green function). These tests pin the measured equivalence matrix:
 
-* reduced / squashed: equal to ~1e-13 in every interaction cell (measured
-  before the #104 fix and unchanged by it -- the Fierz slots sit off the
-  density diagonal those schemes read).
+* reduced: equal to ~1e-13 in every interaction cell (measured before the
+  #104 fix and unchanged by it -- the Fierz slots sit off the density
+  diagonal that scheme reads).
 * general: the multi-orbital on-site cells (inter-orbital CoulombInter,
   Hund, combined U+V+J) disagreed by up to 1.2e-2 while #104 was open --
   the ring's longitudinal W lacked the adjudicated Fierz cross-slot
@@ -102,18 +102,13 @@ class TestGeneralSchemeOneShot(unittest.TestCase):
                             "while #104 was open)" % name)
 
 
-class TestReducedSquashedOneShot(unittest.TestCase):
-    """reduced/squashed were equal before the #104 fix and must stay equal:
-    the Fierz slots sit off the density diagonal these schemes read."""
+class TestReducedOneShot(unittest.TestCase):
+    """reduced == FLEX one-shot before the #104 fix and must stay equal:
+    the Fierz slots sit off the density diagonal that scheme reads."""
 
     def _blocks(self, cq, norb):
-        if cq.ndim == 8:
-            # squashed layout: chiq[w, k, s1, s1', a, s2, s2', b]
-            uu = cq[:, :, 0, 0, :, 0, 0, :]
-            ud = cq[:, :, 0, 0, :, 1, 1, :]
-        else:
-            uu = cq[:, :, :norb, :norb]
-            ud = cq[:, :, :norb, norb:]
+        uu = cq[:, :, :norb, :norb]
+        ud = cq[:, :, :norb, norb:]
         return uu, ud
 
     def test_matrix_cells(self):
@@ -125,7 +120,7 @@ class TestReducedSquashedOneShot(unittest.TestCase):
                                       'Hund': 'hund_onsite.dat'},
              0.5, 2),
         ]
-        for scheme in ('reduced', 'squashed'):
+        for scheme in ('reduced',):
             for path, inter, filling, norb in cases:
                 with self.subTest(scheme=scheme, path=path):
                     gr = _run(scheme, 'rpa', path, inter, filling)

@@ -27,8 +27,7 @@ import hwave.qlmsio.wan90 as wan90
 from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
 from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
-from hwave.solver.density_projection import (
-    project_density_pairs, project_density_squashed)
+from hwave.solver.density_projection import project_density_pairs
 from . import backend as _bk
 from . import fold
 from . import matsubara as _ms
@@ -438,8 +437,8 @@ def _to_bubble_pair_convention(ham):
 
     Applied when the LONGITUDINAL vertex is assembled, i.e. on the
     rank-4 orbital tensor before any density projection: the reduced
-    and squashed projections keep only pair-diagonal slots, where the
-    map is the identity, so they are unaffected either way, while the
+    projection keeps only pair-diagonal slots, where the
+    map is the identity, so it is unaffected either way, while the
     general scheme needs it. The transverse (ladder) assembly is NOT
     routed through this helper: it re-pairs the tensor itself and
     therefore consumes the Hamiltonian convention directly.
@@ -1177,6 +1176,26 @@ class RPA:
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
 
+        if str(info_mode.get("calc_scheme", "auto")).lower() == "squashed":
+            # Removed in 2.0 (issue #144): squashed computed the same
+            # susceptibility as reduced at several times the cost, and the
+            # spin-off-diagonal slots of its 8-axis output were structurally
+            # zero. Only the CONFIGURATION is rejected -- 'squashed' recorded
+            # in the in-memory provenance metadata (chi0q_freq_meta) of a
+            # reused chi0q is still accepted by the reuse route below (the
+            # two share one bubble representation). Checked before
+            # Lattice/Interaction construction so that no other validation
+            # error can mask this message.
+            raise ValueError(
+                "calc_scheme='squashed' was removed in H-wave 2.0: it "
+                "computed the same susceptibility as calc_scheme='reduced' "
+                "at several times the cost, and the extra spin-resolved "
+                "slots of its output were structurally zero (issue #144). "
+                "Use calc_scheme='reduced'. The physics is identical; the "
+                "output layout changes from (l,q,s1,s2,a,s3,s4,b) to "
+                "(l,q,a,b) over generalized indices a = s*norb + orb. See "
+                "the migration note in the RPA output-file documentation.")
+
         self.lattice = Lattice(self.param_mod)
         self.ham_info = Interaction(self.lattice, param_ham, info_mode)
 
@@ -1212,8 +1231,8 @@ class RPA:
                          for t in ("Exchange", "PairHop")):
                     # Exchange and PairHop carry NO density-diagonal vertex
                     # content: only the general scheme represents them. The
-                    # historical auto choice was 'squashed', which silently
-                    # dropped them entirely (#107).
+                    # historical auto choice silently dropped them
+                    # entirely (#107).
                     self.calc_scheme = "general"
                     logger.info(
                         "auto mode for calc_scheme: set to general "
@@ -1224,18 +1243,18 @@ class RPA:
                     self.calc_scheme = "reduced"
                     logger.info("auto mode for calc_scheme: set to reduced")
 
-        # consistency check. The reduced/squashed schemes solve with the
+        # consistency check. The reduced scheme solves with the
         # density-diagonal part of the interaction, and the adjudicated
         # particle-hole vertex of Exchange and PairHop has NO
         # density-diagonal content (hwave.solver.vertex_table: their
         # entries live on the cross and antidiagonal slot families). The
         # projection therefore does not approximate them -- it drops them
-        # entirely, with exactly zero effect on the result. That was three
+        # entirely, with exactly zero effect on the result. That was two
         # different policies before #107: reduced rejected exchange-type
-        # input, squashed accepted it silently, FLEX warned of an
-        # 'approximation'. One policy now, for both solvers (FLEX inherits
-        # this check): reject with a pointer to the scheme that keeps them.
-        if self.calc_scheme in ("reduced", "squashed"):
+        # input, FLEX warned of an 'approximation'. One policy now, for
+        # both solvers (FLEX inherits this check): reject with a pointer
+        # to the scheme that keeps them.
+        if self.calc_scheme == "reduced":
             dropped = [t for t in ("Exchange", "PairHop")
                        if self.param_ham.get(t)]
             if dropped:
@@ -1263,8 +1282,8 @@ class RPA:
         # calc chiq if interaction term exists; otherwise chi0q-only mode
         self.calc_chiq = self.ham_info.has_interaction()
 
-        # chi0q in reduced mode if calc_scheme is reduced or squashed
-        self.enable_reduced = self.calc_scheme.lower() in ["reduced", "squashed"]
+        # chi0q in reduced mode if calc_scheme is reduced
+        self.enable_reduced = self.calc_scheme.lower() == "reduced"
         
     def _init_param(self):
         logger.debug(">>> RPA._init_param")
@@ -1498,7 +1517,7 @@ class RPA:
         The calculation flow is:
         1. Calculate/load chi0q
         2. Transform interactions based on spin state (spin-free/spinful/spin-diag)
-        3. Transform tensors based on calculation scheme (reduced/squashed/general)
+        3. Transform tensors based on calculation scheme (reduced/general)
         4. Solve RPA equation to get chiq
         """
         logger.info("Start RPA calculations")
@@ -1690,8 +1709,8 @@ class RPA:
                 # VRAM preflight: the largest resident device tensor is the
                 # inflated chi0q / chiq, ~ Nmat*Nvol*nd^4 complex128 in the full
                 # (rank-4 orbital) channel; the chiq solve holds a same-sized
-                # workspace. This nd^4 figure is an upper bound for the reduced/
-                # squashed (rank-2) schemes and a rough order-of-magnitude
+                # workspace. This nd^4 figure is an upper bound for the reduced
+                # (rank-2) scheme and a rough order-of-magnitude
                 # estimate otherwise -- advisory only (CuPy raises
                 # OutOfMemoryError on the actual allocation).
                 # H0_eigenvector shape = (nblock, Nvol, nd, nd).
@@ -1765,7 +1784,7 @@ class RPA:
             # The longitudinal channels solve with the Fierz-corrected
             # tensor; ham_inter_q itself stays as the transverse assembly's
             # input (see _make_ham_inter). The correction's (a,b,a,b) slots
-            # sit off the 'kaabb' diagonal, so the reduced/squashed reads
+            # sit off the 'kaabb' diagonal, so the reduced reads
             # below are unaffected by construction.
             fierz_q = getattr(self.ham_info, "ham_fierz_q", None)
             if gpu_active:
@@ -1811,10 +1830,10 @@ class RPA:
                 else:
                     ham_long = _fierz_long()
 
-                if self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+                if self.calc_scheme == "reduced":
                     # Treat combined spin-orbital indices as general orbitals.
-                    # squashed degenerates to reduced; block structure is
-                    # exploited by _find_block_diagonal inside _solve_rpa.
+                    # Block structure is exploited by _find_block_diagonal
+                    # inside _solve_rpa.
                     nvol = self.lattice.nvol
                     nd = self.nd
                     ham = project_density_pairs(ham_long, nvol, nd, xp)
@@ -1839,24 +1858,6 @@ class RPA:
                                       spin_tensor).reshape(nfreq,nvol,nd,nd)
 
                     ham = project_density_pairs(ham_long, nvol, nd, xp)
-
-                elif self.calc_scheme == "squashed":
-                    nblock,nfreq,nvol,norb1,norb2 = chi0q_orig.shape
-
-                    norb = self.norb
-                    ns = self.ns
-                    nd = norb * ns
-
-                    spin_tensor = xp.zeros((2,2,2,2), dtype=np.int32)
-                    spin_tensor[0,0,0,0] = 1
-                    spin_tensor[1,1,1,1] = 1
-
-                    chi0q = xp.einsum('glkab,gtuv->lkgtauvb',
-                                      chi0q_orig,
-                                      spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
-
-                    ham = project_density_squashed(ham_long, nvol, ns,
-                                                   norb, xp)
 
                 else:
                     nblock,nfreq,nvol,norb1,norb2,norb3,norb4 = chi0q_orig.shape
@@ -1896,25 +1897,6 @@ class RPA:
                     # same spin-major extraction as the combined-index
                     # pair diagonal (verified bitwise); shared projection
                     ham = project_density_pairs(ham_long, nvol, nd, xp)
-
-                elif self.calc_scheme == "squashed":
-                    # norb**2 squash
-                    nfreq,nvol,norb1,norb2 = chi0q_orig.shape
-
-                    norb = self.norb
-                    ns = self.ns
-                    nd = norb * ns
-
-                    spin_tensor = xp.zeros((2,2,2,2), dtype=np.int32)
-                    spin_tensor[0,0,0,0] = 1
-                    spin_tensor[1,1,1,1] = 1
-
-                    chi0q = xp.einsum('lkab,stuv->lkstauvb',
-                                      chi0q_orig.reshape(nfreq,nvol,norb,norb),
-                                      spin_tensor).reshape(nfreq,nvol,ns,ns,norb,ns,ns,norb)
-
-                    ham = project_density_squashed(ham_long, nvol, ns,
-                                                   norb, xp)
 
                 else:
                     # general nd**4 case
@@ -2250,7 +2232,7 @@ class RPA:
                     "chi0q from {}: unexpected shape for general scheme: "
                     "{}".format(source, chi0q.shape))
 
-        elif self.calc_scheme == "reduced" or self.calc_scheme == "squashed":
+        elif self.calc_scheme == "reduced":
             # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
             if len(chi0q.shape) == 4:
                 # spin-free or spinful

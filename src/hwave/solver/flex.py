@@ -201,7 +201,7 @@ class FLEX(RPA):
 
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
         # interaction via the density-density diagonal ('kaabb->kab') on the
-        # reduced/squashed path.  The 'general' scheme selects the paramagnetic
+        # reduced path.  The 'general' scheme selects the paramagnetic
         # full-vertex multi-orbital path (v1: spin-free only; the spin_mode
         # guard is enforced in solve(), where spin_mode is determined).
         scheme = self.calc_scheme.lower()
@@ -223,19 +223,19 @@ class FLEX(RPA):
                     "enable_spin_orbital; deferred to the generalized FLEX "
                     "solver.")
             self._flex_general = True
-        elif scheme in ("reduced", "squashed"):
+        elif scheme == "reduced":
             self._flex_general = False
         else:
             if getattr(self, "calc_type", "ring") == "ring+ladder":
                 msg = ("FLEX does not support calc_type='ring+ladder' (the "
                        "transverse ladder channel); use the default 'ring' "
-                       "with calc_scheme='reduced'/'squashed'/'general'.")
+                       "with calc_scheme='reduced'/'general'.")
             else:
-                msg = ("FLEX requires calc_scheme='reduced', 'squashed', or "
-                       "'general', got '{}'.".format(self.calc_scheme))
+                msg = ("FLEX requires calc_scheme='reduced' or 'general', "
+                       "got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        # Exchange/PairHop under reduced/squashed are rejected by the
+        # Exchange/PairHop under reduced are rejected by the
         # consistency check inherited from RPA (one policy for both
         # solvers, #107): their vertex has no density-diagonal content, so
         # the schemes would drop them entirely -- the former warning here
@@ -630,7 +630,7 @@ class FLEX(RPA):
 
             # Step 5: Inflate chi0q and ham, then compute spin/charge
             # susceptibilities and V_eff.  The general (paramagnetic full-vertex)
-            # path keeps the full rank-4 orbital vertex; the reduced/squashed
+            # path keeps the full rank-4 orbital vertex; the reduced
             # path uses the density-density reduction.
             # Step 6: Compute self-energy Sigma(k, iwn).
             if self._flex_general:
@@ -1858,7 +1858,7 @@ class FLEX(RPA):
         """Pass chi0q through; build the full MYO S/C interaction matrices.
 
         This is the paramagnetic (spin-free) full-vertex general-path analogue
-        of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced/squashed path,
+        of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced path,
         which collapses the vertex onto the density-density diagonal and works
         in the spin-orbital ``nd = norb * ns`` space, the MYO paramagnetic
         formalism (cond-mat/0407094 Eqs. 5/6) is purely in ORBITAL space and
@@ -2751,7 +2751,7 @@ class FLEX(RPA):
             # makes any future layout change fail fast instead of being
             # silently misread.
             #
-            # Deliberately NOT stamped on reduced/squashed files: those axes are
+            # Deliberately NOT stamped on reduced files: those axes are
             # spin-orbital (s*norb + a), not four orbital legs -- the loader has
             # to extract a spin block before the array becomes an orbital-pair
             # object at all (see sc._to_orbital_pair). Calling them "acbd" would

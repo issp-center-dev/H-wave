@@ -907,7 +907,7 @@ class TestFLEXIronPnictide(unittest.TestCase):
             chi_s_trace = sum(chi[:, a, a, b, b].real
                               for a in range(norb) for b in range(norb))
         else:
-            # reduced/squashed: (nvol, norb, norb) density-pair matrix
+            # reduced: (nvol, norb, norb) density-pair matrix
             chi_s_trace = chi.real.sum(axis=(-2, -1))
 
         # Q vectors

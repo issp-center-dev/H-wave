@@ -60,8 +60,14 @@ class TestGreenInfoReuse(unittest.TestCase):
     def test_reduced_scheme_roundtrip(self):
         self._roundtrip('reduced')
 
-    def test_squashed_scheme_roundtrip(self):
-        self._roundtrip('squashed')
+    def test_squashed_scheme_is_rejected(self):
+        # the squashed CONFIGURATION is gone (#144); its provenance
+        # token is covered by
+        # test_squashed_provenance_accepted_by_reduced_consumer
+        with self.assertRaises(ValueError) as ctx:
+            self._roundtrip('squashed')
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                       str(ctx.exception))
 
     def test_spin_diag_blocks_are_detected_in_memory(self):
         """A two-block (spin-diag) bubble handed over in memory must select
@@ -423,17 +429,20 @@ class TestRoundFourHardening(unittest.TestCase):
         sv.solve(g, 'tests/rpa/output')
         return sv, g
 
-    def test_reduced_bubble_is_accepted_by_a_squashed_consumer(self):
-        """reduced and squashed share one bubble representation; a
-        reduced-produced bubble solved under squashed must match an
-        internal squashed recomputation exactly."""
+    def test_squashed_provenance_accepted_by_reduced_consumer(self):
+        """A chi0q whose recorded calc_scheme is 'squashed' (an old file's
+        provenance) must load under a reduced consumer: the two schemes
+        always shared one bubble representation (rpa.py rep-mapping), and
+        #144 removed only the configuration, not the representation."""
         sv1, g = self._solved('reduced')
-        sv2, r2 = _make('squashed', {'CoulombInter': 'onsite_inter.dat'})
+        sv2, r2 = _make('reduced', {'CoulombInter': 'onsite_inter.dat'})
         g2 = r2.get_param("green")
         g2['chi0q'] = g['chi0q']
-        g2['chi0q_freq_meta'] = dict(g['chi0q_freq_meta'])
-        sv2.solve(g2, 'tests/rpa/output')
-        sv3, r3 = _make('squashed', {'CoulombInter': 'onsite_inter.dat'})
+        meta = dict(g['chi0q_freq_meta'])
+        meta['calc_scheme'] = 'squashed'   # legacy producer label
+        g2['chi0q_freq_meta'] = meta
+        sv2.solve(g2, 'tests/rpa/output')  # must not raise
+        sv3, r3 = _make('reduced', {'CoulombInter': 'onsite_inter.dat'})
         g3 = r3.get_param("green")
         sv3.solve(g3, 'tests/rpa/output')
         np.testing.assert_allclose(np.asarray(g2['chiq']),
