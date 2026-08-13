@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+
+"""ED adjudication of the bond-resolved ph/pp channels (#151) -- the
+campaign's main comparison module.
+
+See ``docs/superpowers/specs/2026-08-13-bond-ed-adjudication-design.md``
+for the full design and ``docs/superpowers/plans/2026-08-13-bond-ed-
+adjudication.md`` for the task-by-task build order. This module owns the
+shared fixture factories (lazy, cached -- constructing an ``EDFixture``
+costs nothing, but the first Lehmann diagonalization on an ``L=3, norb=2``
+system is exponential-in-Hilbert-space and must happen at most once per
+fixture) plus the module-wide constants every later task in the campaign
+reuses.
+
+Two interaction representations recur throughout the campaign and must
+never be confused (design doc, "Declaration counting"): the ED side
+(Hamiltonian and Hartree-Fock) takes a CANONICAL list -- one entry per
+unordered displaced-density-pair class, via
+``ed_oracle_util.canonical_density_terms`` -- while the SOLVER side takes
+the CLOSED TWO-SIDED declaration dict production's own
+``resolve_interactions`` expects (both ``V_ab(R)`` and ``V_ba(-R)``
+declared explicitly). Feeding the closed two-sided list, undeduplicated,
+to the ED side double-counts the Hamiltonian; this module's first test
+pins that factor of 2 so the convention cannot silently drift (see the
+class docstring below).
+
+The second and third tests pin the design's claimed "null direction": for
+a real density-density interaction, ``V_ab(R) = v + i*eps`` declared
+alongside its Hermitian-closed partner ``V_ba(-R) = v - i*eps`` is, after
+site relabeling, one operator weighted by ``(v+i*eps)+(v-i*eps) = 2v`` --
+independent of ``eps``. The design claims this holds "ED and solver
+alike". The ED half holds at machine precision (verified below). The
+solver half does NOT survive contact with ``bare_bond_vertices`` -- see
+``TestNullDirectionSolverSide`` and this task's report for the measured
+finding.
+"""
+
+import collections
+import functools
+import unittest
+
+import numpy as np
+
+from hwave.solver.bond_channels import bare_bond_vertices, resolve_interactions
+from tests import ed_oracle_util
+from tests.approx_util import ApproxTestCase, assert_approx_array
+
+
+V1 = 0.02      # base coupling used throughout the campaign
+NMAT = 1024    # solver-side Matsubara count for the calibration/adjudication
+               # pins (Tasks 5+); defined here as the shared module constant.
+
+
+@functools.lru_cache(maxsize=1)
+def fx5():
+    """5-site, single-orbital ring: the single-orbital ED fixture.
+
+    ``t`` is a dict keyed by orbital pair, per ``EDFixture``'s actual
+    contract (``build_h1`` reads ``t.items()``) -- for norb=1 this is the
+    single entry ``t[(0, 0)]``.
+    """
+    t = {(0, 0): 0.7 * np.exp(0.3j)}
+    return ed_oracle_util.EDFixture(L=5, norb=1, t=t, eps=(0.0,), T=0.5, mu=0.2)
+
+
+@functools.lru_cache(maxsize=1)
+def fx3():
+    """3-site, two-orbital ring: the case-M ED fixture (complex intra- and
+    inter-orbital hopping, distinct per-orbital on-site energies).
+
+    ``t`` entries are the four (a, b) elements of the campaign's hopping
+    matrix ``[[0.7e^{0.3i}, 0.25+0.15i], [0.25+0.15i, 0.5e^{-0.2i}]]``.
+    """
+    t = {
+        (0, 0): 0.7 * np.exp(0.3j),
+        (1, 1): 0.5 * np.exp(-0.2j),
+        (0, 1): 0.25 + 0.15j,
+        (1, 0): 0.25 + 0.15j,
+    }
+    return ed_oracle_util.EDFixture(
+        L=3, norb=2, t=t, eps=(0.10, -0.05), T=0.5, mu=0.2)
+
+
+@functools.lru_cache(maxsize=1)
+def fx2():
+    """2-site, two-orbital ring: the extraction-gate fixture -- matches
+    ``tests/test_rpa_vs_ed_oracle.py``'s ``FX2``/``HOP`` exactly."""
+    t = {
+        (0, 0): 0.7 + 0.3j,
+        (1, 1): 0.5 - 0.2j,
+        (0, 1): 0.25 + 0.15j,
+        (1, 0): 0.25 + 0.15j,
+    }
+    return ed_oracle_util.EDFixture(
+        L=2, norb=2, t=t, eps=(0.10, -0.05), T=0.5, mu=0.2)
+
+
+# ---------------------------------------------------------------------------
+# Canonical-list pins
+# ---------------------------------------------------------------------------
+
+class TestCanonicalListCounting(ApproxTestCase):
+    """Pins the canonical-list convention (design doc: "Declaration
+    counting, fixed"): a displaced density pair ``(a, b, R)`` and its
+    Hermitian-closed partner ``(b, a, -R)`` are the SAME physical operator
+    after site relabeling. ``canonical_density_terms`` must be fed one
+    entry per unordered class -- feeding both is a silent factor-2 hazard
+    the design flags explicitly, and could otherwise cancel between the ED
+    Hamiltonian and the HF subtraction while leaving a production
+    comparison wrong by 2. Uses ``fx5`` (single-orbital, off-site same-
+    orbital bond): the duplication/nullity argument only needs one bond
+    class and is exercised in full generality (all four spin pairings) by
+    the ``otherwise`` branch of ``canonical_density_terms`` regardless of
+    ``norb``.
+    """
+
+    def test_duplicated_closed_list_is_exactly_twice_canonical(self):
+        fx = fx5()
+        canonical = ed_oracle_util.canonical_density_terms(fx, [(0, 0, 1, V1)])
+        duplicated = ed_oracle_util.canonical_density_terms(
+            fx, [(0, 0, 1, V1), (0, 0, -1, V1)])
+        h_canon = ed_oracle_util.h_int_from_terms(fx, canonical)
+        h_dup = ed_oracle_util.h_int_from_terms(fx, duplicated)
+        assert_approx_array(h_dup, 2.0 * h_canon, rel=0, abs=1e-14)
+
+    def test_imaginary_closed_pair_direction_is_null(self):
+        # The design's "null direction": declaring V_R(+1) = V1 + i*eps
+        # alongside its Hermitian-closed partner V_R(-1) = V1 - i*eps sums,
+        # after site relabeling, to (V1+i*eps) + (V1-i*eps) = 2*V1 on the
+        # SAME operator -- independent of eps. Perturbing eps must move the
+        # ED Hamiltonian by EXACTLY zero, not just approximately.
+        fx = fx5()
+        eps = 1e-3
+        base = ed_oracle_util.canonical_density_terms(
+            fx, [(0, 0, 1, V1), (0, 0, -1, V1)])
+        pert = ed_oracle_util.canonical_density_terms(
+            fx, [(0, 0, 1, V1 + 1j * eps), (0, 0, -1, V1 - 1j * eps)])
+        h_base = ed_oracle_util.h_int_from_terms(fx, base)
+        h_pert = ed_oracle_util.h_int_from_terms(fx, pert)
+        assert_approx_array(h_pert, h_base, rel=0, abs=1e-16)
+
+
+# ---------------------------------------------------------------------------
+# Solver-side null-direction pin
+# ---------------------------------------------------------------------------
+
+_Fx3Resolved = collections.namedtuple(
+    "_Fx3Resolved", ["bond_set", "S_bond", "C_bond", "Vpp_s", "Vpp_t"])
+
+
+def _resolve_fx3(perturbation):
+    """Resolve fx3's ring interaction through the SOLVER's own builders
+    (``resolve_interactions`` then ``bare_bond_vertices``), for the
+    (a=0, b=1, R=+1) bond direction the design's null-direction example
+    uses (spec, "direction g+/g-").
+
+    ``perturbation`` is ``{}`` for the base declaration
+    ``{V_01(+1): V1, V_10(-1): V1}``, or ``{"im_eps": eps}`` to add the
+    Hermitian-closed null perturbation ``V_01(+1) += +i*eps``,
+    ``V_10(-1) += -i*eps`` -- the SAME sign convention pinned by
+    ``test_imaginary_closed_pair_direction_is_null`` above (opposite signs
+    are the only choice ``resolve_interactions`` accepts without raising:
+    same-sign eps on both entries would violate the V_ab(R) ==
+    conj(V_ba(-R)) Hermiticity check it enforces).
+
+    ``lattice_vectors=np.eye(3)`` matches every ``resolve_interactions``
+    caller in ``tests/test_bond_channels.py`` -- it is used only for
+    Euclidean shell-length sorting, not for the fixture's actual ring
+    geometry, and no ``bond_max_shells`` cutoff is in play here.
+
+    ``bare_bond_vertices`` assumes ``C0_q`` already carries the FULL q=0
+    Hartree ``2*V_ab(q=0)`` -- its Case-2-correction step subtracts the
+    R!=0 part back out to isolate the local Cooper block (see its
+    docstring / spec S4.3 star, and
+    ``tests/test_bond_channels.py``'s ``_build_complex_two_orbital_bond``,
+    which documents and exercises the identical precondition). Passing a
+    bare zero ``C0_q`` would violate that precondition and inject a
+    spurious residual into the local block unrelated to the null-
+    direction question under test, so ``C0_q``'s (aa,bb) Hartree entries
+    are filled from ``bond_set.v_bond`` exactly as that helper does:
+    ``2 * sum_{m>=1} V_ab(R_m)``.
+
+    Returns the resolved topology plus the ``bare_bond_vertices`` outputs.
+    """
+    eps = perturbation.get("im_eps", 0.0)
+    coulomb_inter = {
+        ((1, 0, 0), (0, 1)): V1 + 1j * eps,
+        ((-1, 0, 0), (1, 0)): V1 - 1j * eps,
+    }
+    norb = fx3().norb
+    bond_set = resolve_interactions(coulomb_inter, np.eye(3), norb=norb)
+    nd = norb * norb
+    S0_q = np.zeros((1, 1, 1, nd, nd), dtype=complex)
+    C0_q = np.zeros((1, 1, 1, nd, nd), dtype=complex)
+    for a in range(norb):
+        for b in range(norb):
+            total_ab = sum(
+                bond_set.v_bond[m][a, b] for m in range(1, bond_set.n_channels))
+            C0_q[0, 0, 0, a * norb + a, b * norb + b] = 2.0 * total_ab
+    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0_q, C0_q, norb)
+    return _Fx3Resolved(bond_set, S_bond, C_bond, Vpp_s, Vpp_t)
+
+
+class TestNullDirectionSolverSide(ApproxTestCase):
+    """Solver-side half of the null-direction pin (review round 2): the ph
+    matrices ``S_bond``/``C_bond`` AND the pp vertices ``Vpp_s``/``Vpp_t``
+    from ``bare_bond_vertices`` must be unchanged (abs=1e-15) under the
+    imaginary null perturbation -- mirroring
+    ``test_imaginary_closed_pair_direction_is_null``'s ED-side result.
+    Each of the four matrices is checked in its own ``subTest`` so a
+    failure on one does not hide the others' pass/fail status.
+
+    MEASURED FINDING (discrepancy protocol -- do not touch
+    ``bond_channels.py``): the PP sector holds -- ``Vpp_s``/``Vpp_t`` are
+    exactly null-invariant (diff 0.0), because the ``D + D^dagger``
+    construction that feeds the bond Cooper block takes ``2*Re(.)`` of
+    each bond-diagonal entry (killing the imaginary offset before any
+    sandwich), and the local block's R!=0 Hartree subtraction cancels
+    against a correctly-filled ``C0_q`` exactly, independent of ``eps``.
+
+    The PH sector does NOT hold. ``S_bond``/``C_bond``'s m!=0 bond-
+    diagonal Fock element is set directly from ``v_bond[m][l1, l2]``
+    (S) / ``-v_bond[m][l1, l2]`` (C) with no Hermitizing combination at
+    all -- ``V_01(+1)`` and ``V_10(-1)`` live at DIFFERENT enlarged
+    indices ``(m, l1, l2)`` and are never summed onto one physical slot
+    the way the ED canonical list sums them onto one operator -- so the
+    imaginary offset survives linearly: ``S_bond`` responds at magnitude
+    ``eps`` (the bond-diagonal element alone), ``C_bond`` at magnitude
+    ``2*eps`` (that same bond-diagonal element PLUS the m=0 Hartree
+    sub-block, which is ``2*eps``-responsive through
+    ``V_01(q=0) = V_01(+1) + V_01(-1)``). This is an INTERMEDIATE-VERTEX
+    finding at the ``bare_bond_vertices`` output -- whether it survives
+    into a fully-dressed physical observable (``dress_bond``,
+    ``make_bond_kernel``, the eventual chi/gap) is exactly what Tasks 4-9
+    adjudicate; that projection step is out of this task's scope. This
+    test is left asserting the null (and failing on ``S_bond``/``C_bond``)
+    rather than adjusted to match production, per the discrepancy
+    protocol; see this task's report for the measured values. No custom
+    ``msg`` is passed to ``assert_approx_array`` below -- its default
+    failure message already carries the mismatch count, first bad index,
+    actual/expected values, diff and tolerance, which the discrepancy
+    protocol's "record the measured values" step needs; a custom message
+    would replace (not augment) that detail.
+    """
+
+    def test_null_direction_moves_nothing_solver_side(self):
+        base = _resolve_fx3({})
+        pert = _resolve_fx3({"im_eps": 1e-3})
+        for name in ("S_bond", "C_bond", "Vpp_s", "Vpp_t"):
+            with self.subTest(matrix=name):
+                assert_approx_array(
+                    getattr(pert, name), getattr(base, name), rel=0, abs=1e-15)
+
+
+if __name__ == "__main__":
+    unittest.main()
