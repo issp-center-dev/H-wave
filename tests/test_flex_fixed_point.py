@@ -9,10 +9,11 @@ path (normalization drift, an asymmetric sigma update, a vertex applied
 differently on entry), the fixed point moves and these tests fail.
 
 The matrix covers every interaction type FLEX accepts, under every
-calc_scheme. The reduced/squashed schemes REJECT Exchange and PairHop
-(one policy since #107: their vertex has no density-diagonal content,
-so those schemes would drop them entirely); the rejection is pinned
-here alongside the fixed-point cells.
+calc_scheme. The reduced scheme REJECTS Exchange and PairHop (one
+policy since #107: their vertex has no density-diagonal content, so
+that scheme would drop them entirely); the rejection is pinned here
+alongside the fixed-point cells. calc_scheme='squashed' was removed in
+H-wave 2.0 (#144); its construction-time rejection is pinned below.
 """
 
 import os
@@ -90,12 +91,13 @@ class TestFlexFixedPoint(unittest.TestCase):
 
     def _check_or_reject(self, scheme, name, path, interactions):
         if name in ("Exchange 2orb", "PairHop 2orb"):
-            # ONE policy since #107: the density-diagonal schemes reject
+            # ONE policy since #107: the density-diagonal scheme rejects
             # Exchange and PairHop for both solvers -- their adjudicated
-            # vertex has no density-diagonal content, so the schemes
+            # vertex has no density-diagonal content, so the scheme
             # would drop them entirely (zero effect, not an
             # approximation). Previously reduced raised SystemExit,
-            # squashed silently accepted, FLEX warned.
+            # squashed (removed in 2.0, #144) silently accepted, FLEX
+            # warned.
             with self.assertRaises(ValueError) as cm:
                 self._check_cell(scheme, name, path, interactions)
             self.assertIn('general', str(cm.exception))
@@ -108,9 +110,13 @@ class TestFlexFixedPoint(unittest.TestCase):
                 self._check_or_reject('reduced', name, path, interactions)
 
     def test_squashed(self):
-        for name, path, interactions in CELLS:
-            with self.subTest(interaction=name):
-                self._check_or_reject('squashed', name, path, interactions)
+        """calc_scheme='squashed' was removed in H-wave 2.0 (#144): it now
+        fails at construction, before any per-interaction cell is reached."""
+        name, path, interactions = CELLS[0]
+        with self.assertRaises(ValueError) as cm:
+            self._check_or_reject('squashed', name, path, interactions)
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                      str(cm.exception))
 
     def test_general(self):
         for name, path, interactions in CELLS:

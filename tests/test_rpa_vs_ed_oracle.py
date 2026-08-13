@@ -4,8 +4,8 @@
 
 Coverage: the spin-free general scheme for CoulombIntra, CoulombInter,
 Exchange and PairHop (real and complex), plus the reduced scheme for
-CoulombIntra. Hund and Ising, the squashed scheme, the spin-diagonal
-and spinful paths and the GPU backend are adjudicated elsewhere
+CoulombIntra. Hund and Ising, the spin-diagonal and spinful paths and
+the GPU backend are adjudicated elsewhere
 (tests/test_rpa_spinful_vertex_exchange.py carries the spinful
 exact-diagonalization oracle) or, for the interaction-tensor
 conventions, by the fixed-point pin at the bottom of this module.

@@ -389,8 +389,8 @@ class TestExchangeTensorStructure(unittest.TestCase):
         self.assertGreater(np.abs(Xm.imag).max(), 1e-3)
 
     def test_density_projection_vanishes_all_types(self):
-        """project_density_pairs(X) == 0 structurally: the reduced and
-        squashed spinful schemes must be unaffected by the crossing."""
+        """project_density_pairs(X) == 0 structurally: the reduced spinful
+        scheme must be unaffected by the crossing."""
         from hwave.solver.density_projection import project_density_pairs
         cases = TestSpinConservingLimits.TYPES
         for tname, ents in cases.items():
