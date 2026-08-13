@@ -1103,3 +1103,263 @@ def eigenbasis_pair_bubble(fx, channels, nmat):
                     acc += np.sum(green[:, p1, q1] * green_minus[:, p2, q2])
             X[i, jx] = acc / (L * beta)
     return X
+
+
+# ---------------------------------------------------------------------------
+# Task 9: sensitivity diagnostic -- ONE (fixture, channel) matrix, built
+# ONLY from adjudicate_granule's own records (never ED data directly).
+# ---------------------------------------------------------------------------
+
+SENS_SV_FLOOR = 1e-3
+# The a-priori EXPECTED ACTIVE column set per (fixture, channel) -- stated
+# ahead of the measurement (design-doc-level physics: on-site U has no
+# triplet pair component under the exchange projection, Task 7's U-anchor)
+# and ASSERTED against what is actually measured, never derived from it.
+# FX5: S/C/pp-s all three unit directions (U, g1, g2); pp-t excludes U.
+# FX3 (case M): both directions (g+, g-) active in all four channels.
+SENSITIVITY_EXPECTED_ACTIVE = {
+    "fx5/S": ("U", "g1", "g2"),
+    "fx5/C": ("U", "g1", "g2"),
+    "fx5/pp_s": ("U", "g1", "g2"),
+    "fx5/pp_t": ("g1", "g2"),
+    "fx3/S": ("g+", "g-"),
+    "fx3/C": ("g+", "g-"),
+    "fx3/pp_s": ("g+", "g-"),
+    "fx3/pp_t": ("g+", "g-"),
+}
+# The COMPLEMENTARY a-priori EXPECTED NULL (PASS-ZERO) set per (fixture,
+# channel) -- review finding (must_fix): asserting only the active set
+# against what is PRESENT in ``granule_records`` is invisible to an
+# INCOMPLETE input (e.g. fx5/pp_t called with only {g1, g2}, silently
+# missing the U null-anchor direction, would still show
+# ``actual_active == expected_active`` and pass). Declaring the null set
+# too lets ``sensitivity_rank`` assert the FULL expected key set
+# (active | null) against ``granule_records.keys()`` directly, catching a
+# missing OR an extra direction of either kind.
+SENSITIVITY_EXPECTED_NULL = {
+    "fx5/S": (), "fx5/C": (), "fx5/pp_s": (), "fx5/pp_t": ("U",),
+    "fx3/S": (), "fx3/C": (), "fx3/pp_s": (), "fx3/pp_t": (),
+}
+
+
+def sensitivity_rank(granule_records, label):
+    """ONE sensitivity matrix per (fixture, channel), built ONLY from the
+    already-adjudicated ``granule_records`` (``dict(direction_name ->
+    adjudicate_granule record)``) -- never ED data directly, only the
+    SOLVER-side ``pred_full`` each record already carries.
+
+    Columns = each unit direction's ``pred_full`` restricted to the row set
+    = the UNION of the directions' ``bearing_mask`` on the shared canonical
+    grid (``adjudicate_granule``'s own alignment -- no remapping here). A
+    direction structurally zero (``bearing_mask`` False) on a union row
+    contributes exact ``0.0`` there, never whatever residual its own
+    ``pred_full`` happens to hold at that cell.
+
+    STRUCTURALLY NULL COLUMNS (status ``PASS-ZERO``, i.e. ``bearing_mask``
+    all-False) are EXCLUDED before the SVD -- a PASS-ZERO direction is
+    structurally the zero vector and would fail the rank gates by
+    construction, not because anything is wrong; it is validated by its own
+    PASS-ZERO granule status instead.
+
+    The EXPECTED ACTIVE column set (``SENSITIVITY_EXPECTED_ACTIVE``) AND its
+    complementary EXPECTED NULL set (``SENSITIVITY_EXPECTED_NULL``) are
+    stated a priori and ASSERTED against ``granule_records`` in two steps:
+    first that its KEY SET is exactly ``expected_active | expected_null``
+    (review must_fix: checking only the active names would be blind to an
+    INCOMPLETE input silently missing a null-anchor direction), then that
+    the measured active/null partition (derived from each record's own
+    ``status``) matches the expected active set. A column active in
+    expectation but structurally null in fact, or vice versa -- or a
+    missing/unexpected direction of either kind -- is itself a FINDING,
+    raised loudly as an ``AssertionError`` rather than absorbed.
+
+    Gates on the resulting ACTIVE matrix (``sigma`` from ``np.linalg.svd``,
+    descending): ``sv_ratio = sigma_min / sigma_max >= SENS_SV_FLOOR``
+    (1e-3) and ``sigma_min >= 100 * delta_rich_max`` (the max
+    ``delta_rich`` over this channel's own active records -- the same
+    100x-signal-over-ED-noise-floor convention ``adjudicate_granule``'s own
+    power test uses). Either gate failing marks this (fixture, channel)
+    ``status="INCONCLUSIVE"`` -- a genuine rank/conditioning finding (e.g.
+    two directions whose restricted columns are exactly parallel), never
+    fudged past the floor and never silently dropped.
+
+    Every record fed in must already be ``PASS``/``PASS-ZERO`` (this
+    function adjudicates RANK, not agreement -- a FAIL/INCONCLUSIVE
+    granule is a fixture-level concern the caller must already have
+    excluded).
+
+    Returns ``dict(label, active, null, n_rows, singular_values, sv_ratio,
+    sigma_min, sigma_max, delta_rich_max, status)``. Prints the audit line.
+    Pure function; no global state.
+    """
+    if label not in SENSITIVITY_EXPECTED_ACTIVE:
+        raise ValueError(
+            "sensitivity_rank: no a-priori expected-active column set "
+            "declared for label {!r} -- add one to "
+            "SENSITIVITY_EXPECTED_ACTIVE (and SENSITIVITY_EXPECTED_NULL) "
+            "before calling".format(label))
+    expected_active = SENSITIVITY_EXPECTED_ACTIVE[label]
+    expected_null = SENSITIVITY_EXPECTED_NULL[label]
+    expected_all = set(expected_active) | set(expected_null)
+
+    # Review finding (must_fix): checking ONLY the active set against
+    # ``granule_records`` is invisible to an INCOMPLETE input -- e.g.
+    # fx5/pp_t called with just {g1, g2} (silently missing the U
+    # null-anchor direction) would still show
+    # ``actual_active == expected_active`` and pass. Assert the FULL key
+    # set (active | null) matches ``granule_records.keys()`` exactly
+    # first, so a missing OR an unexpected extra direction (active or
+    # null) is caught here, before the active/null split is even read.
+    if set(granule_records) != expected_all:
+        raise AssertionError(
+            "sensitivity_rank[{}] FINDING: a priori expected direction "
+            "set {} (active {} | null {}) but granule_records supplied {} "
+            "-- an incomplete or unexpected direction set is itself a "
+            "campaign finding, not something to silently paper over"
+            .format(label, sorted(expected_all), sorted(expected_active),
+                    sorted(expected_null), sorted(granule_records)))
+
+    for name, rec in granule_records.items():
+        if rec["status"] not in ("PASS", "PASS-ZERO"):
+            raise ValueError(
+                "sensitivity_rank[{}]: direction {!r} has status {!r} -- "
+                "sensitivity_rank only consumes granules that already "
+                "cleared adjudicate_granule (PASS or PASS-ZERO); a "
+                "FAIL/INCONCLUSIVE granule is a fixture-level concern the "
+                "caller must exclude before calling this".format(
+                    label, name, rec["status"]))
+
+    actual_null = sorted(n for n, r in granule_records.items()
+                          if r["status"] == "PASS-ZERO")
+    actual_active = sorted(n for n, r in granule_records.items()
+                            if r["status"] != "PASS-ZERO")
+    expected_active_set = set(expected_active)
+    if set(actual_active) != expected_active_set:
+        raise AssertionError(
+            "sensitivity_rank[{}] FINDING: a priori expected active "
+            "columns {} but measured active {} (null {}) -- a column "
+            "active in expectation but structurally null in fact (or vice "
+            "versa) is a campaign finding, not something to silently "
+            "paper over".format(label, sorted(expected_active_set),
+                                 actual_active, actual_null))
+
+    active_names = [d for d in expected_active if d in granule_records]
+
+    # Review finding (should_fix, round 3): the active/null split above is
+    # DERIVED from each record's own ``status`` string, but nothing
+    # verified the ``status``<->``bearing_mask`` invariant
+    # ``adjudicate_granule`` itself documents (PASS-ZERO iff the granule's
+    # ENTIRE grid is a zero cell, i.e. ``bearing_mask`` all-False; a
+    # bearing PASS has at least one True). A malformed/contract-drifted
+    # record (e.g. PASS-ZERO with bearing rows still set) would otherwise
+    # be silently excluded from the SVD -- or a PASS with an all-False
+    # mask silently included as an all-zero column -- without ever being
+    # caught.
+    for d, rec in granule_records.items():
+        has_bearing = bool(np.any(np.asarray(rec["bearing_mask"], dtype=bool)))
+        if rec["status"] == "PASS-ZERO" and has_bearing:
+            raise ValueError(
+                "sensitivity_rank[{}]: direction {!r} is PASS-ZERO but its "
+                "bearing_mask has at least one True entry -- inconsistent "
+                "adjudicate_granule record".format(label, d))
+        if rec["status"] == "PASS" and not has_bearing:
+            raise ValueError(
+                "sensitivity_rank[{}]: direction {!r} is PASS but its "
+                "bearing_mask is all-False (should have been PASS-ZERO) -- "
+                "inconsistent adjudicate_granule record".format(label, d))
+
+    # Optional finding (contract-drift guard): every direction's
+    # pred_full/bearing_mask must be a 1-D array of the SAME length --
+    # adjudicate_granule already guarantees this per-record, but nothing
+    # upstream guarantees every direction shares the SAME canonical grid
+    # size; a silent length mismatch would otherwise broadcast/misalign
+    # inside the union-mask OR / column stack below. Review finding
+    # (should_fix, round 2): validated over ALL SUPPLIED directions
+    # (``granule_records``), not just ``active_names`` -- a PASS-ZERO/null
+    # direction (e.g. fx5/pp_t's U anchor) must share the same canonical
+    # grid too, even though it never enters the matrix itself.
+    all_names = sorted(granule_records)
+    ref_name, ref_len = None, None
+    for d in all_names:
+        rec = granule_records[d]
+        pred = np.asarray(rec["pred_full"])
+        bearing = np.asarray(rec["bearing_mask"])
+        if pred.ndim != 1 or bearing.ndim != 1:
+            raise ValueError(
+                "sensitivity_rank[{}]: direction {!r} pred_full/"
+                "bearing_mask must be 1-D (got ndim {}/{})".format(
+                    label, d, pred.ndim, bearing.ndim))
+        if pred.shape != bearing.shape:
+            raise ValueError(
+                "sensitivity_rank[{}]: direction {!r} pred_full shape {} "
+                "!= bearing_mask shape {}".format(
+                    label, d, pred.shape, bearing.shape))
+        if ref_len is None:
+            ref_name, ref_len = d, pred.shape[0]
+        elif pred.shape[0] != ref_len:
+            raise ValueError(
+                "sensitivity_rank[{}]: direction {!r} canonical-grid "
+                "length {} != direction {!r}'s length {} -- directions "
+                "must share the SAME canonical grid".format(
+                    label, d, pred.shape[0], ref_name, ref_len))
+
+    bearing_arrays = [np.asarray(granule_records[d]["bearing_mask"], dtype=bool)
+                       for d in active_names]
+    union_mask = bearing_arrays[0].copy()
+    for b in bearing_arrays[1:]:
+        union_mask |= b
+    n_rows = int(np.count_nonzero(union_mask))
+
+    columns = []
+    for d in active_names:
+        rec = granule_records[d]
+        pred = np.asarray(rec["pred_full"], dtype=float)
+        bearing = np.asarray(rec["bearing_mask"], dtype=bool)
+        col = np.where(bearing, pred, 0.0)
+        columns.append(col[union_mask])
+    matrix = np.stack(columns, axis=1) if columns else np.zeros((n_rows, 0))
+    n_cols = matrix.shape[1]
+
+    delta_rich_max = max(granule_records[d]["delta_rich"] for d in active_names)
+
+    # Should_fix (review): an underdetermined matrix (fewer bearing rows
+    # than active columns, including the n_rows==0 edge case) cannot have
+    # full column rank regardless of what raw sv_ratio/sigma_min come out
+    # to -- np.linalg.svd on e.g. a (1, 2) matrix still returns a nonzero
+    # sv[0] with sv_ratio possibly reading 1.0, which would otherwise
+    # silently PASS a matrix that is structurally unable to separate its
+    # columns. Marked INCONCLUSIVE directly, without ever calling svd on
+    # a degenerate shape.
+    if n_rows < n_cols:
+        sv = np.zeros(0)
+        sigma_max = float("nan")
+        sigma_min = 0.0
+        sv_ratio = 0.0
+        status = "INCONCLUSIVE"
+        print("sensitivity_rank[{}]: active={} null={} rows={} cols={} "
+              "UNDERDETERMINED (rows < active columns) -- status={}".format(
+                  label, active_names, actual_null, n_rows, n_cols, status))
+        return dict(label=label, active=active_names, null=actual_null,
+                    n_rows=n_rows, singular_values=sv, sv_ratio=sv_ratio,
+                    sigma_min=sigma_min, sigma_max=sigma_max,
+                    delta_rich_max=delta_rich_max, status=status)
+
+    sv = np.linalg.svd(matrix, compute_uv=False)
+    sigma_max = float(sv[0])
+    sigma_min = float(sv[-1])
+    sv_ratio = sigma_min / sigma_max if sigma_max > 0.0 else 0.0
+
+    rank_ok = (sv_ratio >= SENS_SV_FLOOR) and (sigma_min >= 100.0 * delta_rich_max)
+    status = "PASS" if rank_ok else "INCONCLUSIVE"
+
+    print("sensitivity_rank[{}]: active={} null={} rows={} "
+          "singular_values={} sv_ratio={:.6e} sigma_min={:.6e} "
+          "100*delta_rich_max={:.6e} status={}".format(
+              label, active_names, actual_null, n_rows,
+              np.array2string(sv, precision=6), sv_ratio, sigma_min,
+              100.0 * delta_rich_max, status))
+
+    return dict(label=label, active=active_names, null=actual_null,
+                n_rows=n_rows, singular_values=sv,
+                sv_ratio=sv_ratio, sigma_min=sigma_min, sigma_max=sigma_max,
+                delta_rich_max=delta_rich_max, status=status)

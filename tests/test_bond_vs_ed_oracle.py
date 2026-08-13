@@ -3157,5 +3157,702 @@ class TestCaseM(unittest.TestCase):
             "caseM-pp-g+g-(1,1)")
 
 
+def _fake_record(pred_full, bearing_mask, status="PASS", delta_rich=1e-6,
+                  label="synthetic"):
+    """A synthetic ``adjudicate_granule``-shaped record for
+    ``TestSensitivityRank``'s unit tests below -- fast, no ED/solver cost,
+    mirrors exactly the fields ``sensitivity_rank`` reads
+    (``status``, ``delta_rich``, ``pred_full``, ``bearing_mask``)."""
+    pred_full = np.asarray(pred_full, dtype=float)
+    bearing_mask = np.asarray(bearing_mask, dtype=bool)
+    return dict(label=label, delta_rich=delta_rich, delta_nmat=delta_rich,
+                tol=max(10.0 * delta_rich, 1e-13),
+                max_signal=float(np.max(np.abs(pred_full[bearing_mask])))
+                if bearing_mask.any() else 0.0,
+                status=status, failures=[], pred_full=pred_full,
+                bearing_mask=bearing_mask)
+
+
+class TestSensitivityExpectedTablesInvariant(unittest.TestCase):
+    """Optional finding (review, round 1): nothing previously asserted
+    that ``SENSITIVITY_EXPECTED_ACTIVE`` and ``SENSITIVITY_EXPECTED_NULL``
+    share the same label set with DISJOINT active/null direction sets per
+    label -- both hold today, but a future table edit could silently
+    break the partition reasoning ``sensitivity_rank`` relies on."""
+
+    def test_same_label_set(self):
+        self.assertEqual(
+            set(ed_oracle_util.SENSITIVITY_EXPECTED_ACTIVE),
+            set(ed_oracle_util.SENSITIVITY_EXPECTED_NULL))
+
+    def test_active_and_null_disjoint_per_label(self):
+        for label, active in ed_oracle_util.SENSITIVITY_EXPECTED_ACTIVE.items():
+            null = ed_oracle_util.SENSITIVITY_EXPECTED_NULL[label]
+            with self.subTest(label=label):
+                self.assertEqual(set(active) & set(null), set())
+
+    def test_no_duplicate_directions_within_a_table_entry(self):
+        # optional finding (review, round 2): a duplicated name within one
+        # label's active/null tuple would be silently collapsed by every
+        # SET-based completeness check above yet still appear TWICE in
+        # ``active_names`` (a list, built by iterating the tuple in
+        # order), producing a duplicate SVD column and a misleading rank
+        # failure that the set-equality checks alone cannot catch.
+        for label, active in ed_oracle_util.SENSITIVITY_EXPECTED_ACTIVE.items():
+            null = ed_oracle_util.SENSITIVITY_EXPECTED_NULL[label]
+            with self.subTest(label=label, table="active"):
+                self.assertEqual(len(active), len(set(active)))
+            with self.subTest(label=label, table="null"):
+                self.assertEqual(len(null), len(set(null)))
+
+
+class TestSensitivityRank(unittest.TestCase):
+    """Step 1 unit tests for ``ed_oracle_util.sensitivity_rank`` on
+    synthetic records (fast, no ED/solver cost) -- added during this
+    task's own review round (codex_review_diff via the ai-review-cycle
+    MCP) to close two must_fix gaps and exercise two should_fix guards
+    the campaign's own (all-clean) data never happens to trigger:
+    (1) an INCOMPLETE ``granule_records`` input (missing a null-anchor
+    direction) must raise, not silently pass with only the present
+    directions checked; (2) an UNEXPECTED extra direction must also
+    raise; (3) an underdetermined matrix (fewer bearing rows than active
+    columns) must be marked INCONCLUSIVE without ever calling ``svd`` on
+    a degenerate shape; (4) genuinely parallel/rank-deficient columns (a
+    LOW ``sv_ratio``, rows >= columns) must be marked INCONCLUSIVE via the
+    ``SENS_SV_FLOOR`` gate specifically -- the campaign's real fx3 g+/g-
+    columns turned out NOT to hit this path (Task 9 report, "rank
+    analysis"), so this is the only place that gate's actual behavior is
+    exercised at all.
+    """
+
+    def test_missing_null_anchor_direction_raises(self):
+        # fx5/pp_t's a-priori set is active=(g1, g2), null=(U,) -- an
+        # input missing U entirely (only g1/g2 present) must raise, not
+        # silently read as "active == {g1, g2}, matches expectation".
+        recs = {
+            "g1": _fake_record([1.0, 0.0, 0.0, 1.0], [True, False, False, True]),
+            "g2": _fake_record([0.0, 1.0, 1.0, 0.0], [False, True, True, False]),
+        }
+        with self.assertRaises(AssertionError):
+            ed_oracle_util.sensitivity_rank(recs, "fx5/pp_t")
+
+    def test_unexpected_extra_direction_raises(self):
+        recs = {
+            "U": _fake_record([1.0, 0.0], [True, False]),
+            "g1": _fake_record([0.0, 1.0], [False, True]),
+            "g2": _fake_record([1.0, 1.0], [True, True]),
+            "g3": _fake_record([2.0, 2.0], [True, True]),   # not expected
+        }
+        with self.assertRaises(AssertionError):
+            ed_oracle_util.sensitivity_rank(recs, "fx5/S")
+
+    def test_active_direction_measured_null_raises(self):
+        # fx5/pp_t expects active=(g1, g2), null=(U,). Supply the FULL
+        # expected key set (U present and correctly PASS-ZERO, satisfying
+        # the completeness check) but make g2 come back PASS-ZERO too --
+        # a column active in expectation but structurally null in fact,
+        # which must be caught by the active/null PARTITION assertion
+        # specifically (review should_fix, round 2: the original version
+        # of this test omitted U entirely and only ever exercised the
+        # earlier completeness check, never this one).
+        recs = {
+            "U": _fake_record([0.0, 0.0], [False, False], status="PASS-ZERO"),
+            "g1": _fake_record([1.0, 0.0], [True, False]),
+            "g2": _fake_record([0.0, 0.0], [False, False], status="PASS-ZERO"),
+        }
+        with self.assertRaisesRegex(AssertionError, "active"):
+            ed_oracle_util.sensitivity_rank(recs, "fx5/pp_t")
+
+    def test_underdetermined_matrix_marks_inconclusive(self):
+        # fx3/pp_t expects active=(g+, g-). Both directions bear on the
+        # SAME single canonical row (index 0) and are structurally zero
+        # everywhere else -- note this is NOT the same as two directions
+        # bearing on DIFFERENT rows: two disjoint-support columns would
+        # give a (2, 2) diagonal matrix (well-conditioned, not
+        # underdetermined -- "structurally zero on a union row
+        # contributes exact 0.0" there, not a missing row). Here the
+        # union bearing mask has exactly ONE True row, so the restricted
+        # matrix is (1, 2): fewer rows than active columns, structurally
+        # unable to have full column rank regardless of the raw values.
+        recs = {
+            "g+": _fake_record([5.0, 0.0, 0.0, 0.0],
+                                [True, False, False, False]),
+            "g-": _fake_record([3.0, 0.0, 0.0, 0.0],
+                                [True, False, False, False]),
+        }
+        result = ed_oracle_util.sensitivity_rank(recs, "fx3/pp_t")
+        self.assertEqual(result["status"], "INCONCLUSIVE")
+        self.assertEqual(result["n_rows"], 1)
+
+    def test_parallel_columns_low_sv_ratio_marks_inconclusive(self):
+        # rows (4) >= columns (2), so this goes through the actual SVD
+        # gate (not the underdetermined shortcut) -- exactly parallel
+        # columns give sigma_min == 0 exactly, sv_ratio == 0.0 < floor.
+        recs = {
+            "g+": _fake_record([1.0, 2.0, 3.0, 4.0],
+                                [True, True, True, True], delta_rich=1e-8),
+            "g-": _fake_record([2.0, 4.0, 6.0, 8.0],
+                                [True, True, True, True], delta_rich=1e-8),
+        }
+        result = ed_oracle_util.sensitivity_rank(recs, "fx3/pp_t")
+        self.assertEqual(result["status"], "INCONCLUSIVE")
+        self.assertLess(result["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
+
+    def test_sigma_min_below_delta_rich_floor_marks_inconclusive(self):
+        # well-separated (orthogonal) columns -- sv_ratio == 1.0, clears
+        # SENS_SV_FLOOR easily -- but delta_rich_max is deliberately huge
+        # relative to sigma_min, so the OTHER gate (100*delta_rich) fails.
+        recs = {
+            "g+": _fake_record([1.0, 0.0], [True, True], delta_rich=1.0),
+            "g-": _fake_record([0.0, 1.0], [True, True], delta_rich=1e-8),
+        }
+        result = ed_oracle_util.sensitivity_rank(recs, "fx3/pp_t")
+        self.assertEqual(result["status"], "INCONCLUSIVE")
+        self.assertGreaterEqual(result["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
+        self.assertLess(result["sigma_min"], 100.0 * result["delta_rich_max"])
+
+    def test_well_conditioned_active_matrix_passes(self):
+        recs = {
+            "g+": _fake_record([1.0, 0.0, 0.5, 0.0],
+                                [True, True, True, True], delta_rich=1e-8),
+            "g-": _fake_record([0.0, 1.0, 0.0, 0.5],
+                                [True, True, True, True], delta_rich=1e-8),
+        }
+        result = ed_oracle_util.sensitivity_rank(recs, "fx3/pp_t")
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["active"], ["g+", "g-"])
+        self.assertEqual(result["null"], [])
+
+    def test_mismatched_grid_length_across_directions_raises(self):
+        recs = {
+            "g+": _fake_record([1.0, 0.0], [True, True]),
+            "g-": _fake_record([1.0, 0.0, 0.0], [True, True, True]),
+        }
+        with self.assertRaises(ValueError):
+            ed_oracle_util.sensitivity_rank(recs, "fx3/pp_t")
+
+    def test_mismatched_pred_full_bearing_mask_shape_within_record_raises(self):
+        # a single direction whose OWN pred_full/bearing_mask disagree in
+        # length -- the within-record branch (distinct from the
+        # cross-direction grid-length mismatch above).
+        bad = _fake_record([1.0, 0.0], [True, True])
+        bad["pred_full"] = np.array([1.0, 0.0, 3.0])   # now len 3 vs mask's 2
+        recs = {
+            "g+": bad,
+            "g-": _fake_record([1.0, 0.0], [True, True]),
+        }
+        with self.assertRaises(ValueError):
+            ed_oracle_util.sensitivity_rank(recs, "fx3/pp_t")
+
+    def test_null_direction_grid_length_mismatch_raises(self):
+        # review should_fix (round 2): the shape/length validation must
+        # cover EVERY supplied direction, not just the active columns --
+        # here fx5/pp_t's null U anchor has a DIFFERENT canonical-grid
+        # length than g1/g2, which must be caught even though U itself
+        # never enters the matrix.
+        recs = {
+            "U": _fake_record([0.0, 0.0, 0.0], [False, False, False],
+                               status="PASS-ZERO"),
+            "g1": _fake_record([1.0, 0.0], [True, False]),
+            "g2": _fake_record([0.0, 1.0], [False, True]),
+        }
+        with self.assertRaises(ValueError):
+            ed_oracle_util.sensitivity_rank(recs, "fx5/pp_t")
+
+
+class TestCampaignAggregationRobustness(unittest.TestCase):
+    """Regression coverage (review should_fix, two rounds) for
+    ``_campaign_verdict``'s completeness/non-vacuous-``all()`` guards,
+    using a synthetic ``state`` dict directly (``_campaign_verdict`` is
+    pure logic over its ``state`` argument -- exercising it does not need
+    to run any ED/solver machinery). Round 2 of review found that the
+    original version of this class built states under FABRICATED labels
+    (``"fx5/0"`` etc.), which only exercised the per-fixture non-emptiness
+    guard, never ``_campaign_verdict``'s OWN completeness assertion added
+    in that same round (a partial-but-nonempty state under the REAL
+    expected labels would previously have slipped past the old
+    non-emptiness-only check). States here are now built over the exact
+    same ``_CAMPAIGN_EXPECTED_GRANULES``/``_CAMPAIGN_EXPECTED_SENSITIVITY``
+    label sets ``_campaign_state`` itself would produce.
+    """
+
+    def _synthetic_state(self, overrides=None, omit_fixtures=(),
+                          omit_labels=()):
+        """A synthetic, all-clean-by-default ``state`` over the REAL
+        expected granule/sensitivity label sets. ``overrides``: dict
+        mapping a specific label to a specific status. ``omit_fixtures``:
+        drop every label for the given fixture name(s) entirely
+        (simulates a fixture's evidence never aggregating).
+        ``omit_labels``: drop specific individual labels (simulates a
+        partial, non-fixture-aligned aggregation gap)."""
+        overrides = overrides or {}
+
+        def _build(expected_labels):
+            out = {}
+            for lbl in expected_labels:
+                fixture = lbl.split("/", 1)[0]
+                if fixture in omit_fixtures or lbl in omit_labels:
+                    continue
+                out[lbl] = dict(status=overrides.get(lbl, "PASS"))
+            return out
+
+        return dict(granules=_build(_CAMPAIGN_EXPECTED_GRANULES),
+                    sensitivity=_build(_CAMPAIGN_EXPECTED_SENSITIVITY))
+
+    def test_missing_fixture_evidence_raises(self):
+        # fx3 has NO granules/sensitivity entries at all (simulates a
+        # broken aggregation loop) -- must raise via the completeness
+        # assertion, never read as a vacuous PASS.
+        state = self._synthetic_state(omit_fixtures=("fx3",))
+        with self.assertRaises(AssertionError):
+            _campaign_verdict(state)
+
+    def test_partial_incomplete_granules_state_raises(self):
+        # review should_fix (round 2): a NONEMPTY-per-fixture but
+        # incomplete state (missing just ONE granule label, keeping every
+        # other real label -- including every sensitivity label -- intact)
+        # must also raise -- the old per-fixture-non-emptiness-only guard
+        # would have missed this.
+        one_granule_label = next(iter(_CAMPAIGN_EXPECTED_GRANULES))
+        state = self._synthetic_state(omit_labels=(one_granule_label,))
+        with self.assertRaises(AssertionError):
+            _campaign_verdict(state)
+
+    def test_partial_incomplete_sensitivity_state_raises(self):
+        # review should_fix (round 3): the round-2 tests above only ever
+        # exercised the GRANULE completeness assertion (the sensitivity
+        # side was always either fully present or fully absent together
+        # with the granules) -- nothing independently proved the
+        # SENSITIVITY key-set assertion actually fires. Here the granule
+        # set stays FULLY complete and only one sensitivity label is
+        # dropped.
+        one_sensitivity_label = next(iter(_CAMPAIGN_EXPECTED_SENSITIVITY))
+        state = self._synthetic_state(omit_labels=(one_sensitivity_label,))
+        self.assertEqual(set(state["granules"]), _CAMPAIGN_EXPECTED_GRANULES)
+        with self.assertRaises(AssertionError):
+            _campaign_verdict(state)
+
+    def test_fixture_status_fail_on_a_failing_granule(self):
+        one_fx5_granule = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_GRANULES
+            if lbl.startswith("fx5/"))
+        state = self._synthetic_state(overrides={one_fx5_granule: "FAIL"})
+        verdict = _campaign_verdict(state)
+        self.assertEqual(verdict["fixtures"]["fx5"], "FAIL")
+        self.assertEqual(verdict["fixtures"]["fx3"], "PASS")
+        self.assertEqual(verdict["campaign"], "FAIL")
+
+    def test_fixture_status_inconclusive_on_a_granule_power_shortfall(self):
+        # review must_fix (round 3): a granule-level INCONCLUSIVE (a
+        # power/resolution shortfall, per the design doc -- NOT a
+        # demonstrated numeric mismatch) must report as fixture
+        # "INCONCLUSIVE", distinct from "FAIL".
+        one_fx5_granule = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_GRANULES
+            if lbl.startswith("fx5/"))
+        state = self._synthetic_state(
+            overrides={one_fx5_granule: "INCONCLUSIVE"})
+        verdict = _campaign_verdict(state)
+        self.assertEqual(verdict["fixtures"]["fx5"], "INCONCLUSIVE")
+        self.assertEqual(verdict["campaign"], "INCONCLUSIVE")
+
+    def test_fixture_status_inconclusive_on_a_rank_gate_failure(self):
+        # the design doc's OWN named case: "a rank failure marks the
+        # fixture INCONCLUSIVE" -- distinct from FAIL.
+        one_fx5_sensitivity = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_SENSITIVITY
+            if lbl.startswith("fx5/"))
+        state = self._synthetic_state(
+            overrides={one_fx5_sensitivity: "INCONCLUSIVE"})
+        verdict = _campaign_verdict(state)
+        self.assertEqual(verdict["fixtures"]["fx5"], "INCONCLUSIVE")
+        self.assertEqual(verdict["campaign"], "INCONCLUSIVE")
+
+    def test_fail_takes_precedence_over_inconclusive(self):
+        granule_lbl = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_GRANULES
+            if lbl.startswith("fx5/"))
+        sensitivity_lbl = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_SENSITIVITY
+            if lbl.startswith("fx5/"))
+        state = self._synthetic_state(overrides={
+            granule_lbl: "FAIL", sensitivity_lbl: "INCONCLUSIVE"})
+        verdict = _campaign_verdict(state)
+        self.assertEqual(verdict["fixtures"]["fx5"], "FAIL")
+        self.assertEqual(verdict["campaign"], "FAIL")
+
+    def test_skipped_granule_failure_sensitivity_placeholder_status(self):
+        # review should_fix (round 4): the tests above inject FAIL/
+        # INCONCLUSIVE only at the granule level (leaving the synthetic
+        # sensitivity side "PASS"), never exercising the REAL
+        # ``_campaign_state``-produced "SKIPPED-GRANULE-FAILURE"
+        # sensitivity placeholder a channel gets when its OWN granules
+        # already have a FAIL/INCONCLUSIVE (``sensitivity_rank`` refuses
+        # non-PASS input by design, so ``_campaign_state`` never calls it
+        # in that case -- see its docstring). Mirror that exact
+        # combination directly: a FAIL granule paired with its channel's
+        # sensitivity result reading "SKIPPED-GRANULE-FAILURE" (not
+        # "PASS"), and separately an INCONCLUSIVE granule paired with the
+        # same placeholder -- both must still resolve to the correct
+        # fixture/campaign status via the precedence rule.
+        granule_lbl = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_GRANULES
+            if lbl.startswith("fx5/"))
+        sensitivity_lbl = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_SENSITIVITY
+            if lbl.startswith("fx5/"))
+
+        state_fail = self._synthetic_state(overrides={
+            granule_lbl: "FAIL",
+            sensitivity_lbl: "SKIPPED-GRANULE-FAILURE"})
+        verdict_fail = _campaign_verdict(state_fail)
+        self.assertEqual(verdict_fail["fixtures"]["fx5"], "FAIL")
+        self.assertEqual(verdict_fail["campaign"], "FAIL")
+
+        state_inconclusive = self._synthetic_state(overrides={
+            granule_lbl: "INCONCLUSIVE",
+            sensitivity_lbl: "SKIPPED-GRANULE-FAILURE"})
+        verdict_inconclusive = _campaign_verdict(state_inconclusive)
+        self.assertEqual(verdict_inconclusive["fixtures"]["fx5"],
+                          "INCONCLUSIVE")
+        self.assertEqual(verdict_inconclusive["campaign"], "INCONCLUSIVE")
+
+    def test_all_clean_synthetic_state_passes(self):
+        state = self._synthetic_state()
+        verdict = _campaign_verdict(state)
+        self.assertEqual(verdict["fixtures"]["fx5"], "PASS")
+        self.assertEqual(verdict["fixtures"]["fx3"], "PASS")
+        self.assertEqual(verdict["campaign"], "PASS")
+
+    def test_unrecognized_status_value_raises(self):
+        one_fx5_granule = next(
+            lbl for lbl in _CAMPAIGN_EXPECTED_GRANULES
+            if lbl.startswith("fx5/"))
+        state = self._synthetic_state(
+            overrides={one_fx5_granule: "NOT-A-REAL-STATUS"})
+        with self.assertRaises(AssertionError):
+            _campaign_verdict(state)
+
+
+# ---------------------------------------------------------------------------
+# Task 9: sensitivity diagnostic and campaign verdict (#151) -- aggregates
+# EVERY granule record and EVERY (fixture, channel) sensitivity_rank result
+# produced by Tasks 6-8, by CALLING their already-``functools.lru_cache``'d
+# case helpers (never recomputing anything, never depending on which test
+# ran first). ``_campaign_state`` is itself ``lru_cache``'d so every test
+# method in ``TestCampaignVerdict`` (and the verdict-writing step outside
+# this module) sees the SAME aggregation.
+# ---------------------------------------------------------------------------
+
+_CAMPAIGN_FX5_PH_DIRECTIONS = ("U", "g1", "g2")
+_CAMPAIGN_FX5_PP_DIRECTIONS = ("U", "g1", "g2")
+_CAMPAIGN_FX3_PH_DIRECTIONS = ("g+", "g-")
+_CAMPAIGN_FX3_PP_DIRECTIONS = ("g+", "g-")
+
+# The a-priori COMPLETE set of campaign granule labels
+# (``"fixture/direction/channel"``) and (fixture, channel) sensitivity
+# labels -- review finding (must_fix): ``_campaign_verdict``'s per-fixture
+# ``all(...)`` over a label-prefix filter is VACUOUSLY True on an EMPTY
+# filtered collection, so a fixture whose evidence silently failed to
+# aggregate (a bug in ``_collect``'s loop, a renamed channel key, ...)
+# would read as PASS with zero granules checked. Declaring the expected
+# COMPLETE key set up front and asserting it against what
+# ``_campaign_state`` actually built closes that gap: an incomplete
+# aggregation now raises loudly here, before ``_campaign_verdict`` ever
+# runs its (now guaranteed non-vacuous) per-fixture ``all(...)``.
+_CAMPAIGN_EXPECTED_GRANULES = frozenset(
+    "{}/{}/{}".format(fixture, direction, channel)
+    for fixture, directions, channels in (
+        ("fx5", _CAMPAIGN_FX5_PH_DIRECTIONS, ("S", "C")),
+        ("fx5", _CAMPAIGN_FX5_PP_DIRECTIONS, ("pp_s", "pp_t")),
+        ("fx3", _CAMPAIGN_FX3_PH_DIRECTIONS, ("S", "C")),
+        ("fx3", _CAMPAIGN_FX3_PP_DIRECTIONS, ("pp_s", "pp_t")),
+    )
+    for direction in directions
+    for channel in channels)
+# The expected (fixture, channel) sensitivity labels are exactly the keys
+# ``sensitivity_rank``'s own a-priori table declares (single source of
+# truth -- never duplicated by hand here).
+_CAMPAIGN_EXPECTED_SENSITIVITY = frozenset(
+    ed_oracle_util.SENSITIVITY_EXPECTED_ACTIVE)
+
+
+@functools.lru_cache(maxsize=1)
+def _campaign_state():
+    """Deterministic aggregation of every campaign granule record plus
+    every (fixture, channel) ``sensitivity_rank`` result. Builds
+    ``by_channel`` (``"fx5/S" -> {direction: record}``, the exact input
+    shape ``ed_oracle_util.sensitivity_rank`` consumes) alongside the flat
+    ``granules`` dict (``"fx5/U/S" -> record``) used for the granule rule.
+    ``sensitivity_rank`` is only invoked for a channel whose OWN granules
+    are all PASS/PASS-ZERO already (it refuses non-PASS input by design --
+    see its docstring); a channel with a FAIL/INCONCLUSIVE granule instead
+    gets a ``status="SKIPPED-GRANULE-FAILURE"`` sensitivity placeholder so
+    the granule rule alone (not a raised exception) is what fails that
+    fixture, keeping the two rules independently diagnosable.
+
+    Asserts the resulting ``granules``/``sensitivity`` key sets exactly
+    match ``_CAMPAIGN_EXPECTED_GRANULES``/``_CAMPAIGN_EXPECTED_SENSITIVITY``
+    (review must_fix) -- an incomplete aggregation raises here rather than
+    silently letting a downstream ``all(...)`` read an empty fixture slice
+    as PASS.
+    """
+    granules = {}
+    by_channel = {}
+
+    def _collect(fixture, direction, chan_map):
+        for chan, rec in chan_map.items():
+            key = "{}/{}/{}".format(fixture, direction, chan)
+            # Review finding (should_fix, round 3): the key is
+            # SYNTHESIZED from the loop's own (fixture, direction, chan)
+            # arguments, never cross-checked against the record's OWN
+            # ``label`` field (every ``adjudicate_granule`` record carries
+            # one, e.g. ``"fx5/{direction}/S"``) -- a swapped/mislabeled
+            # record from a future case-helper edit could otherwise be
+            # silently adjudicated under the WRONG fixture/direction/
+            # channel label while still satisfying every completeness
+            # check downstream (those only check KEY sets, never that a
+            # key's VALUE actually is what it claims to be).
+            if rec["label"] != key:
+                raise AssertionError(
+                    "_campaign_state._collect: record's own label {!r} != "
+                    "the synthesized aggregation key {!r} -- a mislabeled "
+                    "or swapped record must never be silently aggregated "
+                    "under the wrong key".format(rec["label"], key))
+            granules[key] = rec
+            by_channel.setdefault(
+                "{}/{}".format(fixture, chan), {})[direction] = rec
+
+    for d in _CAMPAIGN_FX5_PH_DIRECTIONS:
+        _collect("fx5", d, case_fx5_unit_direction(d))
+    for d in _CAMPAIGN_FX5_PP_DIRECTIONS:
+        _collect("fx5", d, case_fx5_pp_unit_direction(d))
+    for d in _CAMPAIGN_FX3_PH_DIRECTIONS:
+        _collect("fx3", d, case_fx3_unit_direction(d))
+    for d in _CAMPAIGN_FX3_PP_DIRECTIONS:
+        _collect("fx3", d, case_fx3_pp_unit_direction(d))
+
+    if set(granules) != _CAMPAIGN_EXPECTED_GRANULES:
+        raise AssertionError(
+            "_campaign_state: incomplete/unexpected granule aggregation -- "
+            "expected {} but got {} (missing {}, unexpected {})".format(
+                sorted(_CAMPAIGN_EXPECTED_GRANULES), sorted(granules),
+                sorted(_CAMPAIGN_EXPECTED_GRANULES - set(granules)),
+                sorted(set(granules) - _CAMPAIGN_EXPECTED_GRANULES)))
+    if set(by_channel) != _CAMPAIGN_EXPECTED_SENSITIVITY:
+        raise AssertionError(
+            "_campaign_state: incomplete/unexpected (fixture, channel) "
+            "aggregation -- expected {} but got {}".format(
+                sorted(_CAMPAIGN_EXPECTED_SENSITIVITY), sorted(by_channel)))
+
+    sensitivity = {}
+    for label, recs in by_channel.items():
+        if all(r["status"] in ("PASS", "PASS-ZERO") for r in recs.values()):
+            sensitivity[label] = ed_oracle_util.sensitivity_rank(recs, label)
+        else:
+            sensitivity[label] = dict(
+                label=label, active=[], null=[], n_rows=0,
+                singular_values=np.array([]), sv_ratio=float("nan"),
+                sigma_min=float("nan"), sigma_max=float("nan"),
+                delta_rich_max=float("nan"),
+                status="SKIPPED-GRANULE-FAILURE")
+
+    return dict(granules=granules, by_channel=by_channel,
+                sensitivity=sensitivity)
+
+
+def _campaign_verdict(state):
+    """Fixture rule (brief): a fixture is PASS iff none of its granules is
+    FAIL/INCONCLUSIVE AND every one of its (fixture, channel)
+    sensitivity_rank gates is PASS. Campaign rule: PASS iff every fixture
+    PASSes. The Task-3 S_bond/C_bond null-direction finding is OUTSIDE
+    this verdict by design (a separately recorded finding, not a
+    granule) -- see TestNullDirectionSolverSide and the verdict document.
+
+    Each fixture (and the campaign as a whole) gets a TRI-STATE status
+    string -- ``"PASS"``, ``"INCONCLUSIVE"``, or ``"FAIL"`` -- not a
+    collapsed boolean (review must_fix: the design doc explicitly names
+    INCONCLUSIVE as its OWN distinct outcome for a rank-gate failure, "a
+    rank failure marks the fixture INCONCLUSIVE", which is a genuinely
+    different scientific finding from a granule FAIL -- a demonstrated
+    numeric mismatch vs. insufficient power/rank to see one either way --
+    and collapsing both to a bare boolean would erase that distinction
+    from the printed verdict). Precedence per fixture: any granule
+    ``FAIL`` -> ``"FAIL"``; else any granule ``INCONCLUSIVE`` or any
+    sensitivity-rank ``INCONCLUSIVE`` -> ``"INCONCLUSIVE"``; else
+    (everything ``PASS``/``PASS-ZERO``/``PASS``) -> ``"PASS"``. Campaign:
+    the same precedence over the fixtures' own statuses (any fixture
+    ``FAIL`` -> campaign ``"FAIL"``; else any fixture ``INCONCLUSIVE`` ->
+    campaign ``"INCONCLUSIVE"``; else ``"PASS"``) -- matching the design
+    doc's "the campaign PASSES ... iff every fixture passes; any other
+    outcome keeps the gate" (both FAIL and INCONCLUSIVE keep the gate;
+    only the PRINTED label distinguishes which).
+
+    ``state``'s ``granules``/``sensitivity`` key sets are asserted here
+    directly against ``_CAMPAIGN_EXPECTED_GRANULES``/
+    ``_CAMPAIGN_EXPECTED_SENSITIVITY`` (review should_fix, round 2:
+    ``_campaign_state`` already enforces this on its OWN return value,
+    but ``_campaign_verdict`` is a separate, independently callable/
+    testable function -- relying only on its caller's discipline would
+    let a partial-but-nonempty ``state`` built any other way slip past
+    the per-fixture non-emptiness check below and still read as PASS).
+    """
+    if set(state["granules"]) != _CAMPAIGN_EXPECTED_GRANULES:
+        raise AssertionError(
+            "_campaign_verdict: incomplete/unexpected granule state -- "
+            "expected {} but got {}".format(
+                sorted(_CAMPAIGN_EXPECTED_GRANULES),
+                sorted(state["granules"])))
+    if set(state["sensitivity"]) != _CAMPAIGN_EXPECTED_SENSITIVITY:
+        raise AssertionError(
+            "_campaign_verdict: incomplete/unexpected sensitivity state -- "
+            "expected {} but got {}".format(
+                sorted(_CAMPAIGN_EXPECTED_SENSITIVITY),
+                sorted(state["sensitivity"])))
+
+    fixtures = {}
+    for fixture in ("fx5", "fx3"):
+        granule_items = [r for label, r in state["granules"].items()
+                          if label.startswith(fixture + "/")]
+        sensitivity_items = [s for label, s in state["sensitivity"].items()
+                              if label.startswith(fixture + "/")]
+        if not granule_items or not sensitivity_items:
+            raise AssertionError(
+                "_campaign_verdict: fixture {!r} has NO granules ({}) or NO "
+                "sensitivity results ({}) -- an empty slice must never be "
+                "read as a vacuous PASS".format(
+                    fixture, len(granule_items), len(sensitivity_items)))
+        # Defensive: the precedence logic below treats "not FAIL, not
+        # INCONCLUSIVE" as PASS-worthy -- an unrecognized status string
+        # (contract drift in adjudicate_granule/sensitivity_rank) must
+        # not silently fall through that else branch as a PASS.
+        bad_granule = [r["status"] for r in granule_items
+                       if r["status"] not in
+                       ("PASS", "PASS-ZERO", "FAIL", "INCONCLUSIVE")]
+        bad_sensitivity = [s["status"] for s in sensitivity_items
+                            if s["status"] not in
+                            ("PASS", "INCONCLUSIVE", "SKIPPED-GRANULE-FAILURE")]
+        if bad_granule or bad_sensitivity:
+            raise AssertionError(
+                "_campaign_verdict: fixture {!r} has unrecognized status "
+                "value(s) -- granule {} / sensitivity {}".format(
+                    fixture, bad_granule, bad_sensitivity))
+        if any(r["status"] == "FAIL" for r in granule_items):
+            status = "FAIL"
+        elif (any(r["status"] == "INCONCLUSIVE" for r in granule_items)
+                or any(s["status"] != "PASS" for s in sensitivity_items)):
+            # A sensitivity_rank result that is anything other than
+            # "PASS" (INCONCLUSIVE from a failed rank gate, or the
+            # "SKIPPED-GRANULE-FAILURE" placeholder _campaign_state emits
+            # when a channel's own granules already have a FAIL/
+            # INCONCLUSIVE -- the granule branch above already covers
+            # that FAIL case, so what reaches here is genuinely a rank/
+            # power finding) is, per the design doc, a rank/power
+            # finding, not a demonstrated numeric mismatch.
+            status = "INCONCLUSIVE"
+        else:
+            status = "PASS"
+        fixtures[fixture] = status
+
+    if any(v == "FAIL" for v in fixtures.values()):
+        campaign = "FAIL"
+    elif any(v == "INCONCLUSIVE" for v in fixtures.values()):
+        campaign = "INCONCLUSIVE"
+    else:
+        campaign = "PASS"
+    return dict(fixtures=fixtures, campaign=campaign)
+
+
+def _print_campaign_verdict_table(state, verdict):
+    print("\n=== CAMPAIGN VERDICT TABLE (#151 Task 9) ===")
+    print("-- granules --")
+    for label in sorted(state["granules"]):
+        r = state["granules"][label]
+        print("  {:14s} status={:10s} delta_rich={:.3e} delta_nmat={:.3e} "
+              "tol={:.3e} max_signal={:.3e} n_failures={}".format(
+                  label, r["status"], r["delta_rich"], r["delta_nmat"],
+                  r["tol"], r["max_signal"], len(r["failures"])))
+    print("-- sensitivity_rank (fixture/channel) --")
+    for label in sorted(state["sensitivity"]):
+        s = state["sensitivity"][label]
+        print("  {:11s} active={} null={} rows={} sv_ratio={:.3e} "
+              "sigma_min={:.3e} 100*delta_rich_max={:.3e} status={}".format(
+                  label, s["active"], s["null"], s["n_rows"], s["sv_ratio"],
+                  s["sigma_min"], 100.0 * s["delta_rich_max"], s["status"]))
+    print("-- fixtures --")
+    for fixture in ("fx5", "fx3"):
+        print("  {}: {}".format(fixture, verdict["fixtures"][fixture]))
+    print("CAMPAIGN VERDICT: {}".format(verdict["campaign"]))
+    print("(Task-3 S_bond/C_bond null-direction finding: OUTSIDE this "
+          "verdict, recorded separately -- see TestNullDirectionSolverSide "
+          "and the verdict document.)\n")
+
+
+class TestCampaignVerdict(unittest.TestCase):
+    """Task 9 Step 1: the campaign-level verdict, aggregating every
+    granule record (Tasks 6-8) and every (fixture, channel)
+    ``sensitivity_rank`` result via ``_campaign_state`` (this module's own
+    ``lru_cache``'d wrapper around the case helpers -- no recomputation, no
+    test-order dependence). THE VERDICT MATTERS MORE THAN GREEN: as of this
+    task, every granule and every sensitivity gate PASSES (verified
+    directly, not assumed -- fx3's g+/g- columns turned out NOT to be
+    parallel on the full canonical grid despite their audit TUPLES being
+    bit-identical by inversion symmetry: their per-cell ``pred_full``
+    values differ by up to ~0.43, giving sv_ratio in [0.87, 0.98] on all
+    four fx3 channels, comfortably above SENS_SV_FLOOR), so this class is
+    expected green; a future FAIL/INCONCLUSIVE here is a real campaign
+    finding and must be reported, not adjusted away.
+
+    Deferred (review should_fix, investigated and NOT implemented): the
+    ``lru_cache``'d case helpers return their record dicts/arrays BY
+    REFERENCE, so ``_campaign_state`` does not itself guarantee immutable
+    read-only results -- a consumer that mutated a returned record in
+    place could change what a LATER call sees. Checked directly: no test
+    anywhere in this module mutates a record (every consumption reads a
+    field, e.g. ``r["status"]``, ``r["failures"][:5]``); adding a
+    subprocess-based cross-order regression would cost ~4x this module's
+    already-3-minute fx3 wall time for a hazard nothing here currently
+    exercises. Left as a documented invariant (records are read-only by
+    convention, not by enforcement) rather than adding that machinery,
+    matching this campaign's established practice of deferring optional/
+    expensive robustness items with an explicit reason (see e.g. Task 4's
+    and Task 5's reports).
+    """
+
+    def test_no_granule_fails_or_is_inconclusive(self):
+        state = _campaign_state()
+        bad = [(label, r["status"]) for label, r in state["granules"].items()
+               if r["status"] not in ("PASS", "PASS-ZERO")]
+        self.assertEqual(
+            bad, [], "granule(s) not PASS/PASS-ZERO: {}".format(bad))
+
+    def test_sensitivity_rank_gates(self):
+        state = _campaign_state()
+        for label, s in state["sensitivity"].items():
+            with self.subTest(label=label):
+                self.assertEqual(
+                    s["status"], "PASS",
+                    "sensitivity_rank[{}] status={} sv_ratio={:.3e} "
+                    "sigma_min={:.3e} 100*delta_rich_max={:.3e} active={} "
+                    "null={}".format(
+                        label, s["status"], s["sv_ratio"], s["sigma_min"],
+                        100.0 * s["delta_rich_max"], s["active"], s["null"]))
+
+    def test_campaign_verdict(self):
+        state = _campaign_state()
+        verdict = _campaign_verdict(state)
+        _print_campaign_verdict_table(state, verdict)
+        for fixture, status in verdict["fixtures"].items():
+            with self.subTest(fixture=fixture):
+                self.assertEqual(
+                    status, "PASS",
+                    "fixture {} verdict status={} (not PASS) -- see the "
+                    "printed table above".format(fixture, status))
+        self.assertEqual(
+            verdict["campaign"], "PASS",
+            "CAMPAIGN VERDICT: {} -- see the printed table above".format(
+                verdict["campaign"]))
+
+
 if __name__ == "__main__":
     unittest.main()
