@@ -153,15 +153,22 @@ def _caplog(level, logger=None):
 
 
 class _ApproxTestCase(unittest.TestCase):
-    """Common base adding ``assertApprox``, an approximate-equality assertion:
-    passes when ``|actual - expected| <= max(abs, rel * |expected|)`` (the
-    conventional rel=1e-6/abs=1e-12 defaults unless overridden). Every test
-    class in this module inherits from it.
+    """Common base adding ``assertApprox``, replicating the exact tolerance
+    semantics of the approximate-equality helper this module used to rely on:
+    when only an absolute tolerance is given (``rel`` omitted), the tolerance
+    is EXACTLY that value -- no relative term is mixed in. Only when ``rel``
+    is given (or neither is given, i.e. the 1e-6 default relative tolerance
+    applies) is the tolerance ``max(rel * |expected|, abs or 1e-12)``. Every
+    test class in this module inherits from it.
     """
 
-    def assertApprox(self, actual, expected, rel=1e-6, abs=1e-12, msg=None):
+    def assertApprox(self, actual, expected, rel=None, abs=None, msg=None):
+        atol = 1e-12 if abs is None else abs
+        if rel is None and abs is not None:
+            tol = atol
+        else:
+            tol = max((1e-6 if rel is None else rel) * operator.abs(expected), atol)
         diff = operator.abs(actual - expected)
-        tol = max(abs, rel * operator.abs(expected))
         if diff > tol:
             self.fail(msg or "{!r} != {!r} within tolerance (diff={!r}, "
                              "tol={!r})".format(actual, expected, diff, tol))
@@ -1925,7 +1932,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
             # ARPACK is not bit-reproducible; everything upstream of it is, so an
             # agreement at 1e-10 pins the green (a different green moves lambda by
             # O(1), see below)
-            np.testing.assert_allclose(row_got, row_ref, rtol=1e-6, atol=1e-10)
+            np.testing.assert_allclose(row_got, row_ref, rtol=0, atol=1e-10)
 
         # a DIFFERENT green must move lambda (and must not be silently ignored)
         gpath2 = os.path.join(self.tmp_path, "green_scaled.npz")

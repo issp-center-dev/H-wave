@@ -13,7 +13,15 @@ gating, which is a separate decision).
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "slow: long-running test, skipped by default. Currently "
-        "tests/test_bond_onari_milestone.py::test_grid_convergence_16_to_32, "
-        "which regenerates the uncommitted L=32 FLEX green fixtures. Select "
-        "with `pytest -m slow` or set HWAVE_RUN_SLOW_FIXTURES=1.")
+        "slow: long-running test, skipped by default. Select with "
+        "`pytest -m slow`. Currently used by "
+        "tests/test_tsweep_e2e.py and tests/test_eliashberg_dynamic.py. "
+        "tests/test_bond_onari_milestone.py::TestBondOnariMilestone::"
+        "test_grid_convergence_16_to_32 (which regenerates the uncommitted "
+        "L=32 FLEX green fixtures) is a separate, unittest-only case: it does "
+        "NOT carry this marker (that module is unittest-discoverable, so "
+        "pytest markers do not gate it under `python -m unittest`) and is "
+        "opted into solely via HWAVE_RUN_SLOW_FIXTURES=1, e.g.:\n"
+        "    HWAVE_RUN_SLOW_FIXTURES=1 python -m unittest "
+        "tests.test_bond_onari_milestone.TestBondOnariMilestone."
+        "test_grid_convergence_16_to_32")
