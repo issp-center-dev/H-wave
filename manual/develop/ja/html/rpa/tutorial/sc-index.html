@@ -255,7 +255,7 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: ペアバブル <span class="math notranslate nohighlight">\(G^{(2)}\)</span> に解析的な松原 tail 補正を適用
-します（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code> 、issue #86）。素朴な打ち切り和は主要な
+します（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code> 、バージョン 2.0 以降）。素朴な打ち切り和は主要な
 単位行列 tail を取りこぼし（ <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span> の誤差）、わずかに
 不定符号になり得るため、小さい <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> では報告される固有値に偽の虚部が
 混入します。この補正は漸近的です。保持される最大周波数が関連するエネル
@@ -1057,8 +1057,8 @@ CPU の空間 FFT にのみ作用します。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
-<p>Issue #57 修正より前のバージョンで計算した動的IRの結果は、ペアリング
-頂点にν非依存成分を持つモデル——特にオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
+<p>1.0.x で計算した動的IRの結果は、ペアリング頂点にν非依存成分を
+持つモデル——特にオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
 を含む系——では誤りです（オンサイト <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみの模型は
 裸頂点項が厳密に相殺するため影響なし）。該当する計算は再実行して
 ください。λの大きな変化は想定どおりです（変化分がバグであり、物理の
@@ -1203,7 +1203,7 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>FLEX は受け付ける</p></td>
 <td><p>拒否</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は設定を即座に拒否します（issue #83）。下の
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は設定を即座に拒否します（バージョン 2.0 以降）。下の
 「スピン構造の取り扱い」参照</p></td>
 </tr>
 <tr class="row-odd"><td><p>保存される感受率</p></td>
@@ -1301,7 +1301,7 @@ reduced の FLEX 感受率は2つのスピンブロックをビット単位で�
 スピン自由な模型もこの表現で書けます）--- <strong>サポートされていません。</strong>
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> は静的・動的の両エントリで設定を明示的なエラーとして即座に
 拒否し、<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> は FLEX rung の実行前に preflight で拒否します
-（issue #83）。このガード導入前は、内部で <span class="math notranslate nohighlight">\(\chi_0\)</span> を
+（バージョン 2.0 以降）。このガード導入前は、内部で <span class="math notranslate nohighlight">\(\chi_0\)</span> を
 計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
 出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
 FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の

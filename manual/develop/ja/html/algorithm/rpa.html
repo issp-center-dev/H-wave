@@ -51,12 +51,13 @@ H-waveのRPAモードでは以下のHamiltonianを取り扱います。</p>
  {\cal H}_{\rm int}&amp;=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
   c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
 \end{aligned}\end{split}\]</div>
-<p>表に与える <span class="math notranslate nohighlight">\(W\)</span> は2つの双一次形式の入れ替えについて完全です（例えばオンサイト
-クーロン項は up-down と down-up の両方のスロットを占めます）。したがってサイトと
-4つの添字にわたる制限のない和は各ペア順序を2度含むことになり、 <span class="math notranslate nohighlight">\(1/2\)</span> は
-それを打ち消します。トランスファーの表も同様にエルミート閉じていること、すなわち
-<span class="math notranslate nohighlight">\(t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}\)</span> を満たすことが要求されます。
-そのため <span class="math notranslate nohighlight">\({\cal H}_0\)</span> に別途エルミート共役項は付きません。</p>
+<p>入力の表には、1つの相互作用が2通りの並び順の両方で現れます。オンサイトの
+クーロン項であれば、up-down のスロットと down-up のスロットの両方に入ります。
+上の和は4つの添字を制限なく走るので、同じ項を2度数えることになり、
+<span class="math notranslate nohighlight">\(1/2\)</span> がそれを打ち消します。トランスファーの表も同様に
+<span class="math notranslate nohighlight">\(t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}\)</span> を満たすように与えます。
+これも両向きが揃っているということなので、 <span class="math notranslate nohighlight">\({\cal H}_0\)</span> に
+エルミート共役項を別途書き足す必要はありません。</p>
 <p>ここで、以下のフーリエ変換</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-1">
 <span class="eqno">(7.12)<a class="headerlink" href="#equation-algorithm-rpa-1" title="Link to this equation">¶</a></span>\[\begin{aligned}
@@ -67,23 +68,23 @@ e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 <p>を行うと、Hamiltonianは以下のように書き換えられます。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>この <span class="math notranslate nohighlight">\(e^{+i\bf{k}\cdot\bf{r}}\)</span> 規約（wannier90 形式の符号、
-UHFk と共通）は、issue #133 以降 RPA モジュールのすべての実空間係数
-構築（<span class="math notranslate nohighlight">\(R \to k/q\)</span> 変換）が従う規約です：
+<p>RPA モジュールの実空間係数構築（<span class="math notranslate nohighlight">\(R \to k/q\)</span> 変換）は、すべて
+この <span class="math notranslate nohighlight">\(e^{+i\bf{k}\cdot\bf{r}}\)</span> 規約に従います（wannier90 形式の
+符号、UHFk と共通）：
 <span class="math notranslate nohighlight">\(\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
 e^{+i {\bf k}\cdot{\bf R}}\)</span> および <span class="math notranslate nohighlight">\(W({\bf q}) =
-\sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}`（感受率計算
-内部の畳み込み変換は自己逆な対であり影響を受けません）。この修正以前
-は、非スピン軌道経路が全体で逆符号を使用しており---自己整合的な
-:math:`{\bf k} \to -{\bf k}\)</span> の再ラベルであり、保存された
+\sum_{\bf R} W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}\)</span>（感受率計算
+内部の畳み込み変換は自己逆な対であり影響を受けません）。1.0.x
+では、非スピン軌道経路が全体で逆符号を使用しており---自己整合的な
+<span class="math notranslate nohighlight">\({\bf k} \to -{\bf k}\)</span> の再ラベルであり、保存された
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は、テンソルが FFT グリッド上で
 <span class="math notranslate nohighlight">\({\bf q} \to -{\bf q}\)</span> に対して要素毎に偶でない限り、運動量
 ラベルが反転していました---、スピン軌道経路は transfer と相互作用で
 2 つの符号が混在し、<code class="docutils literal notranslate"><span class="pre">chiq</span></code> が <span class="math notranslate nohighlight">\(\chi_0({\bf q})\)</span> と
 <span class="math notranslate nohighlight">\(W(-{\bf q})\)</span> から解かれていました：
 <span class="math notranslate nohighlight">\(W({\bf q}) \neq W(-{\bf q})\)</span> となる相互作用（方向性ボンド）
-では、旧スピン軌道 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は再ラベルではなく誤りです。この修正以降
-に書かれる運動量空間ファイルは <code class="docutils literal notranslate"><span class="pre">momentum_convention</span> <span class="pre">=</span> <span class="pre">&quot;e_plus_ikR&quot;</span></code>
+では、旧スピン軌道 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は再ラベルではなく誤りです。現行版
+で書かれる運動量空間ファイルは <code class="docutils literal notranslate"><span class="pre">momentum_convention</span> <span class="pre">=</span> <span class="pre">&quot;e_plus_ikR&quot;</span></code>
 を持ち、ローダは無印の旧ファイルを、内容が <span class="math notranslate nohighlight">\({\bf q}\)</span> 偶
 （両規約が一致する場合）でない限り拒否します。</p>
 </div>
@@ -143,8 +144,7 @@ c_{\bf{k},\alpha} = \sum_{\gamma} u_{\alpha \gamma, \bf{k}} d_{\bf{k}, \gamma}
 <p>として与えられます。ここに含まれる2つのバンド和は独立で、バブルの粒子と正孔は
 異なるバンドに乗ることができます。</p>
 <p>H-wave は両方の和を保持します。バンド添字は現れた直後に和を取って消えるため、
-相互作用は一貫して軌道基底で扱われ、対角化は Green 関数の構成にのみ用いられます。
-バンド順序の追跡も、縮退の特別扱いも、どこにも必要ありません。</p>
+相互作用は一貫して軌道基底で扱われ、対角化は Green 関数の構成にのみ用いられます。</p>
 <p>この既約感受率を用いることで、RPAで得られる感受率が以下のように得られます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-8">
 <span class="eqno">(7.19)<a class="headerlink" href="#equation-algorithm-rpa-8" title="Link to this equation">¶</a></span>\[\begin{aligned}
@@ -185,8 +185,6 @@ c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}\)</span> であり、<strong>どち�
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
 <span class="eqno">(7.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
 = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}\]</div>
-<p>これは H-wave の論文 (<a class="reference external" href="https://arxiv.org/abs/2308.00324">arXiv:2308.00324 [cond-mat.str-el]</a>) の式 (16) と (20) の間に現れる
-並べ替えと同じもので、2つのペアの両方が対象です。</p>
 <p>この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
 実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
 同じ値を持つため）。効いてくるのは <strong>複素の</strong> ペア交差型相互作用、
@@ -231,54 +229,29 @@ X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>と書けることがわかります。以上が一般的なRPAの定式化になります。</p>
-<p>なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 <a class="footnote-reference brackets" href="#id6" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を参考にしてください。</p>
+<p>なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 <a class="footnote-reference brackets" href="#id7" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を参考にしてください。</p>
 <section id="id3">
 <h2><span class="section-number">7.2.1. </span>セクター構造とブロック分解<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
-<p>上で述べた条件、すなわち分解を正当化するのは保存量であるという原理が一般形で
-あり、H-wave が計算を整理する際に用いるのはバンド添字ではなくこの保存量です。
-ここで有用な量とは、保存されており <strong>かつ</strong> 双一次形式を区別するものです。
-粒子数はあらゆる場合に保存されますが、粒子・正孔双一次形式はどれも
-<span class="math notranslate nohighlight">\(\Delta N=0\)</span> を運ぶためブロックが1つになり、分解になりません。一方
-<span class="math notranslate nohighlight">\(S_z\)</span> は密度チャネルとスピン反転チャネルを分離します。分解が成り立つ場合、
-RPA方程式を各ブロックで独立に解くことができ、計算コストも大幅に削減できます。</p>
-<p><span class="math notranslate nohighlight">\({\cal H}_0\)</span> がそのような量（例えばスピン）を保存する場合、Green 関数は
-それについてブロック対角になり
-<span class="math notranslate nohighlight">\(G^{(0)}_{\alpha\sigma,\beta\tau}
-=\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}\)</span> と書けます。このとき
-バブルは、2本の伝播関数それぞれにセクターのラベルを持ちます。</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
-<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
-= -\frac{T}{N_L}\sum_{{\bf k},n}
-  G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
-  G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).\]</div>
-<p>ラベルが等しい <span class="math notranslate nohighlight">\(\sigma=\sigma'\)</span> は縦型（密度・ <span class="math notranslate nohighlight">\(S_z\)</span> ）チャネル、
-異なる場合は横型チャネルです。どちらか一方を選ぶことは <strong>厳密</strong> です。
-バブルを近似しているのではなくチャネルを取り出しているだけであり、両者が
-混ざらない限り成り立ちます。その条件が以下の2つです。</p>
-<p>一方、セクターの <strong>内部</strong> では行列構造を保つ必要があります。これを潰すこと、
-例えばバブルを作る前に <span class="math notranslate nohighlight">\(G\)</span> をスカラー
-<span class="math notranslate nohighlight">\(G_{\uparrow}+G_{\downarrow}\)</span> に置き換えることをすると、交差項
-<span class="math notranslate nohighlight">\(G_{\uparrow}G_{\downarrow}\)</span> が本来属さない密度応答に混入します。
-スピンが縮退していれば結果はちょうど2倍になります。</p>
-<p>どの分解が正当かは対称性から決まり、2つの条件がともに満たされる必要があります。</p>
-<p>裸の感受率は、 <span class="math notranslate nohighlight">\({\cal H}_0\)</span> が保存する量についてブロック対角になります。
-典型例はスピンです。 <span class="math notranslate nohighlight">\([{\cal H}_0, S_z]=0\)</span> なら Green 関数はスピンについて
-ブロック対角になり、バブルはある粒子・正孔双一次形式を、逆向きの <span class="math notranslate nohighlight">\(S_z\)</span>
-変化を持つものとしか結びません。したがって密度（ <span class="math notranslate nohighlight">\(\Delta S_z=0\)</span> ）と
-スピン反転（ <span class="math notranslate nohighlight">\(\Delta S_z=\pm 1\)</span> ）のチャネルは厳密に分離され、これが縦型
-（ring）と横型（ladder）を別々に解ける根拠になります。感受率が <span class="math notranslate nohighlight">\({\bf q}\)</span>
-について対角になるのと同じ機構で、 <span class="math notranslate nohighlight">\({\cal H}_0\)</span> の対称性が異なるセクター間の
-結合を禁じています。</p>
-<p>この分離は <span class="math notranslate nohighlight">\(X^{(0)}\)</span> だけの性質であり、RPA の応答がそれを受け継ぐのは
-<strong>相互作用</strong> が同じ量を保存する場合に限られます。 <span class="math notranslate nohighlight">\(X^{(0)}\)</span> がブロック
-対角でも <span class="math notranslate nohighlight">\(\hat{W}\)</span> がそうでなければ、積 <span class="math notranslate nohighlight">\(\hat{X}^{(0)}\hat{W}\)</span> は
-ブロック対角ではなく、逆行列もそうではありません。相互作用の2次以降でセクターが
-混ざります。2つの条件のいずれかが破れる状況として、スピン軌道相互作用は
-<span class="math notranslate nohighlight">\(S_z\)</span> を保存させなくするため <span class="math notranslate nohighlight">\(X^{(0)}\)</span> 自体にセクター混合要素を
-生じさせ、 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> はスピン上昇（あるいは下降）双一次形式の積であるため
-<span class="math notranslate nohighlight">\({\cal H}_0\)</span> が保存していても相互作用の側が <span class="math notranslate nohighlight">\(S_z\)</span> を保存しません。</p>
-<p>以上より、ブロック構造は相互作用のみからではなく、相互作用行列と裸の感受率の
-<strong>両方</strong> の接続性から検出されます。</p>
+<p>感受率が複数のブロックに分解できる場合、RPA 方程式は各ブロックで独立に解くことが
+でき、計算コストを大幅に削減できます。</p>
+<p><span class="math notranslate nohighlight">\({\cal H}_0\)</span> が保存量 <span class="math notranslate nohighlight">\(Q\)</span> を持つ場合、Green 関数はそれについて
+ブロック対角になり、感受率も同じラベルでブロックに分かれます。ここで相関関数の
+各辺のラベルとは、その双一次形式が与える <span class="math notranslate nohighlight">\(Q\)</span> の変化 <span class="math notranslate nohighlight">\(\Delta Q\)</span> の
+ことで、左辺は <span class="math notranslate nohighlight">\(A^{\dagger}\)</span> と読み <span class="math notranslate nohighlight">\(A\)</span> のラベルを付けます。この規約
+のもとで選択則は <span class="math notranslate nohighlight">\(\Delta Q_{\rm L} = \Delta Q_{\rm R}\)</span> となります。
+スピンが典型例で、
+<span class="math notranslate nohighlight">\([{\cal H}_0, S_z]=0\)</span> なら密度（ <span class="math notranslate nohighlight">\(\Delta S_z=0\)</span> ）とスピン反転
+（ <span class="math notranslate nohighlight">\(\Delta S_z=\pm 1\)</span> ）のチャネルが厳密に分離されます。これが縦型（ring）と
+横型（ladder）を別々に解ける根拠です。ブロックごとに解くことは近似ではなく、
+全体を解いた結果と一致します。</p>
+<p>ただしこの分解が成り立つには、 <strong>相互作用も同じ量を保存している</strong> 必要があります。
+<span class="math notranslate nohighlight">\(X^{(0)}\)</span> がブロック対角でも <span class="math notranslate nohighlight">\(\hat{W}\)</span> がそうでなければ、積
+<span class="math notranslate nohighlight">\(\hat{X}^{(0)}\hat{W}\)</span> もその逆行列もブロック対角ではなく、相互作用の
+2次以降でセクターが混ざります。スピン軌道相互作用は <span class="math notranslate nohighlight">\(S_z\)</span> を保存させないため
+<span class="math notranslate nohighlight">\(X^{(0)}\)</span> 自体に混合を持ち込み、 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> は <span class="math notranslate nohighlight">\({\cal H}_0\)</span> が
+<span class="math notranslate nohighlight">\(S_z\)</span> を保存していても相互作用の側で保存を破ります。</p>
+<p>このため H-wave はブロック構造を仮定せず、相互作用行列と裸の感受率の <strong>両方</strong> の
+接続性から数値的に検出します。</p>
 <ol class="arabic simple">
 <li><p>全k点にわたって相互作用ハミルトニアンの絶対値を、また運動量と振動数にわたって
 裸の感受率の絶対値を合計し、接続パターン行列を得る。</p></li>
@@ -298,13 +271,91 @@ RPA方程式を各ブロックで独立に解くことができ、計算コス�
 H-waveは横感受率 <span class="math notranslate nohighlight">\(\chi_{+-}(\mathbf{q})\)</span> を計算できます。
 これはスピン反転相関を記述します。 <span class="math notranslate nohighlight">\(S^{\pm}\)</span> の記法は曖昧さを伴うため、
 双一次形式そのもので書くと、格納される配列は</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
-<span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[\chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
+<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[\chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
 \Big\langle \big(c^{\dagger}_{\gamma\downarrow}
 c^{\mathstrut}_{\alpha\uparrow}\big)(-\mathbf{q}) \;;\;
 \big(c^{\dagger}_{\beta\uparrow}
 c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle\]</div>
 <p>であり、添字対の規約は縦感受率と同じです。</p>
+<section id="rpa-which-array">
+<span id="id5"></span><h3>どの配列がどのチャネルを保持するか<a class="headerlink" href="#rpa-which-array" title="Link to this heading">¶</a></h3>
+<p><span class="math notranslate nohighlight">\(\chi_{+-}\)</span> は専用の配列 <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> に出力され、これが作られるのは
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>（<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> が必要）の
+ときだけです。配列 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は常に縦方向（ring）の結果です。</p>
+<p>そもそも <code class="docutils literal notranslate"><span class="pre">chiq</span></code> がそのようなスロットを持つかどうかはスキームによります。
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> では各々がスピンを担う対を添字とするため、対が
+スピン非対角となるスロットを常に持ちます。 <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> もバブルが膨張で
+得られる場合には持ち、そのときの配列はスピン軸を明示的に含みます。
+<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> は密度対の成分のみを格納するため、そのようなスロットはそもそも
+存在しません。真にスピンフルな計算における <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> も同様で、この場合は
+reduced の配列形式に帰着します。</p>
+<p><strong>これらのスロットは横感受率ではなく、バブルがスピンフリーあるいはスピン
+対角なバブルの膨張で得られる限り計算されません。恒等的にゼロです。</strong> 膨張は
+同スピンのスロットしか作らないためです。これは <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> を
+使わないすべての計算に加えて、 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> を使っていても一体
+ハミルトニアンがスピンフリーあるいはスピン対角と判定される計算にも当てはまり
+ます。決めているのは設定ではなく、検出されたスピン構造です。感受率配列の
+ゼロは計算結果として読めてしまいますが、ここでは不在を意味します。2軌道の
+オンサイト模型では、縦方向のスロットが <span class="math notranslate nohighlight">\(\max|\chi| = 1.53\)</span> に達する
+一方、対がスピン非対角なスロットはすべて厳密に <span class="math notranslate nohighlight">\(0\)</span> です。</p>
+<p>例外は <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> での真にスピンフルな計算です。
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> を使い、かつハミルトニアンが実際にスピンを混ぜる場合、
+バブルは一般化軌道添字の上で直接構築されるため、これらのスロットは計算され、
+一般にゼロではありません。その場合でも、横感受率は <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> が保持する
+ものであって、これらのスロットが保持するものではありません。</p>
+<p>ラダーを加えても縦方向の答えは変わりません。同一の入力に対して <code class="docutils literal notranslate"><span class="pre">&quot;ring&quot;</span></code> と
+<code class="docutils literal notranslate"><span class="pre">&quot;ring+ladder&quot;</span></code> の <code class="docutils literal notranslate"><span class="pre">chiq</span></code> はビット単位で一致し、<code class="docutils literal notranslate"><span class="pre">&quot;ring+ladder&quot;</span></code> が
+加えるのは別配列の <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> です。したがって <code class="docutils literal notranslate"><span class="pre">calc_type</span></code> の選択は、
+横方向チャネルを計算するかどうかの選択であって、縦方向についての近似の
+選択ではありません。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>SU(2) 対称な常磁性状態では、横方向の応答は対称性から縦方向の結果に
+帰着します（ <span class="math notranslate nohighlight">\(\chi_{+-} = 2\chi_{zz}\)</span> ）。ここで <span class="math notranslate nohighlight">\(\chi_{zz}\)</span>
+は縦方向の結果から</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
+<span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[\chi_{zz} = \frac{1}{4}\sum_{\sigma\sigma'}\sigma\sigma'\,
+\chi^{\sigma\sigma'} ,\qquad \sigma,\sigma' = \pm 1\]</div>
+<p>として作ります（ <span class="math notranslate nohighlight">\(\chi^{\sigma\sigma'}\)</span> は対がスピン対角な
+スロット）。空であるスピン非対角スロットから読むのではありません。
+対称性が成り立つ範囲では、これは <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> を浮動小数点の丸め誤差の範囲で
+再現するため（下記の入力での実測：要素ごとの <strong>絶対</strong> 差の最大が
+<span class="math notranslate nohighlight">\(2.2\times 10^{-16}\)</span> 、これに対し <span class="math notranslate nohighlight">\(\chi_{+-}\)</span> のピークは
+<span class="math notranslate nohighlight">\(1.4\)</span> ）、この目的にラダーは不要です。</p>
+<p>SU(2) が破れた途端にこの関係は成り立たず、しかも小さなパラメータで
+制御されません。ずれは見積もって許容できる補正ではありません。
+1軌道正方格子（ <span class="math notranslate nohighlight">\(U = 4\)</span> 、 <span class="math notranslate nohighlight">\(4\times 4\)</span> 、
+<span class="math notranslate nohighlight">\(N_{\rm mat} = 64\)</span> ）に <code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">0.35</span></code>---2つのスピンの
+間の分裂は <span class="math notranslate nohighlight">\(0.7\)</span>---を加えると、静的な推定値は <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> から
+ピーク波数において <span class="math notranslate nohighlight">\(T = 0.5\)</span> で <span class="math notranslate nohighlight">\(+2\%\)</span> 、 <span class="math notranslate nohighlight">\(T = 1.0\)</span> で
+<span class="math notranslate nohighlight">\(-4\%\)</span> 、 <span class="math notranslate nohighlight">\(T = 0.3\)</span> で <span class="math notranslate nohighlight">\(-25\%\)</span> 、 <span class="math notranslate nohighlight">\(T = 0.2\)</span> で
+<span class="math notranslate nohighlight">\(-37\%\)</span> ずれます。符号は両方向に振れ、温度を下げるほど大きくなり、
+<span class="math notranslate nohighlight">\({\bf q} = 0\)</span> かつ <span class="math notranslate nohighlight">\(T = 0.2\)</span> では 2 倍以上外れます。さらに
+<span class="math notranslate nohighlight">\(T = 0.3\)</span> では推定値の最大値が真の最大値と異なる波数に現れるため、
+ピーク位置さえ信用できません。磁場、磁気秩序変数、スピン軌道相互作用が
+ある場合、横方向チャネルは計算する必要があります。</p>
+</div>
+<div class="note admonition">
+<p class="admonition-title">上記の数値の再現方法</p>
+<p>いずれの計算も <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">mu</span> <span class="pre">=</span> <span class="pre">0.0</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">CellShape</span> <span class="pre">=</span> <span class="pre">[4,</span> <span class="pre">4,</span> <span class="pre">1]</span></code> 、 <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>
+を用い、他は同一の入力に対して <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> と
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> を比較します。</p>
+<p>2軌道の数値は <code class="docutils literal notranslate"><span class="pre">tests/rpa/input_2orb</span></code> （ <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code> 、 <code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code> ）を <span class="math notranslate nohighlight">\(T = 0.5\)</span> で用います。
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみとしてください。オフサイトの <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> は
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> では拒否されます。磁場下の数値は
+<code class="docutils literal notranslate"><span class="pre">tests/rpa/input</span></code> （ <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> 、 <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code> 、
+<code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code> 、 <code class="docutils literal notranslate"><span class="pre">extern.dat</span></code> ）を <code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">0.35</span></code>
+で用います。</p>
+<p>静的な応答は松原添字 <span class="math notranslate nohighlight">\(N_{\rm mat}/2 = 32\)</span> で読みます。添字
+<span class="math notranslate nohighlight">\(0\)</span> ではありません。周波数軸は
+<span class="math notranslate nohighlight">\(\omega_n = (2n - N_{\rm mat})\pi/\beta\)</span> であり、添字 <span class="math notranslate nohighlight">\(0\)</span> は
+最も負の周波数だからです。百分率は <span class="math notranslate nohighlight">\(\chi_{+-}\)</span> 自身がピークを取る
+波数で評価した
+<span class="math notranslate nohighlight">\((\chi^{\rm inferred} - \chi_{+-})/\chi_{+-}\)</span> です。</p>
+</div>
 <p>横方向の裸感受率は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-18">
 <span class="eqno">(7.29)<a class="headerlink" href="#equation-algorithm-rpa-18" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
@@ -331,18 +382,63 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 共役の組 （ <span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span> ）だからです。したがって複素エルミート
 閉じの Exchange の物理的結合 <span class="math notranslate nohighlight">\((J_{01} + J_{10})/2\)</span> は実数になり、複素
 エルミート閉じの PairHop は完全な複素値を保ちます。</p>
-<p>オンサイト相互作用に対する頂点は以下のとおりです:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> <span class="math notranslate nohighlight">\(U\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -U\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -V\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -(J + J^{\rm T})/2\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = +I\)</span> （wannier90 形式の k 空間ソルバーはすべてこの規格化で Ising ファイル
-を読みます。UHFk の因子 1/4 の不一致は issue #106 で解消済みです。
-別系統の実空間 UHFr リーダーは S^z 規約を保持します）</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> <span class="math notranslate nohighlight">\(J\)</span> : <span class="math notranslate nohighlight">\(W_{+-} = -J\)</span></p></li>
-</ul>
+<p><span class="math notranslate nohighlight">\(W_{+-}\)</span> は軌道ペアを添字とする行列であり、各相互作用は自分が占める
+スロットにのみ寄与します。頂点が使うのは相互作用テンソルの <strong>異スピンブロック</strong>
+（<span class="math notranslate nohighlight">\(\uparrow\uparrow\downarrow\downarrow\)</span> と
+<span class="math notranslate nohighlight">\(\downarrow\downarrow\uparrow\uparrow\)</span>）と <strong>スピン反転ブロック</strong>
+（<span class="math notranslate nohighlight">\(\uparrow\downarrow\uparrow\downarrow\)</span> と
+<span class="math notranslate nohighlight">\(\downarrow\uparrow\downarrow\uparrow\)</span>）の2つだけです。
+同スピンブロックは寄与しません。同スピン相互作用は横型ループの上向き伝播関数と
+下向き伝播関数を結べないため、自己エネルギーは生じても頂点は生じないからです。</p>
+<p>オンサイト相互作用が与える成分は以下のとおりです。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 28.2%" />
+<col style="width: 38.5%" />
+<col style="width: 33.3%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>相互作用</p></th>
+<th class="head"><p>占めるブロック</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(W_{+-}\)</span> の成分</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> <span class="math notranslate nohighlight">\(U\)</span></p></td>
+<td><p>異スピン</p></td>
+<td><p><span class="math notranslate nohighlight">\(-U\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span></p></td>
+<td><p>異スピンと同スピン（後者は不使用）</p></td>
+<td><p><span class="math notranslate nohighlight">\(-V\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span></p></td>
+<td><p>同上</p></td>
+<td><p><span class="math notranslate nohighlight">\(+I\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>異スピン</p></td>
+<td><p><span class="math notranslate nohighlight">\(-J\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>スピン反転</p></td>
+<td><p><span class="math notranslate nohighlight">\(-(J + J^{\rm T})/2\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>同スピンのみ</p></td>
+<td><p><span class="math notranslate nohighlight">\(0\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>二重スピン反転（ <span class="math notranslate nohighlight">\(W_{+-}\)</span> では不使用 ）</p></td>
+<td><p><span class="math notranslate nohighlight">\(0\)</span></p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> と <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> がゼロになるのは値が小さいからではなく、
+頂点が使う2つのブロックの外に成分があるためです。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> の規格化について：wannier90 形式の k 空間ソルバーはすべてこの規格化で
+Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージョン 2.0 で
+解消済みです。別系統の実空間 UHFr リーダーは <span class="math notranslate nohighlight">\(S^z\)</span> 規約を保持します。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p>これらの値は、横方向チャネルを厳密対角化と照合する前に公開されていた値とは
@@ -359,7 +455,7 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 実際にはオフサイトの <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Ising</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> が拒否され、
 オフサイトの <code class="docutils literal notranslate"><span class="pre">Hund</span></code> と <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> は横方向頂点が消えるため受理されます。
 なお、互いに打ち消し合う・値が食い違う宣言の組は、より早い読み込み時に
-拒否されます（issue #93: 宣言ファイルはエルミート共役で閉じている必要が
+拒否されます（バージョン 2.0 以降: 宣言ファイルはエルミート共役で閉じている必要が
 あります）。また <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> による折り畳みでスーパーセル内に収まる
 サイト間ペアはセル内軌道ペアとなり、表現可能として受理されます。縦方向（ <code class="docutils literal notranslate"><span class="pre">ring</span></code> ）チャネルは影響を受けません。</p>
 <div class="admonition warning">
@@ -388,8 +484,9 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 スピン混合系の横感受率は、現在の実装では近似となります。</p>
 </div>
 </section>
-<section id="id5">
-<h2><span class="section-number">7.2.3. </span>スピン軌道モード<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
+</section>
+<section id="id6">
+<h2><span class="section-number">7.2.3. </span>スピン軌道モード<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h2>
 <p>H-wave はスピン軌道モードをサポートしています。このモードでは入力ファイルの
 スピン・軌道インデックスがブロック分離ではなくインターリーブされた形で与えられます。
 ソルバーは読み込み時に内部のスピンブロック順へ並べ替えており、保存される感受率も
@@ -418,7 +515,7 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 既存の RPA スピン軌道計算の <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> の <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> は2倍にしてください。</p>
 </div>
 <aside class="footnote-list brackets">
-<aside class="footnote brackets" id="id6" role="doc-footnote">
+<aside class="footnote brackets" id="id7" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>
 <p><a class="reference external" href="https://journals.jps.jp/doi/10.1143/JPSJ.78.104002">K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009).</a></p>
 </aside>
@@ -460,7 +557,7 @@ PairHop は共役転置との平均です。PairHop の2つの宣言は同一係
 <li class="toctree-l2 current"><a class="current reference internal" href="#">7.2. 乱雑位相近似法</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#id3">7.2.1. セクター構造とブロック分解</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id4">7.2.2. 横感受率（はしごダイアグラム）</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id5">7.2.3. スピン軌道モード</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id6">7.2.3. スピン軌道モード</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="eliashberg.html">7.3. 線形化Eliashberg方程式</a></li>

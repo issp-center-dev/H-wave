@@ -256,7 +256,7 @@ nodal <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&qu
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (default), <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: Apply the analytic Matsubara tail correction to the pair
-bubble <span class="math notranslate nohighlight">\(G^{(2)}\)</span> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>; issue #86). The bare truncated
+bubble <span class="math notranslate nohighlight">\(G^{(2)}\)</span> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>; as of version 2.0). The bare truncated
 frequency sum misses the leading identity tail (an
 <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span> error) and can be slightly indefinite, which
 injects spurious imaginary parts into the reported eigenvalues at small
@@ -684,8 +684,8 @@ out of the diagonal <span class="math notranslate nohighlight">\(\chi_{(a,a),(a,
 eigenvalue and gap function as needing recomputation. Single-orbital (<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>) results are bit-identical
 (both placements coincide), as are all general (myo) results. With the fix,
 a <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>-only reduced run reproduces the equivalent
-<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> and general-scheme results exactly <strong>for identical
-:math:`Sigma = 0` physics</strong> (FLEX with <code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">1</span></code>);
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> and general-scheme results exactly <strong>for identical</strong>
+<span class="math notranslate nohighlight">\(\Sigma = 0\)</span> <strong>physics</strong> (FLEX with <code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">1</span></code>);
 before the fix it did not. This is a statement about the pairing vertex
 only. It does not imply the two schemes are interchangeable at full
 self-consistency, where they also differ in how the self-energy is built.</p>
@@ -1109,9 +1109,9 @@ tolerance.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p>Dynamic IR results computed with H-wave versions BEFORE the issue-#57
-fix are incorrect for any model whose pairing vertex has a nonzero
-frequency-independent part — in particular anything with off-site
+<p>Dynamic IR results computed with H-wave 1.0.x are incorrect for any
+model whose pairing vertex has a nonzero frequency-independent
+part — in particular anything with off-site
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (pure on-site-<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> models were
 unaffected: their bare vertex term cancels exactly). Recompute such
 runs; large changes in lambda are expected (they were the bug, not a
@@ -1261,7 +1261,7 @@ was checked by running the combination.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>accepted by FLEX</p></td>
 <td><p>rejected</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the configuration outright (issue #83); see
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the configuration outright (as of version 2.0); see
 <em>Spin structure</em> below</p></td>
 </tr>
 <tr class="row-odd"><td><p>susceptibility stored</p></td>
@@ -1365,7 +1365,7 @@ or even spin-free model can be written in this representation) –
 <strong>not supported.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> rejects the configuration up front with
 an explicit error, on both the static and the dynamic entry, and
 <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> rejects it in preflight before any FLEX rung runs
-(issue #83): before this guard, the internally computed <span class="math notranslate nohighlight">\(\chi_0\)</span>
+(as of version 2.0): before this guard, the internally computed <span class="math notranslate nohighlight">\(\chi_0\)</span>
 path ran to completion and printed eigenvalues built on inconsistent
 index/orbital-count conventions – a silently wrong result, not an
 approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX

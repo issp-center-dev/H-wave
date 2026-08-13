@@ -83,7 +83,7 @@ symmetrised reading of the declaration file – the mean with the
 reversed-bond partner <span class="math notranslate nohighlight">\((R, a, b) \leftrightarrow (-R, b, a)\)</span> –
 matching every other route in the package: real declarations that contain both directions are
 read unchanged, bit for bit; a Hermitian-closed complex pair has its
-inert imaginary part folded to the real coefficient. (Since issue #93 a one-sided declaration
+inert imaginary part folded to the real coefficient. (Since version 2.0 a one-sided declaration
 – an entry with no Hermitian partner – is rejected at read time, so
 only closed files reach this point; earlier versions of the simple mode
 read a one-sided file with the raw one-sided phase.):</p>
@@ -237,7 +237,7 @@ Only positive eigenvalues are physically relevant for the SC transition.</p>
 which is efficiently computed using the Fast Fourier Transform (FFT).</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p><strong>Matsubara tail correction (issue #86).</strong> The bare truncated sum
+<p><strong>Matsubara tail correction (as of version 2.0).</strong> The bare truncated sum
 misses the leading positive identity tail of the exact two-particle
 Green’s function, an <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span> error: the summand’s exact high-frequency tail is
 <span class="math notranslate nohighlight">\(\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2\)</span> (the

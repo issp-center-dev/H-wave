@@ -137,7 +137,7 @@
 <p>本ファイルを使用するにあたってのルールは以下の通りです。</p>
 <ul>
 <li><p>行数固定で読み込みを行うため、ヘッダの省略はできません。</p></li>
-<li><p>係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手 <span class="math notranslate nohighlight">\(X_{ba}(-R)\)</span> が省略された宣言済みエントリは読み込み時に拒否されます（issue #93）。結合の両方向を宣言してください。</p></li>
+<li><p>係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手 <span class="math notranslate nohighlight">\(X_{ba}(-R)\)</span> が省略された宣言済みエントリは読み込み時に拒否されます（バージョン 2.0 以降）。結合の両方向を宣言してください。</p></li>
 <li><p>並進ベクトルは全て <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> 内に収まるとします。
 <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, <code class="docutils literal notranslate"><span class="pre">r_z</span></code> の範囲が <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> のx,y,z軸のサイズを超える場合はエラーで終了します。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> が <code class="docutils literal notranslate"><span class="pre">true</span></code> の場合、Transfer項の軌道インデックスは

@@ -19,7 +19,7 @@ The file contains several arrays bound to the following keys:
 
 - ``momentum_convention``:
 
-  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (issue #133): the
+  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (as of version 2.0): the
   momentum labels follow :math:`M(k) = \sum_R M(R) e^{+ikR}`. Loaders
   reject files recording a different value; files written before this
   field existed are accepted only when their content is elementwise even
@@ -95,7 +95,9 @@ Data format of ``chiq`` takes the following form depending on the value of ``cal
 
 - When ``calc_scheme = squashed``, the array format takes the form of ``ndarray(l,q,s1,s2,a,s3,s4,b)``, where ``a`` and ``b`` correspond to the orbital indices :math:`\alpha` and :math:`\beta`, respectively, and ``s1``, ``s2``, ``s3``, ``s4`` denote spin indices :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime`, respectively. See :ref:`Algorithm<Algorithm_sec>` section for the notation.
 
-When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)` and has the same array layout as ``chiq``.
+``chiq`` holds the longitudinal (ring) susceptibility. Under ``calc_scheme = general`` it has slots in which a pair of indices is spin-off-diagonal, as does ``squashed`` when the bubble is inflated; ``reduced`` stores density-pair components only and has no such slots, and neither does ``squashed`` in a genuinely spinful run, where it degenerates to the reduced layout. Those slots are **not** the transverse susceptibility, and whenever the bubble is obtained by inflating a spin-free or spin-diagonal one they are **not computed** -- the inflation builds only the same-spin slots, leaving the rest identically zero. That covers every calculation without ``enable_spin_orbital``, and also an ``enable_spin_orbital`` calculation whose one-body Hamiltonian is detected as spin-free or spin-diagonal. Do not read those zeros as a computed transverse response. (In a genuinely spinful ``general`` calculation the bubble is built directly on the generalized orbital index, so these slots are computed and are generally nonzero; the transverse susceptibility is still ``chiq_pm``.) See :ref:`Algorithm<rpa_which_array>` for how to obtain the transverse channel.
+
+When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)`. Its layout is ``ndarray(l,q,a,ap,b,bp)`` where ``a``, ``ap``, ``b``, ``bp`` are **orbital** indices :math:`\alpha`, :math:`\gamma`, :math:`\beta`, :math:`\delta` that do *not* include the spin degree of freedom -- the spin structure is fixed by the :math:`+-` labels. It is therefore smaller than ``chiq``, whose corresponding axes run over the generalized (spin-orbital) indices. The longitudinal ``chiq`` is unaffected by the presence of the ladder: on identical input it is bit-identical to the ``calc_type = ring`` result.
 
 
 Example for reading data

@@ -54,13 +54,14 @@ In the RPA mode of H-wave, the Hamiltonian given below will be considered:</p>
  {\cal H}_{\rm int}&amp;=\frac{1}{2}\sum_{ij}\sum_{\alpha, \alpha', \beta, \beta'}W_{ij}^{\beta\beta',\alpha\alpha'}
   c_{i\alpha}^{\dagger}c_{i\alpha'}c_{j\beta'}^{\dagger}c_{j\beta}
 \end{aligned}\end{split}\]</div>
-<p>The tabulated <span class="math notranslate nohighlight">\(W\)</span> is complete under the exchange of its two bilinears –
-an on-site Coulomb term, for instance, occupies both the up-down and the
-down-up slots – so the unrestricted sum over sites and over all four indices
-contains each pair ordering twice, which is what the <span class="math notranslate nohighlight">\(1/2\)</span> removes.  The
-transfer table is likewise required to be Hermitian-closed, i.e. to satisfy
-<span class="math notranslate nohighlight">\(t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}\)</span>, so <span class="math notranslate nohighlight">\({\cal H}_0\)</span>
-carries no separate Hermitian conjugate.</p>
+<p>The input table lists each interaction in both of its orderings: an on-site
+Coulomb term, for instance, fills the up-down slot and the down-up slot alike.
+Since the sum above runs over all four indices without restriction, it counts
+every such term twice, and the <span class="math notranslate nohighlight">\(1/2\)</span> cancels that.  The transfer table is
+given in the same way, satisfying
+<span class="math notranslate nohighlight">\(t_{\alpha\beta}(R)=t_{\beta\alpha}(-R)^{*}\)</span>; both directions being
+present already, no separate Hermitian conjugate is added to
+<span class="math notranslate nohighlight">\({\cal H}_0\)</span>.</p>
 <p>Applying the Fourier transformation</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-1">
 <span class="eqno">(7.12)<a class="headerlink" href="#equation-algorithm-rpa-1" title="Link to this equation">¶</a></span>\[\begin{aligned}
@@ -71,14 +72,14 @@ e^{i \bf{k}\cdot \bf{r}_{i}}c_{\bf{k},\alpha}^{\mathstrut},
 <p>the Hamiltonian is rewritten in the following form</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>This <span class="math notranslate nohighlight">\(e^{+i\bf{k}\cdot\bf{r}}\)</span> convention (the Wannier90-style
-sign, shared with UHFk) is what every real-space-coefficient build
-(<span class="math notranslate nohighlight">\(R \to k/q\)</span>) of the RPA module follows since issue #133:
+<p>Every real-space-coefficient build (<span class="math notranslate nohighlight">\(R \to k/q\)</span>) of the RPA
+module follows this <span class="math notranslate nohighlight">\(e^{+i\bf{k}\cdot\bf{r}}\)</span> convention (the
+Wannier90-style sign, shared with UHFk):
 <span class="math notranslate nohighlight">\(\varepsilon({\bf k}) = \sum_{\bf R} t({\bf R})
 e^{+i {\bf k}\cdot{\bf R}}\)</span> and <span class="math notranslate nohighlight">\(W({\bf q}) = \sum_{\bf R}
 W({\bf R}) e^{+i {\bf q}\cdot{\bf R}}\)</span> (the convolution transforms
 inside the susceptibility machinery are self-inverse pairs and are not
-affected). Before that fix the non-spin-orbital path used the opposite
+affected). In 1.0.x the non-spin-orbital path used the opposite
 sign throughout – a self-consistent global <span class="math notranslate nohighlight">\({\bf k} \to
 -{\bf k}\)</span> relabeling, so its stored <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> carried negated
 momentum labels whenever the tensor is not elementwise even under
@@ -141,8 +142,7 @@ Then, the irreducible one-body Green’s function is written as</p>
 \end{aligned}\]</div>
 <p>H-wave retains both sums.  The band index is contracted away as soon as it
 appears, so the interaction is kept in the orbital basis throughout and the
-diagonalization is used only to construct the Green’s functions; no band
-ordering, and no special handling of degeneracies, is required anywhere.</p>
+diagonalization is used only to construct the Green’s functions.</p>
 <p>By using the irreducible susceptibility, the susceptibility matrix from the RPA
 is obtained as follows:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-7">
@@ -187,8 +187,7 @@ matrix,</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
 <span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
 = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q},\]</div>
-<p>the same reordering that appears between Eqs. (16) and (20) of the
-H-wave paper (<a class="reference external" href="https://arxiv.org/abs/2308.00324">arXiv:2308.00324 [cond-mat.str-el]</a>).  Both index pairs are affected.</p>
+<p>with both index pairs reordered.</p>
 <p>The conversion is the identity on density (pair-diagonal) components
 and, more generally, on any real Hermitian-closed declaration, since
 the transposed slot then carries the same value.  It is observable
@@ -247,61 +246,30 @@ it can be put into matrix form and, as in the case of generalised orbitals, can 
 higher order correlations. See, for example, reference <a class="footnote-reference brackets" href="#id2" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> for the details.</p>
 <section id="sector-structure-and-block-decomposition">
 <h2><span class="section-number">7.2.1. </span>Sector structure and block decomposition<a class="headerlink" href="#sector-structure-and-block-decomposition" title="Link to this heading">¶</a></h2>
-<p>The condition established above – that what licenses a decomposition is a
-conserved quantity – is the general principle, and it is that conserved
-quantity, rather than the band index, by which H-wave organises the
-calculation.  A quantity is useful here only if it is conserved <em>and</em>
-distinguishes the bilinears: the particle number is conserved by everything
-but every particle-hole bilinear carries <span class="math notranslate nohighlight">\(\Delta N=0\)</span>, so it yields a
-single block and no decomposition at all, whereas <span class="math notranslate nohighlight">\(S_z\)</span> separates the
-density and spin-flip channels.  When the problem does decompose, the RPA
-equation is solved independently for each block, which also reduces the
-computational cost substantially.</p>
-<p>When <span class="math notranslate nohighlight">\({\cal H}_0\)</span> conserves such a quantity – spin, say – the Green’s
-function is block diagonal in it,
-<span class="math notranslate nohighlight">\(G^{(0)}_{\alpha\sigma,\beta\tau}
-=\delta_{\sigma\tau}G^{(0)\sigma}_{\alpha\beta}\)</span>, and the bubble carries one
-such label per propagator line,</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
-<span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[X^{(0)(\sigma\sigma')}_{\alpha\alpha',\beta\beta'}({\bf q},i\omega_m)
-= -\frac{T}{N_L}\sum_{{\bf k},n}
-  G^{(0)\sigma}_{\alpha\beta}({\bf k}+{\bf q},i\omega_m+i\epsilon_{n})
-  G^{(0)\sigma'}_{\beta'\alpha'}({\bf k},i\epsilon_{n}).\]</div>
-<p>The equal labels <span class="math notranslate nohighlight">\(\sigma=\sigma'\)</span> are the longitudinal (density,
-<span class="math notranslate nohighlight">\(S_z\)</span>) channel and the unequal ones the transverse channel.  Selecting
-one of them is exact – it picks out a channel, it does not approximate the
-bubble – provided the two do not mix, which is what the conditions below
-decide.</p>
-<p>Inside a sector, on the other hand, the matrix structure has to be kept.
-Collapsing it – replacing <span class="math notranslate nohighlight">\(G\)</span> by the scalar
-<span class="math notranslate nohighlight">\(G_{\uparrow}+G_{\downarrow}\)</span> before forming the bubble, say – puts
-the cross terms <span class="math notranslate nohighlight">\(G_{\uparrow}G_{\downarrow}\)</span> into the density response,
-where they do not belong; for degenerate spins the result then comes out
-exactly twice too large.</p>
-<p>Two separate conditions have to hold.</p>
-<p>The bare susceptibility is block diagonal with respect to any quantity
-conserved by <span class="math notranslate nohighlight">\({\cal H}_0\)</span>.  Spin is the usual example: when
-<span class="math notranslate nohighlight">\([{\cal H}_0, S_z]=0\)</span> the Green’s function is spin block diagonal, and
-the bubble then connects a particle-hole bilinear only to one carrying the
-opposite change of <span class="math notranslate nohighlight">\(S_z\)</span>.  The density (<span class="math notranslate nohighlight">\(\Delta S_z=0\)</span>) and
-spin-flip (<span class="math notranslate nohighlight">\(\Delta S_z=\pm 1\)</span>) channels are therefore strictly
-decoupled, which is what allows the longitudinal (ring) and transverse
-(ladder) channels to be solved separately.  This is the same mechanism that
-makes the susceptibility diagonal in <span class="math notranslate nohighlight">\({\bf q}\)</span>: a symmetry of
-<span class="math notranslate nohighlight">\({\cal H}_0\)</span> forbids the response from connecting different sectors.</p>
-<p>That decoupling is a property of <span class="math notranslate nohighlight">\(X^{(0)}\)</span> alone, and the RPA response
-inherits it only if the INTERACTION respects the same quantity.  If
-<span class="math notranslate nohighlight">\(X^{(0)}\)</span> is block diagonal but <span class="math notranslate nohighlight">\(\hat{W}\)</span> is not, the product
-<span class="math notranslate nohighlight">\(\hat{X}^{(0)}\hat{W}\)</span> is not, so neither is the inverse: the sectors
-mix from second order in the interaction onwards.  Two situations break one
-of the two conditions – spin-orbit coupling makes <span class="math notranslate nohighlight">\(S_z\)</span> non-conserving
-and puts sector-mixing elements into <span class="math notranslate nohighlight">\(X^{(0)}\)</span> itself, while
-<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is a product of two spin-raising (or two spin-lowering)
-bilinears and so does not conserve <span class="math notranslate nohighlight">\(S_z\)</span> even when
-<span class="math notranslate nohighlight">\({\cal H}_0\)</span> does.</p>
-<p>Accordingly the block structure is detected from the COMBINED connectivity of
-the interaction matrix and the bare susceptibility, not from the interaction
-alone.</p>
+<p>When the susceptibility decomposes into several blocks, the RPA equation can be
+solved independently for each of them, which reduces the computational cost
+substantially.</p>
+<p>If <span class="math notranslate nohighlight">\({\cal H}_0\)</span> has a conserved quantity <span class="math notranslate nohighlight">\(Q\)</span>, the Green’s function is
+block diagonal in it and the susceptibility separates into blocks carrying the
+same label.  The label of each side of the correlator is the change
+<span class="math notranslate nohighlight">\(\Delta Q\)</span> its bilinear produces, the left-hand side being read as
+<span class="math notranslate nohighlight">\(A^{\dagger}\)</span> and labelled by <span class="math notranslate nohighlight">\(A\)</span>; with that convention the selection
+rule reads <span class="math notranslate nohighlight">\(\Delta Q_{\rm L} = \Delta Q_{\rm R}\)</span>.  Spin is the usual
+example: when <span class="math notranslate nohighlight">\([{\cal H}_0, S_z]=0\)</span> the density
+(<span class="math notranslate nohighlight">\(\Delta S_z=0\)</span>) and spin-flip (<span class="math notranslate nohighlight">\(\Delta S_z=\pm 1\)</span>) channels are
+strictly decoupled, which is what allows the longitudinal (ring) and transverse
+(ladder) channels to be solved separately.  Solving block by block is not an
+approximation: it returns the same result as solving the whole.</p>
+<p>The decomposition holds only if the <strong>interaction respects the same quantity</strong>.
+If <span class="math notranslate nohighlight">\(X^{(0)}\)</span> is block diagonal but <span class="math notranslate nohighlight">\(\hat{W}\)</span> is not, neither
+<span class="math notranslate nohighlight">\(\hat{X}^{(0)}\hat{W}\)</span> nor its inverse is, and the sectors mix from
+second order in the interaction onwards.  Spin-orbit coupling makes
+<span class="math notranslate nohighlight">\(S_z\)</span> non-conserving and so puts mixing into <span class="math notranslate nohighlight">\(X^{(0)}\)</span> itself,
+while <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> breaks the conservation on the interaction side even when
+<span class="math notranslate nohighlight">\({\cal H}_0\)</span> preserves it.</p>
+<p>H-wave therefore does not assume a block structure but detects it numerically,
+from the connectivity of <strong>both</strong> the interaction matrix and the bare
+susceptibility.</p>
 <ol class="arabic simple">
 <li><p>Sum the absolute values of the interaction Hamiltonian over all k-points,
 and those of the bare susceptibility over momentum and frequency, to
@@ -322,13 +290,94 @@ H-wave can compute the transverse susceptibility
 <span class="math notranslate nohighlight">\(\chi_{+-}(\mathbf{q})\)</span>, which describes spin-flip correlations.
 Writing it with the bilinears themselves avoids the ambiguity of the
 <span class="math notranslate nohighlight">\(S^{\pm}\)</span> labels: the stored array holds</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
-<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[\chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
+<span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\chi_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}) =
 \Big\langle \big(c^{\dagger}_{\gamma\downarrow}
 c^{\mathstrut}_{\alpha\uparrow}\big)(-\mathbf{q}) \;;\;
 \big(c^{\dagger}_{\beta\uparrow}
 c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle ,\]</div>
 <p>with the same index-pair convention as the longitudinal susceptibility.</p>
+<section id="which-array-holds-which-channel">
+<span id="rpa-which-array"></span><h3>Which array holds which channel<a class="headerlink" href="#which-array-holds-which-channel" title="Link to this heading">¶</a></h3>
+<p><span class="math notranslate nohighlight">\(\chi_{+-}\)</span> is delivered in its own array, <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>, and only when
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> (which requires <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>).
+The array <code class="docutils literal notranslate"><span class="pre">chiq</span></code> always holds the longitudinal (ring) result.</p>
+<p>Whether <code class="docutils literal notranslate"><span class="pre">chiq</span></code> has such slots at all depends on the scheme.  Under
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> it is indexed by pairs that each carry a spin, so
+it always has slots in which a pair is spin-off-diagonal.  <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> has
+them too when the bubble is inflated, its layout then carrying explicit spin
+axes.  <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> stores density-pair components only and has no such slots
+at all – and neither does <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> in a genuinely spinful calculation,
+where it degenerates to the reduced layout.</p>
+<p><strong>Those slots are not the transverse susceptibility, and whenever the bubble
+is obtained by inflating a spin-free or spin-diagonal one they are not
+computed: they are identically zero.</strong>  The inflation builds only the
+same-spin slots.  This covers every calculation without
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>, and also an <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> calculation whose
+one-body Hamiltonian the solver detects as spin-free or spin-diagonal – what
+decides the question is the detected spin structure, not the setting.  A zero
+in a susceptibility array reads naturally as a computed result; here it is an
+absence.  On a two-orbital on-site model the longitudinal slots reach
+<span class="math notranslate nohighlight">\(\max|\chi| = 1.53\)</span> while every slot with a spin-off-diagonal pair is
+exactly <span class="math notranslate nohighlight">\(0\)</span>.</p>
+<p>A genuinely spinful calculation under <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> is the
+exception: with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> and a Hamiltonian that actually mixes
+the spins, the bubble is built directly on the generalized orbital index, so
+these slots are computed and are in general nonzero.  Even then the transverse
+susceptibility is what <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> holds, not what these slots hold.</p>
+<p>Adding the ladder does not change the longitudinal answer.  On identical
+input the <code class="docutils literal notranslate"><span class="pre">chiq</span></code> of <code class="docutils literal notranslate"><span class="pre">&quot;ring&quot;</span></code> and of <code class="docutils literal notranslate"><span class="pre">&quot;ring+ladder&quot;</span></code> agree bit for bit;
+what <code class="docutils literal notranslate"><span class="pre">&quot;ring+ladder&quot;</span></code> adds is the separate <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>.  So the choice of
+<code class="docutils literal notranslate"><span class="pre">calc_type</span></code> is a choice of whether the transverse channel is computed at
+all, not a choice of approximation for the longitudinal one.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>In an SU(2)-symmetric paramagnet the transverse response follows from the
+longitudinal one by symmetry, <span class="math notranslate nohighlight">\(\chi_{+-} = 2\chi_{zz}\)</span>, with
+<span class="math notranslate nohighlight">\(\chi_{zz}\)</span> formed from the longitudinal result –</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-16">
+<span class="eqno">(7.27)<a class="headerlink" href="#equation-algorithm-rpa-16" title="Link to this equation">¶</a></span>\[\chi_{zz} = \frac{1}{4}\sum_{\sigma\sigma'}\sigma\sigma'\,
+\chi^{\sigma\sigma'} ,\qquad \sigma,\sigma' = \pm 1 ,\]</div>
+<p>where <span class="math notranslate nohighlight">\(\chi^{\sigma\sigma'}\)</span> are the spin-diagonal-pair slots – and
+not read off the spin-off-diagonal slots, which are empty.  Where the
+symmetry holds this reproduces <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> to floating-point round-off
+(measured on the fixture below: largest <strong>absolute</strong> elementwise difference
+<span class="math notranslate nohighlight">\(2.2\times 10^{-16}\)</span>, against a peak <span class="math notranslate nohighlight">\(\chi_{+-}\)</span> of
+<span class="math notranslate nohighlight">\(1.4\)</span>), so the ladder is not needed for it.</p>
+<p>The relation fails as soon as SU(2) is broken, and it fails without a
+small parameter: the discrepancy is not a correction that can be estimated
+and tolerated.  On a single-orbital square lattice (<span class="math notranslate nohighlight">\(U = 4\)</span>,
+<span class="math notranslate nohighlight">\(4\times 4\)</span>, <span class="math notranslate nohighlight">\(N_{\rm mat} = 64\)</span>) with <code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">0.35</span></code>
+– a splitting of <span class="math notranslate nohighlight">\(0.7\)</span> between the two spin species – the static
+inferred response deviates from <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code> at the peak wavevector by
+<span class="math notranslate nohighlight">\(+2\%\)</span> at <span class="math notranslate nohighlight">\(T = 0.5\)</span>, <span class="math notranslate nohighlight">\(-4\%\)</span> at <span class="math notranslate nohighlight">\(T = 1.0\)</span>,
+<span class="math notranslate nohighlight">\(-25\%\)</span> at <span class="math notranslate nohighlight">\(T = 0.3\)</span> and <span class="math notranslate nohighlight">\(-37\%\)</span> at <span class="math notranslate nohighlight">\(T = 0.2\)</span>.  It
+errs in both directions, it grows as the temperature falls, and at
+<span class="math notranslate nohighlight">\({\bf q} = 0\)</span>, <span class="math notranslate nohighlight">\(T = 0.2\)</span> it is wrong by more than a factor of
+two.  At <span class="math notranslate nohighlight">\(T = 0.3\)</span> the inferred maximum sits at a different
+wavevector from the true one, so even the position of the peak is not
+safe.  Under a field, a magnetic order parameter, or spin-orbit coupling,
+the transverse channel has to be computed.</p>
+</div>
+<div class="note admonition">
+<p class="admonition-title">Reproducing the figures quoted above</p>
+<p>Both runs use <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">mu</span> <span class="pre">=</span> <span class="pre">0.0</span></code>,
+<code class="docutils literal notranslate"><span class="pre">CellShape</span> <span class="pre">=</span> <span class="pre">[4,</span> <span class="pre">4,</span> <span class="pre">1]</span></code>, <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> and <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>,
+comparing <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> on
+otherwise identical input.</p>
+<p>The two-orbital figures use <code class="docutils literal notranslate"><span class="pre">tests/rpa/input_2orb</span></code> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>) at <span class="math notranslate nohighlight">\(T = 0.5\)</span>.  Take
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> only: an off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> is rejected by
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>.  The field figures use <code class="docutils literal notranslate"><span class="pre">tests/rpa/input</span></code>
+(<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">coulombintra.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">extern.dat</span></code>)
+with <code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">0.35</span></code>.</p>
+<p>Read the static response at Matsubara index <span class="math notranslate nohighlight">\(N_{\rm mat}/2 = 32\)</span>,
+not at index <span class="math notranslate nohighlight">\(0\)</span>: the frequency axis is
+<span class="math notranslate nohighlight">\(\omega_n = (2n - N_{\rm mat})\pi/\beta\)</span>, so index <span class="math notranslate nohighlight">\(0\)</span> is the
+most negative frequency.  The percentages are
+<span class="math notranslate nohighlight">\((\chi^{\rm inferred} - \chi_{+-})/\chi_{+-}\)</span> evaluated at the
+wavevector where <span class="math notranslate nohighlight">\(\chi_{+-}\)</span> itself peaks.</p>
+</div>
 <p>The transverse bare susceptibility is</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-17">
 <span class="eqno">(7.28)<a class="headerlink" href="#equation-algorithm-rpa-17" title="Link to this equation">¶</a></span>\[X^{(0)}_{+-,\alpha\gamma;\beta\delta}(\mathbf{q}, i\omega_m)
@@ -359,19 +408,65 @@ declarations are Hermitian partners (<span class="math notranslate nohighlight">
 the same coefficient. For a complex Hermitian-closed Exchange the physical
 coupling <span class="math notranslate nohighlight">\((J_{01} + J_{10})/2\)</span> is therefore real, while a complex
 Hermitian-closed PairHop keeps its full complex value.</p>
-<p>The resulting vertex, for on-site interactions:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> <span class="math notranslate nohighlight">\(U\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -U\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -V\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -(J + J^{\rm T})/2\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = +I\)</span> (all Wannier90-like k-space solvers now read
-the Ising file in this normalization – the UHFk factor-1/4 discrepancy
-was resolved with issue #106; the separate real-space UHFr reader keeps
-its S^z convention)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = 0\)</span></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> <span class="math notranslate nohighlight">\(J\)</span>: <span class="math notranslate nohighlight">\(W_{+-} = -J\)</span></p></li>
-</ul>
+<p><span class="math notranslate nohighlight">\(W_{+-}\)</span> is a matrix in the orbital pairs, and each interaction
+contributes only to the slots it occupies.  The vertex draws on just two spin
+blocks of the interaction tensor: the <strong>cross-spin</strong> block
+(<span class="math notranslate nohighlight">\(\uparrow\uparrow\downarrow\downarrow\)</span> and
+<span class="math notranslate nohighlight">\(\downarrow\downarrow\uparrow\uparrow\)</span>) and the <strong>spin-flip</strong> block
+(<span class="math notranslate nohighlight">\(\uparrow\downarrow\uparrow\downarrow\)</span> and
+<span class="math notranslate nohighlight">\(\downarrow\uparrow\downarrow\uparrow\)</span>).  The same-spin blocks do not
+contribute: a same-spin interaction cannot connect the up and down propagators
+of the transverse loop, so it produces self-energy but no vertex.</p>
+<p>For on-site interactions the components are</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 29.3%" />
+<col style="width: 41.5%" />
+<col style="width: 29.3%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>interaction</p></th>
+<th class="head"><p>block occupied</p></th>
+<th class="head"><p>component of <span class="math notranslate nohighlight">\(W_{+-}\)</span></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> <span class="math notranslate nohighlight">\(U\)</span></p></td>
+<td><p>cross-spin</p></td>
+<td><p><span class="math notranslate nohighlight">\(-U\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> <span class="math notranslate nohighlight">\(V\)</span></p></td>
+<td><p>cross-spin and same-spin (the latter unused)</p></td>
+<td><p><span class="math notranslate nohighlight">\(-V\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\(I\)</span></p></td>
+<td><p>as above</p></td>
+<td><p><span class="math notranslate nohighlight">\(+I\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>cross-spin</p></td>
+<td><p><span class="math notranslate nohighlight">\(-J\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>spin-flip</p></td>
+<td><p><span class="math notranslate nohighlight">\(-(J + J^{\rm T})/2\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>same-spin only</p></td>
+<td><p><span class="math notranslate nohighlight">\(0\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> <span class="math notranslate nohighlight">\(J\)</span></p></td>
+<td><p>double spin flip (not used by <span class="math notranslate nohighlight">\(W_{+-}\)</span>)</p></td>
+<td><p><span class="math notranslate nohighlight">\(0\)</span></p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> vanish not because the coupling is weak but because
+their components lie outside the two blocks the vertex uses.</p>
+<p>On the <code class="docutils literal notranslate"><span class="pre">Ising</span></code> normalization: all Wannier90-like k-space solvers read the
+Ising file this way; the UHFk factor-1/4 discrepancy was resolved in version
+2.0, while the separate real-space UHFr reader keeps its <span class="math notranslate nohighlight">\(S^z\)</span>
+convention.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>These values differ from those published before H-wave’s transverse channel
@@ -390,7 +485,7 @@ off-site term, so such a term’s vertex is not a function of <span class="math 
 and cannot be represented. In practice this rejects off-site
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, while off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
-rejected earlier, at read time (issue #93: declaration files must be
+rejected earlier, at read time (as of version 2.0: declaration files must be
 Hermitian-closed); an inter-site pair that folds into the supercell under
 <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> becomes an intra-cell orbital pair and is representable. The
 longitudinal (<code class="docutils literal notranslate"><span class="pre">ring</span></code>) channel is unaffected.</p>
@@ -422,6 +517,7 @@ bubble; the spin-mixing cross terms are not included, and a warning
 is emitted. The transverse susceptibility of a spin-mixing system is
 therefore an approximation in the current implementation.</p>
 </div>
+</section>
 </section>
 <section id="spin-orbital-mode">
 <h2><span class="section-number">7.2.3. </span>Spin-orbital mode<a class="headerlink" href="#spin-orbital-mode" title="Link to this heading">¶</a></h2>

@@ -84,7 +84,7 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 <span class="math notranslate nohighlight">\((R, a, b) \leftrightarrow (-R, b, a)\)</span> との平均）として入り、
 パッケージ内の他の全経路と一致します。両方向を含む実数の宣言はビット単位で不変に読まれます（エルミート共役
 で閉じた複素対は、不活性な虚部が実係数に折り畳まれます）
-（issue #93 以降、エルミート共役の相手を欠く片側宣言は読み込み時に拒否
+（バージョン 2.0 以降、エルミート共役の相手を欠く片側宣言は読み込み時に拒否
 されるため、ここに到達するのは閉じたファイルのみです。以前の簡易モード
 は片側ファイルを生の位相で読んでいました）:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-3">
@@ -230,7 +230,7 @@ SC転移には正の固有値のみが物理的に関連します。</p>
 高速フーリエ変換（FFT）を用いて効率的に計算できます。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><strong>松原 tail 補正（issue #86）。</strong> 打ち切り和は厳密な二粒子グリーン
+<p><strong>松原 tail 補正（バージョン 2.0 以降）。</strong> 打ち切り和は厳密な二粒子グリーン
 関数の主要な正の単位行列 tail を取りこぼします（ <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>
 の誤差）。被和関数の厳密な
 高周波 tail は
