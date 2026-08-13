@@ -252,5 +252,97 @@ class TestNullDirectionSolverSide(ApproxTestCase):
                     getattr(pert, name), getattr(base, name), rel=0, abs=1e-15)
 
 
+# ---------------------------------------------------------------------------
+# Sector-block engine vs the dense Lehmann path (#151, Task 4)
+# ---------------------------------------------------------------------------
+
+class TestSectorBlockEngine(ApproxTestCase):
+    """``SectorED`` must reproduce the dense ``chi_connected`` path exactly
+    (round-off), including a genuine interaction, and must produce the
+    right-shaped tensor on the case-M fixture the dense path cannot afford
+    (fx3: nmode=12, dim=4096 -- 12 dense (4096, 4096) annihilators alone
+    would be multiple GB; SectorED never builds those)."""
+
+    def test_block_matches_dense_with_interaction(self):
+        fx = fx2()
+        # Mixes both canonical_density_terms branches: an on-site U
+        # (a==b, R==0), an on-site inter-orbital V (a!=b, R==0), and an
+        # off-site same-orbital V (a==b, R!=0) -- exercises the general
+        # nonlocal-Fock HF path is NOT what's under test here (h1 stays
+        # the bare one-body matrix); this is purely the interacting-H
+        # sector-vs-dense comparison.
+        terms = ed_oracle_util.canonical_density_terms(
+            fx, [(0, 0, 0, V1), (0, 1, 0, V1), (0, 0, 1, V1)])
+        hint = ed_oracle_util.h_int_from_terms(fx, terms)
+        dense = ed_oracle_util.chi_connected(fx, hint=hint)
+        block = ed_oracle_util.SectorED(fx, terms=terms).chi_connected()
+        assert_approx_array(block, dense, rel=0, abs=1e-11)
+
+    def test_chi_connected_shape_case_m(self):
+        fx = fx3()
+        out = ed_oracle_util.SectorED(fx).chi_connected()
+        self.assertEqual(out.shape, (3, 4, 4, 4, 4))
+
+
+class TestBondPairCorrelatorApi(ApproxTestCase):
+    """``bond_correlator``/``pair_correlator`` shape and the internal-
+    consistency pin against the already-verified ``chi_connected`` (#151,
+    Task 4)."""
+
+    def test_bond_correlator_shape(self):
+        fx = fx5()
+        sector = ed_oracle_util.SectorED(fx)
+        channels = [(0,), (1,), (-1,)]
+        out = sector.bond_correlator(channels)
+        self.assertEqual(out.shape, (5, 2, 2, 3, 3))
+
+    def test_bond_correlator_diagonal_matches_chi_connected(self):
+        # Index correspondence (derived, not scanned): for the R=0, a=b
+        # bond channel at spin sigma, B_{0,a,a,sigma}(q) = sum_j e^{iqj}
+        # c^dag_{j,a,sigma} c_{j,a,sigma} is LITERALLY chi_connected's
+        # density operator O(q, x, x) with generalized index
+        # x = sigma*norb + a (the a = s*norb+o convention pinned in the
+        # plan's Global Constraints). bond_correlator's <B; B^dagger> and
+        # chi_connected's <(c^dag_a c_c)(q); (c^dag_d c_b)(-q)> both reduce,
+        # at a=c=b=d=x, to sum_{m,n} K[m,n] O(q,x,x)[m,n] conj(O(q,x,x)[m,n])
+        # minus the SAME disconnected piece beta*|<O(q,x,x)>|^2 -- because
+        # O(-q,x,x)[n,m] = conj(O(q,x,x)[m,n]) exactly for any Hermitian
+        # single-site density operator's Fourier transform (a q -> -q
+        # conjugation identity, independent of the fixture). Both use the
+        # SAME 1/L normalization, so the slots match at round-off for ANY
+        # interaction, not just V=0.
+        fx = fx3()
+        terms = ed_oracle_util.canonical_density_terms(fx, [(0, 1, 1, V1)])
+        sector = ed_oracle_util.SectorED(fx, terms=terms)
+        channels = [(0, 0, 0), (0, 1, 1)]
+        xph = sector.bond_correlator(channels)
+        chi = sector.chi_connected()
+        for i, (r, a, b) in enumerate(channels):
+            for sigma in range(2):
+                x = sigma * fx.norb + a
+                assert_approx_array(
+                    xph[:, sigma, sigma, i, i], chi[:, x, x, x, x],
+                    rel=0, abs=1e-11)
+
+    def test_pair_correlator_smoke(self):
+        fx = fx2()
+        sector = ed_oracle_util.SectorED(fx)
+        channels = [(0, 0, 0), (0, 1, 1), (0, 0, 1)]
+        xpp = sector.pair_correlator(channels)
+        self.assertEqual(xpp.shape, (fx.L, 3, 3))
+        self.assertTrue(np.all(np.isfinite(xpp)))
+        self.assertTrue(np.any(xpp != 0))
+        # Xpp[q] is Hermitian AT FIXED q (not a q <-> -q relation): both
+        # Xpp[q,i,j] = <Delta_i(q); Delta_j(q)^dagger> and
+        # Xpp[q,j,i] = <Delta_j(q); Delta_i(q)^dagger> sum over the SAME
+        # (m, n) sector-pair domain (the pair operator's delta is always
+        # (-1, -1)) against the SAME real, symmetric kernel K[m,n] = K[n,m]
+        # (the static Lehmann kernel is real and symmetric by construction
+        # -- see _static_kernel), so term-by-term
+        # Xpp[q,j,i] = conj(Xpp[q,i,j]).
+        for qi in range(fx.L):
+            assert_approx_array(xpp[qi], xpp[qi].conj().T, rel=0, abs=1e-11)
+
+
 if __name__ == "__main__":
     unittest.main()
