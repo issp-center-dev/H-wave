@@ -962,3 +962,144 @@ def adjudicate_granule(D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat,
                 tol=tol, max_signal=max_signal, status=status,
                 failures=failures, pred_full=pred_full,
                 bearing_mask=bearing_mask)
+
+
+# ---------------------------------------------------------------------------
+# pp reference path (#151, Task 7): the exchange projector (fermionic
+# exchange symmetry, independent of bond_channels) and the independent
+# finite-Nmat pp bubble reference (direct sum over the one-body eigenbasis).
+# ---------------------------------------------------------------------------
+
+def exchange_projector(channels):
+    """``(P, Q_s, Q_t)`` over the ordered-pair basis ``channels`` (a list of
+    ``(R, a, b)`` tuples -- ALWAYS the full triple, never the ``(R,)``
+    norb=1 shorthand ``SectorED.bond_correlator``/``pair_correlator`` accept,
+    since orbital indices are meaningful for a pair operator even at
+    norb=1), built from FERMIONIC EXCHANGE SYMMETRY ALONE and independent of
+    ``hwave.solver.bond_channels`` (design doc, "Pair operators are
+    projected before comparison": the singlet/triplet resolution of the
+    ordered-spin pair ``Delta_{R,a,b}(q) = sum_j e^{iqj} c_{j+R,a,down}
+    c_{j,b,up}`` is fixed by requiring the OVERALL two-electron amplitude be
+    symmetric (singlet) / antisymmetric (triplet) under simultaneous
+    ``R -> -R``, orbital swap ``a<->b`` -- the two ways of describing the
+    same bond from either endpoint).
+
+    ``P[i, j] = 1`` iff ``channels[j] == (-R, b, a)`` for
+    ``channels[i] == (R, a, b)``; ``Q_s = (I + P)/2``, ``Q_t = (I - P)/2``.
+    ``channels`` must be UNIQUE and CLOSED under the involution
+    ``(R, a, b) -> (-R, b, a)`` (round-4 fix: the invariant was implicit) --
+    raises ``ValueError`` naming the offending/missing channel otherwise.
+    ``P`` is idempotent-involutive (``P @ P = I``), so ``Q_s``/``Q_t`` are
+    complementary orthogonal projectors (``Q_s + Q_t = I``, ``Q_s^2 = Q_s``,
+    ``Q_t^2 = Q_t``, ``Q_s Q_t = 0``) for any closed, unique channel list.
+    """
+    channels = list(channels)
+    index_of = {}
+    for i, ch in enumerate(channels):
+        if ch in index_of:
+            raise ValueError(
+                "exchange_projector: channels must be unique -- {} appears "
+                "at both index {} and index {}".format(
+                    ch, index_of[ch], i))
+        index_of[ch] = i
+    n = len(channels)
+    P = np.zeros((n, n), dtype=complex)
+    for i, ch in enumerate(channels):
+        R, a, b = ch
+        partner = (-R, b, a)
+        j = index_of.get(partner)
+        if j is None:
+            raise ValueError(
+                "exchange_projector: channels is not closed under the "
+                "involution (R,a,b)->(-R,b,a) -- channel {} is missing its "
+                "partner {}".format(ch, partner))
+        P[i, j] = 1.0
+    Id = np.eye(n, dtype=complex)
+    Q_s = 0.5 * (Id + P)
+    Q_t = 0.5 * (Id - P)
+    return P, Q_s, Q_t
+
+
+def eigenbasis_pair_bubble(fx, channels, nmat):
+    """The INDEPENDENT finite-Nmat pp bubble reference: a direct Matsubara
+    sum over the one-body EIGENBASIS (never through momentum space or
+    ``hwave.solver.bond_channels._g2_from_green`` -- a genuinely different
+    computational route from ``production_pair_bubble``, compared at pin 3a).
+
+    Derivation (Wick's theorem on the free reference state, verified
+    numerically against ``SectorED.pair_correlator`` at pin 3b): for
+    ``Delta_{R,a,b}(q=0) = sum_j c_{j+R,a,down} c_{j,b,up}``, the only
+    nonzero contraction of ``<Delta_{R,a,b}; Delta_{R',c,d}^dagger>`` pairs
+    the two DOWN legs and the two UP legs (down/up never contract in a
+    spin-conserving free theory); converting the resulting imaginary-time
+    integral to a Matsubara sum gives, per site pair ``(j, j')``::
+
+        X0_pp[(R,a,b),(R',c,d)]
+            = (1/(L*beta)) sum_n sum_{j,j'}
+                  G[(j+R,a),(j'+R',c)](iwn) * G[(j,b),(j',d)](-iwn)
+
+    with ``G`` the free single-spin-sector Green function (spin-independent
+    ``H1``, so up and down share one ``G``), built here directly from the
+    one-body eigenbasis: ``G(iwn) = U @ diag(1/(i*wn + mu - eps)) @
+    U^dagger`` for ``eps, U = eigh(H1_one_spin_sector)``. ``G(-iwn[n])`` is
+    read off the SAME array at the mirrored index ``nmat-1-n`` (the centered
+    fermionic Matsubara grid satisfies ``iwn[nmat-1-n] = -iwn[n]`` exactly,
+    an algebraic identity, not an approximation).
+
+    ``channels``: a list of ``(R, a, b)`` triples (the full ordered-pair
+    basis, matching ``exchange_projector``'s convention -- NOT
+    ``SectorED``'s ``(R,)`` norb=1 shorthand; the caller maps between the two
+    when calling ``SectorED.pair_correlator``).
+    """
+    # Review finding (must_fix): the centered fermionic grid
+    # iwn = (2n+1-nmat)*pi/beta is only antisymmetric (iwn[nmat-1-n] =
+    # -iwn[n], the identity this function's G(-iwn) shortcut relies on) for
+    # an EVEN nmat; an odd/zero/negative nmat silently builds a grid that is
+    # not a fermionic Matsubara grid at all (e.g. containing iwn=0), and
+    # production_pair_bubble (same formula, via free_green) would silently
+    # agree with it at pin 3a while both compute the wrong quantity.
+    # Round-2 review finding (should_fix): int(nmat) on a NaN/inf/None/
+    # non-numeric value raises ValueError/TypeError/OverflowError instead of
+    # the intended, consistent ValueError -- normalize through float() first
+    # and reject non-finite values explicitly before the integer/parity check.
+    try:
+        nmat_f = float(nmat)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "eigenbasis_pair_bubble: nmat must be a positive even integer "
+            "(the centered fermionic Matsubara grid) -- got {!r}".format(nmat))
+    if (not np.isfinite(nmat_f) or nmat_f != int(nmat_f) or nmat_f <= 0
+            or int(nmat_f) % 2 != 0):
+        raise ValueError(
+            "eigenbasis_pair_bubble: nmat must be a positive even integer "
+            "(the centered fermionic Matsubara grid) -- got {!r}".format(nmat))
+    nmat = int(nmat_f)
+    L, norb = fx.L, fx.norb
+    idx_up = [fx.mode(j, o, 0) for j in range(L) for o in range(norb)]
+    h1_spin = fx.build_h1()[np.ix_(idx_up, idx_up)]
+    eps, U = np.linalg.eigh(h1_spin)
+    beta = fx.beta
+    iwn = (2.0 * np.arange(nmat) + 1.0 - nmat) * np.pi / beta
+    denom = 1j * iwn[:, None] + fx.mu - eps[None, :]
+    ginv = 1.0 / denom
+    green = np.einsum('pa,na,qa->npq', U, ginv, np.conj(U))   # (nmat, M, M)
+    green_minus = green[::-1]                                  # G(-iwn[n])
+
+    def _mode2(j, o):
+        return j * norb + o
+
+    channels = list(channels)
+    n_ch = len(channels)
+    X = np.zeros((n_ch, n_ch), dtype=complex)
+    for i, (R, a, b) in enumerate(channels):
+        for jx, (Rp, c, d) in enumerate(channels):
+            acc = 0.0 + 0.0j
+            for j in range(L):
+                p1 = _mode2((j + R) % L, a)
+                p2 = _mode2(j, b)
+                for jp in range(L):
+                    q1 = _mode2((jp + Rp) % L, c)
+                    q2 = _mode2(jp, d)
+                    acc += np.sum(green[:, p1, q1] * green_minus[:, p2, q2])
+            X[i, jx] = acc / (L * beta)
+    return X

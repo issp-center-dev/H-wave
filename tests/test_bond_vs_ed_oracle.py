@@ -47,7 +47,8 @@ import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
 from hwave.sc import _build_bond_m0_blocks
 from hwave.solver.bond_channels import (
-    bare_bond_vertices, bond_bubble, dress_bond, resolve_interactions,
+    _g2_from_green, bare_bond_vertices, bond_bubble, dress_bond,
+    resolve_interactions,
 )
 from tests import ed_oracle_util
 from tests.approx_util import ApproxTestCase, assert_approx_array
@@ -1787,6 +1788,795 @@ class TestJointRaySuperposition(unittest.TestCase):
         _joint_ray_superposition_check(
             self, [("g1", 1.0), ("g2", 0.6)], _terms_ray_g1_g2,
             "g1+0.6*g2(1,0.6)")
+
+
+# ---------------------------------------------------------------------------
+# Task 7: pp reference path and adjudication (#151)
+# ---------------------------------------------------------------------------
+#
+# The acceptance identity (design doc, "The particle-particle identity is
+# DERIVED, not assumed"):
+#
+#     dChi_pp/dV|0 = -1/2 * X0_pp * (dV^pp/dV) * X0_pp
+#
+# in the ORDERED-PAIR matrix basis {Delta_i} = {Delta_{R,a,b}(q=0)} (the
+# total Cooper-pair momentum is fixed at zero -- Vpp is q-independent, and
+# the identity carries no q at all). production Vpp from
+# bare_bond_vertices; X0_pp = production_pair_bubble; the ED side is
+# richardson() of SectorED.pair_correlator with the pp HF insertion (free
+# pair matrix derivative with hf_h1_from_terms on both legs), projected on
+# BOTH sides with exchange_projector's Q (never bond_channels' internal
+# P/Q_s/Q_t) before comparison, per channel s/t.
+#
+# Derivation (verified numerically against SectorED.pair_correlator at V=0,
+# not guessed -- see the task report for the two independent cross-checks):
+# for channels = [(R, a, b), ...] (the full ordered-pair triple, always --
+# never the norb=1 (R,) shorthand),
+#
+#     X0_pp[(R,a,b),(R',c,d)] = (1/L) sum_k e^{ik(R'-R)} G2[a,c,b,d](k)
+#
+# with G2 = _g2_from_green(free_green(fx, nmat), fx.beta, tail=False) --
+# mirroring bare_bond_vertices' A_coef/Bcoef contraction structure inside
+# make_bond_kernel's instantaneous part (spec S4.5): A_coef[m,cd] =
+# sum_{m',ef} X0_pp[(m,cd),(m',ef)] phi^{(m')}_{ef} is exactly the same
+# object as bond_channels._bond_kernel_operators builds by hand for a
+# specific phi. Both this formula and an INDEPENDENTLY derived one (direct
+# Wick contraction of Delta_{R,a,b}(0) against Delta_{R',c,d}(0)^dagger,
+# Fourier-transformed with free_green's OWN k-convention) agree exactly,
+# and both match SectorED.pair_correlator at V=0 to the expected O(1/Nmat)
+# finite-window residual (pin 3b).
+
+
+def production_pair_bubble(fx, channels, nmat):
+    """X0_pp assembled per the PRODUCTION conventions: from ``free_green``
+    via the SAME finite-Nmat pp bubble ``_g2_from_green`` builds for
+    ``make_bond_kernel``'s instantaneous part (``g2_tail=False``, matching
+    the raw/no-tail convention ``bond_bubble`` itself uses for the ph
+    channel), reconstructed into the ordered-pair basis via the phase
+    ``e^{ik(R'-R)}`` (see the module note above for the derivation and its
+    numeric cross-check). This is the matrix that multiplies ``dVpp`` in the
+    acceptance identity; ``channels`` is the full ``(R, a, b)`` ordered-pair
+    triple list (see ``exchange_projector``), never the norb=1 ``(R,)``
+    shorthand.
+    """
+    # Review finding (must_fix): matches eigenbasis_pair_bubble's own guard
+    # -- an odd/zero/negative nmat is not a fermionic Matsubara grid, and
+    # pin 3a (round-off agreement with eigenbasis_pair_bubble) could not
+    # catch either side silently computing the wrong quantity from the same
+    # broken grid.
+    # Round-2 review finding (should_fix): matches eigenbasis_pair_bubble's
+    # own fix -- normalize through float() so NaN/inf/None/non-numeric
+    # values raise the intended ValueError rather than a TypeError/
+    # OverflowError from a bare int() call.
+    try:
+        nmat_f = float(nmat)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "production_pair_bubble: nmat must be a positive even integer "
+            "(the centered fermionic Matsubara grid) -- got {!r}".format(nmat))
+    if (not np.isfinite(nmat_f) or nmat_f != int(nmat_f) or nmat_f <= 0
+            or int(nmat_f) % 2 != 0):
+        raise ValueError(
+            "production_pair_bubble: nmat must be a positive even integer "
+            "(the centered fermionic Matsubara grid) -- got {!r}".format(nmat))
+    green = free_green(fx, nmat)
+    G2 = _g2_from_green(green, fx.beta, tail=False)[:, :, :, :, :, 0, 0]
+    L = fx.L
+    kx = 2.0 * np.pi * np.arange(L) / L
+    channels = list(channels)
+    n = len(channels)
+    X = np.zeros((n, n), dtype=complex)
+    for i, (R, a, b) in enumerate(channels):
+        for j, (Rp, c, d) in enumerate(channels):
+            phase = np.exp(1j * kx * (Rp - R))
+            X[i, j] = np.sum(phase * G2[a, c, b, d, :]) / L
+    return X
+
+
+def _ordered_pair_channels(bond_set, norb):
+    """The full ``(R, l1, l2)`` ordered-pair channel list -- ALWAYS the
+    3-tuple, for every ``(bond channel, orbital pair)`` combination of
+    ``bond_set`` -- what ``exchange_projector``/``production_pair_bubble``/
+    ``eigenbasis_pair_bubble`` all need (unlike ``_bond_topology_and_map``'s
+    ph channel list, which collapses to ``(R,)`` at norb=1)."""
+    channels = []
+    for m in range(bond_set.n_channels):
+        R = bond_set.delta_r[m][0]
+        for l1 in range(norb):
+            for l2 in range(norb):
+                channels.append((R, l1, l2))
+    return channels
+
+
+def _to_sector_channels(fx, channels):
+    """``channels`` (full ``(R,a,b)`` triples) converted to
+    ``SectorED.pair_correlator``'s own convention -- ``(R,)`` at norb=1,
+    the same triple otherwise."""
+    if fx.norb == 1:
+        return [(R,) for (R, a, b) in channels]
+    return list(channels)
+
+
+def dVpp_matrices(fx, closed_decls, channels):
+    """``(dVpp_s, dVpp_t)``: ``bare_bond_vertices``' bare Cooper vertices at
+    the (two-sided, closed) ``closed_decls`` declaration minus at the SAME
+    declared topology scaled to zero (mirrors ``dW_matrices``' same-shape
+    subtraction pattern, but for ``Vpp_s``/``Vpp_t`` -- both are
+    q-INDEPENDENT, built from the ``q=0`` slice only, per
+    ``bare_bond_vertices``' own local-block construction, so ``S0_q``/``C0_q``
+    here are evaluated at a single ``q=(0,0,0)`` point via
+    ``_build_bond_m0_blocks``, not the full ring grid), REINDEXED into the
+    DIRECT ordered-pair basis ``channels`` -- the SAME literal ``(R,a,b)``
+    basis ``production_pair_bubble``/``exchange_projector``/ED all share
+    (design doc: "``dV^pp/dV`` is the production tensor's derivative in
+    that SAME basis" as ``Chi0_pp``).
+
+    Why the reindex is needed (round-2 finding, verified independently of
+    this task's own ``dVpp_matrices``/``production_pair_bubble`` code):
+    ``bare_bond_vertices``' enlarged slot ``I = m*nd + l1*norb+l2`` reuses
+    ``S_bond``/``C_bond``'s SAME enlarged-index convention, and Task 5's
+    ``ed_to_solver_bond_map`` (reviewed, load-bearing) established that
+    THAT slot corresponds, when compared against an ED channel list, to the
+    orbital-SWAPPED channel ``(delta_r[m], l2, l1)`` -- not
+    ``(delta_r[m], l1, l2)`` directly. Confirmed HERE for ``Vpp``
+    specifically by an independent numerical cross-check on the
+    ALREADY-validated ph identity (``dW_matrices``/``pred_first_order``/
+    ``ed_to_solver_bond_map``, untouched by this task): feeding
+    ``canonical_density_terms`` the UNSWAPPED ``(a, b, R)`` argument
+    reproduces the ph identity's dW-sandwiched prediction to the expected
+    finite-Nmat/Richardson residual (~1.4e-4), while the SWAPPED argument
+    fails by O(1) (~0.14, matching the signal) -- i.e. the ED-side
+    convention is the SAME UNSWAPPED one used throughout this whole
+    campaign (design doc: "Sigma_j n_{j,a} n_{j+R,b}"), and it is
+    ``bare_bond_vertices``' Vpp slot -- reusing the ph enlarged-index
+    convention for a DIFFERENT physical operator (a pair, not a bond
+    bilinear) -- that needs reindexing to align with it, not the ED term.
+    (An earlier draft of this task instead swapped the ED-side term to
+    match the RAW, unreindexed ``dVpp`` -- numerically equivalent on the
+    single direction it was tried on, but a round-2 review correctly
+    flagged that as attributing the fix to the wrong object; seeing it
+    fail to justify itself against the independently-validated ph
+    identity is what surfaced this cleaner, correct account.)
+
+    A NO-OP at norb=1 (``a=b`` always, so the involution's every channel is
+    a fixed point): every fx5 unit direction this task adjudicates (U/g1/
+    g2) is numerically IDENTICAL with or without this reindex -- it matters
+    only for a genuinely inter-orbital direction (case M, Task 8), where it
+    is REQUIRED.
+    """
+    channels = list(channels)
+    bond_set = resolve_interactions(closed_decls, np.eye(3), norb=fx.norb)
+    # Review round 3 (should_fix): dVpp's raw slot I = m*nd + l1*norb+l2 is
+    # POSITIONAL, built from bond_set's own (m, l1, l2) nested-loop order --
+    # a caller-supplied channels list in ANY other order would silently
+    # misalign the reindex below with no error. Require channels to equal
+    # the canonical positional order exactly (_ordered_pair_channels on
+    # THIS bond_set), not merely a permutation of it.
+    canonical_channels = _ordered_pair_channels(bond_set, fx.norb)
+    if channels != canonical_channels:
+        raise ValueError(
+            "dVpp_matrices: channels must be exactly bond_set's own "
+            "positional (R, l1, l2) order (_ordered_pair_channels(bond_set, "
+            "norb)) -- got a different order/content, which would silently "
+            "misalign the orbital-swap reindex below")
+
+    index_of = {ch: i for i, ch in enumerate(channels)}
+    # perm[I] = index of the orbital-swapped channel (R, b, a) for
+    # channels[I] = (R, a, b) -- an involution (perm[perm[I]] == I), the
+    # SAME (R,a,b)->(R,b,a) relabeling ed_to_solver_bond_map established
+    # for the ph enlarged index, NOT exchange_projector's (R,a,b)->(-R,b,a).
+    perm = np.array([index_of[(R, b, a)] for (R, a, b) in channels])
+
+    zero_decls = {k: 0.0 * v for k, v in closed_decls.items()}
+
+    def _vpp_at(decls):
+        bs = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        kx = np.array([0.0])
+        ky = np.array([0.0])
+        kz = np.array([0.0])
+        S0_q, C0_q = _build_bond_m0_blocks(bs, {}, {}, fx.norb, kx, ky, kz)
+        _S, _C, Vpp_s, Vpp_t = bare_bond_vertices(bs, S0_q, C0_q, fx.norb)
+        return Vpp_s, Vpp_t
+
+    Vpp_s1, Vpp_t1 = _vpp_at(closed_decls)
+    Vpp_s0, Vpp_t0 = _vpp_at(zero_decls)
+    dVpp_s = (Vpp_s1 - Vpp_s0)[np.ix_(perm, perm)]
+    dVpp_t = (Vpp_t1 - Vpp_t0)[np.ix_(perm, perm)]
+    return dVpp_s, dVpp_t
+
+
+# ---------------------------------------------------------------------------
+# Task 7, Step 1: exchange_projector unit tests; pin 3a (production vs
+# eigenbasis pair bubble, abs=1e-12); pin 3b (eigenbasis pair bubble vs
+# SectorED.pair_correlator at V=0, eps3 diagnostic < 1e-5).
+# ---------------------------------------------------------------------------
+
+class TestExchangeProjector(ApproxTestCase):
+    """``P @ P = I``, ``Q_s + Q_t = I``, ``Q^2 = Q`` (both projectors,
+    idempotent and complementary), and the ``ValueError`` on a channel list
+    not closed under the involution ``(R,a,b) -> (-R,b,a)`` (round-4 fix:
+    the invariant was implicit)."""
+
+    def _check(self, channels):
+        n = len(channels)
+        P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+        Id = np.eye(n, dtype=complex)
+        assert_approx_array(P @ P, Id, rel=0, abs=1e-14)
+        assert_approx_array(Q_s + Q_t, Id, rel=0, abs=1e-14)
+        assert_approx_array(Q_s @ Q_s, Q_s, rel=0, abs=1e-14)
+        assert_approx_array(Q_t @ Q_t, Q_t, rel=0, abs=1e-14)
+        assert_approx_array(Q_s @ Q_t, np.zeros((n, n)), rel=0, abs=1e-14)
+
+    def test_fx5_pp_channels(self):
+        bond_set = resolve_interactions(
+            _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 1.0)]), np.eye(3), norb=1)
+        self._check(_ordered_pair_channels(bond_set, 1))
+
+    def test_fx3_pp_channels(self):
+        bond_set = resolve_interactions(
+            _two_sided_decl([(1, 0, 0, V1), (1, 0, 1, V1)]), np.eye(3), norb=2)
+        self._check(_ordered_pair_channels(bond_set, 2))
+
+    def test_fixed_point_channel_is_singlet_only(self):
+        # An on-site same-orbital channel (R=0, a=b) is its own partner
+        # under the involution -- Q_s must be nonzero and Q_t exactly zero
+        # there (the triplet's fixed-point cancellation the brief and
+        # projected_structural_zero_mask's docstring both name explicitly).
+        channels = [(0, 0, 0), (1, 0, 0), (-1, 0, 0)]
+        _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+        self.assertApprox(Q_s[0, 0], 1.0, rel=0, abs=1e-14)
+        self.assertApprox(Q_t[0, 0], 0.0, rel=0, abs=1e-14)
+
+    def test_unclosed_list_raises(self):
+        with self.assertRaises(ValueError):
+            ed_oracle_util.exchange_projector([(1, 0, 0)])   # missing (-1,0,0)
+
+    def test_duplicate_channel_raises(self):
+        with self.assertRaises(ValueError):
+            ed_oracle_util.exchange_projector([(0, 0, 0), (0, 0, 0)])
+
+
+class TestPin3aProductionVsEigenbasisPairBubble(ApproxTestCase):
+    """Pin 3a: ``production_pair_bubble`` vs ``eigenbasis_pair_bubble`` --
+    two DIFFERENT computational routes (momentum-space ``_g2_from_green``
+    plus a phase reconstruction, vs a direct real-space sum over the
+    one-body eigenbasis) evaluating the SAME finite-Nmat window, so they
+    must agree at round-off (``abs=1e-12``), both fixtures."""
+
+    def _check(self, fx, decls):
+        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        channels = _ordered_pair_channels(bond_set, fx.norb)
+        Xp = production_pair_bubble(fx, channels, NMAT)
+        Xe = ed_oracle_util.eigenbasis_pair_bubble(fx, channels, NMAT)
+        diff = float(np.max(np.abs(Xp - Xe)))
+        print("Pin3a (fixture L={}, norb={}): diff={:.3e}".format(
+            fx.L, fx.norb, diff))
+        assert_approx_array(Xp, Xe, rel=0, abs=1e-12)
+
+    def test_fx5(self):
+        self._check(fx5(), _two_sided_decl([(1, 0, 0, V1), (2, 0, 0, 0.5 * V1)]))
+
+    def test_fx3(self):
+        self._check(fx3(), _two_sided_decl([(1, 0, 0, V1), (1, 0, 1, V1)]))
+
+
+class TestPin3bEigenbasisPairBubbleVsEd(ApproxTestCase):
+    """Pin 3b: ``eigenbasis_pair_bubble`` (Nmat-Richardson extrapolated,
+    ``order=1`` matching its raw/no-tail O(1/Nmat) convergence -- same
+    stencil as Pin 2b's ``eps2_rich``) vs the EXACT
+    ``SectorED.pair_correlator`` at V=0, q=0. ``eps3`` is measured, printed
+    and asserted ``< 1e-5`` -- a CALIBRATION DIAGNOSTIC ONLY (round-3 fix:
+    NOT coupled into any pp granule's tolerance; each granule's own
+    ``delta_nmat`` covers the derivative-level Nmat guard). A raw single-Nmat
+    comparison would NOT clear this ceiling (measured ~2e-4 at NMAT=1024,
+    ~4x the design's O(1/Nmat) law) -- the Richardson extrapolation is what
+    makes this pin discriminating without an enormous Nmat, mirroring Pin
+    2b's ``eps2_rich`` exactly.
+    """
+
+    def _check(self, fx, decls, n1):
+        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        channels = _ordered_pair_channels(bond_set, fx.norb)
+        channels_ed = _to_sector_channels(fx, channels)
+        exact = ed_oracle_util.SectorED(fx).pair_correlator(channels_ed)[0]
+        rich = _richardson_nmat(
+            lambda n: ed_oracle_util.eigenbasis_pair_bubble(fx, channels, n),
+            n1, order=1)
+        eps3 = float(np.max(np.abs(rich - exact)))
+        print("Pin3b (fixture L={}, norb={}): eps3={:.3e}".format(
+            fx.L, fx.norb, eps3))
+        self.assertLess(eps3, 1e-5)
+
+    def test_fx5(self):
+        self._check(fx5(), _two_sided_decl([(1, 0, 0, V1), (2, 0, 0, 0.5 * V1)]),
+                    n1=512)
+
+    def test_fx3(self):
+        self._check(fx3(), _two_sided_decl([(1, 0, 0, V1), (1, 0, 1, V1)]),
+                    n1=512)
+
+
+class TestPairBubbleNmatGuard(unittest.TestCase):
+    """Review must_fix: an odd/zero/negative ``nmat`` is not a fermionic
+    Matsubara grid (the centered-grid antisymmetry
+    ``iwn[nmat-1-n] == -iwn[n]`` that ``eigenbasis_pair_bubble``'s
+    ``G(-iwn)`` shortcut relies on only holds for even ``nmat``) -- both
+    ``production_pair_bubble`` and ``eigenbasis_pair_bubble`` must reject
+    it rather than silently building a broken grid (pin 3a could not have
+    caught the two sides silently agreeing on the wrong quantity)."""
+
+    def _channels(self):
+        bond_set = resolve_interactions(
+            _two_sided_decl([(1, 0, 0, 1.0)]), np.eye(3), norb=1)
+        return _ordered_pair_channels(bond_set, 1)
+
+    def test_odd_nmat_raises(self):
+        channels = self._channels()
+        with self.assertRaises(ValueError):
+            production_pair_bubble(fx5(), channels, 33)
+        with self.assertRaises(ValueError):
+            ed_oracle_util.eigenbasis_pair_bubble(fx5(), channels, 33)
+
+    def test_zero_nmat_raises(self):
+        channels = self._channels()
+        with self.assertRaises(ValueError):
+            production_pair_bubble(fx5(), channels, 0)
+        with self.assertRaises(ValueError):
+            ed_oracle_util.eigenbasis_pair_bubble(fx5(), channels, 0)
+
+    def test_negative_nmat_raises(self):
+        channels = self._channels()
+        with self.assertRaises(ValueError):
+            production_pair_bubble(fx5(), channels, -4)
+        with self.assertRaises(ValueError):
+            ed_oracle_util.eigenbasis_pair_bubble(fx5(), channels, -4)
+
+    def test_nonintegral_nmat_raises(self):
+        # Review round 2: int(nmat) alone would truncate (not reject) a
+        # non-integral value -- must be rejected explicitly.
+        channels = self._channels()
+        with self.assertRaises(ValueError):
+            production_pair_bubble(fx5(), channels, 32.5)
+        with self.assertRaises(ValueError):
+            ed_oracle_util.eigenbasis_pair_bubble(fx5(), channels, 32.5)
+
+    def test_nonfinite_nmat_raises(self):
+        # Review round 2: bare int(nan)/int(inf) raise ValueError/
+        # OverflowError, not the intended, consistent ValueError this
+        # module's callers expect -- pinned directly.
+        channels = self._channels()
+        for bad in (float("nan"), float("inf"), None, "not-a-number"):
+            with self.subTest(nmat=bad):
+                with self.assertRaises(ValueError):
+                    production_pair_bubble(fx5(), channels, bad)
+                with self.assertRaises(ValueError):
+                    ed_oracle_util.eigenbasis_pair_bubble(fx5(), channels, bad)
+
+
+class TestPpInterOrbitalSanityFx3(ApproxTestCase):
+    """Should-fix (review round 1): every pp granule adjudicated by this
+    task is fx5 (norb=1, U/g1/g2 all have a=b=0), so orbital-index
+    bookkeeping -- where a genuine bug class lives (design doc: "orbital
+    transposition is this codebase's most recurrent defect class") -- has
+    NO coverage anywhere else in this task. This is a LIGHTWEIGHT
+    two-direction sanity check on case M (fx3), explicitly NOT a full
+    ``adjudicate_granule`` campaign cell (that is Task 8's scope, which
+    owns case M's formal pp granules) -- it exists only to catch what the
+    fx5 granules structurally cannot see.
+
+    FINDING, and how a round-2 review correctly caught the first draft's
+    mistake (receiving-code-review discipline: verify, don't just
+    implement, and don't just defend a first answer either): the first
+    draft of this test made the pp identity agree by feeding
+    ``canonical_density_terms`` a SWAPPED ``(b, a, R)`` orbital argument.
+    Round 2 objected that this "can conceal an orbital-index error ...
+    invalidating this test as an independent oracle" and asked for the
+    UNSWAPPED ``(a, b, R)`` term instead. That objection was investigated
+    on the ALREADY-validated ph identity first (``dW_matrices``/
+    ``pred_first_order``/``ed_to_solver_bond_map``, untouched by this
+    task): feeding ``canonical_density_terms`` the UNSWAPPED argument
+    reproduces the ph prediction at the expected residual (~1.4e-4), the
+    SWAPPED one fails by O(1) (~0.14) -- i.e. round 2 was RIGHT that the ED
+    side should stay unswapped (matching the design doc's own definition,
+    "Sigma_j n_{j,a} n_{j+R,b}"). The real defect was in
+    ``dVpp_matrices``: ``bare_bond_vertices``' enlarged Vpp slot reuses
+    ``S_bond``/``C_bond``'s SAME index convention, and Task 5's
+    ``ed_to_solver_bond_map`` already established (reviewed, load-bearing)
+    that THAT slot needs an orbital-swap reindex to align with a direct
+    ``(R,a,b)`` channel list -- ``dVpp_matrices`` now performs that
+    reindex explicitly (see its docstring) instead of the ED side being
+    swapped to compensate. Both give numerically IDENTICAL results on the
+    direction originally tried (confirmed directly, not assumed) --
+    round 2's objection was about attribution/generality, not about a
+    wrong number, and attribution is exactly what matters for a
+    reindex that must also work on case M's other directions.
+
+    Both g+ (``V_01(+1)=V_10(-1)``) and g- (``V_01(-1)=V_10(+1)``, Task 5's
+    naming) are checked here, with the UNSWAPPED ED canonical term and the
+    reindexed ``dVpp_matrices``: both converge to the expected finite-
+    Nmat/Richardson residual scale (measured: diff_s=8.09e-5,
+    diff_t=7.83e-5 for EITHER direction, despite g+/g- filling DISJOINT
+    ``Vpp_s``/``Vpp_t`` slots on this fixture's B=3 topology -- e.g.
+    ``{6,9}`` vs ``{5,10}``, confirmed by direct inspection). This gap
+    (dVpp's reindex requirement) was invisible to every existing test:
+    Task 5's ``TestPredFirstOrder.test_fx3`` (the only prior test
+    exercising an inter-orbital declaration through the solver) never
+    compares against ED, and every ED-side fx5 comparison across Tasks 3,
+    5, 6 and this task's own granules uses a=b=0, where the reindex is a
+    no-op. LOAD-BEARING for Task 8: its pp case-M granules must build
+    ``dVpp`` via ``dVpp_matrices`` (which now carries the reindex), not a
+    raw ``bare_bond_vertices`` call, for any inter-orbital direction.
+    """
+
+    def _check(self, R_decl):
+        fx = fx3()
+        # solver: V_01(R_decl) = V_10(-R_decl) (Task 5's g+/g- naming)
+        decls = _two_sided_decl([(R_decl, 0, 1, 1.0)])
+        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        channels = _ordered_pair_channels(bond_set, fx.norb)
+        _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+
+        dVpp_s, dVpp_t = dVpp_matrices(fx, decls, channels)
+        X0 = production_pair_bubble(fx, channels, NMAT)
+
+        def _pred(dVpp, Q):
+            D = -0.5 * (X0 @ dVpp @ X0)
+            return Q @ D @ Q
+
+        D_pred_s = _pred(dVpp_s, Q_s)
+        D_pred_t = _pred(dVpp_t, Q_t)
+
+        # NEGATIVE CONTROL (review round 3, should_fix -- make this an
+        # executable assertion, not prose only): the RAW (unreindexed)
+        # dVpp -- bare_bond_vertices' Vpp taken at its own positional
+        # (m, l1, l2) slot with NO orbital-swap correction -- must FAIL
+        # against the same ED target by a large margin, confirming the
+        # reindex in dVpp_matrices is load-bearing here and not a no-op
+        # dressed up as a fix.
+        def _raw_dvpp():
+            zero_decls = {k: 0.0 * v for k, v in decls.items()}
+
+            def _vpp_at(dd):
+                bs = resolve_interactions(dd, np.eye(3), norb=fx.norb)
+                kx = np.array([0.0]); ky = np.array([0.0]); kz = np.array([0.0])
+                s0, c0 = _build_bond_m0_blocks(bs, {}, {}, fx.norb, kx, ky, kz)
+                _s, _c, vs, vt = bare_bond_vertices(bs, s0, c0, fx.norb)
+                return vs, vt
+
+            vs1, vt1 = _vpp_at(decls)
+            vs0, vt0 = _vpp_at(zero_decls)
+            return vs1 - vs0, vt1 - vt0
+
+        raw_s, raw_t = _raw_dvpp()
+        D_pred_s_raw = _pred(raw_s, Q_s)
+        D_pred_t_raw = _pred(raw_t, Q_t)
+
+        # ED canonical term: UNSWAPPED (a, b, R_decl) -- the design doc's
+        # own convention, independently confirmed on the ph identity (see
+        # class docstring); dVpp_matrices carries the reindex instead.
+        terms_at = lambda v: ed_oracle_util.canonical_density_terms(
+            fx, [(0, 1, R_decl, v)])
+
+        @functools.lru_cache(maxsize=None)
+        def _xpp_hf_sub(v):
+            terms = terms_at(v)
+            full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels)
+            hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+            hf_only = ed_oracle_util.SectorED(
+                fx, terms=(), h1=hf_h1).pair_correlator(channels)
+            return (full - hf_only)[0]
+
+        D_ed = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1)
+        D_ed_s = Q_s @ D_ed @ Q_s
+        D_ed_t = Q_t @ D_ed @ Q_t
+
+        diff_s = float(np.max(np.abs(D_pred_s - D_ed_s)))
+        diff_t = float(np.max(np.abs(D_pred_t - D_ed_t)))
+        diff_s_raw = float(np.max(np.abs(D_pred_s_raw - D_ed_s)))
+        diff_t_raw = float(np.max(np.abs(D_pred_t_raw - D_ed_t)))
+        max_signal_s = float(np.max(np.abs(D_pred_s)))
+        max_signal_t = float(np.max(np.abs(D_pred_t)))
+        print("TestPpInterOrbitalSanityFx3[R_decl={:+d}]: diff_s={:.3e} "
+              "diff_t={:.3e} (raw/unreindexed: diff_s={:.3e} diff_t={:.3e})"
+              .format(R_decl, diff_s, diff_t, diff_s_raw, diff_t_raw))
+        # A loose sanity ceiling (measured residual ~8e-5; this is a
+        # single-(V, Nmat) smoke check, not an adjudicated tolerance).
+        assert_approx_array(D_pred_s, D_ed_s, rel=0, abs=1e-3)
+        assert_approx_array(D_pred_t, D_ed_t, rel=0, abs=1e-3)
+        # NEGATIVE CONTROL, asserted (review round 3): the raw/unreindexed
+        # candidate must fail by O(1) -- at least half EACH channel's OWN
+        # signal scale (review round 4: the singlet scale alone could
+        # falsely pass/fail the triplet check if the two magnitudes
+        # differ) -- confirming the reindex is load-bearing here, not a
+        # documented-but-untested claim.
+        self.assertGreater(diff_s_raw, 0.5 * max_signal_s)
+        self.assertGreater(diff_t_raw, 0.5 * max_signal_t)
+
+    def test_g_plus(self):
+        self._check(1)
+
+    def test_g_minus(self):
+        self._check(-1)
+
+
+# ---------------------------------------------------------------------------
+# Task 7, Step 2: the U-anchor -- a shared prerequisite (review, must-fix
+# 13). Runs the U-only pp control for BOTH channels; dependent V-case
+# granules (Step 3) require it to hold, with NO skip path.
+# ---------------------------------------------------------------------------
+
+def _dvpp_support_masks(direction, channels):
+    """The ANALYTIC (boolean, symbolic -- never thresholded-numeric) support
+    of ``Q_eta (dVpp_eta) Q_eta`` for one fx5 pp unit direction, carrying the
+    triplet's FIXED-POINT CANCELLATION exactly (``projected_structural_zero_
+    mask``'s docstring: boolean ``I OR P`` propagation cannot represent
+    this -- the caller must supply the analytic support directly).
+
+    Verified against the builder (not guessed): ``bare_bond_vertices``' RAW
+    (pre-projection) ``dVpp`` is DIAGONAL in the channel-orbital-pair basis
+    for every fx5 unit direction (norb=1, so the local crossing of a scalar
+    is trivially diagonal; the bond Cooper block ``D`` is diagonal by
+    construction, and ``D + D^dagger`` stays diagonal). U (on-site, R=0)
+    touches only the SELF-PAIRED channel ``(0,0,0)`` -- a FIXED POINT of the
+    exchange involution, where ``Q_s`` is nonzero (``=1``) but ``Q_t`` is
+    EXACTLY zero (the brief's "U direction: pp-t support all-False").
+    g1/g2 (off-site, R=+-1/+-2) touch the NON-fixed-point pair
+    ``{(+R,0,0),(-R,0,0)}``; ``Q_eta (D+D^dagger) Q_eta`` spreads this into
+    the FULL 2x2 block spanning both channels for BOTH S and T (no
+    cancellation -- confirmed numerically against the real
+    ``bare_bond_vertices``/``dVpp_matrices`` output during this task's
+    derivation).
+    """
+    channels = list(channels)
+    n = len(channels)
+    index_of = {ch: i for i, ch in enumerate(channels)}
+    raw_channels = {
+        "U": [(0, 0, 0)],
+        "g1": [(1, 0, 0), (-1, 0, 0)],
+        "g2": [(2, 0, 0), (-2, 0, 0)],
+    }[direction]
+    S_supp = np.zeros((n, n), dtype=bool)
+    T_supp = np.zeros((n, n), dtype=bool)
+    for ch in raw_channels:
+        i = index_of[ch]
+        R, a, b = ch
+        j = index_of[(-R, b, a)]
+        fixed = (i == j)
+        for p in (i, j):
+            for q in (i, j):
+                S_supp[p, q] = True
+                if not fixed:
+                    T_supp[p, q] = True
+    return S_supp, T_supp
+
+
+class TestDvppMatricesChannelOrderGuard(unittest.TestCase):
+    """Review round 3 (should_fix): ``dVpp_matrices``' orbital-swap reindex
+    is positional -- it assumes ``channels[I]`` is bond_set's own
+    ``(m, l1, l2)`` nested-loop order -- so a caller-supplied ``channels``
+    in a DIFFERENT order would silently misalign the reindex with no
+    error. Pinned directly: a reordered (but otherwise valid/complete)
+    channel list must raise, not silently mis-permute."""
+
+    def test_reordered_channels_raises(self):
+        fx = fx3()
+        decls = _two_sided_decl([(1, 0, 1, 1.0)])
+        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        canonical = _ordered_pair_channels(bond_set, fx.norb)
+        reordered = canonical[::-1]
+        self.assertNotEqual(canonical, reordered)
+        with self.assertRaises(ValueError):
+            dVpp_matrices(fx, decls, reordered)
+
+
+class TestDvppSupportMasksMatchNumericDvpp(unittest.TestCase):
+    """Review round 2 should-fix: ``_dvpp_support_masks``' hand-derived
+    ANALYTIC pattern, cross-checked against the boolean nonzero pattern of
+    the ACTUAL numeric ``Q_eta @ dVpp_eta @ Q_eta`` (``dVpp_matrices`` +
+    ``exchange_projector``, the real production/independent-projector
+    output) -- mirrors ``TestDwSupportMasksMatchNumericDw``'s ph-channel
+    pattern. Does not replace the analytic derivation (the whole point of
+    ``_dvpp_support_masks`` is to be boolean-and-not-thresholded, never fed
+    a numeric epsilon) but catches a mismatch between the hand-built
+    pattern and what the real builder emits for each of the three unit
+    directions this task adjudicates."""
+
+    def _check(self, direction):
+        fx = fx5()
+        bond_set, _channels_ph, _smap = _bond_topology_and_map(fx)
+        channels = _pp_channels(fx)
+        _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+        decls_at, _terms_at = _UNIT_DIRECTIONS[direction]
+        dVpp_s, dVpp_t = dVpp_matrices(fx, decls_at(fx, 1.0), channels)
+        numeric_S = np.abs(Q_s @ dVpp_s @ Q_s) > 1e-12
+        numeric_T = np.abs(Q_t @ dVpp_t @ Q_t) > 1e-12
+        S_supp, T_supp = _dvpp_support_masks(direction, channels)
+        self.assertTrue(np.array_equal(numeric_S, S_supp),
+                         "direction={} pp_s support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_S, S_supp))
+        self.assertTrue(np.array_equal(numeric_T, T_supp),
+                         "direction={} pp_t support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_T, T_supp))
+
+    def test_U(self):
+        self._check("U")
+
+    def test_g1(self):
+        self._check("g1")
+
+    def test_g2(self):
+        self._check("g2")
+
+
+@functools.lru_cache(maxsize=None)
+def _pp_channels(fx):
+    """The shared fx5 B=5 topology's full ``(R,a,b)`` ordered-pair channel
+    list, reusing ``_bond_topology_and_map``'s bond_set (same shared
+    topology U/g1/g2 all declare, per Task 6's module note) so the pp
+    granules align on the same grid as the ph ones."""
+    bond_set, _channels_ph, _smap = _bond_topology_and_map(fx)
+    return _ordered_pair_channels(bond_set, fx.norb)
+
+
+@functools.lru_cache(maxsize=None)
+def _pp_unit_direction_raw(direction):
+    """Raw (un-adjudicated) ED- and solver-side first-order pp response
+    arrays for one fx5 unit direction, pp_s and pp_t channels. Mirrors
+    ``_unit_direction_raw``'s ph structure: solver side is exact-in-coupling
+    (``dVpp`` at unit declared amplitude, evaluated at NMAT and 2*NMAT); ED
+    side is ``richardson()`` of the HF-subtracted ``pair_correlator`` at
+    ``q=0`` (the pp identity carries no q -- see the module note above),
+    with the pp HF insertion (design doc: "the derivative of the free pair
+    correlator after inserting the same normal-state HF one-body matrix on
+    both legs"). Both sides are projected with the SAME (independently
+    built) ``exchange_projector`` Q before comparison. lru_cache'd: Task 9
+    aggregates without recomputation.
+    """
+    fx = fx5()
+    decls_at, terms_at = _UNIT_DIRECTIONS[direction]
+    channels = _pp_channels(fx)
+    channels_ed = _to_sector_channels(fx, channels)
+    _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+
+    # -- solver side --------------------------------------------------
+    dVpp_s, dVpp_t = dVpp_matrices(fx, decls_at(fx, 1.0), channels)
+    X0_n = production_pair_bubble(fx, channels, NMAT)
+    X0_2n = production_pair_bubble(fx, channels, 2 * NMAT)
+
+    def _pred(X0, dVpp, Q):
+        D = -0.5 * (X0 @ dVpp @ X0)
+        return Q @ D @ Q
+
+    D_pred_nmat_S = _pred(X0_n, dVpp_s, Q_s)
+    D_pred_2nmat_S = _pred(X0_2n, dVpp_s, Q_s)
+    D_pred_nmat_T = _pred(X0_n, dVpp_t, Q_t)
+    D_pred_2nmat_T = _pred(X0_2n, dVpp_t, Q_t)
+
+    # -- ED side ----------------------------------------------------------
+    @functools.lru_cache(maxsize=None)
+    def _xpp_hf_sub(v):
+        terms = terms_at(fx, v)
+        full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels_ed)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).pair_correlator(channels_ed)
+        return (full - hf_only)[0]   # q=0 slice -- the pp identity has no q
+
+    D_ed_v1 = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1)
+    D_ed_vhalf = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1 / 2)
+    D_ed_v1_S = Q_s @ D_ed_v1 @ Q_s
+    D_ed_vhalf_S = Q_s @ D_ed_vhalf @ Q_s
+    D_ed_v1_T = Q_t @ D_ed_v1 @ Q_t
+    D_ed_vhalf_T = Q_t @ D_ed_vhalf @ Q_t
+
+    # -- structural zero mask ----------------------------------------------
+    S_supp, T_supp = _dvpp_support_masks(direction, channels)
+    free_support = np.ones_like(S_supp)   # dense free-fermion bubble (stated)
+    zero_mask_S = ed_oracle_util.projected_structural_zero_mask(
+        free_support, S_supp)
+    zero_mask_T = ed_oracle_util.projected_structural_zero_mask(
+        free_support, T_supp)
+
+    return dict(
+        D_ed_v1_S=D_ed_v1_S, D_ed_vhalf_S=D_ed_vhalf_S,
+        D_pred_nmat_S=D_pred_nmat_S, D_pred_2nmat_S=D_pred_2nmat_S,
+        D_ed_v1_T=D_ed_v1_T, D_ed_vhalf_T=D_ed_vhalf_T,
+        D_pred_nmat_T=D_pred_nmat_T, D_pred_2nmat_T=D_pred_2nmat_T,
+        zero_mask_S=zero_mask_S, zero_mask_T=zero_mask_T,
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def case_fx5_pp_unit_direction(direction):
+    """pp adjudication (pp_s and pp_t granules) for one independent unit
+    coupling direction on fx5. Returns ``dict(pp_s=<record>,
+    pp_t=<record>)`` -- Task 9's aggregation interface, matching
+    ``case_fx5_unit_direction``'s ph shape."""
+    raw = _pp_unit_direction_raw(direction)
+    rec_s = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_S"], raw["D_ed_vhalf_S"],
+        raw["D_pred_nmat_S"], raw["D_pred_2nmat_S"],
+        raw["zero_mask_S"], "fx5/{}/pp_s".format(direction))
+    rec_t = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_T"], raw["D_ed_vhalf_T"],
+        raw["D_pred_nmat_T"], raw["D_pred_2nmat_T"],
+        raw["zero_mask_T"], "fx5/{}/pp_t".format(direction))
+    return {"pp_s": rec_s, "pp_t": rec_t}
+
+
+@functools.lru_cache(maxsize=1)
+def _u_anchor():
+    """Runs the U-only pp control for BOTH channels; returns
+    ``{"pp_s": record, "pp_t": record}``. Dependent V-case tests require
+    ``pp_s["status"] == "PASS"`` AND ``pp_t["status"] == "PASS-ZERO"`` (U is
+    structurally null in the triplet channel -- a pp_t "PASS" would itself
+    be a FINDING). An anchor violation fails LOUDLY, naming the anchor --
+    NO skip path (raises ``AssertionError`` rather than returning a record a
+    caller might not check).
+    """
+    rec = case_fx5_pp_unit_direction("U")
+    if rec["pp_s"]["status"] != "PASS":
+        raise AssertionError(
+            "pp U-ANCHOR VIOLATION: pp_s status={} (required PASS) -- the "
+            "U-only pp control anchors the -1/2 * X0_pp * dVpp * X0_pp "
+            "identity's sign/normalization (design doc); every dependent "
+            "V-case pp granule is unreliable until this is resolved. "
+            "record={}".format(rec["pp_s"]["status"], rec["pp_s"]))
+    if rec["pp_t"]["status"] != "PASS-ZERO":
+        raise AssertionError(
+            "pp U-ANCHOR VIOLATION: pp_t status={} (required PASS-ZERO -- U "
+            "is structurally null in the triplet channel; a pp_t 'PASS' "
+            "would itself be a FINDING, not a pass). record={}".format(
+                rec["pp_t"]["status"], rec["pp_t"]))
+    return rec
+
+
+class TestUAnchor(unittest.TestCase):
+    """Step 2: the U-only pp control, run for BOTH pp_s and pp_t. The U
+    control anchors the acceptance identity's constants: production's
+    on-site ``L_s = 2U`` under the ``-1/2`` convention must reproduce the
+    physical ``-U`` pair kernel."""
+
+    def test_pp_s_pass_pp_t_pass_zero(self):
+        rec = _u_anchor()
+        self.assertEqual(rec["pp_s"]["status"], "PASS")
+        self.assertEqual(rec["pp_t"]["status"], "PASS-ZERO")
+
+
+# ---------------------------------------------------------------------------
+# Task 7, Step 3: pp cells for V one-shell (g1) and two-shell (g2) through
+# adjudicate_granule. Dependent on the U-anchor holding (Step 2) -- calling
+# _u_anchor() first fails loudly, naming the anchor, per its own "no skip
+# path" contract.
+# ---------------------------------------------------------------------------
+
+class TestPpUnitDirectionsFx5(unittest.TestCase):
+    """Step 3: the campaign's pp verdict cells (#151 Task 7) -- independent
+    unit directions g1 (one shell, Delta r = +-1) and g2 (two shell,
+    Delta r = +-2) on fx5, pp channels s (singlet) and t (triplet).
+    THE VERDICT MATTERS MORE THAN GREEN: a FAIL is kept asserting (not
+    weakened), recording a genuine production finding on #82's Cooper
+    vertex; see this task's report for the measured audit tuples."""
+
+    def _check(self, direction):
+        _u_anchor()   # NO skip path: raises loudly if the anchor is violated
+        rec = case_fx5_pp_unit_direction(direction)
+        for channel in ("pp_s", "pp_t"):
+            with self.subTest(direction=direction, channel=channel):
+                r = rec[channel]
+                self.assertIn(
+                    r["status"], ("PASS", "PASS-ZERO"),
+                    "granule {} status={} (delta_rich={:.3e} delta_nmat={:.3e} "
+                    "tol={:.3e} max_signal={:.3e} first_failures={})".format(
+                        r["label"], r["status"], r["delta_rich"],
+                        r["delta_nmat"], r["tol"], r["max_signal"],
+                        r["failures"][:5]))
+
+    def test_g1(self):
+        self._check("g1")
+
+    def test_g2(self):
+        self._check("g2")
 
 
 if __name__ == "__main__":
