@@ -601,6 +601,17 @@ def ed_to_solver_bond_map(channels, bond_set):
     index_of = {ch: i for i, ch in enumerate(channels)}
     slot_to_channel = np.full(B * nd, -1, dtype=int)
     for m in range(B):
+        if bond_set.delta_r[m][1] != 0 or bond_set.delta_r[m][2] != 0:
+            # This map (and every fixture in this module) is derived for
+            # the 1-D ring convention (channels indexed by the single ring
+            # displacement R = delta_r[m][0]) -- a nonzero y/z component
+            # would silently alias onto the wrong channel key below rather
+            # than failing loudly (rider M-3, coordinator review).
+            raise ValueError(
+                "ed_to_solver_bond_map: bond_set.delta_r[{}] = {} has a "
+                "nonzero y/z displacement; this map only supports the "
+                "1-D ring fixtures used in this module (R = delta_r[m][0])"
+                .format(m, bond_set.delta_r[m]))
         R = bond_set.delta_r[m][0]
         for l1 in range(norb):
             for l2 in range(norb):
@@ -797,10 +808,16 @@ class TestPin2aRawChi0(ApproxTestCase):
     ``bond_bubble``'s Delta r=0 block vs the RPA solver's RAW chi0
     (``coeff_tail=0.0``, SAME Nmat as ``bond_bubble``, no Richardson) --
     round-off, ``abs=1e-12``: both sides are the identical finite (no
-    tail correction) Matsubara sum, computed by two independent code
-    paths (``bond_bubble`` vs ``RPA._calc_chi0q``), so this pin does not
-    replace the ED frame-map comparison (Pin 2b) -- it is solver-internal
-    self-consistency only.
+    tail correction) Matsubara sum, assembled by ``bond_bubble`` and
+    ``RPA._calc_chi0q`` respectively (rider M-4, coordinator review: the
+    two share the underlying ``matsubara.fermion_to_tau``/spatial-FFT
+    backends and are not fully independent implementations -- what THIS
+    pin actually covers is the bond-specific machinery layered on top,
+    the ``m=m'=0`` phase/roll/block-extraction bookkeeping, plus
+    ``free_green`` against the eigenbasis Green function the solver
+    builds from ``transfer.dat``), so this pin does not replace the ED
+    frame-map comparison (Pin 2b) -- it is solver-internal self-
+    consistency only.
     """
 
     def _check(self, fx):
@@ -824,19 +841,58 @@ class TestPin2aRawChi0(ApproxTestCase):
         self._check(fx3())
 
 
+class TestEdToSolverBondMapGuard(unittest.TestCase):
+    """Rider M-3 (coordinator review): exercises the nonzero-y/z-
+    displacement guard directly -- every fixture in this module is a 1-D
+    ring, so nothing else in the suite reaches this branch, and an
+    untested rejection path could silently regress into a wrong-but-
+    finite alias instead of a loud failure."""
+
+    def test_nonzero_z_displacement_raises(self):
+        decls = {((1, 0, 1), (0, 0)): 0.1, ((-1, 0, -1), (0, 0)): 0.1}
+        bond_set = resolve_interactions(decls, np.eye(3), norb=1)
+        with self.assertRaises(ValueError):
+            ed_to_solver_bond_map([(0,)], bond_set)
+
+    def test_nonzero_y_displacement_raises(self):
+        decls = {((0, 1, 0), (0, 0)): 0.1, ((0, -1, 0), (0, 0)): 0.1}
+        bond_set = resolve_interactions(decls, np.eye(3), norb=1)
+        with self.assertRaises(ValueError):
+            ed_to_solver_bond_map([(0,)], bond_set)
+
+
 class TestPin2bFrameMap(ApproxTestCase):
     """Pin 2b (LOAD-BEARING, Task 4 review): ``ed_to_solver_bond_map``,
     zero coupling, FULL (m, m') matrix, both fixtures. ``bond_bubble``
     (RAW, no tail correction, per its own documented limitation) is
     compared against ``SectorED.bond_correlator`` (exact Lehmann) through
-    the mapped index; the measured finite-Nmat distance eps2 is a
-    RECORDED DIAGNOSTIC with a fixed safety ceiling (``< 1e-6``), never an
-    input to any tolerance formula. A two-point Nmat-Richardson
-    (``order=1``, matching ``bond_bubble``'s raw O(1/Nmat) convergence --
-    see ``_richardson_nmat``) brings eps2 comfortably below the ceiling at
-    a small Nmat base (512), rather than requiring an impractically large
-    single Nmat (the raw O(1/Nmat) law measured a coefficient that would
-    need Nmat ~ 2e5 for 1e-6 without extrapolation).
+    the mapped index.
+
+    TWO distances are measured, printed and recorded, and must not be
+    confused (coordinator review, round 2):
+
+    - ``eps2_rich``: the Nmat-Richardson-extrapolated distance (``order=1``,
+      matching ``bond_bubble``'s raw O(1/Nmat) convergence -- see
+      ``_richardson_nmat``), computed at the (``n1``, ``2*n1``) base pair
+      stated per fixture below. This is the number that actually adjudicates
+      the frame map's ORIENTATION (whether ``ed_to_solver_bond_map`` is
+      right): an unswapped/mis-oriented candidate fails it by O(1), not by
+      a finite-Nmat amount, so driving it comfortably under the fixed
+      ``< 1e-6`` safety ceiling is what makes the pin discriminating. It is
+      a RECORDED DIAGNOSTIC with that fixed ceiling, never an input to any
+      tolerance formula, and it is NOT representative of the raw production
+      path's accuracy (see below).
+    - ``eps2_raw``: the distance at the single RAW ``NMAT`` (the module
+      constant, 1024) with NO Richardson extrapolation -- i.e. exactly the
+      quantity Tasks 6-8 consume when they call ``bond_bubble`` directly at
+      production Nmat. This is ~0.2/Nmat on the m==m' (delta-r = delta-r')
+      diagonal slots (the raw O(1/Nmat) law measured elsewhere in this
+      module), so at NMAT=1024 it sits around 2e-4 -- FIVE TO SIX ORDERS
+      larger than ``eps2_rich``. A caller sizing a later tolerance from
+      ``eps2_rich`` would be far too tight; ``eps2_raw`` is the number that
+      bounds the raw production path. Asserted only against a loose sanity
+      ceiling (``< 1e-3``, catching a gross regression, not a precision
+      target) since it is not what this pin exists to adjudicate.
 
     Both same-spin diagonal blocks (sigma=sigma'=0 and sigma=sigma'=1) are
     checked against the SAME mapped matrix (spin-independent free
@@ -848,7 +904,7 @@ class TestPin2bFrameMap(ApproxTestCase):
     hide behind an accidental cancellation.
     """
 
-    def _check(self, fx, decls, n1):
+    def _check(self, fx, decls, n1, raw_nmat=NMAT):
         bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
         norb = fx.norb
         nd = norb * norb
@@ -860,34 +916,47 @@ class TestPin2bFrameMap(ApproxTestCase):
                     channels.append((R,) if norb == 1 else (R, l1, l2))
         smap = ed_to_solver_bond_map(channels, bond_set)
 
+        # memoized so a raw_nmat matching one of the Richardson samples
+        # (e.g. the default raw_nmat=NMAT=2*n1) is not recomputed (review
+        # round 3, optional-turned-should_fix).
+        @functools.lru_cache(maxsize=None)
         def _chibar(nmat):
             green = free_green(fx, nmat)
             return bond_bubble(green, bond_set, beta=fx.beta)[:, 0, 0]
 
         chibar_rich = _richardson_nmat(_chibar, n1, order=1)
+        chibar_raw = _chibar(raw_nmat)
 
         sector = ed_oracle_util.SectorED(fx)
         xph = sector.bond_correlator(channels)   # (L, 2, 2, n_i, n_i)
 
-        eps2 = 0.0
-        for (s1, s2) in ((0, 0), (0, 1), (1, 0), (1, 1)):
-            with self.subTest(spins=(s1, s2)):
-                xs = xph[:, s1, s2][:, smap][:, :, smap]  # (L, ND, ND)
-                expected = chibar_rich if s1 == s2 else np.zeros_like(chibar_rich)
-                diff = float(np.abs(xs - expected).max())
-                # review finding: max(eps2, diff) silently discards a NaN
-                # diff (NaN compares False to everything, so Python's max
-                # keeps the OTHER, possibly-zero, operand) -- which would
-                # let this load-bearing pin pass on a broken (NaN) result.
-                # Fail loudly instead.
-                self.assertTrue(
-                    np.isfinite(diff),
-                    "Pin2b: non-finite discrepancy (spins={}, diff={})"
-                    .format((s1, s2), diff))
-                eps2 = max(eps2, diff)
-                print("Pin2b eps2 (fixture L={}, norb={}, spins={}): {:.3e}"
-                      .format(fx.L, fx.norb, (s1, s2), diff))
-        self.assertLess(eps2, 1e-6)
+        def _measure(chibar, label):
+            worst = 0.0
+            for (s1, s2) in ((0, 0), (0, 1), (1, 0), (1, 1)):
+                with self.subTest(distance=label, spins=(s1, s2)):
+                    xs = xph[:, s1, s2][:, smap][:, :, smap]  # (L, ND, ND)
+                    expected = chibar if s1 == s2 else np.zeros_like(chibar)
+                    diff = float(np.abs(xs - expected).max())
+                    # review finding: max(worst, diff) silently discards a
+                    # NaN diff (NaN compares False to everything, so
+                    # Python's max keeps the OTHER, possibly-zero, operand)
+                    # -- which would let this load-bearing pin pass on a
+                    # broken (NaN) result. Fail loudly instead.
+                    self.assertTrue(
+                        np.isfinite(diff),
+                        "Pin2b: non-finite {} discrepancy (spins={}, "
+                        "diff={})".format(label, (s1, s2), diff))
+                    worst = max(worst, diff)
+            return worst
+
+        eps2_rich = _measure(chibar_rich, "rich")
+        eps2_raw = _measure(chibar_raw, "raw")
+        print("Pin2b (fixture L={}, norb={}): eps2_rich (Nmat base pair "
+              "({}, {})) = {:.3e}; eps2_raw (single Nmat={}, the raw "
+              "production-path distance) = {:.3e}"
+              .format(fx.L, fx.norb, n1, 2 * n1, eps2_rich, raw_nmat, eps2_raw))
+        self.assertLess(eps2_rich, 1e-6)
+        self.assertLess(eps2_raw, 1e-3)
 
     def test_fx5(self):
         decls = _two_sided_decl([(1, 0, 0, V1), (2, 0, 0, 0.5 * V1)])
@@ -1034,6 +1103,55 @@ class TestDwMatrices(ApproxTestCase):
             with self.subTest(q=q):
                 assert_approx_array(dS[q], expected_S, rel=0, abs=1e-10)
                 assert_approx_array(dC[q], expected_C, rel=0, abs=1e-10)
+
+    def test_two_shell_joint_ray_dw(self):
+        """Coordinator review (Important 2): no other dW test declares TWO
+        shells at once, so ``v_bond[m]``-to-``delta_r[m]`` pairing across
+        ``B=5`` (m=0, +-1, +-2 all present together) is unexercised -- equal
+        amplitudes or single-shell declarations cannot see a channel-
+        ordering bug (e.g. the g1/g2 shells silently swapped). Declares
+        BOTH shells at UNEQUAL amplitude (g1=1.0, g2=0.6) simultaneously and
+        pins the exact elements, plus the superposition identity
+        ``dW(joint) == dW(g1) + 0.6*dW(g2)`` elementwise (comparing full
+        ``B=5`` matrices throughout: the g1-only/g2-only declarations below
+        also declare the OTHER shell at amplitude 0 so all three share the
+        SAME B=5 topology/index ordering -- "declared topology, not
+        magnitude" per ``resolve_interactions``, matching the linearity
+        pin's convention above)."""
+        fx = fx5()
+        decls_joint = _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 0.6)])
+        dS, dC = dW_matrices(fx, decls_joint)
+        bond_set = resolve_interactions(decls_joint, np.eye(3), norb=1)
+        m_plus1 = bond_set.delta_r.index((1, 0, 0))
+        m_minus1 = bond_set.delta_r.index((-1, 0, 0))
+        m_plus2 = bond_set.delta_r.index((2, 0, 0))
+        m_minus2 = bond_set.delta_r.index((-2, 0, 0))
+        for q in range(fx.L):
+            qv = 2.0 * np.pi * q / fx.L
+            expected_S = np.zeros((5, 5), dtype=complex)
+            expected_S[m_plus1, m_plus1] = 1.0
+            expected_S[m_minus1, m_minus1] = 1.0
+            expected_S[m_plus2, m_plus2] = 0.6
+            expected_S[m_minus2, m_minus2] = 0.6
+            expected_C = np.zeros((5, 5), dtype=complex)
+            expected_C[0, 0] = 4.0 * np.cos(qv) + 2.4 * np.cos(2.0 * qv)
+            expected_C[m_plus1, m_plus1] = -1.0
+            expected_C[m_minus1, m_minus1] = -1.0
+            expected_C[m_plus2, m_plus2] = -0.6
+            expected_C[m_minus2, m_minus2] = -0.6
+            with self.subTest(q=q):
+                assert_approx_array(dS[q], expected_S, rel=0, abs=1e-10)
+                assert_approx_array(dC[q], expected_C, rel=0, abs=1e-10)
+
+        # superposition: g1-only/g2-only, each declared over the SAME B=5
+        # topology (the other shell present at amplitude 0) so the three
+        # results share one index ordering and can be added elementwise.
+        decls_g1_full = _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 0.0)])
+        decls_g2_full = _two_sided_decl([(1, 0, 0, 0.0), (2, 0, 0, 1.0)])
+        dS1, dC1 = dW_matrices(fx, decls_g1_full)
+        dS2, dC2 = dW_matrices(fx, decls_g2_full)
+        assert_approx_array(dS, dS1 + 0.6 * dS2, rel=0, abs=1e-14)
+        assert_approx_array(dC, dC1 + 0.6 * dC2, rel=0, abs=1e-14)
 
     def _case_m_direction(self, R_decl, a, b):
         """Shared support-pattern check for case-M's g+/g- directions:
