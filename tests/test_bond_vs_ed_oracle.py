@@ -53,7 +53,29 @@ from tests import ed_oracle_util
 from tests.approx_util import ApproxTestCase, assert_approx_array
 
 
-V1 = 0.02      # base coupling used throughout the campaign
+V1 = 0.02      # base coupling used throughout the campaign for calibration
+               # pins and static (non-Richardson) identity checks -- the
+               # LEGACY value; NOT the ph-adjudication Richardson step (see
+               # CAMPAIGN_V1 below). Left untouched: every remaining use of
+               # V1 in this module is a representative fixed coupling
+               # amplitude (canonical-list counting, the null-direction
+               # pin, Pin 2a, the two-shell dW joint test, etc.), never a
+               # finite-difference step size.
+CAMPAIGN_V1 = 0.005
+               # The campaign's ph-adjudication Richardson step (design doc,
+               # "Fixtures", amended 2026-08-14 from the draft's 0.02): Task
+               # 6 MEASURED that at V1 = 0.02 the off-site (g1/g2) unit
+               # directions' Richardson convergence was too loose to clear
+               # the granule power check (delta_rich ~1e-3, dominated by a
+               # near-null cross-term cell and ordinary O(V1^2) curvature on
+               # the off-site directions) even though every cell already
+               # agreed with the solver prediction -- a finer scan confirmed
+               # clean convergence toward the solver values and delta_rich
+               # scaling ~ V1^2, so this halves the design's original step
+               # to 0.005 (V2 = 2*CAMPAIGN_V1, halved pair CAMPAIGN_V1/2 =
+               # 0.0025) to restore the power margin. The 2-site legacy ED
+               # oracle (tests/test_rpa_vs_ed_oracle.py) keeps its own 0.02
+               # and is NOT touched by this constant.
 NMAT = 1024    # solver-side Matsubara count for the calibration/adjudication
                # pins (Tasks 5+); defined here as the shared module constant.
 
@@ -1617,10 +1639,10 @@ def _unit_direction_raw(direction):
     def X_C_of_v(v):
         return _mapped(v, 0, 0) + _mapped(v, 0, 1)
 
-    D_ed_v1_S = ed_oracle_util.richardson(X_S_of_v, V1)
-    D_ed_vhalf_S = ed_oracle_util.richardson(X_S_of_v, V1 / 2)
-    D_ed_v1_C = ed_oracle_util.richardson(X_C_of_v, V1)
-    D_ed_vhalf_C = ed_oracle_util.richardson(X_C_of_v, V1 / 2)
+    D_ed_v1_S = ed_oracle_util.richardson(X_S_of_v, CAMPAIGN_V1)
+    D_ed_vhalf_S = ed_oracle_util.richardson(X_S_of_v, CAMPAIGN_V1 / 2)
+    D_ed_v1_C = ed_oracle_util.richardson(X_C_of_v, CAMPAIGN_V1)
+    D_ed_vhalf_C = ed_oracle_util.richardson(X_C_of_v, CAMPAIGN_V1 / 2)
 
     # -- structural zero mask --------------------------------------------
     S_supp, C_supp = _dw_support_masks(direction, bond_set)
@@ -1732,8 +1754,8 @@ def _joint_ray_superposition_check(testcase, directions_alphas, terms_at_ray,
         return _mapped(t, 0, 0) + _mapped(t, 0, 1)
 
     for chan_name, X_of_t in (("S", X_S_of_t), ("C", X_C_of_t)):
-        D_joint_v1 = ed_oracle_util.richardson(X_of_t, V1)
-        D_joint_vhalf = ed_oracle_util.richardson(X_of_t, V1 / 2)
+        D_joint_v1 = ed_oracle_util.richardson(X_of_t, CAMPAIGN_V1)
+        D_joint_vhalf = ed_oracle_util.richardson(X_of_t, CAMPAIGN_V1 / 2)
         delta_rich_joint = float(np.max(np.abs(D_joint_v1 - D_joint_vhalf)))
 
         unit_tols = [case_fx5_unit_direction(d)[chan_name]["tol"]
