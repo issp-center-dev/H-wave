@@ -171,7 +171,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      います。``chi0q_mode = "flex"`` が読む感受率は影響を受けないので問題
      ありませんが、``bond_green`` は FLEX の ``green.npz`` を取るため対象です。
      修正済みのビルドで再生成してください。1軌道の計算および
-     ``"reduced"``/``"squashed"`` スキームは影響を受けません。
+     ``"reduced"`` スキームは影響を受けません。
      \ :ref:`移行に関する警告 <flex_general_transpose_fix_ja>` を参照して
      ください。
 - ``frequency``: ペアリング頂点の振動数の扱い。``"static"`` （デフォルト）は
@@ -587,7 +587,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 
 .. note::
 
-   FLEX の感受率ファイルには ``chi_convention`` タグ（reduced/squashed スキームは
+   FLEX の感受率ファイルには ``chi_convention`` タグ（reduced スキームは
    ``"kuroki"``\ 、general full-vertex スキームは ``"myo"``\ ）が付与されており、
    Eliashberg ローダーはこれを用いて軌道レイアウトを解釈します。\ **2軌道系**\
    （\ ``norb = 2``\ ）では reduced のスピン軌道次元と orbital-pair 次元が一致
@@ -599,7 +599,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 
 .. warning::
 
-   **多軌道の reduced/squashed FLEX を用いた計算結果は変化する可能性があります。**
+   **多軌道の reduced スキーム FLEX を用いた計算結果は変化する可能性があります。**
    reduced (kuroki) 感受率の行列添字は\ *密度対*\ であり、保存されている
    :math:`X[a,b]` は :math:`\chi_{(a,a),(b,b)}` です。以前のバージョンはこれを
    :math:`n_\text{orb}^2` の orbital-pair 空間へ
@@ -610,7 +610,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
    :math:`\text{out}[(a,a),(b,b)] = X[a,b]`\ （他の成分はすべてゼロ）と
    埋め込みます。
 
-   したがって、``calc_scheme = "reduced"`` または ``"squashed"`` の FLEX を用いた
+   したがって、``calc_scheme = "reduced"`` の FLEX を用いた
    ``norb >= 2`` の計算では、\ **static・dynamic の双方**\ で
    ``chi0q_mode = "flex"`` の結果が変化します。要因は独立に2つあり、軌道間の
    密度成分がゼロでも安全とは限りません---旧来の置き方は
@@ -1105,8 +1105,8 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
 
 .. note::
 
-   **reduced/squashed の FLEX を** ``chi0q_mode = "flex"`` **で読む場合の注意。**
-   reduced（``calc_scheme = "reduced"`` または ``"squashed"``\ ）の FLEX 計算は
+   **reduced スキームの FLEX を** ``chi0q_mode = "flex"`` **で読む場合の注意。**
+   reduced（``calc_scheme = "reduced"``\ ）の FLEX 計算は
    密度‐密度成分 :math:`\chi_{(a,a),(b,b)}` しか保存しません。``CoulombIntra``
    のみであれば :math:`S`/:math:`C` 行列はこの密度対ブロックに完全に収まるため、
    reduced 経路は厳密です。``CoulombInter``、``Hund``、``Ising`` は
@@ -1171,7 +1171,7 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    :widths: 26 24 24 26
 
    * -
-     - ``reduced`` / ``squashed``
+     - ``reduced``
      - ``general``
      - 備考
    * - 2体項の距離
@@ -1191,7 +1191,7 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    * - 保存される感受率
      - 密度‐密度成分のみ ``chi_{(a,a),(b,b)}``
      - orbital-pair 全体
-     - ``reduced`` と ``squashed`` は同じ形状・同じ添字レイアウト
+     - --
 
 ``calc_type``
 
@@ -1225,7 +1225,7 @@ Eliashberg 頂点に入る相互作用
    * - 与える感受率
      - ``CoulombIntra`` のみ
      - ``CoulombInter`` / ``Hund`` / ``Ising`` を含む
-   * - reduced / squashed
+   * - reduced
      - 厳密
      - 近似となり警告が出ます（非密度の S/C ブロックを dress する感受率が
        存在しない）。``Exchange``/``PairHop`` は密度対角の頂点を一切持たない

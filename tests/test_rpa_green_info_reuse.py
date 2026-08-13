@@ -64,8 +64,10 @@ class TestGreenInfoReuse(unittest.TestCase):
         # the squashed CONFIGURATION is gone (#144); its provenance
         # token is covered by
         # test_squashed_provenance_accepted_by_reduced_consumer
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as ctx:
             self._roundtrip('squashed')
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                       str(ctx.exception))
 
     def test_spin_diag_blocks_are_detected_in_memory(self):
         """A two-block (spin-diag) bubble handed over in memory must select

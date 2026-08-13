@@ -1196,8 +1196,9 @@ class RPA:
             # susceptibility as reduced at several times the cost, and the
             # spin-off-diagonal slots of its 8-axis output were structurally
             # zero. Only the CONFIGURATION is rejected -- 'squashed' recorded
-            # in an old file's provenance metadata is still accepted by the
-            # reuse route below (the two share one bubble representation).
+            # in the in-memory provenance metadata (chi0q_freq_meta) of a
+            # reused chi0q is still accepted by the reuse route below (the
+            # two share one bubble representation).
             raise ValueError(
                 "calc_scheme='squashed' was removed in H-wave 2.0: it "
                 "computed the same susceptibility as calc_scheme='reduced' "

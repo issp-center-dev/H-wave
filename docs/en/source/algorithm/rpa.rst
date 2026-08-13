@@ -327,11 +327,8 @@ The array ``chiq`` always holds the longitudinal (ring) result.
 
 Whether ``chiq`` has such slots at all depends on the scheme.  Under
 ``calc_scheme = "general"`` it is indexed by pairs that each carry a spin, so
-it always has slots in which a pair is spin-off-diagonal.  ``"squashed"`` has
-them too when the bubble is inflated, its layout then carrying explicit spin
-axes.  ``"reduced"`` stores density-pair components only and has no such slots
-at all -- and neither does ``"squashed"`` in a genuinely spinful calculation,
-where it degenerates to the reduced layout.
+it always has slots in which a pair is spin-off-diagonal.  ``"reduced"``
+stores density-pair components only and has no such slots at all.
 
 **Those slots are not the transverse susceptibility, and whenever the bubble
 is obtained by inflating a spin-free or spin-diagonal one they are not
@@ -579,7 +576,7 @@ in the input TOML file. In this mode:
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
   ``Ising``, ``PairLift``, ``PairHop``) are supported.
 - The block decomposition is applied automatically when possible.
-- The ``squashed`` calculation scheme is also supported for spin-orbital systems.
+- Both the ``reduced`` and ``general`` calculation schemes are supported for spin-orbital systems.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital
   count** (= 2 × the number of physical orbitals = Wannier90 ``num_wann``), the same
   convention as UHFk.
