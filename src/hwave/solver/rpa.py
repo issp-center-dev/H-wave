@@ -1192,6 +1192,23 @@ class RPA:
 
         self.calc_scheme = info_mode.get("calc_scheme", "auto")
 
+        if str(self.calc_scheme).lower() == "squashed":
+            # Removed in 2.0 (issue #144): squashed computed the same
+            # susceptibility as reduced at several times the cost, and the
+            # spin-off-diagonal slots of its 8-axis output were structurally
+            # zero. Only the CONFIGURATION is rejected -- 'squashed' recorded
+            # in an old file's provenance metadata is still accepted by the
+            # reuse route below (the two share one bubble representation).
+            raise ValueError(
+                "calc_scheme='squashed' was removed in H-wave 2.0: it "
+                "computed the same susceptibility as calc_scheme='reduced' "
+                "at several times the cost, and the extra spin-resolved "
+                "slots of its output were structurally zero (issue #144). "
+                "Use calc_scheme='reduced'. The physics is identical; the "
+                "output layout changes from (l,q,s1,s2,a,s3,s4,b) to "
+                "(l,q,a,b) over generalized indices a = s*norb + orb. See "
+                "the migration note in the RPA output-file documentation.")
+
         # calc_type: "ring" (default) or "ring+ladder"
         self.calc_type = info_mode.get("calc_type", "ring")
         if self.calc_type not in ["ring", "ring+ladder"]:
