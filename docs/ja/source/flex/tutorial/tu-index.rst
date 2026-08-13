@@ -118,17 +118,17 @@ Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
 ここでは評価されません。2つのスピンゆらぎから生成される電荷・軌道ゆらぎが
 重要となる場合（例：Onari--Kontaniの軌道ゆらぎ機構 [2]_）には効くことがあります。
 
-またデフォルトの ``calc_scheme = "reduced"`` および ``"squashed"`` スキームでは、
+またデフォルトの ``calc_scheme = "reduced"`` スキームでは、
 スピン/電荷バーテックスを相互作用の密度--密度成分で構成します。
 ``Exchange`` と ``PairHop`` は密度--密度成分の頂点を **一切持たない** ため、
-これらのスキームでは近似すらできません。``reduced``/``squashed`` でこれらを
+このスキームでは近似すらできません。``reduced`` でこれらを
 与えると ``ValueError`` となり、``calc_scheme = "general"`` への切り替えが
 案内されます（以前の開発版では警告付きで受理され、相互作用は無音で効果
 ゼロになっていました）。``calc_scheme = "auto"`` は ``Exchange``/``PairHop``
 がある場合、自動的に ``general`` を選択します。``PairLift`` はどのスキーム
 でも受理されます：その粒子-正孔頂点は厳密にゼロであり、感受率チャネルから
 落とすことは近似ではなく厳密です。
-したがってこれらのスキームでの「FLEX」は *厳密ではなく*、密度--密度かつ
+したがってこのスキームでの「FLEX」は *厳密ではなく*、密度--密度かつ
 AL/MTを含まないゆらぎ交換近似のレベルである点に注意してください。
 
 一方、 ``calc_scheme = "general"`` スキームでは、off-diagonalな完全な
@@ -517,7 +517,7 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz`` ファイルを生成�
 - ``chiq_s`` / ``chiq_c``: スピン / 電荷感受率、
   ``chi0q`` と同じ形状
 - ``chi_convention``: 感受率をどのスピン/電荷頂点と組み合わせるべきか、および
-  形状の系統を示すタグ。reduced/squashed スキームは ``"kuroki"``\ （スピン軌道
+  形状の系統を示すタグ。reduced スキームは ``"kuroki"``\ （スピン軌道
   形状、``nd = norb * ns``\ ）、general full-vertex スキームは ``"myo"``\
   （orbital-pair 形状 ``nd = norb^2``\ 。かつて ``C(ab,ab)`` 電荷頂点にあった
   MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定で解消され、現在は
@@ -526,7 +526,7 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz`` ファイルを生成�
   一致（ともに ``4``\ ）し形状だけでは区別できないため、このタグが必須です。
 - ``chi_orbital_layout``: **general** スキームのみが書き出します。値は
   ``"acbd"``\ で、4本の軌道脚を ``(a,c)``\ （行）と ``(b,d)``\ （列）の
-  ペアとしてこの順序で格納していることを表します。reduced/squashed の
+  ペアとしてこの順序で格納していることを表します。reduced スキームの
   ファイルには付きません。これらの軸はスピン軌道 ``s*norb + a`` であり4本の
   軌道脚ではないため、loader はスピンブロックを抽出して初めて軌道ペアの
   オブジェクトになるからです。このマーカーは、修正前のgeneralパスが
@@ -610,7 +610,7 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
        計算するため、一様FFT由来の :math:`O(\beta/N_{\mathrm{mat}})`
        離散化アーティファクトが原理的に生じません）。``Nmat`` は出力グリッド
        として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
-       ``calc_scheme = "reduced"``、``"squashed"``、``"general"``
+       ``calc_scheme = "reduced"``、``"general"``
        のいずれとも併用できます。オプションの
        `sparse-ir <https://sparse-ir.readthedocs.io>`_ が必要です。μ探索は
        :math:`n = -\mathrm{Tr}\,G(\tau=\beta^-)` の基底評価に置き換わり、
@@ -674,7 +674,7 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
 
       [mode]
       mode = "FLEX"
-      calc_scheme = "reduced"     # または "squashed" または "general"
+      calc_scheme = "reduced"     # または "general"
       [mode.param]
       CellShape = [64, 64, 1]
       T = 0.05
@@ -710,8 +710,8 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
 
 .. note::
 
-   FLEXソルバーは ``calc_scheme`` として ``"reduced"``, ``"squashed"``,
-   ``"general"`` を受け付けます。``"reduced"`` および ``"squashed"`` スキームは
+   FLEXソルバーは ``calc_scheme`` として ``"reduced"`` または
+   ``"general"`` を受け付けます。``"reduced"`` スキームは
    縮約形の感受率を利用し、相互作用の密度-密度成分で解きます。
    ``Exchange``/``PairHop`` は密度-密度頂点を持たないため **拒否** されます
    （受理すると無音で効果ゼロになるため）。
@@ -762,8 +762,8 @@ FLEXソルバーは ``[mode.param]`` セクションで以下のパラメータ�
       **再生成が必要なもの。** 本修正以前の多軌道 ``calc_scheme = "general"``
       計算の ``sigma.npz`` と ``green.npz``、およびそこから導かれた量です。
       ``chi0q``/``chiq_s``/``chiq_c`` は本件を理由とする再生成は不要です。
-      1軌道の計算は影響を受けず、``calc_scheme = "reduced"`` および
-      ``"squashed"`` も影響を受けません。
+      1軌道の計算は影響を受けず、``calc_scheme = "reduced"``
+      も影響を受けません。
 
    **``"general"`` + IR のメモリ使用量。** ``matsubara_basis = "ir"``（上記）
    は ``calc_scheme = "general"`` でも利用できますが、IRが圧縮するのは
@@ -990,7 +990,7 @@ Tips
 
   .. note::
 
-     ``reduced``/``squashed`` 経路では密度‐密度感受率
+     ``reduced`` 経路では密度‐密度感受率
      :math:`\chi_{(a,a),(b,b)}` しか保存されないため、pairing vertex が
      完全に FLEX で dress されるのは ``CoulombIntra`` のみのモデル
      （または ``norb = 1``\ ）に\ **限られます**\ 。``CoulombInter``、
@@ -1041,7 +1041,7 @@ FLEXソルバーは以下の相互作用型に対応しています:
    * - ``Exchange``
      - general のみ
      - 交換相互作用 :math:`J'` （密度-密度頂点を持たないため
-       ``reduced``/``squashed`` では拒否。``auto`` は ``general``
+       ``reduced`` では拒否。``auto`` は ``general``
        を選択）
    * - ``Ising``
      - 対応
@@ -1053,7 +1053,7 @@ FLEXソルバーは以下の相互作用型に対応しています:
    * - ``PairHop``
      - general のみ
      - ペアホッピング相互作用 （密度-密度頂点を持たないため
-       ``reduced``/``squashed`` では拒否。``auto`` は ``general``
+       ``reduced`` では拒否。``auto`` は ``general``
        を選択）
    * - ``InterAll``
      - **非対応**
@@ -1121,7 +1121,7 @@ FLEXソルバーは、自己エネルギーの計算において相互作用テ�
 ``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Ising``
 はすべて密度-密度型であり正しく扱われます。
 一方、 ``Exchange`` と ``PairHop`` は密度-密度頂点を **一切持たない** ため、
-この縮約では全く表現できません。``reduced``/``squashed`` でこれらを与えると
+この縮約では全く表現できません。``reduced`` でこれらを与えると
 ソルバーは ``ValueError`` を送出し、``calc_scheme = "general"`` への切り替えを
 案内します（``auto`` は自動的に general を選択します）。``PairLift`` の
 粒子-正孔頂点は厳密にゼロなので、どのスキームでも受理され、チャネルに

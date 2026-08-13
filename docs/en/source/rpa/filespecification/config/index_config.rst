@@ -74,8 +74,6 @@ Parameters
 
   - ``reduced``: Generalized orbitals combining spins and orbitals are considered. The components of the susceptibility matrix with :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the matrix turns to :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega`. For the two-body interaction terms, only CoulombIntra, CoulombInter, Ising and Hund are allowed. 
 
-  - ``squashed``: Spins and orbitals are separately treated, and for the orbitals :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the susceptilibity matrix becomes :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega`. See :ref:`Ch:Algorithm` for details.
-
   - ``auto``: scheme is automatically chosen according to the specifications of interaction terms. This option is not available when only ``chi0q`` is to be calculated.
 
 - ``calc_type`` (default value is ``"ring"``)
@@ -189,7 +187,7 @@ Parameters
   This parameter specifies the magnitude of the correction when correcting the tails of the Fourier transformation.
   After Fourier transforming the diagonalized one-body Green function to the imaginary time representation by subtracting :math:`\texttt{coeff\_tail}/(i \omega_n)`, the term :math:`-\beta/2\cdot\texttt{coeff\_tail}` is added to the one-body Green function.
   In the FLEX solver the same tail treatment is applied to the *dressed* Green function before the bare susceptibility :math:`\chi_0(q)` is computed, so that ``coeff_tail`` accelerates the frequency summation without changing the physical result. (The FLEX self-energy convolution keeps the full Green function and is unaffected.)
-  Since issue #134 the susceptibility kernels also restore the Green
+  Since version 2.0 the susceptibility kernels also restore the Green
   function's equal-time discontinuity at the bubble's :math:`\tau = 0`
   sample (the tail piece carries the jump; the sample is the mean of the
   two branches), which makes ``coeff_tail = 1.0`` converge at
@@ -217,7 +215,7 @@ Parameters
 
   **Description :**
   Spinful (``enable_spin_orbital``) calculations resum the susceptibility
-  with a single vertex tensor. Since issue #137 that tensor is the
+  with a single vertex tensor. Since version 2.0 that tensor is the
   antisymmetrized bare particle-hole vertex: the direct (ring) wiring
   plus the exchange wiring of the on-site interaction terms. The
   exchange part is what corrects the spin-flip pair components of

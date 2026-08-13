@@ -129,18 +129,18 @@ are outside the FLEX class and are **not** evaluated here. They can matter when
 charge/orbital fluctuations driven by two spin fluctuations are important
 (e.g. the orbital-fluctuation mechanism of Onari and Kontani [2]_).
 
-In addition, the default ``calc_scheme = "reduced"`` and ``"squashed"``
-schemes decompose the interaction via its density--density part for the
-spin/charge vertices. ``Exchange`` and ``PairHop`` have **no**
-density--density vertex content at all, so these schemes cannot even
-approximate them: supplying either under ``reduced``/``squashed`` raises a
-``ValueError`` directing you to ``calc_scheme = "general"`` (in earlier
+In addition, the default ``calc_scheme = "reduced"`` scheme decomposes the
+interaction via its density--density part for the spin/charge vertices.
+``Exchange`` and ``PairHop`` have **no** density--density vertex content at
+all, so this scheme cannot even approximate them: supplying either under
+``reduced`` raises a ``ValueError`` directing you to
+``calc_scheme = "general"`` (in earlier
 development builds this input was accepted with a warning while the
 interaction silently had zero effect). ``calc_scheme = "auto"`` selects
 ``general`` automatically when ``Exchange`` or ``PairHop`` is present.
 ``PairLift`` is accepted everywhere: its particle-hole vertex is exactly
 zero, so omitting it from the susceptibility channels is exact, not an
-approximation. Accordingly, in these schemes "FLEX" means *not exact*: it
+approximation. Accordingly, in this scheme "FLEX" means *not exact*: it
 is the density--density, AL/MT-free fluctuation-exchange level of
 approximation.
 
@@ -547,7 +547,7 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   same shape as ``chi0q``.
 - ``chi_convention``: which spin/charge vertex the susceptibilities are meant
   to be paired with, and which shape family they have: ``"kuroki"`` for the
-  reduced/squashed schemes (spin-orbital shape, ``nd = norb * ns``) or
+  reduced scheme (spin-orbital shape, ``nd = norb * ns``) or
   ``"myo"`` for the general full-vertex scheme (orbital-pair shape,
   ``nd = norb^2``; the historical MYO-vs-Kuroki difference in the
   ``C(ab,ab)`` charge vertex was resolved by the exact-diagonalization
@@ -558,7 +558,7 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   orbital-pair dimensions coincide (both ``4``) and shape alone is ambiguous.
 - ``chi_orbital_layout``: written by the **general** scheme only, value
   ``"acbd"`` — the four orbital legs are stored as the pairs ``(a,c)`` (row)
-  and ``(b,d)`` (column). Reduced/squashed files do not carry it: their axes
+  and ``(b,d)`` (column). Reduced-scheme files do not carry it: their axes
   are spin-orbital (``s*norb + a``), not four orbital legs, so the loader has
   to extract a spin block before the array is an orbital-pair object at all.
   The marker exists so that a file written by a pre-fix build of the
@@ -649,7 +649,7 @@ The FLEX solver accepts the following parameters in the
        :math:`O(\beta/N_{\mathrm{mat}})` discretization artifacts do not
        arise by construction). ``Nmat`` keeps its role as the output grid
        (all output files are densified onto it). Supported with
-       ``calc_scheme = "reduced"``, ``"squashed"``, and ``"general"``.
+       ``calc_scheme = "reduced"`` and ``"general"``.
        Requires the optional
        `sparse-ir <https://sparse-ir.readthedocs.io>`_ package. The mu
        search becomes the basis evaluation of
@@ -720,7 +720,7 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
       [mode]
       mode = "FLEX"
-      calc_scheme = "reduced"     # or "squashed" or "general"
+      calc_scheme = "reduced"     # or "general"
       [mode.param]
       CellShape = [64, 64, 1]
       T = 0.05
@@ -766,10 +766,10 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
 
 .. note::
 
-   The FLEX solver accepts ``calc_scheme`` in ``"reduced"``, ``"squashed"``,
-   or ``"general"``. The ``"reduced"`` and ``"squashed"`` schemes consume the
-   reduced-shape susceptibility and solve with the density-density part of
-   the interaction; they **reject** ``Exchange`` and ``PairHop`` (whose
+   The FLEX solver accepts ``calc_scheme`` in ``"reduced"`` or ``"general"``.
+   The ``"reduced"`` scheme consumes the reduced-shape susceptibility and
+   solves with the density-density part of the interaction; it **rejects**
+   ``Exchange`` and ``PairHop`` (whose
    vertex has no density-density content — the input would silently have
    zero effect). The ``"general"`` scheme is the paramagnetic
    full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
@@ -822,7 +822,7 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
       multi-orbital ``calc_scheme = "general"`` run made before this fix, plus
       anything derived from them. ``chi0q``/``chiq_s``/``chiq_c`` do not need
       regenerating on this account. Single-orbital runs are unaffected, and
-      ``calc_scheme = "reduced"`` and ``"squashed"`` were never affected.
+      ``calc_scheme = "reduced"`` was never affected.
 
    **Memory with** ``"general"`` **+ IR.** ``matsubara_basis = "ir"`` (see
    above) works with ``calc_scheme = "general"``, but IR only compresses the
@@ -1051,14 +1051,14 @@ Tips
 
   .. note::
 
-     On the ``reduced``/``squashed`` route only the density-density
+     On the ``reduced`` route only the density-density
      susceptibility :math:`\chi_{(a,a),(b,b)}` is stored, so the pairing vertex
      is FLEX-dressed in full **only** for ``CoulombIntra``-only models (or
      ``norb = 1``). With ``CoulombInter``, ``Hund`` or ``Ising`` the
      off-density channels enter undressed and the solver warns.
      ``Exchange`` and ``PairHop`` are **rejected** with a reduced
      susceptibility: they have no density-diagonal vertex content at all, so
-     nothing of them would be dressed -- and the schemes refuse them at the
+     nothing of them would be dressed -- and the scheme refuses them at the
      FLEX/RPA stage anyway. Use ``calc_scheme = "general"`` for the complete
      vertex. See
      :ref:`the Eliashberg supported-interactions note <sc_supported_inter>`.
@@ -1101,7 +1101,7 @@ The FLEX solver supports the following interaction types:
    * - ``Exchange``
      - general only
      - Exchange interaction :math:`J'` (no density-density vertex
-       content: rejected under ``reduced``/``squashed``; ``auto``
+       content: rejected under ``reduced``; ``auto``
        selects ``general``)
    * - ``Ising``
      - Yes
@@ -1114,7 +1114,7 @@ The FLEX solver supports the following interaction types:
    * - ``PairHop``
      - general only
      - Pair hopping interaction (no density-density vertex content:
-       rejected under ``reduced``/``squashed``; ``auto`` selects
+       rejected under ``reduced``; ``auto`` selects
        ``general``)
    * - ``InterAll``
      - **No**
@@ -1184,7 +1184,7 @@ This contraction is exact for **density-density type interactions**.
 are all density-density type and are handled correctly.
 ``Exchange`` and ``PairHop`` have **no** density-density vertex content,
 so this reduction cannot represent them at all: the solver rejects them
-under ``reduced``/``squashed`` with a ``ValueError`` pointing to
+under ``reduced`` with a ``ValueError`` pointing to
 ``calc_scheme = "general"`` (``auto`` selects it for you).
 ``PairLift``'s particle-hole vertex is exactly zero, so it is accepted
 in every scheme and its absence from the channels is exact.

@@ -2069,7 +2069,7 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         if norb == 1:
             chi0_static = chi0_2d.reshape(Nx, Ny, Nz, 1, 1)
         else:
-            # A 2-index (reduced/squashed) chi0q is the density-density diagonal
+            # A 2-index (reduced) chi0q is the density-density diagonal
             # of the susceptibility: chi0_2d[a, b] IS chi0_{(a,a),(b,b)} (the
             # matching interaction reduction is einsum('kaabb->kab', ...) in
             # RPA._inflate_chi0q_and_ham).  With the orbital-pair flat index
@@ -2133,14 +2133,14 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
 #: Interaction terms whose Kuroki S/C matrices have entries OUTSIDE the
 #: density-pair block, keyed by the _build_sc_matrices_all_q case that puts
 #: them there.  Case 2 is S/C[(a,b),(a,b)] and case 4 is S/C[(a,b),(b,a)], both
-#: with a != b; a reduced/squashed run never computes chi on those pair indices,
+#: with a != b; a reduced run never computes chi on those pair indices,
 #: so the corresponding fluctuation dressing is missing from the vertex.
 #: Types whose vertex is PARTIALLY represented by a reduced chi: their
 #: density-slot content is dressed, their cross-slot content is not.
 _REDUCED_FLEX_PARTIAL = ("CoulombInter", "Hund", "Ising")
 #: Types with NO density-diagonal vertex content at all
 #: (hwave.solver.vertex_table): with a reduced chi nothing of them is
-#: dressed, and since the #120 policy no reduced/squashed FLEX or RPA run
+#: dressed, and since the #120 policy no reduced FLEX or RPA run
 #: can even be produced with them -- such input is stale or mismatched,
 #: and is REJECTED rather than warned about.
 _REDUCED_FLEX_REJECTED = ("Exchange", "PairHop")
@@ -2231,13 +2231,13 @@ def _reject_reduced_flex_unsupported(inter_k, convention="kuroki",
             "{}: those interactions have no density-diagonal vertex "
             "content at all (hwave.solver.vertex_table), so reduced "
             "(density-only) data dresses none of it and the result would "
-            "silently omit the interaction. (H-wave's own reduced/squashed "
+            "silently omit the interaction. (H-wave's own reduced "
             "runs cannot even be produced with these terms since the "
             "unified scheme policy.) Provide a general (four-index) "
             "susceptibility instead -- for a FLEX source, re-run with "
             "calc_scheme='general'.".format(
-                source or ("a REDUCED (calc_scheme='reduced' or "
-                           "'squashed') FLEX susceptibility"),
+                source or ("a REDUCED (calc_scheme='reduced') FLEX "
+                           "susceptibility"),
                 ", ".join(rejected)))
 
 
@@ -2256,7 +2256,7 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     (:func:`_reject_reduced_flex_unsupported`) -- it is a cheap scan and
     must hold on every route, not just the orchestrated one.
 
-    A ``calc_scheme="reduced"``/``"squashed"`` FLEX run stores only the
+    A ``calc_scheme="reduced"`` FLEX run stores only the
     density-density diagonal chi_{(a,a),(b,b)} of the susceptibility.  The
     Kuroki S/C matrices built from CoulombIntra alone live entirely on that
     density-pair block, so the reduced treatment is exact.  CoulombInter,
@@ -2267,7 +2267,7 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     rather than a solver error, hence the WARNING.  Exchange and PairHop
     carry NO density-diagonal vertex content at all (vertex_table), so a
     reduced chi dresses nothing of them; combined with the #120 scheme
-    policy (no reduced/squashed run can be produced with them) that
+    policy (no reduced run can be produced with them) that
     combination is REJECTED rather than warned about.
 
     This is a genuine limitation of the stored data, not of the loader: it
@@ -2277,7 +2277,7 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     orbital-pair chi).
     """
     if str(convention).lower() != "kuroki":
-        # Only the reduced/squashed route stores a density-only chi; the
+        # Only the reduced route stores a density-only chi; the
         # general (myo) path carries the full orbital-pair susceptibility.
         return
     # The rejection must run BEFORE the norb == 1 shortcut: a one-orbital
@@ -2323,7 +2323,7 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         "folding -- for a model with off-site INTER-orbital interactions "
         "there is currently no FLEX-dressed vertex without this "
         "approximation.",
-        source or ("a REDUCED (calc_scheme='reduced' or 'squashed') FLEX "
+        source or ("a REDUCED (calc_scheme='reduced') FLEX "
                    "susceptibility"),
         ", ".join(missing))
 
@@ -2907,7 +2907,7 @@ def _check_spin_block_discarded(chi_raw, norb, convention, label="chi",
     about how weak a physical field can be.
     """
     if str(convention).lower() != "kuroki":
-        # Only the reduced/squashed layout has spin blocks to compare.
+        # Only the reduced layout has spin blocks to compare.
         return
     ns = 2
     chi = np.asarray(chi_raw)
@@ -3068,7 +3068,7 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
 
     - ``"myo"`` (general full-vertex FLEX) is already in orbital-pair space
       ``nd_chi = norb^2``; passed through unchanged.
-    - ``"kuroki"`` (reduced / squashed FLEX) is in spin-orbital reduced space
+    - ``"kuroki"`` (reduced FLEX) is in spin-orbital reduced space
       ``nd_chi = norb*ns`` (spin-block ordered ``s*norb + a``), and its matrix
       index is a DENSITY PAIR: ``X[a, b]`` is ``chi_{(a,a),(b,b)}``.  The
       spin-up block ``[:norb, :norb]`` is extracted and embedded at the
@@ -3191,7 +3191,7 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     # block and embed it at the DENSITY-PAIR positions of the orbital-pair
     # space.
     #
-    # The reduced/squashed scheme keeps only the density-density diagonal of the
+    # The reduced scheme keeps only the density-density diagonal of the
     # susceptibility: the stored X[a, b] IS chi_{(a,a),(b,b)} (its companion
     # interaction reduction in FLEX._inflate_chi0q_and_ham is
     # einsum('ksasatbtb->ksatb', ...), the density-density diagonal of the

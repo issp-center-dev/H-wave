@@ -19,7 +19,7 @@ The file contains several arrays bound to the following keys:
 
 - ``momentum_convention``:
 
-  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (issue #133): the
+  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (as of version 2.0): the
   momentum labels follow :math:`M(k) = \sum_R M(R) e^{+ikR}`. Loaders
   reject files recording a different value; files written before this
   field existed are accepted only when their content is elementwise even
@@ -65,7 +65,7 @@ Data format of ``chi0q`` relies on the presence of spin-orbital interaction and 
 
     - ``a``, ``ap``, ``b``, ``bp``: indices of the orbitals not including spin degree of freedom. They correspond to :math:`\alpha`, :math:`\alpha^\prime`, :math:`\beta`, :math:`\beta^\prime`. 
 
-  - When ``calc_scheme = reduced`` or ``squashed``, the array format takes the form of ``ndarray(l,q,a,b)`` whose indices are same as the above.
+  - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(l,q,a,b)`` whose indices are same as the above.
 
 - "spin-diagonal" case:
 
@@ -73,7 +73,7 @@ Data format of ``chi0q`` relies on the presence of spin-orbital interaction and 
 
   - When ``calc_scheme = general``, the array format takes the form of ``ndarray(s,l,q,a,ap,b,bp)``, where ``s = 0`` denotes spin-up component and ``s = 1`` does spin-down component. The other indices are same as the above.
 
-  - When ``calc_scheme = reduced`` or ``squashed``, the array format takes the form of ``ndarray(s,l,q,a,b)``. The indices are same as above.
+  - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(s,l,q,a,b)``. The indices are same as above.
 
 - "spinful" case:
 
@@ -93,9 +93,35 @@ Data format of ``chiq`` takes the following form depending on the value of ``cal
 
 - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(l,q,a,b)``, where ``a`` and ``b`` correspond to the generalized orbital indices :math:`\tilde\alpha` and :math:`\tilde\beta`, respectively.
 
-- When ``calc_scheme = squashed``, the array format takes the form of ``ndarray(l,q,s1,s2,a,s3,s4,b)``, where ``a`` and ``b`` correspond to the orbital indices :math:`\alpha` and :math:`\beta`, respectively, and ``s1``, ``s2``, ``s3``, ``s4`` denote spin indices :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime`, respectively. See :ref:`Algorithm<Algorithm_sec>` section for the notation.
+``chiq`` holds the longitudinal (ring) susceptibility. Under ``calc_scheme = general`` it has slots in which a pair of indices is spin-off-diagonal; ``reduced`` stores density-pair components only and has no such slots. Those slots are **not** the transverse susceptibility, and whenever the bubble is obtained by inflating a spin-free or spin-diagonal one they are **not computed** -- the inflation builds only the same-spin slots, leaving the rest identically zero. That covers every calculation without ``enable_spin_orbital``, and also an ``enable_spin_orbital`` calculation whose one-body Hamiltonian is detected as spin-free or spin-diagonal. Do not read those zeros as a computed transverse response. (In a genuinely spinful ``general`` calculation the bubble is built directly on the generalized orbital index, so these slots are computed and are generally nonzero; the transverse susceptibility is still ``chiq_pm``.) See :ref:`Algorithm<rpa_which_array>` for how to obtain the transverse channel.
 
-When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)` and has the same array layout as ``chiq``.
+.. admonition:: Migrating from ``calc_scheme = "squashed"`` (removed in 2.0)
+   :class: note
+
+   ``squashed`` computed the same susceptibility as ``reduced`` at several
+   times the cost; the slots of its 8-axis output in which a pair of spin
+   indices differed were structurally zero. Configurations now fail with an
+   error at start-up; use ``calc_scheme = "reduced"``.
+
+   Analysis scripts reading a legacy 8-axis file can convert it::
+
+       chiq8 = data["chiq"]           # (l, q, s1, s2, a, s3, s4, b)
+       l, q, _, _, norb, _, _, _ = chiq8.shape
+       nd = 2 * norb
+       chiq4 = np.zeros(chiq8.shape[:2] + (nd, nd), dtype=chiq8.dtype)
+       for s1 in (0, 1):
+           for s3 in (0, 1):
+               chiq4[:, :, s1*norb:(s1+1)*norb, s3*norb:(s3+1)*norb] = \
+                   chiq8[:, :, s1, s1, :, s3, s3, :]
+
+   Only the pair-diagonal slots (``s1 == s2``, ``s3 == s4``) carry data;
+   every other slot of the 8-axis array is exactly zero. Susceptibility
+   files produced by older ``squashed`` runs remain loadable as
+   ``chi0q_init`` under ``reduced``, subject to the same provenance
+   validation as any legacy file (e.g. the momentum-convention marker):
+   the two schemes always shared one bubble representation.
+
+When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)`. Its layout is ``ndarray(l,q,a,ap,b,bp)`` where ``a``, ``ap``, ``b``, ``bp`` are **orbital** indices :math:`\alpha`, :math:`\gamma`, :math:`\beta`, :math:`\delta` that do *not* include the spin degree of freedom -- the spin structure is fixed by the :math:`+-` labels. It is therefore smaller than ``chiq``, whose corresponding axes run over the generalized (spin-orbital) indices. The longitudinal ``chiq`` is unaffected by the presence of the ladder: on identical input it is bit-identical to the ``calc_type = ring`` result.
 
 
 Example for reading data

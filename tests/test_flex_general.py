@@ -612,7 +612,7 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
 
     def test_writer_stamps_acbd_layout_for_orbital_pair_files_only(self):
         """The marker describes four orbital legs stored as the pairs (a,c),
-        (b,d).  Only the general path writes such a file: the reduced/squashed
+        (b,d).  Only the general path writes such a file: the reduced-path
         arrays are indexed by spin-orbital ``s*norb + a`` and have to have a
         spin block extracted before they are an orbital-pair object at all, so
         stamping them "acbd" would be false metadata.  The reader accepts
@@ -906,9 +906,9 @@ class TestFLEXGeneralGuards(unittest.TestCase):
 
 
 class TestFLEXGeneralWarningGating(unittest.TestCase):
-    """Scheme policy for exchange-type input: reduced/squashed REJECT
-    Exchange (no density-diagonal vertex content -- one policy since #107),
-    while general keeps the full vertex and constructs quietly."""
+    """Scheme policy for exchange-type input: reduced REJECTS Exchange (no
+    density-diagonal vertex content -- one policy since #107), while general
+    keeps the full vertex and constructs quietly."""
 
     def _construct(self, scheme, exchange=True):
         """Construct a 2-orbital FLEX with a real Exchange interaction
@@ -937,11 +937,15 @@ class TestFLEXGeneralWarningGating(unittest.TestCase):
         return solver_flex.FLEX(ham, {}, info_mode)
 
     def test_squashed_with_exchange_is_rejected(self):
-        # ONE policy since #107 (was: reduced errored, squashed warned of
-        # an 'approximation' while dropping the vertex entirely)
+        # calc_scheme='squashed' was removed in H-wave 2.0 (#144): the
+        # rejection now fires at construction, for the scheme itself,
+        # before the Exchange-content check is ever reached. (Prior to
+        # #144: one policy since #107 -- was: reduced errored, squashed
+        # warned of an 'approximation' while dropping the vertex entirely.)
         with self.assertRaises(ValueError) as cm:
             self._construct('squashed')
-        self.assertIn('general', str(cm.exception))
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                      str(cm.exception))
 
     def test_general_with_exchange_constructs_quietly(self):
         with _assert_no_warning(self, 'hwave.solver.flex'):
@@ -1801,7 +1805,7 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
     # 2-orbital: build directly from a self-contained ON-SITE 2-orbital fixture
     # (mirrors the _construct / TestGeneralSolveEndToEnd path, but WITHOUT
     # patching exchange).  The general path rejects off-site two-body terms
-    # other than same-orbital CoulombInter, so both the general and squashed
+    # other than same-orbital CoulombInter, so both the general and reduced
     # runs here use on-site U' for a fair compare.
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
@@ -2088,10 +2092,10 @@ class TestGeneralLimits(unittest.TestCase):
 
     def test_multiorbital_general_differs_from_reduced(self):
         # 2-orbital, CoulombIntra + CoulombInter (U, U'); J=0.  The general path
-        # keeps the inter-orbital U' vertices that the reduced/squashed
+        # keeps the inter-orbital U' vertices that the reduced
         # density-density reduction drops, so the converged sigmas must differ.
         sig_gen = _run_flex_sigma("general", norb1=False)
-        sig_red = _run_flex_sigma("squashed", norb1=False)
+        sig_red = _run_flex_sigma("reduced", norb1=False)
         self.assertGreater(np.linalg.norm(sig_gen - sig_red), 1e-8)
         self.assertTrue(np.all(np.isfinite(sig_gen))
                         and np.all(np.isfinite(sig_red)))

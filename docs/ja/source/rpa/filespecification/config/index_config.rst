@@ -63,8 +63,6 @@ TOML形式
 
   - ``reduced``: 軌道とスピンを統一した一般化軌道として扱い、感受率行列は :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ計算します。行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega` となります。二体相互作用は CoulombIntra, CoulombInter, Ising, Hund のみを考慮します。
 
-  - ``squashed``: 軌道とスピンを分離し、軌道については :math:`\alpha=\alpha^\prime`, :math:`\beta=\beta^\prime` のみ扱います。感受率行列のサイズは :math:`N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega` となります。詳細は :ref:`Ch:Algorithm` の章を参照してください。
-
   - ``auto``: 相互作用項の指定に応じて自動判別します。 ``chi0q`` のみを計算する場合は指定できません。
 
 - ``calc_type``
@@ -150,7 +148,7 @@ TOML形式
   **説明 :** フーリエ変換の尾部の補正を行う際の、補正の大きさを指定します。
   対角化された一体Green関数に対して :math:`\texttt{coeff\_tail}/(i \omega_n)` を引き虚時間表示にフーリエ変換した後、:math:`-\beta/2\cdot\texttt{coeff\_tail}` を付加します。
   FLEXソルバーでは、裸の感受率 :math:`\chi_0(q)` を計算する前に同じ尾部補正をドレスされたGreen関数に対して適用します。これにより ``coeff_tail`` は物理的な結果を変えずに振動数和の収束を加速します（FLEXの自己エネルギー畳み込みは完全なGreen関数を用いるため影響を受けません）。
-  issue #134 以降、感受率カーネルはバブルの :math:`\tau = 0` サンプルで
+  バージョン 2.0 以降、感受率カーネルはバブルの :math:`\tau = 0` サンプルで
   Green 関数の等時刻不連続を復元します（tail 項がジャンプを担い、サンプル
   は両側分岐の平均）。これにより ``coeff_tail = 1.0`` は
   :math:`O(1/N_{\rm mat}^2)` で収束します。以前の版はこの端点処理を欠いて
@@ -175,7 +173,7 @@ TOML形式
 
   **説明 :**
   スピンフル（``enable_spin_orbital``）計算では感受率をひとつの
-  バーテックステンソルで再帰的に足し上げます。issue #137 以降、この
+  バーテックステンソルで再帰的に足し上げます。バージョン 2.0 以降、この
   テンソルは反対称化された裸の粒子・正孔バーテックス（direct（ring）
   配線＋オンサイト相互作用の exchange 配線）です。exchange 部分は
   :math:`\chi(q)` のスピン反転ペア成分を補正するもので、非スピン軌道

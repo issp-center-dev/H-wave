@@ -67,7 +67,7 @@ symmetrised reading of the declaration file -- the mean with the
 reversed-bond partner :math:`(R, a, b) \leftrightarrow (-R, b, a)` --
 matching every other route in the package: real declarations that contain both directions are
 read unchanged, bit for bit; a Hermitian-closed complex pair has its
-inert imaginary part folded to the real coefficient. (Since issue #93 a one-sided declaration
+inert imaginary part folded to the real coefficient. (Since version 2.0 a one-sided declaration
 -- an entry with no Hermitian partner -- is rejected at read time, so
 only closed files reach this point; earlier versions of the simple mode
 read a one-sided file with the raw one-sided phase.):
@@ -248,7 +248,7 @@ which is efficiently computed using the Fast Fourier Transform (FFT).
 
 .. note::
 
-   **Matsubara tail correction (issue #86).** The bare truncated sum
+   **Matsubara tail correction (as of version 2.0).** The bare truncated sum
    misses the leading positive identity tail of the exact two-particle
    Green's function, an :math:`O(1/N_{\rm mat})` error: the summand's exact high-frequency tail is
    :math:`\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2` (the

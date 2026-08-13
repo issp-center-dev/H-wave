@@ -1017,8 +1017,8 @@ def _make_flex_solver_with(calc_scheme='reduced', interactions=None,
 class TestFLEXSchemeGuards(unittest.TestCase):
     """FLEX-specific compatibility guards.
 
-    The default reduced/squashed FLEX path consumes the reduced-shape (4-dim)
-    chi0q and solves with the density-density diagonal 'kaabb->kab' of the
+    The default reduced FLEX path consumes the reduced-shape (4-dim) chi0q
+    and solves with the density-density diagonal 'kaabb->kab' of the
     interaction; Exchange and PairHop carry no density-diagonal vertex and
     are REJECTED there (one policy since #107). The calc_scheme='general'
     path keeps the full Kanamori vertices (paramagnetic full-vertex MYO
@@ -1040,13 +1040,13 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         self.assertEqual(solver.calc_scheme, 'general')
 
     def test_exchange_interaction_is_rejected(self):
-        """Exchange under 'squashed' is REJECTED (one policy since #107):
+        """Exchange under 'reduced' is REJECTED (one policy since #107):
         its vertex has no density-diagonal content, so the scheme would
         drop it entirely -- zero effect, not an approximation. The old
         behavior accepted it with a warning that called it approximated."""
         with self.assertRaises(ValueError) as cm:
             _make_flex_solver_with(
-                calc_scheme='squashed',
+                calc_scheme='reduced',
                 interactions={'Exchange': self._EXCHANGE_BODY})
         self.assertIn('general', str(cm.exception))
 
@@ -1055,7 +1055,7 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         density-diagonal content."""
         with self.assertRaises(ValueError) as cm:
             _make_flex_solver_with(
-                calc_scheme='squashed',
+                calc_scheme='reduced',
                 interactions={'PairHop': self._PAIRHOP_BODY})
         self.assertIn('general', str(cm.exception))
 
@@ -1066,8 +1066,8 @@ class TestFLEXSchemeGuards(unittest.TestCase):
 
     def test_auto_scheme_exchange_selects_general(self):
         """auto + exchange resolves to GENERAL (the only scheme carrying
-        the Exchange vertex; the historical auto choice was squashed,
-        which silently dropped it -- #107)."""
+        the Exchange vertex; the historical auto choice was squashed
+        (removed in 2.0, #144), which silently dropped it -- #107)."""
         solver = _make_flex_solver_with(
             calc_scheme='auto',
             interactions={
@@ -1085,7 +1085,7 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         import hwave.solver.rpa as rpa_mod
 
         for itype in ("Exchange", "PairHop"):
-            for scheme in ("reduced", "squashed"):
+            for scheme in ("reduced",):
                 with self.subTest(interaction=itype, scheme=scheme):
                     param_ham = {
                         'Geometry': {'norb': 2, 'rvec': np.eye(3),

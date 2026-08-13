@@ -171,7 +171,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      います。``chi0q_mode = "flex"`` が読む感受率は影響を受けないので問題
      ありませんが、``bond_green`` は FLEX の ``green.npz`` を取るため対象です。
      修正済みのビルドで再生成してください。1軌道の計算および
-     ``"reduced"``/``"squashed"`` スキームは影響を受けません。
+     ``"reduced"`` スキームは影響を受けません。
      \ :ref:`移行に関する警告 <flex_general_transpose_fix_ja>` を参照して
      ください。
 - ``frequency``: ペアリング頂点の振動数の扱い。``"static"`` （デフォルト）は
@@ -204,7 +204,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` /
   ``"shift-invert-lgmres"``。
 - ``g2_tail``: ペアバブル :math:`G^{(2)}` に解析的な松原 tail 補正を適用
-  します（デフォルト ``true`` 、issue #86）。素朴な打ち切り和は主要な
+  します（デフォルト ``true`` 、バージョン 2.0 以降）。素朴な打ち切り和は主要な
   単位行列 tail を取りこぼし（ :math:`O(1/N_{\rm mat})` の誤差）、わずかに
   不定符号になり得るため、小さい ``Nmat`` では報告される固有値に偽の虚部が
   混入します。この補正は漸近的です。保持される最大周波数が関連するエネル
@@ -587,7 +587,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 
 .. note::
 
-   FLEX の感受率ファイルには ``chi_convention`` タグ（reduced/squashed スキームは
+   FLEX の感受率ファイルには ``chi_convention`` タグ（reduced スキームは
    ``"kuroki"``\ 、general full-vertex スキームは ``"myo"``\ ）が付与されており、
    Eliashberg ローダーはこれを用いて軌道レイアウトを解釈します。\ **2軌道系**\
    （\ ``norb = 2``\ ）では reduced のスピン軌道次元と orbital-pair 次元が一致
@@ -599,7 +599,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 
 .. warning::
 
-   **多軌道の reduced/squashed FLEX を用いた計算結果は変化する可能性があります。**
+   **多軌道の reduced スキーム FLEX を用いた計算結果は変化する可能性があります。**
    reduced (kuroki) 感受率の行列添字は\ *密度対*\ であり、保存されている
    :math:`X[a,b]` は :math:`\chi_{(a,a),(b,b)}` です。以前のバージョンはこれを
    :math:`n_\text{orb}^2` の orbital-pair 空間へ
@@ -610,7 +610,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
    :math:`\text{out}[(a,a),(b,b)] = X[a,b]`\ （他の成分はすべてゼロ）と
    埋め込みます。
 
-   したがって、``calc_scheme = "reduced"`` または ``"squashed"`` の FLEX を用いた
+   したがって、``calc_scheme = "reduced"`` の FLEX を用いた
    ``norb >= 2`` の計算では、\ **static・dynamic の双方**\ で
    ``chi0q_mode = "flex"`` の結果が変化します。要因は独立に2つあり、軌道間の
    密度成分がゼロでも安全とは限りません---旧来の置き方は
@@ -1040,8 +1040,8 @@ FLEX 側が ``[mode.param] matsubara_basis = "ir"`` かつ
 
 .. warning::
 
-   Issue #57 修正より前のバージョンで計算した動的IRの結果は、ペアリング
-   頂点にν非依存成分を持つモデル——特にオフサイト ``CoulombInter``
+   1.0.x で計算した動的IRの結果は、ペアリング頂点にν非依存成分を
+   持つモデル——特にオフサイト ``CoulombInter``
    を含む系——では誤りです（オンサイト ``CoulombIntra`` のみの模型は
    裸頂点項が厳密に相殺するため影響なし）。該当する計算は再実行して
    ください。λの大きな変化は想定どおりです（変化分がバグであり、物理の
@@ -1105,8 +1105,8 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
 
 .. note::
 
-   **reduced/squashed の FLEX を** ``chi0q_mode = "flex"`` **で読む場合の注意。**
-   reduced（``calc_scheme = "reduced"`` または ``"squashed"``\ ）の FLEX 計算は
+   **reduced スキームの FLEX を** ``chi0q_mode = "flex"`` **で読む場合の注意。**
+   reduced（``calc_scheme = "reduced"``\ ）の FLEX 計算は
    密度‐密度成分 :math:`\chi_{(a,a),(b,b)}` しか保存しません。``CoulombIntra``
    のみであれば :math:`S`/:math:`C` 行列はこの密度対ブロックに完全に収まるため、
    reduced 経路は厳密です。``CoulombInter``、``Hund``、``Ising`` は
@@ -1171,7 +1171,7 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    :widths: 26 24 24 26
 
    * -
-     - ``reduced`` / ``squashed``
+     - ``reduced``
      - ``general``
      - 備考
    * - 2体項の距離
@@ -1186,12 +1186,12 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    * - ``enable_spin_orbital``
      - FLEX は受け付ける
      - 拒否
-     - ``hwave_sc`` は設定を即座に拒否します（issue #83）。下の
+     - ``hwave_sc`` は設定を即座に拒否します（バージョン 2.0 以降）。下の
        「スピン構造の取り扱い」参照
    * - 保存される感受率
      - 密度‐密度成分のみ ``chi_{(a,a),(b,b)}``
      - orbital-pair 全体
-     - ``reduced`` と ``squashed`` は同じ形状・同じ添字レイアウト
+     - --
 
 ``calc_type``
 
@@ -1225,7 +1225,7 @@ Eliashberg 頂点に入る相互作用
    * - 与える感受率
      - ``CoulombIntra`` のみ
      - ``CoulombInter`` / ``Hund`` / ``Ising`` を含む
-   * - reduced / squashed
+   * - reduced
      - 厳密
      - 近似となり警告が出ます（非密度の S/C ブロックを dress する感受率が
        存在しない）。``Exchange``/``PairHop`` は密度対角の頂点を一切持たない
@@ -1272,7 +1272,7 @@ Eliashberg の pairing vertex は\ **常磁性を前提**\ としています。
   スピン自由な模型もこの表現で書けます）--- \ **サポートされていません。**
   ``hwave_sc`` は静的・動的の両エントリで設定を明示的なエラーとして即座に
   拒否し、``hwave_tsweep`` は FLEX rung の実行前に preflight で拒否します
-  （issue #83）。このガード導入前は、内部で :math:`\chi_0` を
+  （バージョン 2.0 以降）。このガード導入前は、内部で :math:`\chi_0` を
   計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
   出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
   FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の
