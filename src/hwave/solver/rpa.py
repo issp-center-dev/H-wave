@@ -1176,6 +1176,26 @@ class RPA:
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
 
+        if str(info_mode.get("calc_scheme", "auto")).lower() == "squashed":
+            # Removed in 2.0 (issue #144): squashed computed the same
+            # susceptibility as reduced at several times the cost, and the
+            # spin-off-diagonal slots of its 8-axis output were structurally
+            # zero. Only the CONFIGURATION is rejected -- 'squashed' recorded
+            # in the in-memory provenance metadata (chi0q_freq_meta) of a
+            # reused chi0q is still accepted by the reuse route below (the
+            # two share one bubble representation). Checked before
+            # Lattice/Interaction construction so that no other validation
+            # error can mask this message.
+            raise ValueError(
+                "calc_scheme='squashed' was removed in H-wave 2.0: it "
+                "computed the same susceptibility as calc_scheme='reduced' "
+                "at several times the cost, and the extra spin-resolved "
+                "slots of its output were structurally zero (issue #144). "
+                "Use calc_scheme='reduced'. The physics is identical; the "
+                "output layout changes from (l,q,s1,s2,a,s3,s4,b) to "
+                "(l,q,a,b) over generalized indices a = s*norb + orb. See "
+                "the migration note in the RPA output-file documentation.")
+
         self.lattice = Lattice(self.param_mod)
         self.ham_info = Interaction(self.lattice, param_ham, info_mode)
 
@@ -1190,24 +1210,6 @@ class RPA:
         # handle calc_scheme: must be called after setting up interactions
 
         self.calc_scheme = info_mode.get("calc_scheme", "auto")
-
-        if str(self.calc_scheme).lower() == "squashed":
-            # Removed in 2.0 (issue #144): squashed computed the same
-            # susceptibility as reduced at several times the cost, and the
-            # spin-off-diagonal slots of its 8-axis output were structurally
-            # zero. Only the CONFIGURATION is rejected -- 'squashed' recorded
-            # in the in-memory provenance metadata (chi0q_freq_meta) of a
-            # reused chi0q is still accepted by the reuse route below (the
-            # two share one bubble representation).
-            raise ValueError(
-                "calc_scheme='squashed' was removed in H-wave 2.0: it "
-                "computed the same susceptibility as calc_scheme='reduced' "
-                "at several times the cost, and the extra spin-resolved "
-                "slots of its output were structurally zero (issue #144). "
-                "Use calc_scheme='reduced'. The physics is identical; the "
-                "output layout changes from (l,q,s1,s2,a,s3,s4,b) to "
-                "(l,q,a,b) over generalized indices a = s*norb + orb. See "
-                "the migration note in the RPA output-file documentation.")
 
         # calc_type: "ring" (default) or "ring+ladder"
         self.calc_type = info_mode.get("calc_type", "ring")

@@ -47,6 +47,39 @@ class TestSquashedRejected(unittest.TestCase):
                       str(cm.exception))
 
 
+class TestRejectionWinsOverOtherInvalidInput(unittest.TestCase):
+    """The retirement guard must fire before Lattice/Interaction
+    construction, so it wins even when the rest of the configuration is
+    also broken (issue #144 follow-up).
+
+    CellShape=[0, 0, 0] is invalid (cell volume zero), but Lattice reports
+    that with logger.error(...) + sys.exit(1), not a raised ValueError --
+    verified by constructing with calc_scheme='reduced' below, which lets
+    the SystemExit propagate. Pre-fix, that SystemExit (not a catchable
+    ValueError) is what would have masked the squashed message; post-fix,
+    the guard raises before Lattice() is ever called, so the SystemExit
+    never happens at all.
+    """
+
+    def test_rejection_wins_over_invalid_lattice(self):
+        import hwave.solver.rpa as rpa_mod
+        info = _mode('RPA', {'CellShape': [0, 0, 0]})
+        with self.assertRaises(ValueError) as cm:
+            rpa_mod.RPA(_ham(), {}, info)
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                      str(cm.exception))
+
+    def test_rejection_wins_case_insensitively_with_invalid_input(self):
+        import hwave.solver.flex as flex_mod
+        info = _mode('FLEX', {'CellShape': [0, 0, 0],
+                              'IterationMax': 1, 'Mix': 1.0})
+        info['calc_scheme'] = 'SQUASHED'
+        with self.assertRaises(ValueError) as cm:
+            flex_mod.FLEX(_ham(), {}, info)
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                      str(cm.exception))
+
+
 class TestAutoNeverResolvesToSquashed(unittest.TestCase):
     """auto must keep resolving to reduced/general only (regression)."""
 
