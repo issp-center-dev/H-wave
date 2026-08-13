@@ -2579,5 +2579,583 @@ class TestPpUnitDirectionsFx5(unittest.TestCase):
         self._check("g2")
 
 
+# ---------------------------------------------------------------------------
+# Task 8: Case M -- multi-orbital ph + pp adjudication on fx3 (#151)
+# ---------------------------------------------------------------------------
+#
+# Case M exercises the orbital-pair bookkeeping invisible at norb=1: the ph
+# and pp channels both PASSED on fx5 (single orbital, Tasks 6-7), but every
+# genuine orbital-index defect in this codebase (design doc: "orbital
+# transposition is this codebase's most recurrent defect class") is a no-op
+# there. This section repeats BOTH channel families on fx3 (case M, norb=2),
+# directions g+ (Delta r=+1, (a,b)=(0,1)) and g- (Delta r=-1, (a,b)=(0,1)) --
+# Task 5's naming, matching TestPpInterOrbitalSanityFx3.
+#
+# Term lists (brief, review round 2 -- exact dict literals):
+#   g+: ED canonical_density_terms(fx3, [(0, 1, +1, g)]);
+#       solver closed {((+1,0,0),(0,1)): g, ((-1,0,0),(1,0)): g}
+#         == _two_sided_decl([(1, 0, 1, g)]) for real g (pinned below).
+#   g-: ED canonical_density_terms(fx3, [(0, 1, -1, g)]);
+#       solver closed {((-1,0,0),(0,1)): g, ((+1,0,0),(1,0)): g}
+#         == _two_sided_decl([(-1, 0, 1, g)]) for real g (pinned below).
+# NEVER feed the closed two-sided dict to the ED side (Task 3's factor-of-2
+# double count); the pp side MUST build dVpp via Task 7's dVpp_matrices --
+# the orbital-swap reindex is LOAD-BEARING here (Task 7's finding), not a
+# no-op the way it is on every fx5 unit direction.
+
+def _decls_case_m_gplus(fx, v):
+    return _two_sided_decl([(1, 0, 1, v)])
+
+
+def _terms_case_m_gplus(fx, v):
+    return ed_oracle_util.canonical_density_terms(fx, [(0, 1, 1, v)])
+
+
+def _decls_case_m_gminus(fx, v):
+    return _two_sided_decl([(-1, 0, 1, v)])
+
+
+def _terms_case_m_gminus(fx, v):
+    return ed_oracle_util.canonical_density_terms(fx, [(0, 1, -1, v)])
+
+
+_CASE_M_DIRECTIONS = {
+    "g+": (_decls_case_m_gplus, _terms_case_m_gplus),
+    "g-": (_decls_case_m_gminus, _terms_case_m_gminus),
+}
+
+
+class TestCaseMDeclLiterals(unittest.TestCase):
+    """Pins the brief's exact closed-declaration dict literals against
+    ``_two_sided_decl``'s own output, so a typo in the convention above
+    cannot silently drift from the reviewed spec."""
+
+    def test_g_plus_matches_brief_literal(self):
+        g = 0.37
+        got = _decls_case_m_gplus(fx3(), g)
+        want = {((1, 0, 0), (0, 1)): g, ((-1, 0, 0), (1, 0)): g}
+        self.assertEqual(got, want)
+
+    def test_g_minus_matches_brief_literal(self):
+        g = 0.37
+        got = _decls_case_m_gminus(fx3(), g)
+        want = {((-1, 0, 0), (0, 1)): g, ((1, 0, 0), (1, 0)): g}
+        self.assertEqual(got, want)
+
+
+@functools.lru_cache(maxsize=1)
+def _case_m_topology_and_map():
+    """(bond_set, channels, smap) for case M's single-shell (Delta r=+-1)
+    inter-orbital topology, shared by g+ and g- (both channels m=+-1 exist
+    in the SAME bond_set regardless of which one carries the coupling --
+    only the declared VALUE differs between directions, never the shell
+    set; mirrors ``_bond_topology_and_map``'s fx5 pattern, Task 6). Channels
+    are always the full ``(R, l1, l2)`` triple (never the norb=1 ``(R,)``
+    shorthand) -- the orbital-resolved rows the brief requires."""
+    fx = fx3()
+    decls = _two_sided_decl([(1, 0, 1, 1.0)])
+    bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+    norb = fx.norb
+    channels = []
+    for m in range(bond_set.n_channels):
+        R = bond_set.delta_r[m][0]
+        for l1 in range(norb):
+            for l2 in range(norb):
+                channels.append((R, l1, l2))
+    smap = ed_to_solver_bond_map(channels, bond_set)
+    return bond_set, channels, smap
+
+
+@functools.lru_cache(maxsize=None)
+def _case_m_chibar(nmat):
+    """The bare bond bubble at ``nmat`` on case M's shared topology (shared
+    by g+ and g-, mirrors ``_shared_chibar``)."""
+    bond_set, _channels, _smap = _case_m_topology_and_map()
+    fx = fx3()
+    green = free_green(fx, nmat)
+    return bond_bubble(green, bond_set, beta=fx.beta)[:, 0, 0]
+
+
+def _dw_support_masks_case_m(direction, bond_set):
+    """ANALYTIC support of dS/dC for one case-M direction, derived directly
+    from ``bare_bond_vertices``' documented element equations (``dW_matrices``'
+    module note: "Case-M's g+/g- ... carry the SAME m!=0 diagonal pattern at
+    the (a,b)/(b,a) orbital-pair slot, plus a q-dependent CROSS Hartree entry
+    at the (aa),(bb) slot with a!=b").
+
+    g+ declares V_01(+1)=g, V_10(-1)=g (no R=0 component): the m!=0 Fock
+    diagonal touches I=(m_{+1}, idx=(0,1)) and I=(m_{-1}, idx=(1,0)) in BOTH
+    S and C (``bare_bond_vertices``: ``S_bond[I,I]=+V``, ``C_bond[I,I]=-V``);
+    since ``v_onsite`` is untouched (zero) here, the m=0 Fock sub-block is
+    exactly zero in S -- S carries NO Hartree term, matching the fx5
+    pattern. The R!=0 Hartree DOES reach the m=0 charge block, but at the
+    CROSS (aa,bb)=(0,0),(1,1) slot (idx 0, 3) -- not the diagonal (0,0)/
+    (3,3) slot fx5's a=b case used -- since ``_build_bond_m0_blocks``'s
+    ``C0[...,a*norb+a,b*norb+b] += 2*V_ab(q)`` is keyed by (a,b)=(0,1) here,
+    off-diagonal in the ``idx=a*norb+a`` labeling. g- carries the SAME
+    pattern with the m_{+1}/m_{-1} roles of the two orbital pairs swapped.
+    """
+    norb = bond_set.v_bond[0].shape[0]
+    nd = norb * norb
+    B = int(bond_set.n_channels)
+    ND = nd * B
+    S_supp = np.zeros((ND, ND), dtype=bool)
+    C_supp = np.zeros((ND, ND), dtype=bool)
+    m_plus = bond_set.delta_r.index((1, 0, 0))
+    m_minus = bond_set.delta_r.index((-1, 0, 0))
+    if direction == "g+":
+        touched = [(m_plus, 0, 1), (m_minus, 1, 0)]
+    else:
+        touched = [(m_minus, 0, 1), (m_plus, 1, 0)]
+    for (m, l1, l2) in touched:
+        I = m * nd + l1 * norb + l2
+        S_supp[I, I] = True
+        C_supp[I, I] = True
+    C_supp[0, 3] = True   # (aa,bb)=(0,0),(1,1) cross Hartree, C only
+    C_supp[3, 0] = True
+    return S_supp, C_supp
+
+
+class TestDwSupportMasksMatchNumericDwCaseM(unittest.TestCase):
+    """Cross-checks ``_dw_support_masks_case_m`` against the actual numeric
+    ``dW_matrices`` output (mirrors ``TestDwSupportMasksMatchNumericDw``,
+    Task 6's should-fix precedent) -- catches a mismatch between the
+    hand-derived case-M pattern above and what ``bare_bond_vertices``
+    actually emits."""
+
+    def _check(self, direction):
+        bond_set, _channels, _smap = _case_m_topology_and_map()
+        decls_at, _terms_at = _CASE_M_DIRECTIONS[direction]
+        dS, dC = dW_matrices(fx3(), decls_at(fx3(), 1.0))
+        numeric_S = np.any(np.abs(dS) > 0, axis=0)
+        numeric_C = np.any(np.abs(dC) > 0, axis=0)
+        S_supp, C_supp = _dw_support_masks_case_m(direction, bond_set)
+        self.assertTrue(np.array_equal(numeric_S, S_supp),
+                         "direction={} S support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_S, S_supp))
+        self.assertTrue(np.array_equal(numeric_C, C_supp),
+                         "direction={} C support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_C, C_supp))
+
+    def test_g_plus(self):
+        self._check("g+")
+
+    def test_g_minus(self):
+        self._check("g-")
+
+
+@functools.lru_cache(maxsize=None)
+def _case_m_unit_direction_raw(direction):
+    """Raw ph ED/solver first-order response arrays for one case-M
+    direction (g+ or g-), S and C channels. Mirrors ``_unit_direction_raw``
+    exactly (Task 6), on fx3 instead of fx5."""
+    fx = fx3()
+    decls_at, terms_at = _CASE_M_DIRECTIONS[direction]
+    bond_set, channels, smap = _case_m_topology_and_map()
+
+    # -- solver side --------------------------------------------------
+    dS, dC = dW_matrices(fx, decls_at(fx, 1.0))
+    chibar_n = _case_m_chibar(NMAT)
+    chibar_2n = _case_m_chibar(2 * NMAT)
+    D_pred_nmat_S, D_pred_nmat_C = pred_first_order(chibar_n, dS, dC)
+    D_pred_2nmat_S, D_pred_2nmat_C = pred_first_order(chibar_2n, dS, dC)
+
+    # -- ED side --------------------------------------------------------
+    @functools.lru_cache(maxsize=None)
+    def _chi_hf_sub(v):
+        terms = terms_at(fx, v)
+        full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).bond_correlator(channels)
+        return full - hf_only
+
+    def _mapped(v, sigma, sigmap):
+        chi = _chi_hf_sub(v)
+        return chi[:, sigma, sigmap][:, smap][:, :, smap]
+
+    def X_S_of_v(v):
+        return _mapped(v, 0, 0) - _mapped(v, 0, 1)
+
+    def X_C_of_v(v):
+        return _mapped(v, 0, 0) + _mapped(v, 0, 1)
+
+    D_ed_v1_S = ed_oracle_util.richardson(X_S_of_v, CAMPAIGN_V1)
+    D_ed_vhalf_S = ed_oracle_util.richardson(X_S_of_v, CAMPAIGN_V1 / 2)
+    D_ed_v1_C = ed_oracle_util.richardson(X_C_of_v, CAMPAIGN_V1)
+    D_ed_vhalf_C = ed_oracle_util.richardson(X_C_of_v, CAMPAIGN_V1 / 2)
+
+    # -- structural zero mask --------------------------------------------
+    S_supp, C_supp = _dw_support_masks_case_m(direction, bond_set)
+    free_support = np.ones_like(S_supp)   # dense fx3 bubble (t_01 != 0)
+    zero_mask_S = ed_oracle_util.projected_structural_zero_mask(
+        free_support, S_supp)
+    zero_mask_C = ed_oracle_util.projected_structural_zero_mask(
+        free_support, C_supp)
+
+    return dict(
+        D_ed_v1_S=D_ed_v1_S, D_ed_vhalf_S=D_ed_vhalf_S,
+        D_pred_nmat_S=D_pred_nmat_S, D_pred_2nmat_S=D_pred_2nmat_S,
+        D_ed_v1_C=D_ed_v1_C, D_ed_vhalf_C=D_ed_vhalf_C,
+        D_pred_nmat_C=D_pred_nmat_C, D_pred_2nmat_C=D_pred_2nmat_C,
+        zero_mask_S=zero_mask_S, zero_mask_C=zero_mask_C,
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def case_fx3_unit_direction(direction):
+    """ph adjudication (S and C granules) for one case-M direction (g+/g-)
+    on fx3. Returns ``dict(S=<record>, C=<record>)``, matching
+    ``case_fx5_unit_direction``'s shape -- Task 9's aggregation interface.
+    ``functools.lru_cache``'d: no recomputation, no test-order dependence.
+    """
+    raw = _case_m_unit_direction_raw(direction)
+    rec_S = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_S"], raw["D_ed_vhalf_S"],
+        raw["D_pred_nmat_S"], raw["D_pred_2nmat_S"],
+        raw["zero_mask_S"], "fx3/{}/S".format(direction))
+    rec_C = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_C"], raw["D_ed_vhalf_C"],
+        raw["D_pred_nmat_C"], raw["D_pred_2nmat_C"],
+        raw["zero_mask_C"], "fx3/{}/C".format(direction))
+    return {"S": rec_S, "C": rec_C}
+
+
+@functools.lru_cache(maxsize=None)
+def _case_m_pp_channels():
+    """The case-M shared topology's full ``(R,a,b)`` ordered-pair pp
+    channel list (mirrors ``_pp_channels``, Task 7), reusing
+    ``_case_m_topology_and_map``'s bond_set so the pp granules align on the
+    same grid as the ph ones."""
+    bond_set, _channels_ph, _smap = _case_m_topology_and_map()
+    return _ordered_pair_channels(bond_set, fx3().norb)
+
+
+def _dvpp_support_masks_case_m(direction, channels):
+    """ANALYTIC support of ``Q_eta (dVpp_eta) Q_eta`` for one case-M pp unit
+    direction (mirrors ``_dvpp_support_masks``, Task 7). g+/g- both touch
+    the NON-fixed-point pair ``{(-1,0,1),(1,1,0)}`` / ``{(1,0,1),(-1,1,0)}``
+    -- an inter-orbital bond channel is NEVER its own exchange partner
+    (a!=b always here, unlike fx5's on-site same-orbital U), so BOTH pp_s
+    and pp_t get the SAME full 2x2 block (no triplet fixed-point
+    cancellation).
+
+    NOTE the channel pairing here is the MIRROR IMAGE of the raw
+    (pre-reindex) ``bare_bond_vertices`` diagonal touched by each direction
+    (g+'s raw D touches ``(1,0,1)``/``(-1,1,0)``; g-'s touches
+    ``(-1,0,1)``/``(1,1,0)``) -- ``dVpp_matrices``' own orbital-swap
+    reindex permutes ``(R,a,b) -> (R,b,a)`` on BOTH matrix axes before this
+    module ever sees it (Task 7's finding, load-bearing here), which swaps
+    which of the two channels in each pp pair ends up carrying the nonzero
+    diagonal entry in the REINDEXED basis this function's caller compares
+    against. Verified against the actual numeric ``dVpp_matrices`` output
+    below (``TestDvppSupportMasksMatchNumericDvppCaseM``), not guessed --
+    an initial draft assigned the raw (unswapped) pairing here and failed
+    that cross-check by construction, which is what surfaced this note."""
+    channels = list(channels)
+    n = len(channels)
+    index_of = {ch: i for i, ch in enumerate(channels)}
+    raw_channels = {
+        "g+": [(-1, 0, 1), (1, 1, 0)],
+        "g-": [(1, 0, 1), (-1, 1, 0)],
+    }[direction]
+    S_supp = np.zeros((n, n), dtype=bool)
+    T_supp = np.zeros((n, n), dtype=bool)
+    for ch in raw_channels:
+        i = index_of[ch]
+        R, a, b = ch
+        j = index_of[(-R, b, a)]
+        fixed = (i == j)
+        for p in (i, j):
+            for q in (i, j):
+                S_supp[p, q] = True
+                if not fixed:
+                    T_supp[p, q] = True
+    return S_supp, T_supp
+
+
+class TestDvppSupportMasksMatchNumericDvppCaseM(unittest.TestCase):
+    """Cross-checks ``_dvpp_support_masks_case_m`` against the actual
+    numeric ``Q_eta @ dVpp_eta @ Q_eta`` output (mirrors
+    ``TestDvppSupportMasksMatchNumericDvpp``, Task 7's should-fix
+    precedent)."""
+
+    def _check(self, direction):
+        fx = fx3()
+        channels = _case_m_pp_channels()
+        _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+        decls_at, _terms_at = _CASE_M_DIRECTIONS[direction]
+        dVpp_s, dVpp_t = dVpp_matrices(fx, decls_at(fx, 1.0), channels)
+        numeric_S = np.abs(Q_s @ dVpp_s @ Q_s) > 1e-12
+        numeric_T = np.abs(Q_t @ dVpp_t @ Q_t) > 1e-12
+        S_supp, T_supp = _dvpp_support_masks_case_m(direction, channels)
+        self.assertTrue(np.array_equal(numeric_S, S_supp),
+                         "direction={} pp_s support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_S, S_supp))
+        self.assertTrue(np.array_equal(numeric_T, T_supp),
+                         "direction={} pp_t support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_T, T_supp))
+
+    def test_g_plus(self):
+        self._check("g+")
+
+    def test_g_minus(self):
+        self._check("g-")
+
+
+@functools.lru_cache(maxsize=None)
+def _case_m_pp_unit_direction_raw(direction):
+    """Raw pp ED/solver first-order response arrays for one case-M
+    direction, pp_s/pp_t. Mirrors ``_pp_unit_direction_raw`` (Task 7), on
+    fx3. ``dVpp`` is built via Task 7's ``dVpp_matrices`` -- the
+    orbital-swap reindex is LOAD-BEARING here (Task 7's finding), not a raw
+    ``bare_bond_vertices`` call."""
+    fx = fx3()
+    decls_at, terms_at = _CASE_M_DIRECTIONS[direction]
+    channels = _case_m_pp_channels()
+    channels_ed = _to_sector_channels(fx, channels)
+    _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+
+    # -- solver side --------------------------------------------------
+    dVpp_s, dVpp_t = dVpp_matrices(fx, decls_at(fx, 1.0), channels)
+    X0_n = production_pair_bubble(fx, channels, NMAT)
+    X0_2n = production_pair_bubble(fx, channels, 2 * NMAT)
+
+    def _pred(X0, dVpp, Q):
+        D = -0.5 * (X0 @ dVpp @ X0)
+        return Q @ D @ Q
+
+    D_pred_nmat_S = _pred(X0_n, dVpp_s, Q_s)
+    D_pred_2nmat_S = _pred(X0_2n, dVpp_s, Q_s)
+    D_pred_nmat_T = _pred(X0_n, dVpp_t, Q_t)
+    D_pred_2nmat_T = _pred(X0_2n, dVpp_t, Q_t)
+
+    # -- ED side ----------------------------------------------------------
+    @functools.lru_cache(maxsize=None)
+    def _xpp_hf_sub(v):
+        terms = terms_at(fx, v)
+        full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels_ed)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).pair_correlator(channels_ed)
+        return (full - hf_only)[0]   # q=0 slice -- the pp identity has no q
+
+    D_ed_v1 = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1)
+    D_ed_vhalf = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1 / 2)
+    D_ed_v1_S = Q_s @ D_ed_v1 @ Q_s
+    D_ed_vhalf_S = Q_s @ D_ed_vhalf @ Q_s
+    D_ed_v1_T = Q_t @ D_ed_v1 @ Q_t
+    D_ed_vhalf_T = Q_t @ D_ed_vhalf @ Q_t
+
+    # -- structural zero mask ----------------------------------------------
+    S_supp, T_supp = _dvpp_support_masks_case_m(direction, channels)
+    free_support = np.ones_like(S_supp)   # dense fx3 bubble (stated)
+    zero_mask_S = ed_oracle_util.projected_structural_zero_mask(
+        free_support, S_supp)
+    zero_mask_T = ed_oracle_util.projected_structural_zero_mask(
+        free_support, T_supp)
+
+    return dict(
+        D_ed_v1_S=D_ed_v1_S, D_ed_vhalf_S=D_ed_vhalf_S,
+        D_pred_nmat_S=D_pred_nmat_S, D_pred_2nmat_S=D_pred_2nmat_S,
+        D_ed_v1_T=D_ed_v1_T, D_ed_vhalf_T=D_ed_vhalf_T,
+        D_pred_nmat_T=D_pred_nmat_T, D_pred_2nmat_T=D_pred_2nmat_T,
+        zero_mask_S=zero_mask_S, zero_mask_T=zero_mask_T,
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def case_fx3_pp_unit_direction(direction):
+    """pp adjudication (pp_s and pp_t granules) for one case-M direction on
+    fx3. Returns ``dict(pp_s=<record>, pp_t=<record>)``, matching
+    ``case_fx5_pp_unit_direction``'s shape. Case M's g+/g- have no U-anchor
+    precondition (unlike fx5's g1/g2, which required Task 7's ``_u_anchor``)
+    -- the acceptance identity's constants were already anchored by Task 7's
+    fx5 U control; this direction pair only needs the ORBITAL bookkeeping
+    (the reindex) to hold, which is exactly what ``dVpp_matrices`` supplies.
+    """
+    raw = _case_m_pp_unit_direction_raw(direction)
+    rec_s = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_S"], raw["D_ed_vhalf_S"],
+        raw["D_pred_nmat_S"], raw["D_pred_2nmat_S"],
+        raw["zero_mask_S"], "fx3/{}/pp_s".format(direction))
+    rec_t = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_T"], raw["D_ed_vhalf_T"],
+        raw["D_pred_nmat_T"], raw["D_pred_2nmat_T"],
+        raw["zero_mask_T"], "fx3/{}/pp_t".format(direction))
+    return {"pp_s": rec_s, "pp_t": rec_t}
+
+
+# --- joint ray (1,1) = g+ + g-, both ph and pp (brief's superposition check) ---
+
+def _terms_ray_case_m(fx, t):
+    return ed_oracle_util.canonical_density_terms(
+        fx, [(0, 1, 1, t), (0, 1, -1, t)])
+
+
+def _joint_ray_superposition_check_case_m(testcase, directions_alphas,
+                                           terms_at_ray, ray_label):
+    """ph joint-ray superposition check on case M (mirrors
+    ``_joint_ray_superposition_check``, Task 6, generalized off its fx5/
+    ``_bond_topology_and_map``/``case_fx5_unit_direction`` hardcoding).
+    Pure ED-side linearity check: the joint ray's OWN Richardson derivative
+    must equal the weighted sum of the already-measured unit directions'
+    own ``D_ed`` -- NOT a granule, NOT a sensitivity input (Task 6's
+    distinction, carried forward unchanged)."""
+    fx = fx3()
+    _bond_set, channels, smap = _case_m_topology_and_map()
+
+    @functools.lru_cache(maxsize=None)
+    def _chi_hf_sub(t):
+        terms = terms_at_ray(fx, t)
+        full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).bond_correlator(channels)
+        return full - hf_only
+
+    def _mapped(t, sigma, sigmap):
+        chi = _chi_hf_sub(t)
+        return chi[:, sigma, sigmap][:, smap][:, :, smap]
+
+    def X_S_of_t(t):
+        return _mapped(t, 0, 0) - _mapped(t, 0, 1)
+
+    def X_C_of_t(t):
+        return _mapped(t, 0, 0) + _mapped(t, 0, 1)
+
+    for chan_name, X_of_t in (("S", X_S_of_t), ("C", X_C_of_t)):
+        D_joint_v1 = ed_oracle_util.richardson(X_of_t, CAMPAIGN_V1)
+        D_joint_vhalf = ed_oracle_util.richardson(X_of_t, CAMPAIGN_V1 / 2)
+        delta_rich_joint = float(np.max(np.abs(D_joint_v1 - D_joint_vhalf)))
+
+        unit_tols = [case_fx3_unit_direction(d)[chan_name]["tol"]
+                     for d, _alpha in directions_alphas]
+        tol_joint = 10.0 * max(delta_rich_joint, max(unit_tols))
+
+        D_sum = sum(
+            alpha * _case_m_unit_direction_raw(d)["D_ed_vhalf_" + chan_name]
+            for d, alpha in directions_alphas)
+
+        diff = float(np.max(np.abs(D_joint_vhalf - D_sum)))
+        print("joint[{}/{}]: delta_rich_joint={:.6e} tol_joint={:.6e} "
+              "diff={:.6e}".format(ray_label, chan_name, delta_rich_joint,
+                                    tol_joint, diff))
+        with testcase.subTest(ray=ray_label, channel=chan_name):
+            testcase.assertLessEqual(diff, tol_joint)
+
+
+def _pp_joint_ray_superposition_check_case_m(testcase, directions_alphas,
+                                              terms_at_ray, ray_label):
+    """pp joint-ray superposition check, case M -- the FIRST pp joint-ray
+    superposition check in the campaign (Task 6 built only the ph version
+    on fx5; this generalizes the same idea to the pp channel, projected
+    with the SAME (independently built) ``exchange_projector`` Q used by
+    every other pp comparison in this module)."""
+    fx = fx3()
+    channels = _case_m_pp_channels()
+    channels_ed = _to_sector_channels(fx, channels)
+    _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
+
+    @functools.lru_cache(maxsize=None)
+    def _xpp_hf_sub(t):
+        terms = terms_at_ray(fx, t)
+        full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels_ed)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).pair_correlator(channels_ed)
+        return (full - hf_only)[0]
+
+    D_joint_v1 = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1)
+    D_joint_vhalf = ed_oracle_util.richardson(_xpp_hf_sub, CAMPAIGN_V1 / 2)
+
+    for chan_name, Q, raw_key in (("pp_s", Q_s, "D_ed_vhalf_S"),
+                                   ("pp_t", Q_t, "D_ed_vhalf_T")):
+        Dj_v1 = Q @ D_joint_v1 @ Q
+        Dj_vhalf = Q @ D_joint_vhalf @ Q
+        delta_rich_joint = float(np.max(np.abs(Dj_v1 - Dj_vhalf)))
+
+        unit_tols = [case_fx3_pp_unit_direction(d)[chan_name]["tol"]
+                     for d, _alpha in directions_alphas]
+        tol_joint = 10.0 * max(delta_rich_joint, max(unit_tols))
+
+        D_sum = sum(
+            alpha * _case_m_pp_unit_direction_raw(d)[raw_key]
+            for d, alpha in directions_alphas)
+
+        diff = float(np.max(np.abs(Dj_vhalf - D_sum)))
+        print("joint[{}/{}]: delta_rich_joint={:.6e} tol_joint={:.6e} "
+              "diff={:.6e}".format(ray_label, chan_name, delta_rich_joint,
+                                    tol_joint, diff))
+        with testcase.subTest(ray=ray_label, channel=chan_name):
+            testcase.assertLessEqual(diff, tol_joint)
+
+
+class TestCaseM(unittest.TestCase):
+    """Step 1 (#151 Task 8): the campaign's case-M multi-orbital verdict
+    cells -- directions g+ (Delta r=+1, (a,b)=(0,1)) / g- (Delta r=-1,
+    (a,b)=(0,1)) on fx3, ph channels S/C and pp channels s/t (8 granules:
+    (fx3,g+,S), (fx3,g+,C), (fx3,g-,S), (fx3,g-,C), (fx3,g+,pp-s),
+    (fx3,g+,pp-t), (fx3,g-,pp-s), (fx3,g-,pp-t)), plus the joint ray
+    (1,1) = g+ + g- superposition check on BOTH channel families (not
+    granules -- pure ED-side linearity checks, per Task 6's distinction).
+    THE VERDICT MATTERS MORE THAN GREEN (brief): a FAIL or INCONCLUSIVE is
+    kept asserting (a production finding on #82's orbital-pair bookkeeping,
+    the codebase's most recurrent defect class), never adjusted, never
+    loosened; see this task's report for the measured audit tuples.
+
+    Reproducible timing (brief Step 2, informational, NOT CI-enforced):
+        /usr/bin/time -p python -m unittest tests.test_bond_vs_ed_oracle.TestCaseM
+    """
+
+    def _check_ph(self, direction):
+        rec = case_fx3_unit_direction(direction)
+        for channel in ("S", "C"):
+            with self.subTest(direction=direction, channel=channel):
+                r = rec[channel]
+                self.assertIn(
+                    r["status"], ("PASS", "PASS-ZERO"),
+                    "granule {} status={} (delta_rich={:.3e} delta_nmat={:.3e} "
+                    "tol={:.3e} max_signal={:.3e} first_failures={})".format(
+                        r["label"], r["status"], r["delta_rich"],
+                        r["delta_nmat"], r["tol"], r["max_signal"],
+                        r["failures"][:5]))
+
+    def _check_pp(self, direction):
+        rec = case_fx3_pp_unit_direction(direction)
+        for channel in ("pp_s", "pp_t"):
+            with self.subTest(direction=direction, channel=channel):
+                r = rec[channel]
+                self.assertIn(
+                    r["status"], ("PASS", "PASS-ZERO"),
+                    "granule {} status={} (delta_rich={:.3e} delta_nmat={:.3e} "
+                    "tol={:.3e} max_signal={:.3e} first_failures={})".format(
+                        r["label"], r["status"], r["delta_rich"],
+                        r["delta_nmat"], r["tol"], r["max_signal"],
+                        r["failures"][:5]))
+
+    def test_ph_g_plus(self):
+        self._check_ph("g+")
+
+    def test_ph_g_minus(self):
+        self._check_ph("g-")
+
+    def test_pp_g_plus(self):
+        self._check_pp("g+")
+
+    def test_pp_g_minus(self):
+        self._check_pp("g-")
+
+    def test_joint_ray_ph_1_1(self):
+        _joint_ray_superposition_check_case_m(
+            self, [("g+", 1.0), ("g-", 1.0)], _terms_ray_case_m,
+            "caseM-ph-g+g-(1,1)")
+
+    def test_joint_ray_pp_1_1(self):
+        _pp_joint_ray_superposition_check_case_m(
+            self, [("g+", 1.0), ("g-", 1.0)], _terms_ray_case_m,
+            "caseM-pp-g+g-(1,1)")
+
+
 if __name__ == "__main__":
     unittest.main()
