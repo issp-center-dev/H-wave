@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from hwave.solver.bond_channels import resolve_interactions, bare_bond_vertices
+from tests.approx_util import ApproxTestCase
 
 def _nn_square(V=0.25):
     # single orbital, NN bonds ±x,±y on a square lattice
@@ -178,7 +179,7 @@ def _direct_bond_bubble(green, bond_set, T, N):
     return chi_bar
 
 
-class TestResolveInteractionsAndBondBubble(unittest.TestCase):
+class TestResolveInteractionsAndBondBubble(ApproxTestCase):
 
     def test_bond_bubble_matches_direct_sum_tiny_grid(self):
         # 4x4x1 single-orbital tight-binding G; compare FFT bond bubble to
@@ -230,8 +231,8 @@ class TestResolveInteractionsAndBondBubble(unittest.TestCase):
         r = resolve_interactions(ci, np.eye(3), norb=1)
         assert r.n_channels == 3                      # {0,+x,-x} synthesized
         ix = r.delta_r.index((1,0,0)); imx = r.delta_r.index((-1,0,0))
-        np.testing.assert_allclose(r.v_bond[ix][0,0], 0.3, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(r.v_bond[imx][0,0], 0.3, rtol=1e-6, atol=1e-12)  # V_ab(R)=V_ba(-R)* real
+        self.assertApprox(r.v_bond[ix][0,0], 0.3)
+        self.assertApprox(r.v_bond[imx][0,0], 0.3)  # V_ab(R)=V_ba(-R)* real
 
     def test_v0_declared_topology_kept(self):
         ci = {((1,0,0),(0,0)): 0.0, ((0,1,0),(0,0)): 0.0}  # declared, zero-valued
@@ -268,7 +269,7 @@ class TestResolveInteractionsAndBondBubble(unittest.TestCase):
 # model; spec S3.0).
 # ---------------------------------------------------------------------------
 
-class TestOnsiteHermiticityClosure(unittest.TestCase):
+class TestOnsiteHermiticityClosure(ApproxTestCase):
 
     def test_v_onsite_hermitian_closed_when_only_one_orientation_declared(self):
         norb = 2
@@ -276,8 +277,8 @@ class TestOnsiteHermiticityClosure(unittest.TestCase):
         ci = {((0, 0, 0), (0, 1)): v}          # only V_01(0) declared, not V_10(0)
         r = resolve_interactions(ci, np.eye(3), norb=norb)
         assert r.v_onsite.shape == (norb, norb)
-        np.testing.assert_allclose(r.v_onsite[0, 1], v, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(r.v_onsite[1, 0], np.conj(v), rtol=1e-6, atol=1e-12)   # synthesized
+        self.assertApprox(r.v_onsite[0, 1], v)
+        self.assertApprox(r.v_onsite[1, 0], np.conj(v))   # synthesized
 
     def test_v_onsite_inconsistent_orientations_raises(self):
         norb = 2
@@ -291,8 +292,8 @@ class TestOnsiteHermiticityClosure(unittest.TestCase):
         v = 0.4 - 0.05j
         ci = {((0, 0, 0), (0, 1)): v, ((0, 0, 0), (1, 0)): np.conj(v)}
         r = resolve_interactions(ci, np.eye(3), norb=norb)
-        np.testing.assert_allclose(r.v_onsite[0, 1], v, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(r.v_onsite[1, 0], np.conj(v), rtol=1e-6, atol=1e-12)
+        self.assertApprox(r.v_onsite[0, 1], v)
+        self.assertApprox(r.v_onsite[1, 0], np.conj(v))
 
     def test_v_onsite_all_zero_when_undeclared(self):
         norb = 2
@@ -409,7 +410,7 @@ def _build_local_full_two_orbital(U=3.0, Up=1.0, J=0.5, Jp=0.2, PH=0.1, Vbond=0.
     return bond_set, S0, C0, norb, dict(U=U, Up=Up, J=J, Jp=Jp, PH=PH)
 
 
-class TestBareBondVertices(unittest.TestCase):
+class TestBareBondVertices(ApproxTestCase):
 
     def test_bare_matrix_elements_two_orbital(self):
         """Spec 7.4: Fock signs & placement in S_bond/C_bond."""
@@ -418,36 +419,28 @@ class TestBareBondVertices(unittest.TestCase):
 
         q0 = (0, 0, 0)
         # m=0 Fock (ab,ab): +U' in S, -U' in C
-        np.testing.assert_allclose(
-            S_bond[q0][_idx(norb, 0, 0, 1), _idx(norb, 0, 0, 1)], 1.0,
-            rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(
-            C_bond[q0][_idx(norb, 0, 0, 1), _idx(norb, 0, 0, 1)], -1.0,
-            rtol=1e-6, atol=1e-12)
+        self.assertApprox(
+            S_bond[q0][_idx(norb, 0, 0, 1), _idx(norb, 0, 0, 1)], 1.0)
+        self.assertApprox(
+            C_bond[q0][_idx(norb, 0, 0, 1), _idx(norb, 0, 0, 1)], -1.0)
         # m=0 Hartree (aa,bb): 2*V01(q=0) = 3, only in the charge C_bond
-        np.testing.assert_allclose(
-            C_bond[q0][_idx(norb, 0, 0, 0), _idx(norb, 0, 1, 1)], 3.0,
-            rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(
-            S_bond[q0][_idx(norb, 0, 0, 0), _idx(norb, 0, 1, 1)], 0.0,
-            rtol=1e-6, atol=1e-12)
+        self.assertApprox(
+            C_bond[q0][_idx(norb, 0, 0, 0), _idx(norb, 0, 1, 1)], 3.0)
+        self.assertApprox(
+            S_bond[q0][_idx(norb, 0, 0, 0), _idx(norb, 0, 1, 1)], 0.0)
 
         # m != 0 bond-diagonal Fock: +V01(R_m) in S, -V01(R_m) in C, for both
         # +R and -R channels (m=1 is -R, m=2 is +R for this bond_set).
         for m in (1, 2):
-            np.testing.assert_allclose(
-                S_bond[q0][_idx(norb, m, 0, 1), _idx(norb, m, 0, 1)], 0.25,
-                rtol=1e-6, atol=1e-12)
-            np.testing.assert_allclose(
-                C_bond[q0][_idx(norb, m, 0, 1), _idx(norb, m, 0, 1)], -0.25,
-                rtol=1e-6, atol=1e-12)
+            self.assertApprox(
+                S_bond[q0][_idx(norb, m, 0, 1), _idx(norb, m, 0, 1)], 0.25)
+            self.assertApprox(
+                C_bond[q0][_idx(norb, m, 0, 1), _idx(norb, m, 0, 1)], -0.25)
         # no (R,01) <-> (R,10) bare-vertex element (Fock is diagonal in the pair idx)
-        np.testing.assert_allclose(
-            S_bond[q0][_idx(norb, 1, 0, 1), _idx(norb, 1, 1, 0)], 0.0,
-            rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(
-            C_bond[q0][_idx(norb, 1, 0, 1), _idx(norb, 1, 1, 0)], 0.0,
-            rtol=1e-6, atol=1e-12)
+        self.assertApprox(
+            S_bond[q0][_idx(norb, 1, 0, 1), _idx(norb, 1, 1, 0)], 0.0)
+        self.assertApprox(
+            C_bond[q0][_idx(norb, 1, 0, 1), _idx(norb, 1, 1, 0)], 0.0)
 
         # S_bond/C_bond are block-diagonal in the bond index m (m=0 and m!=0 blocks
         # never couple; distinct m!=0 channels never couple).
@@ -482,7 +475,7 @@ class TestBareBondVertices(unittest.TestCase):
         # bond_set.v_bond, so this is not circular with the implementation).
         total_01 = VAB + np.conj(VBA)   # V_01(+R) + V_01(-R)
         total_10 = VBA + np.conj(VAB)   # V_10(+R) + V_10(-R)
-        np.testing.assert_allclose(total_01, np.conj(total_10), rtol=1e-6, atol=1e-12)
+        self.assertApprox(total_01, np.conj(total_10))
         assert abs(total_01 - total_10) > 1e-6   # genuinely asymmetric, not a no-op fixture
 
         # Raw (uncorrected) q=0 Hartree the caller (sc._build_bond_m0_blocks)
@@ -500,18 +493,14 @@ class TestBareBondVertices(unittest.TestCase):
         # +/-V_ab(R_m), NOT +/-V_ba(R_m) -- VAB != VBA makes a transposition
         # visible directly (no cancellation needed).
         m_plus = bond_set.delta_r.index((1, 0, 0))
-        np.testing.assert_allclose(
-            S_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)],
-            VAB, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(
-            S_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)],
-            VBA, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(
-            C_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)],
-            -VAB, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(
-            C_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)],
-            -VBA, rtol=1e-6, atol=1e-12)
+        self.assertApprox(
+            S_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)], VAB)
+        self.assertApprox(
+            S_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)], VBA)
+        self.assertApprox(
+            C_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)], -VAB)
+        self.assertApprox(
+            C_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)], -VBA)
 
         # (2) Hartree subtraction (Case-2 correction): with no other local
         # interaction declared, the fully-corrected local block (read off
@@ -560,19 +549,19 @@ class TestBareBondVertices(unittest.TestCase):
 
         U, Up, J, Jp, PH = p["U"], p["Up"], p["J"], p["Jp"], p["PH"]
         # L^s table
-        np.testing.assert_allclose(L_s[i(0, 0), i(0, 0)], 2 * U, rtol=1e-6, atol=1e-12)                  # aa<-aa
-        np.testing.assert_allclose(L_s[i(0, 1), i(0, 1)], 2 * Up, rtol=1e-6, atol=1e-12)                 # ab<-ab
-        np.testing.assert_allclose(L_s[i(0, 1), i(1, 0)], J, rtol=1e-6, atol=1e-12)                      # ab<-ba
-        np.testing.assert_allclose(L_s[i(0, 0), i(1, 1)], 2 * (Jp + PH), rtol=1e-6, atol=1e-12)          # aa<-bb
+        self.assertApprox(L_s[i(0, 0), i(0, 0)], 2 * U)                  # aa<-aa
+        self.assertApprox(L_s[i(0, 1), i(0, 1)], 2 * Up)                 # ab<-ab
+        self.assertApprox(L_s[i(0, 1), i(1, 0)], J)                      # ab<-ba
+        self.assertApprox(L_s[i(0, 0), i(1, 1)], 2 * (Jp + PH))          # aa<-bb
         # L^t table
-        np.testing.assert_allclose(L_t[i(0, 0), i(0, 0)], 0.0, rtol=1e-6, atol=1e-12)                    # aa<-aa
-        np.testing.assert_allclose(L_t[i(0, 1), i(0, 1)], 2 * (Up - J), rtol=1e-6, atol=1e-12)           # ab<-ab
-        np.testing.assert_allclose(L_t[i(0, 1), i(1, 0)], -2 * Up + J, rtol=1e-6, atol=1e-12)            # ab<-ba
-        np.testing.assert_allclose(L_t[i(0, 0), i(1, 1)], 0.0, rtol=1e-6, atol=1e-12)                    # aa<-bb
+        self.assertApprox(L_t[i(0, 0), i(0, 0)], 0.0)                    # aa<-aa
+        self.assertApprox(L_t[i(0, 1), i(0, 1)], 2 * (Up - J))           # ab<-ab
+        self.assertApprox(L_t[i(0, 1), i(1, 0)], -2 * Up + J)            # ab<-ba
+        self.assertApprox(L_t[i(0, 0), i(1, 1)], 0.0)                    # aa<-bb
 
         # No double counting: the inter-site bond V01(R) does NOT leak into the
         # local (m=0) block -- L^s(01,01) stays exactly 2U' (on-site only).
-        np.testing.assert_allclose(L_s[i(0, 1), i(0, 1)], 2 * Up, rtol=1e-6, atol=1e-12)
+        self.assertApprox(L_s[i(0, 1), i(0, 1)], 2 * Up)
 
         # Parity: build the local pair-reversal P_loc:(cd)->(dc), Q_eta=(I+-P)/2.
         P_loc = np.zeros((nd, nd), dtype=complex)
@@ -1188,7 +1177,7 @@ class TestDressBondConditioningGuard(unittest.TestCase):
 
 # --- the on-site (Delta r = 0) diagonal must be REAL -----------------------
 
-class TestOnsiteDiagonalMustBeReal(unittest.TestCase):
+class TestOnsiteDiagonalMustBeReal(ApproxTestCase):
 
     def test_resolve_interactions_rejects_a_complex_onsite_diagonal(self):
         """Hermiticity requires V_aa(0) = conj(V_aa(0)), i.e. real. Accepting an
@@ -1204,15 +1193,15 @@ class TestOnsiteDiagonalMustBeReal(unittest.TestCase):
         ci = {((0, 0, 0), (0, 0)): 0.5 + 1.0e-14j}
         r = resolve_interactions(ci, np.eye(3), norb=1)
         assert r.v_onsite[0, 0].imag == 0.0
-        np.testing.assert_allclose(r.v_onsite[0, 0].real, 0.5, rtol=1e-6, atol=1e-12)
+        self.assertApprox(r.v_onsite[0, 0].real, 0.5)
 
     def test_resolve_interactions_keeps_a_complex_offdiagonal_onsite(self):
         """Only the DIAGONAL has to be real; V_01(0) = conj(V_10(0)) may be
         genuinely complex and must still be accepted."""
         ci = {((0, 0, 0), (0, 1)): 0.3 + 0.1j}
         r = resolve_interactions(ci, np.eye(3), norb=2)
-        np.testing.assert_allclose(r.v_onsite[0, 1], 0.3 + 0.1j, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(r.v_onsite[1, 0], 0.3 - 0.1j, rtol=1e-6, atol=1e-12)
+        self.assertApprox(r.v_onsite[0, 1], 0.3 + 0.1j)
+        self.assertApprox(r.v_onsite[1, 0], 0.3 - 0.1j)
 
 
 # --- an empty declared CoulombInter ----------------------------------------

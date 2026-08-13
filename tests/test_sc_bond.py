@@ -14,18 +14,17 @@ Covers, per
 Tests must be run from the repository root (fixture paths are relative).
 """
 import logging
-import operator
 import os
 import shutil
 import tempfile
 import unittest
 import zipfile
-from contextlib import contextmanager
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
 import hwave.sc as sc
+from tests.approx_util import ApproxTestCase, _caplog
 
 
 # ---------------------------------------------------------------------------
@@ -123,55 +122,11 @@ def _two_orbital_input(outdir, coulomb_inter, **eli):
     }
 
 
-@contextmanager
-def _caplog(level, logger=None):
-    """Minimal log-capture context manager, ``caplog.at_level``-equivalent.
-
-    Attaches a handler directly to the named logger (root, matching the
-    conventional default, when ``logger`` is None) for the duration of the
-    block and yields the list of captured ``LogRecord``\\ s -- each carrying a
-    populated ``.message`` attribute, same as the records list a log-capture
-    fixture would hand back.
-    """
-    target = logging.getLogger(logger)
-    records = []
-
-    class _Handler(logging.Handler):
-        def emit(self, record):
-            record.message = record.getMessage()
-            records.append(record)
-
-    handler = _Handler()
-    old_level = target.level
-    target.addHandler(handler)
-    target.setLevel(level)
-    try:
-        yield records
-    finally:
-        target.removeHandler(handler)
-        target.setLevel(old_level)
-
-
-class _ApproxTestCase(unittest.TestCase):
-    """Common base adding ``assertApprox``, replicating the exact tolerance
-    semantics of the approximate-equality helper this module used to rely on:
-    when only an absolute tolerance is given (``rel`` omitted), the tolerance
-    is EXACTLY that value -- no relative term is mixed in. Only when ``rel``
-    is given (or neither is given, i.e. the 1e-6 default relative tolerance
-    applies) is the tolerance ``max(rel * |expected|, abs or 1e-12)``. Every
-    test class in this module inherits from it.
-    """
-
-    def assertApprox(self, actual, expected, rel=None, abs=None, msg=None):
-        atol = 1e-12 if abs is None else abs
-        if rel is None and abs is not None:
-            tol = atol
-        else:
-            tol = max((1e-6 if rel is None else rel) * operator.abs(expected), atol)
-        diff = operator.abs(actual - expected)
-        if diff > tol:
-            self.fail(msg or "{!r} != {!r} within tolerance (diff={!r}, "
-                             "tol={!r})".format(actual, expected, diff, tol))
+# ``_caplog`` and the assertApprox-providing base class now live in
+# ``tests.approx_util`` (shared with the other bond/spectral test modules);
+# ``_ApproxTestCase`` is kept as a local alias since every test class in this
+# module still refers to it by that name.
+_ApproxTestCase = ApproxTestCase
 
 
 def _read_outputs(outdir):

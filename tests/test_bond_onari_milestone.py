@@ -92,6 +92,7 @@ import numpy as np
 
 import hwave.sc as sc
 from hwave.solver import bond_channels as bc
+from tests.approx_util import ApproxTestCase, assert_approx
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +230,7 @@ def _check_fixture_metadata(path, L, V):
     """
     data = np.load(path)
     assert int(data["L"]) == L
-    np.testing.assert_allclose(float(data["V"]), V, rtol=1e-6, atol=1e-12)
+    assert_approx(float(data["V"]), V)
     assert float(data["U"]) == U
     assert float(data["T"]) == T
     assert float(data["filling"]) == FILLING
@@ -497,7 +498,7 @@ def _attribution(point, record):
 # tests
 # ===========================================================================
 
-class TestBondOnariMilestone(unittest.TestCase):
+class TestBondOnariMilestone(ApproxTestCase):
 
     def _require_slow_fixtures(self):
         """Skip unless the caller explicitly asked for the slow path.
@@ -565,8 +566,7 @@ class TestBondOnariMilestone(unittest.TestCase):
         lam = [r["lambda"] for r in records]
 
         for V, value in zip(V_GRID, lam):
-            np.testing.assert_allclose(value, LAMBDA_BOND_16[V],
-                                       rtol=LAMBDA_RTOL, atol=0)
+            self.assertApprox(value, LAMBDA_BOND_16[V], rel=LAMBDA_RTOL)
 
         for i in range(1, len(lam)):
             assert lam[i] >= lam[i - 1] - ATOL_MONO, (
@@ -592,8 +592,7 @@ class TestBondOnariMilestone(unittest.TestCase):
 
         for V, rec, at in zip(V_GRID, records, attrs):
             assert at["sum_residual"] < 1e-10
-            np.testing.assert_allclose(at["lambda"], rec["lambda"],
-                                       rtol=1e-8, atol=0)
+            self.assertApprox(at["lambda"], rec["lambda"], rel=1e-8)
             assert at["lambda_pp"] <= 1e-12, (
                 "V={}: lambda^pp = {:.3e} > 0 -- the bare pp vertex must be "
                 "repulsive in the triplet channel".format(V, at["lambda_pp"]))
@@ -671,7 +670,7 @@ class TestBondOnariMilestone(unittest.TestCase):
         # rel=1e-4 (review fix: too brittle for a diagnostic) to rel=1e-2, still
         # tight enough to catch a real regression (the qualitative checks below
         # already cover "still f-like, still growing").
-        np.testing.assert_allclose(f_content[-1], 1.361154, rtol=1e-2, atol=0)
+        self.assertApprox(f_content[-1], 1.361154, rel=1e-2)
         assert f_content[-1] > 2.0 * f_content[0]
         assert max(p_content) < 0.01
 
@@ -713,15 +712,14 @@ class TestBondOnariMilestone(unittest.TestCase):
         lam_base = [r["lambda"] for r in base_rec]
 
         for V, value in zip(V_GRID, lam_base):
-            np.testing.assert_allclose(value, LAMBDA_BASE_16[V],
-                                       rtol=LAMBDA_RTOL, atol=0)
+            self.assertApprox(value, LAMBDA_BASE_16[V], rel=LAMBDA_RTOL)
 
         # the recorded (non-flat) spread of the scalar path. A DIAGNOSTIC pin (the
         # per-V lam_base values above are already pinned individually at the
         # tight LAMBDA_RTOL); loosened from rel=1e-3 (review fix: too brittle for
         # a diagnostic derived quantity) to rel=1e-2.
         spread = max(abs(x - lam_base[0]) for x in lam_base) / lam_base[0]
-        np.testing.assert_allclose(spread, 1.2628, rtol=1e-2, atol=0)
+        self.assertApprox(spread, 1.2628, rel=1e-2)
 
         gap = [b - s for b, s in zip(lam_bond, lam_base)]
         np.testing.assert_allclose(gap[0], 0.0, rtol=0, atol=1e-12)
@@ -751,8 +749,7 @@ class TestBondOnariMilestone(unittest.TestCase):
         points32, rec32 = _sweep(32, V_GRID_32, "bond")
         lam32 = [r["lambda"] for r in rec32]
         for V, value in zip(V_GRID_32, lam32):
-            np.testing.assert_allclose(value, LAMBDA_BOND_32[V],
-                                       rtol=LAMBDA_RTOL, atol=0)
+            self.assertApprox(value, LAMBDA_BOND_32[V], rel=LAMBDA_RTOL)
 
         for i in range(1, len(lam32)):
             assert lam32[i] >= lam32[i - 1] - ATOL_MONO
@@ -772,8 +769,7 @@ class TestBondOnariMilestone(unittest.TestCase):
         _, base32 = _sweep(32, V_GRID_32, "base")
         lam_base32 = [r["lambda"] for r in base32]
         for V, value in zip(V_GRID_32, lam_base32):
-            np.testing.assert_allclose(value, LAMBDA_BASE_32[V],
-                                       rtol=LAMBDA_RTOL, atol=0)
+            self.assertApprox(value, LAMBDA_BASE_32[V], rel=LAMBDA_RTOL)
         np.testing.assert_allclose(lam32[0], lam_base32[0], rtol=0, atol=1e-12)
         assert lam32[-1] - lam_base32[-1] >= 0.15
 
@@ -841,7 +837,7 @@ def _write_model_inputs(dirname, V):
     mod._write_inputs(dirname, V)
 
 
-class TestMilestoneThroughTomlEntryPoint(unittest.TestCase):
+class TestMilestoneThroughTomlEntryPoint(ApproxTestCase):
 
     def setUp(self):
         self.tmp_path = tempfile.mkdtemp()
@@ -894,9 +890,8 @@ class TestMilestoneThroughTomlEntryPoint(unittest.TestCase):
 
         # the leading (odd-parity, f-like) eigenvalue of the file == the milestone
         lam_file = rows[0][0]
-        np.testing.assert_allclose(lam_file, LAMBDA_BOND_16[V], rtol=1e-6, atol=0)
-        np.testing.assert_allclose(float(vals["lambda_rayleigh"]),
-                                   LAMBDA_BOND_16[V], rtol=1e-6, atol=0)
+        self.assertApprox(lam_file, LAMBDA_BOND_16[V], rel=1e-6)
+        self.assertApprox(float(vals["lambda_rayleigh"]), LAMBDA_BOND_16[V], rel=1e-6)
 
         # ... and the provenance says WHICH green produced it
         assert vals["bond_green"].endswith("green_L16_V1.20.npz")

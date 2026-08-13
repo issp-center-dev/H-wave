@@ -4,13 +4,12 @@ found. Plain which='LM' returns the large negatives and mis-reports the
 leading lambda; spectral_shift asks ARPACK for the largest-REAL eigenvalue
 (which='LR') on the right-half-plane-shifted operator A + sigma*I, recovering
 the physical SC eigenvalue even for complex (non-Hermitian) spectra."""
-import contextlib
-import logging
 import unittest
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 import hwave.sc as sc
+from tests.approx_util import _caplog
 
 
 def _make_operator_for(diag):
@@ -24,34 +23,8 @@ def _make_operator_for(diag):
     return make_operator, d.size
 
 
-@contextlib.contextmanager
-def _caplog(level, logger=None):
-    """Minimal log-capture context manager, ``caplog.at_level``-equivalent.
-
-    Attaches a handler directly to the named logger (root, matching the
-    conventional default, when ``logger`` is None) for the duration of the
-    block and yields the list of captured ``LogRecord``\\ s -- each carrying a
-    populated ``.message`` attribute, same as the records list a log-capture
-    fixture would hand back.
-    """
-    target = logging.getLogger(logger)
-    records = []
-
-    class _Handler(logging.Handler):
-        def emit(self, record):
-            record.message = record.getMessage()
-            records.append(record)
-
-    handler = _Handler()
-    old_level = target.level
-    target.addHandler(handler)
-    target.setLevel(level)
-    try:
-        yield records
-    finally:
-        target.removeHandler(handler)
-        target.setLevel(old_level)
-
+# ``_caplog`` now lives in ``tests.approx_util`` (shared with the other
+# bond/spectral test modules).
 
 # small positive leading (+0.05) hidden under larger negatives (down to -0.5)
 SPECTRUM = [-0.5, -0.4, -0.3, -0.2, 0.05, 0.03]
