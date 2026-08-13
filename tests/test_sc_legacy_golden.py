@@ -22,9 +22,10 @@ Tests must be run from the repository root (fixture paths are relative).
 import importlib.util
 import os
 import shutil
+import tempfile
+import unittest
 
 import numpy as np
-import pytest
 
 import hwave.sc as sc
 
@@ -71,101 +72,116 @@ def _assert_gap_matches_golden(got):
         rtol=0.0, atol=1.0e-12)
 
 
-# ---------------------------------------------------------------------------
-# the byte-for-byte claim against real pre-branch output
-# ---------------------------------------------------------------------------
+class TestByteForByteAgainstPreBranchOutput(unittest.TestCase):
+    """The byte-for-byte claim against real pre-branch output."""
 
-def test_default_run_matches_712b1a0_with_tail_disabled(tmp_path):
-    """The explicit pre-tail mode reproduces the 712b1a0 physical result."""
-    got = _run_legacy(str(tmp_path / "run"))
-    assert got["eigenvalue.dat"] == _golden("eigenvalue.dat")
-    _assert_gap_matches_golden(got["gap.dat"])
+    def setUp(self):
+        self.tmp_path = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
 
+    def test_default_run_matches_712b1a0_with_tail_disabled(self):
+        """The explicit pre-tail mode reproduces the 712b1a0 physical result."""
+        got = _run_legacy(os.path.join(self.tmp_path, "run"))
+        self.assertEqual(got["eigenvalue.dat"], _golden("eigenvalue.dat"))
+        _assert_gap_matches_golden(got["gap.dat"])
 
-def test_bond_channels_false_matches_712b1a0_with_tail_disabled(tmp_path):
-    """Disabling bond channels also reproduces the pre-tail physical result."""
-    got = _run_legacy(str(tmp_path / "run"), bond_channels=False)
-    assert got["eigenvalue.dat"] == _golden("eigenvalue.dat")
-    _assert_gap_matches_golden(got["gap.dat"])
+    def test_bond_channels_false_matches_712b1a0_with_tail_disabled(self):
+        """Disabling bond channels also reproduces the pre-tail physical result."""
+        got = _run_legacy(os.path.join(self.tmp_path, "run"),
+                          bond_channels=False)
+        self.assertEqual(got["eigenvalue.dat"], _golden("eigenvalue.dat"))
+        _assert_gap_matches_golden(got["gap.dat"])
 
-
-def test_legacy_eigenvalue_dat_carries_no_comment_beyond_the_header():
-    """Pins WHAT the golden is, so a future regeneration cannot quietly
-    launder new comment lines into the baseline."""
-    text = _golden("eigenvalue.dat").decode()
-    comments = [l for l in text.splitlines() if l.startswith("#")]
-    assert comments == ["# Iteration eigenvalue"]
-
-
-# ---------------------------------------------------------------------------
-# the informative note must still appear when it carries information
-# ---------------------------------------------------------------------------
-
-def test_spectral_shift_run_does_emit_the_note(tmp_path):
-    """The note is suppressed only when it says nothing; an explicit
-    ``spectral_shift`` changes the MEANING of the number, so it must be
-    labelled."""
-    got = _run_legacy(str(tmp_path / "run"), spectral_shift="auto")
-    text = got["eigenvalue.dat"].decode()
-    assert "spectral_shift" in text
-    assert got["eigenvalue.dat"] != _golden("eigenvalue.dat")
+    def test_legacy_eigenvalue_dat_carries_no_comment_beyond_the_header(self):
+        """Pins WHAT the golden is, so a future regeneration cannot quietly
+        launder new comment lines into the baseline."""
+        text = _golden("eigenvalue.dat").decode()
+        comments = [l for l in text.splitlines() if l.startswith("#")]
+        self.assertEqual(comments, ["# Iteration eigenvalue"])
 
 
-# ---------------------------------------------------------------------------
-# _calc_g2 moved to bond_channels._g2_from_green -- prove it did not change
-# ---------------------------------------------------------------------------
+class TestInformativeNoteStillAppears(unittest.TestCase):
+    """The informative note must still appear when it carries information."""
 
-def _calc_g2_pre_branch(green_kw, beta):
-    """Verbatim copy of ``sc._calc_g2`` as of commit 712b1a0."""
-    norb = green_kw.shape[0]
-    Nx, Ny, Nz, nmat = (green_kw.shape[2], green_kw.shape[3],
-                        green_kw.shape[4], green_kw.shape[5])
-    nvol = Nx * Ny * Nz
+    def setUp(self):
+        self.tmp_path = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
 
-    green_kw_inv = np.roll(
-        green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
-        (1, 1, 1), (2, 3, 4)
-    )
-    A = green_kw.reshape(norb * norb, nvol, nmat)
-    B = green_kw_inv.reshape(norb * norb, nvol, nmat)
-    As = np.moveaxis(A, 1, 0)
-    Bs = np.moveaxis(B, 1, 0)
-    G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)
-    G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
-    return G2 / beta
+    def test_spectral_shift_run_does_emit_the_note(self):
+        """The note is suppressed only when it says nothing; an explicit
+        ``spectral_shift`` changes the MEANING of the number, so it must be
+        labelled."""
+        got = _run_legacy(os.path.join(self.tmp_path, "run"),
+                          spectral_shift="auto")
+        text = got["eigenvalue.dat"].decode()
+        self.assertIn("spectral_shift", text)
+        self.assertNotEqual(got["eigenvalue.dat"], _golden("eigenvalue.dat"))
 
 
-@pytest.mark.parametrize("shape", [(1, 1, 4, 4, 1, 16), (2, 2, 3, 2, 2, 8)])
-def test_calc_g2_is_bit_identical_to_the_pre_branch_implementation(shape):
-    """``sc._calc_g2`` now delegates to
-    ``bond_channels._g2_from_green``; the result must be bit-for-bit what the
-    pre-branch inline implementation produced."""
-    rng = np.random.default_rng(11)
-    green = (rng.normal(size=shape) + 1j * rng.normal(size=shape))
-    beta = 3.7
-    got = sc._calc_g2(green, beta, tail=False)
-    ref = _calc_g2_pre_branch(green, beta)
-    assert got.dtype == ref.dtype
-    assert got.shape == ref.shape
-    assert np.array_equal(got, ref)
+class TestCalcG2MovedToBondChannels(unittest.TestCase):
+    """_calc_g2 moved to bond_channels._g2_from_green -- prove it did not
+    change."""
+
+    @staticmethod
+    def _calc_g2_pre_branch(green_kw, beta):
+        """Verbatim copy of ``sc._calc_g2`` as of commit 712b1a0."""
+        norb = green_kw.shape[0]
+        Nx, Ny, Nz, nmat = (green_kw.shape[2], green_kw.shape[3],
+                            green_kw.shape[4], green_kw.shape[5])
+        nvol = Nx * Ny * Nz
+
+        green_kw_inv = np.roll(
+            green_kw[:, :, ::-1, ::-1, ::-1, ::-1],
+            (1, 1, 1), (2, 3, 4)
+        )
+        A = green_kw.reshape(norb * norb, nvol, nmat)
+        B = green_kw_inv.reshape(norb * norb, nvol, nmat)
+        As = np.moveaxis(A, 1, 0)
+        Bs = np.moveaxis(B, 1, 0)
+        G2 = np.moveaxis(As @ Bs.transpose(0, 2, 1), 0, 2)
+        G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
+        return G2 / beta
+
+    def test_calc_g2_is_bit_identical_to_the_pre_branch_implementation(self):
+        """``sc._calc_g2`` now delegates to
+        ``bond_channels._g2_from_green``; the result must be bit-for-bit what
+        the pre-branch inline implementation produced."""
+        for shape in [(1, 1, 4, 4, 1, 16), (2, 2, 3, 2, 2, 8)]:
+            with self.subTest(shape=shape):
+                rng = np.random.default_rng(11)
+                green = (rng.normal(size=shape) + 1j * rng.normal(size=shape))
+                beta = 3.7
+                got = sc._calc_g2(green, beta, tail=False)
+                ref = self._calc_g2_pre_branch(green, beta)
+                self.assertEqual(got.dtype, ref.dtype)
+                self.assertEqual(got.shape, ref.shape)
+                self.assertTrue(np.array_equal(got, ref))
 
 
-# ---------------------------------------------------------------------------
-# a shifted run must say in the FILE whether its number is an eigenvalue
-# ---------------------------------------------------------------------------
+class TestShiftedRunLabelsEigenvalueFile(unittest.TestCase):
+    """A shifted run must say in the FILE whether its number is an
+    eigenvalue."""
 
-def test_unvalidated_shifted_run_is_labelled_in_eigenvalue_dat(tmp_path):
-    """Too few iterations to validate anything: eigenvalue.dat must say the
-    number is a shifted iterate-norm estimate, NOT an eigenvalue of K."""
-    got = _run_legacy(str(tmp_path / "run"), spectral_shift=1.0, max_iter=2)
-    text = got["eigenvalue.dat"].decode()
-    assert "NOT an eigenvalue" in text
-    assert "SHIFTED ITERATE-NORM ESTIMATE" in text
+    def setUp(self):
+        self.tmp_path = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
+
+    def test_unvalidated_shifted_run_is_labelled_in_eigenvalue_dat(self):
+        """Too few iterations to validate anything: eigenvalue.dat must say the
+        number is a shifted iterate-norm estimate, NOT an eigenvalue of K."""
+        got = _run_legacy(os.path.join(self.tmp_path, "run"),
+                          spectral_shift=1.0, max_iter=2)
+        text = got["eigenvalue.dat"].decode()
+        self.assertIn("NOT an eigenvalue", text)
+        self.assertIn("SHIFTED ITERATE-NORM ESTIMATE", text)
+
+    def test_validated_shifted_run_is_labelled_as_a_signed_eigenvalue(self):
+        got = _run_legacy(os.path.join(self.tmp_path, "run"),
+                          spectral_shift="auto", max_iter=2000)
+        text = got["eigenvalue.dat"].decode()
+        self.assertIn("SIGNED eigenvalue", text)
+        self.assertIn("VALIDATED", text)
 
 
-def test_validated_shifted_run_is_labelled_as_a_signed_eigenvalue(tmp_path):
-    got = _run_legacy(str(tmp_path / "run"), spectral_shift="auto",
-                      max_iter=2000)
-    text = got["eigenvalue.dat"].decode()
-    assert "SIGNED eigenvalue" in text
-    assert "VALIDATED" in text
+if __name__ == "__main__":
+    unittest.main()

@@ -26,13 +26,11 @@ content-hash-verified below, so the default CI run never runs FLEX.
 one test (``test_grid_convergence_16_to_32``); the repository keeps no other
 tracked file above ~150 KB, so committing them would be a precedent change in
 permanent history for a single grid-convergence check.  That test is therefore
-marked ``slow``, **skipped by default**, and regenerates the L = 32 greens on
-demand via ``tests/sc/onari_bond/generate_fixtures.py``.  To run it::
+skipped by default and regenerates the L = 32 greens on demand via
+``tests/sc/onari_bond/generate_fixtures.py``.  To run it::
 
-    HWAVE_RUN_SLOW_FIXTURES=1 pytest tests/test_bond_onari_milestone.py \
-        -k grid_convergence
-    # or select the marker (pytest.ini registers it):
-    pytest -m slow tests/test_bond_onari_milestone.py
+    HWAVE_RUN_SLOW_FIXTURES=1 python -m unittest \
+        tests.test_bond_onari_milestone.TestBondOnariMilestone.test_grid_convergence_16_to_32
 
 The regenerated files land in ``tests/sc/onari_bond/_regenerated/`` (override
 with ``HWAVE_ONARI_L32_DIR``); the directory is git-ignored and reused, so the
@@ -86,9 +84,11 @@ Measured outcome (see the stored reference tables below)
 """
 import hashlib
 import os
+import shutil
+import tempfile
+import unittest
 
 import numpy as np
-import pytest
 
 import hwave.sc as sc
 from hwave.solver import bond_channels as bc
@@ -120,8 +120,7 @@ FIXTURE_SHA256 = {
 # Where the uncommitted L=32 greens are regenerated to / cached.
 L32_CACHE_DIR = os.environ.get(
     "HWAVE_ONARI_L32_DIR", os.path.join(FIXTURE_DIR, "_regenerated"))
-# Env-var opt-in for the slow regeneration (the marker `-m slow` also enables
-# it; see _require_slow_fixtures).
+# Env-var opt-in for the slow regeneration (see _require_slow_fixtures below).
 _SLOW_ENV = "HWAVE_RUN_SLOW_FIXTURES"
 
 U = 4.0
@@ -144,7 +143,7 @@ DEG_TOL = 1.0e-3            # degenerate-cluster tolerance
 # Recorded at 13 SIGNIFICANT DIGITS, straight from ``_sweep(L, grid, arm)`` --
 # i.e. from the same exact dense ``_odd_spectrum`` eigh the assertions below
 # call, on the committed L=16 greens and on regenerated L=32 greens
-# (``HWAVE_RUN_SLOW_FIXTURES=1 pytest tests/test_bond_onari_milestone.py``).
+# (``HWAVE_RUN_SLOW_FIXTURES=1`` run of ``tests/test_bond_onari_milestone.py``).
 #
 # Why 13 digits and not the 7 decimals these tables used to carry: the old
 # values were transcribed from the ARPACK-windowed spectrum this test used
@@ -208,26 +207,6 @@ def _generator_module():
     return mod
 
 
-def _require_slow_fixtures(request):
-    """Skip unless the caller explicitly asked for the slow path.
-
-    Enabled either by ``HWAVE_RUN_SLOW_FIXTURES=1`` or by selecting the marker
-    (``pytest -m slow``). Everything else -- including a plain ``pytest`` and
-    an explicit ``-m "not slow"`` -- skips.
-    """
-    if os.environ.get(_SLOW_ENV, "").lower() not in ("", "0", "false", "no"):
-        return
-    markexpr = str(request.config.getoption("markexpr", default="") or "")
-    tokens = markexpr.replace("(", " ").replace(")", " ").split()
-    if "slow" in tokens and "not" not in tokens:
-        return
-    pytest.skip(
-        "L=32 grid-convergence test is skipped by default: its ~3.9 MB FLEX "
-        "green fixtures are deliberately NOT committed and must be "
-        "regenerated (minutes of FLEX). Run it with {}=1 or with "
-        "`pytest -m slow`; see the module docstring.".format(_SLOW_ENV))
-
-
 def _ensure_l32_fixtures():
     """Regenerate whichever L=32 greens are missing from the cache dir."""
     missing = [(32, V) for V in V_GRID_32
@@ -250,7 +229,7 @@ def _check_fixture_metadata(path, L, V):
     """
     data = np.load(path)
     assert int(data["L"]) == L
-    assert float(data["V"]) == pytest.approx(V)
+    np.testing.assert_allclose(float(data["V"]), V, rtol=1e-6, atol=1e-12)
     assert float(data["U"]) == U
     assert float(data["T"]) == T
     assert float(data["filling"]) == FILLING
@@ -518,322 +497,332 @@ def _attribution(point, record):
 # tests
 # ===========================================================================
 
-def test_fixtures_are_intact_and_carry_the_documented_setup():
-    """Every committed green.npz matches its recorded hash and metadata, and
-    satisfies the (k,w) -> (-k,-w) symmetry the v1 Hermitian path needs.
+class TestBondOnariMilestone(unittest.TestCase):
 
-    Spec S7.7 "convergence status" / "Reproducibility record": the fixture
-    must also carry a tight symmetrization residual, a non-empty provenance
-    string, and (I-1) an explicit converged-FLEX flag.  The
-    ``scf_converged``/``scf_iterations`` requirement is UNCONDITIONAL -- the
-    pinned lambda values rest entirely on these greens, so a fixture that
-    merely *might* be converged proves nothing (FLEX with linear mixing can
-    even report false convergence near the CDW, which is why the generator
-    hardcodes Anderson mixing).  All six committed fixtures were regenerated
-    with ``generate_fixtures.py`` and carry the flag; the regenerated data
-    agreed with the previously committed bytes to 1.7e-11 relative, so every
-    pinned number below is unchanged.
+    def _require_slow_fixtures(self):
+        """Skip unless the caller explicitly asked for the slow path.
 
-    Only the COMMITTED (L=16) set is covered here; the regenerated L=32 set has
-    no committed bytes to hash, and ``_load_green`` runs the same metadata
-    checks on it via ``_check_fixture_metadata``.
-    """
-    assert {L for L, _ in FIXTURE_SHA256} == {16}, (
-        "only the L=16 fixtures are committed; an L=32 hash entry means the "
-        "3.9 MB set was re-added to git (see the module docstring)")
-    for (L, V), digest in FIXTURE_SHA256.items():
-        path = _fixture_path(L, V)
-        assert os.path.exists(path), path
-        assert _sha256(path) == digest, path
-        _check_fixture_metadata(path, L, V)
+        Enabled by ``HWAVE_RUN_SLOW_FIXTURES=1``. Everything else -- including
+        a plain default run -- skips.
+        """
+        if os.environ.get(_SLOW_ENV, "").lower() not in ("", "0", "false", "no"):
+            return
+        self.skipTest(
+            "L=32 grid-convergence test is skipped by default: its ~3.9 MB "
+            "FLEX green fixtures are deliberately NOT committed and must be "
+            "regenerated (minutes of FLEX). Run it with {}=1; see the module "
+            "docstring.".format(_SLOW_ENV))
 
+    def test_fixtures_are_intact_and_carry_the_documented_setup(self):
+        """Every committed green.npz matches its recorded hash and metadata, and
+        satisfies the (k,w) -> (-k,-w) symmetry the v1 Hermitian path needs.
 
-@pytest.mark.parametrize("V", V_GRID)
-def test_off_instability_guard_at_every_V(V):
-    """Spec S7.7: ``min_q sigma_min`` (and its ratio to ``sigma_max``) of the
-    ACTUAL solve matrices ``I - chi_bar S`` and ``I + chi_bar C`` must stay
-    above the floor at EVERY V point -- a point that fails FAILS the run, it is
-    not dropped from the metrics."""
-    cond = _bond_point(16, V)["conditioning"]
-    for channel in ("spin", "charge"):
-        assert cond[channel]["ratio"] > SIGMA_FLOOR, (
-            "V={} {} channel: min_q sigma_min/sigma_max = {:.3e} <= {} -- the "
-            "V grid entered the unstable region".format(
-                V, channel, cond[channel]["ratio"], SIGMA_FLOOR))
-        assert cond[channel]["sigma_min"] > SIGMA_FLOOR
+        Spec S7.7 "convergence status" / "Reproducibility record": the fixture
+        must also carry a tight symmetrization residual, a non-empty provenance
+        string, and (I-1) an explicit converged-FLEX flag.  The
+        ``scf_converged``/``scf_iterations`` requirement is UNCONDITIONAL -- the
+        pinned lambda values rest entirely on these greens, so a fixture that
+        merely *might* be converged proves nothing (FLEX with linear mixing can
+        even report false convergence near the CDW, which is why the generator
+        hardcodes Anderson mixing).  All six committed fixtures were regenerated
+        with ``generate_fixtures.py`` and carry the flag; the regenerated data
+        agreed with the previously committed bytes to 1.7e-11 relative, so every
+        pinned number below is unchanged.
 
+        Only the COMMITTED (L=16) set is covered here; the regenerated L=32 set has
+        no committed bytes to hash, and ``_load_green`` runs the same metadata
+        checks on it via ``_check_fixture_metadata``.
+        """
+        assert {L for L, _ in FIXTURE_SHA256} == {16}, (
+            "only the L=16 fixtures are committed; an L=32 hash entry means the "
+            "3.9 MB set was re-added to git (see the module docstring)")
+        for (L, V), digest in FIXTURE_SHA256.items():
+            path = _fixture_path(L, V)
+            assert os.path.exists(path), path
+            assert _sha256(path) == digest, path
+            _check_fixture_metadata(path, L, V)
 
-def test_tracked_f_triplet_lambda_rises_with_V():
-    """THE MILESTONE (spec S7.7 acceptance): the tracked f-like triplet
-    eigenvalue is monotone non-decreasing in V and rises by well over
-    ``Delta lambda_min`` across the grid."""
-    points, records = _sweep(16, V_GRID, "bond")
-    lam = [r["lambda"] for r in records]
+    def test_off_instability_guard_at_every_V(self):
+        """Spec S7.7: ``min_q sigma_min`` (and its ratio to ``sigma_max``) of the
+        ACTUAL solve matrices ``I - chi_bar S`` and ``I + chi_bar C`` must stay
+        above the floor at EVERY V point -- a point that fails FAILS the run, it is
+        not dropped from the metrics."""
+        for V in V_GRID:
+            with self.subTest(V=V):
+                cond = _bond_point(16, V)["conditioning"]
+                for channel in ("spin", "charge"):
+                    assert cond[channel]["ratio"] > SIGMA_FLOOR, (
+                        "V={} {} channel: min_q sigma_min/sigma_max = {:.3e} <= "
+                        "{} -- the V grid entered the unstable region".format(
+                            V, channel, cond[channel]["ratio"], SIGMA_FLOOR))
+                    assert cond[channel]["sigma_min"] > SIGMA_FLOOR
 
-    for V, value in zip(V_GRID, lam):
-        assert value == pytest.approx(LAMBDA_BOND_16[V], rel=LAMBDA_RTOL)
+    def test_tracked_f_triplet_lambda_rises_with_V(self):
+        """THE MILESTONE (spec S7.7 acceptance): the tracked f-like triplet
+        eigenvalue is monotone non-decreasing in V and rises by well over
+        ``Delta lambda_min`` across the grid."""
+        points, records = _sweep(16, V_GRID, "bond")
+        lam = [r["lambda"] for r in records]
 
-    for i in range(1, len(lam)):
-        assert lam[i] >= lam[i - 1] - ATOL_MONO, (
-            "lambda_t is not monotone at V={}: {} -> {}".format(
-                V_GRID[i], lam[i - 1], lam[i]))
+        for V, value in zip(V_GRID, lam):
+            np.testing.assert_allclose(value, LAMBDA_BOND_16[V],
+                                       rtol=LAMBDA_RTOL, atol=0)
 
-    assert lam[-1] - lam[0] >= DELTA_LAMBDA_MIN
-    assert lam[0] > 0.02                      # positive baseline
-    assert lam[-1] / lam[0] >= RATIO_MIN
+        for i in range(1, len(lam)):
+            assert lam[i] >= lam[i - 1] - ATOL_MONO, (
+                "lambda_t is not monotone at V={}: {} -> {}".format(
+                    V_GRID[i], lam[i - 1], lam[i]))
 
-    # every point is a genuinely tracked, doubly degenerate odd (E) doublet
-    for rec in records:
-        assert rec["dim"] == 2
-    for rec in records[1:]:
-        assert rec["overlap"] >= 0.9
+        assert lam[-1] - lam[0] >= DELTA_LAMBDA_MIN
+        assert lam[0] > 0.02                      # positive baseline
+        assert lam[-1] / lam[0] >= RATIO_MIN
 
+        # every point is a genuinely tracked, doubly degenerate odd (E) doublet
+        for rec in records:
+            assert rec["dim"] == 2
+        for rec in records[1:]:
+            assert rec["overlap"] >= 0.9
 
-def test_the_rise_lives_in_the_fluctuation_part():
-    """Spec S4.5/S7.10b: ``lambda = lambda^pp + lambda^fl`` exactly, the bare
-    (reversal-complete) particle-particle vertex is REPULSIVE
-    (``lambda^pp <= 0``), and the whole V-rise is carried by ``lambda^fl``."""
-    points, records = _sweep(16, V_GRID, "bond")
-    attrs = [_attribution(p, r) for p, r in zip(points, records)]
+    def test_the_rise_lives_in_the_fluctuation_part(self):
+        """Spec S4.5/S7.10b: ``lambda = lambda^pp + lambda^fl`` exactly, the bare
+        (reversal-complete) particle-particle vertex is REPULSIVE
+        (``lambda^pp <= 0``), and the whole V-rise is carried by ``lambda^fl``."""
+        points, records = _sweep(16, V_GRID, "bond")
+        attrs = [_attribution(p, r) for p, r in zip(points, records)]
 
-    for V, rec, at in zip(V_GRID, records, attrs):
-        assert at["sum_residual"] < 1e-10
-        assert at["lambda"] == pytest.approx(rec["lambda"], rel=1e-8)
-        assert at["lambda_pp"] <= 1e-12, (
-            "V={}: lambda^pp = {:.3e} > 0 -- the bare pp vertex must be "
-            "repulsive in the triplet channel".format(V, at["lambda_pp"]))
-        assert abs(at["imag"]) < 1e-8 * max(1.0, abs(at["lambda"]))
+        for V, rec, at in zip(V_GRID, records, attrs):
+            assert at["sum_residual"] < 1e-10
+            np.testing.assert_allclose(at["lambda"], rec["lambda"],
+                                       rtol=1e-8, atol=0)
+            assert at["lambda_pp"] <= 1e-12, (
+                "V={}: lambda^pp = {:.3e} > 0 -- the bare pp vertex must be "
+                "repulsive in the triplet channel".format(V, at["lambda_pp"]))
+            assert abs(at["imag"]) < 1e-8 * max(1.0, abs(at["lambda"]))
 
-    fl = [a["lambda_fl"] for a in attrs]
-    assert fl[-1] - fl[0] >= DELTA_LAMBDA_MIN
-    for i in range(1, len(fl)):
-        assert fl[i] >= fl[i - 1] - ATOL_MONO
+        fl = [a["lambda_fl"] for a in attrs]
+        assert fl[-1] - fl[0] >= DELTA_LAMBDA_MIN
+        for i in range(1, len(fl)):
+            assert fl[i] >= fl[i - 1] - ATOL_MONO
 
+    def test_charge_fluctuations_carry_most_of_the_rise(self):
+        """Onari's mechanism: the fluctuation kernel splits EXACTLY into its spin
+        and charge halves, and it is the CHARGE (bond) fluctuations that grow with
+        V and dominate the rise."""
+        kx, ky, kz = _kgrid(16)
+        _, records = _sweep(16, V_GRID, "bond")
+        spin_part, charge_part = [], []
+        for V, rec in zip(V_GRID, records):
+            it = _interactions(V)
+            inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
+            bond_set = bc.resolve_interactions(it["CoulombInter"], np.eye(3), 1)
+            green = _load_green(16, V)
+            chi_bar = bc.bond_bubble(green, bond_set, BETA)
+            S0, C0 = sc._build_bond_m0_blocks(bond_set, it, inter_k, 1,
+                                              kx, ky, kz)
+            S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0, C0, 1)
+            chi_s, chi_c = bc.dress_bond(chi_bar, S_b, C_b)
+            zero = np.zeros_like(chi_s)
+            args = (S_b, C_b, Vpp_s, Vpp_t, green, bond_set, "triplet", BETA)
+            _, fl_all, _, _ = bc.make_bond_kernel_parts(chi_s, chi_c, *args)
+            _, fl_spin, _, _ = bc.make_bond_kernel_parts(chi_s, zero, *args)
+            _, fl_chg, _, _ = bc.make_bond_kernel_parts(zero, chi_c, *args)
+            _, fl_none, _, _ = bc.make_bond_kernel_parts(zero, zero, *args)
 
-def test_charge_fluctuations_carry_most_of_the_rise():
-    """Onari's mechanism: the fluctuation kernel splits EXACTLY into its spin
-    and charge halves, and it is the CHARGE (bond) fluctuations that grow with
-    V and dominate the rise."""
-    kx, ky, kz = _kgrid(16)
-    _, records = _sweep(16, V_GRID, "bond")
-    spin_part, charge_part = [], []
-    for V, rec in zip(V_GRID, records):
-        it = _interactions(V)
-        inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
-        bond_set = bc.resolve_interactions(it["CoulombInter"], np.eye(3), 1)
-        green = _load_green(16, V)
-        chi_bar = bc.bond_bubble(green, bond_set, BETA)
-        S0, C0 = sc._build_bond_m0_blocks(bond_set, it, inter_k, 1,
-                                          kx, ky, kz)
-        S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0, C0, 1)
-        chi_s, chi_c = bc.dress_bond(chi_bar, S_b, C_b)
-        zero = np.zeros_like(chi_s)
-        args = (S_b, C_b, Vpp_s, Vpp_t, green, bond_set, "triplet", BETA)
-        _, fl_all, _, _ = bc.make_bond_kernel_parts(chi_s, chi_c, *args)
-        _, fl_spin, _, _ = bc.make_bond_kernel_parts(chi_s, zero, *args)
-        _, fl_chg, _, _ = bc.make_bond_kernel_parts(zero, chi_c, *args)
-        _, fl_none, _, _ = bc.make_bond_kernel_parts(zero, zero, *args)
+            point = _bond_point(16, V)
+            lead = rec["cluster"][int(np.argmax(np.real(rec["eigenvalues"])))]
+            v, W = point["vecs"][lead], point["weight"]
 
-        point = _bond_point(16, V)
-        lead = rec["cluster"][int(np.argmax(np.real(rec["eigenvalues"])))]
-        v, W = point["vecs"][lead], point["weight"]
+            def rq(op):
+                return bc.attribute_lambda(v, W, op, op, op_full=op)["lambda"]
 
-        def rq(op):
-            return bc.attribute_lambda(v, W, op, op, op_full=op)["lambda"]
+            base = rq(fl_none)
+            np.testing.assert_allclose(base, 0.0, rtol=0, atol=1e-12)  # no chi => no fl
+            s, c, tot = rq(fl_spin) - base, rq(fl_chg) - base, rq(fl_all)
+            np.testing.assert_allclose(s + c + base, tot, rtol=0, atol=1e-10)
+            spin_part.append(s)
+            charge_part.append(c)
 
-        base = rq(fl_none)
-        assert base == pytest.approx(0.0, abs=1e-12)     # no chi => no fl
-        s, c, tot = rq(fl_spin) - base, rq(fl_chg) - base, rq(fl_all)
-        assert s + c + base == pytest.approx(tot, abs=1e-10)
-        spin_part.append(s)
-        charge_part.append(c)
+        # the charge channel is what switches on with V
+        assert charge_part[-1] - charge_part[0] >= DELTA_LAMBDA_MIN
+        assert charge_part[-1] > 10.0 * charge_part[0]
+        assert (charge_part[-1] - charge_part[0]) > (spin_part[-1] - spin_part[0])
 
-    # the charge channel is what switches on with V
-    assert charge_part[-1] - charge_part[0] >= DELTA_LAMBDA_MIN
-    assert charge_part[-1] > 10.0 * charge_part[0]
-    assert (charge_part[-1] - charge_part[0]) > (spin_part[-1] - spin_part[0])
+    def test_tracked_state_is_f_like_and_not_p_like(self):
+        """Spec S7.7: report/assert the harmonic decomposition of the TRACKED
+        subspace on the odd basis.  No point-group separation is claimed -- p- and
+        f-like harmonics span the same odd 2D rep -- but the tracked state must be
+        overwhelmingly f-like, and its f content must GROW with V."""
+        _, records = _sweep(16, V_GRID, "bond")
+        f_content, p_content = [], []
+        for rec in records:
+            h = rec["harmonics"]
+            f = h["f_x"] + h["f_y"]
+            p = h["p_x"] + h["p_y"]
+            assert 0.0 <= f <= rec["dim"] + 1e-8
+            f_content.append(f)
+            p_content.append(p)
+        # the absolute f-capture at V_max (measured 1.36115, growing from 0.42395
+        # at V=0): a real pin, unlike "f > 10*max(p, 1e-12)" which the p floor
+        # made pass with a ~4000x margin regardless of the actual f value. This is
+        # a DIAGNOSTIC pin (not the headline lambda claim, which stays at
+        # LAMBDA_RTOL = 1e-5 above), on a quantity derived from eigenvector
+        # overlaps in a near-degenerate subspace -- far more sensitive to a
+        # BLAS/numpy/ARPACK version bump than a bare eigenvalue. Loosened from
+        # rel=1e-4 (review fix: too brittle for a diagnostic) to rel=1e-2, still
+        # tight enough to catch a real regression (the qualitative checks below
+        # already cover "still f-like, still growing").
+        np.testing.assert_allclose(f_content[-1], 1.361154, rtol=1e-2, atol=0)
+        assert f_content[-1] > 2.0 * f_content[0]
+        assert max(p_content) < 0.01
 
+    def test_anchor_cluster_is_the_most_f_like_one(self):
+        """The V=0 anchor (spec S7.7 (v)) is unambiguous: among ALL near-degenerate
+        clusters the tracked one has by far the largest f-seed overlap."""
+        kx, ky, kz = _kgrid(16)
+        seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()[np.newaxis, :]
+        point = _bond_point(16, 0.0)
+        clusters = bc.cluster_eigenvalues(point["evals"], deg_tol=DEG_TOL)
+        scores = [bc.subspace_similarity(point["vecs"][c], seed,
+                                         point["weight"])[0] for c in clusters]
+        assert np.argmax(scores) == 0                  # the LEADING cluster
+        assert scores[0] > 4.0 * max(scores[1:])
 
-def test_tracked_state_is_f_like_and_not_p_like():
-    """Spec S7.7: report/assert the harmonic decomposition of the TRACKED
-    subspace on the odd basis.  No point-group separation is claimed -- p- and
-    f-like harmonics span the same odd 2D rep -- but the tracked state must be
-    overwhelmingly f-like, and its f content must GROW with V."""
-    _, records = _sweep(16, V_GRID, "bond")
-    f_content, p_content = [], []
-    for rec in records:
-        h = rec["harmonics"]
-        f = h["f_x"] + h["f_y"]
-        p = h["p_x"] + h["p_y"]
-        assert 0.0 <= f <= rec["dim"] + 1e-8
-        f_content.append(f)
-        p_content.append(p)
-    # the absolute f-capture at V_max (measured 1.36115, growing from 0.42395
-    # at V=0): a real pin, unlike "f > 10*max(p, 1e-12)" which the p floor
-    # made pass with a ~4000x margin regardless of the actual f value. This is
-    # a DIAGNOSTIC pin (not the headline lambda claim, which stays at
-    # LAMBDA_RTOL = 1e-5 above), on a quantity derived from eigenvector
-    # overlaps in a near-degenerate subspace -- far more sensitive to a
-    # BLAS/numpy/ARPACK version bump than a bare eigenvalue. Loosened from
-    # rel=1e-4 (review fix: too brittle for a diagnostic) to rel=1e-2, still
-    # tight enough to catch a real regression (the qualitative checks below
-    # already cover "still f-like, still growing").
-    assert f_content[-1] == pytest.approx(1.361154, rel=1e-2)
-    assert f_content[-1] > 2.0 * f_content[0]
-    assert max(p_content) < 0.01
+    def test_bond_path_reduces_to_the_scalar_path_at_V_zero(self):
+        """Spec S7.4: at V=0 (topology declared, values zero -> B=5) the bond
+        kernel and the collapsed-bond scalar kernel give the same lambda."""
+        _, bond_rec = _sweep(16, V_GRID, "bond")
+        _, base_rec = _sweep(16, V_GRID, "base")
+        np.testing.assert_allclose(bond_rec[0]["lambda"], base_rec[0]["lambda"],
+                                   rtol=0, atol=1e-12)
 
+    def test_scalar_baseline_is_a_stored_observation_not_flat(self):
+        """Spec S7.7 baseline arm -- the 2-index ``_compute_vertices_simple``
+        (collapsed-bond) path on the SAME greens.
 
-def test_anchor_cluster_is_the_most_f_like_one():
-    """The V=0 anchor (spec S7.7 (v)) is unambiguous: among ALL near-degenerate
-    clusters the tracked one has by far the largest f-seed overlap."""
-    kx, ky, kz = _kgrid(16)
-    seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()[np.newaxis, :]
-    point = _bond_point(16, 0.0)
-    clusters = bc.cluster_eigenvalues(point["evals"], deg_tol=DEG_TOL)
-    scores = [bc.subspace_similarity(point["vecs"][c], seed,
-                                     point["weight"])[0] for c in clusters]
-    assert np.argmax(scores) == 0                  # the LEADING cluster
-    assert scores[0] > 4.0 * max(scores[1:])
+        S7.7 anticipated a flat (<= 5 %) scalar baseline.  That expectation does
+        NOT hold for the STATIC path at these parameters: the retained Delta r = 0
+        density channel still carries -1/2 Wc chi_c Wc, and chi_c grows toward the
+        CDW, so the baseline spread is ~126 %.  Per S7.7 this comparison is "a
+        stored baselined observation, not an invariant", so the observed numbers
+        are PINNED here (a regression guard) and the discriminating statement --
+        bond above scalar at every V > 0, with a monotonically growing gap -- is
+        what is asserted."""
+        _, bond_rec = _sweep(16, V_GRID, "bond")
+        _, base_rec = _sweep(16, V_GRID, "base")
+        lam_bond = [r["lambda"] for r in bond_rec]
+        lam_base = [r["lambda"] for r in base_rec]
 
+        for V, value in zip(V_GRID, lam_base):
+            np.testing.assert_allclose(value, LAMBDA_BASE_16[V],
+                                       rtol=LAMBDA_RTOL, atol=0)
 
-def test_bond_path_reduces_to_the_scalar_path_at_V_zero():
-    """Spec S7.4: at V=0 (topology declared, values zero -> B=5) the bond
-    kernel and the collapsed-bond scalar kernel give the same lambda."""
-    _, bond_rec = _sweep(16, V_GRID, "bond")
-    _, base_rec = _sweep(16, V_GRID, "base")
-    assert bond_rec[0]["lambda"] == pytest.approx(base_rec[0]["lambda"],
-                                                  abs=1e-12)
+        # the recorded (non-flat) spread of the scalar path. A DIAGNOSTIC pin (the
+        # per-V lam_base values above are already pinned individually at the
+        # tight LAMBDA_RTOL); loosened from rel=1e-3 (review fix: too brittle for
+        # a diagnostic derived quantity) to rel=1e-2.
+        spread = max(abs(x - lam_base[0]) for x in lam_base) / lam_base[0]
+        np.testing.assert_allclose(spread, 1.2628, rtol=1e-2, atol=0)
 
+        gap = [b - s for b, s in zip(lam_bond, lam_base)]
+        np.testing.assert_allclose(gap[0], 0.0, rtol=0, atol=1e-12)
+        for i in range(1, len(gap)):
+            assert gap[i] > 0.0
+            assert gap[i] >= gap[i - 1] - ATOL_MONO
+        # measured gap[-1] = 0.1506; 0.10 leaves a defensible margin below the
+        # exact value pinned by the rel=1e-5 lambda approxes above, rather than
+        # the previous 0.15 threshold that was only a 0.4% margin from failing.
+        assert gap[-1] >= 0.10
 
-def test_scalar_baseline_is_a_stored_observation_not_flat():
-    """Spec S7.7 baseline arm -- the 2-index ``_compute_vertices_simple``
-    (collapsed-bond) path on the SAME greens.
+    def test_grid_convergence_16_to_32(self):
+        """Spec S7.7: the 16x16 trend must be REPRODUCED on 32x32 -- same rising,
+        monotone, f-like doublet, and the same qualitative bond-vs-scalar contrast.
+        A discrepant trend is a failure, not a pass.
 
-    S7.7 anticipated a flat (<= 5 %) scalar baseline.  That expectation does
-    NOT hold for the STATIC path at these parameters: the retained Delta r = 0
-    density channel still carries -1/2 Wc chi_c Wc, and chi_c grows toward the
-    CDW, so the baseline spread is ~126 %.  Per S7.7 this comparison is "a
-    stored baselined observation, not an invariant", so the observed numbers
-    are PINNED here (a regression guard) and the discriminating statement --
-    bond above scalar at every V > 0, with a monotonically growing gap -- is
-    what is asserted."""
-    _, bond_rec = _sweep(16, V_GRID, "bond")
-    _, base_rec = _sweep(16, V_GRID, "base")
-    lam_bond = [r["lambda"] for r in bond_rec]
-    lam_base = [r["lambda"] for r in base_rec]
+        SKIPPED BY DEFAULT.  The L=32 greens are the only fixtures this repository
+        would have to commit above ~150 KB (3.9 MB for this one test), so they are
+        regenerated on demand instead -- run with ``HWAVE_RUN_SLOW_FIXTURES=1``
+        (module docstring has the details).  The stored ``LAMBDA_*_32`` tables
+        are asserted at the unchanged ``LAMBDA_RTOL``, so the physics claim is
+        exactly the one it always was; only the *bytes* of the green are no
+        longer pinned.
+        """
+        self._require_slow_fixtures()
+        _ensure_l32_fixtures()
+        points32, rec32 = _sweep(32, V_GRID_32, "bond")
+        lam32 = [r["lambda"] for r in rec32]
+        for V, value in zip(V_GRID_32, lam32):
+            np.testing.assert_allclose(value, LAMBDA_BOND_32[V],
+                                       rtol=LAMBDA_RTOL, atol=0)
 
-    for V, value in zip(V_GRID, lam_base):
-        assert value == pytest.approx(LAMBDA_BASE_16[V], rel=LAMBDA_RTOL)
+        for i in range(1, len(lam32)):
+            assert lam32[i] >= lam32[i - 1] - ATOL_MONO
+        assert lam32[-1] - lam32[0] >= DELTA_LAMBDA_MIN
+        assert lam32[-1] / lam32[0] >= RATIO_MIN
 
-    # the recorded (non-flat) spread of the scalar path. A DIAGNOSTIC pin (the
-    # per-V lam_base values above are already pinned individually at the
-    # tight LAMBDA_RTOL); loosened from rel=1e-3 (review fix: too brittle for
-    # a diagnostic derived quantity) to rel=1e-2.
-    spread = max(abs(x - lam_base[0]) for x in lam_base) / lam_base[0]
-    assert spread == pytest.approx(1.2628, rel=1e-2)
+        for point, rec in zip(points32, rec32):
+            assert rec["dim"] == 2
+            h = rec["harmonics"]
+            assert h["f_x"] + h["f_y"] > 10.0 * (h["p_x"] + h["p_y"])
+            assert point["conditioning"]["spin"]["ratio"] > SIGMA_FLOOR
+            assert point["conditioning"]["charge"]["ratio"] > SIGMA_FLOOR
+            at = _attribution(point, rec)
+            assert at["lambda_pp"] <= 1e-12
 
-    gap = [b - s for b, s in zip(lam_bond, lam_base)]
-    assert gap[0] == pytest.approx(0.0, abs=1e-12)
-    for i in range(1, len(gap)):
-        assert gap[i] > 0.0
-        assert gap[i] >= gap[i - 1] - ATOL_MONO
-    # measured gap[-1] = 0.1506; 0.10 leaves a defensible margin below the
-    # exact value pinned by the rel=1e-5 lambda approxes above, rather than
-    # the previous 0.15 threshold that was only a 0.4% margin from failing.
-    assert gap[-1] >= 0.10
+        # same contrast against the collapsed-bond scalar path
+        _, base32 = _sweep(32, V_GRID_32, "base")
+        lam_base32 = [r["lambda"] for r in base32]
+        for V, value in zip(V_GRID_32, lam_base32):
+            np.testing.assert_allclose(value, LAMBDA_BASE_32[V],
+                                       rtol=LAMBDA_RTOL, atol=0)
+        np.testing.assert_allclose(lam32[0], lam_base32[0], rtol=0, atol=1e-12)
+        assert lam32[-1] - lam_base32[-1] >= 0.15
 
+        # the two grids agree on the size of the effect to better than 20 %
+        _, rec16 = _sweep(16, V_GRID, "bond")
+        d16 = rec16[-1]["lambda"] - rec16[0]["lambda"]
+        d32 = lam32[-1] - lam32[0]
+        assert abs(d32 - d16) / d16 < 0.2
 
-@pytest.mark.slow
-def test_grid_convergence_16_to_32(request):
-    """Spec S7.7: the 16x16 trend must be REPRODUCED on 32x32 -- same rising,
-    monotone, f-like doublet, and the same qualitative bond-vs-scalar contrast.
-    A discrepant trend is a failure, not a pass.
+    def test_small_V_continuity_across_the_B1_to_B5_topology_change(self):
+        """Spec S7.7: the ``B = 1 -> B = 5`` topology change introduces no
+        discontinuity -- V=0 with no CoulombInter declared (B=1) reproduces V=0
+        with a declared-but-zero NN topology (B=5) exactly, and V=0.05 (B=5) is
+        continuously close to it."""
+        p_b1 = _bond_point(16, 0.0, declare_inter=False)
+        p_b5 = _bond_point(16, 0.0, declare_inter=True)
+        p_005 = _bond_point(16, 0.05, declare_inter=True)
+        assert p_b1["n_channels"] == 1
+        assert p_b5["n_channels"] == 5
+        assert p_005["n_channels"] == 5
+        assert p_b1["provenance"].get("collapsed_to_pure_hubbard") is True
 
-    SKIPPED BY DEFAULT.  The L=32 greens are the only fixtures this repository
-    would have to commit above ~150 KB (3.9 MB for this one test), so they are
-    regenerated on demand instead -- run with ``HWAVE_RUN_SLOW_FIXTURES=1`` or
-    ``pytest -m slow`` (module docstring has the details).  The stored
-    ``LAMBDA_*_32`` tables are asserted at the unchanged ``LAMBDA_RTOL``, so
-    the physics claim is exactly the one it always was; only the *bytes* of the
-    green are no longer pinned.
-    """
-    _require_slow_fixtures(request)
-    _ensure_l32_fixtures()
-    points32, rec32 = _sweep(32, V_GRID_32, "bond")
-    lam32 = [r["lambda"] for r in rec32]
-    for V, value in zip(V_GRID_32, lam32):
-        assert value == pytest.approx(LAMBDA_BOND_32[V], rel=LAMBDA_RTOL)
+        kx, ky, kz = _kgrid(16)
+        seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()
+        basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+        records = bc.track_subspace(
+            [(p["evals"], p["vecs"]) for p in (p_b1, p_b5, p_005)],
+            seed=seed, weight=p_b1["weight"], basis=basis, deg_tol=DEG_TOL,
+            capture_tol=0.2)
+        lam_b1, lam_b5, lam_005 = [r["lambda"] for r in records]
 
-    for i in range(1, len(lam32)):
-        assert lam32[i] >= lam32[i - 1] - ATOL_MONO
-    assert lam32[-1] - lam32[0] >= DELTA_LAMBDA_MIN
-    assert lam32[-1] / lam32[0] >= RATIO_MIN
+        np.testing.assert_allclose(lam_b1, lam_b5, rtol=0, atol=1e-12)
+        # No jump at the topology change: the V = 0.05 response must not exceed the
+        # linear extrapolation of the first (smooth, B=5) grid step,
+        # (0.05/0.4) * [lambda(0.4) - lambda(0)] = 2.76e-3. Measured: 2.45e-3, i.e.
+        # slightly SUB-linear -- the branch is continuous and smooth through
+        # B = 1 -> B = 5.
+        step = (0.05 / 0.4) * (LAMBDA_BOND_16[0.4] - LAMBDA_BOND_16[0.0])
+        assert 0.0 < lam_005 - lam_b5 < step
+        assert records[2]["overlap"] > 0.9
 
-    for point, rec in zip(points32, rec32):
-        assert rec["dim"] == 2
-        h = rec["harmonics"]
-        assert h["f_x"] + h["f_y"] > 10.0 * (h["p_x"] + h["p_y"])
-        assert point["conditioning"]["spin"]["ratio"] > SIGMA_FLOOR
-        assert point["conditioning"]["charge"]["ratio"] > SIGMA_FLOOR
-        at = _attribution(point, rec)
-        assert at["lambda_pp"] <= 1e-12
-
-    # same contrast against the collapsed-bond scalar path
-    _, base32 = _sweep(32, V_GRID_32, "base")
-    lam_base32 = [r["lambda"] for r in base32]
-    for V, value in zip(V_GRID_32, lam_base32):
-        assert value == pytest.approx(LAMBDA_BASE_32[V], rel=LAMBDA_RTOL)
-    assert lam32[0] == pytest.approx(lam_base32[0], abs=1e-12)
-    assert lam32[-1] - lam_base32[-1] >= 0.15
-
-    # the two grids agree on the size of the effect to better than 20 %
-    _, rec16 = _sweep(16, V_GRID, "bond")
-    d16 = rec16[-1]["lambda"] - rec16[0]["lambda"]
-    d32 = lam32[-1] - lam32[0]
-    assert abs(d32 - d16) / d16 < 0.2
-
-
-def test_small_V_continuity_across_the_B1_to_B5_topology_change():
-    """Spec S7.7: the ``B = 1 -> B = 5`` topology change introduces no
-    discontinuity -- V=0 with no CoulombInter declared (B=1) reproduces V=0
-    with a declared-but-zero NN topology (B=5) exactly, and V=0.05 (B=5) is
-    continuously close to it."""
-    p_b1 = _bond_point(16, 0.0, declare_inter=False)
-    p_b5 = _bond_point(16, 0.0, declare_inter=True)
-    p_005 = _bond_point(16, 0.05, declare_inter=True)
-    assert p_b1["n_channels"] == 1
-    assert p_b5["n_channels"] == 5
-    assert p_005["n_channels"] == 5
-    assert p_b1["provenance"].get("collapsed_to_pure_hubbard") is True
-
-    kx, ky, kz = _kgrid(16)
-    seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()
-    basis = sc._odd_harmonic_basis(1, kx, ky, kz)
-    records = bc.track_subspace(
-        [(p["evals"], p["vecs"]) for p in (p_b1, p_b5, p_005)],
-        seed=seed, weight=p_b1["weight"], basis=basis, deg_tol=DEG_TOL,
-        capture_tol=0.2)
-    lam_b1, lam_b5, lam_005 = [r["lambda"] for r in records]
-
-    assert lam_b1 == pytest.approx(lam_b5, abs=1e-12)
-    # No jump at the topology change: the V = 0.05 response must not exceed the
-    # linear extrapolation of the first (smooth, B=5) grid step,
-    # (0.05/0.4) * [lambda(0.4) - lambda(0)] = 2.76e-3. Measured: 2.45e-3, i.e.
-    # slightly SUB-linear -- the branch is continuous and smooth through
-    # B = 1 -> B = 5.
-    step = (0.05 / 0.4) * (LAMBDA_BOND_16[0.4] - LAMBDA_BOND_16[0.0])
-    assert 0.0 < lam_005 - lam_b5 < step
-    assert records[2]["overlap"] > 0.9
-
-
-def test_runtime_preconditions_hold_at_every_V():
-    """The v1 Hermitian-path preconditions (spec S4.5) are satisfied by every
-    acceptance point -- the reported lambda really is a real eigenvalue."""
-    for V in V_GRID:
-        diag = _bond_point(16, V)["diagnostics"]
-        assert diag["weight_min_eigenvalue"] > 0.0
-        assert diag["weight_hermiticity_residual"] < 1e-10
-        assert diag["kernel_hermiticity_relative"] < 1e-8
+    def test_runtime_preconditions_hold_at_every_V(self):
+        """The v1 Hermitian-path preconditions (spec S4.5) are satisfied by every
+        acceptance point -- the reported lambda really is a real eigenvalue."""
+        for V in V_GRID:
+            diag = _bond_point(16, V)["diagnostics"]
+            assert diag["weight_min_eigenvalue"] > 0.0
+            assert diag["weight_hermiticity_residual"] < 1e-10
+            assert diag["kernel_hermiticity_relative"] < 1e-8
 
 
 # ---------------------------------------------------------------------------
@@ -852,58 +841,68 @@ def _write_model_inputs(dirname, V):
     mod._write_inputs(dirname, V)
 
 
-def test_milestone_lambda_is_reproducible_from_the_toml_entry_point(tmp_path):
-    """Spec Goal ("fed by an externally supplied Green function"):
-    ``calc_eliashberg`` with ``[eliashberg] bond_channels = true`` and
-    ``bond_green = <FLEX green.npz>`` reproduces the milestone ``lambda_t``
-    that ``_build_bond_operator`` gives when called directly with the same
-    green -- i.e. the acceptance number is reachable from a TOML input, not
-    only from Python.
-    """
-    L, V = 16, 1.2
-    indir = str(tmp_path / "input")
-    outdir = str(tmp_path / "output")
-    _write_model_inputs(indir, V)
+class TestMilestoneThroughTomlEntryPoint(unittest.TestCase):
 
-    input_dict = {
-        "mode": {"param": {"T": T, "CellShape": [L, L, 1],
-                           "SubShape": [1, 1, 1], "Nmat": NMAT,
-                           "filling": FILLING}},
-        "file": {"input": {"interaction": {
-                     "path_to_input": indir,
-                     "Geometry": "geom.dat",
-                     "Transfer": "transfer.dat",
-                     "CoulombIntra": "coulombintra.dat",
-                     "CoulombInter": "coulombinter.dat"}},
-                 "output": {"path_to_output": outdir}},
-        "eliashberg": {"chi0q_mode": "calc",
-                       "bond_channels": True,
-                       "g2_tail": False,
-                       "bond_green": os.path.abspath(_fixture_path(L, V)),
-                       "pairing_type": "triplet",
-                       "init_gap": "f_x",
-                       "solver_mode": "eigenvalue",
-                       "num_eigenvalues": 6},
-    }
-    sc.calc_eliashberg(input_dict)
+    def setUp(self):
+        self.tmp_path = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
 
-    vals, rows = {}, []
-    with open(os.path.join(outdir, "eigenvalue.dat")) as fh:
-        for line in fh:
-            if line.startswith("#"):
-                if "=" in line:
-                    k, _, v = line.lstrip("# ").partition("=")
-                    vals[k.strip()] = v.strip()
-                continue
-            rows.append([float(x) for x in line.split()])
+    def test_milestone_lambda_is_reproducible_from_the_toml_entry_point(self):
+        """Spec Goal ("fed by an externally supplied Green function"):
+        ``calc_eliashberg`` with ``[eliashberg] bond_channels = true`` and
+        ``bond_green = <FLEX green.npz>`` reproduces the milestone ``lambda_t``
+        that ``_build_bond_operator`` gives when called directly with the same
+        green -- i.e. the acceptance number is reachable from a TOML input, not
+        only from Python.
+        """
+        L, V = 16, 1.2
+        indir = os.path.join(self.tmp_path, "input")
+        outdir = os.path.join(self.tmp_path, "output")
+        _write_model_inputs(indir, V)
 
-    # the leading (odd-parity, f-like) eigenvalue of the file == the milestone
-    lam_file = rows[0][0]
-    assert lam_file == pytest.approx(LAMBDA_BOND_16[V], rel=1e-6)
-    assert float(vals["lambda_rayleigh"]) == pytest.approx(
-        LAMBDA_BOND_16[V], rel=1e-6)
+        input_dict = {
+            "mode": {"param": {"T": T, "CellShape": [L, L, 1],
+                               "SubShape": [1, 1, 1], "Nmat": NMAT,
+                               "filling": FILLING}},
+            "file": {"input": {"interaction": {
+                         "path_to_input": indir,
+                         "Geometry": "geom.dat",
+                         "Transfer": "transfer.dat",
+                         "CoulombIntra": "coulombintra.dat",
+                         "CoulombInter": "coulombinter.dat"}},
+                     "output": {"path_to_output": outdir}},
+            "eliashberg": {"chi0q_mode": "calc",
+                           "bond_channels": True,
+                           "g2_tail": False,
+                           "bond_green": os.path.abspath(_fixture_path(L, V)),
+                           "pairing_type": "triplet",
+                           "init_gap": "f_x",
+                           "solver_mode": "eigenvalue",
+                           "num_eigenvalues": 6},
+        }
+        sc.calc_eliashberg(input_dict)
 
-    # ... and the provenance says WHICH green produced it
-    assert vals["bond_green"].endswith("green_L16_V1.20.npz")
-    assert "external" in vals["approximation"].lower()
-    assert "bare" not in vals["approximation"].lower()
+        vals, rows = {}, []
+        with open(os.path.join(outdir, "eigenvalue.dat")) as fh:
+            for line in fh:
+                if line.startswith("#"):
+                    if "=" in line:
+                        k, _, v = line.lstrip("# ").partition("=")
+                        vals[k.strip()] = v.strip()
+                    continue
+                rows.append([float(x) for x in line.split()])
+
+        # the leading (odd-parity, f-like) eigenvalue of the file == the milestone
+        lam_file = rows[0][0]
+        np.testing.assert_allclose(lam_file, LAMBDA_BOND_16[V], rtol=1e-6, atol=0)
+        np.testing.assert_allclose(float(vals["lambda_rayleigh"]),
+                                   LAMBDA_BOND_16[V], rtol=1e-6, atol=0)
+
+        # ... and the provenance says WHICH green produced it
+        assert vals["bond_green"].endswith("green_L16_V1.20.npz")
+        assert "external" in vals["approximation"].lower()
+        assert "bare" not in vals["approximation"].lower()
+
+
+if __name__ == "__main__":
+    unittest.main()
