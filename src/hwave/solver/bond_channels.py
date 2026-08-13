@@ -492,7 +492,14 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
         interactions. The ``m!=0`` block is ``Q_eta (D_off + D_off^dag) Q_eta``
         (``= D_off (1 +- P)`` for real inversion-symmetric bonds), with
         ``D_off`` diagonal ``V_ab(Delta r_m)`` (``m!=0`` only) and
-        ``P:(m,ab)->(m_bar,ba)`` the reversal+orbital-swap involution.
+        ``P:(m,ab)->(m_bar,ba)`` the reversal+orbital-swap involution. Since
+        ``D_off`` is diagonal, ``D_off + D_off^dag`` already reduces
+        elementwise to ``2*Re(D_off)`` before the ``Q_eta`` projection below
+        -- the SAME Hermitization the ph sector's ``m!=0`` diagonal applies
+        explicitly above -- so this pp block is Hermitization-invariant BY
+        CONSTRUCTION and is intentionally left untouched by the Finding 1 fix
+        (do not also apply ``.real`` to ``D_off`` -- it is already redundant
+        and would not change ``Dh``'s value).
     """
     norb = int(norb)
     nd = norb * norb
@@ -574,9 +581,11 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
     # Before this fix, S_bond/C_bond took vb[l1, l2] RAW (no Hermitization):
     # V_01(+1)=V+i*eps and V_10(-1)=V-i*eps live at DIFFERENT slots and were
     # never combined the way the ED oracle's canonical_density_terms combines
-    # them, so S_bond leaked the null direction at magnitude eps and C_bond
-    # (whose sign-flipped copy of this same Fock effect is HALF its total
-    # response) at 2*eps combined with the sc.py Hartree fix below.
+    # them, so S_bond leaked the null direction at magnitude eps. C_bond
+    # picked up this SAME Fock effect (HALF its total response) PLUS a
+    # separate eps response of equal magnitude from the sc.py Hartree BUG,
+    # fixed below (sc._build_bond_m0_blocks summed the raw, un-Hermitized
+    # per-shell value into V_ab(q) before this fix).
     #
     # Re(vb[l1, l2]) is bit-identical to vb[l1, l2] whenever the stored value
     # is already real (every direction adjudicated by this campaign, and

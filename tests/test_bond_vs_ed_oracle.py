@@ -306,6 +306,101 @@ class TestNullDirectionSolverSide(ApproxTestCase):
                     getattr(pert, name), getattr(base, name), rel=0, abs=1e-15)
 
 
+class TestBondM0BlockHermitizationDirect(ApproxTestCase):
+    """Direct regression pins on ``sc._build_bond_m0_blocks`` itself (#151
+    Finding 1 fix, review round 2). ``TestNullDirectionSolverSide`` above
+    (and every other caller of ``bare_bond_vertices`` in this module) only
+    exercises the Finding 1 fix's ``sc.py`` site INDIRECTLY, through a
+    hand-built ``C0_q`` (``_resolve_fx3``) that separately replicates the
+    fixed convention -- it never calls ``_build_bond_m0_blocks`` itself with
+    a null-direction or asymmetric-orbital-order declaration. Every OTHER
+    test in the suite that DOES call ``_build_bond_m0_blocks`` directly
+    (``_bare_vertices_at`` and friends) only ever declares REAL couplings,
+    which is exactly the no-op territory the Finding 1 fix's derivation
+    guarantees -- so a mutation deleting ``sc.py``'s ``.real`` at the ``V_q``
+    accumulation would pass the entire test suite silently. That is the
+    identical silent-desync failure mode the fix's own report documented one
+    review cycle earlier for the TEST harness's hand-rolled ``C0_q``
+    (finding1-fix-report.md, "Fix iteration"). These two tests close that
+    gap by calling ``_build_bond_m0_blocks`` directly.
+    """
+
+    def test_closed_pair_eps_invariant_on_a_multi_q_grid(self):
+        """(a) The null-direction closed pair ``V_01(+1)=V1+i*eps``,
+        ``V_10(-1)=V1-i*eps`` must leave ``_build_bond_m0_blocks``' own
+        ``S0_q``/``C0_q`` output eps-invariant at EVERY q on a multi-point
+        grid, not just the single ``q=0`` point ``_resolve_fx3`` exercises
+        indirectly.
+        """
+        norb = 2
+        eps = 1e-3
+        base_decl = _two_sided_decl([(1, 0, 1, V1)])
+        pert_decl = _two_sided_decl([(1, 0, 1, V1 + 1j * eps)])
+        bond_set_base = resolve_interactions(base_decl, np.eye(3), norb=norb)
+        bond_set_pert = resolve_interactions(pert_decl, np.eye(3), norb=norb)
+        # A multi-q grid, deliberately not tied to any ED fixture's ring
+        # length -- _build_bond_m0_blocks takes raw k-arrays.
+        kx = 2.0 * np.pi * np.arange(7) / 7.0
+        ky = np.array([0.0])
+        kz = np.array([0.0])
+        S0_base, C0_base = _build_bond_m0_blocks(
+            bond_set_base, {}, {}, norb, kx, ky, kz)
+        S0_pert, C0_pert = _build_bond_m0_blocks(
+            bond_set_pert, {}, {}, norb, kx, ky, kz)
+        assert_approx_array(S0_pert, S0_base, rel=0, abs=1e-15)
+        assert_approx_array(C0_pert, C0_base, rel=0, abs=1e-15)
+
+    def test_asymmetric_real_parts_hartree_orbital_order_at_nonzero_q(self):
+        """(b) Restores the Hartree orbital-order transposition coverage
+        that ``q=0`` symmetry made vacuous (review round 2 minor 2; see
+        finding1-fix-report.md Section 5 / ``test_bond_channels.py``'s
+        ``_build_asymmetric_two_orbital_bond`` docstring): at ``q=0`` the
+        Hermitized totals ``Re(V_01(+R))+Re(V_01(-R))`` and
+        ``Re(V_10(+R))+Re(V_10(-R))`` are ALWAYS equal (a structural fact,
+        not a fixture coincidence -- both reduce to ``Re(VAB)+Re(VBA)``), so
+        a ``q=0``-only check cannot catch an orbital-order swap in the
+        Hartree slot. At ``q!=0`` the two orbital orders pick up DIFFERENT
+        phases and so give DIFFERENT complex values -- pinned here directly
+        against the closed form ``V_ab(q) = Re(V_ab(+R)) e^{-iq} +
+        Re(V_ab(-R)) e^{+iq}`` (``_build_bond_m0_blocks``' documented
+        ``e^{-iq.R}`` convention).
+
+        Same ``VAB``/``VBA`` values as
+        ``test_bond_channels._build_asymmetric_two_orbital_bond`` (not
+        imported from there to keep this module's only production import
+        surface -- ``hwave.sc``/``hwave.solver.bond_channels`` -- unchanged).
+        """
+        norb = 2
+        VAB = 0.4 + 0.3j
+        VBA = 0.1 - 0.2j
+        ci = {
+            ((1, 0, 0), (0, 1)): VAB,
+            ((1, 0, 0), (1, 0)): VBA,
+            ((-1, 0, 0), (0, 1)): np.conj(VBA),
+            ((-1, 0, 0), (1, 0)): np.conj(VAB),
+        }
+        bond_set = resolve_interactions(ci, np.eye(3), norb=norb)
+        q = np.pi / 2.0
+        kx = np.array([q])
+        ky = np.array([0.0])
+        kz = np.array([0.0])
+        _S0_q, C0_q = _build_bond_m0_blocks(bond_set, {}, {}, norb, kx, ky, kz)
+
+        def i(a, b):
+            return a * norb + b
+
+        # V_01(+R)=VAB, V_01(-R)=conj(VBA) (declared/synthesized above);
+        # V_10(+R)=VBA, V_10(-R)=conj(VAB). Re(conj(z)) == Re(z).
+        V_q_01 = VAB.real * np.exp(-1j * q) + VBA.real * np.exp(1j * q)
+        V_q_10 = VBA.real * np.exp(-1j * q) + VAB.real * np.exp(1j * q)
+        assert abs(V_q_01 - V_q_10) > 1e-3  # genuinely order-sensitive at this q
+
+        assert_approx_array(
+            C0_q[0, 0, 0, i(0, 0), i(1, 1)], 2.0 * V_q_01, rel=0, abs=1e-14)
+        assert_approx_array(
+            C0_q[0, 0, 0, i(1, 1), i(0, 0)], 2.0 * V_q_10, rel=0, abs=1e-14)
+
+
 # ---------------------------------------------------------------------------
 # Sector-block engine vs the dense Lehmann path (#151, Task 4)
 # ---------------------------------------------------------------------------
