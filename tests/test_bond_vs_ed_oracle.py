@@ -229,8 +229,12 @@ def _resolve_fx3(perturbation):
     bare zero ``C0_q`` would violate that precondition and inject a
     spurious residual into the local block unrelated to the null-
     direction question under test, so ``C0_q``'s (aa,bb) Hartree entries
-    are filled from ``bond_set.v_bond`` exactly as that helper does:
-    ``2 * sum_{m>=1} V_ab(R_m)``.
+    are filled from ``bond_set.v_bond`` exactly as
+    ``sc._build_bond_m0_blocks`` does (Finding 1 fix, #151 ED-adjudication
+    campaign): ``2 * sum_{m>=1} Re(V_ab(R_m))``, Hermitizing PER SHELL
+    before the sum -- see that function's inline comment for the
+    derivation (the same one that applies to ``bare_bond_vertices``' own
+    m!=0 Fock diagonal below).
 
     Returns the resolved topology plus the ``bare_bond_vertices`` outputs.
     """
@@ -244,7 +248,8 @@ def _resolve_fx3(perturbation):
     for a in range(norb):
         for b in range(norb):
             total_ab = sum(
-                bond_set.v_bond[m][a, b] for m in range(1, bond_set.n_channels))
+                bond_set.v_bond[m][a, b].real
+                for m in range(1, bond_set.n_channels))
             C0_q[0, 0, 0, a * norb + a, b * norb + b] = 2.0 * total_ab
     S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0_q, C0_q, norb)
     return _Fx3Resolved(bond_set, S_bond, C_bond, Vpp_s, Vpp_t)
@@ -259,37 +264,37 @@ class TestNullDirectionSolverSide(ApproxTestCase):
     Each of the four matrices is checked in its own ``subTest`` so a
     failure on one does not hide the others' pass/fail status.
 
-    MEASURED FINDING (discrepancy protocol -- do not touch
-    ``bond_channels.py``): the PP sector holds -- ``Vpp_s``/``Vpp_t`` are
-    exactly null-invariant (diff 0.0), because the ``D + D^dagger``
-    construction that feeds the bond Cooper block takes ``2*Re(.)`` of
-    each bond-diagonal entry (killing the imaginary offset before any
-    sandwich), and the local block's R!=0 Hartree subtraction cancels
-    against a correctly-filled ``C0_q`` exactly, independent of ``eps``.
+    HISTORY (Finding 1, #151 ED-adjudication campaign). This pin was
+    deliberately kept RED (Task 3, discrepancy protocol -- ``bond_channels.py``
+    not touched at the time): the PP sector held exactly (``Vpp_s``/``Vpp_t``
+    null-invariant, diff 0.0) because the ``D + D^dagger`` construction
+    feeding the bond Cooper block already took ``2*Re(.)`` of each
+    bond-diagonal entry, and the local block's R!=0 Hartree subtraction
+    canceled against a correctly-filled ``C0_q`` exactly. The PH sector did
+    NOT hold: ``S_bond``/``C_bond``'s m!=0 bond-diagonal Fock element was set
+    directly from ``v_bond[m][l1, l2]`` (S) / ``-v_bond[m][l1, l2]`` (C) with
+    no Hermitizing combination -- ``V_01(+1)`` and ``V_10(-1)`` live at
+    DIFFERENT enlarged indices ``(m, l1, l2)`` and were never combined the
+    way the ED canonical list combines them onto one physical operator --
+    so the imaginary offset survived: ``S_bond`` at magnitude ``eps``,
+    ``C_bond`` at magnitude ``2*eps`` (that same Fock effect PLUS the m=0
+    Hartree sub-block's own eps-response).
 
-    The PH sector does NOT hold. ``S_bond``/``C_bond``'s m!=0 bond-
-    diagonal Fock element is set directly from ``v_bond[m][l1, l2]``
-    (S) / ``-v_bond[m][l1, l2]`` (C) with no Hermitizing combination at
-    all -- ``V_01(+1)`` and ``V_10(-1)`` live at DIFFERENT enlarged
-    indices ``(m, l1, l2)`` and are never summed onto one physical slot
-    the way the ED canonical list sums them onto one operator -- so the
-    imaginary offset survives linearly: ``S_bond`` responds at magnitude
-    ``eps`` (the bond-diagonal element alone), ``C_bond`` at magnitude
-    ``2*eps`` (that same bond-diagonal element PLUS the m=0 Hartree
-    sub-block, which is ``2*eps``-responsive through
-    ``V_01(q=0) = V_01(+1) + V_01(-1)``). This is an INTERMEDIATE-VERTEX
-    finding at the ``bare_bond_vertices`` output -- whether it survives
-    into a fully-dressed physical observable (``dress_bond``,
-    ``make_bond_kernel``, the eventual chi/gap) is exactly what Tasks 4-9
-    adjudicate; that projection step is out of this task's scope. This
-    test is left asserting the null (and failing on ``S_bond``/``C_bond``)
-    rather than adjusted to match production, per the discrepancy
-    protocol; see this task's report for the measured values. No custom
-    ``msg`` is passed to ``assert_approx_array`` below -- its default
-    failure message already carries the mismatch count, first bad index,
-    actual/expected values, diff and tolerance, which the discrepancy
-    protocol's "record the measured values" step needs; a custom message
-    would replace (not augment) that detail.
+    FIX (this pin's own follow-up cycle): both sites Hermitize per slot/
+    per shell -- ``bare_bond_vertices``' m!=0 Fock diagonal takes
+    ``Re(v_bond[m][l1, l2])`` instead of the raw value (see its inline
+    comment for the operator-algebra derivation: the declared channel and
+    its ``resolve_interactions`` reversal partner multiply the SAME
+    physical density operator after site relabeling, so Hermiticity forces
+    their combined coefficient to be real), and ``sc._build_bond_m0_blocks``
+    Hermitizes each R!=0 shell's contribution to the Hartree sum the same
+    way, before the q-phase multiply. Both changes are provable no-ops on
+    every already-real declaration (``.real`` of an already-real complex
+    value is bit-identical), so this pin turning GREEN does not move any
+    other adjudicated granule. No custom ``msg`` is passed to
+    ``assert_approx_array`` below -- its default failure message already
+    carries the mismatch count, first bad index, actual/expected values,
+    diff and tolerance, useful if this pin ever regresses.
     """
 
     def test_null_direction_moves_nothing_solver_side(self):

@@ -350,16 +350,31 @@ def _build_asymmetric_two_orbital_bond(VAB=0.4 + 0.3j, VBA=0.1 - 0.2j):
     V_10(+R) (both orientations declared directly, so no synthesis is
     involved), with no on-site (R=0) CoulombInter declared.
 
-    The two "totals" (the R != 0 sum entering the Hartree correction)
+    The two RAW "totals" (the R != 0 sum entering the Hartree correction)
     ``total_01 = V_01(+R) + V_01(-R)`` and ``total_10 = V_10(+R) + V_10(-R)``
     satisfy ``conj(total_10) == total_01`` (a structural consequence of
     reversal-Hermiticity, true for ANY reversal-closed set) but are
     themselves DIFFERENT complex numbers whenever either value has a nonzero
-    imaginary part -- unlike every other bare_bond_vertices fixture in this
-    file, which declares V_01 == V_10 (symmetric) and so cannot distinguish
-    an orbital-index transposition bug in the Hartree/Fock placement code
-    from a correct implementation (review Task 3/6: pin the convention
-    before the norb>1 top-level guard opens).
+    imaginary part.
+
+    UPDATE (Finding 1 fix, #151 ED-adjudication campaign): the Hartree sum
+    entering ``sc._build_bond_m0_blocks``/``bare_bond_vertices`` no longer
+    uses these RAW totals -- it Hermitizes each shell PER SLOT
+    (``Re(V_ab(R_m))``) before summing, per the operator-algebra derivation
+    at the Hermitization site (a declared channel and its
+    ``resolve_interactions`` reversal partner multiply the SAME physical
+    density operator, so Hermiticity forces their combined coefficient to be
+    real). The HERMITIZED totals, ``Re(V_01(+R))+Re(V_01(-R))`` and
+    ``Re(V_10(+R))+Re(V_10(-R))``, turn out to be EQUAL to each other for
+    this (or any 2-orbital, single-shell) fixture -- both reduce to
+    ``Re(VAB)+Re(VBA)`` -- which is why they no longer distinguish a
+    Hartree-subtraction orbital-order transposition bug (the whole class of
+    bug the raw totals' inequality used to catch is now structurally
+    impossible: post-fix, this Hartree block is always Hermitian/real by
+    construction). ``VAB``/``VBA`` are still asymmetric on their REAL PARTS
+    (``Re(VAB)=0.4 != Re(VBA)=0.1``), so the fixture still exercises and
+    pins the Fock-placement orbital order (S_bond/C_bond bond-diagonal
+    element).
     """
     norb = 2
     ci = {
@@ -451,19 +466,27 @@ class TestBareBondVertices(ApproxTestCase):
             assert np.allclose(blk, 0.0)
 
     def test_bare_bond_vertices_asymmetric_V_orbital_order_pinned(self):
-        """Task 3/6 (review): pin that bare_bond_vertices' Hartree subtraction
-        (the Case-2 correction inside the local Cooper block) and its m != 0 Fock
-        placement (S_bond/C_bond bond-diagonal element) use the SAME orbital-pair
-        index order -- a transposition in either would change the numeric result
-        here (unlike the file's other bare_bond_vertices fixtures, which all
-        declare a symmetric V_01 == V_10 and so cannot detect this).
+        """Task 3/6 (review); updated by the Finding 1 fix (#151 ED-adjudication
+        campaign). Pins that bare_bond_vertices' Hartree subtraction (the Case-2
+        correction inside the local Cooper block) and its m != 0 Fock placement
+        (S_bond/C_bond bond-diagonal element) use the SAME orbital-pair index
+        order -- a transposition in either would change the numeric result here
+        (unlike the file's other bare_bond_vertices fixtures, which all declare
+        a symmetric V_01 == V_10 and so cannot detect this).
 
-        total_01 = V_01(+R) + V_01(-R) and total_10 = V_10(+R) + V_10(-R) are
-        complex conjugates of each other (structural, see
-        _build_asymmetric_two_orbital_bond) but NOT equal, so a transposed
-        Hartree subtraction (using total_10 where total_01 belongs, or vice
-        versa) leaves a nonzero residual in the local Cooper block instead of
-        cancelling it to zero.
+        Both slots now Hermitize per shell before use (Re(V_ab(R_m)) -- see
+        bare_bond_vertices' and sc._build_bond_m0_blocks' inline derivations):
+        a declared channel and its resolve_interactions reversal partner
+        multiply the SAME physical density operator after site relabeling, so
+        Hermiticity forces their combined coefficient to be real. VAB/VBA's
+        REAL PARTS (0.4 vs 0.1) are still different, so the Fock-placement
+        check below still catches an orbital-order transposition directly (no
+        cancellation needed). The Hartree totals, however, become EQUAL once
+        Hermitized (see _build_asymmetric_two_orbital_bond's docstring) --
+        that specific transposition class is now structurally impossible, so
+        this test's Hartree section (2) below only confirms this fixture's
+        production-matching cancellation still holds, not an orbital-order
+        distinction.
         """
         bond_set, norb, VAB, VBA = _build_asymmetric_two_orbital_bond()
         nd = norb * norb
@@ -471,16 +494,21 @@ class TestBareBondVertices(ApproxTestCase):
         def i(a, b):
             return a * norb + b
 
-        # totals computed directly from the DECLARED values (independent of
+        # Hermitized totals (Finding 1 fix): Re(V_ab(+R)) + Re(V_ab(-R)),
+        # computed directly from the DECLARED values (independent of
         # bond_set.v_bond, so this is not circular with the implementation).
-        total_01 = VAB + np.conj(VBA)   # V_01(+R) + V_01(-R)
-        total_10 = VBA + np.conj(VAB)   # V_10(+R) + V_10(-R)
-        self.assertApprox(total_01, np.conj(total_10))
-        assert abs(total_01 - total_10) > 1e-6   # genuinely asymmetric, not a no-op fixture
+        total_01 = VAB.real + np.conj(VBA).real   # Re(V_01(+R)) + Re(V_01(-R))
+        total_10 = VBA.real + np.conj(VAB).real   # Re(V_10(+R)) + Re(V_10(-R))
+        # Re(conj(z)) == Re(z), so both totals reduce to Re(VAB)+Re(VBA) and
+        # are therefore equal -- a structural consequence of Hermitization,
+        # not a fixture coincidence (see the docstring above / the builder's).
+        self.assertApprox(total_01, total_10)
+        self.assertApprox(total_01, VAB.real + VBA.real)
+        assert abs(VAB.real - VBA.real) > 1e-6   # Fock check below is not a no-op
 
-        # Raw (uncorrected) q=0 Hartree the caller (sc._build_bond_m0_blocks)
+        # Case-2-corrected q=0 Hartree the caller (sc._build_bond_m0_blocks)
         # would hand to bare_bond_vertices: C0[aa,bb] = 2 * V_ab(q=0), with
-        # V_ab(q=0) = V_ab(R=0) [undeclared -> 0] + total_ab.
+        # V_ab(q=0) = V_ab(R=0) [undeclared -> 0] + total_ab (Hermitized).
         S0 = np.zeros((1, 1, 1, nd, nd), dtype=complex)
         C0 = np.zeros((1, 1, 1, nd, nd), dtype=complex)
         C0[0, 0, 0, i(0, 0), i(1, 1)] = 2.0 * total_01
@@ -490,25 +518,30 @@ class TestBareBondVertices(ApproxTestCase):
         q0 = (0, 0, 0)
 
         # (1) Fock placement: the m != 0 bond-diagonal element (ab,ab) must carry
-        # +/-V_ab(R_m), NOT +/-V_ba(R_m) -- VAB != VBA makes a transposition
-        # visible directly (no cancellation needed).
+        # +/-Re(V_ab(R_m)), NOT +/-Re(V_ba(R_m)) -- Re(VAB) != Re(VBA) makes a
+        # transposition visible directly (no cancellation needed).
         m_plus = bond_set.delta_r.index((1, 0, 0))
         self.assertApprox(
-            S_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)], VAB)
+            S_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)],
+            VAB.real)
         self.assertApprox(
-            S_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)], VBA)
+            S_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)],
+            VBA.real)
         self.assertApprox(
-            C_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)], -VAB)
+            C_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)],
+            -VAB.real)
         self.assertApprox(
-            C_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)], -VBA)
+            C_bond[q0][_idx(norb, m_plus, 1, 0), _idx(norb, m_plus, 1, 0)],
+            -VBA.real)
 
         # (2) Hartree subtraction (Case-2 correction): with no other local
         # interaction declared, the fully-corrected local block (read off
         # Vpp_s/Vpp_t's m=0 sub-block, which is built from S0_loc/C0_loc AFTER
         # the correction) must cancel EXACTLY to zero on BOTH the (0,0)<-(1,1)
-        # and (1,1)<-(0,0) charge elements. A transposed correction (subtracting
-        # total_ba where total_ab belongs) would leave a residual of
-        # 2*(total_01 - total_10) != 0 instead.
+        # and (1,1)<-(0,0) charge elements -- production's own hartree_rneq0
+        # subtraction Hermitizes the identical way, so it matches this
+        # fixture's C0 exactly regardless of which of the (now-equal) totals
+        # lands in which slot.
         np.testing.assert_allclose(Vpp_s[0:nd, 0:nd], 0.0, atol=1e-12)
         np.testing.assert_allclose(Vpp_t[0:nd, 0:nd], 0.0, atol=1e-12)
 
@@ -618,6 +651,14 @@ def _build_complex_two_orbital_bond():
     block identically zero. Vpp_s/Vpp_t are then supported purely on the
     bond (m!=0) sector, isolating the Q_eta(D+D^dag)Q_eta term for the
     oracle.
+
+    ``hartree_rneq0`` Hermitizes each shell (``.real``) before summing,
+    matching ``sc._build_bond_m0_blocks``' Finding 1 fix (#151 ED-
+    adjudication campaign) -- see that function's inline comment for the
+    derivation. Without this, this fixture's caller-supplied C0 would no
+    longer match what ``bare_bond_vertices``' own (also-fixed)
+    ``hartree_rneq0`` subtracts, reintroducing a spurious residual into the
+    local block this fixture is built to keep exactly zero.
     """
     norb = 2
     nd = norb * norb
@@ -634,7 +675,8 @@ def _build_complex_two_orbital_bond():
     for a in range(norb):
         for b in range(norb):
             hartree_rneq0 = sum(
-                bond_set.v_bond[m][a, b] for m in range(1, bond_set.n_channels)
+                bond_set.v_bond[m][a, b].real
+                for m in range(1, bond_set.n_channels)
             )
             C0[0, 0, 0, i(a, a), i(b, b)] = 2.0 * hartree_rneq0
 

@@ -625,7 +625,43 @@ def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
     for m in range(1, bond_set.n_channels):
         Rx, Ry, Rz = bond_set.delta_r[m]
         phase = np.exp(-1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz))
-        V_q += bond_set.v_bond[m][:, :, np.newaxis, np.newaxis, np.newaxis] \
+        # Hermitize PER SHELL, BEFORE the q-phase multiply (Finding 1, #151
+        # ED-adjudication campaign; tests/test_bond_vs_ed_oracle.py::
+        # TestNullDirectionSolverSide). resolve_interactions guarantees,
+        # EXACTLY, that bond_set.v_bond[reverse[m]][b, a] ==
+        # conj(bond_set.v_bond[m][a, b]): the declared channel V_ab(R_m) and
+        # its reversal partner V_ba(-R_m) multiply the SAME physical operator
+        # sum_j n_{j,a} n_{j+R_m,b} (site relabeling j' = j+R_m turns the
+        # partner's sum_j n_{j,b} n_{j-R_m,a} into the identical sum), so
+        # Hermiticity forces their combined Hamiltonian coefficient
+        # V_ab(R_m) + V_ba(-R_m) == v_bond[m][a,b] + conj(v_bond[m][a,b]) ==
+        # 2*Re(v_bond[m][a,b]) -- real, and INDEPENDENT of q (this is the full
+        # per-shell coefficient the Hartree term wants, unlike the ph Fock
+        # slot in bare_bond_vertices which only wants HALF of it; see that
+        # function's comment for why the two channels differ). This holds
+        # identically for a genuinely complex, phase-carrying single-sided
+        # declaration (not just a synthetic null-direction probe): a complex
+        # CoulombInter value always collapses to twice its real part in this
+        # density-density Hartree term.
+        #
+        # Before this fix, V_q summed the RAW (possibly complex) per-shell
+        # value: the null-direction pair V_ab(+R)=V+i*eps / V_ba(-R)=V-i*eps
+        # left a 2*eps-responsive residual in this Hartree block feeding
+        # bare_bond_vertices' C_bond (that function's m!=0 Fock diagonal
+        # carries the other, eps-magnitude half of the same finding).
+        # Hermitizing per shell HERE, before multiplying by the complex
+        # q-phase, keeps V_q genuinely q-dispersive/complex at q!=0 --
+        # collapsing to .real only AFTER the phase sum (or on the full V_q)
+        # would wrongly discard the physical q-dependent phase.
+        # bond_channels.bare_bond_vertices' local-block hartree_rneq0
+        # subtraction mirrors this exact Hermitization so the R!=0 Hartree it
+        # removes from C0_loc still matches what is added here (keeps
+        # Vpp_s/Vpp_t null-invariant).
+        #
+        # .real is bit-identical to the raw value whenever it is already real
+        # (every direction adjudicated by this campaign, and every #82
+        # golden-test coupling), so this is a provable no-op there.
+        V_q += bond_set.v_bond[m][:, :, np.newaxis, np.newaxis, np.newaxis].real \
             * phase
 
     for a in range(norb):

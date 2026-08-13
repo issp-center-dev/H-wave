@@ -478,8 +478,12 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
     S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
         The ``m=0`` sub-block equals ``S0_q``/``C0_q``; the bond-diagonal
         ``m!=0`` Fock element ``(I,I)`` with ``I=m*nd+(l1*norb+l2)`` equals
-        ``+V_{l1 l2}(Delta r_m)`` (S) / ``-V_{l1 l2}(Delta r_m)`` (C)
-        (spec S4.3). q-dependent (the Hartree lives in the ``m=0`` block).
+        ``+Re(V_{l1 l2}(Delta r_m))`` (S) / ``-Re(V_{l1 l2}(Delta r_m))`` (C)
+        (spec S4.3, Hermitized per Finding 1 of the #151 ED-adjudication
+        campaign -- see the inline comment at the assignment site below for
+        the derivation; bit-identical to the un-Hermitized value whenever
+        ``V_{l1 l2}(Delta r_m)`` is already real). q-dependent (the Hartree
+        lives in the ``m=0`` block).
     Vpp_s, Vpp_t : ndarray, shape (ND, ND), complex
         q-**independent** bare Cooper vertices. The local ``m=0`` block is the
         pair matrix ``L^{s/t}`` obtained from ``(S0 +- C0_local)`` under the
@@ -533,14 +537,57 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
     # m=0 sub-block = existing Kuroki matrices (Hartree included)
     S_bond[:, :, :, 0:nd, 0:nd] = S0_q
     C_bond[:, :, :, 0:nd, 0:nd] = C0_q
-    # m!=0 bond-diagonal Fock: +V_ab(R_m) (S) / -V_ab(R_m) (C)
+    # m!=0 bond-diagonal Fock: +Re(V_ab(R_m)) (S) / -Re(V_ab(R_m)) (C)
+    #
+    # Hermitization derivation (Finding 1, #151 ED-adjudication campaign;
+    # tests/test_bond_vs_ed_oracle.py::TestNullDirectionSolverSide). A declared
+    # channel V_ab(R_m) = v_bond[m][a,b] and its resolve_interactions reversal
+    # partner V_ba(-R_m) = v_bond[reverse[m]][b,a] multiply the SAME physical
+    # operator sum_j n_{j,a} n_{j+R_m,b}: substituting j' = j+R_m in the
+    # partner's sum sum_j n_{j,b} n_{j-R_m,a} reproduces the ORIGINAL sum
+    # verbatim (density operators commute), so the two declarations are not
+    # independent physical terms but two Fourier-index views of one term whose
+    # Hamiltonian coefficient is their SUM, V_ab(R_m) + V_ba(-R_m).
+    # resolve_interactions guarantees, EXACTLY (to the last bit, by
+    # construction -- see its docstring's "returned set satisfies
+    # v_bond[m] == v_bond[reverse[m]].conj().T"), that
+    # v_bond[reverse[m]][b,a] == conj(v_bond[m][a,b]); substituting,
+    # V_ab(R_m) + V_ba(-R_m) == v_bond[m][a,b] + conj(v_bond[m][a,b])
+    # == 2*Re(v_bond[m][a,b]). This is a Hermiticity consequence of the
+    # operator algebra, not a special case for a "null" pair: it holds
+    # identically whether the closed pair is a synthetic +/-i*eps probe or a
+    # genuinely complex, phase-carrying single-sided declaration (whose
+    # reverse partner resolve_interactions synthesizes as the exact
+    # conjugate) -- a complex CoulombInter value ALWAYS collapses to twice its
+    # real part in this density-density Hamiltonian term.
+    #
+    # This enlarged-index slot I=(m,l1,l2) is never summed with its mirror
+    # slot (reverse[m],l2,l1) anywhere downstream (S_bond/C_bond only ever set
+    # the (I,I) diagonal, independently per slot) -- unlike the pp sector's
+    # D+D^dagger construction below, which projects Q_eta (I +/- P) Q_eta
+    # across BOTH mirror slots together and is untouched here. So each ph
+    # slot must carry HALF of the physical total, Re(v_bond[m][a,b]), not the
+    # full 2*Re(v_bond[m][a,b]) -- using the full sum here would double every
+    # already-validated real-coupling S_bond/C_bond entry pinned by this
+    # campaign's granules and the #82 golden tests.
+    #
+    # Before this fix, S_bond/C_bond took vb[l1, l2] RAW (no Hermitization):
+    # V_01(+1)=V+i*eps and V_10(-1)=V-i*eps live at DIFFERENT slots and were
+    # never combined the way the ED oracle's canonical_density_terms combines
+    # them, so S_bond leaked the null direction at magnitude eps and C_bond
+    # (whose sign-flipped copy of this same Fock effect is HALF its total
+    # response) at 2*eps combined with the sc.py Hartree fix below.
+    #
+    # Re(vb[l1, l2]) is bit-identical to vb[l1, l2] whenever the stored value
+    # is already real (every direction adjudicated by this campaign, and
+    # every #82 golden-test coupling), so this is a provable no-op there.
     for m in range(1, B):
         vb = v_bond[m]
         for l1 in range(norb):
             for l2 in range(norb):
                 I = m * nd + l1 * norb + l2
-                S_bond[:, :, :, I, I] = vb[l1, l2]
-                C_bond[:, :, :, I, I] = -vb[l1, l2]
+                S_bond[:, :, :, I, I] = vb[l1, l2].real
+                C_bond[:, :, :, I, I] = -vb[l1, l2].real
 
     # === Local Cooper block L^{s/t} (spec S4.5, crossing) ==================
     # The local interactions are q-independent; only the inter-site Hartree is
@@ -554,7 +601,18 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
         for b in range(norb):
             hartree_rneq0 = 0.0 + 0.0j
             for m in range(1, B):
-                hartree_rneq0 += v_bond[m][a, b]
+                # Same Hermitization as the m!=0 Fock diagonal above (see its
+                # comment for the derivation), and for the same reason: this
+                # subtraction must exactly cancel the R!=0 Hartree
+                # sc._build_bond_m0_blocks adds into C0_q's (aa,bb) element at
+                # q=0, which Hermitizes each shell's contribution the
+                # identical way (per-shell .real BEFORE the q-phase multiply).
+                # Leaving this raw while that Hartree builder is fixed would
+                # reintroduce an eps-dependent residual into
+                # C0_loc -> L_s/L_t -> Vpp_s/Vpp_t, breaking the pp sector's
+                # currently-exact null invariance (Finding 1's report: "Vpp_s/
+                # Vpp_t ... holds exactly").
+                hartree_rneq0 += v_bond[m][a, b].real
             C0_loc[a * norb + a, b * norb + b] -= 2.0 * hartree_rneq0
 
     def _crossing(M):
