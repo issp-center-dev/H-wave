@@ -763,3 +763,202 @@ class SectorED:
                     deltaB, opB = built[j]
                     out[qi, i, j] = self._lehmann_dagger(opA, deltaA, opB, deltaB)
         return out / fx.L
+
+
+# ---------------------------------------------------------------------------
+# Adjudication machinery (#151, Task 6): the shared verdict rule and the
+# structural-zero support propagation, used by ph (Task 6/8) and pp
+# (Task 7/8) alike.
+# ---------------------------------------------------------------------------
+
+def projected_structural_zero_mask(free_support, effective_vertex_support):
+    """ONE support-propagation interface for ph AND pp (round-5 fix: no
+    boolean projector propagation -- ``I OR P`` cannot represent the
+    triplet's FIXED-POINT CANCELLATION, where ``P[i,i] = 1`` makes
+    ``Q_t[i,i] = 0`` exactly, e.g. the on-site (R=0, a=b) pair; the caller
+    supplies instead the exact analytic support of the EFFECTIVE vertex).
+
+    ALL inputs are BOOLEAN index-level supports -- never thresholded
+    numeric matrices: ``free_support`` is the bubble's (ND, ND) reachability
+    from the topology (all-True for these dense free-fermion fixtures,
+    stated explicitly by every caller); ``effective_vertex_support`` is, for
+    ph, the boolean support of the analytic ``dW`` (dS/dC); for pp channel
+    eta, the boolean support of the ANALYTIC projected vertex
+    ``Q_eta (dVpp) Q_eta``, constructed symbolically per channel with the
+    fixed-point cancellation carried exactly.
+
+    Propagated support = ``free @ effective_vertex @ free`` as BOOLEAN
+    products (OR-AND semiring, i.e. graph reachability through two hops --
+    NOT numpy's arithmetic ``@`` on bool arrays, which sums rather than
+    ORs); ``zero_mask = ~propagated``. An all-False propagated support is a
+    zero-only granule (every cell structurally zero).
+
+    Both inputs must be the same (ND, ND) boolean shape; this function does
+    not know or care whether ``ND`` is q-resolved -- callers that have a
+    per-q effective-vertex support reduce it (structural OR over q) before
+    calling, since the analytic support is a property of the topology, not
+    of any single numeric q sample (a coefficient like ``cos(qR)`` is
+    structurally nonzero even though it vanishes at isolated q).
+    """
+    free_support = np.asarray(free_support)
+    effective_vertex_support = np.asarray(effective_vertex_support)
+    if free_support.dtype != bool or effective_vertex_support.dtype != bool:
+        # Review finding: silently casting a NUMERIC array (e.g. a raw dW
+        # matrix passed by mistake instead of its boolean support) via
+        # dtype=bool would treat every nonzero float as True and 0.0 as
+        # False -- accidentally "working" for an exact-zero matrix while
+        # defeating the whole point of the ANALYTIC (never thresholded)
+        # support contract this function documents. Refuse anything that
+        # is not already boolean rather than coercing it.
+        raise ValueError(
+            "projected_structural_zero_mask: free_support (dtype={}) and "
+            "effective_vertex_support (dtype={}) must both be BOOLEAN "
+            "arrays -- this function never thresholds a numeric matrix; "
+            "the caller supplies the analytic support directly".format(
+                free_support.dtype, effective_vertex_support.dtype))
+    if free_support.ndim != 2 or free_support.shape[0] != free_support.shape[1]:
+        raise ValueError(
+            "projected_structural_zero_mask: free_support must be a square "
+            "(ND, ND) matrix, got shape {}".format(free_support.shape))
+    if free_support.shape != effective_vertex_support.shape:
+        raise ValueError(
+            "projected_structural_zero_mask: free_support {} and "
+            "effective_vertex_support {} must share the same (ND, ND) "
+            "boolean shape".format(free_support.shape,
+                                    effective_vertex_support.shape))
+
+    def _bool_matmul(a, b):
+        # (a @ b)[i, j] = OR_k a[i, k] AND b[k, j]. A sum of 0/1 ANDs is > 0
+        # iff at least one AND is 1, so integer matmul + threshold computes
+        # the OR-AND boolean semiring product exactly.
+        return (a.astype(np.int64) @ b.astype(np.int64)) > 0
+
+    propagated = _bool_matmul(
+        _bool_matmul(free_support, effective_vertex_support), free_support)
+    return ~propagated
+
+
+def adjudicate_granule(D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat,
+                        zero_mask, label):
+    """Spec tolerance rule, corrected sides and AUTHORITATIVE estimates
+    (plan review round 2): the compared values are the FINER estimates,
+        D_ed   = D_ed_vhalf      (smaller Richardson step)
+        D_pred = D_pred_2nmat    (larger Matsubara window)
+    and the coarser companions exist only to measure convergence:
+        delta_rich = max|D_ed_v1 - D_ed_vhalf|        (ED side only)
+        delta_nmat = max|D_pred_nmat - D_pred_2nmat|  (solver side only)
+        tol = 10 * max(delta_rich, delta_nmat, 1e-13)
+    zero cells (zero_mask): |D_pred| <= tol AND |D_ed| <= tol
+    bearing cells: |D_pred - D_ed| <= tol
+    power: max over bearing |D_pred| >= 100*tol else INCONCLUSIVE
+    ZERO-ONLY granule (zero_mask.all()): all cells zero-validated, power
+    test SKIPPED, status 'PASS-ZERO' (amended spec).
+
+    ``zero_mask`` may be given at the (ND, ND) external-leg shape (the
+    common case: a structural support that does not depend on q) and is
+    broadcast onto ``D_pred``'s full (q, ND, ND) grid; a q-resolved mask is
+    also accepted directly at the full shape.
+
+    Returns dict(label, delta_rich, delta_nmat, tol, max_signal, status,
+    failures, pred_full, bearing_mask) -- the CANONICAL FULL-GRID record
+    (plan review round 3: a bearing-cells-only flattened column cannot be
+    aligned across directions). pred_full is D_pred on the canonical cell
+    grid, flattened in the FIXED order (q ascending, external leg I
+    row-major, external leg J row-major, then real part followed by
+    imaginary part of each cell -- one interleaved (..., 2) axis
+    flattened last); bearing_mask is ~zero_mask DUPLICATED onto that
+    size-2 component axis before the identical flattening (round-4 fix:
+    without the duplication its length is half of pred_full's).
+    sensitivity_rank aligns columns by this shared grid with no
+    remapping. The record IS the Task-6/7/8 -> Task-9 interface. Prints
+    the audit tuple. Pure function; no global state.
+    """
+    D_ed_v1 = np.asarray(D_ed_v1)
+    D_ed_vhalf = np.asarray(D_ed_vhalf)
+    D_pred_nmat = np.asarray(D_pred_nmat)
+    D_pred_2nmat = np.asarray(D_pred_2nmat)
+    zero_mask = np.asarray(zero_mask, dtype=bool)
+
+    if D_ed_v1.shape != D_ed_vhalf.shape:
+        raise ValueError(
+            "adjudicate_granule[{}]: D_ed_v1 shape {} != D_ed_vhalf shape "
+            "{}".format(label, D_ed_v1.shape, D_ed_vhalf.shape))
+    if D_pred_nmat.shape != D_pred_2nmat.shape:
+        raise ValueError(
+            "adjudicate_granule[{}]: D_pred_nmat shape {} != D_pred_2nmat "
+            "shape {}".format(label, D_pred_nmat.shape, D_pred_2nmat.shape))
+    if D_ed_vhalf.shape != D_pred_2nmat.shape:
+        raise ValueError(
+            "adjudicate_granule[{}]: ED grid shape {} != solver grid shape "
+            "{}".format(label, D_ed_vhalf.shape, D_pred_2nmat.shape))
+
+    # Review finding (must_fix): a NaN/Inf anywhere compares False against
+    # every numeric threshold below (|x| > tol, |x| <= tol alike), so a
+    # broken (non-finite) upstream computation would silently slip through
+    # every zero/bearing check and could even land a zero-only granule on
+    # PASS-ZERO. Fail loudly instead, exactly as Task 5's Pin 2b does for
+    # the same class of hazard.
+    for name, arr in (("D_ed_v1", D_ed_v1), ("D_ed_vhalf", D_ed_vhalf),
+                       ("D_pred_nmat", D_pred_nmat),
+                       ("D_pred_2nmat", D_pred_2nmat)):
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(
+                "adjudicate_granule[{}]: {} contains a non-finite (NaN/Inf) "
+                "value -- refusing to adjudicate a broken input".format(
+                    label, name))
+
+    # AUTHORITATIVE sides (plan review round 2).
+    D_ed = D_ed_vhalf
+    D_pred = D_pred_2nmat
+
+    delta_rich = float(np.max(np.abs(D_ed_v1 - D_ed_vhalf)))
+    delta_nmat = float(np.max(np.abs(D_pred_nmat - D_pred_2nmat)))
+    tol = 10.0 * max(delta_rich, delta_nmat, 1e-13)
+
+    if zero_mask.shape == D_pred.shape:
+        zero_full = zero_mask
+    else:
+        zero_full = np.broadcast_to(zero_mask, D_pred.shape)
+    bearing_full = ~zero_full
+
+    diff = np.abs(D_pred - D_ed)
+    zero_bad = zero_full & ((np.abs(D_pred) > tol) | (np.abs(D_ed) > tol))
+    bearing_bad = bearing_full & (diff > tol)
+
+    failures = []
+    for idx in np.argwhere(zero_bad):
+        idx = tuple(int(i) for i in idx)
+        failures.append(("zero", idx, complex(D_pred[idx]), complex(D_ed[idx]),
+                          float(diff[idx])))
+    for idx in np.argwhere(bearing_bad):
+        idx = tuple(int(i) for i in idx)
+        failures.append(("bearing", idx, complex(D_pred[idx]), complex(D_ed[idx]),
+                          float(diff[idx])))
+
+    zero_only = bool(zero_full.all())
+    has_bearing_signal = bool(bearing_full.any())
+    max_signal = float(np.max(np.abs(D_pred[bearing_full]))) \
+        if has_bearing_signal else 0.0
+
+    if failures:
+        status = "FAIL"
+    elif zero_only:
+        status = "PASS-ZERO"
+        max_signal = 0.0   # power test skipped for a zero-only granule
+    elif max_signal >= 100.0 * tol:
+        status = "PASS"
+    else:
+        status = "INCONCLUSIVE"
+
+    pred_full = np.stack([D_pred.real, D_pred.imag], axis=-1).ravel().copy()
+    bearing_mask = np.stack([bearing_full, bearing_full], axis=-1).ravel().copy()
+
+    print("adjudicate[{}]: delta_rich={:.6e} delta_nmat={:.6e} tol={:.6e} "
+          "max_signal={:.6e} status={} n_failures={}".format(
+              label, delta_rich, delta_nmat, tol, max_signal, status,
+              len(failures)))
+
+    return dict(label=label, delta_rich=delta_rich, delta_nmat=delta_nmat,
+                tol=tol, max_signal=max_signal, status=status,
+                failures=failures, pred_full=pred_full,
+                bearing_mask=bearing_mask)

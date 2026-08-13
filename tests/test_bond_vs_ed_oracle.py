@@ -1196,6 +1196,576 @@ class TestDwMatrices(ApproxTestCase):
         # g- = [V_01(-1) = V_10(+1)]
         self._case_m_direction(-1, 0, 1)
 
+    def test_fx5_onsite_U_direction(self):
+        """Task 6's U (on-site) direction, pinned at the ELEMENT level
+        (review should_fix): unlike g1/g2 above, which already have
+        single-shell pins, the on-site U direction's dW had no element-
+        level pin on the ACTUAL topology Task 6's granules use (fx5's
+        shared B=5 grid, with both V shells declared at zero -- see that
+        task's module note). Confirms the module note's code-derivation
+        (S0 = U, C0 = U, touching ONLY the m=0 sub-block) against the real
+        ``bare_bond_vertices`` output directly, not just the reading of
+        ``_build_bond_m0_blocks`` the note describes. ``_decls_U`` is
+        defined later in this module (Task 6's section) but resolved at
+        call time, after the whole module has been imported."""
+        fx = fx5()
+        decls = _decls_U(fx, 1.0)
+        dS, dC = dW_matrices(fx, decls)
+        expected_S = np.zeros((5, 5), dtype=complex)
+        expected_S[0, 0] = 1.0
+        expected_C = np.zeros((5, 5), dtype=complex)
+        expected_C[0, 0] = 1.0
+        for q in range(fx.L):
+            with self.subTest(q=q):
+                assert_approx_array(dS[q], expected_S, rel=0, abs=1e-10)
+                assert_approx_array(dC[q], expected_C, rel=0, abs=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Task 6: ph adjudication -- verdict machinery (Step 1: adjudicate_granule
+# unit tests on synthetic arrays)
+# ---------------------------------------------------------------------------
+
+class TestAdjudicateGranule(ApproxTestCase):
+    """Unit tests for ``ed_oracle_util.adjudicate_granule`` on synthetic
+    (non-physical) arrays -- shape (L=1, ND=2, ND=2), matching the shape the
+    real granules below actually use (q, external leg I, external leg J).
+    """
+
+    def _synthetic(self, bearing_value=1.0, zero_mask=None):
+        if zero_mask is None:
+            zero_mask = np.array([[True, False], [False, False]])
+        base = np.zeros((1, 2, 2), dtype=complex)
+        base[0, 1, 1] = bearing_value
+        return zero_mask, base
+
+    def test_pass(self):
+        zero_mask, D = self._synthetic(bearing_value=1.0)
+        rec = ed_oracle_util.adjudicate_granule(D, D, D, D, zero_mask, "t/pass")
+        self.assertEqual(rec["status"], "PASS")
+        self.assertEqual(rec["failures"], [])
+        # review finding (should_fix): assertAlmostEqual's default
+        # decimal-place semantics would also accept a spuriously-zero tol
+        # here (7 places rounds both 1e-12 and 0.0 to 0.0000000) -- pin the
+        # campaign's own approx_util rule (rel=0, an EXACT abs floor)
+        # instead, matching this module's convention everywhere else.
+        self.assertApprox(rec["tol"], 1e-12, rel=0, abs=1e-20)
+        self.assertGreaterEqual(rec["max_signal"], 100.0 * rec["tol"])
+
+    def test_fail_bearing_mismatch(self):
+        zero_mask, D_ed = self._synthetic(bearing_value=1.0)
+        D_pred = D_ed.copy()
+        D_pred[0, 1, 1] = 1.5   # off by 0.5 -- far above the round-off tol
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed, D_ed, D_pred, D_pred, zero_mask, "t/fail")
+        self.assertEqual(rec["status"], "FAIL")
+        kinds = {f[0] for f in rec["failures"]}
+        self.assertEqual(kinds, {"bearing"})
+        self.assertEqual(rec["failures"][0][1], (0, 1, 1))
+
+    def test_zero_cell_violation(self):
+        zero_mask, D_ed = self._synthetic(bearing_value=1.0)
+        D_pred = D_ed.copy()
+        D_pred[0, 0, 0] = 5.0   # zero_mask[0,0] is True: this must be ~0
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed, D_ed, D_pred, D_pred, zero_mask, "t/zero-violation")
+        self.assertEqual(rec["status"], "FAIL")
+        kinds = {f[0] for f in rec["failures"]}
+        self.assertIn("zero", kinds)
+        zero_failure = [f for f in rec["failures"] if f[0] == "zero"][0]
+        self.assertEqual(zero_failure[1], (0, 0, 0))
+
+    def test_inconclusive_small_signal(self):
+        zero_mask, D_ed_vhalf = self._synthetic(bearing_value=0.5)
+        D_ed_v1 = D_ed_vhalf.copy()
+        D_ed_v1[0, 1, 1] += 1e-2   # delta_rich = 1e-2 -> tol = 1e-1
+        D_pred = D_ed_vhalf.copy()  # solver matches the finer ED value exactly
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_pred, D_pred, zero_mask, "t/inconclusive")
+        self.assertApprox(rec["tol"], 1e-1, rel=0, abs=1e-15)
+        self.assertEqual(rec["failures"], [])
+        self.assertLess(rec["max_signal"], 100.0 * rec["tol"])
+        self.assertEqual(rec["status"], "INCONCLUSIVE")
+
+    def test_1e13_floor(self):
+        zero_mask, D = self._synthetic(bearing_value=1.0)
+        rec = ed_oracle_util.adjudicate_granule(D, D, D, D, zero_mask, "t/floor")
+        # delta_rich = delta_nmat = 0.0 exactly -> the absolute floor alone
+        # sets tol, not zero.
+        self.assertEqual(rec["delta_rich"], 0.0)
+        self.assertEqual(rec["delta_nmat"], 0.0)
+        self.assertEqual(rec["tol"], 10.0 * 1e-13)
+
+    def test_pass_zero_granule(self):
+        zero_mask = np.ones((2, 2), dtype=bool)
+        D = np.zeros((1, 2, 2), dtype=complex)
+        rec = ed_oracle_util.adjudicate_granule(D, D, D, D, zero_mask, "t/zero-only")
+        self.assertEqual(rec["status"], "PASS-ZERO")
+        self.assertEqual(rec["max_signal"], 0.0)
+        self.assertEqual(rec["failures"], [])
+
+    def test_never_mutates_globals(self):
+        zero_mask, D = self._synthetic(bearing_value=1.0)
+        D_ed_v1 = D.copy()
+        D_ed_vhalf = D.copy()
+        D_pred_nmat = D.copy()
+        D_pred_2nmat = D.copy()
+        snapshots = [a.copy() for a in
+                     (D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat, zero_mask)]
+        ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat, zero_mask, "t/pure")
+        for arr, snap in zip(
+                (D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat, zero_mask),
+                snapshots):
+            self.assertTrue(np.array_equal(arr, snap))
+        # calling twice with the same inputs gives the same record (no
+        # hidden state accumulated across calls).
+        rec1 = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat, zero_mask, "t/pure")
+        rec2 = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat, zero_mask, "t/pure")
+        self.assertEqual(rec1["status"], rec2["status"])
+        self.assertEqual(rec1["tol"], rec2["tol"])
+
+    def test_nan_input_raises_rather_than_false_pass_zero(self):
+        # Review finding (must_fix): NaN compares False against every
+        # threshold in adjudicate_granule (|x| > tol, |x| <= tol alike), so
+        # a broken upstream computation could otherwise silently produce a
+        # PASS-ZERO verdict with an empty failures list. Confirmed to
+        # reproduce before the np.isfinite guard was added; now must raise.
+        zero_mask = np.ones((2, 2), dtype=bool)
+        D = np.full((1, 2, 2), np.nan, dtype=complex)
+        zeros = np.zeros((1, 2, 2), dtype=complex)
+        with self.assertRaises(ValueError):
+            ed_oracle_util.adjudicate_granule(D, zeros, zeros, zeros, zero_mask, "t/nan")
+
+    def test_inf_input_raises(self):
+        zero_mask = np.array([[True, False], [False, False]])
+        D_ed = np.zeros((1, 2, 2), dtype=complex)
+        D_pred = D_ed.copy()
+        D_pred[0, 1, 1] = np.inf
+        with self.assertRaises(ValueError):
+            ed_oracle_util.adjudicate_granule(
+                D_ed, D_ed, D_pred, D_pred, zero_mask, "t/inf")
+
+
+class TestProjectedStructuralZeroMask(unittest.TestCase):
+    """``projected_structural_zero_mask`` on small synthetic supports:
+    dense ``free_support`` collapses the propagated support to all-True
+    whenever the effective vertex has ANY nonzero entry (matching this
+    task's ph granules below, all of which are dense-bubble fixtures), and
+    to all-False (zero-only) only when the effective vertex is entirely
+    empty."""
+
+    def test_dense_free_any_vertex_entry_gives_all_bearing(self):
+        free = np.ones((3, 3), dtype=bool)
+        eff = np.zeros((3, 3), dtype=bool)
+        eff[1, 1] = True
+        zero_mask = ed_oracle_util.projected_structural_zero_mask(free, eff)
+        self.assertFalse(zero_mask.any())
+
+    def test_empty_vertex_gives_zero_only(self):
+        free = np.ones((3, 3), dtype=bool)
+        eff = np.zeros((3, 3), dtype=bool)
+        zero_mask = ed_oracle_util.projected_structural_zero_mask(free, eff)
+        self.assertTrue(zero_mask.all())
+
+    def test_shape_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            ed_oracle_util.projected_structural_zero_mask(
+                np.ones((2, 2), dtype=bool), np.ones((3, 3), dtype=bool))
+
+    def test_numeric_input_raises_rather_than_silently_casting(self):
+        # Review finding (should_fix): dtype=bool on a NUMERIC array would
+        # silently treat every nonzero float as True -- accidentally
+        # "working" but defeating the documented "never thresholded
+        # numeric matrix" contract. A caller that passes a raw dW matrix by
+        # mistake (instead of its boolean support) must be rejected, not
+        # silently coerced.
+        free = np.ones((3, 3), dtype=bool)
+        numeric_eff = np.zeros((3, 3))
+        numeric_eff[1, 1] = 0.02
+        with self.assertRaises(ValueError):
+            ed_oracle_util.projected_structural_zero_mask(free, numeric_eff)
+
+    def test_non_square_input_raises(self):
+        with self.assertRaises(ValueError):
+            ed_oracle_util.projected_structural_zero_mask(
+                np.ones((2, 3), dtype=bool), np.ones((2, 3), dtype=bool))
+
+
+# ---------------------------------------------------------------------------
+# Task 6: ph adjudication -- single-orbital unit directions (U, g1, g2) on
+# fx5, THE CAMPAIGN'S FIRST ADJUDICATION CELLS (#151). Each direction is an
+# INDEPENDENT physical coupling (design doc: "Parameter basis, defined on
+# the physical quotient"), adjudicated as its own (S, C) granule pair, plus
+# two joint-ray superposition checks (U+V and the two-shell ray) that are
+# NOT granules and NOT sensitivity inputs.
+#
+# U control note (brief): U is ON-SITE (Delta r = 0); its bond topology
+# needs a declared V topology to exist inside the bond machinery (an
+# onsite-only ``coulomb_inter`` dict resolves fine on its own -- B=1 -- but
+# would leave U's dW living in a DIFFERENT, smaller ND index space than
+# g1/g2's B=5 fx5 topology). So every direction below declares the SAME
+# two-shell (Delta r = +-1, +-2) topology, with the inactive shell(s) at
+# ZERO amplitude for U (and one of the two shells at zero for g1/g2,
+# matching Task 5's ``test_two_shell_joint_ray_dw`` "declared topology, not
+# magnitude" pattern) -- so dS/dC/chi_bar share one (L, 5, 5) grid across
+# all three directions, which is what later alignment (Task 9's
+# sensitivity_rank) needs.
+#
+# Verified directly against ``_build_bond_m0_blocks``/``bare_bond_vertices``
+# (not guessed): for norb=1, an on-site CoulombInter declaration V_00(0)=U
+# routes through ``bond_set.v_onsite`` into ``_build_bond_m0_blocks``'s
+# ``V_r0``, giving Hartree ``C0 += 2*V_r0`` and Fock ``S0 += V_r0``,
+# ``C0 -= V_r0`` on the SAME (aa,bb)=(0,0) slot -- i.e. S0 = U, C0 = 2U-U
+# = U (the Kuroki S/C matrices), and ``bare_bond_vertices`` places this
+# ENTIRELY in the m=0 sub-block (``S_bond[...,0:nd,0:nd] = S0_q``); no other
+# ND slot is touched, so U's dW support is EXACTLY (m=0, m=0)-only for both
+# S and C.
+# ---------------------------------------------------------------------------
+
+def _decls_U(fx, v):
+    """U (on-site) direction at amplitude ``v``, carried on fx5's shared
+    B=5 topology (the other two shells declared at zero amplitude -- see
+    the module note above)."""
+    decl = _two_sided_decl([(1, 0, 0, 0.0), (2, 0, 0, 0.0)])
+    decl[((0, 0, 0), (0, 0))] = v
+    return decl
+
+
+def _terms_U(fx, v):
+    return ed_oracle_util.canonical_density_terms(fx, [(0, 0, 0, v)])
+
+
+def _decls_g1(fx, v):
+    """g1 (Delta r = +-1) direction at amplitude ``v``, on the shared B=5
+    topology (Delta r = +-2 declared at zero)."""
+    return _two_sided_decl([(1, 0, 0, v), (2, 0, 0, 0.0)])
+
+
+def _terms_g1(fx, v):
+    return ed_oracle_util.canonical_density_terms(fx, [(0, 0, 1, v)])
+
+
+def _decls_g2(fx, v):
+    """g2 (Delta r = +-2) direction at amplitude ``v``, on the shared B=5
+    topology (Delta r = +-1 declared at zero)."""
+    return _two_sided_decl([(1, 0, 0, 0.0), (2, 0, 0, v)])
+
+
+def _terms_g2(fx, v):
+    return ed_oracle_util.canonical_density_terms(fx, [(0, 0, 2, v)])
+
+
+_UNIT_DIRECTIONS = {
+    "U": (_decls_U, _terms_U),
+    "g1": (_decls_g1, _terms_g1),
+    "g2": (_decls_g2, _terms_g2),
+}
+
+
+@functools.lru_cache(maxsize=None)
+def _bond_topology_and_map(fx):
+    """(bond_set, channels, smap) shared by every unit direction on ``fx``:
+    all of them declare the SAME two-shell topology (see the module note
+    above), so the bond-channel enumeration and the derived
+    ``ed_to_solver_bond_map`` are identical across U/g1/g2 and can be built
+    once."""
+    decls = _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 1.0)])
+    bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+    norb = fx.norb
+    channels = []
+    for m in range(bond_set.n_channels):
+        R = bond_set.delta_r[m][0]
+        for l1 in range(norb):
+            for l2 in range(norb):
+                channels.append((R,) if norb == 1 else (R, l1, l2))
+    smap = ed_to_solver_bond_map(channels, bond_set)
+    return bond_set, channels, smap
+
+
+@functools.lru_cache(maxsize=None)
+def _shared_chibar(fx, nmat):
+    """The bare bond bubble at ``nmat``, shared across every direction on
+    ``fx`` (chi_bar depends only on the topology and the free Green
+    function, never on a direction's declared amplitude)."""
+    bond_set, _channels, _smap = _bond_topology_and_map(fx)
+    green = free_green(fx, nmat)
+    return bond_bubble(green, bond_set, beta=fx.beta)[:, 0, 0]
+
+
+def _dw_support_masks(direction, bond_set):
+    """The ANALYTIC (boolean, not thresholded-numeric) support of dS/dC
+    for one fx5 unit direction, derived from the same element pattern
+    Task 5's ``dW_matrices`` element pins established (single-orbital: nd=1,
+    so the enlarged index I equals the bond-channel index m directly).
+    U touches ONLY the (m=0, m=0) slot (see the module note above, verified
+    against the builder). g1/g2 touch the m=+-R bond-diagonal Fock slots
+    (S and C) PLUS the (m=0, m=0) Hartree slot (C only -- S carries no
+    Hartree term, per ``bare_bond_vertices``' documented m=0 sub-block =
+    S0_q/C0_q, m!=0 diagonal = +-V_ab(R))."""
+    B = bond_set.n_channels
+    S_supp = np.zeros((B, B), dtype=bool)
+    C_supp = np.zeros((B, B), dtype=bool)
+    C_supp[0, 0] = True   # every direction here carries SOME (0,0) charge content
+    if direction == "U":
+        S_supp[0, 0] = True
+        return S_supp, C_supp
+    R = {"g1": 1, "g2": 2}[direction]
+    m_plus = bond_set.delta_r.index((R, 0, 0))
+    m_minus = bond_set.delta_r.index((-R, 0, 0))
+    for m in (m_plus, m_minus):
+        S_supp[m, m] = True
+        C_supp[m, m] = True
+    return S_supp, C_supp
+
+
+class TestDwSupportMasksMatchNumericDw(unittest.TestCase):
+    """Review should-fix: ``_dw_support_masks``' hand-derived ANALYTIC
+    pattern is cross-checked here against the boolean nonzero pattern of
+    the ACTUAL numeric ``dS``/``dC`` (``dW_matrices``, ANY q, OR-reduced --
+    a q-dependent Hartree coefficient like ``4*cos(qR)`` is structurally
+    nonzero even where it happens to vanish at one q). This does not
+    replace the analytic derivation (the whole point of ``_dw_support_masks``
+    is to be boolean-and-not-thresholded, never fed a numeric epsilon), but
+    it does catch a mismatch between the hand-built pattern and what the
+    production builder actually emits for each of the three unit
+    directions this task adjudicates."""
+
+    def _check(self, direction):
+        fx = fx5()
+        bond_set, _channels, _smap = _bond_topology_and_map(fx)
+        decls_at, _terms_at = _UNIT_DIRECTIONS[direction]
+        dS, dC = dW_matrices(fx, decls_at(fx, 1.0))
+        numeric_S = np.any(np.abs(dS) > 0, axis=0)
+        numeric_C = np.any(np.abs(dC) > 0, axis=0)
+        S_supp, C_supp = _dw_support_masks(direction, bond_set)
+        self.assertTrue(np.array_equal(numeric_S, S_supp),
+                         "direction={} S support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_S, S_supp))
+        self.assertTrue(np.array_equal(numeric_C, C_supp),
+                         "direction={} C support mismatch: numeric={} "
+                         "analytic={}".format(direction, numeric_C, C_supp))
+
+    def test_U(self):
+        self._check("U")
+
+    def test_g1(self):
+        self._check("g1")
+
+    def test_g2(self):
+        self._check("g2")
+
+
+@functools.lru_cache(maxsize=None)
+def _unit_direction_raw(direction):
+    """Raw (un-adjudicated) ED- and solver-side first-order response
+    arrays for one fx5 unit direction, S and C channels: the ED side is
+    HF-SUBTRACTED (design doc: "the same HF subtraction (the derivative of
+    the free bond-bilinear correlator with the HF one-body matrix inserted
+    on both legs)") -- ``full(v) = SectorED(fx, terms=terms(v))
+    .bond_correlator(channels)`` minus ``hf_only(v) = SectorED(fx,
+    terms=(), h1=hf_h1_from_terms(fx, terms(v))).bond_correlator(channels)``
+    -- so the compared quantity is the genuine VERTEX correction with the
+    trivial mean-field propagator renormalization removed, matching
+    ``pred_first_order``'s fixed-chi_bar sandwich exactly (both sides are
+    zero at v=0 by construction: at v=0, terms=() so full == hf_only).
+    Spin combos X_S = X^uu - X^ud, X_C = X^uu + X^ud are formed AT THE CALL
+    SITE from the sigma-resolved HF-subtracted blocks, mapped into the
+    solver's (q, ND, ND) frame via the Task-5 ``ed_to_solver_bond_map``.
+
+    Solver side: ``pred_first_order`` (exact in the coupling) at Nmat and
+    2*Nmat, using dS/dC evaluated at UNIT declared amplitude (the SLOPE,
+    not a finite response) so its units match the ED-side Richardson
+    derivative directly.
+
+    Shared by ``case_fx5_unit_direction`` (wraps this with
+    ``adjudicate_granule``) and the joint-ray superposition checks (which
+    reuse a unit direction's OWN authoritative D_ed = D_ed_vhalf without
+    recomputation, per the brief). lru_cache'd: Task 9 aggregates without
+    recomputation, no test-order dependence.
+    """
+    fx = fx5()
+    decls_at, terms_at = _UNIT_DIRECTIONS[direction]
+    bond_set, channels, smap = _bond_topology_and_map(fx)
+
+    # -- solver side --------------------------------------------------
+    dS, dC = dW_matrices(fx, decls_at(fx, 1.0))
+    chibar_n = _shared_chibar(fx, NMAT)
+    chibar_2n = _shared_chibar(fx, 2 * NMAT)
+    D_pred_nmat_S, D_pred_nmat_C = pred_first_order(chibar_n, dS, dC)
+    D_pred_2nmat_S, D_pred_2nmat_C = pred_first_order(chibar_2n, dS, dC)
+
+    # -- ED side --------------------------------------------------------
+    @functools.lru_cache(maxsize=None)
+    def _chi_hf_sub(v):
+        terms = terms_at(fx, v)
+        full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).bond_correlator(channels)
+        return full - hf_only
+
+    def _mapped(v, sigma, sigmap):
+        chi = _chi_hf_sub(v)
+        return chi[:, sigma, sigmap][:, smap][:, :, smap]
+
+    def X_S_of_v(v):
+        return _mapped(v, 0, 0) - _mapped(v, 0, 1)
+
+    def X_C_of_v(v):
+        return _mapped(v, 0, 0) + _mapped(v, 0, 1)
+
+    D_ed_v1_S = ed_oracle_util.richardson(X_S_of_v, V1)
+    D_ed_vhalf_S = ed_oracle_util.richardson(X_S_of_v, V1 / 2)
+    D_ed_v1_C = ed_oracle_util.richardson(X_C_of_v, V1)
+    D_ed_vhalf_C = ed_oracle_util.richardson(X_C_of_v, V1 / 2)
+
+    # -- structural zero mask --------------------------------------------
+    S_supp, C_supp = _dw_support_masks(direction, bond_set)
+    free_support = np.ones_like(S_supp)   # dense free-fermion bubble (stated)
+    zero_mask_S = ed_oracle_util.projected_structural_zero_mask(
+        free_support, S_supp)
+    zero_mask_C = ed_oracle_util.projected_structural_zero_mask(
+        free_support, C_supp)
+
+    return dict(
+        D_ed_v1_S=D_ed_v1_S, D_ed_vhalf_S=D_ed_vhalf_S,
+        D_pred_nmat_S=D_pred_nmat_S, D_pred_2nmat_S=D_pred_2nmat_S,
+        D_ed_v1_C=D_ed_v1_C, D_ed_vhalf_C=D_ed_vhalf_C,
+        D_pred_nmat_C=D_pred_nmat_C, D_pred_2nmat_C=D_pred_2nmat_C,
+        zero_mask_S=zero_mask_S, zero_mask_C=zero_mask_C,
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def case_fx5_unit_direction(direction):
+    """ph adjudication (S and C granules) for one independent unit coupling
+    direction on fx5 (brief Step 2: ``U`` on-site, ``g1`` = Delta r = +-1,
+    ``g2`` = Delta r = +-2). Returns ``dict(S=<record>, C=<record>)``, each
+    the canonical full-grid record from ``adjudicate_granule``.
+    ``functools.lru_cache``'d module function: Task 9 aggregates the SAME
+    records without recomputation or test-order dependence (brief's
+    explicit instruction)."""
+    raw = _unit_direction_raw(direction)
+    rec_S = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_S"], raw["D_ed_vhalf_S"],
+        raw["D_pred_nmat_S"], raw["D_pred_2nmat_S"],
+        raw["zero_mask_S"], "fx5/{}/S".format(direction))
+    rec_C = ed_oracle_util.adjudicate_granule(
+        raw["D_ed_v1_C"], raw["D_ed_vhalf_C"],
+        raw["D_pred_nmat_C"], raw["D_pred_2nmat_C"],
+        raw["zero_mask_C"], "fx5/{}/C".format(direction))
+    return {"S": rec_S, "C": rec_C}
+
+
+class TestPhUnitDirectionsFx5(unittest.TestCase):
+    """Step 2: the campaign's first actual verdict cells (#151 Task 6) --
+    independent unit directions U / g1 / g2 on fx5, ph channels S and C.
+    THE VERDICT MATTERS MORE THAN GREEN (brief): a FAIL is kept asserting
+    (not weakened), recording a genuine production finding; see this
+    task's report for the measured audit tuples."""
+
+    def _check(self, direction):
+        rec = case_fx5_unit_direction(direction)
+        for channel in ("S", "C"):
+            with self.subTest(direction=direction, channel=channel):
+                r = rec[channel]
+                self.assertIn(
+                    r["status"], ("PASS", "PASS-ZERO"),
+                    "granule {} status={} (delta_rich={:.3e} delta_nmat={:.3e} "
+                    "tol={:.3e} max_signal={:.3e} first_failures={})".format(
+                        r["label"], r["status"], r["delta_rich"],
+                        r["delta_nmat"], r["tol"], r["max_signal"],
+                        r["failures"][:5]))
+
+    def test_U(self):
+        self._check("U")
+
+    def test_g1(self):
+        self._check("g1")
+
+    def test_g2(self):
+        self._check("g2")
+
+
+# ---------------------------------------------------------------------------
+# Task 6: joint-ray superposition checks (U+V at (1,1), two-shell at
+# (1, 0.6)) -- NOT granules, NOT sensitivity inputs (brief). Pure ED-side
+# linearity checks: the joint ray's OWN Richardson derivative must equal
+# the weighted SUM of the already-measured unit directions' own D_ed.
+# ---------------------------------------------------------------------------
+
+def _terms_ray_U_g1(fx, t):
+    return ed_oracle_util.canonical_density_terms(
+        fx, [(0, 0, 0, t), (0, 0, 1, t)])
+
+
+def _terms_ray_g1_g2(fx, t):
+    return ed_oracle_util.canonical_density_terms(
+        fx, [(0, 0, 1, t), (0, 0, 2, 0.6 * t)])
+
+
+def _joint_ray_superposition_check(testcase, directions_alphas, terms_at_ray,
+                                    ray_label):
+    fx = fx5()
+    _bond_set, channels, smap = _bond_topology_and_map(fx)
+
+    @functools.lru_cache(maxsize=None)
+    def _chi_hf_sub(t):
+        terms = terms_at_ray(fx, t)
+        full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).bond_correlator(channels)
+        return full - hf_only
+
+    def _mapped(t, sigma, sigmap):
+        chi = _chi_hf_sub(t)
+        return chi[:, sigma, sigmap][:, smap][:, :, smap]
+
+    def X_S_of_t(t):
+        return _mapped(t, 0, 0) - _mapped(t, 0, 1)
+
+    def X_C_of_t(t):
+        return _mapped(t, 0, 0) + _mapped(t, 0, 1)
+
+    for chan_name, X_of_t in (("S", X_S_of_t), ("C", X_C_of_t)):
+        D_joint_v1 = ed_oracle_util.richardson(X_of_t, V1)
+        D_joint_vhalf = ed_oracle_util.richardson(X_of_t, V1 / 2)
+        delta_rich_joint = float(np.max(np.abs(D_joint_v1 - D_joint_vhalf)))
+
+        unit_tols = [case_fx5_unit_direction(d)[chan_name]["tol"]
+                     for d, _alpha in directions_alphas]
+        tol_joint = 10.0 * max(delta_rich_joint, max(unit_tols))
+
+        D_sum = sum(
+            alpha * _unit_direction_raw(d)["D_ed_vhalf_" + chan_name]
+            for d, alpha in directions_alphas)
+
+        diff = float(np.max(np.abs(D_joint_vhalf - D_sum)))
+        print("joint[{}/{}]: delta_rich_joint={:.6e} tol_joint={:.6e} "
+              "diff={:.6e}".format(ray_label, chan_name, delta_rich_joint,
+                                    tol_joint, diff))
+        with testcase.subTest(ray=ray_label, channel=chan_name):
+            testcase.assertLessEqual(diff, tol_joint)
+
+
+class TestJointRaySuperposition(unittest.TestCase):
+    """Step 2: the two joint-ray superposition checks (design doc: "at
+    first order d/dV along the joint ray is the SUM of the separate
+    derivatives -- no cross-term exists at this order")."""
+
+    def test_U_plus_V_at_1_1(self):
+        _joint_ray_superposition_check(
+            self, [("U", 1.0), ("g1", 1.0)], _terms_ray_U_g1, "U+V(1,1)")
+
+    def test_two_shell_ray_at_1_0p6(self):
+        _joint_ray_superposition_check(
+            self, [("g1", 1.0), ("g2", 0.6)], _terms_ray_g1_g2,
+            "g1+0.6*g2(1,0.6)")
+
 
 if __name__ == "__main__":
     unittest.main()
