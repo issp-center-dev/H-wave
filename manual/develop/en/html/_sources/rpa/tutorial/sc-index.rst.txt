@@ -174,7 +174,7 @@ This section controls the Eliashberg solver. Key parameters:
      multi-orbital model. ``chi0q_mode = "flex"`` is not affected — it consumes
      the susceptibilities, which are not — but ``bond_green`` is: it takes the
      FLEX ``green.npz``, so regenerate that from a fixed build. Single-orbital
-     runs and the ``"reduced"``/``"squashed"`` schemes are unaffected. See
+     runs and the ``"reduced"`` scheme are unaffected. See
      :ref:`the migration warning <flex_general_transpose_fix>`.
 - ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
   evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki
@@ -605,7 +605,7 @@ into the directory read by the Eliashberg step:
 .. note::
 
    The FLEX susceptibility files carry a ``chi_convention`` tag (``"kuroki"``
-   for the reduced/squashed schemes, ``"myo"`` for the general full-vertex
+   for the reduced scheme, ``"myo"`` for the general full-vertex
    scheme) that the Eliashberg loader uses to interpret their orbital layout.
    For **two-orbital** systems (``norb = 2``) the reduced spin-orbital
    dimension and the orbital-pair dimension coincide (both ``4``), so this tag
@@ -617,7 +617,7 @@ into the directory read by the Eliashberg step:
 
 .. warning::
 
-   **Results may change for multi-orbital reduced/squashed FLEX runs.**
+   **Results may change for multi-orbital reduced-scheme FLEX runs.**
    The matrix index of a reduced (kuroki) susceptibility is a *density pair*:
    the stored :math:`X[a,b]` is :math:`\chi_{(a,a),(b,b)}`. Earlier versions
    embedded it into the :math:`n_\text{orb}^2` orbital-pair space as
@@ -629,8 +629,8 @@ into the directory read by the Eliashberg step:
    :math:`\text{out}[(a,a),(b,b)] = X[a,b]` with every other component zero.
 
    Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
-   for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"`` or
-   ``"squashed"``. Two independent effects contribute, so a vanishing
+   for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"``.
+   Two independent effects contribute, so a vanishing
    inter-orbital density component is not enough to be safe: the old placement
    both dropped :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b`, and -- when
    the interaction reaches the off-density blocks -- fabricated dressing there
@@ -1159,8 +1159,8 @@ with four-index vertex structure.
 
 .. note::
 
-   **Caveat for** ``chi0q_mode = "flex"`` **with a reduced/squashed FLEX run.**
-   A reduced (``calc_scheme = "reduced"`` or ``"squashed"``) FLEX run stores
+   **Caveat for** ``chi0q_mode = "flex"`` **with a reduced-scheme FLEX run.**
+   A reduced (``calc_scheme = "reduced"``) FLEX run stores
    only the density-density components :math:`\chi_{(a,a),(b,b)}`. For
    ``CoulombIntra`` alone the :math:`S`/:math:`C` matrices live entirely on
    that density-pair block, so the reduced route is exact.
@@ -1228,7 +1228,7 @@ was checked by running the combination.
    :widths: 26 24 24 26
 
    * -
-     - ``reduced`` / ``squashed``
+     - ``reduced``
      - ``general``
      - note
    * - two-body range
@@ -1248,7 +1248,7 @@ was checked by running the combination.
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
-     - ``reduced`` and ``squashed`` store the same shape and index layout
+     - --
 
 ``calc_type``
 
@@ -1284,7 +1284,7 @@ Interactions reaching the Eliashberg vertex
    * - susceptibility supplied
      - ``CoulombIntra`` only
      - with ``CoulombInter`` / ``Hund`` / ``Ising``
-   * - reduced / squashed
+   * - reduced
      - exact
      - approximate, and warned about: the off-density S/C blocks have no
        susceptibility to dress them. ``Exchange``/``PairHop`` are

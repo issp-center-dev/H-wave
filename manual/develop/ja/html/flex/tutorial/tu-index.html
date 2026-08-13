@@ -123,17 +123,17 @@ Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
 （モード間結合）は <strong>含みません</strong>。これらの高次補正はFLEXの枠組みの外であり、
 ここでは評価されません。2つのスピンゆらぎから生成される電荷・軌道ゆらぎが
 重要となる場合（例：Onari--Kontaniの軌道ゆらぎ機構 <a class="footnote-reference brackets" href="#id14" id="id10" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>）には効くことがあります。</p>
-<p>またデフォルトの <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> および <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> スキームでは、
+<p>またデフォルトの <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> スキームでは、
 スピン/電荷バーテックスを相互作用の密度--密度成分で構成します。
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度--密度成分の頂点を <strong>一切持たない</strong> ため、
-これらのスキームでは近似すらできません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> でこれらを
+このスキームでは近似すらできません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code> でこれらを
 与えると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> となり、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> への切り替えが
 案内されます（以前の開発版では警告付きで受理され、相互作用は無音で効果
 ゼロになっていました）。<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> は <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
 がある場合、自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code> を選択します。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> はどのスキーム
 でも受理されます：その粒子-正孔頂点は厳密にゼロであり、感受率チャネルから
 落とすことは近似ではなく厳密です。
-したがってこれらのスキームでの「FLEX」は <em>厳密ではなく</em>、密度--密度かつ
+したがってこのスキームでの「FLEX」は <em>厳密ではなく</em>、密度--密度かつ
 AL/MTを含まないゆらぎ交換近似のレベルである点に注意してください。</p>
 <p>一方、 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> スキームでは、off-diagonalな完全な
 Kanamori頂点を <strong>保持</strong> します。これはMochizuki--Yanase--Ogata (MYO) <a class="footnote-reference brackets" href="#id15" id="id11" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
@@ -609,7 +609,7 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: スピン / 電荷感受率、
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と同じ形状</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: 感受率をどのスピン/電荷頂点と組み合わせるべきか、および
-形状の系統を示すタグ。reduced/squashed スキームは <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道
+形状の系統を示すタグ。reduced スキームは <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道
 形状、<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>）、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair 形状 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>。かつて <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> 電荷頂点にあった
 MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定で解消され、現在は
 両ビルダーは一致します）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）はこのタグで軌道
@@ -617,7 +617,7 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 一致（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）し形状だけでは区別できないため、このタグが必須です。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>: <strong>general</strong> スキームのみが書き出します。値は
 <code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>で、4本の軌道脚を <code class="docutils literal notranslate"><span class="pre">(a,c)</span></code>（行）と <code class="docutils literal notranslate"><span class="pre">(b,d)</span></code>（列）の
-ペアとしてこの順序で格納していることを表します。reduced/squashed の
+ペアとしてこの順序で格納していることを表します。reduced スキームの
 ファイルには付きません。これらの軸はスピン軌道 <code class="docutils literal notranslate"><span class="pre">s*norb</span> <span class="pre">+</span> <span class="pre">a</span></code> であり4本の
 軌道脚ではないため、loader はスピンブロックを抽出して初めて軌道ペアの
 オブジェクトになるからです。このマーカーは、修正前のgeneralパスが
@@ -713,7 +713,7 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 計算するため、一様FFT由来の <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span>
 離散化アーティファクトが原理的に生じません）。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は出力グリッド
 として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>
 のいずれとも併用できます。オプションの
 <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> が必要です。μ探索は
 <span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span> の基底評価に置き換わり、
@@ -781,7 +781,7 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 そのままで動作します:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
-<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># または &quot;squashed&quot; または &quot;general&quot;</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># または &quot;general&quot;</span>
 <span class="k">[mode.param]</span>
 <span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
 <span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
@@ -817,8 +817,8 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 </div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> として <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>,
-<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> を受け付けます。<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> および <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> スキームは
+<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> として <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> または
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> を受け付けます。<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> スキームは
 縮約形の感受率を利用し、相互作用の密度-密度成分で解きます。
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度-密度頂点を持たないため <strong>拒否</strong> されます
 （受理すると無音で効果ゼロになるため）。
@@ -864,8 +864,8 @@ reduced スキームの自己エネルギーが本来あるべき通り機械精
 <p><strong>再生成が必要なもの。</strong> 本修正以前の多軌道 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
 計算の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>、およびそこから導かれた量です。
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は本件を理由とする再生成は不要です。
-1軌道の計算は影響を受けず、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> および
-<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> も影響を受けません。</p>
+1軌道の計算は影響を受けず、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>
+も影響を受けません。</p>
 </div>
 <p><strong>``&quot;general&quot;`` + IR のメモリ使用量。</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;``（上記）</span>
 <span class="pre">は</span> <span class="pre">``calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> でも利用できますが、IRが圧縮するのは
@@ -1190,7 +1190,7 @@ FLEX converged after 62 iterations
 解析が可能になります。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> 経路では密度‐密度感受率
+<p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> 経路では密度‐密度感受率
 <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> しか保存されないため、pairing vertex が
 完全に FLEX で dress されるのは <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみのモデル
 （または <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）に<strong>限られます</strong>。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
@@ -1239,7 +1239,7 @@ FLEX converged after 62 iterations
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
 <td><p>general のみ</p></td>
 <td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span> （密度-密度頂点を持たないため
-<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
 を選択）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
@@ -1254,7 +1254,7 @@ FLEX converged after 62 iterations
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
 <td><p>general のみ</p></td>
 <td><p>ペアホッピング相互作用 （密度-密度頂点を持たないため
-<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
 を選択）</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
@@ -1310,7 +1310,7 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
 はすべて密度-密度型であり正しく扱われます。
 一方、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度-密度頂点を <strong>一切持たない</strong> ため、
-この縮約では全く表現できません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> でこれらを与えると
+この縮約では全く表現できません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code> でこれらを与えると
 ソルバーは <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出し、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> への切り替えを
 案内します（<code class="docutils literal notranslate"><span class="pre">auto</span></code> は自動的に general を選択します）。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> の
 粒子-正孔頂点は厳密にゼロなので、どのスキームでも受理され、チャネルに

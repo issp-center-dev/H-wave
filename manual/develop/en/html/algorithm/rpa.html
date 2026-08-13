@@ -304,11 +304,8 @@ c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle ,\]</div>
 The array <code class="docutils literal notranslate"><span class="pre">chiq</span></code> always holds the longitudinal (ring) result.</p>
 <p>Whether <code class="docutils literal notranslate"><span class="pre">chiq</span></code> has such slots at all depends on the scheme.  Under
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> it is indexed by pairs that each carry a spin, so
-it always has slots in which a pair is spin-off-diagonal.  <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> has
-them too when the bubble is inflated, its layout then carrying explicit spin
-axes.  <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> stores density-pair components only and has no such slots
-at all – and neither does <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> in a genuinely spinful calculation,
-where it degenerates to the reduced layout.</p>
+it always has slots in which a pair is spin-off-diagonal.  <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>
+stores density-pair components only and has no such slots at all.</p>
 <p><strong>Those slots are not the transverse susceptibility, and whenever the bubble
 is obtained by inflating a spin-free or spin-diagonal one they are not
 computed: they are identically zero.</strong>  The inflation builds only the
@@ -539,7 +536,7 @@ without assuming spin conservation.</p></li>
 <li><p>All interaction types (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>,
 <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>) are supported.</p></li>
 <li><p>The block decomposition is applied automatically when possible.</p></li>
-<li><p>The <code class="docutils literal notranslate"><span class="pre">squashed</span></code> calculation scheme is also supported for spin-orbital systems.</p></li>
+<li><p>Both the <code class="docutils literal notranslate"><span class="pre">reduced</span></code> and <code class="docutils literal notranslate"><span class="pre">general</span></code> calculation schemes are supported for spin-orbital systems.</p></li>
 <li><p>The <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> value in the geometry file (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>) is the <strong>spin-orbital
 count</strong> (= 2 × the number of physical orbitals = Wannier90 <code class="docutils literal notranslate"><span class="pre">num_wann</span></code>), the same
 convention as UHFk.</p></li>

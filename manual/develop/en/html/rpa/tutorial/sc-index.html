@@ -222,7 +222,7 @@ path built its self-energy from an orbital-pair-transposed bubble, so its
 multi-orbital model. <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> is not affected — it consumes
 the susceptibilities, which are not — but <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> is: it takes the
 FLEX <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>, so regenerate that from a fixed build. Single-orbital
-runs and the <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> schemes are unaffected. See
+runs and the <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> scheme are unaffected. See
 <a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-general-transpose-fix"><span class="std std-ref">the migration warning</span></a>.</p>
 </div>
 </li>
@@ -652,7 +652,7 @@ the <strong>full</strong> bosonic Matsubara axis (all <code class="docutils lite
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>The FLEX susceptibility files carry a <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> tag (<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>
-for the reduced/squashed schemes, <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex
+for the reduced scheme, <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex
 scheme) that the Eliashberg loader uses to interpret their orbital layout.
 For <strong>two-orbital</strong> systems (<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>) the reduced spin-orbital
 dimension and the orbital-pair dimension coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>), so this tag
@@ -664,7 +664,7 @@ version. Single-orbital and general (myo) results are unaffected.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p><strong>Results may change for multi-orbital reduced/squashed FLEX runs.</strong>
+<p><strong>Results may change for multi-orbital reduced-scheme FLEX runs.</strong>
 The matrix index of a reduced (kuroki) susceptibility is a <em>density pair</em>:
 the stored <span class="math notranslate nohighlight">\(X[a,b]\)</span> is <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>. Earlier versions
 embedded it into the <span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span> orbital-pair space as
@@ -675,8 +675,8 @@ pairing vertex <span class="math notranslate nohighlight">\(S \chi S\)</span> ge
 embeds it correctly, as
 <span class="math notranslate nohighlight">\(\text{out}[(a,a),(b,b)] = X[a,b]\)</span> with every other component zero.</p>
 <p>Consequently, <strong>static and dynamic</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> results change
-for runs with <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;=</span> <span class="pre">2</span></code> whose FLEX used <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> or
-<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>. Two independent effects contribute, so a vanishing
+for runs with <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;=</span> <span class="pre">2</span></code> whose FLEX used <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>.
+Two independent effects contribute, so a vanishing
 inter-orbital density component is not enough to be safe: the old placement
 both dropped <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> with <span class="math notranslate nohighlight">\(a \neq b\)</span>, and – when
 the interaction reaches the off-density blocks – fabricated dressing there
@@ -1173,8 +1173,8 @@ interactions, the solver automatically uses the generalized
 with four-index vertex structure.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p><strong>Caveat for</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> <strong>with a reduced/squashed FLEX run.</strong>
-A reduced (<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>) FLEX run stores
+<p><strong>Caveat for</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> <strong>with a reduced-scheme FLEX run.</strong>
+A reduced (<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>) FLEX run stores
 only the density-density components <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>. For
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> alone the <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> matrices live entirely on
 that density-pair block, so the reduced route is exact.
@@ -1241,7 +1241,7 @@ was checked by running the combination.</p>
 </colgroup>
 <thead>
 <tr class="row-odd"><th class="head"></th>
-<th class="head"><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> / <code class="docutils literal notranslate"><span class="pre">squashed</span></code></p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></th>
 <th class="head"><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></th>
 <th class="head"><p>note</p></th>
 </tr>
@@ -1267,7 +1267,7 @@ was checked by running the combination.</p>
 <tr class="row-odd"><td><p>susceptibility stored</p></td>
 <td><p>density-density only, <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
 <td><p>full orbital-pair</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> and <code class="docutils literal notranslate"><span class="pre">squashed</span></code> store the same shape and index layout</p></td>
+<td><p>–</p></td>
 </tr>
 </tbody>
 </table>
@@ -1317,7 +1317,7 @@ split.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>reduced / squashed</p></td>
+<tr class="row-even"><td><p>reduced</p></td>
 <td><p>exact</p></td>
 <td><p>approximate, and warned about: the off-density S/C blocks have no
 susceptibility to dress them. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are

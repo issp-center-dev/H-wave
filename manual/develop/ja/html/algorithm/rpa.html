@@ -285,11 +285,8 @@ c^{\mathstrut}_{\delta\downarrow}\big)(\mathbf{q}) \Big\rangle\]</div>
 ときだけです。配列 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> は常に縦方向（ring）の結果です。</p>
 <p>そもそも <code class="docutils literal notranslate"><span class="pre">chiq</span></code> がそのようなスロットを持つかどうかはスキームによります。
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> では各々がスピンを担う対を添字とするため、対が
-スピン非対角となるスロットを常に持ちます。 <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> もバブルが膨張で
-得られる場合には持ち、そのときの配列はスピン軸を明示的に含みます。
-<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> は密度対の成分のみを格納するため、そのようなスロットはそもそも
-存在しません。真にスピンフルな計算における <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> も同様で、この場合は
-reduced の配列形式に帰着します。</p>
+スピン非対角となるスロットを常に持ちます。 <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> は密度対の成分のみを
+格納するため、そのようなスロットはそもそも存在しません。</p>
 <p><strong>これらのスロットは横感受率ではなく、バブルがスピンフリーあるいはスピン
 対角なバブルの膨張で得られる限り計算されません。恒等的にゼロです。</strong> 膨張は
 同スピンのスロットしか作らないためです。これは <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> を
@@ -505,7 +502,7 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 <li><p>全ての相互作用型（ <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> 、 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Hund</span></code> 、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> 、
 <code class="docutils literal notranslate"><span class="pre">Ising</span></code> 、 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> 、 <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> ）がサポートされます。</p></li>
 <li><p>可能な場合、ブロック分解が自動的に適用されます。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">squashed</span></code> 計算スキームもスピン軌道系で利用可能です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> と <code class="docutils literal notranslate"><span class="pre">general</span></code> の両計算スキームがスピン軌道系で利用可能です。</p></li>
 <li><p>幾何情報ファイル（<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>）の <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> はスピン軌道の総数
 （= 物理軌道数 × 2 = Wannier90 の <code class="docutils literal notranslate"><span class="pre">num_wann</span></code>）を表し、UHFk と同じ規約です。</p></li>
 </ul>

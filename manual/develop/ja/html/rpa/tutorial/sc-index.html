@@ -220,7 +220,7 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 います。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> が読む感受率は影響を受けないので問題
 ありませんが、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> は FLEX の <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> を取るため対象です。
 修正済みのビルドで再生成してください。1軌道の計算および
-<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> スキームは影響を受けません。
+<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> スキームは影響を受けません。
 <a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a> を参照して
 ください。</p>
 </div>
@@ -635,7 +635,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>FLEX の感受率ファイルには <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> タグ（reduced/squashed スキームは
+<p>FLEX の感受率ファイルには <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> タグ（reduced スキームは
 <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>）が付与されており、
 Eliashberg ローダーはこれを用いて軌道レイアウトを解釈します。<strong>2軌道系</strong>（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>）では reduced のスピン軌道次元と orbital-pair 次元が一致
 （ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）するため、両者の区別はこのタグに依存します。本修正以前の H-wave
@@ -646,7 +646,7 @@ orbital-pair と誤認して pairing vertex を壊していました。該当す
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
-<p><strong>多軌道の reduced/squashed FLEX を用いた計算結果は変化する可能性があります。</strong>
+<p><strong>多軌道の reduced スキーム FLEX を用いた計算結果は変化する可能性があります。</strong>
 reduced (kuroki) 感受率の行列添字は<em>密度対</em>であり、保存されている
 <span class="math notranslate nohighlight">\(X[a,b]\)</span> は <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> です。以前のバージョンはこれを
 <span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span> の orbital-pair 空間へ
@@ -656,7 +656,7 @@ reduced (kuroki) 感受率の行列添字は<em>密度対</em>であり、保存
 軌道対の位置に <span class="math notranslate nohighlight">\(X\)</span> が散布されます。本バージョンでは正しく
 <span class="math notranslate nohighlight">\(\text{out}[(a,a),(b,b)] = X[a,b]\)</span>（他の成分はすべてゼロ）と
 埋め込みます。</p>
-<p>したがって、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> の FLEX を用いた
+<p>したがって、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> の FLEX を用いた
 <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;=</span> <span class="pre">2</span></code> の計算では、<strong>static・dynamic の双方</strong>で
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> の結果が変化します。要因は独立に2つあり、軌道間の
 密度成分がゼロでも安全とは限りません---旧来の置き方は
@@ -1118,8 +1118,8 @@ OutOfMemory エラーで停止します）。</p></li>
 4インデックスの頂点構造で計算します。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><strong>reduced/squashed の FLEX を</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> <strong>で読む場合の注意。</strong>
-reduced（<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>）の FLEX 計算は
+<p><strong>reduced スキームの FLEX を</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> <strong>で読む場合の注意。</strong>
+reduced（<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>）の FLEX 計算は
 密度‐密度成分 <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> しか保存しません。<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>
 のみであれば <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span> 行列はこの密度対ブロックに完全に収まるため、
 reduced 経路は厳密です。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code> は
@@ -1183,7 +1183,7 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 </colgroup>
 <thead>
 <tr class="row-odd"><th class="head"></th>
-<th class="head"><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> / <code class="docutils literal notranslate"><span class="pre">squashed</span></code></p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></th>
 <th class="head"><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></th>
 <th class="head"><p>備考</p></th>
 </tr>
@@ -1209,7 +1209,7 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <tr class="row-odd"><td><p>保存される感受率</p></td>
 <td><p>密度‐密度成分のみ <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
 <td><p>orbital-pair 全体</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> と <code class="docutils literal notranslate"><span class="pre">squashed</span></code> は同じ形状・同じ添字レイアウト</p></td>
+<td><p>--</p></td>
 </tr>
 </tbody>
 </table>
@@ -1257,7 +1257,7 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>reduced / squashed</p></td>
+<tr class="row-even"><td><p>reduced</p></td>
 <td><p>厳密</p></td>
 <td><p>近似となり警告が出ます（非密度の S/C ブロックを dress する感受率が
 存在しない）。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度対角の頂点を一切持たない

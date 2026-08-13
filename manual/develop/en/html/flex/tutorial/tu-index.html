@@ -133,18 +133,18 @@ triangular fermion loop (mode–mode coupling). These higher-order corrections
 are outside the FLEX class and are <strong>not</strong> evaluated here. They can matter when
 charge/orbital fluctuations driven by two spin fluctuations are important
 (e.g. the orbital-fluctuation mechanism of Onari and Kontani <a class="footnote-reference brackets" href="#id7" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>).</p>
-<p>In addition, the default <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>
-schemes decompose the interaction via its density–density part for the
-spin/charge vertices. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong>
-density–density vertex content at all, so these schemes cannot even
-approximate them: supplying either under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> raises a
-<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> directing you to <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (in earlier
+<p>In addition, the default <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> scheme decomposes the
+interaction via its density–density part for the spin/charge vertices.
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong> density–density vertex content at
+all, so this scheme cannot even approximate them: supplying either under
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code> raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> directing you to
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (in earlier
 development builds this input was accepted with a warning while the
 interaction silently had zero effect). <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> selects
 <code class="docutils literal notranslate"><span class="pre">general</span></code> automatically when <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is present.
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is accepted everywhere: its particle-hole vertex is exactly
 zero, so omitting it from the susceptibility channels is exact, not an
-approximation. Accordingly, in these schemes “FLEX” means <em>not exact</em>: it
+approximation. Accordingly, in this scheme “FLEX” means <em>not exact</em>: it
 is the density–density, AL/MT-free fluctuation-exchange level of
 approximation.</p>
 <p>The alternative <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> instead <strong>retains</strong> the full
@@ -638,7 +638,7 @@ shape <code class="docutils literal notranslate"><span class="pre">(nmat,</span>
 same shape as <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: which spin/charge vertex the susceptibilities are meant
 to be paired with, and which shape family they have: <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code> for the
-reduced/squashed schemes (spin-orbital shape, <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>) or
+reduced scheme (spin-orbital shape, <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>) or
 <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex scheme (orbital-pair shape,
 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>; the historical MYO-vs-Kuroki difference in the
 <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> charge vertex was resolved by the exact-diagonalization
@@ -649,7 +649,7 @@ indices; it is essential for two-orbital systems, where the spin-orbital and
 orbital-pair dimensions coincide (both <code class="docutils literal notranslate"><span class="pre">4</span></code>) and shape alone is ambiguous.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>: written by the <strong>general</strong> scheme only, value
 <code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code> — the four orbital legs are stored as the pairs <code class="docutils literal notranslate"><span class="pre">(a,c)</span></code> (row)
-and <code class="docutils literal notranslate"><span class="pre">(b,d)</span></code> (column). Reduced/squashed files do not carry it: their axes
+and <code class="docutils literal notranslate"><span class="pre">(b,d)</span></code> (column). Reduced-scheme files do not carry it: their axes
 are spin-orbital (<code class="docutils literal notranslate"><span class="pre">s*norb</span> <span class="pre">+</span> <span class="pre">a</span></code>), not four orbital legs, so the loader has
 to extract a spin block before the array is an orbital-pair object at all.
 The marker exists so that a file written by a pre-fix build of the
@@ -752,7 +752,7 @@ are computed NATIVELY on sparse nodes, so the uniform-FFT
 <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span> discretization artifacts do not
 arise by construction). <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> keeps its role as the output grid
 (all output files are densified onto it). Supported with
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>, and <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>.
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>.
 Requires the optional
 <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> package. The mu
 search becomes the basis evaluation of
@@ -827,7 +827,7 @@ are shared with the RPA solver. See <a class="reference internal" href="../../rp
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, stays as it is:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
-<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># or &quot;squashed&quot; or &quot;general&quot;</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># or &quot;general&quot;</span>
 <span class="k">[mode.param]</span>
 <span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
 <span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
@@ -874,10 +874,10 @@ chi_u = np.moveaxis(ax.eval_to_uniform(c, nmat=4096), -1, 0)
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>The FLEX solver accepts <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> in <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code>,
-or <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>. The <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> schemes consume the
-reduced-shape susceptibility and solve with the density-density part of
-the interaction; they <strong>reject</strong> <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (whose
+<p>The FLEX solver accepts <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> in <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>.
+The <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> scheme consumes the reduced-shape susceptibility and
+solves with the density-density part of the interaction; it <strong>rejects</strong>
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (whose
 vertex has no density-density content — the input would silently have
 zero effect). The <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> scheme is the paramagnetic
 full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
@@ -925,7 +925,7 @@ currently check interaction files for that symmetry.</p>
 multi-orbital <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> run made before this fix, plus
 anything derived from them. <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> do not need
 regenerating on this account. Single-orbital runs are unaffected, and
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;squashed&quot;</span></code> were never affected.</p>
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> was never affected.</p>
 </div>
 <p><strong>Memory with</strong> <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> <strong>+ IR.</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> (see
 above) works with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, but IR only compresses the
@@ -1252,14 +1252,14 @@ This enables analysis of superconducting instabilities with
 FLEX-level spin and charge fluctuations.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>On the <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> route only the density-density
+<p>On the <code class="docutils literal notranslate"><span class="pre">reduced</span></code> route only the density-density
 susceptibility <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> is stored, so the pairing vertex
 is FLEX-dressed in full <strong>only</strong> for <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>-only models (or
 <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>). With <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or <code class="docutils literal notranslate"><span class="pre">Ising</span></code> the
 off-density channels enter undressed and the solver warns.
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are <strong>rejected</strong> with a reduced
 susceptibility: they have no density-diagonal vertex content at all, so
-nothing of them would be dressed – and the schemes refuse them at the
+nothing of them would be dressed – and the scheme refuses them at the
 FLEX/RPA stage anyway. Use <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> for the complete
 vertex. See
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-supported-inter"><span class="std std-ref">the Eliashberg supported-interactions note</span></a>.</p>
@@ -1300,7 +1300,7 @@ vertex. See
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
 <td><p>general only</p></td>
 <td><p>Exchange interaction <span class="math notranslate nohighlight">\(J'\)</span> (no density-density vertex
-content: rejected under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code>; <code class="docutils literal notranslate"><span class="pre">auto</span></code>
+content: rejected under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>; <code class="docutils literal notranslate"><span class="pre">auto</span></code>
 selects <code class="docutils literal notranslate"><span class="pre">general</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
@@ -1316,7 +1316,7 @@ susceptibility channels)</p></td>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
 <td><p>general only</p></td>
 <td><p>Pair hopping interaction (no density-density vertex content:
-rejected under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code>; <code class="docutils literal notranslate"><span class="pre">auto</span></code> selects
+rejected under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>; <code class="docutils literal notranslate"><span class="pre">auto</span></code> selects
 <code class="docutils literal notranslate"><span class="pre">general</span></code>)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
@@ -1374,7 +1374,7 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 are all density-density type and are handled correctly.
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong> density-density vertex content,
 so this reduction cannot represent them at all: the solver rejects them
-under <code class="docutils literal notranslate"><span class="pre">reduced</span></code>/<code class="docutils literal notranslate"><span class="pre">squashed</span></code> with a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> pointing to
+under <code class="docutils literal notranslate"><span class="pre">reduced</span></code> with a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> pointing to
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">auto</span></code> selects it for you).
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>’s particle-hole vertex is exactly zero, so it is accepted
 in every scheme and its absence from the channels is exact.</p>

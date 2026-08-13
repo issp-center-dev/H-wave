@@ -114,7 +114,6 @@ UHFk と同じ規約です。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">general</span></code>: 軌道とスピンを統一した一般化軌道として扱い、感受率行列は最も一般的な形式をとります。行列のサイズは <span class="math notranslate nohighlight">\(N_\text{orb}^4 N_\text{spin}^4 N_k N_\omega\)</span> となります。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>: 軌道とスピンを統一した一般化軌道として扱い、感受率行列は <span class="math notranslate nohighlight">\(\alpha=\alpha^\prime\)</span>, <span class="math notranslate nohighlight">\(\beta=\beta^\prime\)</span> のみ計算します。行列のサイズは <span class="math notranslate nohighlight">\(N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega\)</span> となります。二体相互作用は CoulombIntra, CoulombInter, Ising, Hund のみを考慮します。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">squashed</span></code>: 軌道とスピンを分離し、軌道については <span class="math notranslate nohighlight">\(\alpha=\alpha^\prime\)</span>, <span class="math notranslate nohighlight">\(\beta=\beta^\prime\)</span> のみ扱います。感受率行列のサイズは <span class="math notranslate nohighlight">\(N_\text{orb}^2 N_\text{spin}^4 N_k N_\omega\)</span> となります。詳細は <a class="reference internal" href="../../../algorithm/al-index.html#ch-algorithm"><span class="std std-ref">アルゴリズム</span></a> の章を参照してください。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">auto</span></code>: 相互作用項の指定に応じて自動判別します。 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> のみを計算する場合は指定できません。</p></li>
 </ul>
 </li>
