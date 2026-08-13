@@ -123,16 +123,25 @@ def _diagonalize(fx, hint=None, h1=None):
     return ev, w, V
 
 
-def lehmann_kernel(fx, hint=None, h1=None):
-    """The static Lehmann kernel K[m, n] = (w_m - w_n)/(e_m - e_n), with
-    the thermal-limit value beta*w_m on (near-)degenerate pairs, for
-    H1(+hint) - mu*N."""
-    ev, w, _V = _diagonalize(fx, hint=hint, h1=h1)
+def _static_kernel(ev, w, beta):
+    """The static Lehmann kernel K[m, n] = (w_m - w_n)/(e_n - e_m), with
+    the thermal-limit value beta*w_m on (near-)degenerate pairs.
+
+    Shared by ``lehmann_kernel`` and ``chi_connected`` -- one copy so the
+    two can never drift apart.
+    """
     dE = ev[None, :] - ev[:, None]
     dw = w[:, None] - w[None, :]
     with np.errstate(divide="ignore", invalid="ignore"):
-        K = np.where(np.abs(dE) > 1e-10, dw / dE, fx.beta * w[:, None])
-    return K
+        return np.where(np.abs(dE) > 1e-10, dw / dE, beta * w[:, None])
+
+
+def lehmann_kernel(fx, hint=None, h1=None):
+    """The static Lehmann kernel K[m, n] = (w_m - w_n)/(e_n - e_m), with
+    the thermal-limit value beta*w_m on (near-)degenerate pairs, for
+    H1(+hint) - mu*N."""
+    ev, w, _V = _diagonalize(fx, hint=hint, h1=h1)
+    return _static_kernel(ev, w, fx.beta)
 
 
 def chi_connected(fx, hint=None, h1=None):
@@ -141,6 +150,13 @@ def chi_connected(fx, hint=None, h1=None):
 
     ``a``, ``c``, ``b``, ``d`` are generalized-orbital (spin-block, per
     ``fx.nd``) indices, NOT physical-orbital indices.
+
+    The disconnected piece <O><O'> is subtracted at EVERY q (not just
+    q=0): under translation invariance the q!=0 bilinears have zero
+    thermal average and the subtraction is a no-op there, but a
+    Hamiltonian passed in via ``hint``/``h1`` need not be translation
+    invariant, and an unconditional subtraction is the only form that
+    stays correct for that case too.
     """
     C = fx.annihilators()
     CD = [c.conj().T for c in C]
@@ -156,10 +172,7 @@ def chi_connected(fx, hint=None, h1=None):
                     ph = np.exp(2j * np.pi * qi * j / fx.L)
                     op += ph * (CD[fx.mode(j, oa, sa)] @ C[fx.mode(j, oc, sc)])
                 O[(qi, a, c)] = V.conj().T @ op @ V
-    dE = ev[None, :] - ev[:, None]
-    dw = w[:, None] - w[None, :]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        K = np.where(np.abs(dE) > 1e-10, dw / dE, fx.beta * w[:, None])
+    K = _static_kernel(ev, w, fx.beta)
     out = np.zeros((fx.L, fx.nd, fx.nd, fx.nd, fx.nd), dtype=complex)
     for qi in range(fx.L):
         qn = (-qi) % fx.L
@@ -170,9 +183,8 @@ def chi_connected(fx, hint=None, h1=None):
                     for d in range(fx.nd):
                         B = O[(qn, d, b)]
                         val = (K * A * B.T).sum()
-                        if qi == 0:
-                            val -= fx.beta * (w * np.diag(A)).sum() \
-                                * (w * np.diag(B)).sum()
+                        val -= fx.beta * (w * np.diag(A)).sum() \
+                            * (w * np.diag(B)).sum()
                         out[qi, a, c, b, d] = val
     return out / fx.L
 

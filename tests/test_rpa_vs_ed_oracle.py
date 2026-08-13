@@ -758,10 +758,7 @@ class TestTransverseComplexPairHop(unittest.TestCase):
                                              @ C[fx.mode(j, c, 0)])
                     Opm[(qi, a, c)] = V.conj().T @ op @ V
                     Omp[(qi, a, c)] = V.conj().T @ om @ V
-        dE = ev[None, :] - ev[:, None]
-        dw = w[:, None] - w[None, :]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            K = np.where(np.abs(dE) > 1e-10, dw / dE, BETA * w[:, None])
+        K = ed_oracle_util._static_kernel(ev, w, BETA)
         out = np.zeros((LX, NORB, NORB, NORB, NORB), dtype=complex)
         for qi in range(LX):
             for a in range(NORB):

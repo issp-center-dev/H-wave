@@ -99,6 +99,21 @@ class TestExtractionGate(ApproxTestCase):
         got = oracle._hf_h1("PairHop", oracle.V1)
         assert_approx_array(got, self.ref["hf_PairHop"], rel=0, abs=1e-12)
 
+    def test_h_int_matches_legacy_na_nb(self):
+        # direct pin on H_int itself (not just its first-order response):
+        # the (0, 1, R=0, V) canonical class must reproduce the legacy
+        # _h_int's na@nb exactly.
+        terms = self.U.canonical_density_terms(self.fx, [(0, 1, 0, oracle.V1)])
+        assert_approx_array(self.U.h_int_from_terms(self.fx, terms),
+                            oracle._h_int("CoulombInter", oracle.V1),
+                            rel=0, abs=1e-14)
+
+    def test_h_int_matches_legacy_coulombintra(self):
+        terms = self.U.canonical_density_terms(self.fx, [(0, 0, 0, oracle.V1)])
+        assert_approx_array(self.U.h_int_from_terms(self.fx, terms),
+                            oracle._h_int("CoulombIntra", oracle.V1),
+                            rel=0, abs=1e-14)
+
     def test_first_order_both_kinds_identical(self):
         # CoulombIntra AND CoulombInter, via U.richardson over the
         # canonical-terms vertex function
