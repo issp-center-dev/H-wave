@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import logging
+import zipfile
 
 import numpy as np
 
@@ -30,6 +31,7 @@ import hwave.qlmsio.wan90 as wan90
 from hwave.solver.rpa import validate_chi0q_index_convention
 from hwave.solver.ir_axis import is_ir_native, ir_native_meta
 from hwave.solver import backend
+from hwave.solver import bond_channels
 
 logger = logging.getLogger("hwave_sc")
 
@@ -39,10 +41,127 @@ logger = logging.getLogger("hwave_sc")
 # near the nullspace of the commutator and missing a non-centrosymmetric kernel.
 _PARITY_GUARD_PROBES = 3
 
+# spectral_shift="auto" on the POWER-ITERATION path (see
+# _resolve_iteration_shift): number of probe matvecs per probe vector used to
+# estimate the spectral radius rho(K), and the safety factor applied to it.
+# sigma = _AUTO_SHIFT_MARGIN * rho_est + 1e-6 sits just above the estimated
+# radius, which is the smallest shift that makes every eigenvalue of K + sigma*I
+# have a positive real part (so the power iteration converges to the
+# algebraically largest eigenvalue of K). The margin absorbs the fact that a
+# power-iteration estimate approaches rho FROM BELOW; it is deliberately small
+# because a larger shift compresses the relative eigenvalue gaps and therefore
+# slows the iteration down.
+_AUTO_SHIFT_PROBE_STEPS = 15
+_AUTO_SHIFT_MARGIN = 1.05
+
 # Default Matsubara grid size (mode.param.Nmat). Single definition so the
 # legacy-file fallback in _static_freq_position and the main solver loop can
 # never silently disagree on the grid.
 _DEFAULT_NMAT = 1024
+
+# Default peak-memory ceiling (GB) of the bond-channel preflight
+# ([eliashberg] bond_memory_cap_gb; spec S3.2/S5).
+_BOND_MEMORY_CAP_GB = 8.0
+
+# Tolerance on |Im V_ab(R)| above which a CoulombInter entry counts as complex
+# and the v1 bond path refuses to run (spec S5 guard).
+_BOND_IMAG_TOL = 1.0e-12
+
+# Every [eliashberg] key that only means something when bond_channels=true;
+# set while the flag is off they are ignored with a warning (spec S5).
+_BOND_OPTION_KEYS = (
+    "bond_diagnostics",
+    "bond_green",
+    "bond_max_shells",
+    "bond_memory_cap_gb",
+    "bond_precondition_atol",
+    "bond_precondition_rtol",
+    "bond_precondition_dense_limit",
+)
+
+# Degeneracy tolerance of the opt-in bond diagnostics' eigenvalue clustering
+# ([eliashberg] bond_diagnostics; spec S7.7 default).
+_BOND_DIAGNOSTICS_DEG_TOL = 1.0e-3
+
+# Boolean spellings accepted for the bond-channel [eliashberg] keys -- exactly
+# the ones backend.as_bool documents. ANY other string/type is REFUSED (see
+# _bond_bool_option): as_bool's plain-truthiness fallback would read a typo
+# like "ture" as false, silently disabling the requested feature AND the
+# safety guards that only run with it.
+_BOND_BOOL_TRUE = ("true", "yes", "on", "1")
+_BOND_BOOL_FALSE = ("false", "no", "off", "0")
+
+
+def _bond_bool_option(eli_param, key, default=False):
+    """Read a bond-channel boolean option, refusing unrecognised spellings.
+
+    A key present with the value ``None`` counts as unset (TOML has no null,
+    so that can only come from a programmatic caller meaning "not
+    specified").
+    """
+    val = eli_param.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        spelling = val.strip().lower()
+        if spelling in _BOND_BOOL_TRUE:
+            return True
+        if spelling in _BOND_BOOL_FALSE:
+            return False
+    raise ValueError(
+        "[eliashberg] {} must be a boolean: true/false, or one of the strings "
+        "{} / {}; got {!r}. An unrecognised value is REFUSED rather than read "
+        "as false -- a typo would otherwise silently disable both the "
+        "requested feature and the guards that come with it.".format(
+            key, "/".join(_BOND_BOOL_TRUE), "/".join(_BOND_BOOL_FALSE), val))
+
+
+def _bond_float_option(eli_param, key, default=None):
+    """Read a bond-channel numeric option, naming the key on a bad value.
+
+    A bare ``float(...)`` raises a message that never says WHICH
+    ``[eliashberg]`` key was wrong; booleans are rejected outright (``True``
+    would silently become ``1.0``). ``None`` counts as unset.
+    """
+    val = eli_param.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        raise ValueError(
+            "[eliashberg] {} must be a number, not a boolean; got {!r}."
+            .format(key, val))
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "[eliashberg] {} must be a number; got {!r}.".format(key, val)
+        ) from None
+
+
+def _bond_int_option(eli_param, key, default=None):
+    """Read a bond-channel integer option WITHOUT silently truncating it.
+
+    ``int(1.5)`` used to turn a malformed value into a different, valid
+    configuration (``bond_max_shells = 1``), and TOML booleans were accepted
+    as 0/1. Both change the MEANING of a bad config, so they are refused here,
+    at the TOML boundary, with the key named. ``None`` counts as unset.
+    """
+    val = eli_param.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        raise ValueError(
+            "[eliashberg] {} must be an integer, not a boolean; got {!r}."
+            .format(key, val))
+    fval = _bond_float_option(eli_param, key)
+    if not np.isfinite(fval) or fval != np.floor(fval):
+        raise ValueError(
+            "[eliashberg] {} must be an integer; got {!r} (a non-integral or "
+            "non-finite value is refused rather than truncated).".format(
+                key, val))
+    return int(fval)
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +194,26 @@ def _eliashberg_frequency(input_dict):
     return freq
 
 
+def _reject_bond_channels_dynamic(eli_param):
+    """Reject ``bond_channels=true`` on the dynamic Eliashberg entry point.
+
+    The bond-resolved vertex is implemented for the STATIC path only (spec S5
+    guard / non-goal S2): the dynamic kernel would need the bond channels
+    carried through the frequency-resolved vertex, which is a separate spec.
+    Fail loudly rather than silently running the scalar dynamic vertex.
+
+    The flag goes through the same validator as the static path, so a typo
+    ("ture") is refused here too instead of quietly reading as false.
+    """
+    if _bond_bool_option(eli_param, "bond_channels", False):
+        raise ValueError(
+            "[eliashberg] bond_channels=true is not supported with "
+            "frequency='dynamic': the bond-resolved pairing vertex is "
+            "implemented for the STATIC linearized Eliashberg path only. "
+            "Porting the bond kernel to eliashberg_dynamic.py is a deferred "
+            "follow-up; use frequency='static' (or bond_channels=false).")
+
+
 def _validate_dynamic_prereqs(input_dict):
     """Validate prerequisites for dynamic Eliashberg calculation.
 
@@ -86,9 +225,11 @@ def _validate_dynamic_prereqs(input_dict):
     Raises
     ------
     ValueError
-        If chi0q_mode is not "flex" or if Nmat is odd.
+        If bond_channels is requested, if chi0q_mode is not "flex", or if
+        Nmat is odd.
     """
     eli = input_dict.get("eliashberg", {})
+    _reject_bond_channels_dynamic(eli)
     if eli.get("chi0q_mode") != "flex":
         raise ValueError(
             "eliashberg.frequency='dynamic' requires chi0q_mode='flex' "
@@ -121,6 +262,558 @@ def _warn_if_static_ignores_channel_flags(eli_param):
             "[eliashberg] %s set but frequency='static'; the channel-"
             "decomposition flags only apply to frequency='dynamic' and are "
             "ignored here.", ", ".join(ignored))
+
+
+# ---------------------------------------------------------------------------
+# Bond-resolved interaction channels (opt-in; spec S3-S5)
+# ---------------------------------------------------------------------------
+
+def _read_bond_config(eli_param):
+    """Read the ``[eliashberg]`` bond-channel options (spec S5).
+
+    Returns ``(use_bond_channels, bond_green, bond_max_shells,
+    bond_memory_cap_gb, precondition_opts, bond_diagnostics)``; ``bond_green``
+    is the path to an externally supplied Green function (``None`` = build the
+    bare one from the transfer Hamiltonian), ``precondition_opts`` a kwargs
+    dict for ``bond_channels.check_hermitian_preconditions`` holding only the
+    keys the user actually set (so the function's own defaults stay
+    authoritative), and ``bond_diagnostics`` the opt-in character analysis of
+    the leading state (default ``False``).
+    Every bond option set while ``bond_channels`` is off is IGNORED WITH A
+    WARNING (they have no meaning on the default path) and never parsed, so a
+    stale option cannot fail an otherwise valid run.
+
+    Every value is validated centrally (``_bond_bool_option`` /
+    ``_bond_float_option`` / ``_bond_int_option``): an unrecognised boolean
+    spelling, a non-integral integer or an unparsable number raises naming the
+    offending ``[eliashberg]`` key instead of being coerced into a DIFFERENT
+    valid configuration.
+    """
+    use_bond = _bond_bool_option(eli_param, "bond_channels", False)
+    if not use_bond:
+        stale = [name for name in _BOND_OPTION_KEYS if name in eli_param]
+        if stale:
+            logger.warning(
+                "[eliashberg] %s set but bond_channels=false; the bond-channel "
+                "options only apply to bond_channels=true and are ignored "
+                "here.", ", ".join(stale))
+        return False, None, None, None, {}, False
+
+    bond_diagnostics = _bond_bool_option(eli_param, "bond_diagnostics", False)
+
+    bond_green = eli_param.get("bond_green")
+    if bond_green is not None:
+        bond_green = str(bond_green)
+        if not bond_green:
+            raise ValueError(
+                "[eliashberg] bond_green must be a path to a Green-function "
+                "npz file; got an empty string. Omit the key to build the "
+                "bare Green function from the transfer Hamiltonian.")
+
+    max_shells = _bond_int_option(eli_param, "bond_max_shells")
+    if max_shells is not None and max_shells < 0:
+        raise ValueError(
+            "[eliashberg] bond_max_shells must be >= 0 (shell 0 = the "
+            "on-site Delta r = 0 point), got {}".format(max_shells))
+    cap_gb = _bond_float_option(eli_param, "bond_memory_cap_gb",
+                                _BOND_MEMORY_CAP_GB)
+    if not np.isfinite(cap_gb) or cap_gb <= 0.0:
+        raise ValueError(
+            "[eliashberg] bond_memory_cap_gb must be a positive finite number, "
+            "got {!r}".format(eli_param.get("bond_memory_cap_gb")))
+
+    # Hermiticity-precondition knobs (review fix M7): the tolerance is a
+    # RELATIVE asymmetry of the symmetrized kernel K~ (both the residual and
+    # its scale are K~-referred, review fix I1), and dense_limit forces the
+    # randomized probe estimator on a grid too large for the exact dense
+    # residual.
+    pre_opts = {}
+    for key, opt in (("bond_precondition_atol", "atol"),
+                     ("bond_precondition_rtol", "rtol")):
+        val = _bond_float_option(eli_param, key)
+        if val is not None:
+            if not np.isfinite(val) or val < 0.0:
+                raise ValueError(
+                    "[eliashberg] {} must be a non-negative finite number, "
+                    "got {!r}".format(key, eli_param[key]))
+            pre_opts[opt] = val
+    dense_limit = _bond_int_option(eli_param, "bond_precondition_dense_limit")
+    if dense_limit is not None:
+        if dense_limit < 0:
+            raise ValueError(
+                "[eliashberg] bond_precondition_dense_limit must be >= 0 "
+                "(0 = always use the randomized probe estimator), got "
+                "{}".format(dense_limit))
+        pre_opts["dense_limit"] = dense_limit
+    return True, bond_green, max_shells, cap_gb, pre_opts, bond_diagnostics
+
+
+def _validate_bond_prereqs(chi0q_mode, norb, interactions,
+                           imag_tol=_BOND_IMAG_TOL):
+    """Top-level guards for ``bond_channels=true`` (spec S5).
+
+    Every one of these is a "no silent wrong result" refusal: the internal
+    physics functions (``bond_channels.bond_bubble`` / ``bare_bond_vertices``
+    / ``make_bond_kernel``) stay general so the unit and reduction tests can
+    exercise multi-orbital and complex-bond physics directly; only this
+    top-level entry point restricts what a production run may request.
+    """
+    if chi0q_mode == "flex":
+        raise ValueError(
+            "[eliashberg] bond_channels=true is incompatible with "
+            "chi0q_mode='flex'. That mode INGESTS A FLEX chi (chiq_s/chiq_c "
+            "npz), which is scalar/orbital-only: it carries no bond-resolved "
+            "chi-bar, and the bond path cannot dress one from it. Making "
+            "flex.py output a bond-resolved chi-bar (the conserving-FLEX bond "
+            "self-consistency) is a deferred follow-up spec. NOTE that this "
+            "does NOT prevent you from using a FLEX-dressed GREEN function: "
+            "the bond path builds its own chi-bar from the Green function, so "
+            "set [eliashberg] bond_green = '<path to green.npz>' together "
+            "with chi0q_mode='calc' or 'load' (which are then unused anyway) "
+            "to feed an external/FLEX green.")
+
+    # "Truly absent from the config" is the documented trigger (spec S5): a
+    # DECLARED term whose values are all zero is explicitly allowed, so that a
+    # V sweep keeps a constant channel topology (B does not jump 1 <-> 5) at
+    # its V=0 point.
+    if "CoulombInter" not in interactions:
+        raise ValueError(
+            "[eliashberg] bond_channels=true requires a CoulombInter term: "
+            "bond channels carry the inter-site Fock/Cooper structure of "
+            "V_ab(R), so asking for them with no inter-site interaction "
+            "declared is a configuration mistake. Declare the CoulombInter "
+            "file (or a combined `Coulomb` file containing R!=0 entries) -- "
+            "a declared-but-zero V is allowed and keeps the channel "
+            "topology fixed across a V sweep -- or use bond_channels=false.")
+
+    nonfinite = [(irvec, orbvec, value)
+                 for (irvec, orbvec), value in interactions["CoulombInter"].items()
+                 if not np.isfinite(complex(value).real)
+                 or not np.isfinite(complex(value).imag)]
+    if nonfinite:
+        irvec, orbvec, value = nonfinite[0]
+        raise ValueError(
+            "[eliashberg] bond_channels=true requires every CoulombInter "
+            "value to be finite, but V_{}{}({}) = {} is not (real or "
+            "imaginary part is NaN/inf; {} such entries). A NaN/inf "
+            "interaction value is a data/configuration error, not a "
+            "physical model, and must not silently reach the bond "
+            "machinery.".format(
+                orbvec[0], orbvec[1], tuple(irvec), value, len(nonfinite)))
+
+    bad = [(irvec, orbvec, value)
+           for (irvec, orbvec), value in interactions["CoulombInter"].items()
+           if abs(complex(value).imag) > imag_tol]
+    if bad:
+        irvec, orbvec, value = bad[0]
+        raise ValueError(
+            "[eliashberg] bond_channels=true supports only REAL inversion-"
+            "symmetric CoulombInter in v1, but V_{}{}({}) = {} has a nonzero "
+            "imaginary part ({} such entries). Complex bonds need the "
+            "Hermitian Q(D+D^dag)Q particle-particle form, whose end-to-end "
+            "validation is a deferred follow-up.".format(
+                orbvec[0], orbvec[1], tuple(irvec), value, len(bad)))
+
+    if norb > 1:
+        raise ValueError(
+            "[eliashberg] bond_channels=true is validated for single-orbital "
+            "models only (norb=1); this model has norb={}. The multi-orbital "
+            "equations are implemented and unit-tested, but their end-to-end "
+            "numerical validation is a deferred follow-up spec, so the "
+            "top-level solver refuses to emit unvalidated numbers. Note also "
+            "that the bond path CORRECTS the existing multi-orbital collapsed-"
+            "bond Fock approximation (spec S4.3), so its results would differ "
+            "from bond_channels=false by design.".format(norb))
+
+
+# Number of (N_q, ND, ND)-shaped complex128 arrays that the bond-channel
+# resource preflight (below) assumes are alive simultaneously: chi_bar,
+# S_bond, C_bond, chi_s, chi_c, the fluctuation vertex F_q, its two
+# matrix-product temporaries (chi_bar@S_bond, chi_bar@C_bond, or equivalent),
+# and the real-space vertex Gamma_hat = ifftn(F_q). Named so the preflight's
+# byte estimate and this list can never silently drift apart.
+_BOND_N_Q_ARRAYS = 9
+
+
+def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
+    """Byte budget for the bond path, broken down by buffer family.
+
+    Split out of :func:`_bond_resource_preflight` so the accounting can be
+    asserted directly against a MEASURED peak (``tests/test_sc_bond.py``):
+    a preflight that undercounts is worse than no preflight, because a run it
+    waves through then OOMs anyway.
+
+    Everything is complex128 (16 B). ``unit = N_q * nmat * 16`` is one
+    ``norb``-pair-free frequency-grid buffer.
+
+    ``q_bytes``
+        ``_BOND_N_Q_ARRAYS`` q-resolved ``(N_q, ND, ND)`` arrays alive
+        simultaneously in the vertex assembly -- ``chi_bar``, ``S_bond``,
+        ``C_bond``, ``chi_s``, ``chi_c``, the fluctuation vertex ``F_q``, its
+        two matrix-product temporaries, and ``Gamma_hat = ifftn(F_q)``.
+        ``bond_bubble``'s output ``chi_bar`` is the first of these, so it is
+        NOT counted again in ``bubble_bytes``.
+    ``bubble_bytes``
+        ``bond_bubble``'s simultaneous working set at its high-water mark, the
+        input ``green`` excluded (that is ``green_bytes``):
+        ``BOND_BUBBLE_N4_BUFFERS`` ``norb**4``-sized plus
+        ``BOND_BUBBLE_N2_BUFFERS`` ``norb**2``-sized frequency-grid buffers.
+        The buffer-by-buffer list, and the ``del``/in-place discipline in
+        ``bond_bubble`` that holds the real peak down to it, are documented
+        beside those two constants in ``hwave.solver.bond_channels``; they are
+        imported from there so the two sides cannot silently desync.
+    ``green_bytes``
+        the ``green_kw`` array itself, ``(norb, norb, Nx, Ny, Nz, nmat)`` --
+        i.e. ``bond_bubble``'s input, alive throughout.
+    ``chi_bar_bytes``
+        one ``(N_q, ND, ND)`` array; reported separately (it is already inside
+        ``q_bytes``) because it is the one q-resolved array ``bond_bubble``
+        itself allocates, so ``bubble_bytes + chi_bar_bytes`` is the budget a
+        measurement of ``bond_bubble`` alone must fit into.
+    ``vertex_bytes``
+        ``bare_bond_vertices``'s non-q-resolved ``ND x ND`` working set --
+        ``BARE_VERTEX_ND2_BUFFERS`` buffers (``P``, ``D``, ``Dh``, ``Id``,
+        ``Q_s``, ``Q_t``, ``B_s``, ``B_t``, ``Vpp_s``, ``Vpp_t``), NOT
+        multiplied by ``N_q`` since none of them carry a q-axis (unlike
+        ``S_bond``/``C_bond``, which are already inside ``q_bytes``). This is
+        alive concurrently with ``q_bytes`` (``chi_bar`` from ``bond_bubble``
+        is still held) and ``green_bytes`` (``green_kw`` is still held), so it
+        is additive in ``peak``. The buffer-by-buffer list is documented
+        beside the constant in ``hwave.solver.bond_channels``; imported from
+        there so the two sides cannot silently desync.
+    ``peak``
+        ``q_bytes + bubble_bytes + vertex_bytes + green_bytes`` -- what the
+        cap is applied to.
+    """
+    nd = norb * norb
+    B = int(bond_set.n_channels)
+    ND = nd * B
+    Nq = int(Nx) * int(Ny) * int(Nz)
+    itemsize = 16  # complex128
+    unit = Nq * int(nmat) * itemsize
+
+    chi_bar_bytes = Nq * ND * ND * itemsize
+    q_bytes = _BOND_N_Q_ARRAYS * chi_bar_bytes
+    bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
+                    + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
+    vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
+    green_bytes = (norb ** 2) * unit
+    return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
+            "chi_bar_bytes": chi_bar_bytes,
+            "q_bytes": q_bytes,
+            "bubble_bytes": bubble_bytes,
+            "vertex_bytes": vertex_bytes,
+            "green_bytes": green_bytes,
+            "peak": q_bytes + bubble_bytes + vertex_bytes + green_bytes}
+
+
+def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
+    """Estimate the peak memory of the bond path and refuse to exceed the cap.
+
+    Spec S3.2 "Resource guard": only here are ``nd``, ``N_q``, ``B`` and the
+    dtype all known, so this is where the ``ND = nd*B`` blow-up is caught --
+    never a silent runaway allocation. Called BEFORE ``green_kw`` is
+    allocated (review fix I-2: previously the bond-channel dispatch branch
+    called ``_calc_green`` first, so a large-Nmat run could OOM before the
+    cap was ever consulted); the estimate includes the ``green_kw``
+    allocation itself so the preflight is not blind to it.
+
+    See :func:`_bond_memory_estimate` for the buffer-by-buffer accounting.
+    """
+    est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat)
+    B, ND, Nq = est["B"], est["ND"], est["Nq"]
+    q_bytes = est["q_bytes"]
+    bubble_bytes = est["bubble_bytes"]
+    vertex_bytes = est["vertex_bytes"]
+    green_bytes = est["green_bytes"]
+    peak = est["peak"]
+
+    logger.info(
+        "Bond-channel preflight: B = %d channels, ND = nd*B = %d, "
+        "N_q = %d, estimated peak memory = %.3f GB (cap %.3f GB)",
+        B, ND, Nq, peak / 1.0e9, cap_gb)
+
+    if peak > cap_gb * 1.0e9:
+        raise ValueError(
+            "[eliashberg] bond_channels: estimated peak memory {:.3f} GB "
+            "exceeds bond_memory_cap_gb = {:.3f} GB. The cost is driven by "
+            "B = {} bond channels (Delta r = {}) giving ND = nd*B = {} on "
+            "N_q = {} q-points ({:.3f} GB of q-resolved ND x ND arrays) plus "
+            "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB of bare-"
+            "vertex ND x ND temporaries plus {:.3f} GB for the Green "
+            "function itself. Reduce bond_max_shells (fewer channels), "
+            "reduce the k-grid/Nmat, or raise bond_memory_cap_gb.".format(
+                peak / 1.0e9, cap_gb, B, list(bond_set.delta_r), ND, Nq,
+                q_bytes / 1.0e9, bubble_bytes / 1.0e9, vertex_bytes / 1.0e9,
+                green_bytes / 1.0e9))
+    return peak
+
+
+def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
+                          kx_array, ky_array, kz_array):
+    """Build the Case-2-CORRECTED ``m=0`` spin/charge blocks (spec S4.3 star).
+
+    The existing ``_build_sc_matrices_all_q`` places the FULL Fourier sum
+    ``V_ab(q)`` into the Fock ``(ab,ab)`` element of the local block -- a
+    collapsed-bond approximation that assigns the whole Fock sum to the local
+    orbital-coherence operator. The bond path corrects this: only the on-site
+    ``R=0`` component ``V_ab(R=0)`` stays in the ``m=0`` Fock element, while
+    every ``R!=0`` component moves to its own bond channel
+    (``bond_set.v_bond[m]``, consumed by ``bare_bond_vertices``). The Hartree
+    ``(aa,bb) += 2 V_ab(q)`` stays in the ``m=0`` charge block (correct as is)
+    and is built from the SAME filtered interaction as the bond blocks -- the
+    ``ResolvedInteractionSet`` is the single source of truth (spec S3.0), so a
+    ``bond_max_shells`` cutoff filters Hartree, Fock and Cooper consistently.
+
+    The on-site ``R=0`` Fock component is read from ``bond_set.v_onsite``,
+    NOT from the raw ``interactions["CoulombInter"]`` dict (review fix I-1):
+    ``v_onsite`` is Hermiticity-closed by ``resolve_interactions`` the same
+    way the ``m != 0`` bond channels are, so a user declaring only
+    ``V_01(0)`` (not ``V_10(0)``) still gets a reversal-closed on-site Fock
+    block instead of a silently asymmetric one.
+
+    All other interaction types (CoulombIntra, Hund, Exchange, Ising, PairHop)
+    ride in the ``m=0`` block exactly as today.
+
+    Parameters
+    ----------
+    bond_set : bond_channels.ResolvedInteractionSet
+        The resolved (reversal-closed, shell-filtered) bond topology; its
+        ``v_onsite`` field supplies the ``R=0`` Fock component.
+    interactions : dict
+        Real-space interaction dicts (``_read_interaction_files``); no longer
+        read for ``CoulombInter`` here (kept in the signature for backward
+        compatibility with existing call sites/tests) -- the ``R=0`` value
+        comes from ``bond_set.v_onsite`` instead.
+    inter_k : dict
+        k-space interactions (``_build_interaction_k``); the CoulombInter
+        entry is NOT used -- ``V(q)`` is rebuilt from the filtered bond set.
+    norb : int
+    kx_array, ky_array, kz_array : ndarray
+        k-point arrays (the q-grid of the S/C blocks).
+
+    Returns
+    -------
+    S0_q, C0_q : ndarray, shape (Nx, Ny, Nz, norb**2, norb**2)
+        The Case-2-corrected local blocks, ready for
+        ``bond_channels.bare_bond_vertices``.
+    """
+    Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
+
+    # Everything EXCEPT CoulombInter through the existing builder; the
+    # CoulombInter Hartree/Fock placement is redone below from the resolved
+    # (filtered) interaction so the two can never disagree.
+    inter_k_local = {k: v for k, v in inter_k.items() if k != "CoulombInter"}
+    S0, C0 = _build_sc_matrices_all_q(inter_k_local, norb, Nx, Ny, Nz)
+
+    # On-site (R=0) CoulombInter: the only Fock component that stays local.
+    # Sourced from bond_set.v_onsite -- Hermiticity-closed by
+    # resolve_interactions the same way the bond (R!=0) channels are (review
+    # fix I-1) -- instead of reading interactions["CoulombInter"] raw, which
+    # bypassed that closure and consistency check.
+    V_r0 = np.array(bond_set.v_onsite, dtype=complex, copy=True)
+
+    # Filtered V_ab(q) = V_ab(R=0) + sum_{m>=1} V_ab(Delta r_m) e^{-i q.Delta r_m}
+    # -- same e^{-iqR} convention as _build_interaction_k._to_k, so the m=0
+    # block is element-wise consistent with the rest of sc.py. (For the real
+    # inversion-symmetric interactions v1 accepts, V(q) is real and the phase
+    # sign is immaterial.)
+    kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
+        kx_array, ky_array, kz_array, indexing='ij')
+    V_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
+    V_q += V_r0[:, :, np.newaxis, np.newaxis, np.newaxis]
+    for m in range(1, bond_set.n_channels):
+        Rx, Ry, Rz = bond_set.delta_r[m]
+        phase = np.exp(-1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz))
+        # Hermitize PER SHELL, BEFORE the q-phase multiply (Finding 1, #151
+        # ED-adjudication campaign; tests/test_bond_vs_ed_oracle.py::
+        # TestNullDirectionSolverSide). resolve_interactions guarantees,
+        # EXACTLY, that bond_set.v_bond[reverse[m]][b, a] ==
+        # conj(bond_set.v_bond[m][a, b]): the declared channel V_ab(R_m) and
+        # its reversal partner V_ba(-R_m) multiply the SAME physical operator
+        # sum_j n_{j,a} n_{j+R_m,b} (site relabeling j' = j+R_m turns the
+        # partner's sum_j n_{j,b} n_{j-R_m,a} into the identical sum), so
+        # Hermiticity forces their combined Hamiltonian coefficient
+        # V_ab(R_m) + V_ba(-R_m) == v_bond[m][a,b] + conj(v_bond[m][a,b]) ==
+        # 2*Re(v_bond[m][a,b]) -- real, and INDEPENDENT of q (this is the full
+        # per-shell coefficient the Hartree term wants, unlike the ph Fock
+        # slot in bare_bond_vertices which only wants HALF of it; see that
+        # function's comment for why the two channels differ). This holds
+        # identically for a genuinely complex, phase-carrying single-sided
+        # declaration (not just a synthetic null-direction probe): a complex
+        # CoulombInter value always collapses to twice its real part in this
+        # density-density Hartree term.
+        #
+        # Before this fix, V_q summed the RAW (possibly complex) per-shell
+        # value: the null-direction pair V_ab(+R)=V+i*eps / V_ba(-R)=V-i*eps
+        # left a 2*eps-responsive residual in this Hartree block feeding
+        # bare_bond_vertices' C_bond (that function's m!=0 Fock diagonal
+        # carries the other, eps-magnitude half of the same finding).
+        # Hermitizing per shell HERE, before multiplying by the complex
+        # q-phase, keeps V_q genuinely q-dispersive/complex at q!=0 --
+        # collapsing to .real only AFTER the phase sum (or on the full V_q)
+        # would wrongly discard the physical q-dependent phase.
+        # bond_channels.bare_bond_vertices' local-block hartree_rneq0
+        # subtraction mirrors this exact Hermitization so the R!=0 Hartree it
+        # removes from C0_loc still matches what is added here (keeps
+        # Vpp_s/Vpp_t null-invariant).
+        #
+        # .real is bit-identical to the raw value whenever it is already real
+        # (every direction adjudicated by this campaign, and every #82
+        # golden-test coupling), so this is a provable no-op there.
+        V_q += bond_set.v_bond[m][:, :, np.newaxis, np.newaxis, np.newaxis].real \
+            * phase
+
+    for a in range(norb):
+        for b in range(norb):
+            # Hartree (aa,bb): the FULL q-dependent 2 V_ab(q) (spec S4.3).
+            C0[:, :, :, a * norb + a, b * norb + b] += 2.0 * V_q[a, b]
+            # Fock (ab,ab): ONLY the R=0 component (the Case-2 correction).
+            iab = a * norb + b
+            S0[:, :, :, iab, iab] += V_r0[a, b]
+            C0[:, :, :, iab, iab] -= V_r0[a, b]
+
+    return S0, C0
+
+
+def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
+                         norb, kx_array, ky_array, kz_array, beta,
+                         pairing_type, *, bond_max_shells, bond_memory_cap_gb,
+                         precondition_opts=None, green_source=None,
+                         g2_tail=False):
+    """Run the bond-resolved physics chain and return the Eliashberg operator.
+
+    bond_bubble -> Case-2 corrected m=0 blocks -> bare_bond_vertices ->
+    dress_bond -> make_bond_kernel (spec S4.2-S4.5).
+
+    ``bond_set`` must already be resolved (``bond_channels.
+    resolve_interactions``) and pre-flighted (``_bond_resource_preflight``) by
+    the caller BEFORE ``green_kw`` was allocated (review fix I-2: the
+    preflight must run before the potentially-large Green-function
+    allocation, not after -- see ``calc_eliashberg``'s bond-channel dispatch
+    branch). This function therefore no longer resolves the interaction or
+    runs the preflight itself.
+
+    ``precondition_opts`` (from ``_read_bond_config``) is forwarded verbatim
+    to ``bond_channels.check_hermitian_preconditions`` -- the
+    ``bond_precondition_atol/rtol/dense_limit`` knobs of ``[eliashberg]``
+    (review fix M7).
+
+    ``green_source`` is provenance only: the path ``green_kw`` was loaded from
+    (``[eliashberg] bond_green``), or ``None`` when the caller built the bare
+    Green function from the transfer Hamiltonian. It selects the wording of
+    the recorded approximation level -- the two are physically different
+    approximations and the record must say which one ran.
+
+    ``bond_max_shells`` and ``bond_memory_cap_gb`` are likewise PROVENANCE
+    ONLY here: the resource preflight and the shell cutoff itself already
+    happened in the caller (``resolve_interactions``/
+    ``_bond_resource_preflight``, before ``bond_set``/``green_kw`` were
+    built), so by the time this function runs, neither value feeds into the
+    computed operator -- they are only echoed into the returned
+    ``provenance`` dict. They are keyword-only (review fix: honest
+    signature) precisely so a call site cannot mistake them for
+    physics-affecting positional arguments. (Past review fix: an earlier
+    ``nmat`` parameter was dropped from this signature for the same reason --
+    it was never read in the body, since ``green_kw.shape[-1]`` already fixes
+    the Matsubara grid the bond bubble is built on, and ``bond_green`` can
+    make that grid differ from the ``nmat`` the caller resolved the preflight
+    with.)
+
+    Returns
+    -------
+    (A, vec_size) : tuple
+        The ``scipy.sparse.linalg.LinearOperator`` kernel and its vector size,
+        in the same convention as ``_make_kernel_operator``.
+    provenance : dict
+        Additive output-provenance record (spec S5).
+    attribution : dict
+        Context for the ``lambda = lambda^pp + lambda^fl`` decomposition of
+        spec S4.5: the two kernel parts (``pp``/``fl``), the full kernel and
+        the ``sqrt(GG)`` metric (``weight``), consumed by
+        ``bond_channels.attribute_lambda`` once a gap has converged.
+    """
+    Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
+
+    logger.info("Computing the bond-resolved bubble chi-bar...")
+    chi_bar = bond_channels.bond_bubble(green_kw, bond_set, beta)
+
+    S0_q, C0_q = _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
+                                       kx_array, ky_array, kz_array)
+    S_bond, C_bond, Vpp_s, Vpp_t = bond_channels.bare_bond_vertices(
+        bond_set, S0_q, C0_q, norb)
+    chi_s, chi_c = bond_channels.dress_bond(chi_bar, S_bond, C_bond)
+
+    logger.info("Building the bond-resolved Eliashberg operator "
+                "(pairing_type=%s)...", pairing_type)
+    A, A_fl, A_pp, vec_size = bond_channels.make_bond_kernel_parts(
+        chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green_kw, bond_set,
+        pairing_type, beta, g2_tail=g2_tail)
+
+    # v1 runtime preconditions of the Hermitian static path (spec S4.5): the
+    # pair weight w = GG must be real (Hermitian) and >= 0 and the symmetrized
+    # kernel K~ = -sqrt(w) Gamma sqrt(w) Hermitian, else the reported lambda is
+    # not a real eigenvalue/Rayleigh quotient. Violations RAISE -- there is no
+    # non-Hermitian biorthogonal fallback in v1.
+    weight = bond_channels.pair_weight(green_kw, beta, g2_tail=g2_tail)
+    diagnostics = bond_channels.check_hermitian_preconditions(
+        A, weight, label="eliashberg bond_channels",
+        parts={"pp": A_pp, "fl": A_fl},
+        **(precondition_opts or {}))
+    logger.info(
+        "Bond kernel Hermiticity preconditions OK (%s check): "
+        "||K~ - K~^dag||_F = %.3e (relative %.3e; the same residual on "
+        "M = W K is %.3e), min eig w = %.3e",
+        diagnostics["method"],
+        diagnostics["kernel_hermiticity_residual_ktilde"],
+        diagnostics["kernel_hermiticity_relative_ktilde"],
+        diagnostics["kernel_hermiticity_residual"],
+        diagnostics["weight_min_eigenvalue"])
+
+    attribution = {
+        "full": A,
+        "pp": A_pp,
+        "fl": A_fl,
+        "weight": weight,
+        "diagnostics": diagnostics,
+    }
+
+    provenance = {
+        "bond_channels": True,
+        "bond_n_channels": int(bond_set.n_channels),
+        "bond_delta_r": [list(dr) for dr in bond_set.delta_r],
+        "bond_max_shells": ("all" if bond_max_shells is None
+                            else int(bond_max_shells)),
+        "bond_memory_cap_gb": float(bond_memory_cap_gb),
+        "g2_tail": bool(g2_tail),
+        "approximation": (
+            "static RPA-ladder bond dressing on "
+            + ("an EXTERNAL Green function supplied via [eliashberg] "
+               "bond_green (its own approximation level -- e.g. FLEX-dressed "
+               "and self-consistent -- is that of the file, not of this run); "
+               "the bond chi-bar is still built here from that green, so "
+               "this is NOT a conserving FLEX result"
+               if green_source else
+               "the BARE Green function built from the transfer Hamiltonian "
+               "(supply [eliashberg] bond_green to feed an external/FLEX "
+               "green instead); NOT a conserving FLEX result")
+            + " -- absolute lambda is not comparable to FLEX/dynamic values"),
+    }
+    if green_source:
+        provenance["bond_green"] = str(green_source)
+    if bond_set.n_channels == 1:
+        provenance["collapsed_to_pure_hubbard"] = True
+    provenance["kernel_hermiticity_residual"] = "{:.3e}".format(
+        diagnostics["kernel_hermiticity_residual"])
+    provenance["kernel_hermiticity_residual_ktilde"] = "{:.3e}".format(
+        diagnostics["kernel_hermiticity_residual_ktilde"])
+    provenance["kernel_hermiticity_relative_ktilde"] = "{:.3e}".format(
+        diagnostics["kernel_hermiticity_relative_ktilde"])
+    provenance["kernel_hermiticity_method"] = diagnostics["method"]
+    provenance["pair_weight_min_eigenvalue"] = "{:.6e}".format(
+        diagnostics["weight_min_eigenvalue"])
+
+    return (A, vec_size), provenance, attribution
 
 
 # ---------------------------------------------------------------------------
@@ -1441,13 +2134,20 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     # Batched RPA solve for all q-points simultaneously
     # chi_s = [I - chi0 @ S]^{-1} @ chi0
     # chi_c = [I + chi0 @ C]^{-1} @ chi0
-    I_mat = np.broadcast_to(np.eye(nd, dtype=complex), (Nx, Ny, Nz, nd, nd)).copy()
-
-    mat_s = I_mat - chi0_static @ S_all
-    mat_c = I_mat + chi0_static @ C_all
-
-    chis = np.linalg.solve(mat_s, chi0_static)  # batched solve
-    chic = np.linalg.solve(mat_c, chi0_static)
+    # The solve itself lives in bond_channels.dress_bond, the SINGLE shared
+    # dressing helper: the bond path runs the identical algebra at the enlarged
+    # bond-major size ND = nd*B, so factoring it out lets the bond reduction
+    # test exercise the real production code path instead of a mirror copy.
+    # dress_bond performs exactly the same operations in the same order, so
+    # this call is bit-identical to the historical inline body.
+    #
+    # cond_tol=None DISABLES dress_bond's near-singularity guard here: that
+    # guard is a BOND-PATH-ONLY policy. This is the legacy default path, which
+    # has always simply called np.linalg.solve; an invertible but poorly
+    # conditioned RPA denominator must keep returning its (large but finite)
+    # result rather than becoming a ValueError for existing users.
+    chis, chic = bond_channels.dress_bond(chi0_static, S_all, C_all,
+                                          cond_tol=None)
 
     SChisS = S_all @ chis @ S_all
     CChicC = C_all @ chic @ C_all
@@ -2556,6 +3256,173 @@ def _expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention):
     return out
 
 
+def _load_green_npz(green_path, norb, Nx, Ny, Nz, label="Green"):
+    """Load a Green-function npz written in the H-wave layout, path-explicit.
+
+    Shared by ``_load_flex_green`` (which resolves the path from the FLEX
+    output directory) and by the ``[eliashberg] bond_green`` key (an
+    externally supplied Green function, spec Goal). The file must hold a
+    ``green`` array of shape ``(nblock, nfreq, nvol, norb, norb)`` -- what
+    ``flex.save_results`` writes -- with ``nvol = Nx*Ny*Nz`` and the same
+    ``norb`` as the model; anything else raises rather than being reshaped
+    into silent nonsense.
+
+    Returns ``(green, nfreq)`` with ``green`` in the sc.py layout
+    ``(norb, norb, Nx, Ny, Nz, nfreq)``.
+    """
+    if not os.path.exists(green_path):
+        raise FileNotFoundError(
+            "{} file not found: {}".format(label, green_path))
+    logger.info("Loading {} from: {}".format(label, green_path))
+    data_g = np.load(green_path)
+    _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
+    if "green" not in data_g.files:
+        raise ValueError(
+            "{} file {} has no 'green' array (keys: {}); the expected format "
+            "is the H-wave green.npz written by the FLEX/UHF solvers."
+            .format(label, green_path, list(data_g.files)))
+    green_raw = data_g["green"]
+    if green_raw.ndim != 5:
+        raise ValueError(
+            "{} file {}: 'green' must have shape (nblock, nfreq, nvol, norb, "
+            "norb), got {}".format(label, green_path, green_raw.shape))
+    _, nfreq, nvol_g, norb1, norb2 = green_raw.shape
+    if (nvol_g != Nx * Ny * Nz) or (norb1 != norb) or (norb2 != norb):
+        raise ValueError(
+            "{} file {} does not match the model: it holds nvol={}, norb={}x{} "
+            "while this run has nvol={} ({}x{}x{}) and norb={}."
+            .format(label, green_path, nvol_g, norb1, norb2,
+                    Nx * Ny * Nz, Nx, Ny, Nz, norb))
+    green = green_raw[0].reshape(
+        nfreq, Nx, Ny, Nz, norb, norb).transpose(4, 5, 1, 2, 3, 0).copy()
+    return green, nfreq
+
+
+class _UnsupportedNpyHeaderVersion(Exception):
+    """Internal to :func:`_peek_green_npz_nfreq`: raised when a ``.npy``
+    header version is one neither numpy's public ``read_array_header_X_Y``
+    wrappers nor its internal version-generic dispatcher can parse.
+
+    This is deliberately NOT a plain ``ValueError`` catch target inside
+    :func:`_peek_green_npz_nfreq`'s own except clause: a genuinely unsupported
+    version must surface as a clear error (review fix), not be swallowed into
+    a silent ``None`` that reopens the double-preflight path the header peek
+    exists to close.
+    """
+
+
+def _read_npy_header_shape(fh):
+    """Read only the ``shape`` from a ``.npy`` header, for any format version
+    ``np.load`` itself accepts (1.0, 2.0, 3.0, and any future version numpy
+    grows a dedicated ``read_array_header_X_Y`` wrapper for).
+
+    Dispatches on the version tuple from ``np.lib.format.read_magic`` to the
+    matching public ``read_array_header_X_Y`` function when one exists (1.0,
+    2.0). Format 3.0 (and any future version numpy's public API has not grown
+    a dedicated wrapper for) has no such function, so this falls back to
+    ``numpy.lib.format``'s own internal version-generic dispatcher -- exactly
+    what ``np.load`` uses under the hood to parse ANY version it accepts, so
+    the fallback keeps every such version working here too instead of
+    silently giving up.
+
+    Raises :class:`_UnsupportedNpyHeaderVersion` if the version is genuinely
+    unknown even to that internal dispatcher.
+    """
+    version = np.lib.format.read_magic(fh)
+    reader = getattr(
+        np.lib.format, "read_array_header_{}_{}".format(*version), None)
+    if reader is not None:
+        shape, _, _ = reader(fh)
+        return shape
+    generic = getattr(np.lib.format, "_read_array_header", None)
+    if generic is None:
+        raise _UnsupportedNpyHeaderVersion(
+            "numpy.lib.format has no header reader for NPY format version "
+            "{!r}".format(version))
+    try:
+        shape, _, _ = generic(fh, version)
+    except ValueError as exc:
+        raise _UnsupportedNpyHeaderVersion(
+            "cannot parse NPY header version {!r}: {}".format(version, exc))
+    return shape
+
+
+def _peek_green_npz_nfreq(green_path, label="Green"):
+    """Return the ``nfreq`` axis of a Green npz WITHOUT materialising it.
+
+    The bond path's resource preflight must run with the frequency count the
+    run will really use -- and for an external ``bond_green`` that is the
+    FILE's, not the configured ``Nmat`` (review fix: the preflight used to run
+    with the configured value first, so an over-large ``Nmat`` could refuse a
+    run that fits). Reading the npz member's array header alone keeps the
+    preflight strictly ahead of the (possibly large) allocation.
+
+    Supports every ``.npy`` header version ``np.load`` accepts (see
+    :func:`_read_npy_header_shape`); a genuinely unsupported version raises
+    rather than silently returning ``None``, since falling back to the
+    configured Nmat for the first preflight is exactly the double-preflight
+    behaviour this function exists to eliminate.
+
+    Returns ``None`` when the frequency count cannot be determined from the
+    header alone for an ordinary reason (missing file, no ``green`` member,
+    unexpected rank); the caller then falls back to :func:`_load_green_npz`,
+    which raises the informative error.
+    """
+    try:
+        if not zipfile.is_zipfile(green_path):
+            return None
+        with zipfile.ZipFile(green_path) as zf:
+            member = None
+            for name in zf.namelist():
+                if name in ("green.npy", "green"):
+                    member = name
+                    break
+            if member is None:
+                return None
+            with zf.open(member) as fh:
+                shape = _read_npy_header_shape(fh)
+    except _UnsupportedNpyHeaderVersion as exc:
+        raise ValueError(
+            "{} file {}: {}".format(label, green_path, exc)) from exc
+    except (OSError, ValueError):
+        # unreadable/corrupt: let the real loader produce the diagnostic
+        return None
+    if len(shape) != 5:
+        return None
+    logger.info("%s %s carries %d Matsubara frequencies (read from the npz "
+                "header)", label, green_path, int(shape[1]))
+    return int(shape[1])
+
+
+def _validate_bond_green_nmat(nfreq, green_path, label="bond_green"):
+    """Reject a bond Green file whose frequency count cannot define a grid.
+
+    The file's ``nfreq`` OVERRIDES the configured ``Nmat`` on the bond path
+    (the Green function defines the grid the bubble is built on), so it has to
+    meet the same requirement the configured value does: POSITIVE and EVEN.
+    ``bond_bubble`` builds a CENTERED fermionic grid
+    ``iomega_n = (2n + 1 - nmat) pi/beta``; with an odd ``nmat`` the ``n =
+    (nmat-1)/2`` point sits exactly at ``iomega = 0``, which is not a fermionic
+    Matsubara frequency, and the bubble would process it silently -- an
+    invalid susceptibility with no error at all. Mirrors the dynamic path's
+    even-Nmat requirement (:func:`_validate_dynamic_prerequisites`).
+
+    Called BEFORE the resource preflight and before the array is materialised,
+    so a bad grid never sizes -- let alone allocates -- anything large.
+    """
+    nfreq = int(nfreq)
+    if nfreq <= 0 or nfreq % 2 != 0:
+        raise ValueError(
+            "[eliashberg] {} {} carries Nmat={} Matsubara frequencies, but "
+            "the bond path requires a POSITIVE EVEN count (the file's Nmat "
+            "overrides [mode.param] Nmat, and the bond bubble is built on the "
+            "centered fermionic grid iomega_n = (2n+1-Nmat)*pi/beta, which an "
+            "odd count would place a spurious zero frequency on). Regenerate "
+            "the Green function with an even Nmat.".format(
+                label, green_path, nfreq))
+    return nfreq
+
+
 def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
 
@@ -3026,7 +3893,8 @@ def _calc_g2(green_kw, beta, tail=True):
         Shape (norb, norb, norb, norb, Nx, Ny, Nz).
     """
     norb = green_kw.shape[0]
-    Nx, Ny, Nz, nmat = green_kw.shape[2], green_kw.shape[3], green_kw.shape[4], green_kw.shape[5]
+    Nx, Ny, Nz, nmat = (green_kw.shape[2], green_kw.shape[3],
+                        green_kw.shape[4], green_kw.shape[5])
     nvol = Nx * Ny * Nz
 
     # beta gate (round-6 review): a non-finite or non-positive beta poisons
@@ -3293,6 +4161,15 @@ def _initialize_gap(mode, norb, kx_array, ky_array, kz_array):
         - "p_y"       : sy
         - "p_z"       : sz
 
+        **f-wave (odd parity, higher harmonic):**
+        - "f_x"       : sx*(cx - cy)
+        - "f_y"       : sy*(cy - cx)
+
+        Note that "f_x"/"f_y" span an odd 2D representation together with
+        "p_x"/"p_y" on a square lattice, so they are seeds (and the harmonic
+        basis of the subspace tracking, see ``_odd_harmonic_basis``), not a
+        point-group separation.
+
         **Other:**
         - "random"    : random (all symmetries mixed)
     norb : int
@@ -3330,6 +4207,9 @@ def _initialize_gap(mode, norb, kx_array, ky_array, kz_array):
         "p_x":      lambda: sx,
         "p_y":      lambda: sy,
         "p_z":      lambda: sz,
+        # f-wave (odd; the higher odd harmonic of spec S7.7)
+        "f_x":      lambda: sx * (cx - cy),
+        "f_y":      lambda: sy * (cy - cx),
     }
 
     if mode in form_factors:
@@ -3382,12 +4262,134 @@ def _resolve_init_gap(init_gap, pairing_type):
     return "p_x" if pairing_type == "triplet" else "cos"
 
 
+# The odd (triplet-parity) harmonics the invariant-subspace tracker reports the
+# tracked state on (spec S7.7): {sin kx, sin ky, sin kx (cos kx - cos ky),
+# sin ky (cos ky - cos kx)}. They are exactly the odd `_initialize_gap` form
+# factors, so the seed table stays the single source of truth.
+_ODD_HARMONICS = ("p_x", "p_y", "f_x", "f_y")
+
+
+def _odd_harmonic_basis(norb, kx_array, ky_array, kz_array):
+    """Normalized odd harmonic basis for the subspace decomposition (S7.7).
+
+    Returns ``{name: flat gap vector}`` for the odd form factors of
+    ``_initialize_gap`` (``p_x``, ``p_y``, ``f_x``, ``f_y``), each raveled in
+    the gap layout ``(norb, norb, Nx, Ny, Nz)``. Harmonics that vanish
+    identically on the current k-grid (e.g. ``p_y`` when ``Ny == 1``) are
+    omitted rather than returned as a zero vector, so a decomposition never
+    divides by zero.
+    """
+    basis = {}
+    for name in _ODD_HARMONICS:
+        sigma = _initialize_gap(name, norb, kx_array, ky_array, kz_array)
+        if np.linalg.norm(sigma) == 0.0:
+            logger.debug(
+                "odd harmonic '%s' vanishes on this k-grid; omitted from the "
+                "subspace decomposition basis", name)
+            continue
+        basis[name] = sigma.ravel()
+    return basis
+
+
+def _bond_diagnostics_record(provenance, gap, eigenvalues, weight, norb,
+                             kx_array, ky_array, kz_array,
+                             deg_tol=_BOND_DIAGNOSTICS_DEG_TOL):
+    """Opt-in character analysis of the leading bond state (``[eliashberg]
+    bond_diagnostics``; spec S7.7).
+
+    Writes into the ADDITIVE provenance record (``#`` comment lines of
+    ``eigenvalue.dat``, see ``_save_results``) two things a single solve can
+    honestly report about its leading state:
+
+    1. ``bond_diagnostics_harmonics`` -- the odd-harmonic decomposition of the
+       returned gap on ``_odd_harmonic_basis`` in the ``sqrt(GG)`` metric
+       (``bond_channels.harmonic_decomposition``). Each number is the fraction
+       of that harmonic captured by the state, in ``[0, 1]``; it is the
+       V-sweep "character" quantity of spec S7.7 evaluated at ONE point.
+    2. ``bond_diagnostics_eigenvalue_clusters`` -- the near-degenerate grouping
+       of the computed eigenvalues (``bond_channels.cluster_eigenvalues``), so
+       a user can see whether the leading state is a doublet (the odd E
+       doublet of the square lattice) or a singlet branch. Only present when a
+       spectrum was actually computed (``solver_mode`` includes
+       ``"eigenvalue"``); the iteration path returns one vector and no
+       spectrum, and a one-eigenvalue "cluster list" would be a fake.
+
+    The ``lambda^pp`` / ``lambda^fl`` attribution sits in the same block and is
+    written by the caller regardless of this flag.
+
+    **Eigenvector orientation.** ``eigenvalues``/``gap`` come from
+    ``_solve_eigenvalue``, which already returns eigenvectors as one gap array
+    PER LEADING INDEX (it transposes ``scipy.sparse.linalg.eigs``'s COLUMNS);
+    the row stack this function hands to ``harmonic_decomposition`` therefore
+    holds one eigenvector per row, which is the convention the
+    ``bond_channels`` subspace helpers (and ``track_subspace``) consume.
+
+    Multi-point tracking across a ``V`` sweep -- following ONE invariant
+    subspace through the spectrum rather than characterizing one solve -- is
+    ``bond_channels.track_subspace``; a single ``calc_eliashberg`` run has only
+    one point, so that helper is the documented API for sweep drivers instead.
+    """
+    provenance["bond_diagnostics"] = True
+
+    basis = _odd_harmonic_basis(norb, kx_array, ky_array, kz_array)
+    if basis and gap is not None:
+        vec = np.asarray(gap).ravel()[np.newaxis, :]
+        harmonics = bond_channels.harmonic_decomposition(vec, basis, weight)
+        provenance["bond_diagnostics_harmonics"] = ", ".join(
+            "{}={:.6f}".format(name, harmonics[name])
+            for name in sorted(harmonics))
+        provenance["bond_diagnostics_harmonics_note"] = (
+            "odd-harmonic decomposition of the LEADING (returned) gap on the "
+            "basis {sin kx, sin ky, sin kx (cos kx - cos ky), "
+            "sin ky (cos ky - cos kx)} in the sqrt(GG) pair-weight metric; "
+            "each value is the fraction of that harmonic captured by the "
+            "state, in [0, 1] (spec S7.7). p_x/p_y/f_x/f_y span the SAME odd "
+            "2D representation on a square lattice, so this is a character "
+            "report, not a point-group separation")
+        logger.info("bond diagnostics -- odd-harmonic content of the leading "
+                    "state: %s", provenance["bond_diagnostics_harmonics"])
+    elif not basis:
+        provenance["bond_diagnostics_harmonics"] = (
+            "n/a (every odd harmonic vanishes on this k-grid)")
+
+    if eigenvalues is not None and len(eigenvalues) > 0:
+        clusters = bond_channels.cluster_eigenvalues(np.asarray(eigenvalues),
+                                                     deg_tol=deg_tol)
+        # The cluster of the RETURNED eigenpair, i.e. of row 0 -- NOT
+        # clusters[0]. cluster_eigenvalues orders by descending Re lambda over
+        # every computed eigenpair, while row 0 is the eigenpair the run
+        # actually reports, which _reorder_eigenpairs_by_parity promoted out of
+        # the channel's parity sector; an opposite-parity mode with a larger
+        # Re lambda is demoted below it but still clustered here. Reporting
+        # clusters[0]'s size as "the leading state's degeneracy" would then
+        # describe a different state than the one the file returns.
+        leading = next(c for c in clusters if 0 in c)
+        provenance["bond_diagnostics_eigenvalue_clusters"] = str(clusters)
+        provenance["bond_diagnostics_leading_cluster"] = str(leading)
+        provenance["bond_diagnostics_leading_cluster_size"] = len(leading)
+        provenance["bond_diagnostics_deg_tol"] = "{:.3e}".format(deg_tol)
+        provenance["bond_diagnostics_clusters_note"] = (
+            "near-degenerate groups of the COMPUTED eigenvalues (indices into "
+            "the rows below, single-linkage on |lambda_i - lambda_j| <= "
+            "deg_tol, ordered by descending Re lambda over ALL computed "
+            "eigenpairs -- including any opposite-parity mode that the "
+            "channel-parity promotion demoted below row 0). "
+            "bond_diagnostics_leading_cluster is the group containing ROW 0, "
+            "i.e. the degeneracy of the state this run actually returns; size "
+            "2 is the odd E doublet")
+        logger.info("bond diagnostics -- eigenvalue clusters (deg_tol %.1e): "
+                    "%s; the returned state's cluster is %s (size %d)",
+                    deg_tol, clusters, leading, len(leading))
+    return provenance
+
+
 # ---------------------------------------------------------------------------
 # Solvers
 # ---------------------------------------------------------------------------
 
 def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
-                     max_iter=1000, alpha=0.5, tol=1.0e-5, pairing_type=None):
+                     max_iter=1000, alpha=0.5, tol=1.0e-5, pairing_type=None,
+                     operator=None, spectral_shift=None, info_out=None):
     """Solve linearized Eliashberg equation by self-consistent iteration.
 
     Parameters
@@ -3423,13 +4425,36 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         chiral gaps), projection is automatically disabled with a warning and the
         un-projected iteration is used. When None, no projection is applied (the
         historical behavior).
+    operator : tuple, optional
+        Pre-built ``(A, vec_size)`` kernel to iterate with, bypassing
+        ``_make_kernel_operator(Vs_q, G2, ...)`` (``Vs_q``/``G2`` may then be
+        None). Used by the bond-channel path, whose operator is built by
+        ``bond_channels.make_bond_kernel``. When None (the default) the
+        historical operator is built exactly as before.
+    spectral_shift : float or "auto", optional
+        Positive spectral shift sigma; the power iteration then runs on
+        ``K + sigma*I`` and the returned eigenvalue is shifted back (see
+        ``_solve_leading``). Needed whenever the kernel is repulsive-dominant
+        (negative dominant eigenvalue), where the unshifted iterate flips sign
+        every step and can never converge. When None (the default) the
+        historical unshifted iteration runs unchanged.
+    info_out : dict, optional
+        When given, updated in place with ``_solve_leading``'s info dict --
+        including, on a shifted run, the Rayleigh validation record
+        (``eigenvalue_validated`` / ``rayleigh_residual`` / ...). The return
+        arity is deliberately unchanged (many call sites unpack exactly four
+        values), so this is the way a caller learns WHAT the returned number
+        is.
 
     Returns
     -------
     sigma : ndarray
         Converged gap function.
     eigenvalue : float
-        Leading eigenvalue (norm of sigma_new before normalization).
+        Leading eigenvalue: without ``spectral_shift`` the (unsigned) norm of
+        sigma_new before normalization; with one, the signed eigenvalue when
+        the Rayleigh check validates it, else the raw shifted iterate-norm
+        estimate (see ``_solve_leading`` / ``info_out``).
     converged : bool
         Whether convergence was achieved.
     n_iter : int
@@ -3442,7 +4467,8 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     # preprocessing) on every one of the up-to-max_iter iterations. The matvec
     # is numerically identical to _eliashberg_kernel_fft(Vs_q, G2, sigma, norb).
     Nx, Ny, Nz = sigma_init.shape[-3], sigma_init.shape[-2], sigma_init.shape[-1]
-    A, vec_size = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    A, vec_size = (_make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+                   if operator is None else operator)
     shape = (norb, norb, Nx, Ny, Nz)
 
     # Parity projection is only legitimate when the kernel commutes with the
@@ -3515,9 +4541,11 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     eigenvalue, sigma_flat, info = _solve_leading(
         make_operator, vec_size, "iteration",
         max_iter=max_iter, convergence_tol=tol, init_vec=sigma_old.ravel(),
-        alpha=alpha, project_fn=project_fn,
+        alpha=alpha, project_fn=project_fn, spectral_shift=spectral_shift,
     )
 
+    if info_out is not None:
+        info_out.update(info)
     return sigma_flat.reshape(shape), eigenvalue, info["converged"], info["n_iter"]
 
 
@@ -3865,6 +4893,258 @@ def _shift_from_eigenvalues(vals, factor=0.9):
     return float(vals[np.argmax(np.abs(vals))].real) * factor
 
 
+def _validate_spectral_shift(spectral_shift, solver_mode):
+    """Validate the ``spectral_shift`` option and its mode compatibility.
+
+    ``spectral_shift`` must be a positive finite number or the string
+    ``"auto"``, and is only meaningful for the two drivers that can use it:
+    the ARPACK largest-real path (``eigenvalue_method='arnoldi'``) and the
+    power iteration (``solver_mode='iteration'``). Anything else raises.
+    """
+    if spectral_shift is None:
+        return
+    if isinstance(spectral_shift, str):
+        if spectral_shift != "auto":
+            raise ValueError(
+                "[eliashberg] spectral_shift string must be \"auto\", got "
+                "{!r}".format(spectral_shift))
+    elif isinstance(spectral_shift, bool):
+        # bool is a subclass of int, and float(True) == 1.0 succeeds -- so
+        # without this explicit check a TOML `spectral_shift = true` would be
+        # silently accepted as a numeric shift of 1.0 instead of being
+        # rejected as the type error it is (review fix).
+        raise ValueError(
+            "[eliashberg] spectral_shift must be a positive finite number "
+            "or \"auto\", got a bool: {!r}".format(spectral_shift))
+    else:
+        try:
+            sv = float(spectral_shift)
+        except (TypeError, ValueError, OverflowError):
+            sv = float("nan")
+        if not np.isfinite(sv) or sv <= 0.0:
+            raise ValueError(
+                "[eliashberg] spectral_shift must be a positive finite "
+                "number or \"auto\", got {!r}".format(spectral_shift))
+    if solver_mode not in ("arnoldi", "iteration"):
+        raise ValueError(
+            "[eliashberg] spectral_shift is only supported for "
+            "eigenvalue_method='arnoldi' and solver_mode='iteration', not "
+            "{!r}".format(solver_mode))
+
+
+def _estimate_spectral_radius(A, probes, project_fn=None,
+                              n_steps=_AUTO_SHIFT_PROBE_STEPS):
+    """Estimate the spectral radius rho(A) with a few power-iteration steps.
+
+    For a unit vector ``v``, ``||A v||`` is a lower bound on rho(A) that
+    increases toward it as ``v`` is driven onto the dominant eigenvector; the
+    largest value seen over all probes and steps is returned.
+
+    ``project_fn`` (the gap-parity projector, when the caller iterates in a
+    parity sector) is applied to every probe iterate, so the estimate is the
+    spectral radius OF THAT SECTOR -- the only part of the spectrum the shifted
+    iteration will actually see. Several probes are used because a physically
+    motivated seed can be orthogonal to the dominant eigenvector (an f-wave
+    seed and an s-wave dominant mode, say) and would then wildly underestimate
+    rho on its own.
+    """
+    rho = 0.0
+    for v0 in probes:
+        v = np.asarray(v0, dtype=complex).ravel()
+        if project_fn is not None:
+            v = project_fn(v)
+        nrm = np.linalg.norm(v)
+        if nrm == 0.0 or not np.isfinite(nrm):
+            continue
+        v = v / nrm
+        for _ in range(n_steps):
+            w = A.matvec(v)
+            if project_fn is not None:
+                w = project_fn(w)
+            nw = float(np.linalg.norm(w))
+            if nw == 0.0 or not np.isfinite(nw):
+                break
+            rho = max(rho, nw)
+            v = w / nw
+    return rho
+
+
+def _resolve_iteration_shift(A, spectral_shift, vec_size, init_vec,
+                             project_fn=None):
+    """Resolve the power-iteration spectral shift sigma > 0.
+
+    A number is taken as given. ``"auto"`` estimates the spectral radius with
+    ``_estimate_spectral_radius`` (probing from the caller's seed AND from a
+    deterministic random vector) and returns
+    ``_AUTO_SHIFT_MARGIN * rho_est + 1e-6`` -- i.e. slightly ABOVE the
+    estimated radius, the smallest shift that pushes the whole spectrum into
+    the right half-plane so that the algebraically largest eigenvalue of K
+    becomes the dominant (and positive) eigenvalue of K + sigma*I.
+    """
+    if not isinstance(spectral_shift, str):
+        return float(spectral_shift)
+    # "auto" (validated by _validate_spectral_shift)
+    rng = np.random.default_rng(0)
+    probe = (rng.standard_normal(vec_size)
+             + 1j * rng.standard_normal(vec_size))
+    rho = _estimate_spectral_radius(A, (init_vec, probe), project_fn)
+    sig = _AUTO_SHIFT_MARGIN * rho + 1.0e-6
+    logger.info(
+        "auto spectral_shift: spectral radius estimated as rho = %.6f from 2 "
+        "probes x %d power-iteration steps; sigma = %.2f * rho + 1e-6 = %.6f.",
+        rho, _AUTO_SHIFT_PROBE_STEPS, _AUTO_SHIFT_MARGIN, sig)
+    if not np.isfinite(sig):
+        raise ValueError(
+            "auto spectral_shift overflowed to a non-finite value (spectral "
+            "radius too large); pass an explicit shift.")
+    return sig
+
+
+# ---------------------------------------------------------------------------
+# Rayleigh validation of a SHIFTED power iteration
+#
+# ``||(K + sigma I) v|| - sigma`` is a signed eigenvalue of K only once the
+# iteration has converged to a mode whose SHIFTED eigenvalue is positive real.
+# Neither an explicit sigma (which the user may set too small) nor
+# ``"auto"`` (a finite-step power estimate of the spectral radius, which
+# approaches it from below) guarantees that, and the NON-converged exit
+# returns the same quantity. Example: ``K = diag(-3, -8, -5)`` with
+# ``sigma = 1`` drives the iterate to the -8 mode, whose shifted eigenvalue is
+# -7, so the raw quantity is ``|-7| - 1 = +6`` -- not an eigenvalue of K at
+# all. The signed Rayleigh quotient below (one extra matvec on the UNSHIFTED
+# operator) plus its residual decide whether the run may call its number an
+# eigenvalue; nothing here touches the unshifted (default) path.
+# ---------------------------------------------------------------------------
+
+# Absolute floor of the Rayleigh residual tolerance, and the factor applied to
+# the caller's convergence_tol. The bound is scaled by (|lambda| + 1) so it is
+# relative for a large eigenvalue and absolute for a tiny one.
+_RAYLEIGH_RESIDUAL_ATOL = 1.0e-6
+_RAYLEIGH_RESIDUAL_TOL_FACTOR = 100.0
+
+
+def _signed_rayleigh(A, vec):
+    """Signed Rayleigh quotient and relative residual of ``vec`` under ``A``.
+
+    Returns ``(lambda, residual)`` with
+    ``lambda = <v|A|v> / <v|v>`` (complex; it carries the SIGN of the
+    eigenvalue, unlike a power-iterate norm) and
+    ``residual = ||A v - lambda v|| / ||v||``. Costs exactly one matvec. A
+    zero/non-finite vector or quotient yields ``residual = inf``, i.e. "not
+    an eigenvector".
+    """
+    vec = np.asarray(vec).ravel()
+    vnorm = float(np.linalg.norm(vec))
+    if vnorm == 0.0 or not np.isfinite(vnorm):
+        return complex(np.nan, np.nan), float("inf")
+    Av = np.asarray(A.matvec(vec)).ravel()
+    lam = complex(np.vdot(vec, Av) / (vnorm * vnorm))
+    if not (np.isfinite(lam.real) and np.isfinite(lam.imag)):
+        return lam, float("inf")
+    return lam, float(np.linalg.norm(Av - lam * vec) / vnorm)
+
+
+def _validate_shifted_eigenvalue(A_unshifted, vec, iterate_value, shift,
+                                 convergence_tol):
+    """Decide what a shifted power iteration is allowed to report.
+
+    Parameters
+    ----------
+    A_unshifted : LinearOperator
+        The ORIGINAL kernel K (not ``K + sigma*I``).
+    vec : ndarray
+        The vector the iteration returned.
+    iterate_value : float
+        ``||(K + sigma I) v|| - sigma``, the historical quantity.
+    shift : float
+        The sigma actually applied.
+    convergence_tol : float
+        The iteration's own tolerance; the residual bound is derived from it.
+
+    Returns
+    -------
+    value : float
+        ``lambda`` (the validated Rayleigh eigenvalue) when the residual check
+        passes, otherwise ``iterate_value`` unchanged.
+    record : dict
+        ``eigenvalue_validated`` / ``eigenvalue_kind`` (``"eigenvalue"`` vs
+        ``"shifted-iterate-norm-estimate"``) / ``rayleigh_eigenvalue`` /
+        ``rayleigh_residual`` / ``rayleigh_residual_tol`` /
+        ``shift_sufficient``. ``shift_sufficient`` is False when the mode the
+        iteration locked onto has a NEGATIVE shifted eigenvalue -- the
+        signature of a too-small sigma -- and None when nothing could be
+        validated.
+    """
+    lam, resid = _signed_rayleigh(A_unshifted, vec)
+    tol = max(_RAYLEIGH_RESIDUAL_ATOL,
+              _RAYLEIGH_RESIDUAL_TOL_FACTOR * float(convergence_tol))
+    scale = abs(lam)
+    bound = tol * ((scale if np.isfinite(scale) else 0.0) + 1.0)
+    validated = bool(np.isfinite(resid) and resid <= bound
+                     and abs(lam.imag) <= bound)
+    record = {
+        "eigenvalue_validated": validated,
+        "eigenvalue_kind": ("eigenvalue" if validated
+                            else "shifted-iterate-norm-estimate"),
+        "rayleigh_eigenvalue": (float(lam.real) if validated else None),
+        "rayleigh_residual": resid,
+        "rayleigh_residual_tol": bound,
+        "shift_sufficient": None,
+    }
+    if not validated:
+        return iterate_value, record
+    value = float(lam.real)
+    # A sufficient sigma puts the WHOLE spectrum in the right half-plane, so
+    # the mode the iteration locks onto satisfies lambda + sigma > 0. A
+    # negative implied shifted eigenvalue means the iterate was driven by
+    # |lambda + sigma| with lambda + sigma < 0: sigma was too small, and the
+    # mode found is the largest-MAGNITUDE one, not the algebraically largest.
+    record["shift_sufficient"] = bool(value + shift > 0.0)
+    return value, record
+
+
+def _shifted_eigenvalue_note(solver_mode, spectral_shift, converged, n_iter,
+                             iter_info, kernel_label="kernel"):
+    """The ``eigenvalue.dat`` comment describing a SHIFTED iteration's number.
+
+    Split out of ``calc_eliashberg`` so the static and dynamic entry points --
+    and the tests -- share one wording, and so the "this is NOT an eigenvalue"
+    case can never be silently dropped from the file.
+    """
+    info = iter_info or {}
+    resid = info.get("rayleigh_residual")
+    resid_txt = ("{:.3e}".format(resid) if isinstance(resid, float)
+                 and np.isfinite(resid) else str(resid))
+    tail = ("the iteration {} after {} steps."
+            .format("converged" if converged else "did NOT converge", n_iter))
+    if info.get("eigenvalue_validated"):
+        note = (
+            "solver_mode='{}' with spectral_shift={!r}: the power iteration "
+            "ran on the shifted {} K + sigma*I and the value below is the "
+            "SIGNED eigenvalue of K (the shift has been subtracted back), "
+            "VALIDATED by the Rayleigh quotient <v|K|v>/<v|v> with residual "
+            "||K v - lambda v||/||v|| = {}; {}"
+            .format(solver_mode, spectral_shift, kernel_label, resid_txt,
+                    tail))
+        if info.get("shift_sufficient") is False:
+            note += (" WARNING: spectral_shift appears INSUFFICIENT -- the "
+                     "mode found has lambda + sigma < 0, so it is the "
+                     "largest-MAGNITUDE eigenvalue of K + sigma*I, not the "
+                     "algebraically largest (physical) one; re-run with a "
+                     "larger spectral_shift or \"auto\".")
+        return note
+    return (
+        "solver_mode='{}' with spectral_shift={!r}: the value below is a "
+        "SHIFTED ITERATE-NORM ESTIMATE, ||(K + sigma*I) v|| - sigma. It is "
+        "NOT an eigenvalue of K: the Rayleigh check <v|K|v>/<v|v> left a "
+        "residual ||K v - lambda v||/||v|| = {} (tolerance {}), so no signed "
+        "eigenvalue could be validated for this run -- do not quote it as "
+        "lambda. {} Raise max_iter, raise spectral_shift, or use "
+        "solver_mode=\"eigenvalue\"."
+        .format(solver_mode, spectral_shift, resid_txt,
+                info.get("rayleigh_residual_tol"), tail))
+
+
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
                    sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
@@ -3914,24 +5194,137 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         Flat-vector -> flat-vector projector applied to every power-iteration
         iterate (e.g. the gap-parity projector in ``_solve_iteration``). Only
         used by "iteration"; when None, no projection is applied.
+    spectral_shift : float or "auto", optional
+        Positive spectral shift sigma. Supported by "arnoldi" (ARPACK asks for
+        the largest-REAL eigenvalue of ``A + sigma*I``) and by "iteration"
+        (the power loop runs on ``A + sigma*I``, whose dominant eigenvalue is
+        positive even for a repulsive-dominant kernel, so it converges). In
+        both cases sigma is subtracted back: the returned eigenvalue is the
+        SIGNED eigenvalue of the original operator and the eigenvector is
+        unchanged by the shift. ``"auto"`` estimates sigma from the spectral
+        radius (see ``_resolve_iteration_shift`` for the iteration path).
+        Rejected for every other mode.
 
     Returns
     -------
     leading_eigenvalue : complex or float
         The dominant eigenvalue (eigenvalue-family: largest real part, per
-        ``_order_eigenpairs``; iteration: the converged/last iterate norm).
+        ``_order_eigenpairs``). On the iteration path WITHOUT
+        ``spectral_shift`` it is the converged/last iterate norm (unsigned),
+        exactly as before. WITH a ``spectral_shift`` it is the signed Rayleigh
+        eigenvalue ``<v|K|v>/<v|v>`` when that passes the residual check
+        (``eig_analysis["eigenvalue_validated"]``), and otherwise the raw
+        ``||(K + sigma I) v|| - sigma``, which is NOT an eigenvalue and must be
+        reported as an estimate (see ``_validate_shifted_eigenvalue``).
     leading_eigenvector : ndarray
         Flat, shape ``(vec_size,)``.
     eig_analysis : dict
         Eigenvalue-family modes: ``{"eigenvalues": vals, "eigenvectors": vecs,
         "sigma_shift": sigma_shift}`` with ``vals`` ordered by descending real
         part (``_order_eigenpairs``) and ``vecs`` the matching eigenvectors as
-        columns. "iteration" mode: ``{"converged": bool, "n_iter": int}``.
+        columns. "iteration" mode: ``{"converged": bool, "n_iter": int}`` --
+        exactly the historical key set when no shift is requested -- plus,
+        ONLY when a shift was actually applied (so the default path's dict is
+        unchanged), ``spectral_shift`` (the sigma actually applied),
+        ``eigenvalue_validated``, ``eigenvalue_kind``, ``rayleigh_eigenvalue``,
+        ``rayleigh_residual``, ``rayleigh_residual_tol`` and
+        ``shift_sufficient``.
     """
+    # Validate spectral_shift up front -- before any branch, including the
+    # iteration loop and the small-dense early return -- so an invalid value or
+    # an incompatible mode fails fast everywhere.
+    _validate_spectral_shift(spectral_shift, solver_mode)
+
     if solver_mode == "iteration":
         if init_vec is None:
             raise ValueError("init_vec is required for solver_mode='iteration'")
         A, _ = make_operator()
+
+        # Spectral shift: iterate with K + sigma*I instead of K. A repulsive-
+        # dominant kernel has a NEGATIVE dominant eigenvalue, which flips the
+        # iterate's sign every step, so the convergence test
+        # ||sigma_new/||sigma_new|| - sigma_old|| sits at ~2 and the loop can
+        # never converge. Shifting the spectrum into the right half-plane makes
+        # the ALGEBRAICALLY LARGEST eigenvalue dominant and positive (the same
+        # physical selection as the arnoldi which='LR' path). The shift leaves
+        # every eigenvector -- and hence every invariant subspace, including
+        # the parity sectors that project_fn selects -- untouched; only the
+        # eigenvalue moves, and it is shifted back below.
+        shift = 0.0
+        if spectral_shift is not None:
+            shift = _resolve_iteration_shift(A, spectral_shift, vec_size,
+                                             init_vec, project_fn)
+            logger.info(
+                "Power iteration with spectral shift sigma = %.6f (%s): "
+                "iterating on K + sigma*I; the reported eigenvalue is "
+                "un-shifted (lambda = lambda_shifted - sigma) and the "
+                "eigenvector is unchanged by the shift.",
+                shift,
+                "auto" if isinstance(spectral_shift, str) else "explicit")
+            A_unshifted = A
+            A = LinearOperator(
+                (vec_size, vec_size),
+                matvec=lambda v: A_unshifted.matvec(v) + shift * v,
+                dtype=complex)
+        # the sigma actually applied (None when no shift was requested), so
+        # callers can report it; `shift` itself is the arithmetic value.
+        shift_used = shift if spectral_shift is not None else None
+
+        def _finish(value, vec, converged, n_iter_done, rayleigh=True):
+            """Assemble the return triple, validating the SHIFTED value.
+
+            On the unshifted path this is exactly the historical dict --
+            ``{"converged", "n_iter"}`` and NOTHING else, as at commit
+            712b1a0; ``spectral_shift`` is added only when a shift was really
+            applied, so a caller that compares or serializes the default
+            dict sees the key set it always saw -- and no extra matvec is
+            taken, so the default behaviour is bit-identical.
+            """
+            info = {"converged": converged, "n_iter": n_iter_done}
+            if shift_used is None:
+                return value, vec, info
+            info["spectral_shift"] = shift_used
+            if not rayleigh:
+                # Nothing meaningful to validate (the zero-norm sentinel).
+                info.update({"eigenvalue_validated": False,
+                             "eigenvalue_kind": "not-computed",
+                             "rayleigh_eigenvalue": None,
+                             "rayleigh_residual": float("inf"),
+                             "rayleigh_residual_tol": float("nan"),
+                             "shift_sufficient": None})
+                return value, vec, info
+            value, record = _validate_shifted_eigenvalue(
+                A_unshifted, vec, value, shift, convergence_tol)
+            info.update(record)
+            if record["eigenvalue_validated"]:
+                logger.info(
+                    "Shifted power iteration: reporting the SIGNED Rayleigh "
+                    "eigenvalue lambda = %.8e of K (residual %.3e <= %.3e), "
+                    "not the raw shifted iterate norm.",
+                    value, record["rayleigh_residual"],
+                    record["rayleigh_residual_tol"])
+                if record["shift_sufficient"] is False:
+                    logger.warning(
+                        "spectral_shift = %.6f appears INSUFFICIENT: the "
+                        "iteration locked onto a mode with lambda = %.8e, so "
+                        "lambda + sigma = %.8e < 0 and the power iteration "
+                        "selected the largest-MAGNITUDE eigenvalue of "
+                        "K + sigma*I rather than the algebraically largest "
+                        "(physical) one. Re-run with a larger spectral_shift "
+                        "or spectral_shift=\"auto\".",
+                        shift, value, value + shift)
+            else:
+                logger.warning(
+                    "Shifted power iteration: the returned value %.8e is "
+                    "||(K + sigma*I) v|| - sigma and is NOT an eigenvalue of "
+                    "K -- the Rayleigh check <v|K|v>/<v|v> left a residual of "
+                    "%.3e (tolerance %.3e), so no signed eigenvalue could be "
+                    "validated. Do not quote it as lambda; raise max_iter, "
+                    "raise spectral_shift, or use solver_mode=\"eigenvalue\".",
+                    value, record["rayleigh_residual"],
+                    record["rayleigh_residual_tol"])
+            return value, vec, info
+
         sigma_old = init_vec
         eigenvalue = 0.0
 
@@ -3940,7 +5333,6 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             if project_fn is not None:
                 sigma_new = project_fn(sigma_new)
             norm = np.linalg.norm(sigma_new)
-            eigenvalue = norm
 
             # A (possibly projected) iterate can collapse to the zero vector
             # when the kernel annihilates the requested sector; normalizing by
@@ -3954,22 +5346,39 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     "{}; the kernel annihilates the requested sector, so the "
                     "eigenvalue cannot be normalized. Returning the previous "
                     "iterate as non-converged.".format(iteration))
-                return 0.0, sigma_old, {"converged": False,
-                                        "n_iter": iteration + 1}
+                # 0.0 is the historical non-converged sentinel, NOT a shifted
+                # eigenvalue, so it is returned as-is (un-shifting it would
+                # dress a failure up as lambda = -sigma) and no Rayleigh
+                # validation is attempted on it.
+                return _finish(0.0, sigma_old, False, iteration + 1,
+                               rayleigh=False)
 
+            # `norm` is the eigenvalue of the (possibly shifted) operator;
+            # subtract the shift back so every reported/logged value belongs to
+            # the ORIGINAL operator K. `shift` is exactly 0.0 when no spectral
+            # shift is in use, so the un-shifted path is bit-identical.
+            eigenvalue = norm - shift
             diff = np.linalg.norm(sigma_new / norm - sigma_old)
             logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
-                iteration, norm, diff))
+                iteration, eigenvalue, diff))
 
             if diff < convergence_tol:
                 logger.info("Converged at iteration {}".format(iteration + 1))
-                return eigenvalue, sigma_new / norm, {"converged": True,
-                                                       "n_iter": iteration + 1}
+                return _finish(eigenvalue, sigma_new / norm, True,
+                               iteration + 1)
 
             sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
 
         logger.warning("Failed to converge after {} iterations".format(max_iter))
-        return eigenvalue, sigma_old, {"converged": False, "n_iter": max_iter}
+        if shift_used is not None:
+            logger.warning(
+                "The power iteration ran on the shifted operator K + sigma*I "
+                "with sigma = %.6f and still did not converge. Either sigma is "
+                "too small (the dominant eigenvalue of K + sigma*I is still "
+                "negative -- try a larger spectral_shift, or \"auto\") or it is "
+                "so large that it compressed the relative eigenvalue gaps "
+                "(try a smaller one, or solver_mode=\"eigenvalue\").", shift)
+        return _finish(eigenvalue, sigma_old, False, max_iter)
 
     # Eigenvalue family: ARPACK Arnoldi or shift-invert.
     A, _ = make_operator()
@@ -3977,27 +5386,9 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     if not (solver_mode == "arnoldi" or solver_mode.startswith("shift-invert")):
         raise ValueError("Unknown eigenvalue method: {}".format(solver_mode))
 
-    # Validate spectral_shift up front (before any branch, incl. the small-dense
-    # early return) so invalid values / incompatible modes fail fast everywhere.
-    if spectral_shift is not None:
-        if isinstance(spectral_shift, str):
-            if spectral_shift != "auto":
-                raise ValueError(
-                    "[eliashberg] spectral_shift string must be \"auto\", got "
-                    "{!r}".format(spectral_shift))
-        else:
-            try:
-                sv = float(spectral_shift)
-            except (TypeError, ValueError, OverflowError):
-                sv = float("nan")
-            if not np.isfinite(sv) or sv <= 0.0:
-                raise ValueError(
-                    "[eliashberg] spectral_shift must be a positive finite "
-                    "number or \"auto\", got {!r}".format(spectral_shift))
-        if solver_mode != "arnoldi":
-            raise ValueError(
-                "[eliashberg] spectral_shift is only supported for "
-                "eigenvalue_method='arnoldi', not {!r}".format(solver_mode))
+    # (spectral_shift was validated at the top of the function, before every
+    # branch, so an invalid value fails fast even on the small-dense early
+    # return below.)
 
     # sigma_shift is the shift-invert target; it has no effect on the plain
     # arnoldi path (which uses spectral_shift instead). Warn rather than fail so
@@ -4131,7 +5522,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
 
 
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
-                      method="arnoldi", sigma_shift=None, spectral_shift=None):
+                      method="arnoldi", sigma_shift=None, spectral_shift=None,
+                      operator=None):
     """Solve linearized Eliashberg equation by eigenvalue analysis.
 
     Parameters
@@ -4169,6 +5561,9 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
         Shift parameter for shift-invert methods. Eigenvalues near this
         value are found most efficiently. If None, a preliminary Arnoldi
         step estimates an appropriate shift value.
+    operator : tuple, optional
+        Pre-built ``(A, vec_size)`` kernel, bypassing
+        ``_make_kernel_operator(Vs_q, G2, ...)`` (see ``_solve_iteration``).
 
     Returns
     -------
@@ -4178,6 +5573,23 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
         Corresponding eigenvectors reshaped to (num_ev, norb, norb, Nx, Ny, Nz).
     """
     vec_size = norb * norb * Nx * Ny * Nz
+
+    # Safety check (review fix): when a pre-built ``operator`` is supplied,
+    # its own vec_size (``operator[1]``) is otherwise never read here -- every
+    # downstream call (``_solve_leading``, ``_solve_subspace_iteration``) is
+    # handed the LOCALLY recomputed ``norb*norb*Nx*Ny*Nz`` instead. The two
+    # agree today for both callers of this path (the standard
+    # ``_make_kernel_operator`` result and the bond-channel
+    # ``bond_channels.make_bond_kernel*`` result both use the plain
+    # orbital-pair x spatial vec_size), but nothing enforces that; a future
+    # dynamic/enlarged bond operator with a DIFFERENT internal size would
+    # silently reshape eigenvectors into the wrong shape instead of failing
+    # loudly. Assert the invariant instead of trusting it silently.
+    if operator is not None:
+        assert operator[1] == vec_size, (
+            "_solve_eigenvalue: the supplied operator's vec_size ({}) does "
+            "not match norb**2*Nx*Ny*Nz ({}); eigenvectors would be reshaped "
+            "with the wrong size.".format(operator[1], vec_size))
 
     if method == "subspace":
         # spectral_shift routes through the ARPACK largest-real path in
@@ -4199,12 +5611,13 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
             max_ev, method))
         return _solve_subspace_iteration(
             Vs_q, G2, norb, Nx, Ny, Nz,
-            num_eigenvalues=max_ev
+            num_eigenvalues=max_ev, operator=operator
         )
 
     # ARPACK Arnoldi / shift-invert: delegate the eigen-selection, shift
     # estimation, and descending-real-part ordering to the shared driver.
-    make_operator = lambda: _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    make_operator = (lambda: _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)) \
+        if operator is None else (lambda: operator)
     _, _, eig_analysis = _solve_leading(
         make_operator, vec_size, method,
         num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
@@ -4308,7 +5721,8 @@ def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8,
 
 
 def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
-                              num_eigenvalues=5, max_iter=300, tol=1e-6):
+                              num_eigenvalues=5, max_iter=300, tol=1e-6,
+                              operator=None):
     """Find multiple eigenvalues by subspace iteration (block power method).
 
     Simultaneously propagates a block of vectors through the kernel,
@@ -4332,6 +5746,9 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
         Maximum iterations.
     tol : float
         Convergence tolerance for eigenvalues.
+    operator : tuple, optional
+        Pre-built ``(A, vec_size)`` kernel, bypassing
+        ``_make_kernel_operator(Vs_q, G2, ...)`` (see ``_solve_iteration``).
 
     Returns
     -------
@@ -4340,7 +5757,8 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
     eigenvectors : ndarray
         Shape (num_eigenvalues, norb, norb, Nx, Ny, Nz).
     """
-    A, vec_size = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    A, vec_size = (_make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+                   if operator is None else operator)
     num_ev = min(num_eigenvalues, vec_size)
 
     # Use extra vectors for better convergence (subspace padding)
@@ -4414,6 +5832,14 @@ def _solve_subspace_iteration(Vs_q, G2, norb, Nx, Ny, Nz,
 def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
                         sigma_list, num_eigenvalues=3, tol_linear=1e-8):
     """Find eigenvalues near multiple target values using shifted BiCG.
+
+    Note: this helper does not accept an ``operator=`` (bond-channel)
+    argument -- it always builds its own kernel from ``Vs_q``/``G2`` via
+    ``_make_kernel_operator``. It is unreachable from ``calc_eliashberg``
+    when ``bond_channels=true`` (that path sets ``Vs_q = G2 = None`` and
+    drives the pre-built bond operator through ``_solve_iteration``/
+    ``_solve_eigenvalue`` instead; nothing in the bond dispatch calls this
+    function).
 
     Parameters
     ----------
@@ -4509,7 +5935,8 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
 
 def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_array, kz_array,
                   gap_file="gap.dat", eigenvalue_file="eigenvalue.dat",
-                  eigenvalue_match=None):
+                  eigenvalue_match=None, provenance=None,
+                  eigenvalue_note=None):
     """Save gap function and eigenvalue results to files.
 
     Parameters
@@ -4528,6 +5955,21 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         Output filename for gap function.
     eigenvalue_file : str
         Output filename for eigenvalues.
+    provenance : dict, optional
+        Extra approximation-level metadata (currently the bond-channel record,
+        spec S5). Written as ``# key = value`` COMMENT lines at the top of the
+        eigenvalue file, so this is a strictly ADDITIVE schema change: existing
+        readers (``np.loadtxt``, ``tsweep.parse_leading_eig``) skip ``#`` lines
+        and every existing key/column is untouched. When None (the default) the
+        file is byte-for-byte what it always was.
+    eigenvalue_note : str, optional
+        Free text describing WHAT the single ``eigenvalue`` number is, written
+        as ``#`` comment line(s) between the ``# Iteration eigenvalue`` header
+        and the value itself. Used to state that an iteration-mode value is an
+        unsigned iterate norm (and whether it converged), so it can never be
+        silently confused with the signed ``lambda_rayleigh`` sitting in the
+        provenance block above it. Additive in the same sense as
+        ``provenance``: comment lines only, no numeric row changes.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -4572,8 +6014,14 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         filepath = os.path.join(output_dir, eigenvalue_file)
         logger.info("Saving eigenvalues to {}".format(filepath))
         with open(filepath, "w") as fw:
+            if provenance:
+                for key in sorted(provenance):
+                    fw.write("# {} = {}\n".format(key, provenance[key]))
             if eigenvalue is not None:
                 fw.write("# Iteration eigenvalue\n")
+                if eigenvalue_note:
+                    for line in str(eigenvalue_note).splitlines():
+                        fw.write("# {}\n".format(line))
                 fw.write("{:.8e}\n".format(eigenvalue))
             if eigenvalues_eig is not None:
                 fw.write("# Eigenvalue analysis\n")
@@ -4790,6 +6238,15 @@ def calc_eliashberg(input_dict):
     init_gap_mode = _resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     chi0q_mode = eli_param.get("chi0q_mode", "load")
     chi0q_tensor = eli_param.get("chi0q_tensor", "auto")
+    # Bond-resolved interaction channels (opt-in, spec S5). The options are
+    # ignored with a warning when the flag is off; the guards themselves run
+    # right after the interaction files are read (below), before any
+    # chi0q/FLEX data is touched.
+    (use_bond_channels, bond_green, bond_max_shells, bond_memory_cap_gb,
+     bond_precondition_opts, bond_diagnostics) = _read_bond_config(eli_param)
+    from requests.structures import CaseInsensitiveDict
+    g2_tail = _coerce_g2_tail(
+        CaseInsensitiveDict(eli_param).get("g2_tail", True))
     gap_file = eli_param.get("output_gap", "gap.dat")
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
 
@@ -4805,6 +6262,37 @@ def calc_eliashberg(input_dict):
     # --- Step 2: Read input files ---
     geom_info, hr, interactions = _read_interaction_files(input_dict)
     norb = geom_info["norb"]
+
+    if use_bond_channels:
+        # Every guard raises before any susceptibility/Green data is built, so
+        # a misconfigured bond run fails fast and never emits numbers from a
+        # path it is not validated for (spec S5).
+        _validate_bond_prereqs(chi0q_mode, norb, interactions)
+        logger.info(
+            "bond_channels=true: using the bond-resolved (Z+1)x(Z+1) "
+            "interaction channels for the static Eliashberg vertex.")
+        logger.warning(
+            "[eliashberg] bond_channels=true is a STATIC RPA-ladder bond "
+            "dressing on %s. It demonstrates the qualitative V-dependence of "
+            "the pairing eigenvalue; it is NOT a conserving FLEX result "
+            "(the bond chi-bar is built here at RPA-ladder level), so "
+            "absolute lambda values are not comparable with FLEX/dynamic "
+            "references.",
+            ("the EXTERNAL Green function '{}' ([eliashberg] bond_green)"
+             .format(bond_green) if bond_green else
+             "the BARE Green function built from the transfer Hamiltonian "
+             "(set [eliashberg] bond_green to feed an external/FLEX green)"))
+        logger.warning(
+            "[eliashberg] bond_channels=true builds its own bond-resolved "
+            "bubble directly from the Green function (the m=m'=0 block IS the "
+            "ordinary chi0q), so chi0q_mode='%s' and chi0q_tensor are not "
+            "used: no chi0q file is read or computed on this path.",
+            chi0q_mode)
+        if use_gpu:
+            logger.warning(
+                "[eliashberg] gpu=true is ignored for bond_channels=true: the "
+                "bond-resolved kernel is CPU-only in v1 (GPU support is a "
+                "deferred follow-up).")
 
     # --- Step 3: Setup k-mesh ---
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
@@ -4826,6 +6314,12 @@ def calc_eliashberg(input_dict):
     # --- Step 7: Build interaction in k-space ---
     logger.info("Building interactions in k-space...")
     inter_k = _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb)
+
+    # Pre-built Eliashberg operator + provenance record; only the bond path
+    # sets them (every other path builds its operator from Vs_q/G2 as before).
+    bond_operator = None
+    bond_provenance = None
+    bond_attribution = None
 
     if chi0q_mode == "flex":
         # --- FLEX mode: use pre-computed dressed susceptibilities ---
@@ -4863,6 +6357,93 @@ def calc_eliashberg(input_dict):
                                       convention=chi_convention,
                                       sc_matrices=sc_mats)
         logger.info("FLEX vertex shape: {}".format(Vs_q.shape))
+
+    elif use_bond_channels:
+        # --- Bond-resolved mode: the enlarged (orbital-pair)x(bond) ladder ---
+        # This path builds its own bubble (bond_bubble) directly from the
+        # Green function, so no chi0q file/tensor is read: the m=m'=0 block of
+        # chi-bar IS the ordinary chi0q, and the m!=0 blocks (which no chi0q
+        # file carries) are what the bond channels add.
+        #
+        # Resolve the bond topology and run the resource preflight (S3.2)
+        # BEFORE allocating green_kw (review fix I-2): green_kw's own bytes
+        # are folded into the preflight's estimate, and a large-Nmat run must
+        # be refused here, not after the (possibly large) Green-function
+        # allocation has already happened.
+        bond_set = bond_channels.resolve_interactions(
+            interactions["CoulombInter"], geom_info["rvec"], norb,
+            bond_max_shells=bond_max_shells)
+        logger.info("Bond channels: B = %d, Delta r = %s",
+                    bond_set.n_channels, list(bond_set.delta_r))
+        if bond_set.dropped:
+            logger.info("Bond channel provenance (dropped): %s",
+                        list(bond_set.dropped))
+        # The frequency grid the bond bubble will really be built on: for an
+        # external bond_green that is the FILE's Nmat, which therefore has to
+        # be known BEFORE the cap is applied -- otherwise an over-large
+        # configured Nmat could refuse a run that fits comfortably (the file
+        # is never reached). The header peek reads the npz member's shape
+        # only, so the preflight still precedes every large allocation.
+        nmat_bond = nmat
+        if bond_green is not None:
+            nmat_peek = _peek_green_npz_nfreq(bond_green, label="bond_green")
+            if nmat_peek is not None:
+                # Validate the EFFECTIVE (file) Nmat before the preflight: an
+                # odd or non-positive grid is a silent-wrong-result, and it
+                # must not even be used to size the cap check.
+                nmat_bond = _validate_bond_green_nmat(nmat_peek, bond_green)
+                if nmat_peek != nmat:
+                    logger.warning(
+                        "[eliashberg] bond_green %s carries %d Matsubara "
+                        "frequencies while [mode.param] Nmat = %d; the FILE "
+                        "wins (the Green function defines the frequency grid "
+                        "the bond bubble is built on). The resource preflight "
+                        "uses the file's Nmat.",
+                        bond_green, nmat_peek, nmat)
+        _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat_bond,
+                                 bond_memory_cap_gb)
+
+        if bond_green is not None:
+            # Externally supplied Green function (spec Goal): the milestone
+            # green is FLEX-dressed and self-consistent, which the bare
+            # transfer-Hamiltonian green is not. The bond path never reads a
+            # chi file, so this is the only external input it takes.
+            green_kw, nmat_green = _load_green_npz(
+                bond_green, norb, Nx, Ny, Nz, label="bond_green")
+            # Same requirement on the loaded count: when the header peek could
+            # not resolve nfreq, this is the first place the file's real Nmat
+            # is known, so the guard has to be repeated here rather than
+            # trusted from above.
+            _validate_bond_green_nmat(nmat_green, bond_green)
+            if nmat_green != nmat_bond:
+                # The header peek could not resolve the count (unusual npz
+                # layout); the preflight above therefore ran with the
+                # configured Nmat, so re-run it with the authoritative one.
+                logger.warning(
+                    "[eliashberg] bond_green %s carries %d Matsubara "
+                    "frequencies while [mode.param] Nmat = %d; the FILE wins "
+                    "(the Green function defines the frequency grid the bond "
+                    "bubble is built on). Re-running the resource preflight "
+                    "with the file's Nmat.", bond_green, nmat_green, nmat)
+                _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz,
+                                         nmat_green, bond_memory_cap_gb)
+        else:
+            logger.info("Calculating Green's function G(k, iwn)...")
+            green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+        logger.info("g2_tail = %s (Matsubara tail correction for the pair "
+                    "bubble); Green frequency axis = %d points", g2_tail,
+                    green_kw.shape[-1])
+        if g2_tail:
+            _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
+        bond_operator, bond_provenance, bond_attribution = _build_bond_operator(
+            bond_set, green_kw, interactions, inter_k, geom_info, norb,
+            kx_array, ky_array, kz_array, beta, pairing_type,
+            bond_max_shells=bond_max_shells,
+            bond_memory_cap_gb=bond_memory_cap_gb,
+            precondition_opts=bond_precondition_opts,
+            green_source=bond_green,
+            g2_tail=g2_tail)
+        Vs_q = None
 
     else:
         # --- Standard RPA mode ---
@@ -4903,20 +6484,25 @@ def calc_eliashberg(input_dict):
             logger.info("General mode: 4-index V^s vertex, shape {}".format(Vs_q.shape))
 
     # --- Step 10: Compute G2 ---
-    logger.info("Computing G2...")
-    # New config keys are read case-insensitively (the config layers disagree
-    # on case handling; see the PR #128 sweep) and through the strict parser:
-    # a misspelled value must fail, not silently flip the physics.
-    from requests.structures import CaseInsensitiveDict
-    g2_tail = _coerce_g2_tail(
-        CaseInsensitiveDict(eli_param).get("g2_tail", True))
-    logger.info("g2_tail = %s (Matsubara tail correction for the pair "
-                "bubble); Green frequency axis = %d points", g2_tail,
-                green_kw.shape[-1])
-    if g2_tail:
-        _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
-    G2 = _calc_g2(green_kw, beta, tail=g2_tail)
-    _warn_if_g2_indefinite(G2, norb, g2_tail)
+    # The bond operator carries its own pair bubble (the same construction as
+    # the finite-window part of _calc_g2, applied inside
+    # bond_channels.make_bond_kernel), so G2 is not
+    # needed -- and must not be built -- on that path.
+    if use_bond_channels:
+        G2 = None
+    else:
+        logger.info("Computing G2...")
+        # New config keys are read case-insensitively (the config layers
+        # disagree on case handling; see the PR #128 sweep) and through the
+        # strict parser: a misspelled value must fail, not silently flip the
+        # physics.
+        logger.info("g2_tail = %s (Matsubara tail correction for the pair "
+                    "bubble); Green frequency axis = %d points", g2_tail,
+                    green_kw.shape[-1])
+        if g2_tail:
+            _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
+        G2 = _calc_g2(green_kw, beta, tail=g2_tail)
+        _warn_if_g2_indefinite(G2, norb, g2_tail)
 
     # --- Step 11: Initialize gap function ---
     sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
@@ -4925,7 +6511,7 @@ def calc_eliashberg(input_dict):
     # device once; each matvec then only moves the gap vector across PCIe. The
     # solver entry points below pass Vs_q/G2 straight to _make_kernel_operator,
     # which derives its backend from them, so no other change is needed here.
-    if gpu_active:
+    if gpu_active and not use_bond_channels:
         # Resident device tensors are more than the two inputs: the operator
         # also holds V_r (~Vs_q) and G2_pre (~G2), and in general mode
         # G2_gemm (~G2) + V_r_gemm (~Vs_q) -- i.e. up to ~3x the inputs. The
@@ -4946,12 +6532,33 @@ def calc_eliashberg(input_dict):
     eigenvalue_iter = None
     eigenvalues_eig = None
     eigenvalue_match = None
+    # Live only on the iteration path; kept in scope so the output artifact can
+    # record WHICH quantity the written number is and whether it converged
+    # (review fix C1).
+    converged = None
+    n_iter = None
+
+    # Spectral shift of the POWER ITERATION (None unless requested). When set,
+    # the iteration runs on K + sigma*I and its reported eigenvalue is the
+    # signed eigenvalue of K, which changes how the result must be labelled
+    # below; keep it in scope for that.
+    iteration_spectral_shift = (eli_param.get("spectral_shift")
+                                if solver_mode in ("iteration", "both")
+                                else None)
+
+    # Rayleigh-validation record of a SHIFTED power iteration (empty on the
+    # unshifted default path); decides whether the number written to
+    # eigenvalue.dat may be called an eigenvalue at all.
+    iteration_info = {}
 
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
         sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
             green_kw, Vs_q, G2, sigma_init, norb,
-            max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type
+            max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type,
+            operator=bond_operator,
+            spectral_shift=iteration_spectral_shift,
+            info_out=iteration_info,
         )
         logger.info("Iteration result: eigenvalue = {:.6f}, converged = {}, n_iter = {}".format(
             eigenvalue_iter, converged, n_iter))
@@ -4964,6 +6571,7 @@ def calc_eliashberg(input_dict):
             method=eigenvalue_method,
             sigma_shift=eli_param.get("sigma_shift"),
             spectral_shift=eli_param.get("spectral_shift"),
+            operator=bond_operator,
         )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
         # requested channel parity (singlet even / triplet odd) so the reported
@@ -4989,12 +6597,136 @@ def calc_eliashberg(input_dict):
             sigma_result = eigenvectors_eig[0]
             eigenvalue_iter = eigenvalues_eig[0].real
 
+    # --- Step 12b: bare-pp vs fluctuation attribution of lambda (S4.5) ---
+    # Real Rayleigh quotients of the two kernel parts on the symmetrized
+    # kernel, evaluated at the converged gap. The preconditions that make them
+    # real were already enforced when the operator was built.
+    if bond_attribution is not None and sigma_result is not None:
+        attr = bond_channels.attribute_lambda(
+            sigma_result, bond_attribution["weight"],
+            bond_attribution["pp"], bond_attribution["fl"],
+            op_full=bond_attribution["full"])
+        logger.info(
+            "lambda attribution (spec S4.5): lambda = %.8f = lambda^pp %.8f "
+            "+ lambda^fl %.8f (sum residual %.2e)",
+            attr["lambda"], attr["lambda_pp"], attr["lambda_fl"],
+            attr["sum_residual"])
+        if not attr["imag_within_tol"]:
+            logger.warning(
+                "lambda attribution: the Rayleigh quotients carry a non-"
+                "negligible imaginary part (Im lambda = %.3e, pp %.3e, fl "
+                "%.3e). The reported real parts are still the projections "
+                "onto the Hermitian path, but check the gap's convergence.",
+                attr["imag"], attr["imag_pp"], attr["imag_fl"])
+        bond_provenance["lambda_rayleigh"] = "{:.8e}".format(attr["lambda"])
+        bond_provenance["lambda_pp"] = "{:.8e}".format(attr["lambda_pp"])
+        bond_provenance["lambda_fl"] = "{:.8e}".format(attr["lambda_fl"])
+        bond_provenance["lambda_attribution"] = (
+            "lambda = lambda_pp + lambda_fl, real Rayleigh quotients of the "
+            "instantaneous (bare particle-particle) and fluctuation parts on "
+            "the symmetrized kernel K~ = -sqrt(w) Gamma sqrt(w) (spec S4.5); "
+            "evaluated at the RETURNED gap, so lambda_rayleigh equals the "
+            "solver's eigenvalue only when that gap is a converged "
+            "eigenvector (and, unlike the iteration-mode norm, it carries "
+            "the sign of the eigenvalue)")
+        # Which solver produced the gap the Rayleigh quotient was evaluated at,
+        # and -- on the iteration path -- whether that gap converged. Without
+        # this the file carries two numbers (lambda_rayleigh and the iteration
+        # value) that a reader cannot tell apart (review fix C1a).
+        bond_provenance["lambda_rayleigh_solver_mode"] = solver_mode
+        bond_provenance["lambda_rayleigh_converged"] = (
+            str(bool(converged)) if solver_mode in ("iteration", "both")
+            else "n/a")
+
+        # The iteration path returns ||A sigma||, an UNSIGNED norm. On a
+        # repulsive-dominant bond kernel the leading eigenvalue is NEGATIVE, so
+        # the power iterate flips sign every step: diff ~ 2 forever and the
+        # loop can never converge. That is structural, not a max_iter setting
+        # -- warn loudly and point at the signed quantity (review fix C1b).
+        # With a spectral_shift the iteration runs on K + sigma*I and the
+        # returned value IS the signed eigenvalue, so this warning does not
+        # apply (a mismatch there means the run simply did not converge, which
+        # is already warned about in _solve_leading).
+        if (iteration_spectral_shift is None
+                and solver_mode in ("iteration", "both")
+                and eigenvalue_iter is not None):
+            lam_signed = attr["lambda"]
+            if (np.sign(lam_signed) != np.sign(eigenvalue_iter)
+                    or abs(lam_signed - eigenvalue_iter) > 1.0e-6):
+                logger.warning(
+                    "[eliashberg] solver_mode='%s' reports %.8e, which is the "
+                    "UNSIGNED norm of the power iterate (||A sigma||), NOT a "
+                    "signed eigenvalue; the signed physical quantity is "
+                    "lambda_rayleigh = %.8e (converged = %s). Iteration mode "
+                    "CANNOT converge on a repulsive-dominant bond kernel: its "
+                    "dominant eigenvalue is negative, so the iterate flips "
+                    "sign every step and the normalized difference stays "
+                    "~2 regardless of max_iter. Set [eliashberg] "
+                    "spectral_shift=\"auto\" to iterate on the shifted kernel "
+                    "K + sigma*I (the reported lambda is then signed), or use "
+                    "solver_mode=\"eigenvalue\" for the bond path.",
+                    solver_mode, eigenvalue_iter, lam_signed, bool(converged))
+
+    # --- Step 12c: opt-in bond diagnostics (S7.7 character analysis) ---
+    # Additive comment lines only; off by default, so a run without the flag is
+    # byte-identical to what it was before the diagnostics existed.
+    if (bond_diagnostics and bond_provenance is not None
+            and bond_attribution is not None):
+        _bond_diagnostics_record(
+            bond_provenance, sigma_result, eigenvalues_eig,
+            bond_attribution["weight"], norb,
+            kx_array, ky_array, kz_array)
+
     # --- Step 13: Save results ---
+    # Label the iteration number in the file itself, so it can never be
+    # silently confused with the signed lambda_rayleigh sitting next to it
+    # (review fix C1c).
+    #
+    # The note is written ONLY when it carries information, i.e. when the run
+    # opted into something that changes what the number means:
+    #   * an explicit spectral_shift -- the value is then the SIGNED eigenvalue
+    #     of K (or, if that could not be validated, a shifted iterate-norm
+    #     ESTIMATE, see below), not the historical unsigned iterate norm; or
+    #   * bond_channels -- eigenvalue.dat then also carries lambda_rayleigh,
+    #     and the two numbers must be told apart.
+    # With both inactive the meaning is exactly the historical one and there is
+    # nothing to say, so eigenvalue.dat stays byte-for-byte the legacy file
+    # (tests/test_sc_legacy_golden.py pins this against commit 712b1a0).
+    eigenvalue_note = None
+    if (solver_mode in ("iteration", "both") and eigenvalue_iter is not None
+            and (iteration_spectral_shift is not None or use_bond_channels)):
+        if iteration_spectral_shift is not None:
+            # Shifted power iteration: the value is the SIGNED eigenvalue of
+            # the original kernel only when the Rayleigh check validated it;
+            # otherwise it is an iterate-norm ESTIMATE and must be labelled as
+            # not-an-eigenvalue (see _validate_shifted_eigenvalue).
+            eigenvalue_note = _shifted_eigenvalue_note(
+                solver_mode, iteration_spectral_shift, converged, n_iter,
+                iteration_info)
+        else:
+            note = ("solver_mode='{}': the value below is the UNSIGNED norm of "
+                    "the power iterate (||A sigma||), not a signed eigenvalue; "
+                    "the power iteration {} after {} steps."
+                    .format(solver_mode,
+                            "converged" if converged else "did NOT converge",
+                            n_iter))
+            if bond_provenance and "lambda_rayleigh" in bond_provenance:
+                note += (" The signed physical eigenvalue of this run is "
+                         "lambda_rayleigh = {} above. Iteration mode does not "
+                         "converge for a repulsive-dominant bond kernel "
+                         "(negative dominant eigenvalue) unless you set "
+                         "[eliashberg] spectral_shift; otherwise use "
+                         "solver_mode=\"eigenvalue\"."
+                         .format(bond_provenance["lambda_rayleigh"]))
+            eigenvalue_note = note
+
     _save_results(
         output_dir, sigma_result, eigenvalue_iter, eigenvalues_eig,
         kx_array, ky_array, kz_array,
         gap_file=gap_file, eigenvalue_file=eigenvalue_file,
-        eigenvalue_match=eigenvalue_match
+        eigenvalue_match=eigenvalue_match,
+        provenance=bond_provenance,
+        eigenvalue_note=eigenvalue_note
     )
 
     logger.info("=== Done ===")

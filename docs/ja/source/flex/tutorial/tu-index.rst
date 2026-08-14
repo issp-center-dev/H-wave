@@ -1003,6 +1003,16 @@ Tips
      :ref:`Eliashberg の対応する相互作用に関する注意 <sc_supported_inter>`
      も参照してください。
 
+  .. note::
+
+     ``chi0q_mode = "flex"`` は ``[eliashberg] bond_channels = true``
+     と併用すると **エラーになります**。ボンド分解パスは Green 関数から
+     直接自前の :math:`\bar\chi` バブルを構成するため、``chi0q``/``chiq``
+     ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
+     渡す場合は、FLEX を収束まで実行し、その ``green.npz`` 出力を
+     ``[eliashberg] bond_green`` に指定してください。詳細は
+     :doc:`/rpa/tutorial/sc-index` の ``bond_green`` の説明を参照してください。
+
 
 実装の詳細と制限事項
 ----------------------------

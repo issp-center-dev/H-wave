@@ -58,6 +58,7 @@ recorded by those counts rather than by an explicit mask.
 Tests must be run from the repository root.
 """
 
+import functools
 import os
 import tempfile
 import unittest
@@ -66,6 +67,7 @@ import numpy as np
 
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
+from tests import ed_oracle_util
 
 
 LX, NORB, NS = 2, 2, 2
@@ -81,47 +83,38 @@ E_ONSITE = (0.10, -0.05)
 PHASE = np.exp(0.4j)                # complex-declaration phase
 
 
-def _mode(j, o, s):
-    """ED single-particle mode (site-major, interleaved 2*orb+spin)."""
-    return 4 * j + 2 * o + s
-
-
 def _sb(o, s):
     """Solver generalized-orbital index (spin-block, spin*norb+orb)."""
     return s * NORB + o
 
 
-def _build_h1():
-    h = np.zeros((NMODE, NMODE), dtype=complex)
-    for j in range(LX):
-        jp = (j + 1) % LX
-        for (a, b), t in HOP.items():
-            for s in range(2):
-                h[_mode(jp, a, s), _mode(j, b, s)] += t
-                h[_mode(j, a, s), _mode(jp, b, s)] += np.conj(HOP[(b, a)])
-        for o, e in enumerate(E_ONSITE):
-            for s in range(2):
-                h[_mode(j, o, s), _mode(j, o, s)] += e
-    return h
+# --------------------------------------------------------------------
+# lazy 2-site ED fixture and legacy compatibility layer.
+#
+# The heavy state (annihilation operators, H1) used to be built eagerly
+# at import time as module globals C/CD/H1 (and _mode/_annihilators/
+# _build_h1 functions). Both are now backed by ed_oracle_util.EDFixture,
+# built lazily on first use. Legacy external access (FX2/C/CD/H1) goes
+# through the module-level __getattr__ below (PEP 562); INTERNAL builders
+# in this module must fetch the state explicitly via _fx2_state() -- a
+# bare global read of C/CD/H1 from inside a function in this module goes
+# through LOAD_GLOBAL, which __getattr__ does NOT intercept, and would
+# raise NameError before the lazy state is ever built.
+# --------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=1)
+def _fx2_state():
+    fx = ed_oracle_util.EDFixture(L=LX, norb=NORB, t=HOP, eps=E_ONSITE,
+                                  T=T, mu=MU)
+    C = fx.annihilators()
+    return fx, C, [c.conj().T for c in C], fx.build_h1()
 
 
-H1 = _build_h1()
-
-
-def _annihilators():
-    ops = []
-    for p in range(NMODE):
-        c = np.zeros((DIM, DIM))
-        for st in range(DIM):
-            if (st >> p) & 1:
-                sign = (-1) ** bin(st & ((1 << p) - 1)).count("1")
-                c[st ^ (1 << p), st] = sign
-        ops.append(c.astype(complex))
-    return ops
-
-
-C = _annihilators()
-CD = [c.conj().T for c in C]
+def __getattr__(name):                     # PEP 562, EXTERNAL access only
+    if name in ("FX2", "C", "CD", "H1"):
+        fx, C, CD, H1 = _fx2_state()
+        return {"FX2": fx, "C": C, "CD": CD, "H1": H1}[name]
+    raise AttributeError(name)
 
 
 # --------------------------------------------------------------------
@@ -129,8 +122,43 @@ CD = [c.conj().T for c in C]
 # specification assigns to each declaration, written out explicitly
 # --------------------------------------------------------------------
 
+def _terms_for(fx, kind, v, phase=1.0):
+    """(p, q, r, s, coeff) quartic terms for one declaration type at
+    coupling v, in the canonical add()-argument order used by the
+    Hartree-Fock Wick contraction below."""
+    coef = v * phase
+    terms = []
+    for j in range(LX):
+        if kind == "CoulombIntra":
+            terms.append((fx.mode(j, 0, 0), fx.mode(j, 0, 0),
+                          fx.mode(j, 0, 1), fx.mode(j, 0, 1), v))
+        elif kind == "CoulombInter":
+            for s1 in range(2):
+                for s2 in range(2):
+                    terms.append((fx.mode(j, 0, s1), fx.mode(j, 0, s1),
+                                  fx.mode(j, 1, s2), fx.mode(j, 1, s2), v))
+        elif kind == "Exchange":
+            for a, b in ((0, 1), (1, 0)):
+                terms.append((fx.mode(j, a, 0), fx.mode(j, b, 0),
+                              fx.mode(j, b, 1), fx.mode(j, a, 1), v))
+        elif kind == "PairLift":
+            terms.append((fx.mode(j, 0, 0), fx.mode(j, 0, 1),
+                          fx.mode(j, 1, 0), fx.mode(j, 1, 1), v))
+            terms.append((fx.mode(j, 1, 1), fx.mode(j, 1, 0),
+                          fx.mode(j, 0, 1), fx.mode(j, 0, 0), v))
+        elif kind in ("PairHop", "PairHopComplex"):
+            terms.append((fx.mode(j, 0, 0), fx.mode(j, 1, 0),
+                          fx.mode(j, 0, 1), fx.mode(j, 1, 1), coef))
+            terms.append((fx.mode(j, 1, 0), fx.mode(j, 0, 0),
+                          fx.mode(j, 1, 1), fx.mode(j, 0, 1), np.conj(coef)))
+        else:
+            raise ValueError(kind)
+    return terms
+
+
 def _n(j, o, s):
-    return CD[_mode(j, o, s)] @ C[_mode(j, o, s)]
+    fx, C, CD, _H1 = _fx2_state()
+    return CD[fx.mode(j, o, s)] @ C[fx.mode(j, o, s)]
 
 
 def _h_int(kind, v, phase=1.0):
@@ -143,6 +171,7 @@ def _h_int(kind, v, phase=1.0):
     P c^+_{a up} c_{b up} c^+_{a dn} c_{b dn}. Complex declarations are
     Hermitian-closed, the partner carrying the conjugate.
     """
+    fx, C, CD, _H1 = _fx2_state()
     H = np.zeros((DIM, DIM), dtype=complex)
     coef = v * phase
     for j in range(LX):
@@ -154,15 +183,15 @@ def _h_int(kind, v, phase=1.0):
             H += v * (na @ nb)
         elif kind == "Exchange":
             for a, b in ((0, 1), (1, 0)):
-                H += v * (CD[_mode(j, a, 0)] @ C[_mode(j, b, 0)]
-                          @ CD[_mode(j, b, 1)] @ C[_mode(j, a, 1)])
+                H += v * (CD[fx.mode(j, a, 0)] @ C[fx.mode(j, b, 0)]
+                          @ CD[fx.mode(j, b, 1)] @ C[fx.mode(j, a, 1)])
         elif kind == "PairLift":
-            A = (CD[_mode(j, 0, 0)] @ C[_mode(j, 0, 1)]
-                 @ CD[_mode(j, 1, 0)] @ C[_mode(j, 1, 1)])
+            A = (CD[fx.mode(j, 0, 0)] @ C[fx.mode(j, 0, 1)]
+                 @ CD[fx.mode(j, 1, 0)] @ C[fx.mode(j, 1, 1)])
             H += v * (A + A.conj().T)
         elif kind in ("PairHop", "PairHopComplex"):
-            A = (CD[_mode(j, 0, 0)] @ C[_mode(j, 1, 0)]
-                 @ CD[_mode(j, 0, 1)] @ C[_mode(j, 1, 1)])
+            A = (CD[fx.mode(j, 0, 0)] @ C[fx.mode(j, 1, 0)]
+                 @ CD[fx.mode(j, 0, 1)] @ C[fx.mode(j, 1, 1)])
             H += coef * A + np.conj(coef) * A.conj().T
         else:
             raise ValueError(kind)
@@ -171,96 +200,17 @@ def _h_int(kind, v, phase=1.0):
 
 def _hf_h1(kind, v, phase=1.0):
     """H1 plus the first-order Hartree-Fock self-energy of the same
-    interaction, by Wick contraction with the free density matrix."""
-    ev, W = np.linalg.eigh(H1 - MU * np.eye(NMODE))
-    f = 1.0 / (np.exp(np.clip(BETA * ev, -500, 500)) + 1.0)
-    rho = ((W * f) @ W.conj().T).T          # rho[p, q] = <c^+_p c_q>
-    S = np.zeros((NMODE, NMODE), dtype=complex)
-
-    def add(p, q, r, s, c_):
-        # E = c [rho_pq rho_rs + rho_ps (delta_qr - rho_rq)];
-        # H_MF = sum (dE / d rho_xy) c^+_x c_y
-        S[p, q] += c_ * rho[r, s]
-        S[r, s] += c_ * rho[p, q]
-        S[p, s] += c_ * ((1.0 if q == r else 0.0) - rho[r, q])
-        S[r, q] += -c_ * rho[p, s]
-
-    coef = v * phase
-    for j in range(LX):
-        if kind == "CoulombIntra":
-            add(_mode(j, 0, 0), _mode(j, 0, 0),
-                _mode(j, 0, 1), _mode(j, 0, 1), v)
-        elif kind == "CoulombInter":
-            for s1 in range(2):
-                for s2 in range(2):
-                    add(_mode(j, 0, s1), _mode(j, 0, s1),
-                        _mode(j, 1, s2), _mode(j, 1, s2), v)
-        elif kind == "Exchange":
-            for a, b in ((0, 1), (1, 0)):
-                add(_mode(j, a, 0), _mode(j, b, 0),
-                    _mode(j, b, 1), _mode(j, a, 1), v)
-        elif kind == "PairLift":
-            add(_mode(j, 0, 0), _mode(j, 0, 1),
-                _mode(j, 1, 0), _mode(j, 1, 1), v)
-            add(_mode(j, 1, 1), _mode(j, 1, 0),
-                _mode(j, 0, 1), _mode(j, 0, 0), v)
-        elif kind in ("PairHop", "PairHopComplex"):
-            add(_mode(j, 0, 0), _mode(j, 1, 0),
-                _mode(j, 0, 1), _mode(j, 1, 1), coef)
-            add(_mode(j, 1, 0), _mode(j, 0, 0),
-                _mode(j, 1, 1), _mode(j, 0, 1), np.conj(coef))
-        else:
-            raise ValueError(kind)
-    return H1 + 0.5 * (S + S.conj().T)
+    interaction, by Wick contraction with the free density matrix
+    (the generalized add() engine, via ed_oracle_util)."""
+    fx, _C, _CD, _H1 = _fx2_state()
+    return ed_oracle_util.hf_h1_from_terms(fx, _terms_for(fx, kind, v, phase))
 
 
 def _chi_ed(hint=None, h1=None):
     """Static chi[q, a, c, b, d] = <(c^+_a c_c)(q); (c^+_d c_b)(-q)>,
     connected, by the Lehmann representation."""
-    H = np.zeros((DIM, DIM), dtype=complex)
-    h1m = H1 if h1 is None else h1
-    for p in range(NMODE):
-        for q in range(NMODE):
-            if h1m[p, q] != 0:
-                H += h1m[p, q] * (CD[p] @ C[q])
-    if hint is not None:
-        H = H + hint
-    N = sum(CD[p] @ C[p] for p in range(NMODE))
-    with np.errstate(all="ignore"):
-        ev, V = np.linalg.eigh(H - MU * N)
-    ev = ev - ev.min()
-    w = np.exp(-BETA * ev)
-    w /= w.sum()
-    O = {}
-    for qi in range(LX):
-        for a in range(ND):
-            for c in range(ND):
-                oa, sa = a % NORB, a // NORB
-                oc, sc = c % NORB, c // NORB
-                op = np.zeros((DIM, DIM), dtype=complex)
-                for j in range(LX):
-                    ph = np.exp(2j * np.pi * qi * j / LX)
-                    op += ph * (CD[_mode(j, oa, sa)] @ C[_mode(j, oc, sc)])
-                O[(qi, a, c)] = V.conj().T @ op @ V
-    dE = ev[None, :] - ev[:, None]
-    dw = w[:, None] - w[None, :]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        K = np.where(np.abs(dE) > 1e-10, dw / dE, BETA * w[:, None])
-    out = np.zeros((LX, ND, ND, ND, ND), dtype=complex)
-    for qi in range(LX):
-        qn = (-qi) % LX
-        for a in range(ND):
-            for c in range(ND):
-                A = O[(qi, a, c)]
-                for b in range(ND):
-                    for d in range(ND):
-                        B = O[(qn, d, b)]
-                        val = (K * A * B.T).sum()
-                        if qi == 0:
-                            val -= BETA * (w * np.diag(A)).sum() \
-                                * (w * np.diag(B)).sum()
-                        out[qi, a, c, b, d] = val
-    return out / LX
+    fx, _C, _CD, _H1 = _fx2_state()
+    return ed_oracle_util.chi_connected(fx, hint=hint, h1=h1)
 
 
 def _to_solver_slots(x):
@@ -270,18 +220,20 @@ def _to_solver_slots(x):
     c^+_{b} c_{b'}, while ``_chi_ed`` stores <(c^+_a c_c); (c^+_d c_b)>:
     the two differ by swapping the indices inside each pair. No scan.
     """
-    return np.transpose(x, (0, 2, 1, 4, 3))
+    return ed_oracle_util.to_solver_slots(x)
 
 
 def _ed_first_order(kind, phase=1.0):
     """Vertex part of d(chi)/dV at V -> 0, in the solver's slots: the
     exact response minus the Hartree-Fock insertion piece."""
     base = _chi_ed()
-    d_full = (2 * (_chi_ed(_h_int(kind, V1, phase)) - base) / V1
-              - (_chi_ed(_h_int(kind, V2, phase)) - base) / V2)
-    d_ins = (2 * (_chi_ed(h1=_hf_h1(kind, V1, phase)) - base) / V1
-             - (_chi_ed(h1=_hf_h1(kind, V2, phase)) - base) / V2)
-    return _to_solver_slots(d_full - d_ins), _to_solver_slots(base)
+
+    def vertex(v):
+        full = _chi_ed(_h_int(kind, v, phase))
+        ins = _chi_ed(h1=_hf_h1(kind, v, phase))
+        return _to_solver_slots(full - ins)
+
+    return ed_oracle_util.richardson(vertex, V1), _to_solver_slots(base)
 
 
 # --------------------------------------------------------------------
@@ -776,6 +728,7 @@ class TestTransverseComplexPairHop(unittest.TestCase):
     def _chi_pm_ed(self, hint=None, h1=None):
         """Static transverse chi[q, a, c, b, d] over ORBITAL indices,
         built from the spin-flip bilinears directly."""
+        fx, C, CD, H1 = _fx2_state()        # explicit, not a bare global
         H = np.zeros((DIM, DIM), dtype=complex)
         h1m = H1 if h1 is None else h1
         for p_ in range(NMODE):
@@ -800,15 +753,12 @@ class TestTransverseComplexPairHop(unittest.TestCase):
                     om = np.zeros((DIM, DIM), dtype=complex)
                     for j in range(LX):
                         ph = np.exp(2j * np.pi * qi * j / LX)
-                        op += ph * (CD[_mode(j, a, 0)] @ C[_mode(j, c, 1)])
-                        om += np.conj(ph) * (CD[_mode(j, a, 1)]
-                                             @ C[_mode(j, c, 0)])
+                        op += ph * (CD[fx.mode(j, a, 0)] @ C[fx.mode(j, c, 1)])
+                        om += np.conj(ph) * (CD[fx.mode(j, a, 1)]
+                                             @ C[fx.mode(j, c, 0)])
                     Opm[(qi, a, c)] = V.conj().T @ op @ V
                     Omp[(qi, a, c)] = V.conj().T @ om @ V
-        dE = ev[None, :] - ev[:, None]
-        dw = w[:, None] - w[None, :]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            K = np.where(np.abs(dE) > 1e-10, dw / dE, BETA * w[:, None])
+        K = ed_oracle_util._static_kernel(ev, w, BETA)
         out = np.zeros((LX, NORB, NORB, NORB, NORB), dtype=complex)
         for qi in range(LX):
             for a in range(NORB):

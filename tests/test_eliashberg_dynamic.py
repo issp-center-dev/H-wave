@@ -715,6 +715,62 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     assert captured.get("spectral_shift") == "auto"
 
 
+def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
+    """Review fix I-2: on the dynamic solver_mode='iteration' path,
+    spectral_shift changes what the eigenvalue.dat number MEANS, and that
+    change must be labelled in the output file itself (mirroring
+    sc.calc_eliashberg's static eigenvalue_note), not left silent.
+
+    ``||(K + sigma I) v|| - sigma`` is the SIGNED eigenvalue of K only once
+    the iterate is an eigenvector of K; this fixture stops at max_iter=50
+    without converging, so the honest label is the shifted iterate-norm
+    ESTIMATE -- claiming "the SIGNED eigenvalue" there is exactly the
+    mislabelling ``_validate_shifted_eigenvalue`` exists to prevent."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+
+    base_config = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "solver_mode": "iteration", "max_iter": 50},
+    }
+
+    # Without spectral_shift, no signed-eigenvalue note is written (the
+    # unshifted path is the historical unsigned-iterate-norm behavior).
+    ed.solve_dynamic(base_config)
+    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
+        content_unshifted = f.read()
+    assert "SIGNED eigenvalue" not in content_unshifted
+
+    # With spectral_shift active, the reported number's meaning changes and
+    # that change must be labelled in the file itself (same output directory,
+    # so the run overwrites eigenvalue.dat; the FLEX fixture files it reads
+    # are untouched by the previous run). This run does NOT converge, so the
+    # Rayleigh check cannot validate an eigenvalue and the label must say so.
+    shifted_config = dict(base_config)
+    shifted_config["eliashberg"] = dict(base_config["eliashberg"])
+    shifted_config["eliashberg"]["spectral_shift"] = "auto"
+    ed.solve_dynamic(shifted_config)
+    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
+        content_shifted = f.read()
+    assert "spectral_shift" in content_shifted
+    assert "NOT an eigenvalue" in content_shifted
+    assert "SHIFTED ITERATE-NORM ESTIMATE" in content_shifted
+    assert "VALIDATED" not in content_shifted
+
+
 def test_kernel_cupy_matches_numpy():
     """The dynamic kernel applied to cupy arrays (GPU) must reproduce the
     numpy result to fp64 round-off, and stay on the device."""

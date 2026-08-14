@@ -413,3 +413,9 @@ docs/superpowers/
 # committed once, so every full `pytest` run left a spurious deletion in
 # `git status`.) Committed inputs here are .dat/.in files, never *_fixture.npz.
 tests/rpa/input/*_fixture.npz
+
+# Uncommitted L=32 Onari bond-channel FLEX greens. Only the L=16 set (~1.3 MB)
+# is tracked; the L=32 set is ~3.9 MB and backs one skipped-by-default test
+# (test_grid_convergence_16_to_32), which regenerates it here on demand via
+# tests/sc/onari_bond/generate_fixtures.py. Never track this directory.
+tests/sc/onari_bond/_regenerated/

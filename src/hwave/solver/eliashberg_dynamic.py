@@ -1231,6 +1231,11 @@ def solve_dynamic(input_dict):
     Nk = Nx * Ny * Nz
 
     eli_param = input_dict.get("eliashberg", {})
+    # The bond-resolved channels are a STATIC-path feature; reject them here
+    # too so a direct solve_dynamic() call (bypassing calc_eliashberg's
+    # dispatch, which validates the same thing) cannot silently fall back to
+    # the scalar dynamic vertex.
+    sc._reject_bond_channels_dynamic(eli_param)
     pairing_type = eli_param.get("pairing_type", "singlet")
     # Mirror calc_eliashberg's config -> _solve_leading string mapping.
     solver_mode = eli_param.get("solver_mode", "iteration")
@@ -1484,6 +1489,12 @@ def solve_dynamic(input_dict):
     # Map [eliashberg] controls to the _solve_leading solver_mode string,
     # exactly as calc_eliashberg does for the static path.
     eigenvalue_match = None
+    # Mirrors sc.calc_eliashberg's eigenvalue_note (review fix I-2): when
+    # spectral_shift is active on this power-iteration path, the value
+    # written below is the SIGNED eigenvalue of the shifted-and-subtracted-
+    # back kernel rather than the unshifted UNSIGNED iterate norm, and that
+    # meaning change must be labelled in the output, not just logged.
+    dynamic_eigenvalue_note = None
     if solver_mode == "iteration":
         # Mirror the static _solve_iteration: project every iterate onto the
         # channel's combined-parity sector so numerical noise cannot let the
@@ -1507,11 +1518,30 @@ def solve_dynamic(input_dict):
                 "channel is disabled and the un-projected iteration is used.",
                 leak, pairing_type)
             project_fn = None
+        # spectral_shift is honoured on the power-iteration path too: with a
+        # repulsive-dominant kernel (negative dominant eigenvalue) the iterate
+        # flips sign every step and the loop can never converge; iterating on
+        # K + sigma*I fixes that and sc._solve_leading subtracts sigma back, so
+        # the eigenvalue below is still the signed eigenvalue of K.
+        iteration_spectral_shift = eli_param.get("spectral_shift")
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, "iteration",
             max_iter=max_iter, convergence_tol=tol, alpha=alpha,
-            init_vec=phi0.ravel(), project_fn=project_fn)
+            init_vec=phi0.ravel(), project_fn=project_fn,
+            spectral_shift=iteration_spectral_shift)
         eigenvalues_all = None
+        if iteration_spectral_shift is not None:
+            # Shifted power iteration: the value is the SIGNED eigenvalue of
+            # the original dynamic kernel only when sc._solve_leading's
+            # Rayleigh check validated it (<v|K|v>/<v|v> with a small
+            # residual). Otherwise ||(K + sigma*I) v|| - sigma is NOT an
+            # eigenvalue at all -- e.g. an insufficient sigma leaves the
+            # dominant shifted eigenvalue negative -- and the shared note
+            # labels it as an estimate so eigenvalue.dat cannot be misread.
+            dynamic_eigenvalue_note = sc._shifted_eigenvalue_note(
+                "iteration", iteration_spectral_shift,
+                info.get("converged"), info.get("n_iter"), info,
+                kernel_label="dynamic kernel")
     else:
         # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
         # Note: "both" degrades to eigenvalue-only here (the static path also
@@ -1565,6 +1595,9 @@ def solve_dynamic(input_dict):
                     str(zero_chi_s).lower(), str(zero_chi_c).lower()
                 )
             )
+        if dynamic_eigenvalue_note:
+            for line in str(dynamic_eigenvalue_note).splitlines():
+                fw.write("# {}\n".format(line))
         fw.write("{:.8e}\n".format(lam))
         if eigenvalues_all is not None:
             if eigenvalue_match is not None:
