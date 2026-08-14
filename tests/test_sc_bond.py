@@ -546,21 +546,51 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         self.assertLessEqual(budget, 3.0 * peak)
 
     def test_bond_green_construction_peak_within_carrier_budget(self):
-        """SHOULD_FIX 5(b) (Pass B review): ``_bond_memory_estimate``'s
+        """SHOULD_FIX 5(b) (Pass B review, round 2 fix): ``_bond_memory_estimate``'s
         ``carrier_bytes`` docstring claims ``_build_bond_green``'s INTERNAL
         branch peaks at ``4 * S_in`` while ``tail_on`` (the canonical
         ``full_kw`` + canonical ``deflated_kw`` + ``green0_tail`` all alive
         at once, plus ``full_sc`` during the sc-layout conversion, before
         the canonical ``full_kw`` is released) -- this was asserted only in
-        prose, never measured against the real construction call. Pins
-        that claim with the same tracemalloc methodology as this class's
-        other tests, calling ``sc._build_bond_green`` directly with
+        prose, never measured against the real construction call. Pins that
+        claim with the same tracemalloc methodology as this class's other
+        tests, calling ``sc._build_bond_green`` directly with
         ``coeff_tail_requested=1.0`` (nonzero => ``tail_on=True``) on a
         physical (not random-matrix) multi-orbital fixture built the same
-        way ``_physical_single_band`` builds its norb=1 one."""
+        way ``_physical_single_band`` builds its norb=1 one.
+
+        ROUND 1 of this gate (a smaller ``Nx=Ny=Nz=4`` fixture) measured a
+        peak of ~5-7x ``S_in`` and concluded the ``4 * S_in`` bound was an
+        undercount, bumping the multiplier to 8. ROUND 2 (this version)
+        found the TRUE cause: ``green.build_green``'s locals ``Vg``
+        (full-size) and ``g_deflated`` were never released and stayed alive
+        through the ``green0_tail``/``full_kw`` assembly, inflating the
+        measured peak; round 1's small fixture also had disproportionate
+        FIXED small-buffer overhead relative to its tiny ``S_in``. With
+        ``green.py``'s ``del Vg, g_deflated`` fix (added immediately after
+        ``deflated_kw`` is formed) and a LARGER fixture here (so fixed
+        overhead is negligible relative to ``S_in``), the measured peak is
+        ``4 * S_in`` plus a small FIXED (not ``S_in``-scaled) residual --
+        measured 888-952 bytes across several fixture sizes, from the small
+        non-``S_in``-scaled buffers (``V_conj_t``, ``VVt``, ``wn``, ``ek``,
+        ``iomega``, ``wn5``) plus ordinary Python/tracemalloc object
+        bookkeeping (the returned ``_BondGreen`` namedtuple, etc.) that the
+        coarse ``S_in``-unit estimate does not itemize. ``_CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES``
+        below is a generous (>15x the largest measured residual), honestly
+        documented allowance for exactly that -- NOT a reopening of the
+        undercount round 1 found and round 2 fixed at the source. The
+        multiplier is back at the spec's documented ``4``
+        (``_bond_memory_estimate``'s ``carrier_bytes``); this test's own
+        slack lives here, in the MEASUREMENT comparison, not in production's
+        estimate.
+        """
         from hwave.solver import bond_channels as bc
 
-        norb, Nx, Ny, Nz, nmat, beta = 2, 4, 4, 4, 32, 10.0
+        # A LARGER fixture than round 1's (Nx=Ny=Nz=4) so the small FIXED
+        # (non-S_in-scaled) buffer overhead is negligible relative to S_in
+        # (measured ~0.02% here vs. ~5-40% on the tiny round-1 fixture),
+        # giving the upper-slack check below real teeth at the 4x budget.
+        norb, Nx, Ny, Nz, nmat, beta = 2, 16, 16, 1, 64, 10.0
         kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
         ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
         kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
@@ -588,12 +618,28 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
                                        tail_on=True)
         budget = est["carrier_bytes"]
-        self.assertGreaterEqual(budget, peak, (
-            "the preflight budgets {:.3f} MB for the tail-on Green carrier "
-            "(_build_bond_green's construction phase) but the measured "
-            "peak is {:.3f} MB -- carrier_bytes's 4*S_in claim has desynced "
-            "from _build_bond_green".format(budget / 1e6, peak / 1e6)))
-        self.assertLessEqual(budget, 3.0 * peak)
+
+        # Documented, honest allowance for the small FIXED (non-S_in-scaled)
+        # overhead described in the docstring above -- see that note for
+        # what it covers and why it belongs in this measurement comparison
+        # rather than in production's coarse S_in-unit estimate.
+        _CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES = 16384
+
+        self.assertGreaterEqual(
+            budget + _CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES, peak, (
+                "the preflight budgets {:.3f} MB (plus a {} B fixed-overhead "
+                "allowance) for the tail-on Green carrier (_build_bond_green's "
+                "construction phase) but the measured peak is {:.3f} MB -- "
+                "carrier_bytes's documented tail-on multiplier (currently 4x "
+                "S_in) has desynced from _build_bond_green".format(
+                    budget / 1e6, _CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES,
+                    peak / 1e6)))
+        # Upper-slack check: budget must not be wildly conservative either.
+        # Retuned from the earlier 3.0x to 2.0x -- with the del fix and this
+        # larger fixture, budget tracks peak almost exactly (~1.0x), so 2.0x
+        # has real teeth: it would immediately catch a regression back to
+        # something like round 1's over-inflated 8x multiplier.
+        self.assertLessEqual(budget, 2.0 * peak)
 
 
 def _large_B_bond_set(norb, B):

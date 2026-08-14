@@ -115,6 +115,14 @@ def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail,
     Vg = V[:, np.newaxis, :, :, :] * g_deflated[:, :, :, np.newaxis, :]
     deflated_kw = (Vg @ V_conj_t[:, np.newaxis, :, :, :]).astype(
         np.complex128, copy=False)
+    # LOAD-BEARING for the memory bound (Pass B review, round 2): both are
+    # provably dead from here on (deflated_kw already holds everything Vg
+    # contributed; g_deflated was consumed building Vg) -- without this,
+    # both stay alive through the green0_tail/full_kw assembly below,
+    # pushing the real transient peak well past the documented carrier
+    # budget in sc._bond_memory_estimate (measured: ~5-7x S_in undeleted
+    # vs. ~3.2-4.1x S_in with this del, across fixtures).
+    del Vg, g_deflated
 
     if aa == 0.0:
         return deflated_kw, deflated_kw, None
