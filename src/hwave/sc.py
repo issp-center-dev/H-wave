@@ -517,25 +517,40 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
         "Memory contract"), each expressed in units of ``S_in``:
 
         * carrier CONSTRUCTION (:func:`_build_bond_green`, transient):
-          ``4 * S_in`` when ``tail_on`` (``build_green``'s canonical
-          ``full_kw`` + canonical ``deflated_kw`` + ``green0_tail`` all
-          alive at once, PLUS ``full_sc`` during the layout conversion,
-          before the canonical ``full_kw`` is released) and ``2 * S_in``
-          tail-off (``full``/``deflated`` alias one array; the sc-layout
-          conversion adds the second). The external-npz branch peaks at
-          ``2 * S_in`` (source + complex128-promoted copy) before the
-          source is released -- covered by the same tail-off bound.
+          tail-off is ``2 * S_in`` (``full``/``deflated`` alias one array;
+          the sc-layout conversion adds the second) -- the external-npz
+          branch peaks at ``2 * S_in`` too (source + complex128-promoted
+          copy) before the source is released, covered by the same bound.
+          Tail-on is ``8 * S_in`` (measured, not just the naive "4 named
+          arrays alive at once" count: ``build_green``'s own tail
+          reconstruction -- the ``deflated_kw + coeff_tail * VVt /
+          iw_n`` broadcast-and-add that produces ``full_kw`` -- allocates
+          transient temporaries beyond ``full_kw``/``deflated_kw``/
+          ``green0_tail`` themselves before they are freed, and this
+          repeats (proportionally smaller each time) for the small
+          ``(nvol, p, p)``-shaped ``V``/``V^dagger``/``VVt`` buffers, so
+          the REAL transient peak measures ~5-7x ``S_in`` across a range
+          of ``(norb, Nx, Ny, Nz, nmat)`` -- the ``8x`` bound below adds
+          margin over the worst case measured
+          (``tests.test_sc_bond.TestPreflightMemoryBudget.
+          test_bond_green_construction_peak_within_carrier_budget``, Pass
+          B review: the OLD ``4 * S_in`` bound here undercounted this
+          phase's real peak, which is exactly the "preflight undercounts
+          the measured peak" failure mode this module's own docstring
+          warns about).
         * carrier SETTLED / bubble phase: ``n_green * S_in`` with
           ``n_green = 3`` (``full_sc`` + canonical ``deflated_kw`` +
           ``green0_tail``) when ``tail_on`` else ``2``, PLUS one extra
           ``S_in``-sized endpoint-branch buffer while ``tail_on`` (the
-          bubble's per-pair tail-endpoint correction).
+          bubble's per-pair tail-endpoint correction) -- ``4 * S_in``
+          tail-on, ``2 * S_in`` tail-off, both comfortably under their
+          respective construction-phase bound.
 
-        Both phases top out at ``4 * S_in`` (tail-on) / ``2 * S_in``
-        (tail-off) -- the settled phase's ``3 + 1 = 4`` (tail-on) / ``2``
-        (tail-off) equals the construction peak, so ONE closed-form bound
-        covers the whole carrier lifetime:
-        ``carrier_bytes = (4 if tail_on else 2) * norb**2 * unit``.
+        The CONSTRUCTION phase is the larger of the two in the tail-on
+        case (``8 * S_in`` vs. the settled phase's ``4 * S_in``), so it is
+        the binding bound there; tail-off both phases agree at ``2 *
+        S_in``. ONE closed-form bound covers the whole carrier lifetime:
+        ``carrier_bytes = (8 if tail_on else 2) * norb**2 * unit``.
     ``chi_bar_bytes``
         one ``(N_q, ND, ND)`` array; reported separately (it is already inside
         ``q_bytes``) because it is the one q-resolved array ``bond_bubble``
@@ -577,7 +592,7 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
     bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
                     + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
     vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
-    carrier_bytes = (4 if tail_on else 2) * (norb ** 2) * unit
+    carrier_bytes = (8 if tail_on else 2) * (norb ** 2) * unit
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
             "chi_bar_bytes": chi_bar_bytes,
             "q_bytes": q_bytes,

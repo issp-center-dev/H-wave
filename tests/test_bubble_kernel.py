@@ -565,10 +565,18 @@ class TestBubbleOldVsNewIr(unittest.TestCase):
 
 
 class TestBubbleOldVsNewBondStatic(unittest.TestCase):
-    """Old-vs-new gate: ``bond_channels.bond_bubble`` (OLD, sc-layout
-    Green) vs ``bubble.bond_bubble_static`` (NEW, canonical Green) on
-    identical inputs -- a 2-orbital NN CoulombInter fixture built exactly
-    the way ``tests/test_bond_channels.py``'s bubble tests build it
+    """``bond_channels.bond_bubble`` (OLD, sc-layout Green) is now a thin
+    wrapper over ``bubble.bond_bubble_static`` (NEW, canonical Green), so an
+    "old vs new" comparison between them is really just an adapter-
+    consistency check (kept below as
+    ``test_layout_adapter_consistency_2orb_nn``) -- it does not exercise
+    ``bond_bubble_static``'s own correctness. The genuine, independent
+    correctness gate for ``bond_bubble_static`` is
+    ``test_bond_bubble_static_matches_direct_sum_oracle_2orb``, which
+    compares straight against the plain nested-loop Eq.14 oracle
+    (``tests.test_bond_channels._direct_bond_bubble``) instead of against
+    either adapter path. Both use a 2-orbital NN CoulombInter fixture built
+    exactly the way ``tests/test_bond_channels.py``'s bubble tests build it
     (``_nn_square_2orb`` / ``_toy_green_4x4_2orb``, imported directly
     rather than re-derived). Layout conversion between the sc.py Green
     layout (``p, p, Nx, Ny, Nz, nmat``) and the kernel's canonical layout
@@ -597,7 +605,25 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         g = np.ascontiguousarray(g).reshape(nmat, nx * ny * nz, p1, p2)
         return g[np.newaxis, ...]  # (1, nmat, nvol, p, p)
 
-    def test_old_vs_new_2orb_nn(self):
+    def test_layout_adapter_consistency_2orb_nn(self):
+        """ADAPTER-CONSISTENCY gate, not an old-vs-new correctness gate.
+
+        Since ``bond_channels.bond_bubble`` (OLD entry point) is now itself a
+        thin wrapper that converts its ``sc.py``-layout Green into the
+        kernel's canonical layout and delegates to
+        ``bubble.bond_bubble_static`` (NEW), calling both sides here only
+        re-exercises the SAME underlying computation through two different
+        layout-conversion paths (the module's inline ``_sc_to_canonical``
+        helper here vs. ``bond_bubble``'s own internal conversion) -- it can
+        no longer catch a bug in ``bond_bubble_static`` itself, only a
+        mismatch between the two adapters. That narrower property is still
+        worth pinning (a future refactor of either adapter must keep them
+        agreeing), so this test is kept under its narrower name.
+        Independent correctness coverage for ``bond_bubble_static`` lives in
+        ``test_bond_bubble_static_matches_direct_sum_oracle_2orb`` below,
+        which compares against the plain nested-loop Eq.14 oracle instead of
+        against either adapter path.
+        """
         from hwave.solver.bond_channels import bond_bubble, resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb, _toy_green_4x4_2orb
 
@@ -617,6 +643,36 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
 
         self.assertEqual(new.shape, old_reshaped.shape)
         assert_approx_array(new, old_reshaped, rel=1e-6, abs=1e-8)
+
+    def test_bond_bubble_static_matches_direct_sum_oracle_2orb(self):
+        """Genuine INDEPENDENT correctness gate for
+        ``bubble.bond_bubble_static``: compares its canonical-layout output
+        directly against ``tests.test_bond_channels._direct_bond_bubble``, a
+        plain nested-loop transcription of spec Eq.14 (S4.2) that shares no
+        code path with either ``bond_bubble_static`` or the ``bond_bubble``
+        legacy wrapper -- unlike ``test_layout_adapter_consistency_2orb_nn``
+        above, a bug inside ``bond_bubble_static``'s FFT/einsum machinery
+        itself (not just a layout-adapter mismatch) will be caught here."""
+        from hwave.solver.bond_channels import resolve_interactions
+        from tests.test_bond_channels import (
+            _direct_bond_bubble, _nn_square_2orb, _toy_green_4x4_2orb)
+
+        green_sc, T, N = _toy_green_4x4_2orb(Nx=4, Ny=4, Nz=1, Nmat=8)
+        beta = 1.0 / T
+        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        self.assertEqual(bond_set.n_channels, 5)
+
+        ref = _direct_bond_bubble(green_sc, bond_set, T, N)  # (Nx,Ny,Nz,ND,ND)
+        nx, ny, nz, nD, nD2 = ref.shape
+        ref_reshaped = ref.reshape(nx * ny * nz, nD, nD2)
+
+        green_canonical = self._sc_to_canonical(green_sc)
+        new = bubble_mod.bond_bubble_static(
+            green_canonical, None, beta, bond_set,
+            spatial_shape=(nx, ny, nz))
+
+        self.assertEqual(new.shape, ref_reshaped.shape)
+        assert_approx_array(new, ref_reshaped, rel=1e-6, abs=1e-8)
 
     def test_shared_primitive_pin_m0_block(self):
         from hwave.solver.bond_channels import resolve_interactions
@@ -925,44 +981,72 @@ class TestBondEndpointShift(unittest.TestCase):
     branch's jump term as to green_rev"; brief: "an m=m'=0 test cannot see
     this error").
 
+    SELF-INVERSE DISPLACEMENT / INVERSION-SYMMETRIC GREEN BLIND SPOT (Pass B
+    review): the ORIGINAL fixture used ``Nx=4`` with the ``(m, mp) = (1, 4)``
+    pair's shift ``ddx = -2``, which is self-inverse mod 4 (``-2 == 2 (mod
+    4)``) -- AND its Green function had ``H(-k) == H(k)`` EXACTLY (every
+    term of ``H(k)`` was a plain cosine or a k-independent constant), so
+    ``G(+r) == G(-r)`` identically. Both properties together made a
+    reversed-sign bug in the production roll (``shift -> -shift``)
+    UNDETECTABLE: the two conditions separately would each have been
+    enough to hide the bug (a self-inverse shift makes ``+shift`` and
+    ``-shift`` land on the same cell regardless of the Green's symmetry;
+    an inversion-symmetric Green makes ``chi_bar(+shift) ==
+    chi_bar(-shift)`` regardless of whether the shift itself is
+    self-inverse). Fixed by (1) widening the lattice to ``Nx=5`` so
+    ``ddx=-2`` is no longer self-inverse (``-2 (mod 5) = 3 != 2``), and (2)
+    giving the inter-orbital hopping a k-DEPENDENT phase (``t12 *
+    exp(i*kx)`` instead of the old plain constant ``t12``) -- a Peierls-
+    phase-like term representing orbital 2 sitting at a lattice offset from
+    orbital 1, which breaks ``H(-k) == H(k)`` and hence ``G(+r) == G(-r)``.
+    Mutation-checked (task report has the full log): temporarily negating
+    the shift tuple in ``bubble._iter_bond_channel_pairs`` (the production
+    roll consumed by ``bond_bubble_static``) made this test's error jump
+    from the measured ~5e-7 (see the tolerance derivation below) to
+    4.6e-3 at q=(0,0,0) and 1.16e-2 at q=(1,1,0) -- confirmed FAILING at
+    ``abs=1e-5``, then the mutation was reverted (bytecode cache cleared
+    around the mutation per the repo's known stale-pyc trap) and ``git
+    diff`` confirmed clean of the mutation.
+
     Fixture: a 2-orbital Hamiltonian with different diagonal dispersions
     per orbital (``eps1`` disperses along x and z, ``eps2`` along y and z,
-    at different amplitudes) and a constant complex inter-orbital hopping
-    (extends the Task 4 ``_toy_green_4x4_2orb`` idea, but built from an
-    explicit Hermitian ``H(k)`` diagonalized via ``green.build_green`` so
-    both the FULL and DEFLATED Green functions -- and the endpoint jump
-    term -- are available with the exact tail semantics the kernel
-    consumes). ``coeff_tail=0.5`` (a fractional value, per the spec's note
-    that fractional tail coefficients remain in scope for this path).
+    at different amplitudes) and a k-dependent complex inter-orbital
+    hopping ``t12 * exp(i*kx)`` (extends the Task 4 ``_toy_green_4x4_2orb``
+    idea, but built from an explicit Hermitian ``H(k)`` diagonalized via
+    ``green.build_green`` so both the FULL and DEFLATED Green functions --
+    and the endpoint jump term -- are available with the exact tail
+    semantics the kernel consumes). ``coeff_tail=0.5`` (a fractional
+    value, per the spec's note that fractional tail coefficients remain in
+    scope for this path).
 
     The channel pair compared is ``(m, mp) = (1, 4)``, i.e.
     ``Delta r_m=(-1,0,0)``, ``Delta r_mp=(1,0,0)`` (from
     ``_nn_square_2orb``'s ``resolve_interactions`` topology) -- shift
     ``(-2, 0, 0)``, the LARGEST-magnitude nonzero shift available on this
-    topology, chosen because a dropped roll on the endpoint jump term is
-    most visible where the phase/shift is least trivial.
+    topology (now non-self-inverse at ``Nx=5``), chosen because a dropped
+    roll on the endpoint jump term is most visible where the phase/shift
+    is least trivial.
 
     Tolerance derivation (measured, not guessed, AT THIS (m, mp) = (1, 4)
-    pair -- the truncation error is shift-dependent, so it was remeasured
-    for the actual pair/q-points used here rather than reused from a
-    different pair): at this fixture's Nmat=128, the tail-ON
-    ``bond_bubble_static`` output differs from the direct FULL-Green
-    Matsubara sum (restricted to the same finite n=0..Nmat-1 window -- the
-    physically exact answer only in the Nmat -> infinity limit, since the
-    coeff_tail correction accelerates but does not eliminate the
-    finite-window truncation error) by <= 2e-6 in max-abs at both tested
-    q-points (measured 1.7e-6 at q=(0,0,0), 8.6e-7 at q=(1,1,0)), scaling
-    ~1/Nmat**2 (measured at Nmat=16/32/64/128/256:
-    1.0e-4/2.7e-5/6.8e-6/1.7e-6/4.3e-7, each ~4x the next -- consistent
-    with the tail correction's improved but still finite-order
-    convergence). The gate uses abs=1e-5, a >5x margin over the measured
-    error, which is still several orders of magnitude tighter than the
-    scale at which a dropped roll on the jump term shows up (an
-    undropped-vs-dropped roll differs by O(1e-2) at this shift -- see the
-    mutation-check note in the task report).
+    pair on the ``Nx=5`` fixture -- the truncation error is
+    shift/fixture-dependent, so it was remeasured after the Pass B fixture
+    change rather than reused from the old ``Nx=4`` numbers): at this
+    fixture's Nmat=128, the tail-ON ``bond_bubble_static`` output differs
+    from the direct FULL-Green Matsubara sum (restricted to the same
+    finite n=0..Nmat-1 window -- the physically exact answer only in the
+    Nmat -> infinity limit, since the coeff_tail correction accelerates
+    but does not eliminate the finite-window truncation error) by
+    <= 5e-7 in max-abs at both tested q-points (measured 4.8e-7 at
+    q=(0,0,0), 2.4e-7 at q=(1,1,0)), scaling ~1/Nmat**2 (measured at
+    Nmat=16/32/64/128/256: 2.75e-5/7.4e-6/1.9e-6/4.8e-7/1.2e-7, each ~3.9x
+    the next -- consistent with the tail correction's improved but still
+    finite-order convergence). The gate uses abs=1e-5, a >20x margin over
+    the measured error, which is still several orders of magnitude
+    tighter than the scale at which the shift-sign mutation shows up (see
+    the mutation-check note above: O(1e-2)-O(1e-3)).
     """
 
-    Nx, Ny, Nz, Nmat = 4, 2, 1, 128
+    Nx, Ny, Nz, Nmat = 5, 2, 1, 128
     BETA = 1.3
     MU = 0.15
     COEFF_TAIL = 0.5
@@ -982,8 +1066,12 @@ class TestBondEndpointShift(unittest.TestCase):
         H = np.zeros((nvol, 2, 2), dtype=complex)
         H[:, 0, 0] = eps1.reshape(nvol)
         H[:, 1, 1] = eps2.reshape(nvol)
-        H[:, 0, 1] = t12
-        H[:, 1, 0] = np.conj(t12)
+        # k-dependent (Peierls-like) inter-orbital hopping -- breaks
+        # H(-k) == H(k), so G(+r) != G(-r) (see the class docstring's
+        # blind-spot note); the OLD fixture used a plain k-independent
+        # ``t12`` here, which kept H(k) inversion-symmetric.
+        H[:, 0, 1] = t12 * np.exp(1j * KX.reshape(nvol))
+        H[:, 1, 0] = np.conj(H[:, 0, 1])
         ev, V = np.linalg.eigh(H)
         full, defl, tail = green_mod.build_green(
             ev, V, cls.MU, cls.BETA, cls.Nmat, cls.COEFF_TAIL)
@@ -1441,17 +1529,45 @@ class TestTauToFreqPoints(unittest.TestCase):
 
 class TestIrBondOracle(unittest.TestCase):
     """Independent oracle for ``bubble._ir_bond_static``: the exact static
-    (``Omega=0``) bond-enlarged bubble on a 2-site (``Nx=2``), single-orbital
-    (``p=1``) tight-binding ring, computed by a plain-Python Lehmann/
-    Matsubara double sum with NO shared transforms whatsoever -- no FFT, no
-    IR basis machinery, no ``bond_channels`` helpers, not even
-    ``bubble.py``'s own ``contract_general``/``_roll_spatial``. The analytic
-    ``G`` of the 2-site Hamiltonian is written out directly (``H(k) = -2 t
-    cos(k)``, a trivial one-pole Lehmann representation per k-point since
-    the tight-binding Hamiltonian is already diagonal in k), and the
-    Matsubara frequency sum is a genuine truncated double sum with a
-    CERTIFIED analytic remainder bound (below), independent of
-    ``_prepare_ir``/``ir_axis.IRAxis``'s own machinery.
+    (``Omega=0``) bond-enlarged bubble on a ``Nx=3``-site, single-orbital
+    (``p=1``) tight-binding ring THREADED BY A FLUX (Peierls phase), computed
+    by a plain-Python Lehmann/Matsubara double sum with NO shared transforms
+    whatsoever -- no FFT, no IR basis machinery, no ``bond_channels``
+    helpers, not even ``bubble.py``'s own ``contract_general``/
+    ``_roll_spatial``. The analytic ``G`` of the ring Hamiltonian is written
+    out directly (``H(k) = -2 t cos(k - phi)``, a trivial one-pole Lehmann
+    representation per k-point since the tight-binding Hamiltonian is
+    already diagonal in k), and the Matsubara frequency sum is a genuine
+    truncated double sum with a CERTIFIED analytic remainder bound (below),
+    independent of ``_prepare_ir``/``ir_axis.IRAxis``'s own machinery.
+
+    SELF-INVERSE DISPLACEMENT / INVERSION-SYMMETRIC GREEN BLIND SPOT (Pass B
+    review): the ORIGINAL fixture used ``Nx=2`` with displacement
+    ``dr=(1,0,0)``, which is self-inverse mod 2 (``1 == -1 (mod 2)`` -- on a
+    2-site ring "one step right" and "one step left" reach the SAME site,
+    so there is no way to even express a non-self-inverse nonzero shift
+    there) -- AND the plain ``H(k) = -2t cos(k)`` dispersion is even in
+    ``k``, so ``G(+r) == G(-r)`` identically. As in ``TestBondEndpointShift``
+    above, either property alone would already have hidden a
+    reversed-sign bug in the production roll. Fixed by (1) widening the
+    ring to ``Nx=3`` (so ``dr=(1,0,0)`` is no longer self-inverse: ``1 (mod
+    3) = 1 != 2 = -1 (mod 3)``), and (2) threading the ring with a flux
+    (Peierls phase ``phi=0.4``, i.e. ``H(k) = -2t cos(k - phi)`` instead of
+    the old symmetric ``-2t cos(k)``), which breaks ``e(-k) == e(k)`` and
+    hence ``G(+r) == G(-r)`` while keeping the single-pole-per-k Lehmann
+    form (and thus the certified remainder bound below) unchanged. This
+    keeps the Green's spectrum real (H(k) is still a real, and therefore
+    Hermitian, 1x1 matrix per k -- a flux only shifts WHICH k each energy
+    sits at, not whether energies are real), so the ``G(-iw_n) =
+    G(iw_n)*`` identity the tail bound depends on still holds. Mutation-
+    checked (task report has the full log): temporarily negating the shift
+    tuple in ``bubble._ir_bond_static`` (the production roll) made this
+    test's max-abs error jump from the measured ~5.06e-11 (certified
+    remainder-bound territory) to 6.03e-5 -- more than 3 orders of
+    magnitude above the gate's ``tol`` (~3.0e-9) -- confirmed FAILING,
+    then the mutation was reverted (bytecode cache cleared around the
+    mutation per the repo's known stale-pyc trap) and ``git diff``
+    confirmed clean of the mutation.
 
     Formula (mirrors ``TestBondDynamicOracle``'s already-validated
     ``Omega=0`` slice, re-derived from scratch here rather than imported):
@@ -1492,22 +1608,29 @@ class TestIrBondOracle(unittest.TestCase):
     mp)`` entry (no ``Nx`` factor survives; verified against a direct
     numerical over-estimate check in this class's own setup).
 
-    Fixture and cut: ``t=1``, ``mu=0.3`` (``W=2.3``), ``beta=0.1`` (a small,
-    but NOT pathologically small, temperature scale -- picked empirically:
-    ``beta <~ 0.03`` starts hitting unrelated ``sparse_ir``/``IRAxis``
-    conditioning issues at this ``wmax``/``eps``, well outside this task's
-    scope), ``N_cut = 10**8`` gives a certified remainder of
-    ``~5.1e-11 < 1e-10`` (asserted below, not just asserted in this
-    docstring) at a runtime of a few seconds (chunked summation, no huge
-    array materialized at once).
+    Fixture and cut: ``t=1``, ``mu=0.3``, ``phi=0.4`` (``W = max_k|e(k)-mu|
+    = 2.142`` -- was ``2.3`` on the old symmetric-dispersion ``Nx=2``
+    fixture; the flux phase shifts which ``k`` the extremal energy sits at
+    but the bound derivation above makes no assumption about ``e(k)``'s
+    symmetry, only that it is real and bounded by ``W``, so it applies
+    unchanged), ``beta=0.1`` (a small, but NOT pathologically small,
+    temperature scale -- picked empirically: ``beta <~ 0.03`` starts
+    hitting unrelated ``sparse_ir``/``IRAxis`` conditioning issues at this
+    ``wmax``/``eps``, well outside this task's scope), ``N_cut = 10**8``
+    gives a certified remainder of ``~5.07e-11 < 1e-10`` (asserted below,
+    not just asserted in this docstring) at a runtime of roughly 7 seconds
+    (``Nx=3`` now needs 9 chunked (q, k) sums rather than the old ``Nx=2``
+    fixture's 4, chunked summation throughout, no huge array materialized
+    at once).
 
     Skips cleanly when ``sparse_ir`` is not importable (mirrors
     ``TestBubbleOldVsNewIr``'s guard).
     """
 
-    Nx = 2
+    Nx = 3
     t = 1.0
     mu = 0.3
+    phi = 0.4
     beta = 0.1
     wmax = 5.0
     eps = 1e-8
@@ -1553,9 +1676,13 @@ class TestIrBondOracle(unittest.TestCase):
         from hwave.solver.bond_channels import ResolvedInteractionSet
         from hwave.solver.ir_axis import IRAxis
 
-        Nx, t, mu, beta = self.Nx, self.t, self.mu, self.beta
+        Nx, t, mu, beta, phi = self.Nx, self.t, self.mu, self.beta, self.phi
         kx = 2.0 * np.pi * np.arange(Nx) / Nx
-        ev = -2.0 * t * np.cos(kx)
+        # Flux/Peierls phase phi: breaks e(-k) == e(k) (see class
+        # docstring's blind-spot note) while H(k) stays a real 1x1
+        # Hermitian matrix per k, so the Lehmann form and tail bound are
+        # unaffected.
+        ev = -2.0 * t * np.cos(kx - phi)
         W = float(np.max(np.abs(ev - mu)))
 
         S = self._tail_sum_bound(W, self.N_cut)
@@ -1597,6 +1724,15 @@ class TestIrBondOracle(unittest.TestCase):
         ir_static = bubble_mod._ir_bond_static(
             green_ir, axF, axB, bond_set, spatial_shape=(Nx, 1, 1))
 
+        # tol has two terms of different character: `remainder` is the
+        # CERTIFIED analytic Matsubara-truncation bound derived in the
+        # class docstring; `axF.eps * max|oracle|` is NOT a second
+        # certified bound of that kind -- axF.eps is sparse-ir's basis
+        # SIZE CUTOFF (the singular-value threshold controlling how many
+        # IR basis functions are kept), and this term is an empirically
+        # validated allowance for the resulting basis-truncation error
+        # scale, not a proven error bound on the observable itself. The
+        # 10x prefactor is the margin absorbing that non-certified part.
         tol = 10.0 * (remainder + axF.eps * float(np.max(np.abs(oracle))))
         assert_approx_array(ir_static, oracle, rel=0, abs=tol)
 
@@ -1916,20 +2052,34 @@ class TestOneshotIrVsDense(unittest.TestCase):
 # here but are not spec-manifest names) -- GATE_CLASSES lists every gate
 # class that exists in this module, per the task's ambiguity resolution:
 # the spec's 11 are the floor, not the ceiling.
+#
+# PLUS (Pass B review) the two IR gate classes converted to unittest.TestCase
+# collection mechanics in Task 11 but living in OTHER modules
+# (tests/test_flex_ir.py, tests/test_flex_ir_general.py) -- the manifest
+# previously omitted both, so discovery of the whole gate set outside this
+# module went unenforced.
+#
+# Entries are FULLY QUALIFIED as "module.ClassName" (not bare class names):
+# a bare name would be satisfied by ANY class of that name anywhere in the
+# discovered suite, including an unrelated duplicate-named class in a
+# different module -- fully qualifying pins the exact class this manifest
+# means.
 GATE_CLASSES = [
-    "TestBuildGreen",
-    "TestBubbleOldVsNewDense",
-    "TestBubbleOldVsNewIr",
-    "TestBubbleOldVsNewBondStatic",
-    "TestBondDynamicOracle",
-    "TestBondEndpointShift",
-    "TestBondGreenFlow",
-    "TestBondTailConvergence",
-    "TestTauToFreqPoints",
-    "TestIrBondOracle",
-    "TestIrBondVsDense",
-    "TestOneshotIrVsDense",
-    "TestGateCollection",
+    "test_bubble_kernel.TestBuildGreen",
+    "test_bubble_kernel.TestBubbleOldVsNewDense",
+    "test_bubble_kernel.TestBubbleOldVsNewIr",
+    "test_bubble_kernel.TestBubbleOldVsNewBondStatic",
+    "test_bubble_kernel.TestBondDynamicOracle",
+    "test_bubble_kernel.TestBondEndpointShift",
+    "test_bubble_kernel.TestBondGreenFlow",
+    "test_bubble_kernel.TestBondTailConvergence",
+    "test_bubble_kernel.TestTauToFreqPoints",
+    "test_bubble_kernel.TestIrBondOracle",
+    "test_bubble_kernel.TestIrBondVsDense",
+    "test_bubble_kernel.TestOneshotIrVsDense",
+    "test_bubble_kernel.TestGateCollection",
+    "test_flex_ir.TestChi0GateIrMatchesUniformLargeNmat",
+    "test_flex_ir_general.TestChi0GeneralGateIrMatchesUniformLargeNmat",
 ]
 
 
@@ -1940,6 +2090,13 @@ class TestGateCollection(unittest.TestCase):
     NOT execute the suite (`unittest.defaultTestLoader.discover` builds a
     tree of TestCase instances without running them), so it stays cheap
     even though it walks every ``tests/test_*.py`` module.
+
+    ``GATE_CLASSES`` entries are fully-qualified ``"module.ClassName"``
+    strings (Pass B review fix): matching bare class names would let an
+    unrelated same-named class anywhere in the discovered suite silently
+    satisfy an entry. ``_collected_class_names`` below records each
+    discovered ``TestCase``'s ``"module.ClassName"`` (via
+    ``type(item).__module__``/``__qualname__``), so the comparison is exact.
     """
 
     @staticmethod
@@ -1951,7 +2108,17 @@ class TestGateCollection(unittest.TestCase):
             if isinstance(item, unittest.TestSuite):
                 stack.extend(item)
             elif isinstance(item, unittest.TestCase):
-                names.add(type(item).__name__)
+                cls = type(item)
+                # __module__ is the module's dotted import path (e.g.
+                # "tests.test_bubble_kernel" under package-relative
+                # discovery, or "test_bubble_kernel" if tests/ is on
+                # sys.path directly) -- strip any leading "tests." so the
+                # qualified name is stable across both invocation styles,
+                # matching the "module.ClassName" form GATE_CLASSES uses.
+                mod = cls.__module__
+                if mod.startswith("tests."):
+                    mod = mod[len("tests."):]
+                names.add("{}.{}".format(mod, cls.__qualname__))
             # unittest.loader._FailedTest (import errors) is also a
             # TestCase subclass and is deliberately NOT excluded here: a
             # gate class that fails to import must fail this test, not be

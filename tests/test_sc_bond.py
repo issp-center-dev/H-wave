@@ -490,6 +490,111 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         # useless in the other direction.
         self.assertLessEqual(budget, 3.0 * peak)
 
+    def test_preflight_bubble_budget_covers_the_measured_tail_on_bond_bubble_peak(self):
+        """SHOULD_FIX 5(a) (Pass B review): the sibling test above only
+        measures the TAIL-OFF ``bond_bubble_static`` peak (its ``tail=None``
+        branch). Production's DEFAULT is tail-ON (``bond_coeff_tail``
+        defaults to 1.0, unified-bubble-kernel spec "Tail default for the
+        bond path"), and ``_bond_memory_estimate``'s own docstring says the
+        tail-on carrier phase adds "one extra S_in-sized endpoint-branch
+        buffer" on top of the tail-off count -- a preflight that only
+        matched the tail-off peak could undercount every default-config
+        production run. Same tracemalloc methodology as the tail-off
+        sibling, but with a REAL nonzero ``(deflated, tail)`` pair (built
+        via ``green.build_green`` at ``coeff_tail=0.5``, mirroring
+        ``tests/test_bubble_kernel.py``'s
+        ``TestBubbleOldVsNewBondStatic.test_tail_on_smoke_runs_and_differs_from_tail_off``
+        fixture recipe) fed to ``bond_bubble_static``, checked against
+        ``_bond_memory_estimate(..., tail_on=True)``.
+        """
+        from hwave.solver import bond_channels as bc
+        from hwave.solver import bubble as bm
+        from hwave.solver import green as green_mod
+
+        norb, Nx, Ny, Nz, nmat, beta = 2, 4, 4, 4, 32, 10.0
+        bond_set = bc.resolve_interactions(
+            {((1, 0, 0), (0, 0)): 0.25, ((-1, 0, 0), (0, 0)): 0.25},
+            [(0, 0, 0), (1, 0, 0), (-1, 0, 0)], norb, bond_max_shells=1)
+
+        nvol = Nx * Ny * Nz
+        rng = np.random.default_rng(1)
+        H = (rng.normal(size=(nvol, norb, norb))
+             + 1j * rng.normal(size=(nvol, norb, norb)))
+        H = H + np.conj(np.swapaxes(H, -2, -1))  # Hermitian
+        ev, V = np.linalg.eigh(H)
+        _, deflated, tail = green_mod.build_green(ev, V, 0.1, beta, nmat, 0.5)
+        self.assertTrue(bool(np.any(tail != 0)))  # tail really is on
+
+        def _run():
+            return bm.bond_bubble_static(
+                deflated, tail, beta, bond_set, spatial_shape=(Nx, Ny, Nz))
+
+        _run()     # warm up numpy's FFT caches
+        peak = _measure_peak_bytes(_run)
+        if peak is None:
+            self.skipTest("tracemalloc does not track numpy array data here")
+
+        est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+                                       tail_on=True)
+        budget = est["bubble_bytes"] + est["chi_bar_bytes"]
+        self.assertGreaterEqual(budget, peak, (
+            "the preflight budgets {:.3f} MB for the TAIL-ON bond_bubble "
+            "work buffers but the measured peak is {:.3f} MB -- the "
+            "buffer list in _bond_memory_estimate has desynced from "
+            "bond_bubble_static's tail-on branch".format(
+                budget / 1e6, peak / 1e6)))
+        self.assertLessEqual(budget, 3.0 * peak)
+
+    def test_bond_green_construction_peak_within_carrier_budget(self):
+        """SHOULD_FIX 5(b) (Pass B review): ``_bond_memory_estimate``'s
+        ``carrier_bytes`` docstring claims ``_build_bond_green``'s INTERNAL
+        branch peaks at ``4 * S_in`` while ``tail_on`` (the canonical
+        ``full_kw`` + canonical ``deflated_kw`` + ``green0_tail`` all alive
+        at once, plus ``full_sc`` during the sc-layout conversion, before
+        the canonical ``full_kw`` is released) -- this was asserted only in
+        prose, never measured against the real construction call. Pins
+        that claim with the same tracemalloc methodology as this class's
+        other tests, calling ``sc._build_bond_green`` directly with
+        ``coeff_tail_requested=1.0`` (nonzero => ``tail_on=True``) on a
+        physical (not random-matrix) multi-orbital fixture built the same
+        way ``_physical_single_band`` builds its norb=1 one."""
+        from hwave.solver import bond_channels as bc
+
+        norb, Nx, Ny, Nz, nmat, beta = 2, 4, 4, 4, 32, 10.0
+        kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+        ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+        hr = {}
+        for orb in range(norb):
+            hr[((1, 0, 0), (orb, orb))] = 1.0
+            hr[((-1, 0, 0), (orb, orb))] = 1.0
+            hr[((0, 1, 0), (orb, orb))] = 1.0
+            hr[((0, -1, 0), (orb, orb))] = 1.0
+        eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
+        evals, evecs = sc._calc_eigenvalues(eps)
+
+        def _run():
+            return sc._build_bond_green(evals, evecs, 0.1, beta, nmat,
+                                        1.0, None)
+
+        _run()     # warm up
+        peak = _measure_peak_bytes(_run)
+        if peak is None:
+            self.skipTest("tracemalloc does not track numpy array data here")
+
+        bond_set = bc.resolve_interactions(
+            {((1, 0, 0), (0, 0)): 0.25, ((-1, 0, 0), (0, 0)): 0.25},
+            [(0, 0, 0), (1, 0, 0), (-1, 0, 0)], norb, bond_max_shells=1)
+        est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+                                       tail_on=True)
+        budget = est["carrier_bytes"]
+        self.assertGreaterEqual(budget, peak, (
+            "the preflight budgets {:.3f} MB for the tail-on Green carrier "
+            "(_build_bond_green's construction phase) but the measured "
+            "peak is {:.3f} MB -- carrier_bytes's 4*S_in claim has desynced "
+            "from _build_bond_green".format(budget / 1e6, peak / 1e6)))
+        self.assertLessEqual(budget, 3.0 * peak)
+
 
 def _large_B_bond_set(norb, B):
     """A reversal-closed ``ResolvedInteractionSet`` with ``B`` channels.
@@ -752,7 +857,20 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         """The flag must actually route through the bond path: at V != 0 the
         bond-resolved result differs from the default (which, for a single band
         with a 4-index chi0q, carries no inter-site V at all -- the scope
-        limitation this feature addresses)."""
+        limitation this feature addresses).
+
+        ``bond_coeff_tail=0.0`` pins the bond run to the SAME tail setting as
+        the (tail-off) ``bond_channels=False`` comparison side. Without this,
+        the bond run's default ``bond_coeff_tail=1.0`` (unified-bubble-kernel
+        spec, "Tail default for the bond path") would itself be enough to
+        make ``lam_on != lam_off`` even if the nonzero inter-site V were
+        completely ignored by the bond path -- the routing gate this test
+        exists to enforce would then pass vacuously on a tail-correction
+        artifact instead of on V-routing. Holding the tail fixed at 0 on
+        both sides (mirroring
+        ``test_bond_channels_true_with_zero_V_matches_default_run`` just
+        above) isolates the V=0-vs-V!=0 contrast within the bond path
+        itself, which is the comparison this test's docstring promises."""
         ci = os.path.join(self.tmp_path, "ci1.dat")
         _write_w90(ci, 1, _nn_entries(1.0))
         d_off = os.path.join(self.tmp_path, "off")
@@ -760,7 +878,7 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         sc.calc_eliashberg(_base_input(d_off, coulomb_inter=ci,
                                        bond_channels=False))
         sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
-                                       bond_channels=True))
+                                       bond_channels=True, bond_coeff_tail=0.0))
         self.assertGreater(
             abs(_leading_eigenvalue(d_on) - _leading_eigenvalue(d_off)), 1e-3)
 
@@ -2661,6 +2779,105 @@ class TestBondCoeffTailResolution(_ApproxTestCase):
     def test_rejects_non_numeric(self):
         with self.assertRaises(ValueError):
             sc._resolve_bond_coeff_tail({"bond_coeff_tail": "1.0"})
+
+
+class TestBondCoeffTailEndToEndProvenance(_ApproxTestCase):
+    """SHOULD_FIX 6 (Pass B review): ``TestBondCoeffTailResolution`` above
+    only pins ``sc._resolve_bond_coeff_tail``'s pure config-parsing output
+    (requested value + source, in isolation); ``TestBondGreenExternalGreenFunction``
+    only checks the ``bond_green`` PATH itself lands in provenance. Neither
+    exercises the FULL end-to-end pipeline down to the actual
+    ``eigenvalue.dat`` ``# key = value`` comment lines for the specific
+    ``(bond_coeff_tail_requested, bond_coeff_tail_applied,
+    bond_coeff_tail_source, bond_green_source,
+    external_full_green_assumed)`` tuple, across all three scenarios the
+    bond path's tail-correction resolution distinguishes (spec "Tail
+    default for the bond path" / ``_build_bond_green``'s docstring). Pins
+    EXACT values for each -- a regression that silently swaps
+    ``applied``/``requested``, or stops forcing ``applied=0.0`` on the
+    external-Green branch, would not be caught by the two narrower tests
+    above.
+    """
+
+    def setUp(self):
+        self.tmp_path = tempfile.mkdtemp(prefix="hwave_sc_bond_")
+        self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
+
+    def test_internal_default_tail_provenance(self):
+        """Scenario 1: ``bond_channels=true``, ``bond_coeff_tail`` UNSET --
+        the production default (unified-bubble-kernel spec, "Tail default
+        for the bond path") resolves to
+        ``requested=applied=1.0``, ``source="default"``,
+        ``green_source="internal"``, ``external_full_green_assumed=False``.
+        """
+        ci = os.path.join(self.tmp_path, "ci.dat")
+        _write_w90(ci, 1, _nn_entries(0.5))
+        d = os.path.join(self.tmp_path, "internal_default")
+        sc.calc_eliashberg(_base_input(d, coulomb_inter=ci,
+                                       bond_channels=True))
+        vals = _provenance_keys(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(vals["bond_coeff_tail_requested"], "1.0")
+        self.assertEqual(vals["bond_coeff_tail_applied"], "1.0")
+        self.assertEqual(vals["bond_coeff_tail_source"], "default")
+        self.assertEqual(vals["bond_green_source"], "internal")
+        self.assertEqual(vals["external_full_green_assumed"], "False")
+
+    def test_explicit_zero_tail_provenance(self):
+        """Scenario 2: ``bond_channels=true``, ``bond_coeff_tail=0.0``
+        EXPLICIT -- resolves to ``requested=applied=0.0``,
+        ``source="config"`` (distinguishing an explicit opt-out from the
+        implicit default, even though both would numerically match a
+        tail-off comparison elsewhere in this module -- the SOURCE label
+        is the fact this scenario pins, not just the numeric value)."""
+        ci = os.path.join(self.tmp_path, "ci.dat")
+        _write_w90(ci, 1, _nn_entries(0.5))
+        d = os.path.join(self.tmp_path, "explicit_zero")
+        sc.calc_eliashberg(_base_input(d, coulomb_inter=ci,
+                                       bond_channels=True,
+                                       bond_coeff_tail=0.0))
+        vals = _provenance_keys(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(vals["bond_coeff_tail_requested"], "0.0")
+        self.assertEqual(vals["bond_coeff_tail_applied"], "0.0")
+        self.assertEqual(vals["bond_coeff_tail_source"], "config")
+        self.assertEqual(vals["bond_green_source"], "internal")
+        self.assertEqual(vals["external_full_green_assumed"], "False")
+
+    def test_external_green_nonzero_requested_tail_provenance_and_warning(self):
+        """Scenario 3: ``bond_channels=true``, ``bond_green=<file>``,
+        ``bond_coeff_tail=0.7`` (nonzero, requested but NOT APPLICABLE to
+        an external Green function whose high-frequency asymptote is
+        unknown here) -- ``applied`` is forced to ``0.0`` regardless of
+        what was requested, ``external_full_green_assumed=True``, and a
+        WARNING is logged (``_build_bond_green``'s documented behavior:
+        "NOT applying it here (recorded as requested but not applied)").
+        Asserted via ``assertLogs`` (cheap: the call already runs;
+        ``assertLogs`` just wraps it)."""
+        ci = os.path.join(self.tmp_path, "ci.dat")
+        _write_w90(ci, 1, _nn_entries(0.5))
+        inp_bare = _base_input(os.path.join(self.tmp_path, "bare"),
+                               coulomb_inter=ci, bond_channels=True,
+                               solver_mode="eigenvalue", num_eigenvalues=3)
+        gpath = os.path.join(self.tmp_path, "green.npz")
+        _bare_green_npz(gpath, inp_bare)
+
+        d = os.path.join(self.tmp_path, "external_nonzero_tail")
+        with self.assertLogs(level=logging.WARNING) as cm:
+            sc.calc_eliashberg(_base_input(
+                d, coulomb_inter=ci, bond_channels=True, bond_green=gpath,
+                bond_coeff_tail=0.7, solver_mode="eigenvalue",
+                num_eigenvalues=3))
+        self.assertTrue(
+            any("bond_coeff_tail" in msg and "0.7" in msg
+                for msg in cm.output),
+            "expected a WARNING mentioning bond_coeff_tail=0.7 among: "
+            "{}".format(cm.output))
+
+        vals = _provenance_keys(os.path.join(d, "eigenvalue.dat"))
+        self.assertEqual(vals["bond_coeff_tail_requested"], "0.7")
+        self.assertEqual(vals["bond_coeff_tail_applied"], "0.0")
+        self.assertEqual(vals["bond_coeff_tail_source"], "config")
+        self.assertEqual(vals["bond_green_source"], "external_npz")
+        self.assertEqual(vals["external_full_green_assumed"], "True")
 
 
 if __name__ == "__main__":
