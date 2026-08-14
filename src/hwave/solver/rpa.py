@@ -31,6 +31,7 @@ from hwave.solver.density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
 from . import fold
+from . import green as green_mod
 
 
 def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
@@ -2876,59 +2877,39 @@ class RPA:
     @do_profile
     def _calc_green(self, beta, mu):
         """
+        Thin wrapper around ``green.build_green`` (the shared Green's
+        function builder used by both RPA and sc.py's bond carrier).
+
         ew: eigenvalues  ew[g,k,i]    i-th eigenvalue of wavenumber k in block g
         ev: eigenvectors ev[g,k,a,i]  i-th eigenvector corresponding to ew[g,k,i]
         beta: inverse temperature
         mu: chemical potential
+
+        Returns
+        -------
+        (green, green_tail) : the deflated Green's function (with the
+        coeff_tail/(iw_n) term subtracted for faster tau-space decay) and
+        its analytic high-frequency tail. This preserves the legacy
+        contract exactly: when ``coeff_tail == 0`` ``build_green`` returns
+        ``green0_tail=None``, but callers such as ``_calc_chi0q_transverse``
+        access ``green0_tail.shape`` unconditionally, so this wrapper
+        materializes a shape-matched all-zero tail in that case.
         """
         logger.debug(">>> RPA._calc_green")
 
         # load eigenvalues and eigenvectors
         ew = self.H0_eigenvalue
         ev = self.H0_eigenvector
-        xp = _bk.array_module_of(ew)
 
-        nx,ny,nz = self.lattice.shape
-
-        nblock,nvol,nd = ew.shape
+        nblock, nvol, nd = ew.shape
         assert nvol == self.lattice.nvol
 
-        nmat = self.nmat
+        _full, green, green_tail = green_mod.build_green(
+            ew, ev, mu, beta, self.nmat, self.coeff_tail)
 
-        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
-
-        # 1 / (iw_{n} - (e_i(k) - mu)) -> g[g,l,k,i] via broadcasting
-        # iomega: (nmat,), ew: (nblock, nvol, nd)
-        wn = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis]  # (1,nmat,1,1)
-        ek = (ew - mu)[:, np.newaxis, :, :]  # (nblock,1,nvol,nd)
-
-        # High-frequency tail improvement (optional; default coeff_tail=0 keeps
-        # the bare Green's function). The 1/(iw) part of G(iw) decays slowly and
-        # truncating the Matsubara sum at finite Nmat leaves an error. Here a
-        # term aa/(iw) is *subtracted* in frequency space so the FFT'd
-        # quantity decays faster; its contribution is added back analytically in
-        # imaginary time as green_tail below, using the exact Fourier identity
-        #   T * sum_n e^{-iw_n tau} / (iw_n) = -1/2   for 0 < tau < beta,
-        # i.e. the back-transform of aa/(iw) is -aa/2, and green_tail carries the
-        # aa*0.5*beta normalization expected by _calc_chi0q's tau-space product.
-        # NOTE: aa is a user coefficient; it should match the true 1/(iw)
-        # coefficient of G (= 1 by unitarity) to *accelerate* convergence -- any
-        # other value is a deliberate modification of G, not just acceleration.
-        aa = self.coeff_tail
-        g = 1.0 / (wn - ek) - aa / wn  # (nblock,nmat,nvol,nd)
-
-        # G_ab(k,iw_n) = sum_j V_{a,j} V*_{b,j} * g_j
-        # = (V * g) @ V†  -- use matmul (BLAS) instead of einsum
-        ev_conj_t = xp.conj(ev).swapaxes(-2, -1)  # (nblock,nvol,nd,nd): V†[g,k]
-
-        # Vg = V * g: broadcast g into eigenvector columns
-        Vg = ev[:, np.newaxis, :, :, :] * g[:, :, :, np.newaxis, :]  # (nblock,nmat,nvol,nd,nd)
-        green = Vg @ ev_conj_t[:, np.newaxis, :, :, :]  # (nblock,nmat,nvol,nd,nd)
-
-        # Tail: G_tail = V @ V† * aa * 0.5 * beta = I * aa * 0.5 * beta (unitarity)
-        # But original code retains V V† form for non-complete basis cases
-        VVt = ev @ ev_conj_t  # (nblock,nvol,nd,nd)
-        green_tail = VVt[:, np.newaxis, :, :, :] * xp.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta
+        if green_tail is None:
+            xp = _bk.array_module_of(ew)
+            green_tail = xp.zeros_like(green)
 
         return green, green_tail
 

@@ -198,9 +198,12 @@ class TestBuildGreen(unittest.TestCase):
         self.assertIsNone(tail)
 
     def test_matches_rpa_solver_calc_green(self):
-        """Oracle: RPA._calc_green on the same eigen-decomposition must
-        equal build_green's (deflated, tail) pair exactly (same math,
-        transcribed -- not just close)."""
+        """RPA._calc_green is now a thin wrapper delegating to
+        build_green: this pins that delegation end-to-end -- the
+        wrapper's (deflated, tail) output must equal build_green's own
+        (deflated, tail) pair exactly, including the wrapper's
+        materialization of a shape-matched all-zero tail when
+        coeff_tail == 0 (build_green itself returns tail=None there)."""
         solver = _make_rpa_solver(coeff_tail=0.5)
         solver._calc_epsilon_k({})
         beta = 1.0 / solver.T

@@ -9,9 +9,13 @@ classes and ``bond_channels`` functions.
 
 The binding contract is
 ``docs/superpowers/specs/2026-08-14-unified-bubble-kernel-design.md``
-(section "Green data flow"). See that document for the rationale; this
-module transcribes the numerics of ``RPA._calc_green`` (rpa.py, around
-line 2877 at series start) without altering them.
+(section "Green data flow"). See that document for the rationale.
+``RPA._calc_green`` (rpa.py, around line 2877 at series start) originally
+held this numerics directly; it now delegates to ``build_green`` below
+and just adapts the return contract (materializing a shape-matched
+all-zero tail when ``coeff_tail == 0``, since ``build_green`` returns
+``None`` there but legacy callers access ``green0_tail.shape``
+unconditionally).
 """
 
 import math

@@ -1211,6 +1211,10 @@ def bond_bubble(green, bond_set, beta):
     tail-corrected bond path (``sc._build_bond_operator``) calls
     ``bubble.bond_bubble_static`` directly with the Green carrier's
     ``deflated_kw``/``green0_tail`` instead of going through this function.
+    The ``np.asarray`` coercion below is a CPU-compatibility shim kept for
+    this established signature; the production path (sc.py's Green
+    carrier into ``bubble.bond_bubble_static``) is device-clean and is
+    what carries the GPU claims.
 
     Parameters
     ----------
