@@ -894,12 +894,32 @@ class FLEX(RPA):
         # only on the general path (mirrors that method's `enable_reduced`
         # guard, which is why this one has no analogous check).
         r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
+        (MYO) scheme.
+
+        Delegates to ``bubble.ir_bubble`` (no ``enable_reduced`` guard, as
+        with the legacy body -- this method is only called on the general
+        path).
+        """
+        nx, ny, nz = self.lattice.shape
+        workers = getattr(self, "fft_workers", 1)
+        return bubble.ir_bubble(
+            green_kw, self._ir_axF, self._ir_axB,
+            spatial_shape=(nx, ny, nz), scheme="general", workers=workers)
+
+    @do_profile
+    def _legacy_calc_chi0q_general_ir(self, green_kw, beta):
+        # General (full-vertex/MYO) counterpart of `_calc_chi0q_ir`; called
+        # only on the general path (mirrors that method's `enable_reduced`
+        # guard, which is why this one has no analogous check).
+        r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
         (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
         coefficients on the bosonic tau nodes; tau flip-only reversal, the
         shared spatial FFT-grid reversal; physical transforms, no 1/beta);
         the orbital product is
         the full (a,c,b,d) form of the uniform general `_calc_chi0q`
         (rpa.py): chi0[a,c,b,d] = -G[a,b](r,tau) * G[d,c](-r,-tau).
+
+        Legacy body kept for side-by-side comparison; removed at series end.
         """
         axF, axB = self._ir_axF, self._ir_axB
         nx, ny, nz = self.lattice.shape

@@ -440,7 +440,7 @@ class TestBubbleOldVsNewIr(unittest.TestCase):
         axF, axB = solver._ir_axF, solver._ir_axB
 
         green, _ = solver._calc_green_ir(beta, 0.0)
-        old = solver._calc_chi0q_general_ir(green, beta)
+        old = solver._legacy_calc_chi0q_general_ir(green, beta)
         spatial_shape = tuple(solver.lattice.shape)
 
         new = bubble_mod.ir_bubble(green, axF, axB,
