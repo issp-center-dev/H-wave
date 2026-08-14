@@ -3,13 +3,13 @@
 
 - ``mode is not defined in [mode].``
 
-  **説明 :** パラメータファイルの ``[mode]`` セクションに ``mode`` パラメータが指定されていない。
+  **説明 :** パラメータファイルの ``[mode]``\ セクションに ``mode``\ パラメータが指定されていない。
 
   **モード :** main
 
 - ``Get_param: key must be mod or ham or output.``
 
-  **説明 :** ``get_param()`` の引数が不正
+  **説明 :** ``get_param()``\ の引数が不正
 
   **モード :** UHFr (read_input)
 
@@ -27,13 +27,13 @@
 
 - ``Unknown keyword`` *keyword*
 
-  **説明 :** ``[file.input.interaction]`` に不明なキーワードがある
+  **説明 :** ``[file.input.interaction]``\ に不明なキーワードがある
 
   **モード :** UHFk (read_input_k)
 
 - ``initial and initial_uhf can not be specified simultaneously.``
 
-  **説明 :** ``initial`` と ``initial_uhf`` は同時に指定できない
+  **説明 :** ``initial`` と ``initial_uhf``\ は同時に指定できない
 
   **モード :** UHFk (read_input_k)
 
@@ -45,19 +45,19 @@
 
 - ``Get_param: key must be mod or ham or output.``
 
-  **説明 :** ``get_param()`` の引数が不正
+  **説明 :** ``get_param()``\ の引数が不正
 
   **モード :** UHFk (read_input_k)
 
 - ``read_geom: file`` *file* ``not found``
 
-  **説明 :** ``Geometry`` に指定されているファイル *file* が存在しない
+  **説明 :** ``Geometry``\ に指定されているファイル *file* が存在しない
 
   **モード :** UHFk (wan90)
 
 - ``mode.param.2Sz must be even(odd) when Ncond is even(odd).``
 
-  **説明 :**  パラメータ ``2Sz`` と ``Ncond`` の偶奇が一致していない
+  **説明 :**  パラメータ ``2Sz`` と ``Ncond``\ の偶奇が一致していない
 
   **モード :** solver base
 
@@ -111,25 +111,25 @@
 
 - ``Lattice initialization failed: 'CellShape' not found.``
 
-  **説明 :** [mode.param] に ``CellShape`` が指定されていない
+  **説明 :** [mode.param] に ``CellShape``\ が指定されていない
 
   **モード :** RPA
 
 - ``Ncond must be greater than zero: Ncond=`` *Ncond*
 
-  **説明 :** ``Ncond`` に0以上の値が指定されていない
+  **説明 :** ``Ncond``\ に0以上の値が指定されていない
 
   **モード :** RPA
 
 - ``Nmat must be greater than zero: Nmat=`` *Nmat*
 
-  **説明 :** ``Nmat`` に0以上の値が指定されていない
+  **説明 :** ``Nmat``\ に0以上の値が指定されていない
 
   **モード :** RPA
 
 - ``RPA._find_mu: not converged. abort``
 
-  **説明 :** ``mu`` の計算が収束しなかった
+  **説明 :** ``mu``\ の計算が収束しなかった
 
   **モード :** RPA
 
@@ -147,13 +147,13 @@
 
 - ``both mu and Ncond or filling are specified``
 
-  **説明 :** ``mu` と ``Ncond`` または ``filling`` が同時に指定されている
+  **説明 :** ``mu``\ と ``Ncond``\ または ``filling``\ が同時に指定されている
 
   **モード :** RPA
 
 - ``dimension of CellShape must be one, two, or three.``
 
-  **説明 :** ``CellShape`` の指定が不正
+  **説明 :** ``CellShape``\ の指定が不正
 
   **モード :** RPA
 
@@ -177,13 +177,13 @@
 
 - ``none of mu, Ncond, nor filling is specified``
 
-  **説明 :** ``mu`` または ``Ncond``, ``filling`` のいずれも指定されていない
+  **説明 :** ``mu``\ または ``Ncond``, ``filling``\ のいずれも指定されていない
 
   **モード :** RPA
 
 - ``read_chi0q failed:`` *info*
 
-  **説明 :** ``chi0q`` の読み込みに問題があった
+  **説明 :** ``chi0q``\ の読み込みに問題があった
 
   **モード :** RPA
 
@@ -213,19 +213,19 @@
 
 - ``initial green function in coord space requires geometry.dat``
 
-  **説明 :** 実空間でのグリーン関数の読み込みは ``geometry.dat`` を同時に指定する必要がある
+  **説明 :** 実空間でのグリーン関数の読み込みは ``geometry.dat``\ を同時に指定する必要がある
 
   **モード :** UHFk
 
 - ``CellShape is missing. abort``
 
-  **説明 :** ``CellShape`` パラメータが指定されていない
+  **説明 :** ``CellShape``\ パラメータが指定されていない
 
   **モード :** UHFk
 
 - ``Ncond or Nelec is missing. abort``
 
-  **説明 :** ``Ncond`` または ``Nelec`` パラメータが指定されていない
+  **説明 :** ``Ncond``\ または ``Nelec``\ パラメータが指定されていない
 
   **モード :** UHFk
 
@@ -243,25 +243,25 @@
 
 - ``_save_greenone: onebodyg_uhf and geometry_uhf are required``
 
-  **説明 :** ``onebodyg_uhf`` と ``geometry_uhf`` が指定されていない
+  **説明 :** ``onebodyg_uhf`` と ``geometry_uhf``\ が指定されていない
 
   **モード :** UHFk
 
 - ``find mu: not converged. abort``
 
-  **説明 :** ``mu`` の計算が収束しなかった
+  **説明 :** ``mu``\ の計算が収束しなかった
 
   **モード :** UHFk
 
 - ``range check failed for Initial``
 
-  **説明 :** ``Initial`` の指定が不正
+  **説明 :** ``Initial``\ の指定が不正
 
   **モード :** UHFr
 
 - ``OneBodyG is required to output green function.``
 
-  **説明 :** グリーン関数の出力のための ``OneBodyG`` の指定がない
+  **説明 :** グリーン関数の出力のための ``OneBodyG``\ の指定がない
 
   **モード :** UHFr
 
@@ -273,7 +273,7 @@
 
 - ``Range check failed for Transfer``
 
-  **説明 :** ``Transfer`` 定義ファイルのインデックスが範囲外
+  **説明 :** ``Transfer``\ 定義ファイルのインデックスが範囲外
 
   **モード :** UHFr
 
@@ -291,7 +291,7 @@
 
 - ``mode is incorrect: mode=`` *mode*
 
-  **説明 :** ``mode`` の指定が不正
+  **説明 :** ``mode``\ の指定が不正
 
   **モード :** UHFr
 
@@ -315,19 +315,19 @@
 
 - ``mode.`` *key* ``in mode section is incorrect:`` *values*
 
-  **説明 :** ``[mode]`` セクションの ``mode`` パラメータの値が不正
+  **説明 :** ``[mode]``\ セクションの ``mode``\ パラメータの値が不正
 
   **モード :** solver base [warning]
 
 - ``mode.`` *key* ``is not defined.``
 
-  **説明 :** ``[mode]`` セクションに ``mode`` パラメータが指定されていない
+  **説明 :** ``[mode]``\ セクションに ``mode``\ パラメータが指定されていない
 
   **モード :** solver base [warning]
 
 - ``TRUST-ME mode enabled. parameter checks are relaxed``
 
-  **説明 :** ``TRUST-ME`` モードが有効。パラメータのチェックを行わない
+  **説明 :** ``TRUST-ME``\ モードが有効。パラメータのチェックを行わない
 
   **モード :** solver base [warning]
 
@@ -339,25 +339,25 @@
 
 - ``mode is incorrect: mode=`` *mode*
 
-  **説明 :** ``mode`` パラメータの値が不正
+  **説明 :** ``mode``\ パラメータの値が不正
 
   **モード :** RPA [warning]
 
 - ``FATAL: 2Sz=`` *value* ``. 2Sz should be even for calculating fij``
 
-  **説明 :** :math:`f_{ij}` の計算で ``2Sz`` は偶数でなければならない
+  **説明 :** :math:`f_{ij}`\ の計算で ``2Sz``\ は偶数でなければならない
 
   **モード :** UHFr [warning]
 
 - ``FATAL: Ne=`` *value* ``. Ne should be even for calculating fij``
 
-  **説明 :** :math:`f_{ij}` の計算で ``Ne`` は偶数でなければならない
+  **説明 :** :math:`f_{ij}`\ の計算で ``Ne``\ は偶数でなければならない
 
   **モード :** UHFr [warning]
 
 - ``NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future``
 
-  **説明 :** :math:`f_{ij}` の計算で ``Sz`` が 0以外の偶数の場合は未サポート
+  **説明 :** :math:`f_{ij}`\ の計算で ``Sz`` が 0以外の偶数の場合は未サポート
 
   **モード :** UHFr [warning]
 
@@ -376,8 +376,8 @@
 
 - ``dynamic Eliashberg grid mismatch: nmat differs``
 
-  **説明 :** FLEX 出力ファイル（``chiq_s.npz`` / ``chiq_c.npz`` / ``green.npz``）に
-  保存された松原振動数の数（``Nmat``）が、現在の計算の ``[mode.param] Nmat`` と
-  異なる。一致する ``Nmat`` で FLEX 出力を再生成するか、``Nmat`` を保存値に合わせること。
+  **説明 :** FLEX 出力ファイル（``chiq_s.npz`` / ``chiq_c.npz`` / ``green.npz``\ ）に
+  保存された松原振動数の数（``Nmat``\ ）が、現在の計算の ``[mode.param] Nmat``\ と
+  異なる。一致する ``Nmat`` で FLEX 出力を再生成するか、``Nmat``\ を保存値に合わせること。
 
   **モード :** RPA (hwave_sc, dynamic Eliashberg) [error]
