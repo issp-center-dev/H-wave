@@ -9,18 +9,21 @@ notice to callers outside ``hwave.solver``.
 
 The binding contract is
 ``docs/superpowers/specs/2026-08-14-unified-bubble-kernel-design.md``
-(sections "Module layout", "Green/tail contracts", "Scheme x bond", and
-"Output contracts"). This module transcribes the numerics of
-``RPA._calc_chi0q`` (rpa.py, around line 2936 at series start) and
+(sections "Module layout", "Green/tail contracts", "Scheme x bond", "The
+bond assembly", and "Output contracts"). This module transcribes the
+numerics of ``RPA._calc_chi0q`` (rpa.py, around line 2936 at series start),
 ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir`` (flex.py, around
-lines 818-917 at series start) without altering them -- including the
-equal-time endpoint-mean correction (issue #134) and the data-driven tail
-gate on the dense path. ``bubble.py`` deliberately imports neither
-``sparse_ir`` nor ``flex.py`` -- the IR entry points receive
-already-constructed ``IRAxis`` objects and duck-type their attributes/
-methods (``statistics``, ``beta``, ``wmax``, ``eps``, ``tau``, ``n_tau``,
-``n_freq``, ``freq_to_tau_points``, ``tau_to_freq``) -- so the plain dense
-path stays usable without the optional IR dependency.
+lines 818-917 at series start), and ``bond_channels.bond_bubble``
+(bond_channels.py, around lines 1171-1315 at series start) without
+altering them -- including the equal-time endpoint-mean correction (issue
+#134) and the data-driven tail gate on the dense path. ``bubble.py``
+deliberately imports neither ``sparse_ir`` nor ``flex.py`` -- the IR entry
+points receive already-constructed ``IRAxis`` objects and duck-type their
+attributes/methods (``statistics``, ``beta``, ``wmax``, ``eps``, ``tau``,
+``n_tau``, ``n_freq``, ``freq_to_tau_points``, ``tau_to_freq``) -- so the
+plain dense path stays usable without the optional IR dependency; the bond
+entry point takes a ``bond_set`` (duck-typed ``delta_r``/``n_channels``)
+and never imports ``bond_channels`` either.
 """
 
 import numpy as np
@@ -30,6 +33,14 @@ from . import matsubara as _ms
 from .kgrid import reverse_fft_axes
 
 _SCHEMES = ("reduced", "general")
+
+# Per-pair working-set buffer counts for the streaming bond assembly (spec:
+# "Memory contract"). This module owns the canonical definition (values
+# transcribed unchanged from ``bond_channels.BOND_BUBBLE_N4_BUFFERS`` /
+# ``BOND_BUBBLE_N2_BUFFERS``); ``bond_channels.py`` keeps its own copy for
+# now -- the re-export switch happens in a later task of this series.
+BOND_BUBBLE_N4_BUFFERS = 3
+BOND_BUBBLE_N2_BUFFERS = 3
 
 
 def contract_reduced(g_fwd, g_rev):
@@ -169,6 +180,39 @@ def _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape, scheme):
         green0_tail = _promote_complex(green0_tail, xp, "green0_tail")
 
     return (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape)
+
+
+def _validate_bond_set(bond_set):
+    """Structural guard on ``bond_set`` (a
+    ``bond_channels.ResolvedInteractionSet``, duck-typed here -- this
+    module never imports ``bond_channels``): ``n_channels``/``delta_r``
+    present, ``len(delta_r) == n_channels``, and every displacement an
+    integer 3-tuple (spec: "Kernel input validation"). Returns
+    ``(n_channels, delta_r)``. ``ValueError`` on any failure (survives
+    ``python -O``)."""
+    n_channels = getattr(bond_set, "n_channels", None)
+    delta_r = getattr(bond_set, "delta_r", None)
+    if n_channels is None or delta_r is None:
+        raise ValueError(
+            "bubble kernel: bond_set must provide 'n_channels' and "
+            "'delta_r' attributes (see "
+            "bond_channels.resolve_interactions)")
+    if len(delta_r) != n_channels:
+        raise ValueError(
+            "bubble kernel: bond_set.delta_r length ({}) does not match "
+            "bond_set.n_channels ({})".format(len(delta_r), n_channels))
+    for i, dr in enumerate(delta_r):
+        try:
+            ok = len(dr) == 3 and all(
+                not isinstance(c, bool) and isinstance(c, (int, np.integer))
+                for c in dr)
+        except TypeError:
+            ok = False
+        if not ok:
+            raise ValueError(
+                "bubble kernel: bond_set.delta_r[{}] must be a 3-tuple of "
+                "integers, got {!r}".format(i, dr))
+    return n_channels, delta_r
 
 
 def _validate_ir_axes(ax_fermi, ax_bose):
@@ -550,3 +594,192 @@ def ir_bubble(green_kw, ax_fermi, ax_bose, *, spatial_shape, scheme,
                           workers)
     return _assemble_plain(prepped, scheme, None, spatial_shape, workers,
                            ax_bose=ax_bose)
+
+
+# ===========================================================================
+# bond-enlarged static bubble  --  streaming (m, m') channel-pair assembly
+# ===========================================================================
+#
+# Transcribes ``bond_channels.bond_bubble`` (bond_channels.py:1171-1315)
+# onto the shared ``_prepare_dense``/``contract_general`` primitives: the
+# roll-by-``Delta r_m - Delta r_m'`` of the reversed Green function, the
+# general orbital contraction, and the reshape into the ``(npair, npair)``
+# pair block, one channel pair at a time so the per-pair working set stays
+# O(nmat * nvol * p**4) rather than O(nmat * nvol * ND**2) (spec: "The bond
+# assembly").
+
+
+def _roll_spatial(arr, axis, spatial_shape, shift):
+    """Circularly shift ``arr`` by ``shift`` (a 3-tuple of integers) along
+    the flattened spatial axis at position ``axis`` -- temporarily splits
+    that axis into ``(Nx, Ny, Nz)``, rolls, and reshapes back. Used for the
+    per-channel-pair ``Delta r_m - Delta r_m'`` shift (the Fourier-shift
+    realization of the bond phase ``e^{i k . (Delta r_m - Delta r_m')}``,
+    see ``bond_channels.bond_bubble``'s docstring)."""
+    xp = _bk.array_module_of(arr)
+    nx, ny, nz = spatial_shape
+    shape = arr.shape
+    expanded = arr.reshape(shape[:axis] + (nx, ny, nz) + shape[axis + 1:])
+    rolled = xp.roll(expanded, shift=shift, axis=(axis, axis + 1, axis + 2))
+    return rolled.reshape(shape)
+
+
+def _assemble_bond_static(prepped, beta, bond_set, spatial_shape, workers):
+    """Stream the bond-enlarged static bubble
+    ``chi_bar(q; Delta r_m, Delta r_m')`` one ``(m, m')`` channel pair at a
+    time, on ``_prepare_dense``'s already-prepared tau/real-space tensors
+    (``nblock`` assumed already validated as 1 by the caller).
+
+    Per pair: roll the reversed Green (and, when the tail correction is
+    active, the reversed branch's equal-time jump term -- SAME shift, spec:
+    "endpoint correction under a shift") by ``Delta r_m - Delta r_m'``,
+    ``contract_general``, overwrite the equal-time (tau=0) slice with the
+    endpoint-mean correction, reshape the trailing ``(a, c, b, d)`` axes
+    into the ``(npair, npair)`` pair block (spec's "Scheme x bond and the
+    pair-block mapping" -- ``contract_general``'s own axis order already
+    IS the row/column split, no moveaxis needed), spatial ``fftn``,
+    ``tau_to_boson``, take the ``Omega=0`` element (bosonic Matsubara
+    index ``nmat // 2``), scale by ``-1/beta``, write into the
+    preallocated ``chi_bar`` sub-block, and free every per-pair temporary
+    before the next pair (mirrors ``bond_channels.bond_bubble``'s ``del``
+    discipline -- the ``BOND_BUBBLE_N4_BUFFERS`` / ``BOND_BUBBLE_N2_BUFFERS``
+    memory contract depends on it)."""
+    xp = _bk.array_module_of(prepped.green_rt)
+    _, nmat, nvol, nd, _ = prepped.green_rt.shape
+    nx, ny, nz = spatial_shape
+    npair = nd * nd
+    n_channels, delta_r = _validate_bond_set(bond_set)
+    nD = npair * n_channels
+    static_index = nmat // 2
+
+    # nblock == 1 (validated by the caller): drop the block axis.
+    green_rt = prepped.green_rt[0]        # (nmat, nvol, nd, nd)
+    green_rev = prepped.green_rev[0]      # (nmat, nvol, nd, nd)
+    sgn = prepped.sgn.reshape((nmat, 1, 1, 1))
+    # Baked in ONCE (sgn is +-1, exact, so this commutes with the
+    # contraction regardless of which factor carries it) -- mirrors
+    # bond_bubble's G_fwd_sgn, computed outside the (m, m') loop.
+    green_fwd_sgn = green_rt * sgn
+
+    tail_on = prepped.tail_on
+    if tail_on:
+        fwd0_p = prepped.fwd0_p[0]            # (nvol, nd, nd)
+        rev0_p = prepped.rev0_p[0]
+        jump_f = prepped.jump_f[0]
+        jump_r_rev = prepped.jump_r_rev[0]
+
+    chi_bar = xp.zeros((nvol, nD, nD), dtype=xp.complex128)
+
+    for m in range(n_channels):
+        dm = delta_r[m]
+        for mp in range(n_channels):
+            dmp = delta_r[mp]
+            shift = (int(dm[0]) - int(dmp[0]),
+                     int(dm[1]) - int(dmp[1]),
+                     int(dm[2]) - int(dmp[2]))
+
+            green_rev_shifted = _roll_spatial(
+                green_rev, 1, spatial_shape, shift)
+
+            # (nmat, nvol, a, c, b, d)
+            chi0_rt = contract_general(green_fwd_sgn, green_rev_shifted)
+            del green_rev_shifted
+
+            if tail_on:
+                rev0_p_shifted = _roll_spatial(
+                    rev0_p, 0, spatial_shape, shift)
+                jump_r_rev_shifted = _roll_spatial(
+                    jump_r_rev, 0, spatial_shape, shift)
+                chi0_rt[0] = 0.5 * (
+                    contract_general(fwd0_p,
+                                     rev0_p_shifted + jump_r_rev_shifted)
+                    + contract_general(fwd0_p + jump_f, rev0_p_shifted))
+                del rev0_p_shifted, jump_r_rev_shifted
+
+            # reshape to the pair block: contract_general's trailing axis
+            # order is already (a, c, b, d) -- row = (a, c), col = (b, d)
+            # (spec's pair-block mapping) -- and split nvol back to
+            # (Nx, Ny, Nz) for the spatial FFT, in one reshape.
+            chi0_rt = chi0_rt.reshape(nmat, nx, ny, nz, npair, npair)
+
+            chi0_qt = _bk.spatial_fftn(chi0_rt, axes=(1, 2, 3),
+                                       workers=workers)
+            del chi0_rt
+            chi0_qt = chi0_qt.reshape(nmat, nvol, npair, npair)
+
+            chi0_qw = _ms.tau_to_boson(chi0_qt, axis=0)
+            del chi0_qt
+
+            block = chi0_qw[static_index] * (-1.0 / beta)
+            del chi0_qw
+
+            chi_bar[:, m * npair:(m + 1) * npair,
+                    mp * npair:(mp + 1) * npair] = block
+            del block
+
+    return chi_bar
+
+
+def bond_bubble_static(green_kw, green0_tail, beta, bond_set, *,
+                       spatial_shape, workers=None):
+    """Bond-enlarged static (``Omega=0``) particle-hole bubble
+    ``chi_bar(q; Delta r_m, Delta r_m')``.
+
+    Parameters
+    ----------
+    green_kw : ndarray, complex, shape (1, nmat, nvol, p, p)
+        Green's function in k-space and fermionic Matsubara frequency,
+        canonical layout with a single propagator block (``nblock == 1``
+        strictly -- see ``ValueError`` below). Same deflated/full
+        Green/tail semantics as :func:`dense_bubble` (module docstring's
+        "Green/tail contracts").
+    green0_tail : ndarray or None, same shape/dtype family as ``green_kw``
+        The paired tau-space tail add-back, or None to disable the tail
+        correction. Same pairing-provenance caveat as :func:`dense_bubble`.
+    beta : float
+        Inverse temperature; must be > 0.
+    bond_set : ResolvedInteractionSet-like
+        Bond-channel topology (``delta_r``, ``n_channels``), e.g. from
+        ``bond_channels.resolve_interactions``.
+    spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
+        The lattice shape; ``prod(spatial_shape)`` must equal
+        ``green_kw.shape[2]`` (``nvol``).
+    workers : int or None, optional
+        Forwarded to ``backend.spatial_ifftn``/``spatial_fftn``.
+
+    Returns
+    -------
+    ndarray, complex128, shape (nvol, ND, ND)
+        ``ND = npair * bond_set.n_channels`` with ``npair = p**2``; the
+        static (``Omega=0``) bond-enlarged bubble, bond-major/orbital-minor
+        index ``I = m * npair + (a * p + c)`` (spec's pair-block mapping,
+        numerically identical to ``bond_channels.bond_bubble``'s
+        ``(l1*norb+l2)`` convention).
+
+    Raises
+    ------
+    ValueError
+        On any shape/dtype/nblock/bond_set mismatch (see
+        :func:`_validate_dense_inputs` / :func:`_validate_bond_set`); these
+        checks use ``ValueError`` rather than a bare ``assert`` so they
+        survive ``python -O``. In particular ``green_kw``'s block axis
+        must be exactly 1 -- the bond entry points take no ``scheme``
+        argument (the enlarged object requires the general orbital
+        product) and no ``nblock == 2`` cross-block semantics are defined
+        (spec: "Scheme x bond and the pair-block mapping").
+    """
+    (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
+     ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
+                                 "general")
+    if nblock != 1:
+        raise ValueError(
+            "bubble kernel: bond_bubble_static requires green_kw's block "
+            "axis to be 1 (bond entry points take no scheme argument and "
+            "no nblock=2 cross-block semantics are defined), got "
+            "nblock={}".format(nblock))
+    _validate_bond_set(bond_set)
+
+    prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
+                             workers)
+    return _assemble_bond_static(prepped, beta, bond_set, spatial_shape,
+                                 workers)
