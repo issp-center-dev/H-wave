@@ -36,6 +36,7 @@ from .rpa import RPA, Lattice, Interaction, MOMENTUM_CONVENTION
 from .density_projection import project_density_pairs
 from .kgrid import reverse_fft_axes
 from . import backend as _bk
+from . import bubble
 from . import matsubara as _ms
 
 
@@ -818,6 +819,26 @@ class FLEX(RPA):
     def _calc_chi0q_ir(self, green_kw, beta):
         r"""chi0 on the bosonic IR nodes, computed natively from G on the
         fermionic nodes (reduced scheme).
+
+        Validates the ``enable_reduced`` requirement (the user-facing
+        diagnostic below is kept even though the kernel has no reduced-only
+        restriction of its own), then delegates to ``bubble.ir_bubble``.
+        """
+        if not self.enable_reduced:
+            raise ValueError(
+                "matsubara_basis='ir' chi0 supports the reduced scheme only")
+        nx, ny, nz = self.lattice.shape
+        workers = getattr(self, "fft_workers", 1)
+        return bubble.ir_bubble(
+            green_kw, self._ir_axF, self._ir_axB,
+            spatial_shape=(nx, ny, nz), scheme="reduced", workers=workers)
+
+    @do_profile
+    def _legacy_calc_chi0q_ir(self, green_kw, beta):
+        r"""chi0 on the bosonic IR nodes, computed natively from G on the
+        fermionic nodes (reduced scheme).
+
+        Legacy body kept for side-by-side comparison; removed at series end.
 
         chi0_{ab}(r,tau) = -G_{ab}(r,tau) * G_{ba}(-r,-tau) with the
         fermionic anti-periodicity G(-tau) = -G(beta - tau) realized as a

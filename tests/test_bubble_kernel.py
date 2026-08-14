@@ -383,10 +383,16 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
 
 
 class TestBubbleOldVsNewIr(unittest.TestCase):
-    """Old-vs-new gate: ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir``
-    (OLD) vs ``bubble.ir_bubble`` (NEW) on identical inputs, reduced +
-    general -- plus the IR axis-compatibility ``ValueError`` cases. No
-    dispatch change yet (flex.py is untouched until Task 7).
+    """Old-vs-new gate: ``FLEX._legacy_calc_chi0q_ir`` /
+    ``FLEX._legacy_calc_chi0q_general_ir`` (OLD) vs ``bubble.ir_bubble``
+    (NEW) on identical inputs, reduced + general -- plus the IR
+    axis-compatibility ``ValueError`` cases. Since Task 7,
+    ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir`` are thin
+    wrappers that delegate to ``bubble.ir_bubble`` -- comparing them
+    against ``ir_bubble`` directly would be new-vs-new. The OLD side is the
+    verbatim-renamed ``_legacy_*`` body instead, so this stays a real
+    old-vs-new numerics gate until the legacy bodies are deleted at the
+    series' end.
 
     Fixtures reuse ``tests/test_flex_ir.py``'s / ``tests/test_flex_ir_general.py``'s
     smallest-``Nmat`` solver-construction helpers (``Nmat=64``) rather than
@@ -415,7 +421,7 @@ class TestBubbleOldVsNewIr(unittest.TestCase):
         self.assertTrue(solver.enable_reduced)
 
         green, _ = solver._calc_green_ir(beta, 0.0)
-        old = solver._calc_chi0q_ir(green, beta)
+        old = solver._legacy_calc_chi0q_ir(green, beta)
         spatial_shape = tuple(solver.lattice.shape)
 
         new = bubble_mod.ir_bubble(green, axF, axB,
