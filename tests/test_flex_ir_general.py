@@ -6,6 +6,7 @@ IR result as Nmat grows (the uniform path carries the O(beta/Nmat) artifact).
 Run from the repository root.
 """
 import os
+import unittest
 
 import numpy as np
 import pytest
@@ -84,35 +85,53 @@ def test_grev_index_map_tau_flip_only_spatial_roll_flip():
     np.testing.assert_allclose(ref, out, atol=1e-12)
 
 
-def test_chi0_general_gate_ir_matches_uniform_large_nmat():
+class TestChi0GeneralGateIrMatchesUniformLargeNmat(unittest.TestCase):
     """GATE: the general IR-native chi0 (rank-6) must agree with the uniform
-    general chi0 at large Nmat, compressed onto the same bosonic nodes."""
-    from hwave.solver import eliashberg_dynamic as ed
-    T = 2.0
-    beta = 1.0 / T
-    diffs = []
-    for nmat in (256, 1024):
-        s, gi = _make_general_solver(nmat, "ir", T=T)
-        s._calc_epsilon_k(gi)
-        s._ir_setup(beta)
-        axB = s._ir_axB
-        g_nodes, _ = s._calc_green_ir(beta, 0.0)
-        chi0_ir = s._calc_chi0q_general_ir(g_nodes, beta)[0]      # strip block
+    general chi0 at large Nmat, compressed onto the same bosonic nodes.
 
-        su, giu = _make_general_solver(nmat, "uniform", T=T)
-        su._calc_epsilon_k(giu)
-        gu, gtail = su._calc_green(beta, 0.0)
-        chi0_u = su._calc_chi0q(gu, gtail, beta)[0]               # rank-6 (l,r,a,c,b,d)
-        chi0_u_nodes = ed._ir_compress(
-            np.moveaxis(chi0_u, 0, -1), axB, nmat, "chi0_u_gen",
-            drop_constant=True)
-        chi0_u_nodes = np.moveaxis(chi0_u_nodes, -1, 0)
+    Collection-mechanics conversion only (unified-bubble-kernel spec,
+    Task 11 -- the general counterpart of
+    ``tests/test_flex_ir.py``'s ``TestChi0GateIrMatchesUniformLargeNmat``):
+    this was a module-level pytest function
+    (``test_chi0_general_gate_ir_matches_uniform_large_nmat``), invisible
+    to the gating runner (``python -m unittest discover -s tests`` only
+    collects ``unittest.TestCase`` methods). Wrapped in a ``TestCase`` here
+    with its body, tolerances, and fixtures UNCHANGED -- this module stays
+    pytest-style everywhere else."""
 
-        scale = np.abs(chi0_u_nodes).max()
-        diffs.append(np.abs(chi0_ir - chi0_u_nodes).max() / scale)
-    assert diffs[-1] < 1e-2, "general chi0 gate failed: {}".format(diffs)
-    assert diffs[-1] < 0.6 * diffs[0], \
-        "no Nmat convergence toward IR chi0: {}".format(diffs)
+    @classmethod
+    def setUpClass(cls):
+        if not _HAVE_SPARSE_IR:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+    def test_chi0_general_gate_ir_matches_uniform_large_nmat(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        T = 2.0
+        beta = 1.0 / T
+        diffs = []
+        for nmat in (256, 1024):
+            s, gi = _make_general_solver(nmat, "ir", T=T)
+            s._calc_epsilon_k(gi)
+            s._ir_setup(beta)
+            axB = s._ir_axB
+            g_nodes, _ = s._calc_green_ir(beta, 0.0)
+            chi0_ir = s._calc_chi0q_general_ir(g_nodes, beta)[0]      # strip block
+
+            su, giu = _make_general_solver(nmat, "uniform", T=T)
+            su._calc_epsilon_k(giu)
+            gu, gtail = su._calc_green(beta, 0.0)
+            chi0_u = su._calc_chi0q(gu, gtail, beta)[0]               # rank-6 (l,r,a,c,b,d)
+            chi0_u_nodes = ed._ir_compress(
+                np.moveaxis(chi0_u, 0, -1), axB, nmat, "chi0_u_gen",
+                drop_constant=True)
+            chi0_u_nodes = np.moveaxis(chi0_u_nodes, -1, 0)
+
+            scale = np.abs(chi0_u_nodes).max()
+            diffs.append(np.abs(chi0_ir - chi0_u_nodes).max() / scale)
+        self.assertTrue(diffs[-1] < 1e-2,
+                        "general chi0 gate failed: {}".format(diffs))
+        self.assertTrue(diffs[-1] < 0.6 * diffs[0],
+                        "no Nmat convergence toward IR chi0: {}".format(diffs))
 
 
 def test_chi0_general_ir_orbital_covariance():

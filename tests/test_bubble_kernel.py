@@ -30,6 +30,38 @@ def _tiny_eig(nvol=4, p=2, seed=7):
     return ev, q
 
 
+def _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat):
+    """Independent, unoptimized reference for ``G(k, iw_n)`` in sc.py's
+    layout (``p, p, Nx, Ny, Nz, nmat``): plain nested sums, a direct
+    transcription of ``G_ij(k, iw_n) = sum_m U_im(k) U*_jm(k) / (iw_n -
+    (e_m(k) - mu))`` with ``iw_n = (2n+1-nmat)*pi/beta``.
+
+    Used by ``TestBondGreenFlow`` as the oracle in place of the now-deleted
+    hand-written sc.py Green-function builder (Task 11 of the
+    unified-bubble-kernel series, closing the series): loop-based rather
+    than the batched-GEMM/einsum machinery both that deleted code and
+    ``hwave.solver.green.build_green`` use, so it stays a genuinely
+    independent check on the formula rather than a restatement of either
+    implementation.
+    """
+    Nx, Ny, Nz, norb = eigenvalues.shape
+    iomega = np.array(
+        [(2 * n + 1 - nmat) * np.pi / beta for n in range(nmat)])
+    green = np.zeros((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
+    for ix in range(Nx):
+        for iy in range(Ny):
+            for iz in range(Nz):
+                U = eigenvectors[ix, iy, iz]        # (norb, norb)
+                xi = eigenvalues[ix, iy, iz] - mu    # (norb,)
+                for n in range(nmat):
+                    denom = 1j * iomega[n] - xi      # (norb,)
+                    for i in range(norb):
+                        for j in range(norb):
+                            green[i, j, ix, iy, iz, n] = np.sum(
+                                U[i, :] * np.conj(U[j, :]) / denom)
+    return green
+
+
 def _make_rpa_solver(coeff_tail=0.0, Lx=4, Ly=4, Nmat=8, calc_scheme='general',
                       norb=1, complex_hop=False, hz=0.0):
     """Build a minimal RPA solver with a real eigen-decomposition.
@@ -227,16 +259,24 @@ class TestBuildGreen(unittest.TestCase):
 
 
 class TestBubbleOldVsNewDense(unittest.TestCase):
-    """Old-vs-new gate: ``RPA._legacy_calc_chi0q`` (OLD) vs
-    ``bubble.dense_bubble`` (NEW) on identical inputs, across
+    """Was the old-vs-new gate: the pre-extraction, hand-written
+    ``RPA._calc_chi0q`` body (OLD) vs ``bubble.dense_bubble`` (NEW), across
     {reduced, general} x {nblock 1, 2} x {tail on (coeff_tail=0.5), off}.
-    Since Task 6, ``RPA._calc_chi0q`` itself is a thin wrapper that
-    delegates to ``bubble.dense_bubble`` -- comparing it against
-    ``dense_bubble`` directly would be new-vs-new. The OLD side is the
-    verbatim-renamed ``_legacy_calc_chi0q`` body instead, so this stays a
-    real old-vs-new numerics gate until the legacy body is deleted at the
-    series' end (Global Constraints: ``assert_approx_array(new, old,
-    rel=1e-6, abs=1e-8)``, no bytewise gates, issue #85).
+    Task 11 (unified-bubble-kernel series close-out) deleted that OLD body
+    -- the dense old-vs-new numerics table (``test_old_vs_new_all_cells``,
+    formerly here) was DELETED rather than converted: it is purely
+    redundant with
+    the surviving physics-golden canaries that exercise the exact same
+    production path (``RPA._calc_chi0q`` -> ``bubble.dense_bubble``)
+    against independently-derived reference values --
+    ``tests/test_rpa_1orb.py``, ``tests/test_rpa_2orb.py``,
+    ``tests/test_flex_general.py`` -- plus the cross-implementation checks
+    in this module (``TestBubbleOldVsNewBondStatic.
+    test_shared_primitive_pin_m0_block``, ``TestOneshotIrVsDense``). What
+    remains here are the validation-only cases (odd/degenerate ``nmat``,
+    shape/dtype/scheme rejection) and a self-consistency pin
+    (``test_general_diagonal_matches_reduced_at_nmat_one``, replacing the
+    old legacy-numerics pin) that needs no legacy body at all.
 
     The fixture is norb=2 with complex NN hopping (``t = 0.7 * exp(0.3j)``,
     a different magnitude per orbital) so the general (non-diagonal
@@ -260,23 +300,6 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
         green, tail = solver._calc_green(beta, mu)
         spatial_shape = tuple(solver.lattice.shape)
         return solver, green, tail, beta, spatial_shape
-
-    def test_old_vs_new_all_cells(self):
-        for hz, want_nblock in ((0.0, 1), (0.3, 2)):
-            for coeff_tail, tail_label in ((0.0, "off"), (0.5, "on")):
-                solver, green, tail, beta, spatial_shape = self._oracle(
-                    coeff_tail, hz)
-                self.assertEqual(green.shape[0], want_nblock)
-                for scheme in ("reduced", "general"):
-                    with self.subTest(nblock=want_nblock, tail=tail_label,
-                                       scheme=scheme):
-                        solver.enable_reduced = (scheme == "reduced")
-                        old = solver._legacy_calc_chi0q(green, tail, beta)
-                        new = bubble_mod.dense_bubble(
-                            green, tail, beta, spatial_shape=spatial_shape,
-                            scheme=scheme)
-                        self.assertEqual(new.shape, old.shape)
-                        assert_approx_array(new, old, rel=1e-6, abs=1e-8)
 
     def test_none_tail_matches_zero_tail_array(self):
         """``green0_tail=None`` (full Green, no tail machinery) and an
@@ -312,9 +335,10 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
         ``green_kw`` must now be ACCEPTED, not rejected. (The bond entry
         points still reject odd ``nmat`` -- see
         ``TestBubbleOldVsNewBondStatic.test_rejects_odd_nmat``.)
-        ``test_nmat_one_matches_legacy`` below is the positive numerical
-        pin against the legacy body; this is the negative "does not raise"
-        smoke check at a non-degenerate odd value."""
+        ``test_general_diagonal_matches_reduced_at_nmat_one`` below is the
+        positive numerical check at the degenerate value; this is the
+        negative "does not raise" smoke check at a non-degenerate odd
+        value."""
         solver, green, tail, beta, spatial_shape = self._oracle(0.0, 0.0)
         bad_green = green[:, :-1]
         bad_tail = tail[:, :-1]
@@ -324,18 +348,25 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
                                          scheme="general")
         self.assertEqual(result.shape[1], bad_green.shape[1])
 
-    def test_nmat_one_matches_legacy(self):
-        """Degenerate ``nmat=1`` dense bubble, both schemes, against
-        ``RPA._legacy_calc_chi0q`` on the identical input -- the numerical
-        pin behind the amendment above. Mirrors
-        ``tests/test_flex_general.py``'s ``_make_chi0_general_flex``
-        pattern: build with a valid even ``Nmat`` (the solver-level config
-        validator at ``rpa.py``'s ``_init_param`` -- distinct from the
-        kernel's own validation touched here -- still rejects odd ``Nmat``
-        at construction time), then override ``solver.nmat = 1`` and feed a
-        hand-built ``(1, 1, nvol, p, p)`` random ``green_kw`` directly
-        (bypassing ``_calc_green``, which the construction-time Nmat would
-        make inconsistent with a post-hoc override)."""
+    def test_general_diagonal_matches_reduced_at_nmat_one(self):
+        """Degenerate ``nmat=1`` dense bubble, both schemes -- REPLACES the
+        old numerical pin against the (now-deleted, pre-extraction) dense
+        chi0q body (Task 11) with a self-consistency invariant that needs
+        no legacy body: ``contract_general``'s definition, ``chi0[...,a,c,b,d] =
+        g_fwd[...,a,b] * g_rev[...,d,c]``, means its ``c=a, d=b`` diagonal
+        slice is *exactly* ``contract_reduced``'s ``chi0[...,a,b] =
+        g_fwd[...,a,b] * g_rev[...,b,a]`` -- an identity that holds for any
+        ``nmat`` (including this degenerate value), so ``dense_bubble``'s
+        general-scheme output must reduce to its reduced-scheme output on
+        that diagonal. Mirrors ``tests/test_flex_general.py``'s
+        ``_make_chi0_general_flex`` pattern: build with a valid even
+        ``Nmat`` (the solver-level config validator at ``rpa.py``'s
+        ``_init_param`` -- distinct from the kernel's own validation
+        touched here -- still rejects odd ``Nmat`` at construction time),
+        then override ``solver.nmat = 1`` and feed a hand-built ``(1, 1,
+        nvol, p, p)`` random ``green_kw`` directly (bypassing
+        ``_calc_green``, which the construction-time Nmat would make
+        inconsistent with a post-hoc override)."""
         solver = _make_rpa_solver(coeff_tail=0.0, norb=2, complex_hop=True,
                                   Lx=4, Ly=4, Nmat=2)
         solver.nmat = 1
@@ -349,15 +380,19 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
                    + 1j * rng.standard_normal(shape)).astype(np.complex128)
         tail = np.zeros_like(green_kw)
 
-        for scheme in ("reduced", "general"):
-            with self.subTest(scheme=scheme):
-                solver.enable_reduced = (scheme == "reduced")
-                old = solver._legacy_calc_chi0q(green_kw, tail, beta)
-                new = bubble_mod.dense_bubble(
-                    green_kw, tail, beta, spatial_shape=spatial_shape,
-                    scheme=scheme)
-                self.assertEqual(new.shape, old.shape)
-                assert_approx_array(new, old, rel=1e-6, abs=1e-8)
+        reduced = bubble_mod.dense_bubble(
+            green_kw, tail, beta, spatial_shape=spatial_shape,
+            scheme="reduced")
+        general = bubble_mod.dense_bubble(
+            green_kw, tail, beta, spatial_shape=spatial_shape,
+            scheme="general")
+        p = green_kw.shape[-1]
+        for a in range(p):
+            for b in range(p):
+                with self.subTest(a=a, b=b):
+                    assert_approx_array(
+                        general[..., a, a, b, b], reduced[..., a, b],
+                        rel=1e-10, abs=1e-12)
 
     def test_rejects_spatial_shape_mismatch(self):
         solver, green, tail, beta, spatial_shape = self._oracle(0.0, 0.0)
@@ -383,20 +418,30 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
 
 
 class TestBubbleOldVsNewIr(unittest.TestCase):
-    """Old-vs-new gate: ``FLEX._legacy_calc_chi0q_ir`` /
-    ``FLEX._legacy_calc_chi0q_general_ir`` (OLD) vs ``bubble.ir_bubble``
-    (NEW) on identical inputs, reduced + general -- plus the IR
-    axis-compatibility ``ValueError`` cases. Since Task 7,
-    ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir`` are thin
-    wrappers that delegate to ``bubble.ir_bubble`` -- comparing them
-    against ``ir_bubble`` directly would be new-vs-new. The OLD side is the
-    verbatim-renamed ``_legacy_*`` body instead, so this stays a real
-    old-vs-new numerics gate until the legacy bodies are deleted at the
-    series' end.
+    """Was the old-vs-new gate: the pre-extraction, hand-written
+    ``FLEX._calc_chi0q_ir`` / ``_calc_chi0q_general_ir`` bodies (OLD) vs
+    ``bubble.ir_bubble`` (NEW), reduced + general. Task 11 (unified-
+    bubble-kernel series close-out) deleted both OLD bodies -- the two
+    numerics tests that compared against them (``test_reduced_old_vs_new`` /
+    ``test_general_old_vs_new``, formerly here) were DELETED rather than
+    converted: they are purely redundant with surviving oracles that cover
+    the identical production path (``FLEX._calc_chi0q_ir`` /
+    ``_calc_chi0q_general_ir`` -> ``bubble.ir_bubble``) more strongly --
+    ``tests/test_flex_ir.py`` / ``tests/test_flex_ir_general.py``'s
+    physics-golden canaries, those same modules'
+    ``test_chi0_gate_ir_matches_uniform_large_nmat`` / general counterpart
+    (converted to ``unittest.TestCase`` in this same Task 11 commit --
+    an independent NUMERICAL-SCHEME cross-check, dense FFT vs IR fitting,
+    which is a stronger oracle than comparing the extracted IR body
+    against its own pre-extraction copy), and this module's
+    ``TestOneshotIrVsDense`` (RPA dense vs FLEX IR at matched settings).
 
-    Fixtures reuse ``tests/test_flex_ir.py``'s / ``tests/test_flex_ir_general.py``'s
-    smallest-``Nmat`` solver-construction helpers (``Nmat=64``) rather than
-    re-deriving them here.
+    What remains here is the IR axis-compatibility ``ValueError`` case,
+    which never depended on either legacy body.
+
+    Fixtures for the (now-deleted) numerics tests reused
+    ``tests/test_flex_ir.py``'s / ``tests/test_flex_ir_general.py``'s
+    smallest-``Nmat`` solver-construction helpers (``Nmat=64``).
 
     Skips cleanly when ``sparse_ir`` is not importable -- the same guard
     ``tests/test_flex_ir.py`` uses, so ``tests.test_flex_ir`` skipping is
@@ -409,45 +454,6 @@ class TestBubbleOldVsNewIr(unittest.TestCase):
             import sparse_ir  # noqa: F401
         except ImportError:
             raise unittest.SkipTest("sparse-ir not installed")
-
-    def test_reduced_old_vs_new(self):
-        from tests.test_flex_ir import _make_solver
-        T = 0.5
-        beta = 1.0 / T
-        solver, gi = _make_solver(64, {'matsubara_basis': 'ir'}, T=T)
-        solver._calc_epsilon_k(gi)
-        solver._ir_setup(beta)
-        axF, axB = solver._ir_axF, solver._ir_axB
-        self.assertTrue(solver.enable_reduced)
-
-        green, _ = solver._calc_green_ir(beta, 0.0)
-        old = solver._legacy_calc_chi0q_ir(green, beta)
-        spatial_shape = tuple(solver.lattice.shape)
-
-        new = bubble_mod.ir_bubble(green, axF, axB,
-                                   spatial_shape=spatial_shape,
-                                   scheme="reduced")
-        self.assertEqual(new.shape, old.shape)
-        assert_approx_array(new, old, rel=1e-6, abs=1e-8)
-
-    def test_general_old_vs_new(self):
-        from tests.test_flex_ir_general import _make_general_solver
-        T = 2.0
-        beta = 1.0 / T
-        solver, gi = _make_general_solver(64, "ir", T=T)
-        solver._calc_epsilon_k(gi)
-        solver._ir_setup(beta)
-        axF, axB = solver._ir_axF, solver._ir_axB
-
-        green, _ = solver._calc_green_ir(beta, 0.0)
-        old = solver._legacy_calc_chi0q_general_ir(green, beta)
-        spatial_shape = tuple(solver.lattice.shape)
-
-        new = bubble_mod.ir_bubble(green, axF, axB,
-                                   spatial_shape=spatial_shape,
-                                   scheme="general")
-        self.assertEqual(new.shape, old.shape)
-        assert_approx_array(new, old, rel=1e-6, abs=1e-8)
 
     def test_axis_mismatch_raises_value_error(self):
         from hwave.solver.ir_axis import IRAxis
@@ -1031,9 +1037,19 @@ def _flex_fallback_bare_green_input(dirpath):
 
 
 class TestBondGreenFlow(unittest.TestCase):
-    """sc.py's Green carrier (``sc._build_bond_green``) vs the legacy
-    oracle (``sc._legacy_calc_green``) -- unified-bubble-kernel spec,
-    'Green-flow oracles' / ``TestBondGreenFlow``."""
+    """sc.py's Green carrier (``sc._build_bond_green``) vs the direct-sum
+    formula oracle (``_direct_green_sc``, module level) -- unified-
+    bubble-kernel spec, 'Green-flow oracles' / ``TestBondGreenFlow``.
+
+    Through Task 10 this compared ``carrier.full_sc`` against sc.py's own
+    pre-extraction, hand-written Green-function builder, the reference
+    implementation the shared-kernel carrier replaced. Task 11 deleted
+    that function (and its module-level compatibility alias);
+    ``_direct_green_sc`` is a
+    plain nested-loop transcription of the same physics formula kept
+    independently in this test module, so these checks keep their
+    numerical pin without depending on any production code that no longer
+    exists."""
 
     @staticmethod
     def _sc_tiny_eig(Nx=2, Ny=2, Nz=1, norb=2, seed=5):
@@ -1048,17 +1064,16 @@ class TestBondGreenFlow(unittest.TestCase):
         h = raw + np.conj(np.swapaxes(raw, 0, 1))  # Hermitian per k-point
         return sc_mod._calc_eigenvalues(h)
 
-    def test_full_sc_matches_legacy_calc_green_internal_build(self):
-        """(a): carrier.full_sc vs sc._legacy_calc_green, abs=1e-13."""
+    def test_full_sc_matches_direct_sum_internal_build(self):
+        """(a): carrier.full_sc vs the direct-sum oracle, abs=1e-13."""
         import hwave.sc as sc_mod
 
         eigenvalues, eigenvectors = self._sc_tiny_eig()
         mu, beta, nmat = 0.15, 2.0, 8
-        legacy = sc_mod._legacy_calc_green(
-            eigenvalues, eigenvectors, mu, beta, nmat)
+        oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
         carrier = sc_mod._build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
-        assert_approx_array(carrier.full_sc, legacy, rel=0, abs=1e-13)
+        assert_approx_array(carrier.full_sc, oracle, rel=0, abs=1e-13)
         self.assertEqual(carrier.coeff_tail_requested, 1.0)
         self.assertEqual(carrier.coeff_tail_applied, 1.0)
         self.assertEqual(carrier.source, "internal")
@@ -1067,7 +1082,8 @@ class TestBondGreenFlow(unittest.TestCase):
         """(d): mu equality -- proven the strong way, by asserting
         ``_build_bond_green`` never calls ``sc._determine_mu`` at all (it
         reuses the caller's already-computed ``mu`` verbatim), then pinning
-        the result against the legacy oracle called with that SAME mu."""
+        the result against the direct-sum oracle called with that SAME
+        mu."""
         import hwave.sc as sc_mod
 
         eigenvalues, eigenvectors = self._sc_tiny_eig(seed=6)
@@ -1084,14 +1100,13 @@ class TestBondGreenFlow(unittest.TestCase):
                 eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
         finally:
             sc_mod._determine_mu = orig
-        legacy = sc_mod._legacy_calc_green(
-            eigenvalues, eigenvectors, mu, beta, nmat)
-        assert_approx_array(carrier.full_sc, legacy, rel=0, abs=1e-13)
+        oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
+        assert_approx_array(carrier.full_sc, oracle, rel=0, abs=1e-13)
 
     def test_separation_pair_weight_unchanged_bubble_differs(self):
         """(c): with bond_coeff_tail=1, pair_weight(carrier.full_sc, ...)
-        equals the legacy-green result at abs=1e-13, while the bubble (fed
-        the SAME carrier's deflated_kw/green0_tail) differs from the
+        equals the direct-sum-oracle result at abs=1e-13, while the bubble
+        (fed the SAME carrier's deflated_kw/green0_tail) differs from the
         tail-off bubble by more than 1e-8 -- the exact separation the
         carrier design exists to guarantee (spec 'Green data flow')."""
         import hwave.sc as sc_mod
@@ -1102,14 +1117,13 @@ class TestBondGreenFlow(unittest.TestCase):
             Nx=Nx, Ny=Ny, Nz=Nz, norb=norb, seed=7)
         mu, beta, nmat = 0.1, 3.0, 16
 
-        legacy = sc_mod._legacy_calc_green(
-            eigenvalues, eigenvectors, mu, beta, nmat)
+        oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
         carrier = sc_mod._build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
 
         w_new = bc.pair_weight(carrier.full_sc, beta, g2_tail=False)
-        w_legacy = bc.pair_weight(legacy, beta, g2_tail=False)
-        assert_approx_array(w_new, w_legacy, rel=0, abs=1e-13)
+        w_oracle = bc.pair_weight(oracle, beta, g2_tail=False)
+        assert_approx_array(w_new, w_oracle, rel=0, abs=1e-13)
 
         bond_set = resolve_interactions(
             {((1, 0, 0), (0, 0)): 0.3}, np.eye(3), norb)
@@ -1123,12 +1137,13 @@ class TestBondGreenFlow(unittest.TestCase):
         self.assertGreater(max_abs_diff, 1e-8)
 
     def test_flex_fallback_and_standard_rpa_sites_use_the_carrier(self):
-        """(b): the same full_sc-vs-legacy comparison at the FLEX-mode
+        """(b): the same full_sc-vs-oracle comparison at the FLEX-mode
         bare-Green fallback and the Standard-RPA call sites -- captures the
         carrier ``_build_bond_green`` returns at each PRODUCTION call site
         (via ``sc.calc_eliashberg``, driven by the smallest
         ``tests/test_sc_bond.py``-style TOML fixtures) and pins it against
-        the legacy oracle called with the SAME arguments the site used."""
+        the direct-sum oracle called with the SAME arguments the site
+        used."""
         import hwave.sc as sc_mod
         from tests.test_sc_bond import _base_input
 
@@ -1157,9 +1172,9 @@ class TestBondGreenFlow(unittest.TestCase):
         self.assertEqual(len(captured), 2)
         for args, carrier in captured:
             eigenvalues, eigenvectors, mu, beta, nmat = args[:5]
-            legacy = sc_mod._legacy_calc_green(
+            oracle = _direct_green_sc(
                 eigenvalues, eigenvectors, mu, beta, nmat)
-            assert_approx_array(carrier.full_sc, legacy, rel=0, abs=1e-13)
+            assert_approx_array(carrier.full_sc, oracle, rel=0, abs=1e-13)
 
 
 class TestBondTailConvergence(unittest.TestCase):

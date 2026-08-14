@@ -595,8 +595,8 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, *,
     dtype all known, so this is where the ``ND = nd*B`` blow-up is caught --
     never a silent runaway allocation. Called BEFORE the Green carrier is
     built (review fix I-2, preserved through the unified-bubble-kernel
-    switch: previously the bond-channel dispatch branch called
-    ``_calc_green`` first, so a large-Nmat run could OOM before the cap was
+    switch: previously the bond-channel dispatch branch built the Green
+    function first, so a large-Nmat run could OOM before the cap was
     ever consulted); the estimate includes the carrier's own allocation so
     the preflight is not blind to it.
 
@@ -789,9 +789,8 @@ def _build_bond_operator(bond_set, green_carrier, interactions, inter_k,
         EVERY downstream consumer receives full_kw" -- here ``full_sc``, the
         sc-layout equivalent); every other consumer in this function
         (``make_bond_kernel_parts``, ``pair_weight``) reads
-        ``green_carrier.full_sc`` -- numerically the SAME array
-        ``_legacy_calc_green`` would have produced on the same inputs,
-        independent of the tail coefficient.
+        ``green_carrier.full_sc`` -- the bare Green function on the same
+        inputs, independent of the tail coefficient.
 
     ``precondition_opts`` (from ``_read_bond_config``) is forwarded verbatim
     to ``bond_channels.check_hermitian_preconditions`` -- the
@@ -1735,76 +1734,6 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
     return float(mu)
 
 
-def _legacy_calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
-    """Construct Green's function G(k, iwn).
-
-    LEGACY body, kept as the numerical oracle for the shared-kernel
-    carrier (:func:`_build_bond_green`, ``hwave.solver.green.build_green``)
-    -- see the unified-bubble-kernel spec's "Green data flow" section.
-    ``TestBondGreenFlow`` pins ``_build_bond_green(...).full_sc`` against
-    this function's output at ``abs=1e-13`` (numerical, not bitwise,
-    equivalence: the two assemble through different operation orders).
-    Deleted at the end of the bubble-unification series (Task 11); until
-    then it is also reachable as the module-level alias ``_calc_green``
-    (below) for the suite's existing direct callers.
-
-    Parameters
-    ----------
-    eigenvalues : ndarray
-        Shape (Nx, Ny, Nz, norb).
-    eigenvectors : ndarray
-        Shape (Nx, Ny, Nz, norb, norb).
-    mu : float
-        Chemical potential.
-    beta : float
-        Inverse temperature.
-    nmat : int
-        Number of Matsubara frequencies.
-
-    Returns
-    -------
-    green_kw : ndarray
-        Shape (norb, norb, Nx, Ny, Nz, nmat).
-    """
-    Nx, Ny, Nz, norb = eigenvalues.shape
-    iomega = np.array([(2.0 * i + 1.0 - nmat) * np.pi for i in range(nmat)]) / beta
-
-    # Vectorized Green's function construction:
-    # G_{ij}(k, iwn) = sum_m U_{im}(k) U*_{jm}(k) / (iwn - (e_m(k) - mu))
-
-    # factor[kx,ky,kz,i,j,m] = U[kx,ky,kz,i,m] * conj(U[kx,ky,kz,j,m])
-    factor = np.einsum('...im,...jm->...ijm', eigenvectors, np.conj(eigenvectors))
-    # factor shape: (Nx, Ny, Nz, norb, norb, norb)
-
-    # denom[kx,ky,kz,m,w] = 1 / (iwn_w - (e_m(k) - mu))
-    xi = eigenvalues - mu  # (Nx, Ny, Nz, norb)
-    denom = 1.0 / (1j * iomega[None, None, None, None, :] - xi[:, :, :, :, None])
-    # denom shape: (Nx, Ny, Nz, norb, nmat)
-
-    # G[kx,ky,kz,i,j,w] = sum_m factor[...,i,j,m] * denom[...,m,w]
-    # Batched GEMM over the flattened spatial axes (C-order, reshape-only):
-    #   (nv, ij, m) @ (nv, m, w) -> (nv, ij, w). numpy.einsum does NOT lower
-    #   the '...ijm,...mw->...ijw' form to BLAS GEMM, so reshape to matmul.
-    nv = Nx * Ny * Nz
-    G = factor.reshape(nv, norb * norb, norb) @ denom.reshape(nv, norb, nmat)
-    green_kw_tmp = G.reshape(Nx, Ny, Nz, norb, norb, nmat)
-    # shape: (Nx, Ny, Nz, norb, norb, nmat)
-
-    # Transpose to output convention: (norb, norb, Nx, Ny, Nz, nmat)
-    green_kw = green_kw_tmp.transpose(3, 4, 0, 1, 2, 5)
-
-    return green_kw
-
-
-# Module-level compatibility alias: every production call site below has
-# switched to the shared-kernel carrier (:func:`_build_bond_green`); this
-# alias only exists so the suite's existing DIRECT callers of
-# ``sc._calc_green`` (``tests/test_sc.py``, ``tests/test_sc_bond.py``, ...)
-# keep working unmodified through the rest of this series. Removed in
-# Task 11 together with ``_legacy_calc_green`` itself.
-_calc_green = _legacy_calc_green
-
-
 def _green_sc_to_canonical(g):
     """Convert sc.py's Green-function layout to the shared kernel's
     canonical layout.
@@ -1873,8 +1802,8 @@ class _BondGreen(NamedTuple):
     Attributes
     ----------
     full_sc : ndarray
-        sc.py layout ``(p, p, Nx, Ny, Nz, nmat)`` -- numerically the SAME
-        bare Green function ``_legacy_calc_green`` would return,
+        sc.py layout ``(p, p, Nx, Ny, Nz, nmat)`` -- the bare Green
+        function ``G(k, iw_n)`` built from the eigen-decomposition,
         independent of ``coeff_tail`` (the tail term the bubble subtracts
         in frequency space is added straight back for ``full``; only
         ``deflated_kw`` depends on the coefficient).

@@ -10,6 +10,7 @@ Import-safe under both pytest and unittest discovery (CI lesson from #54).
 Tests must run from the repository root.
 """
 import os
+import unittest
 from types import SimpleNamespace
 
 import numpy as np
@@ -54,46 +55,63 @@ def _run(nmat, extra_param=None, **kw):
     return solver, gi
 
 
-def test_chi0_gate_ir_matches_uniform_large_nmat():
+class TestChi0GateIrMatchesUniformLargeNmat(unittest.TestCase):
     """GATE (design Sec. 2 analogue): the IR-native chi0 on bosonic nodes
     must agree with the uniform-FFT chi0 computed at LARGE Nmat and
     compressed (constant dropped) onto the same nodes -- the uniform result
-    converges to the IR one as its Nmat artifacts vanish."""
-    from hwave.solver import eliashberg_dynamic as ed
-    T = 0.5
-    beta = 1.0 / T
+    converges to the IR one as its Nmat artifacts vanish.
 
-    diffs = []
-    for nmat in (256, 1024):
-        solver, gi = _make_solver(nmat, {'matsubara_basis': 'ir'})
-        solver._calc_epsilon_k(gi)
-        solver._ir_setup(beta)
-        axF, axB = solver._ir_axF, solver._ir_axB
+    Collection-mechanics conversion only (unified-bubble-kernel spec,
+    Task 11): this was a module-level pytest function
+    (``test_chi0_gate_ir_matches_uniform_large_nmat``), invisible to the
+    gating runner (``python -m unittest discover -s tests`` only collects
+    ``unittest.TestCase`` methods). Wrapped in a ``TestCase`` here with its
+    body, tolerances, and fixtures UNCHANGED -- this module stays
+    pytest-style everywhere else (the CI constraint only requires this one
+    named gate to be reachable from ``unittest discover``, not a
+    module-wide rewrite)."""
 
-        # IR-native chi0 from the bare G on nodes
-        g_nodes, _ = solver._calc_green_ir(beta, 0.0)
-        chi0_ir = solver._calc_chi0q_ir(g_nodes, beta)[0]   # strip block
+    @classmethod
+    def setUpClass(cls):
+        if not _HAVE_SPARSE_IR:
+            raise unittest.SkipTest("sparse-ir not installed")
 
-        # uniform chi0 from the same solver machinery at this Nmat
-        solver_u, gi_u = _make_solver(nmat)
-        solver_u._calc_epsilon_k(gi_u)
-        g_u, gtail_u = solver_u._calc_green(beta, 0.0)
-        chi0_u = solver_u._calc_chi0q(g_u, gtail_u, beta)[0]
-        # (nmat, nvol, nd, nd) -> nodes, dropping the delta(tau) constant
-        chi0_u_nodes = ed._ir_compress(
-            np.moveaxis(chi0_u, 0, -1), axB, nmat, "chi0_u",
-            drop_constant=True)
-        chi0_u_nodes = np.moveaxis(chi0_u_nodes, -1, 0)
+    def test_chi0_gate_ir_matches_uniform_large_nmat(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        T = 0.5
+        beta = 1.0 / T
 
-        scale = np.abs(chi0_u_nodes).max()
-        diffs.append(np.abs(chi0_ir - chi0_u_nodes).max() / scale)
+        diffs = []
+        for nmat in (256, 1024):
+            solver, gi = _make_solver(nmat, {'matsubara_basis': 'ir'})
+            solver._calc_epsilon_k(gi)
+            solver._ir_setup(beta)
+            axF, axB = solver._ir_axF, solver._ir_axB
 
-    # measured: 1.89e-2 (Nmat=256) -> 3.1e-3 (1024) -> 1.5e-3 (2048),
-    # i.e. ~1/Nmat -- the uniform path's own artifact scale beyond the
-    # removed delta(tau) constant (aliasing images).
-    assert diffs[-1] < 5e-3, "chi0 gate failed: {}".format(diffs)
-    assert diffs[-1] < 0.5 * diffs[0], \
-        "no Nmat convergence toward IR chi0: {}".format(diffs)
+            # IR-native chi0 from the bare G on nodes
+            g_nodes, _ = solver._calc_green_ir(beta, 0.0)
+            chi0_ir = solver._calc_chi0q_ir(g_nodes, beta)[0]   # strip block
+
+            # uniform chi0 from the same solver machinery at this Nmat
+            solver_u, gi_u = _make_solver(nmat)
+            solver_u._calc_epsilon_k(gi_u)
+            g_u, gtail_u = solver_u._calc_green(beta, 0.0)
+            chi0_u = solver_u._calc_chi0q(g_u, gtail_u, beta)[0]
+            # (nmat, nvol, nd, nd) -> nodes, dropping the delta(tau) constant
+            chi0_u_nodes = ed._ir_compress(
+                np.moveaxis(chi0_u, 0, -1), axB, nmat, "chi0_u",
+                drop_constant=True)
+            chi0_u_nodes = np.moveaxis(chi0_u_nodes, -1, 0)
+
+            scale = np.abs(chi0_u_nodes).max()
+            diffs.append(np.abs(chi0_ir - chi0_u_nodes).max() / scale)
+
+        # measured: 1.89e-2 (Nmat=256) -> 3.1e-3 (1024) -> 1.5e-3 (2048),
+        # i.e. ~1/Nmat -- the uniform path's own artifact scale beyond the
+        # removed delta(tau) constant (aliasing images).
+        self.assertTrue(diffs[-1] < 5e-3, "chi0 gate failed: {}".format(diffs))
+        self.assertTrue(diffs[-1] < 0.5 * diffs[0],
+                        "no Nmat convergence toward IR chi0: {}".format(diffs))
 
 
 def test_sigma_gate_one_iteration():

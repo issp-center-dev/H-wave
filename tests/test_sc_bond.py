@@ -686,7 +686,8 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
               ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
         eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
         evals, evecs = sc._calc_eigenvalues(eps)
-        green = sc._calc_green(evals, evecs, 0.1, beta, nmat)
+        green = sc._build_bond_green(
+            evals, evecs, 0.1, beta, nmat, 0.0, None).full_sc
 
         bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
         self.assertEqual(bond_set.n_channels, 5)  # declared topology survives V=0
@@ -849,7 +850,8 @@ def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
           ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
     eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
     evals, evecs = sc._calc_eigenvalues(eps)
-    green = sc._calc_green(evals, evecs, 0.1, beta, nmat)
+    green = sc._build_bond_green(
+        evals, evecs, 0.1, beta, nmat, 0.0, None).full_sc
     bset = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
     chi_bar = bond_bubble(green, bset, beta)
     S0, C0 = sc._build_bond_m0_blocks(bset, interactions, inter_k, norb,
@@ -1875,7 +1877,8 @@ def _bare_green_npz(path, inp):
     eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
     evals, evecs = sc._calc_eigenvalues(eps)
     mu = sc._determine_mu(evals, beta, mode_param["filling"], norb)
-    green = sc._calc_green(evals, evecs, mu, beta, nmat)
+    green = sc._build_bond_green(
+        evals, evecs, mu, beta, nmat, 0.0, None).full_sc
     raw = green.transpose(5, 2, 3, 4, 0, 1).reshape(
         1, nmat, Lx * Ly * Lz, norb, norb)
     np.savez(path, green=raw)
@@ -2427,7 +2430,8 @@ class TestBondDiagnostics(_ApproxTestCase):
         ev, evec = sc._calc_eigenvalues(eps)
         beta = 1.0 / inp["mode"]["param"]["T"]
         mu = sc._determine_mu(ev, beta, inp["mode"]["param"]["filling"], 1)
-        green = sc._calc_green(ev, evec, mu, beta, inp["mode"]["param"]["Nmat"])
+        green = sc._build_bond_green(
+            ev, evec, mu, beta, inp["mode"]["param"]["Nmat"], 0.0, None).full_sc
         weight = bc.pair_weight(green, beta, g2_tail=True)
 
         ref = bc.harmonic_decomposition([vec.ravel()], basis, weight)

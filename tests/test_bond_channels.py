@@ -14,7 +14,7 @@ def _nn_square(V=0.25):
 def _toy_green_4x4(Nx=4, Ny=4, Nz=1, Nmat=8, t=1.0, mu=0.3, beta=2.0):
     """Single-orbital tight-binding k-space Green function on a tiny grid,
     in the sc.py layout (norb, norb, Nx, Ny, Nz, nmat) with the same
-    Matsubara convention as hwave.sc._calc_green / rpa.py's _calc_green:
+    Matsubara convention as hwave.sc._build_bond_green / rpa.py's _calc_green:
     iomega_n = (2n+1-nmat)*pi/beta.
 
     Returns (green, T, N) where T = 1/beta and N = Nx*Ny*Nz, matching the
