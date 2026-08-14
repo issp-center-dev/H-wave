@@ -1217,6 +1217,129 @@ class TestBondTailConvergence(unittest.TestCase):
                         "observed order p_hat={} outside [1.7, 2.6]".format(p_hat))
 
 
+class TestTauToFreqPoints(unittest.TestCase):
+    """Dedicated unit tests for ``ir_axis.IRAxis.tau_to_freq_points``
+    (spec's Step 1 -- fix round 1: these were only exercised indirectly via
+    ``_ir_bond_static``'s ``[0]`` call before this class was added, which
+    left the method's own contract -- round-trip value, parity guard,
+    shape guard, order/duplicate handling, and the per-instance cache's
+    lifetime -- unpinned).
+
+    Skips cleanly when ``sparse_ir`` is not importable (mirrors
+    ``TestBubbleOldVsNewIr``'s guard).
+    """
+
+    beta = 2.0
+    wmax = 5.0
+    eps = 1e-8
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+    def _axes(self):
+        from hwave.solver.ir_axis import IRAxis
+        axF = IRAxis(self.beta, self.wmax, self.eps, "F")
+        axB = IRAxis(self.beta, self.wmax, self.eps, "B")
+        return axF, axB
+
+    def test_round_trip_vs_tau_to_freq_shared_point(self):
+        """A single point already present in ``axF.freq_n`` must match
+        ``tau_to_freq``'s own value at that point -- fit-then-evaluate is
+        the SAME operation either way, just through a differently-built
+        evaluation matrix (``sparse_ir.MatsubaraSampling`` + ``basis.uhat``
+        here vs. the class's own pinv-built ``tau_to_freq`` matrix), so the
+        two must agree to near machine precision, not just within a loose
+        physics tolerance."""
+        axF, _ = self._axes()
+        rng = np.random.default_rng(3)
+        arr = (rng.standard_normal((5, axF.n_tau))
+              + 1j * rng.standard_normal((5, axF.n_tau)))
+
+        full = axF.tau_to_freq(arr)
+        j = axF.n_freq // 2   # an interior point, trivially in axF.freq_n
+        n0 = int(axF.freq_n[j])
+        reference = full[..., j]
+
+        got = axF.tau_to_freq_points(arr, np.array([n0]))[..., 0]
+        assert_approx_array(got, reference, rel=0, abs=1e-12)
+
+    def test_order_preservation_and_duplicates(self):
+        """``freq_indices = [2, 0, 0]`` on the bosonic axis (both values
+        are members of ``axB.freq_n``): the output's 3 columns must match
+        ``tau_to_freq``'s corresponding points IN THAT ORDER, with the
+        repeated ``0`` producing two identical (not deduplicated) columns."""
+        _, axB = self._axes()
+        rng = np.random.default_rng(4)
+        arr = (rng.standard_normal((3, axB.n_tau))
+              + 1j * rng.standard_normal((3, axB.n_tau)))
+
+        full = axB.tau_to_freq(arr)
+        idx2 = int(np.where(axB.freq_n == 2)[0][0])
+        idx0 = int(np.where(axB.freq_n == 0)[0][0])
+        reference = np.stack(
+            [full[..., idx2], full[..., idx0], full[..., idx0]], axis=-1)
+
+        got = axB.tau_to_freq_points(arr, np.array([2, 0, 0]))
+        self.assertEqual(got.shape, reference.shape)
+        assert_approx_array(got, reference, rel=0, abs=1e-12)
+
+    def test_parity_mismatch_raises_value_error(self):
+        """An odd index on the bosonic axis, and an even index on the
+        fermionic axis, both raise -- ``freq_indices`` parity must match
+        ``self.statistics``."""
+        axF, axB = self._axes()
+        arrF = np.zeros((axF.n_tau,), dtype=complex)
+        arrB = np.zeros((axB.n_tau,), dtype=complex)
+
+        with self.subTest(axis="bosonic_odd_index"):
+            with self.assertRaises(ValueError):
+                axB.tau_to_freq_points(arrB, np.array([1]))
+
+        with self.subTest(axis="fermionic_even_index"):
+            with self.assertRaises(ValueError):
+                axF.tau_to_freq_points(arrF, np.array([2]))
+
+    def test_shape_mismatch_raises_value_error(self):
+        """``arr.shape[-1] != n_tau`` raises, independent of otherwise-valid
+        ``freq_indices``."""
+        axF, _ = self._axes()
+        bad = np.zeros((axF.n_tau - 1,), dtype=complex)
+        with self.assertRaises(ValueError):
+            axF.tau_to_freq_points(bad, np.array([1]))
+
+    def test_no_cross_instance_retention(self):
+        """Fix round 1 (real memory issue, reviewer-demonstrated): the
+        matrix cache backing ``tau_to_freq_points`` must be PER-INSTANCE,
+        not a process-wide cache that keeps a used-then-discarded
+        ``IRAxis`` alive. Create one, exercise ``tau_to_freq_points``, drop
+        every strong reference, and confirm a weakref to it dies (a single
+        ``gc.collect()`` is allowed to settle reference-cycle cleanup;
+        CPython's plain refcounting already suffices for this specific
+        object graph, but the collect keeps the assertion robust against
+        interpreter/implementation details)."""
+        import gc
+        import weakref
+        from hwave.solver.ir_axis import IRAxis
+
+        ax = IRAxis(self.beta, self.wmax, self.eps, "F")
+        arr = np.zeros((3, ax.n_tau), dtype=complex)
+        ax.tau_to_freq_points(arr, np.array([1]))
+
+        ref = weakref.ref(ax)
+        del ax
+        gc.collect()
+        self.assertIsNone(
+            ref(),
+            "IRAxis instance was kept alive after its only strong "
+            "reference was dropped -- tau_to_freq_points' matrix cache "
+            "must be per-instance, not a process-wide cache holding a "
+            "reference to self")
+
+
 class TestIrBondOracle(unittest.TestCase):
     """Independent oracle for ``bubble._ir_bond_static``: the exact static
     (``Omega=0``) bond-enlarged bubble on a 2-site (``Nx=2``), single-orbital

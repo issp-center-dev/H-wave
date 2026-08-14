@@ -1039,7 +1039,7 @@ def _validate_ir_bond_inputs(green_kw, ax_fermi, ax_bose, spatial_shape):
 def _ir_bond_pair_block(g_fwd, g_rev, ax_bose, spatial_shape, workers,
                         shift, freq_indices):
     """Compute the IR bond bubble block for ONE ``(m, mp)`` channel pair at
-    the requested bosonic IR frequency indices: ``(nvol, npair,
+    the requested bosonic IR frequency indices: ``(nvol, npair, npair,
     len(freq_indices))`` complex128, FRESHLY ALLOCATED (mirrors
     :func:`_bond_pair_full_block`'s per-pair pipeline through the IR
     transport -- spec: "the IR path mirrors its structure but through the

@@ -22,8 +22,8 @@ Wraps the optional ``sparse-ir`` package behind explicit H-wave conventions:
   matrices to the device via :func:`hwave.solver.backend.array_module_of`
   dispatch -- see :meth:`IRAxis.mats`).
 """
-import functools
 import logging
+from collections import OrderedDict
 
 import numpy as np
 
@@ -195,6 +195,26 @@ class IRAxis:
         # device mirrors, filled lazily per array module
         self._device_m = {}
 
+        # Bounded, PER-INSTANCE LRU cache for tau_to_freq_points' fused
+        # tau-fit + Matsubara-evaluate matrices (see that method): an
+        # OrderedDict keyed by (freq_tuple, xp), maxsize 8, evicted oldest-
+        # first. Deliberately NOT a functools.lru_cache on the method (that
+        # would be one cache shared across every IRAxis instance ever
+        # constructed, keyed on (self, freq_tuple, xp) -- self only
+        # participates in equality/hash by identity, so it does not merge
+        # entries across instances, but it DOES (a) keep every instance
+        # that was ever used with tau_to_freq_points alive for the
+        # lifetime of the process, since the cache holds a strong
+        # reference to self as part of its key, and (b) share one global
+        # maxsize=8 budget across all instances, so more than ~8
+        # concurrently-live axes (e.g. a temperature scan constructing one
+        # IRAxis pair per point) would evict each other's entries even
+        # though each axis only ever asks for a couple of distinct point
+        # sets). A per-instance dict has no such cross-instance coupling:
+        # it is garbage-collected along with the instance, and its budget
+        # is per-axis, not shared.
+        self._tau_freq_pts_cache = OrderedDict()
+
     # -- matrix access with backend dispatch ---------------------------------
 
     def mats(self, name, xp):
@@ -288,12 +308,19 @@ class IRAxis:
         -----
         The evaluation matrix is built via ``sparse_ir.MatsubaraSampling``
         at exactly the requested points (fit from this axis's tau sampling,
-        evaluate at the points) and cached per ``(tuple(freq_indices),
-        array module)`` with a BOUNDED cache
-        (``functools.lru_cache(maxsize=8)`` -- current use is only ``[0]``;
-        the bound prevents unbounded growth on arbitrary tuples), mirrored
-        to the requesting array's device the same way the other cached
-        matrices in this class are (:meth:`mats`).
+        evaluate at the points) and cached in a BOUNDED, PER-INSTANCE cache
+        (an ``OrderedDict`` on ``self``, ``self._tau_freq_pts_cache``,
+        keyed by ``(tuple(freq_indices), array module)``, LRU-evicted at
+        ``maxsize=8`` -- current use is only ``[0]``; the bound prevents
+        unbounded growth on arbitrary tuples). Being per-instance, the
+        cache is garbage-collected along with the axis it belongs to and
+        its 8-entry budget is never shared across (or thrashed by) other
+        ``IRAxis`` instances -- unlike a ``functools.lru_cache`` on the
+        method, which would be ONE cache shared by every instance ever
+        constructed (see the field's own comment in ``__init__`` for the
+        two concrete failure modes that would cause). The matrix itself is
+        mirrored to the requesting array's device the same way the other
+        cached matrices in this class are (:meth:`mats`).
         """
         freq_indices = np.asarray(freq_indices)
         if freq_indices.ndim != 1 or freq_indices.size == 0:
@@ -322,15 +349,30 @@ class IRAxis:
         mat = self._tau_to_freq_points_matrix(freq_tuple, xp)
         return arr @ mat
 
-    @functools.lru_cache(maxsize=8)
     def _tau_to_freq_points_matrix(self, freq_tuple, xp):
-        """Bounded, device-mirrored cache for :meth:`tau_to_freq_points`'s
-        fused tau-fit + Matsubara-evaluate matrix, keyed by
-        ``(self, freq_tuple, xp)`` (``self`` folds in automatically since
-        this is an instance method wrapped by ``lru_cache`` -- each axis
-        instance gets its own cache slots; ``xp`` selects the host/device
-        mirror). ``maxsize=8`` bounds growth on arbitrary point tuples
-        (current callers only ever request ``(0,)``)."""
+        """Per-instance bounded LRU lookup (``self._tau_freq_pts_cache``,
+        maxsize 8) for :meth:`tau_to_freq_points`'s fused tau-fit +
+        Matsubara-evaluate matrix, keyed by ``(freq_tuple, xp)``. A hit
+        moves the entry to most-recently-used; a miss builds the matrix
+        (:meth:`_build_tau_to_freq_points_matrix`), inserts it, and evicts
+        the oldest entry once the cache exceeds 8 entries."""
+        cache = self._tau_freq_pts_cache
+        key = (freq_tuple, xp)
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+        mat = self._build_tau_to_freq_points_matrix(freq_tuple, xp)
+        cache[key] = mat
+        cache.move_to_end(key)
+        if len(cache) > 8:
+            cache.popitem(last=False)
+        return mat
+
+    def _build_tau_to_freq_points_matrix(self, freq_tuple, xp):
+        """Build (never caches itself -- see :meth:`_tau_to_freq_points_matrix`)
+        the fused tau-fit + Matsubara-evaluate matrix ``(n_tau, npts)`` for
+        the given integer Matsubara indices, on the host, then mirrors it
+        to ``xp`` if requested."""
         sparse_ir = _import_sparse_ir()
         freq_n = np.array(freq_tuple, dtype=np.int64)
         # Validates the point set against sparse_ir's own Matsubara
