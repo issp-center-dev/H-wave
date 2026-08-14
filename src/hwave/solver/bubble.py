@@ -1,5 +1,5 @@
 """INTERNAL module -- shared particle-hole bubble orbital contractions and
-the dense uniform-Matsubara-grid transport.
+the dense uniform-Matsubara-grid / sparse-IR transports.
 
 This module is NOT public API; the supported user-facing surface stays the
 solver classes (``RPA``, ``FLEX``) and the documented ``bond_channels``
@@ -11,11 +11,16 @@ The binding contract is
 ``docs/superpowers/specs/2026-08-14-unified-bubble-kernel-design.md``
 (sections "Module layout", "Green/tail contracts", "Scheme x bond", and
 "Output contracts"). This module transcribes the numerics of
-``RPA._calc_chi0q`` (rpa.py, around line 2936 at series start) without
-altering them -- including the equal-time endpoint-mean correction
-(issue #134) and the data-driven tail gate. ``bubble.py`` deliberately
-imports neither ``sparse_ir`` nor ``flex.py``, so the plain dense path
-stays usable without the optional IR dependency.
+``RPA._calc_chi0q`` (rpa.py, around line 2936 at series start) and
+``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir`` (flex.py, around
+lines 818-917 at series start) without altering them -- including the
+equal-time endpoint-mean correction (issue #134) and the data-driven tail
+gate on the dense path. ``bubble.py`` deliberately imports neither
+``sparse_ir`` nor ``flex.py`` -- the IR entry points receive
+already-constructed ``IRAxis`` objects and duck-type their attributes/
+methods (``statistics``, ``beta``, ``wmax``, ``eps``, ``tau``, ``n_tau``,
+``n_freq``, ``freq_to_tau_points``, ``tau_to_freq``) -- so the plain dense
+path stays usable without the optional IR dependency.
 """
 
 import numpy as np
@@ -166,6 +171,125 @@ def _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape, scheme):
     return (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape)
 
 
+def _validate_ir_axes(ax_fermi, ax_bose):
+    """Axis-compatibility guard for the IR entry points (spec: "IR axis
+    compatibility"). Duck-typed -- reads ``statistics``/``beta``/``wmax``/
+    ``eps`` off the given objects without importing ``ir_axis`` or
+    ``sparse_ir``. Validates PARAMETER equality only: separately
+    constructed axes with equal parameters pass. ``ValueError`` names the
+    offending field and both values."""
+    fermi_stat = getattr(ax_fermi, "statistics", None)
+    if fermi_stat != "F":
+        raise ValueError(
+            "bubble kernel: ax_fermi.statistics must be 'F', got {!r}"
+            .format(fermi_stat))
+    bose_stat = getattr(ax_bose, "statistics", None)
+    if bose_stat != "B":
+        raise ValueError(
+            "bubble kernel: ax_bose.statistics must be 'B', got {!r}"
+            .format(bose_stat))
+    for field in ("beta", "wmax", "eps"):
+        v_fermi = getattr(ax_fermi, field)
+        v_bose = getattr(ax_bose, field)
+        if v_fermi != v_bose:
+            raise ValueError(
+                "bubble kernel: ax_fermi.{f} ({a!r}) does not match "
+                "ax_bose.{f} ({b!r}) -- the IR entry points require "
+                "parameter-identical fermionic/bosonic axes"
+                .format(f=field, a=v_fermi, b=v_bose))
+
+
+def _validate_ir_inputs(green_kw, ax_fermi, ax_bose, spatial_shape, scheme):
+    """Validate an ``ir_bubble`` call. Returns the normalized
+    ``(green_kw, nblock, nw, nvol, nd, spatial_shape)`` -- ``green_kw``
+    promoted to complex128 (copy only when needed). All failures are
+    ``ValueError`` (survives ``python -O``). No tail argument -- the IR
+    entry points take the FULL Green function at fermionic IR nodes (see
+    the module docstring's Green/tail contract)."""
+    _validate_scheme(scheme)
+    _validate_ir_axes(ax_fermi, ax_bose)
+
+    xp = _bk.array_module_of(green_kw)
+
+    if green_kw.ndim != 5:
+        raise ValueError(
+            "bubble kernel: green_kw must have ndim 5 "
+            "(nblock, n_freq_F, nvol, p, p), got ndim={} shape={}".format(
+                green_kw.ndim, green_kw.shape))
+    nblock, nw, nvol, nd, nd2 = green_kw.shape
+    if nblock not in (1, 2):
+        raise ValueError(
+            "bubble kernel: Green's function block axis ({}) must be 1 "
+            "(spin-free/spinful) or 2 (spin-diag)".format(nblock))
+    if nd != nd2 or nd < 1:
+        raise ValueError(
+            "bubble kernel: orbital axes must be square and nonempty, "
+            "got ({}, {})".format(nd, nd2))
+    if nw != ax_fermi.n_freq:
+        raise ValueError(
+            "bubble kernel: green_kw frequency axis (nw={}) does not "
+            "match ax_fermi.n_freq ({}) -- green_kw must be sampled at "
+            "the fermionic IR nodes".format(nw, ax_fermi.n_freq))
+
+    spatial_shape = _validate_spatial_shape(spatial_shape, nvol)
+
+    green_kw = _promote_complex(green_kw, xp, "green_kw")
+
+    return (green_kw, nblock, nw, nvol, nd, spatial_shape)
+
+
+class _IRPrepared:
+    """Internal container for :func:`_prepare_ir`'s output. Not part of
+    this module's public surface."""
+
+    __slots__ = ("green_rt", "green_rev")
+
+    def __init__(self, green_rt, green_rev):
+        self.green_rt = green_rt
+        self.green_rev = green_rev
+
+
+def _prepare_ir(green_kw, ax_fermi, ax_bose, spatial_shape, workers):
+    """Fermionic-IR-node-to-bosonic-tau evaluation, spatial ifftn, and the
+    IR tau/spatial reversal. Transcribes ``FLEX._calc_chi0q_ir`` /
+    ``FLEX._calc_chi0q_general_ir`` (flex.py:842-856 / 889-902) verbatim.
+
+    Unlike the dense transport's ``_prepare_dense`` (a roll+flip over the
+    discrete FFT tau grid via ``kgrid.reverse_fft_axes`` on BOTH the tau
+    and spatial axes at once), the IR tau reversal is a plain reflection
+    ``flip`` of the (already reversal-symmetric) bosonic tau node array,
+    kept as its own step distinct from the shared FFT-grid spatial
+    reversal -- the two transports never share a reversal implementation
+    (spec: "Module layout").
+
+    ``green_kw`` is assumed already validated and complex128-promoted (by
+    :func:`_validate_ir_inputs`); this function performs no validation of
+    its own. ``ax_fermi``/``ax_bose`` are duck-typed ``IRAxis``-like
+    objects (see the module docstring)."""
+    xp = _bk.array_module_of(green_kw)
+    nblock, nw, nvol, nd, _ = green_kw.shape
+    nx, ny, nz = spatial_shape
+
+    # G(k, tau_B): fermionic-node coefficients evaluated at the bosonic
+    # axis's tau nodes.
+    g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
+    g_tau = ax_fermi.freq_to_tau_points(g, ax_bose.tau)
+    ntB = ax_bose.n_tau
+    g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
+        nblock, ntB, nx, ny, nz, nd * nd)
+
+    g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
+
+    # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
+    # plain tau reversal (with the global fermionic -1); r -> -r is the
+    # shared FFT-grid reversal (identical to the dense path).
+    g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
+    g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
+    g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
+
+    return _IRPrepared(g_rt, g_rev)
+
+
 class _DensePrepared:
     """Internal container for :func:`_prepare_dense`'s output. Not part of
     this module's public surface."""
@@ -249,20 +373,48 @@ def _prepare_dense(green_kw, green0_tail, beta, spatial_shape, workers):
                            fwd0_p, rev0_p, jump_f, jump_r_rev)
 
 
-def _assemble_plain(prepped, scheme, beta, spatial_shape, workers):
-    """Contract (reduced or general), apply the equal-time endpoint-mean
-    correction, and transport back to (bosonic Matsubara frequency,
-    k-space) -- the dense arm. Transcribes ``RPA._calc_chi0q``
-    (rpa.py:3076-3126) verbatim."""
+def _assemble_plain(prepped, scheme, beta, spatial_shape, workers,
+                    ax_bose=None):
+    """Contract (reduced or general) and transport back to (bosonic
+    Matsubara frequency, k-space).
+
+    Two arms, selected by ``ax_bose`` (``None`` -> dense, given -> IR):
+
+    - Dense arm (``ax_bose is None``): applies the equal-time endpoint-mean
+      correction and the per-tau ``sgn``, then ``spatial fftn ->
+      tau_to_boson -> x(-1/beta)``. Transcribes ``RPA._calc_chi0q``
+      (rpa.py:3076-3126) verbatim.
+    - IR arm (``ax_bose`` given): the bubble sign is the single explicit
+      ``-1`` on the contraction (no ``sgn`` array, no endpoint correction --
+      the IR basis already represents the tail), then ``spatial fftn ->
+      ax_bose.tau_to_freq`` with NO ``1/beta`` factor (the IR transforms
+      are physical). Transcribes ``FLEX._calc_chi0q_ir`` /
+      ``FLEX._calc_chi0q_general_ir`` (flex.py:858-868 / 904-917) verbatim.
+    """
     nx, ny, nz = spatial_shape
-    nblock, nmat, nvol, nd, _ = prepped.green_rt.shape
+    nblock, nt, nvol, nd, _ = prepped.green_rt.shape
 
     contract = contract_reduced if scheme == "reduced" else contract_general
     nd_shape = (nd, nd) if scheme == "reduced" else (nd, nd, nd, nd)
     nds = nd * nd if scheme == "reduced" else nd ** 4
 
+    if ax_bose is not None:
+        xp = _bk.array_module_of(prepped.green_rt)
+        chi0_rt = -contract(prepped.green_rt, prepped.green_rev)
+
+        chi0_qt = _bk.spatial_fftn(
+            chi0_rt.reshape(nblock, nt, nx, ny, nz, nds),
+            axes=(2, 3, 4), workers=workers)
+
+        chi0_qt_flat = xp.moveaxis(
+            chi0_qt.reshape(nblock, nt, nvol * nds), 1, -1)
+        chi0_q = ax_bose.tau_to_freq(chi0_qt_flat)
+        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
+            nblock, ax_bose.n_freq, nvol, *nd_shape)
+        return chi0_q
+
     chi0_rt = contract(prepped.green_rt, prepped.green_rev)
-    sgn_bc = prepped.sgn.reshape((1, nmat) + (1,) * (chi0_rt.ndim - 2))
+    sgn_bc = prepped.sgn.reshape((1, nt) + (1,) * (chi0_rt.ndim - 2))
     chi0_rt = chi0_rt * sgn_bc
 
     if prepped.tail_on:
@@ -272,12 +424,12 @@ def _assemble_plain(prepped, scheme, beta, spatial_shape, workers):
             + contract(prepped.fwd0_p + prepped.jump_f, prepped.rev0_p))
 
     chi0_qt = _bk.spatial_fftn(
-        chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds),
+        chi0_rt.reshape(nblock, nt, nx, ny, nz, nds),
         axes=(2, 3, 4), workers=workers)
 
-    chi0_qt_flat = chi0_qt.reshape(nblock, nmat, nvol * nds)
+    chi0_qt_flat = chi0_qt.reshape(nblock, nt, nvol * nds)
     chi0_qw = _ms.tau_to_boson(chi0_qt_flat, axis=1).reshape(
-        nblock, nmat, nvol, *nd_shape) * (-1.0 / beta)
+        nblock, nt, nvol, *nd_shape) * (-1.0 / beta)
 
     return chi0_qw
 
@@ -336,3 +488,65 @@ def dense_bubble(green_kw, green0_tail, beta, *, spatial_shape, scheme,
     prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
                               workers)
     return _assemble_plain(prepped, scheme, beta, spatial_shape, workers)
+
+
+def ir_bubble(green_kw, ax_fermi, ax_bose, *, spatial_shape, scheme,
+              workers=None):
+    """Sparse-IR particle-hole bubble chi0(q, iOmega_l) on the bosonic IR
+    nodes, computed natively from the full Green function on the fermionic
+    IR nodes.
+
+    Parameters
+    ----------
+    green_kw : ndarray, complex, shape (nblock, n_freq_F, nvol, p, p)
+        The FULL Green's function (no tail subtracted) sampled at
+        ``ax_fermi``'s fermionic Matsubara nodes -- there is no
+        ``green0_tail`` argument on the IR path (the IR basis represents
+        the ``coeff_tail / (i w)`` asymptotics within ``ax_fermi.eps``).
+        ``nblock`` is 1 (spin-free/spinful) or 2 (spin-diag).
+    ax_fermi, ax_bose : IRAxis-like
+        Already-constructed fermionic/bosonic IR axis objects (duck-typed:
+        ``statistics``, ``beta``, ``wmax``, ``eps``, ``tau``, ``n_tau``,
+        ``n_freq``, ``freq_to_tau_points``, ``tau_to_freq`` -- this module
+        never imports ``sparse_ir`` or ``ir_axis`` itself). Must be
+        parameter-compatible: ``ax_fermi.statistics == "F"``,
+        ``ax_bose.statistics == "B"``, and exact float equality of
+        ``beta``, ``wmax``, and ``eps`` between the two -- see
+        :func:`_validate_ir_axes`.
+    spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
+        The lattice shape; ``prod(spatial_shape)`` must equal
+        ``green_kw.shape[2]`` (``nvol``).
+    scheme : {"reduced", "general"}
+        ``"reduced"`` returns the diagonal-orbital-pair bubble
+        ``(nblock, n_freq_B, nvol, p, p)``; ``"general"`` returns the full
+        orbital-pair bubble ``(nblock, n_freq_B, nvol, p, p, p, p)``.
+    workers : int or None, optional
+        Forwarded to ``backend.spatial_ifftn``/``spatial_fftn`` exactly as
+        the FLEX IR methods forward their own ``fft_workers`` setting.
+
+    Returns
+    -------
+    ndarray, complex128
+        The bare susceptibility chi0(q, iOmega_l) on ``ax_bose``'s bosonic
+        Matsubara nodes (axis 1, length ``ax_bose.n_freq``), k-space on
+        axis 2. Inputs are promoted to complex128 (complex64 is copied up);
+        real-dtype inputs raise ``ValueError``. No ``1/beta`` factor is
+        applied -- the IR transforms are physical (the module docstring's
+        "Green/tail contracts" section).
+
+    Raises
+    ------
+    ValueError
+        On any shape/dtype/scheme/axis-compatibility mismatch (see
+        :func:`_validate_ir_inputs` / :func:`_validate_ir_axes`); these
+        checks use ``ValueError`` rather than a bare ``assert`` so they
+        survive ``python -O``.
+    """
+    (green_kw, nblock, nw, nvol, nd, spatial_shape
+     ) = _validate_ir_inputs(green_kw, ax_fermi, ax_bose, spatial_shape,
+                             scheme)
+
+    prepped = _prepare_ir(green_kw, ax_fermi, ax_bose, spatial_shape,
+                          workers)
+    return _assemble_plain(prepped, scheme, None, spatial_shape, workers,
+                           ax_bose=ax_bose)

@@ -328,5 +328,91 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
                                      scheme="bogus")
 
 
+class TestBubbleOldVsNewIr(unittest.TestCase):
+    """Old-vs-new gate: ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir``
+    (OLD) vs ``bubble.ir_bubble`` (NEW) on identical inputs, reduced +
+    general -- plus the IR axis-compatibility ``ValueError`` cases. No
+    dispatch change yet (flex.py is untouched until Task 7).
+
+    Fixtures reuse ``tests/test_flex_ir.py``'s / ``tests/test_flex_ir_general.py``'s
+    smallest-``Nmat`` solver-construction helpers (``Nmat=64``) rather than
+    re-deriving them here.
+
+    Skips cleanly when ``sparse_ir`` is not importable -- the same guard
+    ``tests/test_flex_ir.py`` uses, so ``tests.test_flex_ir`` skipping is
+    the canary that this class must also skip.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+    def test_reduced_old_vs_new(self):
+        from tests.test_flex_ir import _make_solver
+        T = 0.5
+        beta = 1.0 / T
+        solver, gi = _make_solver(64, {'matsubara_basis': 'ir'}, T=T)
+        solver._calc_epsilon_k(gi)
+        solver._ir_setup(beta)
+        axF, axB = solver._ir_axF, solver._ir_axB
+        self.assertTrue(solver.enable_reduced)
+
+        green, _ = solver._calc_green_ir(beta, 0.0)
+        old = solver._calc_chi0q_ir(green, beta)
+        spatial_shape = tuple(solver.lattice.shape)
+
+        new = bubble_mod.ir_bubble(green, axF, axB,
+                                   spatial_shape=spatial_shape,
+                                   scheme="reduced")
+        self.assertEqual(new.shape, old.shape)
+        assert_approx_array(new, old, rel=1e-6, abs=1e-8)
+
+    def test_general_old_vs_new(self):
+        from tests.test_flex_ir_general import _make_general_solver
+        T = 2.0
+        beta = 1.0 / T
+        solver, gi = _make_general_solver(64, "ir", T=T)
+        solver._calc_epsilon_k(gi)
+        solver._ir_setup(beta)
+        axF, axB = solver._ir_axF, solver._ir_axB
+
+        green, _ = solver._calc_green_ir(beta, 0.0)
+        old = solver._calc_chi0q_general_ir(green, beta)
+        spatial_shape = tuple(solver.lattice.shape)
+
+        new = bubble_mod.ir_bubble(green, axF, axB,
+                                   spatial_shape=spatial_shape,
+                                   scheme="general")
+        self.assertEqual(new.shape, old.shape)
+        assert_approx_array(new, old, rel=1e-6, abs=1e-8)
+
+    def test_axis_mismatch_raises_value_error(self):
+        from hwave.solver.ir_axis import IRAxis
+        beta = 2.0
+        axF = IRAxis(beta=beta, wmax=5.0, eps=1e-8, statistics="F")
+        axB_bad_wmax = IRAxis(beta=beta, wmax=7.0, eps=1e-8, statistics="B")
+        axB_ok = IRAxis(beta=beta, wmax=5.0, eps=1e-8, statistics="B")
+        green = np.zeros((1, axF.n_freq, 4, 1, 1), dtype=complex)
+
+        with self.subTest(field="wmax"):
+            with self.assertRaises(ValueError):
+                bubble_mod.ir_bubble(green, axF, axB_bad_wmax,
+                                     spatial_shape=(2, 2, 1), scheme="reduced")
+
+        with self.subTest(field="statistics_swapped"):
+            with self.assertRaises(ValueError):
+                # axF/axB swapped: axF.statistics == "F" required first arg
+                bubble_mod.ir_bubble(green, axB_ok, axF,
+                                     spatial_shape=(2, 2, 1), scheme="reduced")
+
+        # sanity: matched axes do NOT raise (isolates the mismatch itself
+        # as the cause above, not some other shape/scheme issue)
+        bubble_mod.ir_bubble(green, axF, axB_ok, spatial_shape=(2, 2, 1),
+                             scheme="reduced")
+
+
 if __name__ == "__main__":
     unittest.main()
