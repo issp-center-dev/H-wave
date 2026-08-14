@@ -403,8 +403,20 @@ def _bond_point(L, V, declare_inter=True):
                                        np.eye(3), 1)
     green = _load_green(L, V)
 
+    # This fixture green is an externally supplied, self-consistent FLEX
+    # Green function (see the module docstring's "Green provenance"): under
+    # the unified-bubble-kernel carrier, an external green ALWAYS resolves
+    # coeff_tail_applied = 0.0 regardless of what is requested (its
+    # high-frequency asymptote is not known here), so this is numerically
+    # identical to what the pre-carrier direct array argument produced --
+    # a structural (signature) update only, no re-baseline.
+    green_carrier = sc._BondGreen(
+        full_sc=green, deflated_kw=sc._green_sc_to_canonical(green),
+        green0_tail=None, coeff_tail_requested=0.0, coeff_tail_applied=0.0,
+        source="external_npz")
+
     (A, vec_size), provenance, attribution = sc._build_bond_operator(
-        bond_set, green, it, inter_k, {"norb": 1, "rvec": np.eye(3)}, 1,
+        bond_set, green_carrier, it, inter_k, {"norb": 1, "rvec": np.eye(3)}, 1,
         kx, ky, kz, BETA, "triplet",
         bond_max_shells=None, bond_memory_cap_gb=0.0, g2_tail=False)
 

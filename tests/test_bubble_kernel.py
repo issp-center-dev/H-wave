@@ -972,5 +972,250 @@ class TestBondEndpointShift(unittest.TestCase):
                 assert_approx_array(code_block, ref_block, rel=0, abs=1e-5)
 
 
+def _flex_fallback_bare_green_input(dirpath):
+    """A minimal ``chi0q_mode='flex'`` fixture with NO dressed ``green.npz``
+    -- exercises sc.py's FLEX-mode bare-Green fallback branch (sc.py, the
+    ``green_dressed is None`` arm: ``green_kw = _build_bond_green(..., 0.0,
+    None).full_sc``). Modeled on
+    ``tests.test_flex_reduced_eliashberg``'s reduced-chi fixture, minus its
+    ``green.npz``."""
+    from tests.test_flex_reduced_eliashberg import _write_2orb_intra_only_fixture
+
+    _write_2orb_intra_only_fixture(dirpath)
+    norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 8
+    nvol, nd_so = Nx * Ny * Nz, norb * 2
+    rng = np.random.default_rng(23)
+
+    def rc(shape):
+        return (rng.standard_normal(shape)
+                + 1j * rng.standard_normal(shape)) * 0.01
+
+    def paramagnetic_chi():
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
+    np.savez(os.path.join(dirpath, "chiq_s.npz"),
+             chiq_s=paramagnetic_chi(), chi_convention="kuroki",
+             momentum_convention="e_plus_ikR")
+    np.savez(os.path.join(dirpath, "chiq_c.npz"),
+             chiq_c=paramagnetic_chi(), chi_convention="kuroki",
+             momentum_convention="e_plus_ikR")
+    # Deliberately NO green.npz: forces the bare-G fallback.
+
+    return {
+        "mode": {"mode": "RPA", "calc_scheme": "reduced",
+                 "param": {"T": 2.0, "mu": 0.0,
+                           "CellShape": [Nx, Ny, Nz],
+                           "SubShape": [1, 1, 1], "Nmat": nmat,
+                           "filling": 0.5}},
+        "file": {
+            "input": {"path_to_input": dirpath,
+                      "path_to_flex_output": dirpath,
+                      "interaction": {
+                          "path_to_input": dirpath,
+                          "Geometry": "geom.dat",
+                          "Transfer": "transfer.dat",
+                          "CoulombIntra": "coulombintra.dat"}},
+            "output": {"path_to_output": os.path.join(dirpath, "out")}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "static",
+                       "pairing_type": "singlet", "init_gap": "cos",
+                       "solver_mode": "eigenvalue",
+                       "eigenvalue_method": "arnoldi",
+                       "num_eigenvalues": 2,
+                       "output_eigenvalue": "eig.dat",
+                       "output_gap": "gap.dat"},
+    }
+
+
+class TestBondGreenFlow(unittest.TestCase):
+    """sc.py's Green carrier (``sc._build_bond_green``) vs the legacy
+    oracle (``sc._legacy_calc_green``) -- unified-bubble-kernel spec,
+    'Green-flow oracles' / ``TestBondGreenFlow``."""
+
+    @staticmethod
+    def _sc_tiny_eig(Nx=2, Ny=2, Nz=1, norb=2, seed=5):
+        """sc.py-shaped (unflattened) eigen-decomposition of a random
+        Hermitian ``H0(k)``: eigenvalues ``(Nx, Ny, Nz, norb)``,
+        eigenvectors ``(Nx, Ny, Nz, norb, norb)``."""
+        import hwave.sc as sc_mod
+
+        rng = np.random.default_rng(seed)
+        raw = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
+               + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
+        h = raw + np.conj(np.swapaxes(raw, 0, 1))  # Hermitian per k-point
+        return sc_mod._calc_eigenvalues(h)
+
+    def test_full_sc_matches_legacy_calc_green_internal_build(self):
+        """(a): carrier.full_sc vs sc._legacy_calc_green, abs=1e-13."""
+        import hwave.sc as sc_mod
+
+        eigenvalues, eigenvectors = self._sc_tiny_eig()
+        mu, beta, nmat = 0.15, 2.0, 8
+        legacy = sc_mod._legacy_calc_green(
+            eigenvalues, eigenvectors, mu, beta, nmat)
+        carrier = sc_mod._build_bond_green(
+            eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
+        assert_approx_array(carrier.full_sc, legacy, rel=0, abs=1e-13)
+        self.assertEqual(carrier.coeff_tail_requested, 1.0)
+        self.assertEqual(carrier.coeff_tail_applied, 1.0)
+        self.assertEqual(carrier.source, "internal")
+
+    def test_no_mu_search_is_run(self):
+        """(d): mu equality -- proven the strong way, by asserting
+        ``_build_bond_green`` never calls ``sc._determine_mu`` at all (it
+        reuses the caller's already-computed ``mu`` verbatim), then pinning
+        the result against the legacy oracle called with that SAME mu."""
+        import hwave.sc as sc_mod
+
+        eigenvalues, eigenvectors = self._sc_tiny_eig(seed=6)
+        mu, beta, nmat = -0.35, 1.5, 8
+
+        def _boom(*args, **kwargs):
+            raise AssertionError(
+                "_build_bond_green must never re-run a mu search")
+
+        orig = sc_mod._determine_mu
+        sc_mod._determine_mu = _boom
+        try:
+            carrier = sc_mod._build_bond_green(
+                eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
+        finally:
+            sc_mod._determine_mu = orig
+        legacy = sc_mod._legacy_calc_green(
+            eigenvalues, eigenvectors, mu, beta, nmat)
+        assert_approx_array(carrier.full_sc, legacy, rel=0, abs=1e-13)
+
+    def test_separation_pair_weight_unchanged_bubble_differs(self):
+        """(c): with bond_coeff_tail=1, pair_weight(carrier.full_sc, ...)
+        equals the legacy-green result at abs=1e-13, while the bubble (fed
+        the SAME carrier's deflated_kw/green0_tail) differs from the
+        tail-off bubble by more than 1e-8 -- the exact separation the
+        carrier design exists to guarantee (spec 'Green data flow')."""
+        import hwave.sc as sc_mod
+        from hwave.solver import bond_channels as bc
+
+        Nx, Ny, Nz, norb = 3, 2, 1, 1
+        eigenvalues, eigenvectors = self._sc_tiny_eig(
+            Nx=Nx, Ny=Ny, Nz=Nz, norb=norb, seed=7)
+        mu, beta, nmat = 0.1, 3.0, 16
+
+        legacy = sc_mod._legacy_calc_green(
+            eigenvalues, eigenvectors, mu, beta, nmat)
+        carrier = sc_mod._build_bond_green(
+            eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
+
+        w_new = bc.pair_weight(carrier.full_sc, beta, g2_tail=False)
+        w_legacy = bc.pair_weight(legacy, beta, g2_tail=False)
+        assert_approx_array(w_new, w_legacy, rel=0, abs=1e-13)
+
+        bond_set = resolve_interactions(
+            {((1, 0, 0), (0, 0)): 0.3}, np.eye(3), norb)
+        tail_on = bubble_mod.bond_bubble_static(
+            carrier.deflated_kw, carrier.green0_tail, beta, bond_set,
+            spatial_shape=(Nx, Ny, Nz))
+        tail_off = bubble_mod.bond_bubble_static(
+            carrier.deflated_kw, None, beta, bond_set,
+            spatial_shape=(Nx, Ny, Nz))
+        max_abs_diff = float(np.max(np.abs(tail_on - tail_off)))
+        self.assertGreater(max_abs_diff, 1e-8)
+
+    def test_flex_fallback_and_standard_rpa_sites_use_the_carrier(self):
+        """(b): the same full_sc-vs-legacy comparison at the FLEX-mode
+        bare-Green fallback and the Standard-RPA call sites -- captures the
+        carrier ``_build_bond_green`` returns at each PRODUCTION call site
+        (via ``sc.calc_eliashberg``, driven by the smallest
+        ``tests/test_sc_bond.py``-style TOML fixtures) and pins it against
+        the legacy oracle called with the SAME arguments the site used."""
+        import hwave.sc as sc_mod
+        from tests.test_sc_bond import _base_input
+
+        captured = []
+        orig = sc_mod._build_bond_green
+
+        def _capture(*args, **kwargs):
+            carrier = orig(*args, **kwargs)
+            captured.append((args, carrier))
+            return carrier
+
+        sc_mod._build_bond_green = _capture
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                # Standard RPA (bond_channels=False, chi0q_mode="calc" by
+                # default in _base_input): the final `else:` branch.
+                sc_mod.calc_eliashberg(
+                    _base_input(os.path.join(d, "rpa"), bond_channels=False))
+            with tempfile.TemporaryDirectory() as d:
+                # FLEX-mode bare-Green fallback (no green.npz in the FLEX
+                # output): the `chi0q_mode == "flex"` branch's `else:` arm.
+                sc_mod.calc_eliashberg(_flex_fallback_bare_green_input(d))
+        finally:
+            sc_mod._build_bond_green = orig
+
+        self.assertEqual(len(captured), 2)
+        for args, carrier in captured:
+            eigenvalues, eigenvectors, mu, beta, nmat = args[:5]
+            legacy = sc_mod._legacy_calc_green(
+                eigenvalues, eigenvectors, mu, beta, nmat)
+            assert_approx_array(carrier.full_sc, legacy, rel=0, abs=1e-13)
+
+
+class TestBondTailConvergence(unittest.TestCase):
+    """Reference-free observed-order convergence gate for the bond static
+    bubble's Nmat-truncation error (spec 'Bond new capabilities' /
+    ``TestBondTailConvergence``). norb=1 ring (4, 1, 1), Nmat ladder
+    {256, 512, 1024}; no IR value is treated as exact."""
+
+    @staticmethod
+    def _ring_eig(Nx=4):
+        """A single-orbital tight-binding ring (t=1), Ny=Nz=1, already
+        FLATTENED to ``(nvol, p)``/``(nvol, p, p)`` (``build_green``'s
+        contract) -- ``nvol == Nx`` here since Ny=Nz=1."""
+        kx = 2.0 * np.pi * np.arange(Nx) / Nx
+        ev = (-2.0 * np.cos(kx)).reshape(Nx, 1)
+        V = np.ones((Nx, 1, 1), dtype=complex)
+        return ev, V
+
+    def _measure(self, coeff_tail):
+        from hwave.solver.bond_channels import ResolvedInteractionSet
+
+        Nx = 4
+        ev, V = self._ring_eig(Nx)
+        beta, mu = 8.0, 0.3
+        bond_set = ResolvedInteractionSet(
+            delta_r=((0, 0, 0),),
+            v_bond=(np.zeros((1, 1), dtype=complex),),
+            reverse=(0,), n_channels=1)
+
+        chis = {}
+        for nmat in (256, 512, 1024):
+            _, deflated_kw, tail = green_mod.build_green(
+                ev, V, mu, beta, nmat, coeff_tail)
+            chis[nmat] = bubble_mod.bond_bubble_static(
+                deflated_kw, tail, beta, bond_set, spatial_shape=(Nx, 1, 1))
+
+        d1 = float(np.max(np.abs(chis[256] - chis[512])))
+        d2 = float(np.max(np.abs(chis[512] - chis[1024])))
+        p_hat = float(np.log2(d1 / d2))
+        floor = 1e3 * np.finfo(np.float64).eps * float(np.max(np.abs(chis[1024])))
+        return d1, d2, p_hat, floor
+
+    def test_tail_off_first_order(self):
+        d1, d2, p_hat, floor = self._measure(coeff_tail=0.0)
+        self.assertLess(d2, d1)
+        self.assertGreaterEqual(d2, floor)
+        self.assertTrue(0.8 <= p_hat <= 1.3,
+                        "observed order p_hat={} outside [0.8, 1.3]".format(p_hat))
+
+    def test_tail_on_second_order(self):
+        d1, d2, p_hat, floor = self._measure(coeff_tail=1.0)
+        self.assertLess(d2, d1)
+        self.assertGreaterEqual(d2, floor)
+        self.assertTrue(1.7 <= p_hat <= 2.6,
+                        "observed order p_hat={} outside [1.7, 2.6]".format(p_hat))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,7 @@ from scipy.sparse.linalg import LinearOperator
 
 from . import backend as _bk
 from . import matsubara as _ms
+from . import bubble as _bubble
 
 logger = logging.getLogger("qlms.solver.bond_channels")
 
@@ -1127,22 +1128,32 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 
 
 # ---------------------------------------------------------------------------
-# bond_bubble's memory contract  --  read together with sc._bond_memory_estimate
+# bond bubble memory contract  --  read together with sc._bond_memory_estimate
 # ---------------------------------------------------------------------------
 #
 # The resource preflight (``sc._bond_resource_preflight``) refuses a run whose
 # estimated peak exceeds ``bond_memory_cap_gb``. That guard is only worth
-# anything if the estimate is not an UNDERCOUNT, so :func:`bond_bubble` below
-# is written to a fixed, documented working set: every temporary is released
-# (``del`` / in-place rescaling) as soon as it is consumed, and the two counts
-# here are the number of buffers that may be alive at the high-water mark.
-# They are imported by ``sc._bond_memory_estimate`` so the two cannot silently
-# desync; a new buffer in ``bond_bubble`` must bump the matching count (and
-# ``tests/test_sc_bond.py`` measures the real peak against the budget).
+# anything if the estimate is not an UNDERCOUNT, so both :func:`bond_bubble`
+# below (LEGACY, ``_legacy_bond_bubble``) and the shared kernel's
+# ``bubble.bond_bubble_static`` (the PRODUCTION streaming assembly, since the
+# unified-bubble-kernel series' Task 8 wrapper switch) are written to a
+# fixed, documented working set: every temporary is released (``del`` /
+# in-place rescaling) as soon as it is consumed, and the two counts below are
+# imported FROM ``hwave.solver.bubble`` -- which owns the canonical
+# definition -- so the value actually used by ``sc._bond_memory_estimate``
+# always matches what the PRODUCTION path allocates, not this legacy
+# reference implementation. ``tests/test_sc_bond.py`` measures the real
+# ``bubble.bond_bubble_static`` peak against the budget.
 #
-# High-water mark: inside ``tau_to_boson(chi0_qt)`` in the channel-pair loop.
+# ``_legacy_bond_bubble``'s own high-water mark (BELOW this constant block,
+# unchanged since before Task 8) is inside ``tau_to_boson(chi0_qt)`` in the
+# channel-pair loop:
 #
-#   ``norb**4``-sized, on the ``(N_q, nmat)`` grid (BOND_BUBBLE_N4_BUFFERS):
+#   ``norb**4``-sized, on the ``(N_q, nmat)`` grid (3 of the 4 counted by
+#   BOND_BUBBLE_N4_BUFFERS -- the shared kernel's ``contract_general`` +
+#   reshape-copy transient, documented beside the constant in
+#   ``hwave.solver.bubble``, adds the 4th and does not occur in this legacy
+#   body, which writes its contraction directly via ``np.einsum``):
 #     1. ``chi0_qt``            -- the q,tau bubble being transformed
 #     2. ``arr * omg``          -- tau_to_boson's internal phase-multiplied copy
 #     3. the ``ifft`` output    -- becomes ``chi0_qw`` (rescaled IN PLACE)
@@ -1153,7 +1164,7 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 #
 #   ``norb**2``-sized, on the ``(N_q, nmat)`` grid (BOND_BUBBLE_N2_BUFFERS,
 #   the input ``green`` NOT included -- the preflight budgets that separately
-#   as ``green_kw``):
+#   as ``carrier_bytes``):
 #     1. ``green_rev``          -- G(-r,-tau) (an np.flip VIEW of one np.roll)
 #     2. ``G_fwd_sgn``          -- G(r,tau)*sgn(tau)
 #     3. one transient          -- covers ``green_rev_shifted`` in the loop and,
@@ -1164,12 +1175,87 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 #
 # The output ``chi_bar`` is ``(N_q, ND, ND)`` and is already one of the
 # ``sc._BOND_N_Q_ARRAYS`` q-resolved arrays, so it is not counted twice here.
-BOND_BUBBLE_N4_BUFFERS = 3
-BOND_BUBBLE_N2_BUFFERS = 3
+BOND_BUBBLE_N4_BUFFERS = _bubble.BOND_BUBBLE_N4_BUFFERS
+BOND_BUBBLE_N2_BUFFERS = _bubble.BOND_BUBBLE_N2_BUFFERS
+
+
+def _sc_to_canonical(green):
+    """``(p, p, Nx, Ny, Nz, nmat) -> (1, nmat, Nx*Ny*Nz, p, p)``.
+
+    A PRIVATE, local copy of the same transpose/reshape/block-axis-insert
+    ``sc._green_sc_to_canonical`` uses -- duplicated rather than imported
+    because ``sc.py`` already imports this module (importing back would be
+    circular); :func:`bond_bubble` (below) is the only caller.
+    """
+    p, p2, Nx, Ny, Nz, nmat = green.shape
+    if p2 != p:
+        raise ValueError(
+            "bond_bubble: green's two orbital axes must both equal norb; "
+            "got shape {}".format(green.shape))
+    transposed = green.transpose(5, 2, 3, 4, 0, 1)      # (nmat,Nx,Ny,Nz,p,p)
+    canonical = transposed.reshape(nmat, Nx * Ny * Nz, p, p)[np.newaxis, ...]
+    return np.ascontiguousarray(canonical)
 
 
 def bond_bubble(green, bond_set, beta):
+    """Compatibility wrapper for the enlarged bond-channel bubble
+    ``chi_bar(q; Delta r, Delta r')``.
+
+    SAME signature and return as the original implementation (now
+    :func:`_legacy_bond_bubble`, kept as the old-vs-new oracle -- see
+    ``tests.test_bubble_kernel.TestBubbleOldVsNewBondStatic``): converts
+    ``green`` to the shared kernel's canonical layout and delegates to
+    :func:`hwave.solver.bubble.bond_bubble_static`. TAIL-OFF ALWAYS -- this
+    signature carries no tail argument, so it can only reproduce the
+    original raw finite-``nmat`` sum; the production tail-corrected bond
+    path (``sc._build_bond_operator``) calls ``bubble.bond_bubble_static``
+    directly with the Green carrier's ``deflated_kw``/``green0_tail``
+    instead of going through this function.
+
+    Parameters
+    ----------
+    green : ndarray, shape (norb, norb, Nx, Ny, Nz, nmat)
+        k-space, Matsubara-frequency Green's function in the ``sc.py``
+        layout/normalization (see ``hwave.sc._legacy_calc_green`` /
+        ``hwave.sc._load_flex_green``): ``iomega_n = (2n+1-nmat)*pi/beta``.
+    bond_set : ResolvedInteractionSet
+        Bond-channel topology (``delta_r``, ``n_channels``) as returned by
+        :func:`resolve_interactions`.
+    beta : float
+        Inverse temperature.
+
+    Returns
+    -------
+    chi_bar : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
+        Static (zero bosonic frequency) enlarged bubble; ``ND = norb**2 * B``.
+    """
+    green = np.asarray(green)
+    if green.ndim != 6:
+        raise ValueError(
+            "bond_bubble: green must have shape (norb, norb, Nx, Ny, Nz, "
+            "nmat); got ndim={} shape={}".format(green.ndim, green.shape)
+        )
+    norb, norb2, Nx, Ny, Nz, nmat = green.shape
+    if norb2 != norb:
+        raise ValueError(
+            "bond_bubble: green's two orbital axes must both equal norb; "
+            "got shape {}".format(green.shape)
+        )
+
+    canonical = _sc_to_canonical(green)
+    chi_bar_flat = _bubble.bond_bubble_static(
+        canonical, None, beta, bond_set, spatial_shape=(Nx, Ny, Nz))
+    nD = chi_bar_flat.shape[-1]
+    return chi_bar_flat.reshape(Nx, Ny, Nz, nD, nD)
+
+
+def _legacy_bond_bubble(green, bond_set, beta):
     """Compute the enlarged bond-channel bubble ``chi_bar(q; Delta r, Delta r')``.
+
+    LEGACY body, kept as the numerical oracle for
+    ``bubble.bond_bubble_static`` -- ``tests.test_bubble_kernel.
+    TestBubbleOldVsNewBondStatic`` pins the two against each other.
+    Deleted at the end of the bubble-unification series (Task 11).
 
     Implements spec S4.2 (Onari Eq. 14): the orbital contraction is
     *identical* to the existing ``chi0q`` bubble (mirrored verbatim from

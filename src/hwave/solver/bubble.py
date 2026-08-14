@@ -35,11 +35,22 @@ from .kgrid import reverse_fft_axes
 _SCHEMES = ("reduced", "general")
 
 # Per-pair working-set buffer counts for the streaming bond assembly (spec:
-# "Memory contract"). This module owns the canonical definition (values
-# transcribed unchanged from ``bond_channels.BOND_BUBBLE_N4_BUFFERS`` /
-# ``BOND_BUBBLE_N2_BUFFERS``); ``bond_channels.py`` keeps its own copy for
-# now -- the re-export switch happens in a later task of this series.
-BOND_BUBBLE_N4_BUFFERS = 3
+# "Memory contract"). This module owns the canonical definition;
+# ``bond_channels.py`` re-exports these names (unified-bubble-kernel series,
+# Task 8) rather than keeping its own copy, so the two cannot silently
+# desync.
+#
+# N4_BUFFERS is 4, not the legacy ``bond_bubble``'s 3: ``contract_general``
+# returns a non-contiguous SWAPAXES VIEW (the ``(..., a, d, b, c) ->
+# (..., a, c, b, d)`` permutation), and ``_bond_pair_full_block``'s
+# immediately following ``.reshape(nmat, nx, ny, nz, npair, npair)`` cannot
+# express that as a further view -- it silently COPIES, so the pre-reshape
+# buffer and its reshaped copy briefly coexist as a 4th N4-sized array
+# (measured: ``tests/test_sc_bond.py::TestPreflightMemoryBudget``). The
+# legacy body avoided this because ``np.einsum`` wrote directly into the
+# final contiguous layout; the shared kernel trades that one extra
+# transient for sharing ``contract_general`` with the plain dense path.
+BOND_BUBBLE_N4_BUFFERS = 4
 BOND_BUBBLE_N2_BUFFERS = 3
 
 
@@ -405,6 +416,11 @@ def _prepare_dense(green_kw, green0_tail, beta, spatial_shape, workers):
     green_rt = _bk.spatial_ifftn(
         green_kt.reshape(nblock, nmat, nx, ny, nz, nd * nd),
         axes=(2, 3, 4), workers=workers)
+    # Never needed again (fully consumed by the ifftn above); released here
+    # rather than left bound for the rest of the function -- the bond
+    # path's memory budget (BOND_BUBBLE_N2_BUFFERS, sc._bond_memory_estimate)
+    # assumes this buffer does not coexist with green_rev below.
+    del green_kt
 
     green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(
         nblock, nmat, nvol, nd, nd)
@@ -746,6 +762,15 @@ def _iter_bond_channel_pairs(prepped, bond_set_validated, beta,
     # contraction regardless of which factor carries it) -- mirrors
     # bond_bubble's G_fwd_sgn, computed outside the (m, m') loop.
     green_fwd_sgn = green_rt * sgn
+    # green_rt is consumed: never read again below (every pair rolls a
+    # fresh copy of green_rev instead). Release BOTH the local view and
+    # prepped's own reference (a bare `del green_rt` would leave
+    # prepped.green_rt holding the underlying buffer alive) -- this
+    # generator is the sole consumer of a freshly built _DensePrepared
+    # instance per bond_bubble_static/_iter_bond_dynamic call, so clearing
+    # the attribute here cannot affect any other caller.
+    del green_rt
+    prepped.green_rt = None
 
     tail_pack = None
     if prepped.tail_on:
