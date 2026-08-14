@@ -379,11 +379,14 @@ class TestS5Guards(_ApproxTestCase):
 
     def test_resource_preflight_raises_before_green_allocation(self):
         """I-2 review fix: the resource preflight (S3.2) must run BEFORE
-        ``green_kw`` is allocated -- previously ``_calc_green`` ran first in the
-        bond-channel dispatch branch, so a large-Nmat run could OOM before the
-        cap was ever consulted, defeating "never a silent runaway allocation".
-        Patch ``_calc_green`` to blow up if called; the preflight's ValueError
-        must surface instead of the patched crash."""
+        the Green carrier is built -- previously ``_calc_green`` ran first in
+        the bond-channel dispatch branch, so a large-Nmat run could OOM before
+        the cap was ever consulted, defeating "never a silent runaway
+        allocation". Patch ``sc._build_bond_green`` (the unified-bubble-kernel
+        carrier builder that replaced the direct ``_calc_green`` call on this
+        path -- production no longer calls ``sc._calc_green`` at all here, so
+        patching THAT would leave this pin vacuous) to blow up if called; the
+        preflight's ValueError must surface instead of the patched crash."""
         ci = os.path.join(self.tmp_path, "ci.dat")
         _write_w90(ci, 1, _nn_entries(1.0))
         inp = _base_input(self.tmp_path, coulomb_inter=ci, bond_channels=True,
@@ -391,12 +394,12 @@ class TestS5Guards(_ApproxTestCase):
 
         def _boom(*args, **kwargs):
             raise AssertionError(
-                "_calc_green must not be called before the bond-channel "
-                "resource preflight (I-2)")
+                "_build_bond_green must not be called before the "
+                "bond-channel resource preflight (I-2)")
 
-        orig_calc_green = sc._calc_green
-        self.addCleanup(setattr, sc, "_calc_green", orig_calc_green)
-        sc._calc_green = _boom
+        orig_build_bond_green = sc._build_bond_green
+        self.addCleanup(setattr, sc, "_build_bond_green", orig_build_bond_green)
+        sc._build_bond_green = _boom
         with self.assertRaisesRegex(ValueError, r"(?i)bond_memory_cap_gb"):
             sc.calc_eliashberg(inp)
 

@@ -40,17 +40,21 @@ _SCHEMES = ("reduced", "general")
 # Task 8) rather than keeping its own copy, so the two cannot silently
 # desync.
 #
-# N4_BUFFERS is 4, not the legacy ``bond_bubble``'s 3: ``contract_general``
-# returns a non-contiguous SWAPAXES VIEW (the ``(..., a, d, b, c) ->
-# (..., a, c, b, d)`` permutation), and ``_bond_pair_full_block``'s
-# immediately following ``.reshape(nmat, nx, ny, nz, npair, npair)`` cannot
-# express that as a further view -- it silently COPIES, so the pre-reshape
-# buffer and its reshaped copy briefly coexist as a 4th N4-sized array
-# (measured: ``tests/test_sc_bond.py::TestPreflightMemoryBudget``). The
-# legacy body avoided this because ``np.einsum`` wrote directly into the
-# final contiguous layout; the shared kernel trades that one extra
-# transient for sharing ``contract_general`` with the plain dense path.
-BOND_BUBBLE_N4_BUFFERS = 4
+# N4_BUFFERS = 3, matching the legacy ``bond_bubble``'s count: the
+# ``contract_general``-then-reshape copy in :func:`_bond_pair_full_block`
+# only ever holds 2 N4-sized buffers at once (below ``tau_to_boson``'s
+# internal peak of 3, so it is not the binding constraint). The REAL risk
+# to this budget is generator retention across ``yield``:
+# :func:`_iter_bond_channel_pairs` is a generator, and a generator's local
+# variables -- including ``block``, the value it just yielded -- stay bound
+# in its suspended frame until it is explicitly cleared, REGARDLESS of
+# whether the consumer drops its own reference (``_assemble_bond_static``'s
+# ``del block`` only releases the CONSUMER's reference). Without an
+# explicit ``del`` on the generator's side, the previous pair's block stays
+# alive while the next pair's is being built, adding a 4th simultaneous
+# N4-sized array. :func:`_iter_bond_channel_pairs` clears its own
+# reference immediately after each ``yield`` to close this.
+BOND_BUBBLE_N4_BUFFERS = 3
 BOND_BUBBLE_N2_BUFFERS = 3
 
 
@@ -789,6 +793,16 @@ def _iter_bond_channel_pairs(prepped, bond_set_validated, beta,
                 green_fwd_sgn, green_rev, tail_pack, beta, spatial_shape,
                 workers, shift)
             yield (m, mp), block
+            # A generator's locals -- including `block`, just yielded --
+            # stay bound in its suspended frame across the yield regardless
+            # of what the consumer does with ITS reference, so without this
+            # the previous pair's block stays alive while the next pair's
+            # is being built (a 4th N4-sized buffer beyond the documented
+            # budget). Runs when the generator is resumed for the next
+            # pair, i.e. AFTER the consumer's own `del block` (if any) has
+            # already dropped its reference -- so this is the point the
+            # buffer's refcount actually reaches zero.
+            del block
 
 
 def _assemble_bond_static(prepped, beta, bond_set_validated, spatial_shape,

@@ -1149,11 +1149,13 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
 # unchanged since before Task 8) is inside ``tau_to_boson(chi0_qt)`` in the
 # channel-pair loop:
 #
-#   ``norb**4``-sized, on the ``(N_q, nmat)`` grid (3 of the 4 counted by
-#   BOND_BUBBLE_N4_BUFFERS -- the shared kernel's ``contract_general`` +
-#   reshape-copy transient, documented beside the constant in
-#   ``hwave.solver.bubble``, adds the 4th and does not occur in this legacy
-#   body, which writes its contraction directly via ``np.einsum``):
+#   ``norb**4``-sized, on the ``(N_q, nmat)`` grid (BOND_BUBBLE_N4_BUFFERS;
+#   the shared kernel's per-pair generator, ``bubble._iter_bond_channel_
+#   pairs``, matches this same count -- its own risk of an extra buffer
+#   (the previous pair's block staying alive across ``yield`` in the
+#   generator's suspended frame) is closed by an explicit ``del`` right
+#   after the ``yield``, documented beside the constant in
+#   ``hwave.solver.bubble``):
 #     1. ``chi0_qt``            -- the q,tau bubble being transformed
 #     2. ``arr * omg``          -- tau_to_boson's internal phase-multiplied copy
 #     3. the ``ifft`` output    -- becomes ``chi0_qw`` (rescaled IN PLACE)

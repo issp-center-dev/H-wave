@@ -6668,7 +6668,12 @@ def calc_eliashberg(input_dict):
             # recovers the plain bare Green function regardless of
             # ``coeff_tail``), so 0.0 is passed to skip the extra
             # tail-buffer construction rather than because it is the
-            # physically meaningful choice here.
+            # physically meaningful choice here. At tail_off,
+            # _build_bond_green transiently holds the canonical build_green
+            # output and its sc-layout conversion (``full_sc``) at once
+            # before releasing the canonical array -- unlike the bond
+            # branch, no ``_bond_resource_preflight`` covers this transient
+            # here (this path has no memory cap of its own).
             green_kw = _build_bond_green(
                 eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
 
@@ -6803,7 +6808,11 @@ def calc_eliashberg(input_dict):
         # Step 6: Calculate bare Green's function
         logger.info("Calculating Green's function G(k, iwn)...")
         # Same rationale as the FLEX-fallback branch above: only full_sc is
-        # consumed here, and it is independent of coeff_tail.
+        # consumed here, and it is independent of coeff_tail. Also same
+        # transient-memory caveat: _build_bond_green briefly holds the
+        # canonical build_green output alongside its sc-layout conversion
+        # before releasing the former, and no resource preflight covers
+        # this Standard-RPA path.
         green_kw = _build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
 
