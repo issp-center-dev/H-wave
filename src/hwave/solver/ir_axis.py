@@ -307,20 +307,44 @@ class IRAxis:
         Notes
         -----
         The evaluation matrix is built via ``sparse_ir.MatsubaraSampling``
-        at exactly the requested points (fit from this axis's tau sampling,
-        evaluate at the points) and cached in a BOUNDED, PER-INSTANCE cache
-        (an ``OrderedDict`` on ``self``, ``self._tau_freq_pts_cache``,
-        keyed by ``(tuple(freq_indices), array module)``, LRU-evicted at
-        ``maxsize=8`` -- current use is only ``[0]``; the bound prevents
-        unbounded growth on arbitrary tuples). Being per-instance, the
-        cache is garbage-collected along with the axis it belongs to and
-        its 8-entry budget is never shared across (or thrashed by) other
-        ``IRAxis`` instances -- unlike a ``functools.lru_cache`` on the
-        method, which would be ONE cache shared by every instance ever
-        constructed (see the field's own comment in ``__init__`` for the
-        two concrete failure modes that would cause). The matrix itself is
-        mirrored to the requesting array's device the same way the other
-        cached matrices in this class are (:meth:`mats`).
+        / ``basis.uhat`` at the UNIQUE, SORTED set of the requested points
+        (fit from this axis's tau sampling, evaluate at the points) and
+        cached in a BOUNDED, PER-INSTANCE cache (an ``OrderedDict`` on
+        ``self``, ``self._tau_freq_pts_cache``, keyed by
+        ``(tuple(sorted(set(freq_indices))), array module)``, LRU-evicted
+        at ``maxsize=8`` -- current use is only ``[0]``; the bound prevents
+        unbounded growth on arbitrary tuples; caching on the UNIQUE-SORTED
+        key means ``[2, 0, 0]`` and ``[0, 2]`` share one cache entry).
+        Being per-instance, the cache is garbage-collected along with the
+        axis it belongs to and its 8-entry budget is never shared across
+        (or thrashed by) other ``IRAxis`` instances -- unlike a
+        ``functools.lru_cache`` on the method, which would be ONE cache
+        shared by every instance ever constructed (see the field's own
+        comment in ``__init__`` for the two concrete failure modes that
+        would cause). The matrix itself is mirrored to the requesting
+        array's device the same way the other cached matrices in this
+        class are (:meth:`mats`).
+
+        BACKEND VERSION DIFFERENCE (load-bearing): ``sparse_ir``'s
+        ``MatsubaraSampling`` does not consistently preserve the caller's
+        point ORDER across versions -- ``sparse-ir`` 1.1.7 (e.g. the
+        Python-3.9 CI leg, which cannot resolve 2.x) silently SORTS (and
+        may deduplicate) the ``sampling_points`` it is constructed with,
+        while ``sparse-ir`` 2.1.1 preserves the given order and duplicates
+        verbatim. Trusting ``smpl.sampling_points`` for COLUMN ORDER after
+        construction is therefore unsafe: on 1.1.7, requesting ``[2, 0,
+        0]`` silently returns columns for the SORTED ``[0, 0, 2]`` instead,
+        so the first output column becomes the value at index 0 (wrong)
+        instead of index 2. This method never reads
+        ``smpl.sampling_points`` back for ordering: it evaluates only at
+        the unique, sorted, WE-CONTROLLED point array (using
+        ``MatsubaraSampling`` purely as a validity check on that array,
+        discarding its return value) and then GATHERS the result into the
+        caller's requested order (with duplicates) via a value->position
+        lookup -- correct and identical in COST regardless of which
+        backend behavior is in effect, and immune to any further
+        reordering a backend might perform on an input that is already
+        sorted and duplicate-free.
         """
         freq_indices = np.asarray(freq_indices)
         if freq_indices.ndim != 1 or freq_indices.size == 0:
@@ -345,15 +369,37 @@ class IRAxis:
                     arr.shape[-1], self.n_tau))
 
         xp = _bk.array_module_of(arr)
-        freq_tuple = tuple(int(n) for n in freq_indices)
-        mat = self._tau_to_freq_points_matrix(freq_tuple, xp)
-        return arr @ mat
+        freq_list = [int(n) for n in freq_indices]
+        # Cache/evaluate on the UNIQUE, SORTED point set only -- see the
+        # "BACKEND VERSION DIFFERENCE" note above for why the requested
+        # (possibly unsorted, possibly duplicated) order is never fed
+        # straight through to sparse_ir.
+        unique_sorted = tuple(sorted(set(freq_list)))
+        mat = self._tau_to_freq_points_matrix(unique_sorted, xp)
+        result_unique = arr @ mat   # (..., len(unique_sorted))
+
+        if freq_list == list(unique_sorted):
+            # Already the unique/sorted set itself (the overwhelmingly
+            # common case, e.g. the single-point [0] call from
+            # bubble._ir_bond_static) -- no gather needed.
+            return result_unique
+
+        # Gather into the REQUESTED order (duplicates permitted): position
+        # of each requested index within unique_sorted, by VALUE (never by
+        # any backend-reported row/column order).
+        position = {value: i for i, value in enumerate(unique_sorted)}
+        gather_idx = [position[value] for value in freq_list]
+        return result_unique[..., gather_idx]
 
     def _tau_to_freq_points_matrix(self, freq_tuple, xp):
         """Per-instance bounded LRU lookup (``self._tau_freq_pts_cache``,
         maxsize 8) for :meth:`tau_to_freq_points`'s fused tau-fit +
-        Matsubara-evaluate matrix, keyed by ``(freq_tuple, xp)``. A hit
-        moves the entry to most-recently-used; a miss builds the matrix
+        Matsubara-evaluate matrix, keyed by ``(freq_tuple, xp)``.
+        ``freq_tuple`` MUST already be unique and sorted (the caller,
+        :meth:`tau_to_freq_points`, enforces this and gathers the result
+        back to the requested order/duplicates afterward -- see that
+        method's "BACKEND VERSION DIFFERENCE" docstring note). A hit moves
+        the entry to most-recently-used; a miss builds the matrix
         (:meth:`_build_tau_to_freq_points_matrix`), inserts it, and evicts
         the oldest entry once the cache exceeds 8 entries."""
         cache = self._tau_freq_pts_cache
@@ -371,19 +417,21 @@ class IRAxis:
     def _build_tau_to_freq_points_matrix(self, freq_tuple, xp):
         """Build (never caches itself -- see :meth:`_tau_to_freq_points_matrix`)
         the fused tau-fit + Matsubara-evaluate matrix ``(n_tau, npts)`` for
-        the given integer Matsubara indices, on the host, then mirrors it
-        to ``xp`` if requested."""
+        the given UNIQUE, SORTED integer Matsubara indices, on the host,
+        then mirrors it to ``xp`` if requested."""
         sparse_ir = _import_sparse_ir()
         freq_n = np.array(freq_tuple, dtype=np.int64)
-        # Validates the point set against sparse_ir's own Matsubara
-        # convention; the evaluation matrix itself is the same
-        # ``basis.uhat`` map ``MatsubaraSampling`` wraps internally, kept
-        # explicit here (rather than routed through ``evaluate()``) so it
-        # composes with ``fit_tau`` into one matmul-ready matrix, exactly
-        # like every other cached transform in this class.
-        smpl = sparse_ir.MatsubaraSampling(self._basis,
-                                           sampling_points=freq_n)
-        eval_mat = np.asarray(self._basis.uhat(smpl.sampling_points))
+        # sparse_ir's own Matsubara-point validity check (kept for parity
+        # with the rest of this module's cached transforms, which all
+        # validate their point sets via MatsubaraSampling) -- its RETURN
+        # VALUE is deliberately discarded: sparse-ir 1.x silently
+        # sorts/deduplicates the sampling_points it was constructed with,
+        # so `smpl.sampling_points` cannot be trusted for column order
+        # (see tau_to_freq_points' docstring). `freq_n` (already unique
+        # and sorted by the caller) is used directly for `basis.uhat`
+        # instead, on both backend versions.
+        sparse_ir.MatsubaraSampling(self._basis, sampling_points=freq_n)
+        eval_mat = np.asarray(self._basis.uhat(freq_n))
         eval_mat = eval_mat.reshape(self.L, freq_n.size)   # (L, npts)
         composite = np.ascontiguousarray(
             self._m["fit_tau"] @ eval_mat)                 # (n_tau, npts)
