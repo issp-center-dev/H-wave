@@ -1264,6 +1264,16 @@ FLEX/RPA stage anyway. Use <code class="docutils literal notranslate"><span clas
 vertex. See
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-supported-inter"><span class="std std-ref">the Eliashberg supported-interactions note</span></a>.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> is <strong>rejected</strong> together with
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>: the bond-resolved path builds its
+own bond-resolved <span class="math notranslate nohighlight">\(\bar\chi\)</span> bubble directly from the Green
+function, so it never reads a <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> file. To feed a
+FLEX-dressed Green function into the bond path, run FLEX to convergence
+and point <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> at its <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> output; see
+the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> parameter in <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a>.</p>
+</div>
 </li>
 </ul>
 </section>

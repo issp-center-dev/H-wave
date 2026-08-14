@@ -1203,6 +1203,16 @@ FLEX converged after 62 iterations
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-supported-inter"><span class="std std-ref">Eliashberg の対応する相互作用に関する注意</span></a>
 も参照してください。</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> は <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+と併用すると <strong>エラーになります</strong>。ボンド分解パスは Green 関数から
+直接自前の <span class="math notranslate nohighlight">\(\bar\chi\)</span> バブルを構成するため、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>
+ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
+渡す場合は、FLEX を収束まで実行し、その <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> 出力を
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> に指定してください。詳細は
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a> の <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> の説明を参照してください。</p>
+</div>
 </li>
 </ul>
 </section>

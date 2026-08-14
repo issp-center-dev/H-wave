@@ -1063,6 +1063,16 @@ Tips
      vertex. See
      :ref:`the Eliashberg supported-interactions note <sc_supported_inter>`.
 
+  .. note::
+
+     ``chi0q_mode = "flex"`` is **rejected** together with
+     ``[eliashberg] bond_channels = true``: the bond-resolved path builds its
+     own bond-resolved :math:`\bar\chi` bubble directly from the Green
+     function, so it never reads a ``chi0q``/``chiq`` file. To feed a
+     FLEX-dressed Green function into the bond path, run FLEX to convergence
+     and point ``[eliashberg] bond_green`` at its ``green.npz`` output; see
+     the ``bond_green`` parameter in :doc:`/rpa/tutorial/sc-index`.
+
 
 Implementation details and limitations
 -----------------------------------------
