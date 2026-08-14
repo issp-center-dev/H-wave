@@ -19,6 +19,7 @@ import numpy.testing as npt
 from numpy.fft import fftn, ifftn
 
 from hwave.sc import (
+    _build_bond_green,
     _build_hamiltonian_k,
     _build_interaction_k,
     _build_sc_matrices,
@@ -26,7 +27,6 @@ from hwave.sc import (
     _calc_chi0q_internal,
     _calc_eigenvalues,
     _calc_g2,
-    _calc_green,
     _compute_vertices,
     _compute_vertices_simple,
     _compute_vertices_general,
@@ -52,6 +52,22 @@ from hwave.sc import (
     _solve_shifted_bicg,
 )
 from scipy.sparse.linalg import LinearOperator
+
+
+def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
+    """Test-local replacement for the module-level ``hwave.sc._calc_green``
+    compatibility alias, deleted in the unified-bubble-kernel series' Task
+    11 (closing commit) along with its hand-written reference-implementation
+    body: delegates to the shared-kernel Green carrier (``sc._build_bond_green``,
+    per that task's brief -- 'the carrier is the natural fit' here since
+    every call site below only wants the bare Green function, ``carrier
+    .full_sc``, with ``coeff_tail=0`` reproducing the exact SAME semantics
+    ``_calc_green`` had (it took no tail argument at all: full == deflated
+    at coeff_tail=0)). Keeping this wrapper's name/signature identical to
+    the deleted function keeps every call site below unchanged.
+    """
+    return _build_bond_green(
+        eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
 
 
 class TestKSpaceBuilderConvention(unittest.TestCase):

@@ -16,6 +16,7 @@ import os
 import sys
 import logging
 import zipfile
+from typing import NamedTuple
 
 import numpy as np
 
@@ -28,10 +29,12 @@ from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
 
 import hwave
 import hwave.qlmsio.wan90 as wan90
-from hwave.solver.rpa import validate_chi0q_index_convention
+from hwave.solver.rpa import validate_chi0q_index_convention, TAIL_ENDPOINT_CONVENTION
 from hwave.solver.ir_axis import is_ir_native, ir_native_meta
 from hwave.solver import backend
 from hwave.solver import bond_channels
+from hwave.solver import bubble
+from hwave.solver import green as green_mod
 
 logger = logging.getLogger("hwave_sc")
 
@@ -77,6 +80,7 @@ _BOND_OPTION_KEYS = (
     "bond_precondition_atol",
     "bond_precondition_rtol",
     "bond_precondition_dense_limit",
+    "bond_coeff_tail",
 )
 
 # Degeneracy tolerance of the opt-in bond diagnostics' eigenvalue clustering
@@ -268,6 +272,45 @@ def _warn_if_static_ignores_channel_flags(eli_param):
 # Bond-resolved interaction channels (opt-in; spec S3-S5)
 # ---------------------------------------------------------------------------
 
+def _resolve_bond_coeff_tail(eli_param):
+    """Resolve ``[eliashberg] bond_coeff_tail`` (unified-bubble-kernel spec,
+    "Tail default for the bond path").
+
+    Resolution rule: key ABSENT -> requested value ``1.0`` (the physical
+    asymptotic coefficient of a normal Green function; source
+    ``"default"``); key PRESENT -> its value verbatim, validated exactly as
+    RPA validates ``[mode.param] coeff_tail`` (rpa.py:1318-1332: a real
+    scalar, type-strict -- booleans are rejected outright, since
+    ``float(True) == 1.0`` would silently pass the check -- and finite; any
+    finite real value is otherwise accepted, source ``"config"``).
+
+    This intentionally differs from the RPA route's historical default
+    ``coeff_tail = 0.0``: the bond path is pre-first-release code with no
+    legacy users, so it defaults to the physically correct tail-on
+    behaviour; the RPA route's own default is untouched by this function.
+
+    Returns
+    -------
+    (requested, source) : (float, str)
+        ``source`` is ``"default"`` or ``"config"``.
+    """
+    import numbers
+
+    if "bond_coeff_tail" not in eli_param or eli_param["bond_coeff_tail"] is None:
+        return 1.0, "default"
+
+    raw = eli_param["bond_coeff_tail"]
+    if isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real):
+        raise ValueError(
+            "[eliashberg] bond_coeff_tail must be a real number, got "
+            "{!r}".format(raw))
+    value = float(raw)
+    if not np.isfinite(value):
+        raise ValueError(
+            "[eliashberg] bond_coeff_tail must be finite, got {}".format(value))
+    return value, "config"
+
+
 def _read_bond_config(eli_param):
     """Read the ``[eliashberg]`` bond-channel options (spec S5).
 
@@ -435,7 +478,7 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
 _BOND_N_Q_ARRAYS = 9
 
 
-def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
+def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
     """Byte budget for the bond path, broken down by buffer family.
 
     Split out of :func:`_bond_resource_preflight` so the accounting can be
@@ -443,8 +486,13 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
     a preflight that undercounts is worse than no preflight, because a run it
     waves through then OOMs anyway.
 
-    Everything is complex128 (16 B). ``unit = N_q * nmat * 16`` is one
-    ``norb``-pair-free frequency-grid buffer.
+    Everything is complex128 (16 B) end to end on the bond path (the
+    unified-bubble-kernel spec's "Memory contract": ``build_green`` produces
+    complex128, the external-npz loader promotes to complex128 at load, so
+    there is one itemsize and no input-vs-compute dtype split). ``unit =
+    N_q * nmat * 16`` is one ``norb``-pair-free frequency-grid buffer, so
+    ``S_in = norb**2 * unit`` is one FULL-size Green-function-shaped array
+    (``(norb, norb, Nx, Ny, Nz, nmat)`` worth of complex128).
 
     ``q_bytes``
         ``_BOND_N_Q_ARRAYS`` q-resolved ``(N_q, ND, ND)`` arrays alive
@@ -455,16 +503,60 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
         NOT counted again in ``bubble_bytes``.
     ``bubble_bytes``
         ``bond_bubble``'s simultaneous working set at its high-water mark, the
-        input ``green`` excluded (that is ``green_bytes``):
+        Green carrier excluded (that is ``carrier_bytes``):
         ``BOND_BUBBLE_N4_BUFFERS`` ``norb**4``-sized plus
         ``BOND_BUBBLE_N2_BUFFERS`` ``norb**2``-sized frequency-grid buffers.
         The buffer-by-buffer list, and the ``del``/in-place discipline in
         ``bond_bubble`` that holds the real peak down to it, are documented
         beside those two constants in ``hwave.solver.bond_channels``; they are
         imported from there so the two sides cannot silently desync.
-    ``green_bytes``
-        the ``green_kw`` array itself, ``(norb, norb, Nx, Ny, Nz, nmat)`` --
-        i.e. ``bond_bubble``'s input, alive throughout.
+    ``carrier_bytes``
+        The Green carrier's (:class:`_BondGreen`) contribution, replacing
+        the pre-tail-correction ``green_bytes`` (one bare ``green_kw``
+        array). Derived from TWO phases the carrier passes through (spec
+        "Memory contract"), each expressed in units of ``S_in``:
+
+        * carrier CONSTRUCTION (:func:`_build_bond_green`, transient):
+          ``4 * S_in`` when ``tail_on`` (``build_green``'s canonical
+          ``full_kw`` + canonical ``deflated_kw`` + ``green0_tail`` all
+          alive at once, PLUS ``full_sc`` during the layout conversion,
+          before the canonical ``full_kw`` is released) and ``2 * S_in``
+          tail-off (``full``/``deflated`` alias one array; the sc-layout
+          conversion adds the second). The external-npz branch peaks at
+          ``2 * S_in`` (source + complex128-promoted copy) before the
+          source is released -- covered by the same tail-off bound.
+
+          Pass B review, round 1, measured ~5-7x ``S_in`` here on a SMALL
+          fixture and (wrongly) concluded the ``4x`` bound undercounted;
+          round 2 found the true cause and fixed it at the source instead
+          of inflating this estimate: ``build_green``'s locals ``Vg``
+          (full-size) and ``g_deflated`` were never released and stayed
+          alive through the ``green0_tail``/``full_kw`` assembly (see
+          ``green.build_green``'s ``del Vg, g_deflated`` -- load-bearing
+          for this bound), and round 1's tiny fixture additionally paid a
+          FIXED small-buffer overhead (``V_conj_t``/``VVt``/frequency-grid
+          arrays, not ``S_in``-scaled) that is disproportionate relative to
+          a small ``S_in`` but negligible at realistic problem sizes. With
+          both effects accounted for, the measured peak is ``4 * S_in``
+          plus a small FIXED residual (measured 888-952 bytes across
+          several fixture sizes -- NOT ``S_in``-scaled, so it vanishes in
+          relative terms as ``S_in`` grows), pinned by
+          ``tests.test_sc_bond.TestPreflightMemoryBudget.
+          test_bond_green_construction_peak_within_carrier_budget`` (which
+          carries a small, honestly-documented absolute slack for exactly
+          that residual in its own comparison -- not in this estimate).
+        * carrier SETTLED / bubble phase: ``n_green * S_in`` with
+          ``n_green = 3`` (``full_sc`` + canonical ``deflated_kw`` +
+          ``green0_tail``) when ``tail_on`` else ``2``, PLUS one extra
+          ``S_in``-sized endpoint-branch buffer while ``tail_on`` (the
+          bubble's per-pair tail-endpoint correction) -- ``4 * S_in``
+          tail-on, ``2 * S_in`` tail-off, both equal to their respective
+          construction-phase bound.
+
+        Both phases top out at ``4 * S_in`` (tail-on) / ``2 * S_in``
+        (tail-off), so ONE closed-form bound covers the whole carrier
+        lifetime: ``carrier_bytes = (4 if tail_on else 2) * norb**2 *
+        unit``.
     ``chi_bar_bytes``
         one ``(N_q, ND, ND)`` array; reported separately (it is already inside
         ``q_bytes``) because it is the one q-resolved array ``bond_bubble``
@@ -477,13 +569,22 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
         multiplied by ``N_q`` since none of them carry a q-axis (unlike
         ``S_bond``/``C_bond``, which are already inside ``q_bytes``). This is
         alive concurrently with ``q_bytes`` (``chi_bar`` from ``bond_bubble``
-        is still held) and ``green_bytes`` (``green_kw`` is still held), so it
-        is additive in ``peak``. The buffer-by-buffer list is documented
+        is still held) and ``carrier_bytes`` (``full_sc`` is still held), so
+        it is additive in ``peak``. The buffer-by-buffer list is documented
         beside the constant in ``hwave.solver.bond_channels``; imported from
         there so the two sides cannot silently desync.
     ``peak``
-        ``q_bytes + bubble_bytes + vertex_bytes + green_bytes`` -- what the
-        cap is applied to.
+        ``q_bytes + bubble_bytes + vertex_bytes + carrier_bytes`` -- the SUM
+        combine rule preserved unchanged from before the tail correction;
+        what the cap is applied to.
+
+    Parameters
+    ----------
+    tail_on : bool
+        ``coeff_tail_applied != 0`` (NEVER the requested value -- an
+        external Green function always resolves ``tail_on = False``
+        regardless of what was requested, since ``coeff_tail_applied`` is
+        forced to ``0.0`` on that branch).
     """
     nd = norb * norb
     B = int(bond_set.n_channels)
@@ -497,41 +598,50 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat):
     bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
                     + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
     vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
-    green_bytes = (norb ** 2) * unit
+    carrier_bytes = (4 if tail_on else 2) * (norb ** 2) * unit
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
             "chi_bar_bytes": chi_bar_bytes,
             "q_bytes": q_bytes,
             "bubble_bytes": bubble_bytes,
             "vertex_bytes": vertex_bytes,
-            "green_bytes": green_bytes,
-            "peak": q_bytes + bubble_bytes + vertex_bytes + green_bytes}
+            "carrier_bytes": carrier_bytes,
+            "peak": q_bytes + bubble_bytes + vertex_bytes + carrier_bytes}
 
 
-def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
+def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, *,
+                             tail_on):
     """Estimate the peak memory of the bond path and refuse to exceed the cap.
 
     Spec S3.2 "Resource guard": only here are ``nd``, ``N_q``, ``B`` and the
     dtype all known, so this is where the ``ND = nd*B`` blow-up is caught --
-    never a silent runaway allocation. Called BEFORE ``green_kw`` is
-    allocated (review fix I-2: previously the bond-channel dispatch branch
-    called ``_calc_green`` first, so a large-Nmat run could OOM before the
-    cap was ever consulted); the estimate includes the ``green_kw``
-    allocation itself so the preflight is not blind to it.
+    never a silent runaway allocation. Called BEFORE the Green carrier is
+    built (review fix I-2, preserved through the unified-bubble-kernel
+    switch: previously the bond-channel dispatch branch built the Green
+    function first, so a large-Nmat run could OOM before the cap was
+    ever consulted); the estimate includes the carrier's own allocation so
+    the preflight is not blind to it.
+
+    ``tail_on`` : bool
+        Whether the bond path's tail correction will be applied
+        (``coeff_tail_applied != 0``); known at this call site even though
+        the carrier itself is built afterwards, because an external
+        ``bond_green`` always resolves ``coeff_tail_applied = 0`` (see
+        :func:`_build_bond_green`) regardless of what was requested.
 
     See :func:`_bond_memory_estimate` for the buffer-by-buffer accounting.
     """
-    est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat)
+    est = _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on)
     B, ND, Nq = est["B"], est["ND"], est["Nq"]
     q_bytes = est["q_bytes"]
     bubble_bytes = est["bubble_bytes"]
     vertex_bytes = est["vertex_bytes"]
-    green_bytes = est["green_bytes"]
+    carrier_bytes = est["carrier_bytes"]
     peak = est["peak"]
 
     logger.info(
         "Bond-channel preflight: B = %d channels, ND = nd*B = %d, "
-        "N_q = %d, estimated peak memory = %.3f GB (cap %.3f GB)",
-        B, ND, Nq, peak / 1.0e9, cap_gb)
+        "N_q = %d, tail_on = %s, estimated peak memory = %.3f GB "
+        "(cap %.3f GB)", B, ND, Nq, tail_on, peak / 1.0e9, cap_gb)
 
     if peak > cap_gb * 1.0e9:
         raise ValueError(
@@ -541,11 +651,11 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb):
             "N_q = {} q-points ({:.3f} GB of q-resolved ND x ND arrays) plus "
             "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB of bare-"
             "vertex ND x ND temporaries plus {:.3f} GB for the Green "
-            "function itself. Reduce bond_max_shells (fewer channels), "
+            "carrier (tail_on={}). Reduce bond_max_shells (fewer channels), "
             "reduce the k-grid/Nmat, or raise bond_memory_cap_gb.".format(
                 peak / 1.0e9, cap_gb, B, list(bond_set.delta_r), ND, Nq,
                 q_bytes / 1.0e9, bubble_bytes / 1.0e9, vertex_bytes / 1.0e9,
-                green_bytes / 1.0e9))
+                carrier_bytes / 1.0e9, tail_on))
     return peak
 
 
@@ -676,11 +786,11 @@ def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
     return S0, C0
 
 
-def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
-                         norb, kx_array, ky_array, kz_array, beta,
+def _build_bond_operator(bond_set, green_carrier, interactions, inter_k,
+                         geom_info, norb, kx_array, ky_array, kz_array, beta,
                          pairing_type, *, bond_max_shells, bond_memory_cap_gb,
                          precondition_opts=None, green_source=None,
-                         g2_tail=False):
+                         g2_tail=False, bond_coeff_tail_source="default"):
     """Run the bond-resolved physics chain and return the Eliashberg operator.
 
     bond_bubble -> Case-2 corrected m=0 blocks -> bare_bond_vertices ->
@@ -688,37 +798,47 @@ def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
 
     ``bond_set`` must already be resolved (``bond_channels.
     resolve_interactions``) and pre-flighted (``_bond_resource_preflight``) by
-    the caller BEFORE ``green_kw`` was allocated (review fix I-2: the
+    the caller BEFORE ``green_carrier`` was built (review fix I-2: the
     preflight must run before the potentially-large Green-function
     allocation, not after -- see ``calc_eliashberg``'s bond-channel dispatch
     branch). This function therefore no longer resolves the interaction or
     runs the preflight itself.
+
+    ``green_carrier`` : :class:`_BondGreen`
+        The bubble reads ONLY ``deflated_kw``/``green0_tail`` (unified-
+        bubble-kernel spec: "the bubble receives (deflated_kw, green0_tail);
+        EVERY downstream consumer receives full_kw" -- here ``full_sc``, the
+        sc-layout equivalent); every other consumer in this function
+        (``make_bond_kernel_parts``, ``pair_weight``) reads
+        ``green_carrier.full_sc`` -- the bare Green function on the same
+        inputs, independent of the tail coefficient.
 
     ``precondition_opts`` (from ``_read_bond_config``) is forwarded verbatim
     to ``bond_channels.check_hermitian_preconditions`` -- the
     ``bond_precondition_atol/rtol/dense_limit`` knobs of ``[eliashberg]``
     (review fix M7).
 
-    ``green_source`` is provenance only: the path ``green_kw`` was loaded from
-    (``[eliashberg] bond_green``), or ``None`` when the caller built the bare
-    Green function from the transfer Hamiltonian. It selects the wording of
-    the recorded approximation level -- the two are physically different
-    approximations and the record must say which one ran.
+    ``green_source`` is provenance only: the path the Green function was
+    loaded from (``[eliashberg] bond_green``), or ``None`` when the caller
+    built the bare Green function from the transfer Hamiltonian. It selects
+    the wording of the recorded approximation level -- the two are
+    physically different approximations and the record must say which one
+    ran.
 
     ``bond_max_shells`` and ``bond_memory_cap_gb`` are likewise PROVENANCE
     ONLY here: the resource preflight and the shell cutoff itself already
     happened in the caller (``resolve_interactions``/
-    ``_bond_resource_preflight``, before ``bond_set``/``green_kw`` were
+    ``_bond_resource_preflight``, before ``bond_set``/``green_carrier`` were
     built), so by the time this function runs, neither value feeds into the
     computed operator -- they are only echoed into the returned
     ``provenance`` dict. They are keyword-only (review fix: honest
     signature) precisely so a call site cannot mistake them for
     physics-affecting positional arguments. (Past review fix: an earlier
     ``nmat`` parameter was dropped from this signature for the same reason --
-    it was never read in the body, since ``green_kw.shape[-1]`` already fixes
-    the Matsubara grid the bond bubble is built on, and ``bond_green`` can
-    make that grid differ from the ``nmat`` the caller resolved the preflight
-    with.)
+    it was never read in the body, since ``green_carrier.full_sc.shape[-1]``
+    already fixes the Matsubara grid the bond bubble is built on, and
+    ``bond_green`` can make that grid differ from the ``nmat`` the caller
+    resolved the preflight with.)
 
     Returns
     -------
@@ -726,7 +846,10 @@ def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
         The ``scipy.sparse.linalg.LinearOperator`` kernel and its vector size,
         in the same convention as ``_make_kernel_operator``.
     provenance : dict
-        Additive output-provenance record (spec S5).
+        Additive output-provenance record (spec S5; unified-bubble-kernel
+        spec's "Tail default for the bond path" adds the
+        ``bond_coeff_tail_*``/``bond_endpoint_convention``/
+        ``bond_green_source``/``external_full_green_assumed`` keys).
     attribution : dict
         Context for the ``lambda = lambda^pp + lambda^fl`` decomposition of
         spec S4.5: the two kernel parts (``pp``/``fl``), the full kernel and
@@ -734,9 +857,19 @@ def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
         ``bond_channels.attribute_lambda`` once a gap has converged.
     """
     Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
+    green_kw = green_carrier.full_sc
 
     logger.info("Computing the bond-resolved bubble chi-bar...")
-    chi_bar = bond_channels.bond_bubble(green_kw, bond_set, beta)
+    chi_bar = bubble.bond_bubble_static(
+        green_carrier.deflated_kw, green_carrier.green0_tail, beta, bond_set,
+        spatial_shape=(Nx, Ny, Nz))
+    # bond_bubble_static returns the flattened-spatial (nvol, ND, ND)
+    # canonical shape; every downstream consumer here (dress_bond,
+    # bare_bond_vertices' S/C blocks, ...) still expects the unflattened
+    # sc.py spatial layout (Nx, Ny, Nz, ND, ND) -- the same reshape
+    # bond_channels.bond_bubble's compatibility wrapper applies.
+    nD = chi_bar.shape[-1]
+    chi_bar = chi_bar.reshape(Nx, Ny, Nz, nD, nD)
 
     S0_q, C0_q = _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
                                        kx_array, ky_array, kz_array)
@@ -786,6 +919,12 @@ def _build_bond_operator(bond_set, green_kw, interactions, inter_k, geom_info,
                             else int(bond_max_shells)),
         "bond_memory_cap_gb": float(bond_memory_cap_gb),
         "g2_tail": bool(g2_tail),
+        "bond_coeff_tail_requested": float(green_carrier.coeff_tail_requested),
+        "bond_coeff_tail_applied": float(green_carrier.coeff_tail_applied),
+        "bond_coeff_tail_source": bond_coeff_tail_source,
+        "bond_endpoint_convention": TAIL_ENDPOINT_CONVENTION,
+        "bond_green_source": green_carrier.source,
+        "external_full_green_assumed": (green_carrier.source == "external_npz"),
         "approximation": (
             "static RPA-ladder bond dressing on "
             + ("an EXTERNAL Green function supplied via [eliashberg] "
@@ -1616,55 +1755,193 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
     return float(mu)
 
 
-def _calc_green(eigenvalues, eigenvectors, mu, beta, nmat):
-    """Construct Green's function G(k, iwn).
+def _green_sc_to_canonical(g):
+    """Convert sc.py's Green-function layout to the shared kernel's
+    canonical layout.
+
+    ``(p, p, Nx, Ny, Nz, nmat) -> (1, nmat, Nx*Ny*Nz, p, p)``: transpose to
+    ``(nmat, Nx, Ny, Nz, p, p)`` order, reshape the spatial axes to
+    ``nvol`` in C order, and insert a leading length-1 block axis (the
+    canonical layout's ``nblock`` -- sc.py's Green function never carries a
+    block axis of its own). ``Nx, Ny, Nz`` are read directly off ``g``'s
+    shape, so no separate ``spatial_shape`` argument is needed on this
+    direction. ALWAYS returns a copy (``np.ascontiguousarray``) -- never a
+    view aliasing ``g`` (unified-bubble-kernel spec, "Layout adapters").
+    """
+    g = np.asarray(g)
+    if g.ndim != 6:
+        raise ValueError(
+            "_green_sc_to_canonical: expected ndim=6 (p, p, Nx, Ny, Nz, "
+            "nmat), got ndim={} shape={}".format(g.ndim, g.shape))
+    p, p2, Nx, Ny, Nz, nmat = g.shape
+    if p2 != p:
+        raise ValueError(
+            "_green_sc_to_canonical: the two orbital axes must be equal; "
+            "got shape {}".format(g.shape))
+    transposed = g.transpose(5, 2, 3, 4, 0, 1)          # (nmat,Nx,Ny,Nz,p,p)
+    canonical = transposed.reshape(nmat, Nx * Ny * Nz, p, p)[np.newaxis, ...]
+    return np.ascontiguousarray(canonical)
+
+
+def _green_canonical_to_sc(g, spatial_shape):
+    """Exact inverse of :func:`_green_sc_to_canonical`.
+
+    ``(1, nmat, nvol, p, p) -> (p, p, Nx, Ny, Nz, nmat)``. ``nvol`` alone
+    does not determine its own ``(Nx, Ny, Nz)`` factorization, so this
+    direction takes ``spatial_shape`` explicitly (the same way every other
+    kernel entry point -- ``bond_bubble_static``, ``dense_bubble`` -- does).
+    ALWAYS returns a copy (``np.ascontiguousarray``).
+    """
+    g = np.asarray(g)
+    if g.ndim != 5 or g.shape[0] != 1:
+        raise ValueError(
+            "_green_canonical_to_sc: expected canonical shape (1, nmat, "
+            "nvol, p, p); got ndim={} shape={}".format(g.ndim, g.shape))
+    _, nmat, nvol, p, p2 = g.shape
+    if p2 != p:
+        raise ValueError(
+            "_green_canonical_to_sc: the two orbital axes must be equal; "
+            "got shape {}".format(g.shape))
+    Nx, Ny, Nz = spatial_shape
+    if Nx * Ny * Nz != nvol:
+        raise ValueError(
+            "_green_canonical_to_sc: spatial_shape {} does not match "
+            "nvol={} (shape {})".format(spatial_shape, nvol, g.shape))
+    reshaped = g[0].reshape(nmat, Nx, Ny, Nz, p, p)
+    out = reshaped.transpose(4, 5, 1, 2, 3, 0)          # (p,p,Nx,Ny,Nz,nmat)
+    return np.ascontiguousarray(out)
+
+
+class _BondGreen(NamedTuple):
+    """Carrier separating the FULL Green function -- fed, unchanged, to
+    EVERY downstream consumer of the bond path (``pair_weight``,
+    ``make_bond_kernel_parts``, the Eliashberg convolutions) -- from the
+    DEFLATED Green/tail pair, fed ONLY to the bubble
+    (``bubble.bond_bubble_static``). See the unified-bubble-kernel spec's
+    "Green data flow in sc.py's bond branch".
+
+    Attributes
+    ----------
+    full_sc : ndarray
+        sc.py layout ``(p, p, Nx, Ny, Nz, nmat)`` -- the bare Green
+        function ``G(k, iw_n)`` built from the eigen-decomposition,
+        independent of ``coeff_tail`` (the tail term the bubble subtracts
+        in frequency space is added straight back for ``full``; only
+        ``deflated_kw`` depends on the coefficient).
+    deflated_kw : ndarray
+        Canonical ``(1, nmat, nvol, p, p)``, for the bubble only.
+    green0_tail : ndarray or None
+        Canonical, paired with ``deflated_kw``; ``None`` when the tail
+        correction is off (``coeff_tail_applied == 0``).
+    coeff_tail_requested : float
+        The resolved ``[eliashberg] bond_coeff_tail`` config value.
+    coeff_tail_applied : float
+        What the build actually used: equals ``coeff_tail_requested`` for
+        an internal build, ``0.0`` for an external Green function (the
+        tail correction is not well defined for a file whose asymptote is
+        unknown).
+    source : str
+        ``"internal"`` (built from sc.py's own eigen-decomposition) or
+        ``"external_npz"`` (``[eliashberg] bond_green``).
+    """
+    full_sc: np.ndarray
+    deflated_kw: np.ndarray
+    green0_tail: np.ndarray | None
+    coeff_tail_requested: float
+    coeff_tail_applied: float
+    source: str
+
+
+def _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
+                      coeff_tail_requested, bond_green_path):
+    """Build the bond path's :class:`_BondGreen` carrier.
+
+    Internal branch (``bond_green_path is None``): flattens sc.py's
+    ``(Nx, Ny, Nz, p)`` / ``(Nx, Ny, Nz, p, p)`` eigen-decomposition to the
+    kernel's flattened-only ``(nvol, p)`` / ``(nvol, p, p)`` contract (C
+    order -- the SAME flattening :func:`_green_sc_to_canonical` uses, so
+    k-point ordering is consistent by construction), calls
+    ``hwave.solver.green.build_green`` with the CALLER's already-computed
+    ``mu`` (no mu search is ever re-run here), and converts the canonical
+    ``full_kw`` to ``full_sc`` ONCE -- the canonical array is released
+    (``del``) immediately after, so the two full-size layouts coexist only
+    for the duration of that one conversion. ``coeff_tail_applied ==
+    coeff_tail_requested``, ``source = "internal"``.
+
+    External branch (``bond_green_path`` set): loads the npz via
+    :func:`_load_green_npz` (promoted to complex128 at load if needed),
+    ``full_sc = loaded``, ``deflated_kw = _green_sc_to_canonical(full_sc)``,
+    ``green0_tail = None``, ``coeff_tail_applied = 0.0``, ``source =
+    "external_npz"``. A nonzero ``coeff_tail_requested`` logs a WARNING
+    (the tail correction is not applicable to an externally supplied Green
+    function, whose high-frequency asymptote is not known here) rather
+    than raising -- recorded as requested-but-not-applied, not an error.
 
     Parameters
     ----------
-    eigenvalues : ndarray
-        Shape (Nx, Ny, Nz, norb).
-    eigenvectors : ndarray
-        Shape (Nx, Ny, Nz, norb, norb).
+    eigenvalues : ndarray, shape (Nx, Ny, Nz, p)
+        Only used for its VALUES on the internal branch; on the external
+        branch only its SHAPE is read (to validate the loaded file's
+        ``norb``/``Nx``/``Ny``/``Nz`` against the model).
+    eigenvectors : ndarray, shape (Nx, Ny, Nz, p, p)
+        As above.
     mu : float
-        Chemical potential.
+        The caller's already-determined chemical potential.
     beta : float
         Inverse temperature.
     nmat : int
-        Number of Matsubara frequencies.
+        Target Matsubara-frequency count for an internal build; unused on
+        the external branch (the file's own frequency count wins -- the
+        caller is responsible for reconciling the two, exactly as the
+        pre-carrier code did).
+    coeff_tail_requested : float
+        The resolved ``[eliashberg] bond_coeff_tail`` value.
+    bond_green_path : str or None
+        ``[eliashberg] bond_green``; ``None`` selects the internal build.
 
     Returns
     -------
-    green_kw : ndarray
-        Shape (norb, norb, Nx, Ny, Nz, nmat).
+    _BondGreen
     """
-    Nx, Ny, Nz, norb = eigenvalues.shape
-    iomega = np.array([(2.0 * i + 1.0 - nmat) * np.pi for i in range(nmat)]) / beta
+    if bond_green_path is not None:
+        Nx, Ny, Nz, norb = eigenvalues.shape
+        green_sc, nfreq = _load_green_npz(
+            bond_green_path, norb, Nx, Ny, Nz, label="bond_green")
+        _validate_bond_green_nmat(nfreq, bond_green_path)
+        if green_sc.dtype != np.complex128:
+            green_sc = green_sc.astype(np.complex128)
+        if coeff_tail_requested != 0.0:
+            logger.warning(
+                "[eliashberg] bond_coeff_tail = %s requested but "
+                "bond_green = '%s' supplies an EXTERNAL Green function: "
+                "the tail correction needs the analytic high-frequency "
+                "asymptote of an internally built bare Green function, "
+                "which is not available for a file. NOT applying it here "
+                "(recorded as requested but not applied).",
+                coeff_tail_requested, bond_green_path)
+        return _BondGreen(
+            full_sc=green_sc,
+            deflated_kw=_green_sc_to_canonical(green_sc),
+            green0_tail=None,
+            coeff_tail_requested=float(coeff_tail_requested),
+            coeff_tail_applied=0.0,
+            source="external_npz")
 
-    # Vectorized Green's function construction:
-    # G_{ij}(k, iwn) = sum_m U_{im}(k) U*_{jm}(k) / (iwn - (e_m(k) - mu))
-
-    # factor[kx,ky,kz,i,j,m] = U[kx,ky,kz,i,m] * conj(U[kx,ky,kz,j,m])
-    factor = np.einsum('...im,...jm->...ijm', eigenvectors, np.conj(eigenvectors))
-    # factor shape: (Nx, Ny, Nz, norb, norb, norb)
-
-    # denom[kx,ky,kz,m,w] = 1 / (iwn_w - (e_m(k) - mu))
-    xi = eigenvalues - mu  # (Nx, Ny, Nz, norb)
-    denom = 1.0 / (1j * iomega[None, None, None, None, :] - xi[:, :, :, :, None])
-    # denom shape: (Nx, Ny, Nz, norb, nmat)
-
-    # G[kx,ky,kz,i,j,w] = sum_m factor[...,i,j,m] * denom[...,m,w]
-    # Batched GEMM over the flattened spatial axes (C-order, reshape-only):
-    #   (nv, ij, m) @ (nv, m, w) -> (nv, ij, w). numpy.einsum does NOT lower
-    #   the '...ijm,...mw->...ijw' form to BLAS GEMM, so reshape to matmul.
-    nv = Nx * Ny * Nz
-    G = factor.reshape(nv, norb * norb, norb) @ denom.reshape(nv, norb, nmat)
-    green_kw_tmp = G.reshape(Nx, Ny, Nz, norb, norb, nmat)
-    # shape: (Nx, Ny, Nz, norb, norb, nmat)
-
-    # Transpose to output convention: (norb, norb, Nx, Ny, Nz, nmat)
-    green_kw = green_kw_tmp.transpose(3, 4, 0, 1, 2, 5)
-
-    return green_kw
+    Nx, Ny, Nz, p = eigenvalues.shape
+    nvol = Nx * Ny * Nz
+    ev_flat = eigenvalues.reshape(nvol, p)
+    evec_flat = eigenvectors.reshape(nvol, p, p)
+    full_kw, deflated_kw, green0_tail = green_mod.build_green(
+        ev_flat, evec_flat, mu, beta, nmat, coeff_tail_requested)
+    full_sc = _green_canonical_to_sc(full_kw, (Nx, Ny, Nz))
+    del full_kw
+    return _BondGreen(
+        full_sc=full_sc,
+        deflated_kw=deflated_kw,
+        green0_tail=green0_tail,
+        coeff_tail_requested=float(coeff_tail_requested),
+        coeff_tail_applied=float(coeff_tail_requested),
+        source="internal")
 
 
 # ---------------------------------------------------------------------------
@@ -3286,7 +3563,18 @@ def _load_green_npz(green_path, norb, Nx, Ny, Nz, label="Green"):
         raise ValueError(
             "{} file {}: 'green' must have shape (nblock, nfreq, nvol, norb, "
             "norb), got {}".format(label, green_path, green_raw.shape))
-    _, nfreq, nvol_g, norb1, norb2 = green_raw.shape
+    nblock_g, nfreq, nvol_g, norb1, norb2 = green_raw.shape
+    if nblock_g != 1:
+        raise ValueError(
+            "{} file {}: 'green' carries {} spin blocks, but this loader "
+            "unconditionally consumes block 0 -- the bond/FLEX Green "
+            "consumers here are single-block. A file with nblock=2 (e.g. a "
+            "legitimate spin-diagonal H-wave Green with separate G_up/G_down "
+            "blocks) would otherwise be silently halved to its up block "
+            "while being recorded as a trusted full Green. Re-run the "
+            "producing calculation paramagnetically (nblock=1), or extract "
+            "and save the single block you intend to use."
+            .format(label, green_path, nblock_g))
     if (nvol_g != Nx * Ny * Nz) or (norb1 != norb) or (norb2 != norb):
         raise ValueError(
             "{} file {} does not match the model: it holds nvol={}, norb={}x{} "
@@ -6335,7 +6623,20 @@ def calc_eliashberg(input_dict):
             logger.info("Using FLEX dressed Green's function")
         else:
             logger.info("Calculating bare Green's function G(k, iwn)...")
-            green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+            # Only ``full_sc`` is read on this path (no bond bubble here),
+            # and ``full_sc`` is numerically independent of the tail
+            # coefficient (build_green's full = deflated + tail add-back
+            # recovers the plain bare Green function regardless of
+            # ``coeff_tail``), so 0.0 is passed to skip the extra
+            # tail-buffer construction rather than because it is the
+            # physically meaningful choice here. At tail_off,
+            # _build_bond_green transiently holds the canonical build_green
+            # output and its sc-layout conversion (``full_sc``) at once
+            # before releasing the canonical array -- unlike the bond
+            # branch, no ``_bond_resource_preflight`` covers this transient
+            # here (this path has no memory cap of its own).
+            green_kw = _build_bond_green(
+                eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
 
         # Compute pairing vertex from FLEX susceptibilities
         logger.info("Computing FLEX vertices (pairing_type={})...".format(pairing_type))
@@ -6366,10 +6667,12 @@ def calc_eliashberg(input_dict):
         # file carries) are what the bond channels add.
         #
         # Resolve the bond topology and run the resource preflight (S3.2)
-        # BEFORE allocating green_kw (review fix I-2): green_kw's own bytes
-        # are folded into the preflight's estimate, and a large-Nmat run must
-        # be refused here, not after the (possibly large) Green-function
-        # allocation has already happened.
+        # BEFORE building the Green carrier (review fix I-2: the carrier's
+        # own bytes are folded into the preflight's estimate, and a
+        # large-Nmat run must be refused here, not after the (possibly
+        # large) Green-function allocation has already happened --
+        # unified-bubble-kernel spec/test_sc_bond.py:382-399 pin this
+        # ordering across the carrier switch too).
         bond_set = bond_channels.resolve_interactions(
             interactions["CoulombInter"], geom_info["rvec"], norb,
             bond_max_shells=bond_max_shells)
@@ -6378,6 +6681,10 @@ def calc_eliashberg(input_dict):
         if bond_set.dropped:
             logger.info("Bond channel provenance (dropped): %s",
                         list(bond_set.dropped))
+
+        bond_coeff_tail_requested, bond_coeff_tail_source = (
+            _resolve_bond_coeff_tail(eli_param))
+
         # The frequency grid the bond bubble will really be built on: for an
         # external bond_green that is the FILE's Nmat, which therefore has to
         # be known BEFORE the cap is applied -- otherwise an over-large
@@ -6400,21 +6707,31 @@ def calc_eliashberg(input_dict):
                         "the bond bubble is built on). The resource preflight "
                         "uses the file's Nmat.",
                         bond_green, nmat_peek, nmat)
+        # tail_on = coeff_tail_applied != 0: known before the carrier is
+        # built because an external bond_green ALWAYS resolves
+        # coeff_tail_applied = 0.0 regardless of what was requested (see
+        # _build_bond_green).
+        tail_on = (bond_green is None) and (bond_coeff_tail_requested != 0.0)
         _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat_bond,
-                                 bond_memory_cap_gb)
+                                 bond_memory_cap_gb, tail_on=tail_on)
 
         if bond_green is not None:
-            # Externally supplied Green function (spec Goal): the milestone
-            # green is FLEX-dressed and self-consistent, which the bare
-            # transfer-Hamiltonian green is not. The bond path never reads a
-            # chi file, so this is the only external input it takes.
-            green_kw, nmat_green = _load_green_npz(
-                bond_green, norb, Nx, Ny, Nz, label="bond_green")
-            # Same requirement on the loaded count: when the header peek could
-            # not resolve nfreq, this is the first place the file's real Nmat
-            # is known, so the guard has to be repeated here rather than
-            # trusted from above.
-            _validate_bond_green_nmat(nmat_green, bond_green)
+            logger.info(
+                "Loading external Green's function from bond_green=%s...",
+                bond_green)
+        else:
+            logger.info("Calculating Green's function G(k, iwn)...")
+        # Externally supplied Green function (spec Goal): the milestone
+        # green is FLEX-dressed and self-consistent, which the bare
+        # transfer-Hamiltonian green is not. The bond path never reads a
+        # chi file, so this is the only external input it takes. Built
+        # AFTER the preflight above (review fix I-2 / the ordering pin).
+        green_carrier = _build_bond_green(
+            eigenvalues, eigenvectors, mu, beta, nmat,
+            bond_coeff_tail_requested, bond_green)
+        green_kw = green_carrier.full_sc
+        if bond_green is not None:
+            nmat_green = green_kw.shape[-1]
             if nmat_green != nmat_bond:
                 # The header peek could not resolve the count (unusual npz
                 # layout); the preflight above therefore ran with the
@@ -6426,23 +6743,24 @@ def calc_eliashberg(input_dict):
                     "bubble is built on). Re-running the resource preflight "
                     "with the file's Nmat.", bond_green, nmat_green, nmat)
                 _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz,
-                                         nmat_green, bond_memory_cap_gb)
-        else:
-            logger.info("Calculating Green's function G(k, iwn)...")
-            green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+                                         nmat_green, bond_memory_cap_gb,
+                                         tail_on=tail_on)
         logger.info("g2_tail = %s (Matsubara tail correction for the pair "
-                    "bubble); Green frequency axis = %d points", g2_tail,
-                    green_kw.shape[-1])
+                    "bubble); bond_coeff_tail = %s (source=%s, applied=%s); "
+                    "Green frequency axis = %d points", g2_tail,
+                    bond_coeff_tail_requested, bond_coeff_tail_source,
+                    green_carrier.coeff_tail_applied, green_kw.shape[-1])
         if g2_tail:
             _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
         bond_operator, bond_provenance, bond_attribution = _build_bond_operator(
-            bond_set, green_kw, interactions, inter_k, geom_info, norb,
+            bond_set, green_carrier, interactions, inter_k, geom_info, norb,
             kx_array, ky_array, kz_array, beta, pairing_type,
             bond_max_shells=bond_max_shells,
             bond_memory_cap_gb=bond_memory_cap_gb,
             precondition_opts=bond_precondition_opts,
             green_source=bond_green,
-            g2_tail=g2_tail)
+            g2_tail=g2_tail,
+            bond_coeff_tail_source=bond_coeff_tail_source)
         Vs_q = None
 
     else:
@@ -6450,7 +6768,14 @@ def calc_eliashberg(input_dict):
 
         # Step 6: Calculate bare Green's function
         logger.info("Calculating Green's function G(k, iwn)...")
-        green_kw = _calc_green(eigenvalues, eigenvectors, mu, beta, nmat)
+        # Same rationale as the FLEX-fallback branch above: only full_sc is
+        # consumed here, and it is independent of coeff_tail. Also same
+        # transient-memory caveat: _build_bond_green briefly holds the
+        # canonical build_green output alongside its sc-layout conversion
+        # before releasing the former, and no resource preflight covers
+        # this Standard-RPA path.
+        green_kw = _build_bond_green(
+            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
 
         # Step 1: Load or compute chi0q
         if chi0q_mode == "calc":

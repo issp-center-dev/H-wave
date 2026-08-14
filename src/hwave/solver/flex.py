@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 from .rpa import RPA, Lattice, Interaction, MOMENTUM_CONVENTION
 from .density_projection import project_density_pairs
-from .kgrid import reverse_fft_axes
 from . import backend as _bk
+from . import bubble
 from . import matsubara as _ms
 
 
@@ -819,53 +819,18 @@ class FLEX(RPA):
         r"""chi0 on the bosonic IR nodes, computed natively from G on the
         fermionic nodes (reduced scheme).
 
-        chi0_{ab}(r,tau) = -G_{ab}(r,tau) * G_{ba}(-r,-tau) with the
-        fermionic anti-periodicity G(-tau) = -G(beta - tau) realized as a
-        pure tau-node index reversal (symmetric node sets); the spatial
-        r -> -r is the shared FFT-grid reversal (kgrid.reverse_fft_axes),
-        identical to the uniform path. The
-        product lives on the BOSONIC tau nodes (chi0 is periodic), where G
-        is evaluated exactly from its fermionic coefficients. All IR
-        transforms are physical (the tau -> i nu step is the integral over
-        tau), so no 1/beta factors appear -- pinned against the uniform
-        chi0 by test_chi0_gate_ir_matches_uniform_large_nmat.
+        Validates the ``enable_reduced`` requirement (the user-facing
+        diagnostic below is kept even though the kernel has no reduced-only
+        restriction of its own), then delegates to ``bubble.ir_bubble``.
         """
-        axF, axB = self._ir_axF, self._ir_axB
-        nx, ny, nz = self.lattice.shape
-        nblock, nw, nvol, nd, _ = green_kw.shape
         if not self.enable_reduced:
             raise ValueError(
                 "matsubara_basis='ir' chi0 supports the reduced scheme only")
-        xp = _bk.array_module_of(green_kw)
+        nx, ny, nz = self.lattice.shape
         workers = getattr(self, "fft_workers", 1)
-
-        # G(k, tau_B): fermionic coefficients evaluated at the bosonic nodes
-        g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
-        g_tau = axF.freq_to_tau_points(g, axB.tau)      # (nblock, ., n_tauB)
-        ntB = axB.n_tau
-        g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
-            nblock, ntB, nx, ny, nz, nd * nd)
-
-        g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
-
-        # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
-        # plain tau reversal (with the global fermionic -1); r -> -r is
-        # the shared FFT-grid reversal (identical to the uniform path).
-        g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
-        g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
-        g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
-
-        # chi0[a,b] = -G[a,b](r,tau) * G[b,a](-r,-tau)
-        chi0_rt = -g_rt * g_rev.swapaxes(-2, -1)
-
-        chi0_qt = _bk.spatial_fftn(
-            chi0_rt.reshape(nblock, ntB, nx, ny, nz, nd * nd),
-            axes=(2, 3, 4), workers=workers)
-        chi0_q = axB.tau_to_freq(
-            xp.moveaxis(chi0_qt.reshape(nblock, ntB, nvol * nd * nd), 1, -1))
-        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
-            nblock, axB.n_freq, nvol, nd, nd)
-        return chi0_q
+        return bubble.ir_bubble(
+            green_kw, self._ir_axF, self._ir_axB,
+            spatial_shape=(nx, ny, nz), scheme="reduced", workers=workers)
 
     @do_profile
     def _calc_chi0q_general_ir(self, green_kw, beta):
@@ -873,48 +838,17 @@ class FLEX(RPA):
         # only on the general path (mirrors that method's `enable_reduced`
         # guard, which is why this one has no analogous check).
         r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
-        (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
-        coefficients on the bosonic tau nodes; tau flip-only reversal, the
-        shared spatial FFT-grid reversal; physical transforms, no 1/beta);
-        the orbital product is
-        the full (a,c,b,d) form of the uniform general `_calc_chi0q`
-        (rpa.py): chi0[a,c,b,d] = -G[a,b](r,tau) * G[d,c](-r,-tau).
+        (MYO) scheme.
+
+        Delegates to ``bubble.ir_bubble`` (no ``enable_reduced`` guard, as
+        with the legacy body -- this method is only called on the general
+        path).
         """
-        axF, axB = self._ir_axF, self._ir_axB
         nx, ny, nz = self.lattice.shape
-        nblock, nw, nvol, nd, _ = green_kw.shape
-        xp = _bk.array_module_of(green_kw)
         workers = getattr(self, "fft_workers", 1)
-
-        # G(k, tau_B): fermionic coefficients evaluated at the bosonic nodes
-        g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
-        g_tau = axF.freq_to_tau_points(g, axB.tau)
-        ntB = axB.n_tau
-        g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
-            nblock, ntB, nx, ny, nz, nd * nd)
-        g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
-
-        # G(-r,-tau): tau flip-only (j -> nt-1-j), the shared spatial
-        # FFT-grid reversal, and the leading -1 folds in the fermionic
-        # antiperiodicity.
-        g_rev = -xp.flip(reverse_fft_axes(g_rt, (2, 3, 4)), axis=1)
-        g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
-        g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
-
-        # chi0[g,tau,r, a,c,b,d] = -G[a,b] * G_rev[d,c]  (mirror rpa.py general:
-        # (G)[...,a,_,b,_] * (G_rev)[...,_,d,_,c] -> (a,d,b,c) -> transpose (a,c,b,d))
-        chi0_rt = -(g_rt[:, :, :, :, np.newaxis, :, np.newaxis]
-                    * g_rev[:, :, :, np.newaxis, :, np.newaxis, :])
-        chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
-
-        chi0_qt = _bk.spatial_fftn(
-            chi0_rt.reshape(nblock, ntB, nx, ny, nz, nd ** 4),
-            axes=(2, 3, 4), workers=workers)
-        chi0_q = axB.tau_to_freq(
-            xp.moveaxis(chi0_qt.reshape(nblock, ntB, nvol * nd ** 4), 1, -1))
-        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
-            nblock, axB.n_freq, nvol, nd, nd, nd, nd)
-        return chi0_q
+        return bubble.ir_bubble(
+            green_kw, self._ir_axF, self._ir_axB,
+            spatial_shape=(nx, ny, nz), scheme="general", workers=workers)
 
     @do_profile
     def _calc_self_energy_ir(self, green_kw, v_eff, beta):

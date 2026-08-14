@@ -771,7 +771,7 @@ def _richardson_nmat(fn, n1, order):
     RAW (no tail correction) Matsubara sum -- ``bond_bubble``, which
     documents that it lacks the tail correction -- and ``order=2`` for a
     TAIL-CORRECTED one (``coeff_tail=1.0``, the same acceleration
-    ``hwave.sc._calc_green``'s docstring describes). Measured empirically
+    ``hwave.solver.green.build_green``'s docstring describes). Measured empirically
     on fx5 before being used as a pin here: at ``order=1`` the raw
     ``bond_bubble`` diagonal (m=m') error is C/Nmat to 4 significant
     figures over a 16x Nmat range; at ``order=2`` the tail-corrected

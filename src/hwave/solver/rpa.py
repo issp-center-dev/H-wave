@@ -29,8 +29,9 @@ from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import project_density_pairs
 from . import backend as _bk
+from . import bubble
 from . import fold
-from . import matsubara as _ms
+from . import green as green_mod
 
 
 def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
@@ -2876,59 +2877,44 @@ class RPA:
     @do_profile
     def _calc_green(self, beta, mu):
         """
+        Thin wrapper around ``green.build_green`` (the shared Green's
+        function builder used by both RPA and sc.py's bond carrier).
+
         ew: eigenvalues  ew[g,k,i]    i-th eigenvalue of wavenumber k in block g
         ev: eigenvectors ev[g,k,a,i]  i-th eigenvector corresponding to ew[g,k,i]
         beta: inverse temperature
         mu: chemical potential
+
+        Returns
+        -------
+        (green, green_tail) : the deflated Green's function (with the
+        coeff_tail/(iw_n) term subtracted for faster tau-space decay) and
+        its analytic high-frequency tail. This preserves the legacy
+        contract exactly: when ``coeff_tail == 0`` ``build_green`` returns
+        ``green0_tail=None``, but callers such as ``_calc_chi0q_transverse``
+        access ``green0_tail.shape`` unconditionally, so this wrapper
+        materializes a shape-matched all-zero tail in that case.
+
+        ``want_full=False`` is passed to ``build_green``: this wrapper only
+        ever returns the deflated Green/tail pair, so the full-size
+        ``full_kw`` reconstruction (one whole extra Green-sized allocation
+        when ``coeff_tail != 0``) is never even built here.
         """
         logger.debug(">>> RPA._calc_green")
 
         # load eigenvalues and eigenvectors
         ew = self.H0_eigenvalue
         ev = self.H0_eigenvector
-        xp = _bk.array_module_of(ew)
 
-        nx,ny,nz = self.lattice.shape
-
-        nblock,nvol,nd = ew.shape
+        nblock, nvol, nd = ew.shape
         assert nvol == self.lattice.nvol
 
-        nmat = self.nmat
+        _full, green, green_tail = green_mod.build_green(
+            ew, ev, mu, beta, self.nmat, self.coeff_tail, want_full=False)
 
-        iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
-
-        # 1 / (iw_{n} - (e_i(k) - mu)) -> g[g,l,k,i] via broadcasting
-        # iomega: (nmat,), ew: (nblock, nvol, nd)
-        wn = 1j * iomega[np.newaxis, :, np.newaxis, np.newaxis]  # (1,nmat,1,1)
-        ek = (ew - mu)[:, np.newaxis, :, :]  # (nblock,1,nvol,nd)
-
-        # High-frequency tail improvement (optional; default coeff_tail=0 keeps
-        # the bare Green's function). The 1/(iw) part of G(iw) decays slowly and
-        # truncating the Matsubara sum at finite Nmat leaves an error. Here a
-        # term aa/(iw) is *subtracted* in frequency space so the FFT'd
-        # quantity decays faster; its contribution is added back analytically in
-        # imaginary time as green_tail below, using the exact Fourier identity
-        #   T * sum_n e^{-iw_n tau} / (iw_n) = -1/2   for 0 < tau < beta,
-        # i.e. the back-transform of aa/(iw) is -aa/2, and green_tail carries the
-        # aa*0.5*beta normalization expected by _calc_chi0q's tau-space product.
-        # NOTE: aa is a user coefficient; it should match the true 1/(iw)
-        # coefficient of G (= 1 by unitarity) to *accelerate* convergence -- any
-        # other value is a deliberate modification of G, not just acceleration.
-        aa = self.coeff_tail
-        g = 1.0 / (wn - ek) - aa / wn  # (nblock,nmat,nvol,nd)
-
-        # G_ab(k,iw_n) = sum_j V_{a,j} V*_{b,j} * g_j
-        # = (V * g) @ V†  -- use matmul (BLAS) instead of einsum
-        ev_conj_t = xp.conj(ev).swapaxes(-2, -1)  # (nblock,nvol,nd,nd): V†[g,k]
-
-        # Vg = V * g: broadcast g into eigenvector columns
-        Vg = ev[:, np.newaxis, :, :, :] * g[:, :, :, np.newaxis, :]  # (nblock,nmat,nvol,nd,nd)
-        green = Vg @ ev_conj_t[:, np.newaxis, :, :, :]  # (nblock,nmat,nvol,nd,nd)
-
-        # Tail: G_tail = V @ V† * aa * 0.5 * beta = I * aa * 0.5 * beta (unitarity)
-        # But original code retains V V† form for non-complete basis cases
-        VVt = ev @ ev_conj_t  # (nblock,nvol,nd,nd)
-        green_tail = VVt[:, np.newaxis, :, :, :] * xp.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta
+        if green_tail is None:
+            xp = _bk.array_module_of(ew)
+            green_tail = xp.zeros_like(green)
 
         return green, green_tail
 
@@ -2957,15 +2943,15 @@ class RPA:
 
         Notes
         -----
-        Calculation steps:
-        1. Fourier transform from Matsubara freq to imaginary time
-        2. Transform from k-space to real space
-        3. Calculate chi0 in real space and imaginary time
-        4. Transform back to k-space and Matsubara frequency
+        Validates the input shapes (see the inline guards below), then
+        delegates the dense-grid bubble calculation to
+        ``bubble.dense_bubble``. The guards here duplicate some of the
+        kernel's own validation deliberately -- their messages are the
+        user-facing diagnostics for this solver and are kept even though
+        the kernel would also catch the malformed input.
         """
         logger.debug(">>> RPA._calc_chi0q")
 
-        xp = _bk.array_module_of(green_kw)
         workers = getattr(self, "fft_workers", 1)
 
         nx,ny,nz = self.lattice.shape
@@ -3017,113 +3003,15 @@ class RPA:
                 "array from the same _calc_green call".format(
                     green0_tail.shape, green_kw.shape))
 
-        # Fourier transform from Matsubara freq to imaginary time
-        green_flat = green_kw.reshape(nblock, nmat, nvol * nd * nd)
-        green_kt = _ms.fermion_to_tau(green_flat, axis=1)
-        green_kt = green_kt.reshape(nblock, nmat, nx, ny, nz, nd, nd)
-        green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
-
-        # Fourier transform from wave number space to coordinate space
-        green_rt = _bk.spatial_ifftn(
-            green_kt.reshape(nblock, nmat, nx, ny, nz, nd * nd),
-            axes=(2, 3, 4), workers=workers)
-
-        # calculate chi0 in real space and imaginary time
-        green_rev = reverse_fft_axes(green_rt, (1, 2, 3, 4)).reshape(nblock, nmat, nvol, nd, nd)
-
-        # Equal-time endpoint correction (issue #134). The tail piece
-        # aa/(i w_n) carries G's equal-time jump: its tau-space branches
-        # are -aa/2 for 0 < tau < beta and +aa/2 for tau < 0, i.e.
-        # G(0^-) = G(0^+) + aa * VV^dag (= twice the subtracted
-        # green0_tail constant in these kt units). Subtracting
-        # green0_tail above reconstructs the 0^+ branch at EVERY tau
-        # slot (exactly so at tau = 0 only for coeff_tail = 1; a
-        # fractional coefficient cancels only part of the jump, leaves a
-        # scaled-down discontinuity and stays first order -- use 0 or
-        # 1), but the bubble chi(tau) is DISCONTINUOUS at tau = 0
-        # whenever the two factors differ (different spins, or asymmetric
-        # multi-orbital structure): chi(0^+) uses (G_fwd(0^+), G_rev(0^-))
-        # and chi(0^-) the opposite pair. A discrete Fourier transform of
-        # a jump converges O(1/Nmat) unless the tau = 0 sample is the
-        # MEAN of the two branches -- without this the tail-corrected
-        # bubble was ~4.5x WORSE than the uncorrected one; with it the
-        # convergence is O(1/Nmat^2) (measured fourfold-Nmat ratios ~16).
-        # No-op -- including bitwise -- when the tail is zero. The
-        # predicate inspects only frequency slice 0: that is the ONLY
-        # slice the correction reads (the tail is frequency-constant by
-        # construction), and reducing the full repeated tensor would
-        # force a device synchronization over nmat times the data on the
-        # GPU path (round-6 review).
-        _tail_on = bool(xp.any(
-            green0_tail.reshape(nblock, nmat, -1)[:, 0] != 0))
-        if _tail_on:
-            tail_kt0 = green0_tail.reshape(
-                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
-            jump_f = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
-                                       workers=workers)
-            # the reversed factor lives at -r: its jump is the spatial
-            # reversal of the forward one
-            jump_r_rev = reverse_fft_axes(jump_f, (2, 3, 4))
-            jump_f = jump_f.reshape(nblock, nvol, nd, nd)
-            jump_r_rev = jump_r_rev.reshape(nblock, nvol, nd, nd)
-            fwd0_p = green_rt.reshape(
-                nblock, nmat, nvol, nd, nd)[:, 0].copy()
-            rev0_p = green_rev[:, 0].copy()
-
-        sgn = xp.full(nmat, -1)
-        sgn[0] = 1
-
-        if self.enable_reduced:
-            # reduced index calculation
-            # chi0[g,l,r,a,b] = G[g,l,r,a,b] * G_rev[g,l,r,b,a] * sgn[l]
-            green_rt_5d = green_rt.reshape(nblock, nmat, nvol, nd, nd)
-            chi0_rt = (green_rt_5d
-                       * green_rev.swapaxes(-2, -1)
-                       * sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis])
-            if _tail_on:
-                # mean of the two equal-time branches (sgn[0] = +1)
-                chi0_rt[:, 0] = 0.5 * (
-                    fwd0_p * (rev0_p + jump_r_rev).swapaxes(-2, -1)
-                    + (fwd0_p + jump_f)
-                    * rev0_p.swapaxes(-2, -1))
-            nd_shape = (nd, nd)
-            nds = nd ** 2
-        else:
-            # General index: chi0[g,l,r,a,c,b,d] = G[g,l,r,a,b] * G_rev[g,l,r,d,c] * sgn[l]
-            # Use outer product via broadcasting instead of einsum
-            G_fwd = green_rt.reshape(nblock, nmat, nvol, nd, nd)
-            sgn_bc = sgn[np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
-            # G_fwd[:,:,:,a,b] * sgn -> shape (g,l,r,a,b)
-            # G_rev[:,:,:,d,c]        -> shape (g,l,r,d,c)
-            # result[:,:,:,a,c,b,d] = G_fwd[:,:,:,a,b] * G_rev[:,:,:,d,c] * sgn
-            chi0_rt = ((G_fwd * sgn_bc)[:, :, :, :, np.newaxis, :, np.newaxis]
-                       * green_rev[:, :, :, np.newaxis, :, np.newaxis, :])
-            # shape: (g,l,r,a,d,b,c) -> need (g,l,r,a,c,b,d)
-            chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
-            if _tail_on:
-                # mean of the two equal-time branches (sgn[0] = +1),
-                # same outer-product layout as the bulk slice
-                def _slice(gf, gr):
-                    x = (gf[:, :, :, np.newaxis, :, np.newaxis]
-                         * gr[:, :, np.newaxis, :, np.newaxis, :])
-                    return x.transpose(0, 1, 2, 5, 4, 3)
-                chi0_rt[:, 0] = 0.5 * (
-                    _slice(fwd0_p, rev0_p + jump_r_rev)
-                    + _slice(fwd0_p + jump_f, rev0_p))
-            nd_shape = (nd, nd, nd, nd)
-            nds = nd ** 4
-
-        # Fourier transform to wave number space
-        chi0_qt = _bk.spatial_fftn(
-            chi0_rt.reshape(nblock, nmat, nx, ny, nz, nds),
-            axes=(2, 3, 4), workers=workers)
-
-        # Fourier transform to matsubara freq
-        chi0_qt_flat = chi0_qt.reshape(nblock, nmat, nvol * nds)
-        chi0_qw = _ms.tau_to_boson(chi0_qt_flat, axis=1).reshape(
-            nblock, nmat, nvol, *nd_shape) * (-1.0 / beta)
-
-        return chi0_qw
+        # Delegate to the shared bubble kernel (spec: "Module layout").
+        # green0_tail is forwarded AS-IS -- an all-zero tail is not
+        # special-cased here; the kernel's own data-driven tail gate
+        # (mirroring the legacy _tail_on predicate) handles it.
+        return bubble.dense_bubble(
+            green_kw, green0_tail, beta,
+            spatial_shape=(nx, ny, nz),
+            scheme="reduced" if self.enable_reduced else "general",
+            workers=workers)
 
     def _calc_chi0q_transverse(self, green_kw, green0_tail, beta):
         """Calculate the transverse bare susceptibility chi0_+-(q,iω).
