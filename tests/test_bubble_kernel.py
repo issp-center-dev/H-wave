@@ -1591,5 +1591,406 @@ class TestIrBondVsDense(unittest.TestCase):
                                  e[1024], e[256] / 10.0))
 
 
+class TestOneshotIrVsDense(unittest.TestCase):
+    """IterationMax=1 IR-vs-dense equivalence (spec "Equivalence gates"
+    item 4, the #107 "plausible but to be measured" item, AMENDED
+    2026-08-14): RPA (dense uniform Matsubara grid) is the analytically
+    exact one-shot limit of FLEX, and
+    ``tests/test_rpa_flex_oneshot_equivalence.py`` already pins that
+    RPA(dense)-vs-FLEX(dense) agreement to ~1e-12/1e-13 element-wise
+    (``TestGeneralSchemeOneShot``). This class measures the ONE remaining
+    leg of that triangle: FLEX run on the sparse-ir basis
+    (``matsubara_basis='ir'``) instead of the uniform grid, at the SAME one
+    SCF iteration (``IterationMax=1, Mix=1.0`` -- no self-energy feedback
+    on either side).
+
+    Units: the fixture Hamiltonians fix the NN hopping ``t = 1`` as the
+    energy unit (``tests/rpa/input{,_2orb}/transfer.dat``) and ``beta`` is
+    quoted in that unit -- the same convention already used throughout
+    ``tests/test_rpa_flex_oneshot_equivalence.py``.
+
+    Fixture reuse (implementer's choice, per the task brief): this class
+    imports ``tests.test_rpa_flex_oneshot_equivalence._read`` directly (the
+    k-space/Wannier90 read step is identical) but does NOT import that
+    module's ``_run`` -- ``_run`` has no IR-basis dispatch, and adding one
+    there would touch a module whose existing gates are pinned to the
+    dense-only convention documented in its own docstring. Instead this
+    class defines its own minimal ``_run`` staticmethod, a small
+    superset of the reused one (same RPA/FLEX construction, plus
+    ``matsubara_basis='ir'`` on the FLEX side) so the two modules stay
+    decoupled.
+
+    AMENDMENT HISTORY (load-bearing -- explains why the criterion below is
+    a decay/plateau check, not an absolute bound): the draft criterion was
+    ``max_abs(diff) / max_abs(chi_rpa_dense) <= 5 * (beta/pi**2) / Nmat``,
+    borrowing the #151 campaign's ``a ~= beta/pi**2`` first-order
+    dense-truncation prefactor -- but that law was measured on a
+    STRUCTURALLY DIFFERENT observable (the single-orbital STATIC bond
+    bubble, ``TestBondTailConvergence``/``TestIrBondVsDense``). Measuring
+    the actual multi-orbital DYNAMIC ``chi0q`` max-element distance (this
+    class, fix round 1) at ``T=2.0, t=1``, general scheme, gave:
+
+    ==== ========
+    Nmat  e_N (measured)
+    ==== ========
+      32  0.1255
+      64  0.0717
+     128  0.0404
+     256  0.0225
+     512  0.0124
+    ==== ========
+
+    with successive ratios climbing 1.75 -> 1.82 toward 2.0 -- textbook
+    O(1/Nmat) convergence, NO plateau. This is the finding that matters:
+    a genuine basis/convention mismatch between the dense and IR
+    transports would show up as an Nmat-INDEPENDENT floor (the error
+    stops shrinking once Nmat resolves finer than whatever the mismatch's
+    intrinsic scale is); a floor that keeps halving-ish all the way from
+    Nmat=32 to 512 means the two transports converge to the SAME
+    continuum bubble, i.e. NO convention mismatch exists and the #107
+    measurement item is RESOLVED. The borrowed prefactor was simply wrong
+    for this observable (measured effective prefactor a_eff =
+    e_N * Nmat ~= 4-6, about 20x the borrowed ``5*beta/pi**2 ~= 0.25`` --
+    the TRANSFER of the #151 prefactor to this quantity is measured
+    false), so the criterion below tests for the plateau signature
+    directly (strict decrease + a bounded decay ratio) instead of
+    asserting an absolute distance, plus a regression pin at each
+    scheme's own measured ``e_512`` (with headroom) so a future genuine
+    regression -- a real convention change that reintroduces error at a
+    fixed floor -- still fails this gate.
+
+    Acceptance (amended, executable, per scheme): on the ladder
+    ``Nmat in {128, 256, 512}`` at the oneshot settings, with
+    ``e_N = max_abs(diff_N) / max_abs(chi_rpa_dense_N)`` and
+    ``max_abs(chi_rpa_dense_N) >= 1e-6`` asserted at EVERY point: STRICT
+    decrease ``e_128 > e_256 > e_512``; decay bound
+    ``e_512 <= e_128 / 3`` (first-order predicts ~/3.26, measured); and a
+    measured-value regression pin (2x the measured ``e_512``, per scheme,
+    stated at each test method). A PLATEAU (a strict-decrease or
+    decay-bound failure) is the actual FINDING this gate exists to catch
+    and blocks the interface freeze -- see the sequencing spec.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+    @staticmethod
+    def _run(scheme, solver, path, interactions, filling, T, Nmat):
+        """Minimal superset of
+        ``tests/test_rpa_flex_oneshot_equivalence.py``'s ``_run`` (reused
+        module docstring above): identical RPA/FLEX construction, plus
+        ``matsubara_basis='ir'`` on the FLEX side."""
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+        from tests.test_rpa_flex_oneshot_equivalence import _read
+
+        r = _read(path, interactions)
+        ham = r.get_param("ham")
+        par = {'T': T, 'filling': filling, 'CellShape': [4, 4, 1],
+               'SubShape': [1, 1, 1], 'Nmat': Nmat}
+        if solver == 'rpa':
+            sv = rpa_mod.RPA(ham, {}, {'mode': 'RPA', 'param': par,
+                                       'enable_spin_orbital': False,
+                                       'calc_scheme': scheme,
+                                       'calc_type': 'ring'})
+        else:
+            pf = dict(par)
+            pf.update({'IterationMax': 1, 'Mix': 1.0, 'EPS': 1,
+                      'matsubara_basis': 'ir'})
+            sv = flex_mod.FLEX(ham, {}, {'mode': 'FLEX', 'param': pf,
+                                         'enable_spin_orbital': False,
+                                         'calc_scheme': scheme})
+        g = r.get_param("green")
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        sv.solve(g, 'tests/rpa/output')
+        return g
+
+    def _e_general(self, Nmat, T=2.0):
+        """One ladder point, general scheme: direct ``chi0q`` comparison
+        (a directly comparable quantity between RPA and FLEX at this
+        scheme -- verified: ``TestGeneralSchemeOneShot`` in
+        ``tests/test_rpa_flex_oneshot_equivalence.py`` already pins
+        RPA(dense)-vs-FLEX(dense) ``chi0q`` element-equal to 1e-12 here,
+        the same raw quantity this compares, only with the FLEX side
+        switched to the IR basis)."""
+        path = 'tests/rpa/input_2orb'
+        interactions = {'CoulombIntra': 'coulombintra.dat',
+                        'CoulombInter': 'onsite_inter.dat',
+                        'Hund': 'hund_onsite.dat'}
+        gr = self._run('general', 'rpa', path, interactions, 0.5, T, Nmat)
+        gf = self._run('general', 'flex', path, interactions, 0.5, T, Nmat)
+        chi_rpa = np.asarray(gr['chi0q'])
+        chi_flex_ir = np.asarray(gf['chi0q'])
+        self.assertEqual(chi_rpa.shape, chi_flex_ir.shape)
+
+        m_rpa = float(np.max(np.abs(chi_rpa)))
+        self.assertGreaterEqual(
+            m_rpa, 1e-6, "Nmat={}: max_abs(chi_rpa_dense)={} below the "
+                        "1e-6 scale floor".format(Nmat, m_rpa))
+        diff = float(np.max(np.abs(chi_flex_ir - chi_rpa)))
+        return diff / m_rpa
+
+    def _e_reduced(self, Nmat, T=2.0, norb=1):
+        """One ladder point, reduced scheme: raw ``chi0q`` is NOT directly
+        comparable between RPA and FLEX here -- this is a pre-existing,
+        IR-unrelated fact (verified: FLEX's reduced-scheme ``chi0q`` is
+        ``(nmat, nvol, 2, 2)`` even on the DENSE path, while RPA's
+        reduced-scheme ``chi0q`` is ``(nmat, nvol, 1, 1)`` for the same
+        norb=1 fixture -- FLEX keeps a spin-block axis in the raw bubble
+        that RPA's reduced construction has already summed away).
+        ``tests/test_rpa_flex_oneshot_equivalence.py``'s own
+        ``TestReducedOneShot`` never compares raw ``chi0q`` for this
+        reason either -- it compares the POST-inflation ``chiq`` (RPA,
+        spin-block-sliced) against ``chiq_s``/``chiq_c`` (FLEX). This
+        reuses that exact recipe, extended to the IR basis on the FLEX
+        side, as the valid apples-to-apples quantity for this scheme."""
+        path, interactions = 'tests/rpa/input', {'CoulombInter': 'coulombinter.dat'}
+        gr = self._run('reduced', 'rpa', path, interactions, 0.75, T, Nmat)
+        gf = self._run('reduced', 'flex', path, interactions, 0.75, T, Nmat)
+        chiq = np.asarray(gr['chiq'])
+        uu = chiq[:, :, :norb, :norb]
+        ud = chiq[:, :, :norb, norb:]
+        cs = np.asarray(gf['chiq_s'])[:, :, :norb, :norb]
+        cc = np.asarray(gf['chiq_c'])[:, :, :norb, :norb]
+
+        scale = float(max(np.max(np.abs(uu - ud)), np.max(np.abs(uu + ud))))
+        self.assertGreaterEqual(
+            scale, 1e-6, "Nmat={}: max_abs(chi_rpa_dense)={} below the "
+                         "1e-6 scale floor".format(Nmat, scale))
+        diff = float(max(np.max(np.abs((uu - ud) - cs)),
+                         np.max(np.abs((uu + ud) - cc))))
+        return diff / scale
+
+    def _check_ladder(self, e128, e256, e512, pin, label):
+        self.assertGreater(
+            e128, e256,
+            "{}: e_128={} not > e_256={} -- plateau signature (a real "
+            "basis/convention mismatch), not a test to loosen".format(
+                label, e128, e256))
+        self.assertGreater(
+            e256, e512,
+            "{}: e_256={} not > e_512={} -- plateau signature (a real "
+            "basis/convention mismatch), not a test to loosen".format(
+                label, e256, e512))
+        self.assertLessEqual(
+            e512, e128 / 3.0,
+            "{}: e_512={} not <= e_128/3={} -- decay too slow for the "
+            "measured first-order law".format(label, e512, e128 / 3.0))
+        self.assertLessEqual(
+            e512, pin,
+            "{}: e_512={} exceeds the regression pin {} -- this is a "
+            "FINDING (a real convention regression), not a test to "
+            "loosen".format(label, e512, pin))
+
+    def test_general_scheme(self):
+        """Measured (fix round 1, this environment): e_128=0.040373,
+        e_256=0.022479, e_512=0.012392 (matches the class docstring's
+        table). Regression pin: 0.025 (2x the measured e_512, per the
+        amended spec's own worked example)."""
+        e128 = self._e_general(128)
+        e256 = self._e_general(256)
+        e512 = self._e_general(512)
+        self._check_ladder(e128, e256, e512, pin=0.025,
+                           label="general scheme")
+
+    def test_reduced_scheme(self):
+        """Measured (fix round 1, this environment): e_128=0.021153,
+        e_256=0.011592, e_512=0.006344. Regression pin: 0.012689 (2x the
+        measured e_512 for THIS scheme, per the coordinator's amended
+        instruction -- reduced scheme's own distance is smaller than
+        general scheme's, so it gets its own, tighter pin rather than
+        inheriting general's 0.025)."""
+        e128 = self._e_reduced(128)
+        e256 = self._e_reduced(256)
+        e512 = self._e_reduced(512)
+        self._check_ladder(e128, e256, e512, pin=0.012689,
+                           label="reduced scheme")
+
+
+# Spec manifest ("Equivalence gates and tests", the 11 named gate classes).
+# This module's actual class list is a SUPERSET (TestBuildGreen,
+# TestTauToFreqPoints, TestBondDynamicOracle, TestBondEndpointShift exist
+# here but are not spec-manifest names) -- GATE_CLASSES lists every gate
+# class that exists in this module, per the task's ambiguity resolution:
+# the spec's 11 are the floor, not the ceiling.
+GATE_CLASSES = [
+    "TestBuildGreen",
+    "TestBubbleOldVsNewDense",
+    "TestBubbleOldVsNewIr",
+    "TestBubbleOldVsNewBondStatic",
+    "TestBondDynamicOracle",
+    "TestBondEndpointShift",
+    "TestBondGreenFlow",
+    "TestBondTailConvergence",
+    "TestTauToFreqPoints",
+    "TestIrBondOracle",
+    "TestIrBondVsDense",
+    "TestOneshotIrVsDense",
+    "TestGateCollection",
+]
+
+
+class TestGateCollection(unittest.TestCase):
+    """Collection meta-test (spec: "a COLLECTION meta-test asserts ... that
+    every gate class named in this spec is discovered by the gating
+    command -- enforcement, not convention"). Discovery-only: this does
+    NOT execute the suite (`unittest.defaultTestLoader.discover` builds a
+    tree of TestCase instances without running them), so it stays cheap
+    even though it walks every ``tests/test_*.py`` module.
+    """
+
+    @staticmethod
+    def _collected_class_names(suite):
+        names = set()
+        stack = [suite]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, unittest.TestSuite):
+                stack.extend(item)
+            elif isinstance(item, unittest.TestCase):
+                names.add(type(item).__name__)
+            # unittest.loader._FailedTest (import errors) is also a
+            # TestCase subclass and is deliberately NOT excluded here: a
+            # gate class that fails to import must fail this test, not be
+            # silently skipped from the discovered set.
+        return names
+
+    def test_every_manifest_class_is_discovered(self):
+        # Exact form from the spec/brief -- matches the gating CI command
+        # `python -m unittest discover -s tests` (both must be run from the
+        # repository root; CLAUDE.md documents this project convention).
+        suite = unittest.defaultTestLoader.discover(
+            'tests', pattern='test_*.py')
+        discovered = self._collected_class_names(suite)
+        missing = [name for name in GATE_CLASSES if name not in discovered]
+        self.assertFalse(
+            missing,
+            "gate class(es) named in GATE_CLASSES not discovered by "
+            "`unittest discover -s tests`: {}".format(missing))
+
+
+class TestBubbleGpuParity(unittest.TestCase):
+    """Per-cell CPU/GPU parity for the bubble kernel's device-dispatched
+    entry points, mirroring ``tests/test_rpa_gpu.py``'s skip pattern
+    (skip cleanly without CuPy / a usable CUDA device). Scope (spec "GPU
+    scope"): the BUBBLE CELLS ONLY -- ``dense_bubble`` (both schemes),
+    ``ir_bubble`` (reduced), ``bond_bubble_static``. ``pair_weight``,
+    ``_g2_from_green``, and the rest of the bond-kernel/Eliashberg
+    assembly keep their existing NumPy coercions and are OUT of this
+    class's scope; nothing here claims device-residency past the bubble
+    output.
+
+    Every fixture here is built on the CPU (the same fixture helpers the
+    old-vs-new gates above use) and then mirrored onto the device with a
+    single ``cupy.asarray`` per input array -- the parity claim is CPU
+    kernel-output vs GPU kernel-output on IDENTICAL numeric inputs, not a
+    second independent numerics oracle (that burden is already carried by
+    the old-vs-new / direct-sum gates elsewhere in this module).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import cupy
+        except ImportError:
+            raise unittest.SkipTest("cupy not installed")
+        try:
+            cupy.zeros(1)
+        except Exception:
+            raise unittest.SkipTest("cupy installed but no usable CUDA "
+                                    "device")
+        cls.cupy = cupy
+
+    def _to_device(self, arr):
+        if arr is None:
+            return None
+        return self.cupy.asarray(arr)
+
+    def test_dense_bubble_reduced_and_general(self):
+        from hwave.solver import backend as bk
+
+        solver = _make_rpa_solver(coeff_tail=0.5, hz=0.0, norb=2,
+                                  complex_hop=True, Lx=4, Ly=4, Nmat=8)
+        solver._calc_epsilon_k({})
+        beta = 1.0 / solver.T
+        mu = solver.mu_value
+        green, tail = solver._calc_green(beta, mu)
+        spatial_shape = tuple(solver.lattice.shape)
+
+        green_gpu = self._to_device(green)
+        tail_gpu = self._to_device(tail)
+
+        for scheme in ("reduced", "general"):
+            with self.subTest(scheme=scheme):
+                cpu_out = bubble_mod.dense_bubble(
+                    green, tail, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                gpu_out = bubble_mod.dense_bubble(
+                    green_gpu, tail_gpu, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                self.assertIs(bk.array_module_of(gpu_out), self.cupy)
+                assert_approx_array(bk.to_host(gpu_out), cpu_out,
+                                    rel=1e-10, abs=1e-12)
+
+    def test_ir_bubble_reduced(self):
+        from hwave.solver import backend as bk
+        from tests.test_flex_ir import _make_solver
+
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+        T = 0.5
+        beta = 1.0 / T
+        solver, gi = _make_solver(64, {'matsubara_basis': 'ir'}, T=T)
+        solver._calc_epsilon_k(gi)
+        solver._ir_setup(beta)
+        axF, axB = solver._ir_axF, solver._ir_axB
+        green, _ = solver._calc_green_ir(beta, 0.0)
+        spatial_shape = tuple(solver.lattice.shape)
+
+        green_gpu = self._to_device(green)
+
+        cpu_out = bubble_mod.ir_bubble(green, axF, axB,
+                                       spatial_shape=spatial_shape,
+                                       scheme="reduced")
+        gpu_out = bubble_mod.ir_bubble(green_gpu, axF, axB,
+                                       spatial_shape=spatial_shape,
+                                       scheme="reduced")
+        self.assertIs(bk.array_module_of(gpu_out), self.cupy)
+        assert_approx_array(bk.to_host(gpu_out), cpu_out,
+                            rel=1e-10, abs=1e-12)
+
+    def test_bond_bubble_static(self):
+        from hwave.solver import backend as bk
+        from hwave.solver.bond_channels import resolve_interactions
+        from tests.test_bond_channels import _nn_square_2orb
+
+        solver = _make_rpa_solver(coeff_tail=0.5, hz=0.0, norb=2,
+                                  complex_hop=True, Lx=4, Ly=4, Nmat=8)
+        solver._calc_epsilon_k({})
+        beta = 1.0 / solver.T
+        mu = solver.mu_value
+        green, tail = solver._calc_green(beta, mu)
+        spatial_shape = tuple(solver.lattice.shape)
+        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+
+        green_gpu = self._to_device(green)
+        tail_gpu = self._to_device(tail)
+
+        cpu_out = bubble_mod.bond_bubble_static(
+            green, tail, beta, bond_set, spatial_shape=spatial_shape)
+        gpu_out = bubble_mod.bond_bubble_static(
+            green_gpu, tail_gpu, beta, bond_set, spatial_shape=spatial_shape)
+        self.assertIs(bk.array_module_of(gpu_out), self.cupy)
+        assert_approx_array(bk.to_host(gpu_out), cpu_out,
+                            rel=1e-10, abs=1e-12)
+
+
 if __name__ == "__main__":
     unittest.main()
