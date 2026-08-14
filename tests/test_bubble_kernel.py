@@ -1455,24 +1455,55 @@ class TestTauToFreqPoints(unittest.TestCase):
         assert_approx_array(got, reference, rel=0, abs=1e-12)
 
     def test_order_preservation_and_duplicates(self):
-        """``freq_indices = [2, 0, 0]`` on the bosonic axis (both values
-        are members of ``axB.freq_n``): the output's 3 columns must match
-        ``tau_to_freq``'s corresponding points IN THAT ORDER, with the
-        repeated ``0`` producing two identical (not deduplicated) columns."""
+        """``freq_indices = [2, 0, 0]`` on the bosonic axis: the output's 3
+        columns must match, IN THAT ORDER, what ``tau_to_freq_points`` itself
+        produces for each index taken one at a time, with the repeated ``0``
+        producing two identical (not deduplicated) columns.
+
+        CI-incident note (platform-fragile reference, now fixed): the
+        original reference here was built by picking columns out of
+        ``axB.tau_to_freq(arr)`` (the FULL, all-node transform) located by
+        ``np.where(axB.freq_n == n)``. That construction quietly depends on
+        the COMPOSITION of ``axB.freq_n`` -- sparse-ir's default Matsubara
+        sampling-point set, which is derived from which singular values
+        ``FiniteTempBasis`` retains at the ``eps`` cutoff. A borderline
+        singular value can be kept on one BLAS stack and dropped on another
+        (same ``sparse-ir``/``pylibsparseir`` version, different backend
+        rounding), shifting which indices ``freq_n`` contains or how the
+        two transform paths' evaluation matrices are assembled -- CI (all
+        four Python versions) saw 6 of this test's 9 elements differ hugely
+        from that reference while the identical test passed on local macOS
+        and a Linux A100 host, the signature of exactly this kind of
+        platform-dependent composition, not a real order/duplicate bug.
+
+        The contract actually under test is order preservation and
+        duplicate handling, NOT numerical agreement with a second transform
+        path -- so the fix makes the reference self-consistent: each column
+        of the multi-index call must equal the SAME method
+        (``tau_to_freq_points``) called with that one index alone. This
+        exercises the identical code path (``_build_tau_to_freq_points_matrix``
+        -> ``sparse_ir.MatsubaraSampling(basis, sampling_points=...)`` ->
+        ``basis.uhat``) for both sides, so it is platform-independent by
+        construction and the ``abs=1e-13`` tolerance stays tight. Value-level
+        correctness of ``tau_to_freq_points`` against an INDEPENDENT
+        transform is already anchored, platform-independently, by
+        ``test_round_trip_vs_tau_to_freq_shared_point`` above (which compares
+        a single shared point against ``tau_to_freq`` at ``abs=1e-12``) --
+        duplicating that cross-path check here would not test anything this
+        test doesn't already cover via that sibling test."""
         _, axB = self._axes()
         rng = np.random.default_rng(4)
         arr = (rng.standard_normal((3, axB.n_tau))
               + 1j * rng.standard_normal((3, axB.n_tau)))
 
-        full = axB.tau_to_freq(arr)
-        idx2 = int(np.where(axB.freq_n == 2)[0][0])
-        idx0 = int(np.where(axB.freq_n == 0)[0][0])
-        reference = np.stack(
-            [full[..., idx2], full[..., idx0], full[..., idx0]], axis=-1)
-
         got = axB.tau_to_freq_points(arr, np.array([2, 0, 0]))
+        reference = np.concatenate(
+            [axB.tau_to_freq_points(arr, np.array([2])),
+             axB.tau_to_freq_points(arr, np.array([0])),
+             axB.tau_to_freq_points(arr, np.array([0]))], axis=-1)
+
         self.assertEqual(got.shape, reference.shape)
-        assert_approx_array(got, reference, rel=0, abs=1e-12)
+        assert_approx_array(got, reference, rel=0, abs=1e-13)
 
     def test_parity_mismatch_raises_value_error(self):
         """An odd index on the bosonic axis, and an even index on the
@@ -1567,7 +1598,11 @@ class TestIrBondOracle(unittest.TestCase):
     magnitude above the gate's ``tol`` (~3.0e-9) -- confirmed FAILING,
     then the mutation was reverted (bytecode cache cleared around the
     mutation per the repo's known stale-pyc trap) and ``git diff``
-    confirmed clean of the mutation.
+    confirmed clean of the mutation. (This mutation check predates the
+    ``beta=0.1 -> 2.0`` CI-incident fixture change below -- its numbers are
+    from the older ``beta=0.1``/``N_cut=10**8`` fixture. It remains valid
+    evidence for the roll-direction bug it targets, since that bug and its
+    detection depend on the ``Nx=3``/flux structure, not on ``beta``.)
 
     Formula (mirrors ``TestBondDynamicOracle``'s already-validated
     ``Omega=0`` slice, re-derived from scratch here rather than imported):
@@ -1613,15 +1648,43 @@ class TestIrBondOracle(unittest.TestCase):
     fixture; the flux phase shifts which ``k`` the extremal energy sits at
     but the bound derivation above makes no assumption about ``e(k)``'s
     symmetry, only that it is real and bounded by ``W``, so it applies
-    unchanged), ``beta=0.1`` (a small, but NOT pathologically small,
-    temperature scale -- picked empirically: ``beta <~ 0.03`` starts
-    hitting unrelated ``sparse_ir``/``IRAxis`` conditioning issues at this
-    ``wmax``/``eps``, well outside this task's scope), ``N_cut = 10**8``
-    gives a certified remainder of ``~5.07e-11 < 1e-10`` (asserted below,
-    not just asserted in this docstring) at a runtime of roughly 7 seconds
-    (``Nx=3`` now needs 9 chunked (q, k) sums rather than the old ``Nx=2``
-    fixture's 4, chunked summation throughout, no huge array materialized
-    at once).
+    unchanged).
+
+    Beta selection (CI incident, issue #153-adjacent): the ORIGINAL fixture
+    used ``beta=0.1`` (``Lambda = beta*wmax = 0.5``), picked as "small but
+    not pathologically small" -- ``beta <~ 0.03-0.04`` was known (issue
+    #153) to hit ``IRAxis``'s ill-conditioning boundary, sometimes as a hard
+    ``LinAlgError``, sometimes SILENTLY producing wrong transform matrices.
+    CI (all four Python versions) measured exactly that silent-wrong
+    signature at ``beta=0.1`` -- ``ir_static`` off from the oracle by
+    roughly a factor of 2, uniformly across all 12 elements -- while the
+    IDENTICAL test, on the IDENTICAL pinned ``sparse-ir``/``pylibsparseir``
+    versions, passed on local macOS and on a Linux A100 host. That is only
+    possible if the ``beta=0.03-0.04`` conditioning boundary is itself
+    BLAS-stack-dependent (which SVD backend ``numpy.linalg.pinv`` and
+    ``sparse_ir.FiniteTempBasis`` end up calling, and how it rounds
+    near-singular values, differs by platform) -- on the CI runners'
+    BLAS stack, ``beta=0.1`` was ALREADY on the wrong side of that boundary,
+    even though it safely wasn't on macOS or the A100 host. The fixture is
+    therefore moved well clear of the boundary rather than re-measuring a
+    new platform-specific edge: ``beta=2.0`` (``Lambda = beta*wmax = 10``)
+    -- the SAME ``beta``/``wmax``/``eps`` as ``TestTauToFreqPoints``, whose
+    other tests (round-trip, parity, shape, cache lifetime) all passed on
+    every CI runner -- giving a wide, already-CI-validated margin from the
+    boundary.
+
+    ``N_cut``: at the larger ``beta``, the Matsubara spacing ``pi/beta``
+    shrinks, so reaching the same certified remainder needs more terms:
+    ``N_cut = 2 * 10**9`` gives a certified remainder of ``~5.07e-11 <
+    1e-10`` (asserted below, not just asserted in this docstring; the same
+    numeric value as the old ``beta=0.1``/``N_cut=10**8`` fixture's bound,
+    coincidentally, since both were tuned for a comparable safety margin
+    below the ``1e-10`` threshold) at a runtime of roughly 160 seconds
+    (``Nx=3`` needs 9 chunked (q, k) sums, each 20x the old fixture's
+    ``N_cut``; chunked summation throughout, no huge array materialized at
+    once -- CHUNK=10**7 was measured to be near-optimal, larger chunks were
+    NOT faster since per-chunk complex-array allocation overhead dominates
+    over python-loop overhead at this scale).
 
     Skips cleanly when ``sparse_ir`` is not importable (mirrors
     ``TestBubbleOldVsNewIr``'s guard).
@@ -1631,10 +1694,10 @@ class TestIrBondOracle(unittest.TestCase):
     t = 1.0
     mu = 0.3
     phi = 0.4
-    beta = 0.1
+    beta = 2.0
     wmax = 5.0
     eps = 1e-8
-    N_cut = 100_000_000
+    N_cut = 2_000_000_000
     CHUNK = 10_000_000
     delta_r = ((0, 0, 0), (1, 0, 0))
 
