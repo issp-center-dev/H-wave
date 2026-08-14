@@ -25,7 +25,8 @@ import numpy as np
 from . import backend as _bk
 
 
-def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail):
+def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail,
+                want_full=True):
     """Build the non-interacting Green's function from an eigen-decomposition.
 
     Parameters
@@ -47,11 +48,23 @@ def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail):
     coeff_tail : float
         High-frequency tail coefficient (see below); must be a finite
         real number. ``0`` disables the tail correction.
+    want_full : bool, default True
+        Whether the caller actually needs ``full_kw``. When ``False`` AND
+        ``coeff_tail != 0``, the full-size ``(nblock, nmat, nvol, p, p)``
+        reconstruction is skipped entirely (it is one extra full-Green-sized
+        allocation that a caller consuming only the deflated Green/tail pair
+        -- e.g. ``RPA._calc_green`` -- never needs) and ``full_kw`` comes
+        back as ``None``. When ``coeff_tail == 0``, ``full_kw`` IS
+        ``deflated_kw`` regardless of ``want_full`` (no extra allocation to
+        skip in the first place), so it is always returned in that case.
 
     Returns
     -------
-    full_kw : ndarray, complex128, shape (nblock, nmat, nvol, p, p)
-        The bare Green's function G(k, iw_n).
+    full_kw : ndarray, complex128, shape (nblock, nmat, nvol, p, p), or None
+        The bare Green's function G(k, iw_n). ``None`` exactly when
+        ``want_full=False`` and ``coeff_tail != 0``; at ``coeff_tail == 0``
+        this is the SAME object as ``deflated_kw`` regardless of
+        ``want_full`` (see above).
     deflated_kw : ndarray, complex128, shape (nblock, nmat, nvol, p, p)
         ``full_kw`` with the ``coeff_tail / (iw_n)`` term subtracted in
         frequency space (faster tau-space decay for FFT use). When
@@ -71,6 +84,10 @@ def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail):
     ``full[g,n,k] = deflated[g,n,k] + coeff_tail * (V V dagger)[g,k] / (iw_n)``
 
     ``green0_tail = V V dagger * coeff_tail * beta / 2`` (constant over n).
+
+    The ``deflated_kw``/``green0_tail`` computation is identical regardless
+    of ``want_full`` -- there is exactly one code path for that math; the
+    only thing ``want_full`` skips is the extra ``full_kw`` reconstruction.
 
     The leading block axis is inserted (length 1) when the inputs carry
     none, so the output is always canonical ``(nblock, nmat, nvol, p, p)``.
@@ -107,12 +124,21 @@ def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail):
     # the addition back onto `deflated_kw` broadcast the frequency axis in
     # a single assembly step.
     VVt = V @ V_conj_t                                             # (nblock,nvol,p,p)
-    wn5 = wn[:, :, :, :, np.newaxis]                               # (1,nmat,1,1,1)
-    full_kw = (deflated_kw + aa * VVt[:, np.newaxis, :, :, :] / wn5).astype(
-        np.complex128, copy=False)
 
     green0_tail = (VVt[:, np.newaxis, :, :, :]
                    * xp.ones((1, nmat, 1, 1, 1)) * aa * 0.5 * beta).astype(
+        np.complex128, copy=False)
+
+    if not want_full:
+        # The caller only needs deflated_kw/green0_tail (e.g. RPA._calc_green,
+        # which discards full_kw): skip the full-size (nblock,nmat,nvol,p,p)
+        # reconstruction entirely -- it is one whole extra Green-sized
+        # allocation the legacy code never made. deflated_kw/green0_tail come
+        # from the exact same computation above regardless of want_full.
+        return None, deflated_kw, green0_tail
+
+    wn5 = wn[:, :, :, :, np.newaxis]                               # (1,nmat,1,1,1)
+    full_kw = (deflated_kw + aa * VVt[:, np.newaxis, :, :, :] / wn5).astype(
         np.complex128, copy=False)
 
     return full_kw, deflated_kw, green0_tail

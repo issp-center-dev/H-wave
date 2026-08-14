@@ -2164,6 +2164,28 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
         with self.assertRaisesRegex(ValueError, r"(?i)does not match the model"):
             sc.calc_eliashberg(inp)
 
+    def test_load_green_npz_rejects_multi_block_file(self):
+        """FINDING 1 (external review): an external Green npz with
+        nblock=2 -- a legitimate spin-diagonal H-wave file, e.g. separate
+        G_up/G_down blocks written by a spin-resolved run -- must be
+        REJECTED, not silently truncated to block 0 while the bond path's
+        provenance records it as a trusted full Green.
+
+        A tiny synthetic 2-block npz, loaded directly through
+        ``_load_green_npz`` (the ``[eliashberg] bond_green`` loader), is
+        enough to pin this: it must raise ValueError mentioning the block
+        count, not silently return block 0's data."""
+        path = os.path.join(self.tmp_path, "two_block.npz")
+        raw = np.zeros((2, 4, 1, 1, 1), dtype=complex)
+        np.savez(path, green=raw)
+
+        with self.assertRaises(ValueError) as cm:
+            sc._load_green_npz(path, norb=1, Nx=1, Ny=1, Nz=1,
+                               label="bond_green")
+        msg = str(cm.exception)
+        self.assertIn("2", msg)
+        self.assertIn("block", msg.lower())
+
     def test_bond_green_rejects_non_positive_or_odd_nmat(self):
         """The FILE's Nmat overrides the configured one, so it must be validated
         like the configured one: POSITIVE and EVEN.

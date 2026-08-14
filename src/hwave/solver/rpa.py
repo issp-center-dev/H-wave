@@ -2894,6 +2894,11 @@ class RPA:
         ``green0_tail=None``, but callers such as ``_calc_chi0q_transverse``
         access ``green0_tail.shape`` unconditionally, so this wrapper
         materializes a shape-matched all-zero tail in that case.
+
+        ``want_full=False`` is passed to ``build_green``: this wrapper only
+        ever returns the deflated Green/tail pair, so the full-size
+        ``full_kw`` reconstruction (one whole extra Green-sized allocation
+        when ``coeff_tail != 0``) is never even built here.
         """
         logger.debug(">>> RPA._calc_green")
 
@@ -2905,7 +2910,7 @@ class RPA:
         assert nvol == self.lattice.nvol
 
         _full, green, green_tail = green_mod.build_green(
-            ew, ev, mu, beta, self.nmat, self.coeff_tail)
+            ew, ev, mu, beta, self.nmat, self.coeff_tail, want_full=False)
 
         if green_tail is None:
             xp = _bk.array_module_of(ew)

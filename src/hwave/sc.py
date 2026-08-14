@@ -3542,7 +3542,18 @@ def _load_green_npz(green_path, norb, Nx, Ny, Nz, label="Green"):
         raise ValueError(
             "{} file {}: 'green' must have shape (nblock, nfreq, nvol, norb, "
             "norb), got {}".format(label, green_path, green_raw.shape))
-    _, nfreq, nvol_g, norb1, norb2 = green_raw.shape
+    nblock_g, nfreq, nvol_g, norb1, norb2 = green_raw.shape
+    if nblock_g != 1:
+        raise ValueError(
+            "{} file {}: 'green' carries {} spin blocks, but this loader "
+            "unconditionally consumes block 0 -- the bond/FLEX Green "
+            "consumers here are single-block. A file with nblock=2 (e.g. a "
+            "legitimate spin-diagonal H-wave Green with separate G_up/G_down "
+            "blocks) would otherwise be silently halved to its up block "
+            "while being recorded as a trusted full Green. Re-run the "
+            "producing calculation paramagnetically (nblock=1), or extract "
+            "and save the single block you intend to use."
+            .format(label, green_path, nblock_g))
     if (nvol_g != Nx * Ny * Nz) or (norb1 != norb) or (norb2 != norb):
         raise ValueError(
             "{} file {} does not match the model: it holds nvol={}, norb={}x{} "

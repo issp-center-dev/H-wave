@@ -237,6 +237,13 @@ def _validate_bond_set(bond_set):
             "bubble kernel: bond_set must provide 'n_channels' and "
             "'delta_r' attributes (see "
             "bond_channels.resolve_interactions)")
+    if isinstance(n_channels, bool) or not isinstance(
+            n_channels, (int, np.integer)) or n_channels <= 0:
+        raise ValueError(
+            "bubble kernel: bond_set.n_channels must be a positive integer, "
+            "got {!r} -- a malformed (e.g. zero-channel) bond set would "
+            "otherwise pass through and yield a plausible-looking but "
+            "empty/zero-sized susceptibility".format(n_channels))
     if len(delta_r) != n_channels:
         raise ValueError(
             "bubble kernel: bond_set.delta_r length ({}) does not match "

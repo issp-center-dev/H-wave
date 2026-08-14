@@ -197,6 +197,43 @@ class TestBuildGreen(unittest.TestCase):
         self.assertIs(full, defl)
         self.assertIsNone(tail)
 
+    def test_want_full_false_skips_full_reconstruction(self):
+        """FINDING 2: ``want_full=False`` must return ``full_kw=None`` (no
+        full-size reconstruction at all) when ``coeff_tail != 0``, while
+        ``deflated_kw``/``green0_tail`` stay BITWISE identical to the
+        ``want_full=True`` call -- both share the exact same code path for
+        that math, want_full only skips the extra full-size allocation."""
+        ev, V = _tiny_eig()
+        beta, nmat, mu, ct = 2.0, 8, 0.1, 1.0
+
+        full_t, defl_t, tail_t = green_mod.build_green(
+            ev, V, mu, beta, nmat, ct, want_full=True)
+        full_f, defl_f, tail_f = green_mod.build_green(
+            ev, V, mu, beta, nmat, ct, want_full=False)
+
+        self.assertIsNotNone(full_t)
+        self.assertIsNone(full_f)
+        assert_approx_array(defl_f, defl_t, rel=0, abs=0)
+        assert_approx_array(tail_f, tail_t, rel=0, abs=0)
+
+    def test_want_full_default_is_true(self):
+        """The default keeps the pre-existing (full, deflated, tail)
+        contract for callers that do not opt in (e.g. sc.py's
+        _build_bond_green, which needs full_sc)."""
+        ev, V = _tiny_eig()
+        full, defl, tail = green_mod.build_green(ev, V, 0.1, 2.0, 8, 1.0)
+        self.assertIsNotNone(full)
+
+    def test_want_full_false_at_coeff_tail_zero_still_returns_full(self):
+        """At coeff_tail == 0, full_kw IS deflated_kw regardless of
+        want_full (documented aliasing contract) -- there is no full-size
+        allocation to skip in the first place."""
+        ev, V = _tiny_eig()
+        full, defl, tail = green_mod.build_green(
+            ev, V, 0.0, 2.0, 8, 0.0, want_full=False)
+        self.assertIs(full, defl)
+        self.assertIsNone(tail)
+
     def test_matches_rpa_solver_calc_green(self):
         """RPA._calc_green is now a thin wrapper delegating to
         build_green: this pins that delegation end-to-end -- the
@@ -259,6 +296,50 @@ class TestBuildGreen(unittest.TestCase):
             green_mod.build_green(ev, V, 0.0, 2.0, 8, float('nan'))
         with self.assertRaises(ValueError):
             green_mod.build_green(ev, V, 0.0, 2.0, 8, float('inf'))
+
+
+class _FakeBondSet:
+    """Minimal duck-typed stand-in for ``ResolvedInteractionSet``, carrying
+    only what ``bubble._validate_bond_set`` reads."""
+
+    def __init__(self, n_channels, delta_r):
+        self.n_channels = n_channels
+        self.delta_r = delta_r
+
+
+class TestValidateBondSet(unittest.TestCase):
+    """FINDING 3 (external review): ``bubble._validate_bond_set`` checked
+    ``len(delta_r) == n_channels`` but never that ``n_channels`` itself is a
+    sane positive integer -- a malformed duck-typed bond set with
+    ``n_channels=0`` and ``delta_r=()`` sailed straight through
+    ``len(()) == 0`` and would yield a plausible-looking but zero-sized
+    susceptibility instead of failing loudly."""
+
+    def test_rejects_zero_n_channels(self):
+        bond_set = _FakeBondSet(n_channels=0, delta_r=())
+        with self.assertRaisesRegex(ValueError, r"(?i)n_channels"):
+            bubble_mod._validate_bond_set(bond_set)
+
+    def test_rejects_negative_n_channels(self):
+        bond_set = _FakeBondSet(n_channels=-1, delta_r=())
+        with self.assertRaisesRegex(ValueError, r"(?i)n_channels"):
+            bubble_mod._validate_bond_set(bond_set)
+
+    def test_rejects_non_integer_n_channels(self):
+        bond_set = _FakeBondSet(n_channels=1.5, delta_r=((0, 0, 0),))
+        with self.assertRaisesRegex(ValueError, r"(?i)n_channels"):
+            bubble_mod._validate_bond_set(bond_set)
+
+    def test_rejects_boolean_n_channels(self):
+        bond_set = _FakeBondSet(n_channels=True, delta_r=((0, 0, 0),))
+        with self.assertRaisesRegex(ValueError, r"(?i)n_channels"):
+            bubble_mod._validate_bond_set(bond_set)
+
+    def test_accepts_valid_n_channels(self):
+        bond_set = _FakeBondSet(n_channels=1, delta_r=((0, 0, 0),))
+        n_channels, delta_r = bubble_mod._validate_bond_set(bond_set)
+        self.assertEqual(n_channels, 1)
+        self.assertEqual(delta_r, ((0, 0, 0),))
 
 
 class TestBubbleOldVsNewDense(unittest.TestCase):
