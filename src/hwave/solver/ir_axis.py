@@ -22,6 +22,7 @@ Wraps the optional ``sparse-ir`` package behind explicit H-wave conventions:
   matrices to the device via :func:`hwave.solver.backend.array_module_of`
   dispatch -- see :meth:`IRAxis.mats`).
 """
+import functools
 import logging
 
 import numpy as np
@@ -258,6 +259,95 @@ class IRAxis:
         """(..., n_freq) node values -> values on ARBITRARY tau points
         (fused fit + evaluate, cached like :meth:`eval_to_tau_points`)."""
         return self.eval_to_tau_points(self.fit_from_freq(arr), tau_points)
+
+    def tau_to_freq_points(self, arr, freq_indices):
+        """Fit ``arr`` from THIS axis's own tau-sampling nodes (LAST axis --
+        the same axis convention as every other ``IRAxis`` transform; there
+        is no ``axis`` argument) and evaluate at the given INTEGER Matsubara
+        indices ``freq_indices`` (sparse_ir convention: ``i w = n pi /
+        beta``). Fused fit(tau) + evaluate(freq_indices), analogous to
+        :meth:`freq_to_tau_points` with the two axes swapped.
+
+        Parameters
+        ----------
+        arr : ndarray
+            ``arr.shape[-1]`` must equal ``self.n_tau`` (this axis's
+            tau-node count) -- validated.
+        freq_indices : 1-D, non-empty, integer, sparse_ir Matsubara indices.
+            Parity must match ``self.statistics`` (odd for 'F', even for
+            'B'), else ``ValueError``. Order is PRESERVED in the output and
+            duplicates are permitted -- the evaluation matrix carries one
+            row per requested point (not a set).
+
+        Returns
+        -------
+        ndarray
+            ``arr`` with the last axis replaced by ``len(freq_indices)``.
+
+        Notes
+        -----
+        The evaluation matrix is built via ``sparse_ir.MatsubaraSampling``
+        at exactly the requested points (fit from this axis's tau sampling,
+        evaluate at the points) and cached per ``(tuple(freq_indices),
+        array module)`` with a BOUNDED cache
+        (``functools.lru_cache(maxsize=8)`` -- current use is only ``[0]``;
+        the bound prevents unbounded growth on arbitrary tuples), mirrored
+        to the requesting array's device the same way the other cached
+        matrices in this class are (:meth:`mats`).
+        """
+        freq_indices = np.asarray(freq_indices)
+        if freq_indices.ndim != 1 or freq_indices.size == 0:
+            raise ValueError(
+                "tau_to_freq_points: freq_indices must be a 1-D, non-empty "
+                "array of integer Matsubara indices, got shape {}"
+                .format(freq_indices.shape))
+        if not np.issubdtype(freq_indices.dtype, np.integer):
+            raise ValueError(
+                "tau_to_freq_points: freq_indices must contain integer "
+                "Matsubara indices, got dtype {}".format(freq_indices.dtype))
+        want_odd = 1 if self.statistics == "F" else 0
+        if np.any(np.abs(freq_indices) % 2 != want_odd):
+            raise ValueError(
+                "tau_to_freq_points: freq_indices parity does not match "
+                "this axis's statistics={!r} ({} indices required)."
+                .format(self.statistics, "odd" if want_odd else "even"))
+        if arr.shape[-1] != self.n_tau:
+            raise ValueError(
+                "tau_to_freq_points: arr.shape[-1] ({}) must equal this "
+                "axis's tau-node count n_tau ({})".format(
+                    arr.shape[-1], self.n_tau))
+
+        xp = _bk.array_module_of(arr)
+        freq_tuple = tuple(int(n) for n in freq_indices)
+        mat = self._tau_to_freq_points_matrix(freq_tuple, xp)
+        return arr @ mat
+
+    @functools.lru_cache(maxsize=8)
+    def _tau_to_freq_points_matrix(self, freq_tuple, xp):
+        """Bounded, device-mirrored cache for :meth:`tau_to_freq_points`'s
+        fused tau-fit + Matsubara-evaluate matrix, keyed by
+        ``(self, freq_tuple, xp)`` (``self`` folds in automatically since
+        this is an instance method wrapped by ``lru_cache`` -- each axis
+        instance gets its own cache slots; ``xp`` selects the host/device
+        mirror). ``maxsize=8`` bounds growth on arbitrary point tuples
+        (current callers only ever request ``(0,)``)."""
+        sparse_ir = _import_sparse_ir()
+        freq_n = np.array(freq_tuple, dtype=np.int64)
+        # Validates the point set against sparse_ir's own Matsubara
+        # convention; the evaluation matrix itself is the same
+        # ``basis.uhat`` map ``MatsubaraSampling`` wraps internally, kept
+        # explicit here (rather than routed through ``evaluate()``) so it
+        # composes with ``fit_tau`` into one matmul-ready matrix, exactly
+        # like every other cached transform in this class.
+        smpl = sparse_ir.MatsubaraSampling(self._basis,
+                                           sampling_points=freq_n)
+        eval_mat = np.asarray(self._basis.uhat(smpl.sampling_points))
+        eval_mat = eval_mat.reshape(self.L, freq_n.size)   # (L, npts)
+        composite = np.ascontiguousarray(
+            self._m["fit_tau"] @ eval_mat)                 # (n_tau, npts)
+        if xp is not np:
+            composite = xp.asarray(composite)
+        return composite
 
     def fit_from_freq_points(self, arr, freq_n):
         """(..., npts) values at ARBITRARY integer Matsubara indices

@@ -959,3 +959,211 @@ def bond_bubble_static(green_kw, green0_tail, beta, bond_set, *,
                              workers)
     return _assemble_bond_static(prepped, beta, bond_set_validated,
                                  spatial_shape, workers)
+
+
+# ===========================================================================
+# bond-enlarged bubble  --  private IR x bond cell
+# ===========================================================================
+#
+# _ir_bond_static computes the SAME static (Omega=0) bond-enlarged bubble as
+# bond_bubble_static, natively on the sparse-IR bosonic node l=0 rather than
+# via dense-Matsubara-grid truncation, reusing _prepare_ir (the same
+# fermionic-node-to-bosonic-tau transport, spatial ifftn, and reversed
+# propagator ir_bubble already uses) and the same per-pair
+# roll -> contract_general -> pair-reshape -> spatial fftn pipeline as the
+# dense bond assembly, with tau_to_freq_points(block, [0]) in place of the
+# dense path's spatial-fftn -> tau_to_boson -> (-1/beta) tail (spec:
+# "_ir_bond_static assembly sequence").
+#
+# Sign convention: _prepare_ir's g_rev already carries ONE explicit minus
+# (the fermionic-antiperiodicity sign, spec: "IR Omega=0 semantics"). The
+# per-pair contraction below applies a SECOND explicit minus at
+# contract_general -- the closed-fermion-loop bubble sign -- exactly
+# mirroring ir_bubble's own IR arm (_assemble_plain's
+# ``chi0_rt = -contract(...)``, the direct counterpart of dense_bubble's
+# ``sgn`` array plus its final ``-1/beta``, both of which also carry two
+# independent sign contributions). Both signs are REQUIRED: at zero bond
+# displacement (single channel, delta_r=(0,0,0)) this cell's diagonal block
+# must equal ir_bubble's general-scheme Omega=0 slice EXACTLY (mirroring the
+# dense bond assembly's own zero-displacement identity with dense_bubble's
+# general scheme, verified bitwise during development) -- omitting the
+# second minus produces the exact negative of that value, not a
+# discretization-scale discrepancy, so TestIrBondOracle/TestIrBondVsDense
+# would fail outright (not just miss a tolerance) rather than merely
+# degrade, making this identity self-checking.
+
+
+def _validate_ir_bond_inputs(green_kw, ax_fermi, ax_bose, spatial_shape):
+    """Validate an ``_ir_bond_static`` call: IR axis compatibility
+    (:func:`_validate_ir_axes`) plus everything :func:`_validate_ir_inputs`
+    validates for the general-orbital contraction, MINUS the ``scheme``
+    argument itself (the bond entry point takes none, mirroring
+    :func:`bond_bubble_static`'s dense counterpart) -- and ``nblock`` must
+    be exactly 1 (no ``scheme`` argument and no ``nblock == 2`` cross-block
+    semantics are defined for the bond entry points). Returns the
+    normalized ``(green_kw, nvol, nd, spatial_shape)``. ``ValueError`` on
+    any failure (survives ``python -O``)."""
+    _validate_ir_axes(ax_fermi, ax_bose)
+
+    xp = _bk.array_module_of(green_kw)
+
+    if green_kw.ndim != 5:
+        raise ValueError(
+            "bubble kernel: green_kw must have ndim 5 "
+            "(nblock, n_freq_F, nvol, p, p), got ndim={} shape={}".format(
+                green_kw.ndim, green_kw.shape))
+    nblock, nw, nvol, nd, nd2 = green_kw.shape
+    if nblock != 1:
+        raise ValueError(
+            "bubble kernel: _ir_bond_static requires green_kw's block "
+            "axis to be 1 (bond entry points take no scheme argument and "
+            "no nblock=2 cross-block semantics are defined), got "
+            "nblock={}".format(nblock))
+    if nd != nd2 or nd < 1:
+        raise ValueError(
+            "bubble kernel: orbital axes must be square and nonempty, "
+            "got ({}, {})".format(nd, nd2))
+    if nw != ax_fermi.n_freq:
+        raise ValueError(
+            "bubble kernel: green_kw frequency axis (nw={}) does not "
+            "match ax_fermi.n_freq ({}) -- green_kw must be sampled at "
+            "the fermionic IR nodes".format(nw, ax_fermi.n_freq))
+
+    spatial_shape = _validate_spatial_shape(spatial_shape, nvol)
+
+    green_kw = _promote_complex(green_kw, xp, "green_kw")
+
+    return (green_kw, nvol, nd, spatial_shape)
+
+
+def _ir_bond_pair_block(g_fwd, g_rev, ax_bose, spatial_shape, workers,
+                        shift, freq_indices):
+    """Compute the IR bond bubble block for ONE ``(m, mp)`` channel pair at
+    the requested bosonic IR frequency indices: ``(nvol, npair,
+    len(freq_indices))`` complex128, FRESHLY ALLOCATED (mirrors
+    :func:`_bond_pair_full_block`'s per-pair pipeline through the IR
+    transport -- spec: "the IR path mirrors its structure but through the
+    IR transport").
+
+    Roll the reversed Green by ``shift`` (``Delta r_m - Delta r_m'``),
+    ``contract_general`` (with the closed-loop sign, see the module
+    comment above), reshape the trailing ``(a, c, b, d)`` axes into the
+    ``(npair, npair)`` pair block and split ``nvol`` back to
+    ``(Nx, Ny, Nz)`` in one reshape (identical to the dense pipeline's
+    reshape), spatial ``fftn``, then ``ax_bose.tau_to_freq_points`` at the
+    requested indices -- every per-pair temporary is freed before return,
+    mirroring the dense path's ``del`` discipline.
+
+    ``g_fwd``/``g_rev``: ``(n_tau_B, nvol, nd, nd)`` (block axis already
+    dropped by the caller)."""
+    nt, nvol, nd, _ = g_rev.shape
+    nx, ny, nz = spatial_shape
+    npair = nd * nd
+
+    g_rev_shifted = _roll_spatial(g_rev, 1, spatial_shape, shift)
+
+    # (n_tau_B, nvol, a, c, b, d) -- the closed-fermion-loop bubble sign
+    # (see the module comment above: this is the SECOND of the two signs
+    # the IR bond cell needs, on top of the one already embedded in g_rev
+    # by _prepare_ir).
+    chi0_rt = -contract_general(g_fwd, g_rev_shifted)
+    del g_rev_shifted
+
+    # pair-block reshape + split nvol back to (Nx, Ny, Nz), one reshape
+    # (contract_general's trailing axis order (a, c, b, d) already IS the
+    # row/column split -- identical to the dense pipeline).
+    chi0_rt = chi0_rt.reshape(nt, nx, ny, nz, npair, npair)
+
+    chi0_qt = _bk.spatial_fftn(chi0_rt, axes=(1, 2, 3), workers=workers)
+    del chi0_rt
+    chi0_qt = chi0_qt.reshape(nt, nvol * npair * npair)
+
+    xp = _bk.array_module_of(chi0_qt)
+    chi0_qt_flat = xp.moveaxis(chi0_qt, 0, -1)   # (nvol*npair*npair, n_tau_B)
+    del chi0_qt
+
+    val = ax_bose.tau_to_freq_points(chi0_qt_flat, freq_indices)
+    del chi0_qt_flat
+
+    block = val.reshape(nvol, npair, npair, freq_indices.size)
+    del val
+
+    return block
+
+
+def _ir_bond_static(green_kw, ax_fermi, ax_bose, bond_set, *,
+                    spatial_shape, workers=None):
+    """Bond-enlarged static (bosonic Matsubara index ``n = 0``) IR
+    particle-hole bubble ``chi_bar(q; Delta r_m, Delta r_m')``, computed
+    natively on the sparse-IR bosonic axis rather than by dense-Matsubara
+    truncation.
+
+    Parameters
+    ----------
+    green_kw : ndarray, complex, shape (1, n_freq_F, nvol, p, p)
+        The FULL Green's function (no tail subtracted) sampled at
+        ``ax_fermi``'s fermionic Matsubara nodes -- no ``green0_tail``
+        argument (same Green/tail contract as :func:`ir_bubble`; the IR
+        basis already represents the ``coeff_tail / (i w)`` asymptotics
+        within ``ax_fermi.eps``). ``nblock`` must be exactly 1.
+    ax_fermi, ax_bose : IRAxis-like
+        Already-constructed fermionic/bosonic IR axis objects; must be
+        parameter-compatible (see :func:`_validate_ir_axes`).
+    bond_set : ResolvedInteractionSet-like
+        Bond-channel topology (``delta_r``, ``n_channels``).
+    spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
+        The lattice shape; ``prod(spatial_shape)`` must equal
+        ``green_kw.shape[2]`` (``nvol``).
+    workers : int or None, optional
+        Forwarded to ``backend.spatial_ifftn``/``spatial_fftn``.
+
+    Returns
+    -------
+    ndarray, complex128, shape (nvol, ND, ND)
+        ``ND = npair * bond_set.n_channels`` with ``npair = p**2``; the
+        static (``iOmega_0 = 0``) bond-enlarged bubble, same
+        bond-major/orbital-minor index convention as
+        :func:`bond_bubble_static`.
+
+    Raises
+    ------
+    ValueError
+        On any shape/dtype/nblock/axis-compatibility/bond_set mismatch
+        (see :func:`_validate_ir_bond_inputs` / :func:`_validate_bond_set`);
+        these checks use ``ValueError`` rather than a bare ``assert`` so
+        they survive ``python -O``.
+    """
+    (green_kw, nvol, nd, spatial_shape
+     ) = _validate_ir_bond_inputs(green_kw, ax_fermi, ax_bose, spatial_shape)
+    n_channels, delta_r = _validate_bond_set(bond_set)
+
+    prepped = _prepare_ir(green_kw, ax_fermi, ax_bose, spatial_shape,
+                          workers)
+    # nblock == 1 (validated above): drop the block axis. No forward-side
+    # sgn precompute here (unlike the dense path's green_fwd_sgn) -- the IR
+    # transport has no per-tau sgn array (spec: "no sgn array"), so the
+    # SAME g_rt is reused unmodified for every channel pair below.
+    g_rt = prepped.green_rt[0]
+    g_rev = prepped.green_rev[0]
+
+    npair = nd * nd
+    nD = npair * n_channels
+    xp = _bk.array_module_of(g_rt)
+    chi_bar = xp.zeros((nvol, nD, nD), dtype=xp.complex128)
+    freq0 = np.array([0], dtype=np.int64)
+
+    for m in range(n_channels):
+        dm = delta_r[m]
+        for mp in range(n_channels):
+            dmp = delta_r[mp]
+            shift = (int(dm[0]) - int(dmp[0]),
+                     int(dm[1]) - int(dmp[1]),
+                     int(dm[2]) - int(dmp[2]))
+
+            block = _ir_bond_pair_block(g_rt, g_rev, ax_bose, spatial_shape,
+                                        workers, shift, freq0)
+            chi_bar[:, m * npair:(m + 1) * npair,
+                    mp * npair:(mp + 1) * npair] = block[..., 0]
+            del block
+
+    return chi_bar
