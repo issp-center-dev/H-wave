@@ -148,10 +148,20 @@ def _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape, scheme):
         raise ValueError(
             "bubble kernel: Green's function block axis ({}) must be 1 "
             "(spin-free/spinful) or 2 (spin-diag)".format(nblock))
-    if nmat <= 0 or nmat % 2 != 0:
+    if nmat <= 0:
+        # Evenness is deliberately NOT required here (spec: "Kernel input
+        # validation", AMENDED 2026-08-14, Task 6): the centered grid
+        # iw_n = 1j*(2n+1-nmat)*pi/beta is well-defined for odd nmat too,
+        # the legacy _calc_chi0q body accepted odd nmat, and the issue-#91
+        # orbital-order regression locks in test_flex_general.py run a
+        # degenerate nmat=1 oracle through the public dispatch path. The
+        # bond entry points (bond_bubble_static, _iter_bond_dynamic) DO
+        # still require even nmat -- see _validate_even_nmat_for_bond --
+        # because their Omega=0 identification (static_index = nmat // 2)
+        # assumes the even centered grid.
         raise ValueError(
             "bubble kernel: Green's function frequency axis (nmat={}) "
-            "must be a positive even integer".format(nmat))
+            "must be a positive integer".format(nmat))
     if nd != nd2 or nd < 1:
         raise ValueError(
             "bubble kernel: orbital axes must be square and nonempty, "
@@ -180,6 +190,21 @@ def _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape, scheme):
         green0_tail = _promote_complex(green0_tail, xp, "green0_tail")
 
     return (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape)
+
+
+def _validate_even_nmat_for_bond(nmat):
+    """The bond entry points (``bond_bubble_static``, ``_iter_bond_dynamic``)
+    require an even ``nmat``, unlike the plain dense path (see the
+    evenness note in :func:`_validate_dense_inputs`): their static
+    ``Omega=0`` slice is identified by ``static_index = nmat // 2``, which
+    only lands on the bosonic zero-frequency point for the even centered
+    Matsubara grid. ``ValueError`` (survives ``python -O``)."""
+    if nmat % 2 != 0:
+        raise ValueError(
+            "bubble kernel: the bond bubble entry points require an even "
+            "nmat (got nmat={}) -- the static Omega=0 slice is identified "
+            "by static_index = nmat // 2, which assumes the even centered "
+            "Matsubara grid".format(nmat))
 
 
 def _validate_bond_set(bond_set):
@@ -803,8 +828,10 @@ def _iter_bond_dynamic(green_kw, green0_tail, beta, bond_set, *,
     ------
     ValueError
         Same conditions as :func:`bond_bubble_static` (shape/dtype/
-        nblock/bond_set mismatches); see :func:`_validate_dense_inputs` /
-        :func:`_validate_bond_set`.
+        nblock/bond_set mismatches, and an odd ``nmat`` -- unlike the
+        plain dense path, the bond entry points still require an even
+        ``nmat``, see :func:`_validate_even_nmat_for_bond`); see
+        :func:`_validate_dense_inputs` / :func:`_validate_bond_set`.
     """
     (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
      ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
@@ -815,6 +842,7 @@ def _iter_bond_dynamic(green_kw, green0_tail, beta, bond_set, *,
             "axis to be 1 (bond entry points take no scheme argument and "
             "no nblock=2 cross-block semantics are defined), got "
             "nblock={}".format(nblock))
+    _validate_even_nmat_for_bond(nmat)
     bond_set_validated = _validate_bond_set(bond_set)
 
     prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
@@ -870,7 +898,11 @@ def bond_bubble_static(green_kw, green0_tail, beta, bond_set, *,
         must be exactly 1 -- the bond entry points take no ``scheme``
         argument (the enlarged object requires the general orbital
         product) and no ``nblock == 2`` cross-block semantics are defined
-        (spec: "Scheme x bond and the pair-block mapping").
+        (spec: "Scheme x bond and the pair-block mapping") -- and
+        ``nmat`` must be even (unlike the plain dense path): the static
+        ``Omega=0`` slice is identified by ``nmat // 2``, which assumes
+        the even centered Matsubara grid (see
+        :func:`_validate_even_nmat_for_bond`).
     """
     (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
      ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
@@ -881,6 +913,7 @@ def bond_bubble_static(green_kw, green0_tail, beta, bond_set, *,
             "axis to be 1 (bond entry points take no scheme argument and "
             "no nblock=2 cross-block semantics are defined), got "
             "nblock={}".format(nblock))
+    _validate_even_nmat_for_bond(nmat)
     bond_set_validated = _validate_bond_set(bond_set)
 
     prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,

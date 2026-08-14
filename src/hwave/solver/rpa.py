@@ -29,6 +29,7 @@ from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import project_density_pairs
 from . import backend as _bk
+from . import bubble
 from . import fold
 from . import matsubara as _ms
 
@@ -2957,13 +2958,109 @@ class RPA:
 
         Notes
         -----
+        Validates the input shapes (see the inline guards below), then
+        delegates the dense-grid bubble calculation to
+        ``bubble.dense_bubble``. The guards here duplicate some of the
+        kernel's own validation deliberately -- their messages are the
+        user-facing diagnostics for this solver and are kept even though
+        the kernel would also catch the malformed input.
+        """
+        logger.debug(">>> RPA._calc_chi0q")
+
+        workers = getattr(self, "fft_workers", 1)
+
+        nx,ny,nz = self.lattice.shape
+        #nvol = self.lattice.nvol
+
+        nblock,nmat,nvol,nd,nd2 = green_kw.shape
+        # ValueError, not assert (issue #125, the longitudinal analogue of
+        # the transverse block-count fix): these validate INPUT array data,
+        # and a bare assert disappears under python -O. A wrong frequency
+        # count would then proceed into the kernel and produce
+        # plausible-looking wrong output; a wrong volume fails later at
+        # the lattice reshape, but with a diagnostic that names neither
+        # the axis nor the expectation.
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "chi0q kernel: Green's function volume axis ({}) does not "
+                "match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "chi0q kernel: Green's function frequency axis ({}) does "
+                "not match Nmat ({})".format(nmat, self.nmat))
+        if nblock not in (1, 2):
+            # 1 = spin-free/spinful, 2 = spin-diag. Anything else is
+            # malformed input: nblock=0 returned a finite EMPTY result
+            # and nblock=3 a finite three-block one, which the caller's
+            # block handling would then silently truncate (round-5
+            # review reproduced both).
+            raise ValueError(
+                "chi0q kernel: Green's function block axis ({}) must be "
+                "1 (spin-free/spinful) or 2 (spin-diag)".format(nblock))
+        if nd != nd2 or nd < 1:
+            raise ValueError(
+                "chi0q kernel: orbital axes must be square and nonempty, "
+                "got ({}, {})".format(nd, nd2))
+        if green0_tail.shape != green_kw.shape:
+            # STRUCTURAL pairing check only: shape equality cannot prove
+            # the tail came from the same _calc_green call (a stale
+            # same-shaped tail passes and shifts chi0q). Provenance
+            # machinery is deliberately out of scope here -- unlike
+            # chi0q reuse (#116), this pair never crosses the
+            # green_info/file boundary: every caller passes the two
+            # arrays one _calc_green call returned together. The guard
+            # exists because a same-SIZE tail of a different shape would
+            # be silently reshaped below and corrupt chi0q with finite,
+            # plausible-looking values (round-3 review reproduced it).
+            raise ValueError(
+                "chi0q kernel: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
+
+        # Delegate to the shared bubble kernel (spec: "Module layout").
+        # green0_tail is forwarded AS-IS -- an all-zero tail is not
+        # special-cased here; the kernel's own data-driven tail gate
+        # (mirroring the legacy _tail_on predicate) handles it.
+        return bubble.dense_bubble(
+            green_kw, green0_tail, beta,
+            spatial_shape=(nx, ny, nz),
+            scheme="reduced" if self.enable_reduced else "general",
+            workers=workers)
+
+    def _legacy_calc_chi0q(self, green_kw, green0_tail, beta):
+        """Calculate the bare susceptibility chi0q.
+
+        Legacy body kept for side-by-side comparison; removed at series end.
+
+        Parameters
+        ----------
+        green_kw : ndarray
+            Green's function in k-space and Matsubara frequency.
+            Shape: [g,l,k,a,b] where:
+            - g: block index
+            - l: Matsubara frequency index
+            - k: wave number index
+            - a,b: orbital and spin indices
+        green0_tail : ndarray
+            High-frequency tail correction for Green's function.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            The calculated chi0q.
+
+        Notes
+        -----
         Calculation steps:
         1. Fourier transform from Matsubara freq to imaginary time
         2. Transform from k-space to real space
         3. Calculate chi0 in real space and imaginary time
         4. Transform back to k-space and Matsubara frequency
         """
-        logger.debug(">>> RPA._calc_chi0q")
+        logger.debug(">>> RPA._legacy_calc_chi0q")
 
         xp = _bk.array_module_of(green_kw)
         workers = getattr(self, "fft_workers", 1)

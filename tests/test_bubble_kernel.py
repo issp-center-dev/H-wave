@@ -227,13 +227,16 @@ class TestBuildGreen(unittest.TestCase):
 
 
 class TestBubbleOldVsNewDense(unittest.TestCase):
-    """Old-vs-new gate: ``RPA._calc_chi0q`` (OLD) vs
+    """Old-vs-new gate: ``RPA._legacy_calc_chi0q`` (OLD) vs
     ``bubble.dense_bubble`` (NEW) on identical inputs, across
     {reduced, general} x {nblock 1, 2} x {tail on (coeff_tail=0.5), off}.
-    No dispatch change yet (rpa.py is untouched until Task 6) -- both
-    callables exist today, so this is a pure old-vs-new numerics gate
-    (Global Constraints: ``assert_approx_array(new, old, rel=1e-6,
-    abs=1e-8)``, no bytewise gates, issue #85).
+    Since Task 6, ``RPA._calc_chi0q`` itself is a thin wrapper that
+    delegates to ``bubble.dense_bubble`` -- comparing it against
+    ``dense_bubble`` directly would be new-vs-new. The OLD side is the
+    verbatim-renamed ``_legacy_calc_chi0q`` body instead, so this stays a
+    real old-vs-new numerics gate until the legacy body is deleted at the
+    series' end (Global Constraints: ``assert_approx_array(new, old,
+    rel=1e-6, abs=1e-8)``, no bytewise gates, issue #85).
 
     The fixture is norb=2 with complex NN hopping (``t = 0.7 * exp(0.3j)``,
     a different magnitude per orbital) so the general (non-diagonal
@@ -268,7 +271,7 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
                     with self.subTest(nblock=want_nblock, tail=tail_label,
                                        scheme=scheme):
                         solver.enable_reduced = (scheme == "reduced")
-                        old = solver._calc_chi0q(green, tail, beta)
+                        old = solver._legacy_calc_chi0q(green, tail, beta)
                         new = bubble_mod.dense_bubble(
                             green, tail, beta, spatial_shape=spatial_shape,
                             scheme=scheme)
@@ -298,13 +301,63 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
                         scheme=scheme)
                     assert_approx_array(with_none, with_zero, rel=0, abs=0)
 
-    def test_rejects_odd_nmat(self):
+    def test_odd_nmat_no_longer_rejected(self):
+        """AMENDED (spec "Kernel input validation", 2026-08-14, Task 6 fix
+        round 1): the plain dense path dropped its even-nmat requirement --
+        the draft required it, but the legacy ``_calc_chi0q`` body accepted
+        odd ``nmat`` and the issue-#91 orbital-order regression locks in
+        ``test_flex_general.py`` deliberately run a degenerate ``nmat=1``
+        oracle through the public dispatch path. This used to assert the
+        OPPOSITE (pre-amendment ``test_rejects_odd_nmat``): an odd-``nmat``
+        ``green_kw`` must now be ACCEPTED, not rejected. (The bond entry
+        points still reject odd ``nmat`` -- see
+        ``TestBubbleOldVsNewBondStatic.test_rejects_odd_nmat``.)
+        ``test_nmat_one_matches_legacy`` below is the positive numerical
+        pin against the legacy body; this is the negative "does not raise"
+        smoke check at a non-degenerate odd value."""
         solver, green, tail, beta, spatial_shape = self._oracle(0.0, 0.0)
         bad_green = green[:, :-1]
-        with self.assertRaises(ValueError):
-            bubble_mod.dense_bubble(bad_green, tail[:, :-1], beta,
-                                     spatial_shape=spatial_shape,
-                                     scheme="general")
+        bad_tail = tail[:, :-1]
+        self.assertEqual(bad_green.shape[1] % 2, 1)
+        result = bubble_mod.dense_bubble(bad_green, bad_tail, beta,
+                                         spatial_shape=spatial_shape,
+                                         scheme="general")
+        self.assertEqual(result.shape[1], bad_green.shape[1])
+
+    def test_nmat_one_matches_legacy(self):
+        """Degenerate ``nmat=1`` dense bubble, both schemes, against
+        ``RPA._legacy_calc_chi0q`` on the identical input -- the numerical
+        pin behind the amendment above. Mirrors
+        ``tests/test_flex_general.py``'s ``_make_chi0_general_flex``
+        pattern: build with a valid even ``Nmat`` (the solver-level config
+        validator at ``rpa.py``'s ``_init_param`` -- distinct from the
+        kernel's own validation touched here -- still rejects odd ``Nmat``
+        at construction time), then override ``solver.nmat = 1`` and feed a
+        hand-built ``(1, 1, nvol, p, p)`` random ``green_kw`` directly
+        (bypassing ``_calc_green``, which the construction-time Nmat would
+        make inconsistent with a post-hoc override)."""
+        solver = _make_rpa_solver(coeff_tail=0.0, norb=2, complex_hop=True,
+                                  Lx=4, Ly=4, Nmat=2)
+        solver.nmat = 1
+        nk = solver.lattice.nvol
+        spatial_shape = tuple(solver.lattice.shape)
+        beta = 1.0 / solver.T
+
+        rng = np.random.default_rng(4242)
+        shape = (1, 1, nk, 2, 2)
+        green_kw = (rng.standard_normal(shape)
+                   + 1j * rng.standard_normal(shape)).astype(np.complex128)
+        tail = np.zeros_like(green_kw)
+
+        for scheme in ("reduced", "general"):
+            with self.subTest(scheme=scheme):
+                solver.enable_reduced = (scheme == "reduced")
+                old = solver._legacy_calc_chi0q(green_kw, tail, beta)
+                new = bubble_mod.dense_bubble(
+                    green_kw, tail, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                self.assertEqual(new.shape, old.shape)
+                assert_approx_array(new, old, rel=1e-6, abs=1e-8)
 
     def test_rejects_spatial_shape_mismatch(self):
         solver, green, tail, beta, spatial_shape = self._oracle(0.0, 0.0)
@@ -559,6 +612,40 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         with self.assertRaises(ValueError):
             bubble_mod.bond_bubble_static(
                 green, tail, beta, bond_set, spatial_shape=bad_shape)
+
+    def test_rejects_odd_nmat(self):
+        """Unlike the plain dense path (whose even-nmat requirement was
+        dropped -- see ``TestBubbleOldVsNewDense.test_odd_nmat_no_longer_rejected``
+        / spec "Kernel input validation", AMENDED 2026-08-14), the bond
+        entry points still require an even ``nmat``: ``bond_bubble_static``
+        identifies its static ``Omega=0`` slice as ``nmat // 2``, which
+        only lands on the bosonic zero-frequency point for the even
+        centered Matsubara grid. Both ``bond_bubble_static`` and
+        ``_iter_bond_dynamic`` share this guard
+        (``bubble._validate_even_nmat_for_bond``)."""
+        from hwave.solver.bond_channels import resolve_interactions
+        from tests.test_bond_channels import _nn_square_2orb
+
+        solver = _make_rpa_solver(coeff_tail=0.0, hz=0.0, norb=2,
+                                   complex_hop=True, Lx=4, Ly=4, Nmat=8)
+        solver._calc_epsilon_k({})
+        beta = 1.0 / solver.T
+        mu = solver.mu_value
+        green, tail = solver._calc_green(beta, mu)
+        spatial_shape = tuple(solver.lattice.shape)
+        bad_green = green[:, :-1]
+        bad_tail = tail[:, :-1]
+        self.assertEqual(bad_green.shape[1] % 2, 1)
+
+        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        with self.assertRaises(ValueError):
+            bubble_mod.bond_bubble_static(
+                bad_green, bad_tail, beta, bond_set,
+                spatial_shape=spatial_shape)
+        with self.assertRaises(ValueError):
+            list(bubble_mod._iter_bond_dynamic(
+                bad_green, bad_tail, beta, bond_set,
+                spatial_shape=spatial_shape))
 
 
 class TestBondDynamicOracle(unittest.TestCase):
