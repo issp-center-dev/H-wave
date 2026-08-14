@@ -561,28 +561,43 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
 
         ROUND 1 of this gate (a smaller ``Nx=Ny=Nz=4`` fixture) measured a
         peak of ~5-7x ``S_in`` and concluded the ``4 * S_in`` bound was an
-        undercount, bumping the multiplier to 8. ROUND 2 (this version)
-        found the TRUE cause: ``green.build_green``'s locals ``Vg``
-        (full-size) and ``g_deflated`` were never released and stayed alive
-        through the ``green0_tail``/``full_kw`` assembly, inflating the
-        measured peak; round 1's small fixture also had disproportionate
-        FIXED small-buffer overhead relative to its tiny ``S_in``. With
+        undercount, bumping the multiplier to 8. ROUND 2 found the TRUE
+        cause: ``green.build_green``'s locals ``Vg`` (full-size) and
+        ``g_deflated`` were never released and stayed alive through the
+        ``green0_tail``/``full_kw`` assembly, inflating the measured peak;
+        round 1's small fixture also had disproportionate FIXED
+        small-buffer overhead relative to its tiny ``S_in``. With
         ``green.py``'s ``del Vg, g_deflated`` fix (added immediately after
         ``deflated_kw`` is formed) and a LARGER fixture here (so fixed
         overhead is negligible relative to ``S_in``), the measured peak is
         ``4 * S_in`` plus a small FIXED (not ``S_in``-scaled) residual --
-        measured 888-952 bytes across several fixture sizes, from the small
-        non-``S_in``-scaled buffers (``V_conj_t``, ``VVt``, ``wn``, ``ek``,
-        ``iomega``, ``wn5``) plus ordinary Python/tracemalloc object
-        bookkeeping (the returned ``_BondGreen`` namedtuple, etc.) that the
-        coarse ``S_in``-unit estimate does not itemize. ``_CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES``
-        below is a generous (>15x the largest measured residual), honestly
-        documented allowance for exactly that -- NOT a reopening of the
-        undercount round 1 found and round 2 fixed at the source. The
-        multiplier is back at the spec's documented ``4``
-        (``_bond_memory_estimate``'s ``carrier_bytes``); this test's own
-        slack lives here, in the MEASUREMENT comparison, not in production's
-        estimate.
+        measured 888-952 bytes locally across several fixture sizes, from
+        the small non-``S_in``-scaled buffers (``V_conj_t``, ``VVt``,
+        ``wn``, ``ek``, ``iomega``, ``wn5``) plus ordinary Python/
+        tracemalloc object bookkeeping (the returned ``_BondGreen``
+        namedtuple, etc.) that the coarse ``S_in``-unit estimate does not
+        itemize.
+
+        ROUND 3 (this version): round 2's fixed ``16384`` B allowance for
+        that residual was itself PLATFORM-FRAGILE -- PR #152's CI on Python
+        3.12 measured the same fixed-overhead residual at ~24 KB (vs. <1 KB
+        locally), tripping the fixed allowance even though the carrier
+        itself was NOT desynced (different cpython/tracemalloc builds
+        instrument allocator bookkeeping differently, so the ABSOLUTE size
+        of this non-``S_in``-scaled residual is itself platform-dependent,
+        not just its already-acknowledged non-zero existence). Replaced
+        with a SCALE-AWARE slack of ``0.5 * S_in`` instead of a bigger fixed
+        constant: a GENUINE carrier desync (a dropped ``del``, a
+        reintroduced un-freed buffer) adds at least one WHOLE extra
+        ``S_in``-sized array, so anything under half an ``S_in`` cannot be a
+        real desync and must be platform allocator noise -- this keeps full
+        detection power for the failure mode this test exists to catch
+        while absorbing the measured cross-platform variation (<1 KB
+        locally, ~24 KB on CI cpython 3.12) automatically, without needing
+        a fixture-specific or platform-specific constant. The multiplier is
+        at the spec's documented ``4`` (``_bond_memory_estimate``'s
+        ``carrier_bytes``); this test's own slack lives here, in the
+        MEASUREMENT comparison, not in production's estimate.
         """
         from hwave.solver import bond_channels as bc
 
@@ -619,26 +634,34 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
                                        tail_on=True)
         budget = est["carrier_bytes"]
 
-        # Documented, honest allowance for the small FIXED (non-S_in-scaled)
-        # overhead described in the docstring above -- see that note for
-        # what it covers and why it belongs in this measurement comparison
-        # rather than in production's coarse S_in-unit estimate.
-        _CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES = 16384
+        # Scale-aware (round 3), not fixed, allowance for the small FIXED
+        # (non-S_in-scaled) residual described in the docstring above: one
+        # Green-buffer's worth of bytes, same S_in the budget itself derives
+        # from. A GENUINE carrier desync adds at least one WHOLE extra
+        # S_in-sized array, so half an S_in of slack keeps full detection
+        # power for that failure mode while absorbing platform allocator
+        # overhead (measured <1 KB locally, ~24 KB on CI cpython 3.12 --
+        # tracemalloc accounting differs across builds) that a fixed-byte
+        # constant cannot track across platforms.
+        unit = int(Nx) * int(Ny) * int(Nz) * int(nmat) * 16  # complex128
+        S_in = (norb ** 2) * unit
+        slack = 0.5 * S_in
 
         self.assertGreaterEqual(
-            budget + _CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES, peak, (
-                "the preflight budgets {:.3f} MB (plus a {} B fixed-overhead "
-                "allowance) for the tail-on Green carrier (_build_bond_green's "
-                "construction phase) but the measured peak is {:.3f} MB -- "
-                "carrier_bytes's documented tail-on multiplier (currently 4x "
-                "S_in) has desynced from _build_bond_green".format(
-                    budget / 1e6, _CONSTRUCTION_FIXED_OVERHEAD_SLACK_BYTES,
-                    peak / 1e6)))
+            budget + slack, peak, (
+                "the preflight budgets {:.3f} MB (plus a {:.3f} MB "
+                "scale-aware allocator-overhead allowance of 0.5*S_in) for "
+                "the tail-on Green carrier (_build_bond_green's construction "
+                "phase) but the measured peak is {:.3f} MB -- carrier_bytes's "
+                "documented tail-on multiplier (currently 4x S_in) has "
+                "desynced from _build_bond_green".format(
+                    budget / 1e6, slack / 1e6, peak / 1e6)))
         # Upper-slack check: budget must not be wildly conservative either.
         # Retuned from the earlier 3.0x to 2.0x -- with the del fix and this
         # larger fixture, budget tracks peak almost exactly (~1.0x), so 2.0x
         # has real teeth: it would immediately catch a regression back to
-        # something like round 1's over-inflated 8x multiplier.
+        # something like round 1's over-inflated 8x multiplier. Unchanged by
+        # this round's fix (only the lower-bound allowance is scale-aware).
         self.assertLessEqual(budget, 2.0 * peak)
 
 
