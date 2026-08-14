@@ -18,6 +18,7 @@ import numpy as np
 from tests.approx_util import assert_approx_array
 from hwave.solver import green as green_mod
 from hwave.solver import bubble as bubble_mod
+from hwave.solver.bond_channels import resolve_interactions
 
 
 def _tiny_eig(nvol=4, p=2, seed=7):
@@ -558,6 +559,324 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         with self.assertRaises(ValueError):
             bubble_mod.bond_bubble_static(
                 green, tail, beta, bond_set, spatial_shape=bad_shape)
+
+
+class TestBondDynamicOracle(unittest.TestCase):
+    """Independent oracle for ``bubble._iter_bond_dynamic``: a plain-Python
+    Matsubara double sum extending ``tests/test_bond_channels.py``'s
+    ``_direct_bond_bubble`` (the static, Omega=0-only recipe at line ~122)
+    to EVERY bosonic frequency index ``l``.
+
+    Derivation of the frequency extension (recorded here since it is the
+    load-bearing new fact this task adds): the fermionic grid is
+    ``iw_n = (2n+1-nmat)*pi/beta`` for ``n = 0 .. nmat-1``
+    (``_toy_green_4x4``'s convention); the bosonic Matsubara index at
+    generator-slot ``l`` is ``2l - nmat`` (``ir_axis.py``'s ``n_l = 2l -
+    Nmat`` convention, pinned by the module docstring / spec's "Output
+    contracts"). Because the kernel builds G(tau) from only ``nmat``
+    sampled frequencies via an FFT, multiplying two such truncated series
+    in tau and transforming back realizes a CIRCULAR (mod-``nmat``, no
+    wraparound sign flip) convolution over the SAME ``n=0..nmat-1`` window
+    -- not literal analytic continuation to frequencies outside the
+    window. Concretely, the forward propagator's frequency index shifts by
+    ``l - nmat//2`` (wrapped mod ``nmat``) while the reverse propagator's
+    index stays unshifted:
+
+        chi[(m,idx),(mp,idxp)](q,l) =
+            -(T/N) sum_{k,n} e^{i k.(dr_m - dr_mp)}
+                              G_{l1,l3}(k+q, (n + l - nmat//2) mod nmat)
+                              G_{l4,l2}(k, n)
+
+    with idx=l1*norb+l2, idx'=l3*norb+l4 (same bond-major/orbital-minor
+    convention as ``_direct_bond_bubble``). This formula was mechanically
+    derived and cross-checked against ``bubble.dense_bubble``'s ALREADY
+    old-vs-new-gated general-scheme output (``TestBubbleOldVsNewDense``)
+    at zero displacement, on both a real single-orbital fixture and a
+    fully random-Hamiltonian multi-orbital fixture with no built-in
+    k -> -k symmetry (which would otherwise make the shift's sign
+    unobservable) -- exact match (<1e-15) at every ``(q, l, orbital)``
+    combination confirmed the "+", "mod-nmat, no sign flip" convention
+    used above (a "-" shift or a wraparound sign flip both fail on the
+    asymmetric fixture). The static (``l = nmat//2``, shift 0) case
+    reduces to the existing test's unmodified formula.
+
+    Tiny grid (spec's ambiguity resolution): Nx=2, Ny=Nz=1, p=1, nmat=8 --
+    reuses ``_toy_green_4x4`` (it accepts arbitrary Nx/Ny/Nz/Nmat) rather
+    than re-deriving the single-orbital tight-binding fixture.
+    """
+
+    Nx, Ny, Nz, Nmat = 2, 1, 1, 8
+
+    @staticmethod
+    def _materialize_dynamic(green_kw, green0_tail, beta, bond_set,
+                             spatial_shape):
+        """Test-only helper (spec: "Private interfaces" -- kept in the
+        test module, not ``bubble.py``): collects ``_iter_bond_dynamic``'s
+        streamed ``((m, mp), block)`` pairs into a dense
+        ``(nmat, nvol, ND, ND)`` array, for tiny grids only."""
+        n_channels = bond_set.n_channels
+        npair = None
+        out = None
+        for (m, mp), block in bubble_mod._iter_bond_dynamic(
+                green_kw, green0_tail, beta, bond_set,
+                spatial_shape=spatial_shape):
+            if out is None:
+                nmat, nvol, npair, _ = block.shape
+                out = np.zeros((nmat, nvol, npair * n_channels,
+                                npair * n_channels), dtype=np.complex128)
+            out[:, :, m * npair:(m + 1) * npair,
+                mp * npair:(mp + 1) * npair] = block
+        return out
+
+    def _direct_reference(self, green, bond_set, T, N):
+        """Single-orbital (``l1=l2=l3=l4=0``) direct sum per (m, mp, l, q)
+        -- the formula derived in the class docstring, specialized to
+        ``norb=1`` (``idx=idx'=0``, so ``chi`` is just
+        ``(n_channels, n_channels, Nmat, Nx, Ny, Nz)``, no orbital axes)."""
+        Nx, Ny, Nz, Nmat = self.Nx, self.Ny, self.Nz, self.Nmat
+        g = green[0, 0]  # (Nx, Ny, Nz, Nmat)
+        B = bond_set.n_channels
+        kx_list = 2.0 * np.pi * np.arange(Nx) / Nx
+        ky_list = 2.0 * np.pi * np.arange(Ny) / Ny
+        kz_list = 2.0 * np.pi * np.arange(Nz) / Nz
+
+        ref = np.zeros((B, B, Nmat, Nx, Ny, Nz), dtype=complex)
+        for m in range(B):
+            drm = bond_set.delta_r[m]
+            for mp in range(B):
+                drmp = bond_set.delta_r[mp]
+                ddx, ddy, ddz = (drm[0] - drmp[0], drm[1] - drmp[1],
+                                 drm[2] - drmp[2])
+                for l in range(Nmat):
+                    shift = l - Nmat // 2
+                    for qx in range(Nx):
+                        for qy in range(Ny):
+                            for qz in range(Nz):
+                                s = 0.0 + 0.0j
+                                for kx in range(Nx):
+                                    for ky in range(Ny):
+                                        for kz in range(Nz):
+                                            phase = np.exp(1j * (
+                                                kx_list[kx] * ddx
+                                                + ky_list[ky] * ddy
+                                                + kz_list[kz] * ddz))
+                                            kqx = (kx + qx) % Nx
+                                            kqy = (ky + qy) % Ny
+                                            kqz = (kz + qz) % Nz
+                                            n_fwd = (np.arange(Nmat)
+                                                     + shift) % Nmat
+                                            s += phase * np.sum(
+                                                g[kqx, kqy, kqz, n_fwd]
+                                                * g[kx, ky, kz, :])
+                                ref[m, mp, l, qx, qy, qz] = -(T / N) * s
+        return ref
+
+    def test_per_omega_matches_direct_sum(self):
+        from tests.test_bond_channels import _toy_green_4x4, _nn_square
+
+        green, T, N = _toy_green_4x4(Nx=self.Nx, Ny=self.Ny, Nz=self.Nz,
+                                     Nmat=self.Nmat)
+        beta = 1.0 / T
+        bond_set = resolve_interactions(_nn_square(0.25), np.eye(3), norb=1)
+
+        g_canon = np.ascontiguousarray(
+            np.transpose(green[0, 0], (3, 0, 1, 2))
+        ).reshape(1, self.Nmat, self.Nx * self.Ny * self.Nz, 1, 1)
+
+        materialized = self._materialize_dynamic(
+            g_canon, None, beta, bond_set,
+            spatial_shape=(self.Nx, self.Ny, self.Nz))
+        ref = self._direct_reference(green, bond_set, T, N)
+
+        for m in range(bond_set.n_channels):
+            for mp in range(bond_set.n_channels):
+                for l in range(self.Nmat):
+                    with self.subTest(m=m, mp=mp, l=l):
+                        code_block = materialized[
+                            l, :, m:m + 1, mp:mp + 1].reshape(
+                                self.Nx, self.Ny, self.Nz)
+                        ref_block = ref[m, mp, l]
+                        assert_approx_array(code_block, ref_block,
+                                            rel=0, abs=1e-10)
+
+    def test_l_half_nmat_pins_static_output(self):
+        """The generator's ``l = nmat // 2`` slice must equal
+        ``bond_bubble_static``'s output at ``abs=1e-13`` -- same per-pair
+        pipeline (:func:`bubble._bond_pair_full_block`), so this is a
+        near-exact numerical pin, not an independent-oracle tolerance."""
+        from tests.test_bond_channels import _toy_green_4x4, _nn_square
+
+        green, T, N = _toy_green_4x4(Nx=self.Nx, Ny=self.Ny, Nz=self.Nz,
+                                     Nmat=self.Nmat)
+        beta = 1.0 / T
+        bond_set = resolve_interactions(_nn_square(0.25), np.eye(3), norb=1)
+        spatial_shape = (self.Nx, self.Ny, self.Nz)
+
+        g_canon = np.ascontiguousarray(
+            np.transpose(green[0, 0], (3, 0, 1, 2))
+        ).reshape(1, self.Nmat, self.Nx * self.Ny * self.Nz, 1, 1)
+
+        materialized = self._materialize_dynamic(
+            g_canon, None, beta, bond_set, spatial_shape=spatial_shape)
+        static = bubble_mod.bond_bubble_static(
+            g_canon, None, beta, bond_set, spatial_shape=spatial_shape)
+
+        assert_approx_array(materialized[self.Nmat // 2], static,
+                            rel=0, abs=1e-13)
+
+    def test_rejects_nblock_2(self):
+        from tests.test_bond_channels import _nn_square
+        bond_set = resolve_interactions(_nn_square(0.25), np.eye(3), norb=1)
+        green = np.zeros((2, self.Nmat, self.Nx * self.Ny * self.Nz, 1, 1),
+                         dtype=complex)
+        with self.assertRaises(ValueError):
+            list(bubble_mod._iter_bond_dynamic(
+                green, None, 2.0, bond_set,
+                spatial_shape=(self.Nx, self.Ny, self.Nz)))
+
+
+class TestBondEndpointShift(unittest.TestCase):
+    """Nonzero-displacement, asymmetric-Green, tail-ON gate for the
+    equal-time endpoint-mean correction's spatial roll (spec: "Endpoint
+    correction under a shift" -- "the SAME spatial roll to the reversed
+    branch's jump term as to green_rev"; brief: "an m=m'=0 test cannot see
+    this error").
+
+    Fixture: a 2-orbital Hamiltonian with different diagonal dispersions
+    per orbital (``eps1`` disperses along x and z, ``eps2`` along y and z,
+    at different amplitudes) and a constant complex inter-orbital hopping
+    (extends the Task 4 ``_toy_green_4x4_2orb`` idea, but built from an
+    explicit Hermitian ``H(k)`` diagonalized via ``green.build_green`` so
+    both the FULL and DEFLATED Green functions -- and the endpoint jump
+    term -- are available with the exact tail semantics the kernel
+    consumes). ``coeff_tail=0.5`` (a fractional value, per the spec's note
+    that fractional tail coefficients remain in scope for this path).
+
+    The channel pair compared is ``(m, mp) = (1, 4)``, i.e.
+    ``Delta r_m=(-1,0,0)``, ``Delta r_mp=(1,0,0)`` (from
+    ``_nn_square_2orb``'s ``resolve_interactions`` topology) -- shift
+    ``(-2, 0, 0)``, the LARGEST-magnitude nonzero shift available on this
+    topology, chosen because a dropped roll on the endpoint jump term is
+    most visible where the phase/shift is least trivial.
+
+    Tolerance derivation (measured, not guessed, AT THIS (m, mp) = (1, 4)
+    pair -- the truncation error is shift-dependent, so it was remeasured
+    for the actual pair/q-points used here rather than reused from a
+    different pair): at this fixture's Nmat=128, the tail-ON
+    ``bond_bubble_static`` output differs from the direct FULL-Green
+    Matsubara sum (restricted to the same finite n=0..Nmat-1 window -- the
+    physically exact answer only in the Nmat -> infinity limit, since the
+    coeff_tail correction accelerates but does not eliminate the
+    finite-window truncation error) by <= 2e-6 in max-abs at both tested
+    q-points (measured 1.7e-6 at q=(0,0,0), 8.6e-7 at q=(1,1,0)), scaling
+    ~1/Nmat**2 (measured at Nmat=16/32/64/128/256:
+    1.0e-4/2.7e-5/6.8e-6/1.7e-6/4.3e-7, each ~4x the next -- consistent
+    with the tail correction's improved but still finite-order
+    convergence). The gate uses abs=1e-5, a >5x margin over the measured
+    error, which is still several orders of magnitude tighter than the
+    scale at which a dropped roll on the jump term shows up (an
+    undropped-vs-dropped roll differs by O(1e-2) at this shift -- see the
+    mutation-check note in the task report).
+    """
+
+    Nx, Ny, Nz, Nmat = 4, 2, 1, 128
+    BETA = 1.3
+    MU = 0.15
+    COEFF_TAIL = 0.5
+
+    @classmethod
+    def _build_fixture(cls):
+        t = 1.0
+        mu1, mu2 = 0.2, -0.35
+        t12 = 0.18 + 0.07j
+        kx = 2.0 * np.pi * np.arange(cls.Nx) / cls.Nx
+        ky = 2.0 * np.pi * np.arange(cls.Ny) / cls.Ny
+        kz = 2.0 * np.pi * np.arange(cls.Nz) / cls.Nz
+        KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+        eps1 = -2.0 * t * np.cos(KX) - 1.0 * t * np.cos(KZ) - mu1
+        eps2 = -2.0 * t * np.cos(KY) - 0.5 * t * np.cos(KZ) - mu2
+        nvol = cls.Nx * cls.Ny * cls.Nz
+        H = np.zeros((nvol, 2, 2), dtype=complex)
+        H[:, 0, 0] = eps1.reshape(nvol)
+        H[:, 1, 1] = eps2.reshape(nvol)
+        H[:, 0, 1] = t12
+        H[:, 1, 0] = np.conj(t12)
+        ev, V = np.linalg.eigh(H)
+        full, defl, tail = green_mod.build_green(
+            ev, V, cls.MU, cls.BETA, cls.Nmat, cls.COEFF_TAIL)
+        return full, defl, tail
+
+    @staticmethod
+    def _direct_block_full_green(full, bond_set, T, N, spatial_shape, Nmat,
+                                 m, mp, qx, qy, qz):
+        """Static (Omega=0) direct Matsubara sum over the FULL Green
+        function for ONE (m, mp, q) cell, all 2x2 orbital indices --
+        restricted (not the whole (m, mp, q) grid) to keep this fast."""
+        Nx, Ny, Nz = spatial_shape
+        drm = bond_set.delta_r[m]
+        drmp = bond_set.delta_r[mp]
+        ddx, ddy, ddz = (drm[0] - drmp[0], drm[1] - drmp[1],
+                         drm[2] - drmp[2])
+        kx_list = 2.0 * np.pi * np.arange(Nx) / Nx
+        ky_list = 2.0 * np.pi * np.arange(Ny) / Ny
+        kz_list = 2.0 * np.pi * np.arange(Nz) / Nz
+
+        def g_at(l1, l3, kx, ky, kz, n):
+            kidx = (kx * Ny + ky) * Nz + kz
+            return full[0, n, kidx, l1, l3]
+
+        npair = 4
+        block = np.zeros((npair, npair), dtype=complex)
+        for l1 in range(2):
+            for l2 in range(2):
+                for l3 in range(2):
+                    for l4 in range(2):
+                        s = 0.0 + 0.0j
+                        for kx in range(Nx):
+                            for ky in range(Ny):
+                                for kz in range(Nz):
+                                    phase = np.exp(1j * (
+                                        kx_list[kx] * ddx
+                                        + ky_list[ky] * ddy
+                                        + kz_list[kz] * ddz))
+                                    kqx = (kx + qx) % Nx
+                                    kqy = (ky + qy) % Ny
+                                    kqz = (kz + qz) % Nz
+                                    for n in range(Nmat):
+                                        s += phase * g_at(
+                                            l1, l3, kqx, kqy, kqz, n
+                                        ) * g_at(l4, l2, kx, ky, kz, n)
+                        block[l1 * 2 + l2, l3 * 2 + l4] = -(T / N) * s
+        return block
+
+    def test_tail_on_nonzero_shift_matches_direct_sum(self):
+        from tests.test_bond_channels import _nn_square_2orb
+
+        full, defl, tail = self._build_fixture()
+        spatial_shape = (self.Nx, self.Ny, self.Nz)
+        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3),
+                                         norb=2)
+        self.assertEqual(bond_set.delta_r[1], (-1, 0, 0))
+        self.assertEqual(bond_set.delta_r[4], (1, 0, 0))
+        m, mp = 1, 4
+
+        static_tail_on = bubble_mod.bond_bubble_static(
+            defl, tail, self.BETA, bond_set, spatial_shape=spatial_shape)
+
+        T = 1.0 / self.BETA
+        N = self.Nx * self.Ny * self.Nz
+        npair = 4
+
+        for (qx, qy, qz) in [(0, 0, 0), (1, 1, 0)]:
+            with self.subTest(q=(qx, qy, qz)):
+                kidx = (qx * self.Ny + qy) * self.Nz + qz
+                code_block = static_tail_on[
+                    kidx, m * npair:(m + 1) * npair,
+                    mp * npair:(mp + 1) * npair]
+                ref_block = self._direct_block_full_green(
+                    full, bond_set, T, N, spatial_shape, self.Nmat,
+                    m, mp, qx, qy, qz)
+                assert_approx_array(code_block, ref_block, rel=0, abs=1e-5)
 
 
 if __name__ == "__main__":
