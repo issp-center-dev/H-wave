@@ -422,6 +422,73 @@ class TestH2OnsiteTableReadjudication(unittest.TestCase):
                 rec["delta_rich"], rec["delta_nmat"], rec["tol"],
                 rec["max_signal"], rec["failures"][:5]))
 
+    def test_ising_hund_term_builders_match_dense_hamiltonian(self):
+        """Standalone Hamiltonian-level pin for ``_terms_ising_hund``
+        (fix round 1, review finding: the other 5 types are backed this
+        way by ``oracle._h_int``, but Ising/Hund -- the two types this
+        module had to build locally -- had no such pin).
+
+        Builds each dense many-body Hamiltonian matrix DIRECTLY from the
+        physical operator definitions -- density operators
+        (``CD[mode] @ C[mode]``) combined by plain matrix
+        multiplication/addition, the SAME construction style
+        ``oracle._h_int`` uses for its own types (e.g. its CoulombIntra:
+        ``v * (_n(j, 0, 0) @ _n(j, 0, 1))``) -- rather than through the
+        generic ``(p, q, r, s, coeff)`` quartic engine
+        (``ed_oracle_util.h_int_from_terms``) that
+        ``_terms_ising_hund``'s OWN output is fed through elsewhere in
+        this module. This is therefore an INDEPENDENT check of the
+        formula: it never calls ``_terms_ising_hund`` to build the
+        Hamiltonian, only to build the side being checked.
+
+        Convention source (src/hwave/solver/uhfk.py):
+
+        - Ising (``_make_ham_inter``'s Ising block comment): "the
+          documented Hamiltonian is J (n_up - n_down)(n_up - n_down)" --
+          density operators are diagonal (they commute), so this dense
+          form and ``_terms_ising_hund``'s four explicit
+          (+,-,-,+)-signed same-site density-density terms are the same
+          operator by construction, checked here to round-off.
+        - Hund (``_make_ham_inter``'s Hund block comment): "interaction
+          coeffs : -J^Hund by convention", with the append machinery
+          populating only the SAME-SPIN slots (spin_table entries
+          ``(0,0,0,0)``/``(1,1,1,1)`` -- see also rpa.py's
+          ``_append_inter``, which drives the actual solver's assembly
+          off the identical same-spin-only rule): H_Hund =
+          -J * (n_{0,up} n_{1,up} + n_{0,dn} n_{1,dn}).
+        """
+        fx, C, CD, _H1 = oracle._fx2_state()
+        v = 0.37 + 0.0j   # arbitrary nonzero coupling; both Hamiltonians
+                          # are real-valued by construction (pure density
+                          # operator products)
+
+        def _n(j, o, s):
+            m = fx.mode(j, o, s)
+            return CD[m] @ C[m]
+
+        def _dense_ising(v):
+            H = np.zeros((fx.dim, fx.dim), dtype=complex)
+            for j in range(fx.L):
+                sz0 = _n(j, 0, 0) - _n(j, 0, 1)
+                sz1 = _n(j, 1, 0) - _n(j, 1, 1)
+                H = H + v * (sz0 @ sz1)
+            return H
+
+        def _dense_hund(v):
+            H = np.zeros((fx.dim, fx.dim), dtype=complex)
+            for j in range(fx.L):
+                H = H - v * (_n(j, 0, 0) @ _n(j, 1, 0)
+                             + _n(j, 0, 1) @ _n(j, 1, 1))
+            return H
+
+        for kind, dense_fn in (("Ising", _dense_ising),
+                                ("Hund", _dense_hund)):
+            with self.subTest(kind=kind):
+                terms = _terms_ising_hund(fx, kind, v)
+                got = ed_oracle_util.h_int_from_terms(fx, terms)
+                want = dense_fn(v)
+                assert_approx_array(got, want, rel=0, abs=1e-13)
+
     def test_coulomb_intra(self):
         self._check("CoulombIntra")
 
