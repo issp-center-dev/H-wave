@@ -544,8 +544,9 @@ def _assemble_cross_block(prepped, fwd_block, rev_block, scheme, beta,
     the two factors are read from DIFFERENT block indices
     (``fwd_block``/``rev_block``) rather than the same one, and the
     block axis is consumed by the crossing rather than carried through
-    to the output. Transcribes ``RPA._calc_chi0q_transverse``
-    (rpa.py:3076-3171) verbatim.
+    to the output. Transcribed from the legacy ``RPA._calc_chi0q_transverse``
+    body (deleted at the end of the migration series; see git history)
+    verbatim.
 
     The endpoint-mean correction threads ``fwd_block``/``rev_block``
     through EACH of its four independently-indexable terms
@@ -610,8 +611,8 @@ def transverse_bubble(green_kw, green0_tail, beta, *, spatial_shape,
     This docstring states the SPIN-DIAG two-block contract only -- block
     0 is G_up, block 1 is G_down, and this entry point computes their
     cross term chi0_+-. The full spinful (spin-mixing) transverse bubble
-    generalizes this (a later task in the series); it is not what this
-    function computes.
+    generalizes this -- that is a SEPARATE later spec/campaign (Step 3b),
+    not a task within this series; it is not what this function computes.
 
     Returns
     -------

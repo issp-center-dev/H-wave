@@ -579,15 +579,19 @@ class TestTransverseBubbleKernel(unittest.TestCase):
         tail = np.tile(tailk, (1, NMAT, 1, 1, 1))
         return green, tailk, tail
 
-    def _direct_reference(self, green, tailk, reduced,
-                          swap_jump_f=False, swap_jump_r_rev=False):
+    def _direct_reference(self, green, tailk, reduced):
         """Independent reference: replicates the legacy transverse op
         sequence with plain ``matsubara``/``backend`` transform calls
         (mirrors ``TestTransverseSyntheticTail._reference``). Block 0 is
         the forward (up) factor, block 1 the reversed (down) factor.
-        ``swap_jump_f``/``swap_jump_r_rev`` deliberately feed the WRONG
-        block's jump term into the endpoint formula -- used only by the
-        mutation-check tests below, never by the passing gate."""
+        Deliberately kept independent of ``_assemble_cross_block`` --
+        it never calls into the kernel or shares its helpers. The
+        mutation-check evidence cited by the tests below (e.g.
+        ``test_distinct_block_tails_direct``) was gathered by temporarily
+        mutating the PRODUCTION code (``_assemble_cross_block``) and
+        re-running the gate against this reference, not by parameterizing
+        this reference itself -- see those tests' own docstrings for the
+        measured deviations."""
         import hwave.solver.matsubara as _ms
         import hwave.solver.backend as _bk
         NX, NMAT, ND = self.NX, self.NMAT, self.ND
@@ -604,10 +608,6 @@ class TestTransverseBubbleKernel(unittest.TestCase):
             (2.0 * tailk).reshape(2, 1, 1, 1, NX, ND * ND),
             axes=(2, 3, 4), workers=1).reshape(2, NX, ND, ND)
         jump_up, jump_dn_rev = jr[0], jr[1][rev]
-        if swap_jump_f:
-            jump_up = jr[1][rev]
-        if swap_jump_r_rev:
-            jump_dn_rev = jr[0]
         if reduced:
             chi = np.stack([(1.0 if l == 0 else -1.0)
                             * up[l] * dn_rev[l].swapaxes(-2, -1)
@@ -680,6 +680,22 @@ class TestTransverseBubbleKernel(unittest.TestCase):
                 msg = str(cm.exception)
                 self.assertIn("nblock={}".format(nblock), msg)
                 self.assertIn("required: 2", msg)
+
+    def test_rejects_bad_scheme(self):
+        """Scheme-enum validation on the transverse entry point mirrors
+        ``TestBubbleOldVsNewDense.test_rejects_bad_scheme`` for
+        ``dense_bubble`` -- an invalid ``scheme`` string must raise
+        ``ValueError`` here too, not silently fall through to one of the
+        two known contraction primitives. Reuses the lightweight
+        synthetic ``_direct_fixture`` (no solver/lattice construction
+        needed for a pure input-validation gate)."""
+        green, tailk, tail = self._direct_fixture()
+        spatial_shape = (1, 1, self.NX)
+        beta = 1.0
+        with self.assertRaises(ValueError):
+            bubble_mod.transverse_bubble(
+                green, None, beta, spatial_shape=spatial_shape,
+                scheme="bogus")
 
     def test_wrapper_delegates_to_kernel(self):
         """Delegation spy (Task 2 of the series: the wrapper switch).
