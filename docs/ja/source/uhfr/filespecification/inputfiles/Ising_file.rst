@@ -8,7 +8,7 @@ Ising相互作用をハミルトニアンに付け加えます
 
 .. math:: \mathcal{H}+=\sum_{i,j}J_{ij}^{z} S^{z}_{i} S^{z}_{j}, \quad S^{z}_{i}=\tfrac{1}{2}(n_{i\uparrow}-n_{i\downarrow})
 
-（注：この実空間 UHFr の規約は、Ising ファイルを :math:`J (n_\uparrow-n_\downarrow)(n_\uparrow-n_\downarrow)` として読む wannier90 形式の k 空間ソルバーとは異なります。）
+（注：この実空間 UHFr の規約は、Ising ファイルを :math:`J (n_\uparrow-n_\downarrow)(n_\uparrow-n_\downarrow)`\ として読む wannier90 形式の k 空間ソルバーとは異なります。）
 
 が付け加えられ、スピン系の場合には
 
