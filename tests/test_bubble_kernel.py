@@ -508,11 +508,13 @@ class TestTransverseBubbleKernel(unittest.TestCase):
     with ``rpa.py`` untouched (``RPA._calc_chi0q_transverse`` still the
     legacy production body). Task 2 switched the dispatch:
     ``RPA._calc_chi0q_transverse`` now delegates to
-    ``bubble.transverse_bubble``, and the former production body was
-    renamed ``RPA._legacy_calc_chi0q_transverse`` -- the comparison
-    oracle below was repointed to that renamed method (still the same
-    numerics, now purely a side-by-side pin rather than the live
-    production path)."""
+    ``bubble.transverse_bubble``. Task 3 deleted the renamed former
+    production body (kept through Task 2 only as a side-by-side pin)
+    along with the old-vs-new comparison test that referenced it; the
+    Lindhard analytic pins, the ED first-order pin, the
+    degenerate-limit oracle, the synthetic-tail wrapper and direct
+    tests, the bitwise zero-tail mirror, the None==zeros pin, and the
+    delegation spy below now carry that coverage on their own."""
 
     def _asym_solver(self):
         # G_up != G_dn via nonzero Zeeman; complex hopping; tail on.
@@ -527,50 +529,6 @@ class TestTransverseBubbleKernel(unittest.TestCase):
         green, tail = solver._calc_green(beta, mu)
         spatial_shape = tuple(solver.lattice.shape)
         return solver, green, tail, beta, spatial_shape
-
-    def test_old_vs_new_asymmetric(self):
-        """Legacy ``RPA._legacy_calc_chi0q_transverse`` (bound method,
-        the renamed former production body -- since Task 2's wrapper
-        switch, ``RPA._calc_chi0q_transverse`` itself delegates to
-        ``bubble.transverse_bubble``, so this comparison is now a
-        side-by-side pin rather than old-vs-new-production) vs
-        ``bubble.transverse_bubble`` on an asymmetric (``G_up != G_dn``)
-        fixture, both schemes, tail on
-        (``coeff_tail=0.5``) AND off (an explicit all-zero tail array --
-        the legacy body always requires a real array, it has no ``None``
-        convention): measured margin max|new-legacy| == 0.0 (bitwise
-        equal in this run) across all four (scheme, tail) cells, well
-        inside rel=1e-12/abs=1e-13 -- both paths compute the same
-        elementwise product (no reduction axis, so no summation-order
-        freedom) through the same ``spatial_ifftn``/``spatial_fftn``/
-        ``fermion_to_tau``/``tau_to_boson`` primitives; see
-        task-1-report.md for the measured table.
-
-        Mutation check (a) -- swapping the block pair
-        ``_assemble_cross_block(prepped, 0, 1, ...)`` ->
-        ``_assemble_cross_block(prepped, 1, 0, ...)`` inside
-        ``transverse_bubble`` -- makes this fail by O(1): measured max
-        relative deviation |mutated-legacy|/|legacy| ~= 2.0 (the block
-        swap makes the new value approximately the NEGATION of the
-        legacy one -- chi0_-+ instead of chi0_+- -- an entirely
-        different physical object on this asymmetric fixture, not a
-        small numeric drift)."""
-        solver, green, tail, beta, spatial_shape = self._asym_fixture()
-        zero_tail = np.zeros_like(tail)
-
-        for reduced in (True, False):
-            solver.enable_reduced = reduced
-            scheme = "reduced" if reduced else "general"
-            for tail_arr, label in ((tail, "tail_on"),
-                                    (zero_tail, "tail_off")):
-                with self.subTest(scheme=scheme, tail=label):
-                    legacy = np.asarray(
-                        solver._legacy_calc_chi0q_transverse(
-                            green, tail_arr, beta))
-                    new = bubble_mod.transverse_bubble(
-                        green, tail_arr, beta, spatial_shape=spatial_shape,
-                        scheme=scheme)
-                    assert_approx_array(new, legacy, rel=1e-12, abs=1e-13)
 
     def test_none_tail_equals_zeros_tail(self):
         """``green0_tail=None`` (tail machinery off) must match an
@@ -598,11 +556,12 @@ class TestTransverseBubbleKernel(unittest.TestCase):
     # The Zeeman fixture's tail projectors are effectively identical
     # between the two spin blocks (a single scalar Extern field splits
     # H0 +/- H1 symmetrically), so an endpoint-ONLY indexing mistake --
-    # e.g. jump_f[1] used where jump_f[0] belongs -- could survive
-    # test_old_vs_new_asymmetric above (R1 should_fix 1). This synthetic
-    # fixture gives the two blocks DISTINCT momentum-dependent tails so
-    # such a mistake is visible, and computes its expected values
-    # independently (mirrors tests/test_coeff_tail_endpoint.py
+    # e.g. jump_f[1] used where jump_f[0] belongs -- could survive the
+    # other asymmetric-fixture gates above undetected (R1 should_fix 1).
+    # This synthetic fixture gives the two blocks DISTINCT
+    # momentum-dependent tails so such a mistake is visible, and
+    # computes its expected values independently (mirrors
+    # tests/test_coeff_tail_endpoint.py
     # ::TestTransverseSyntheticTail's own reference recipe: the shared
     # ``matsubara``/``backend`` transform primitives, but never
     # ``_prepare_dense``, ``contract_reduced``/``contract_general``, or
@@ -731,8 +690,10 @@ class TestTransverseBubbleKernel(unittest.TestCase):
         minimal stub solver (mirrors ``TestZeroTailBitwise._lat_stub``,
         ``tests/test_coeff_tail_endpoint.py``) rather than a full RPA
         solver, since only the attribute forwarding is under test here,
-        not the numerics (those are ``test_old_vs_new_asymmetric``'s and
-        ``test_distinct_block_tails_direct``'s job)."""
+        not the numerics (that is
+        ``test_distinct_block_tails_direct``'s job, alongside the
+        Lindhard/ED/degenerate-limit oracles elsewhere in this
+        module)."""
         import hwave.solver.rpa as R
 
         NX, NMAT, ND = 3, 4, 2
