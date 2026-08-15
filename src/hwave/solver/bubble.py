@@ -12,6 +12,8 @@ The binding contract is
 (sections "Module layout", "Green/tail contracts", "Scheme x bond", "The
 bond assembly", and "Output contracts"). This module transcribes the
 numerics of ``RPA._calc_chi0q`` (rpa.py, around line 2936 at series start),
+``RPA._calc_chi0q_transverse`` (rpa.py, around line 3016 at the start of
+the 2026-08-15-transverse-bubble-on-kernel series),
 ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir`` (flex.py, around
 lines 818-917 at series start), and ``bond_channels.bond_bubble``
 (bond_channels.py, around lines 1171-1315 at series start) without
@@ -528,6 +530,137 @@ def _assemble_plain(prepped, scheme, beta, spatial_shape, workers,
         nblock, nt, nvol, *nd_shape) * (-1.0 / beta)
 
     return chi0_qw
+
+
+def _assemble_cross_block(prepped, fwd_block, rev_block, scheme, beta,
+                          spatial_shape, workers):
+    """Cross-block contraction for the transverse bubble: contract
+    ``prepped.green_rt[fwd_block]`` (the forward factor) against
+    ``prepped.green_rev[rev_block]`` (the reversed factor) via the SAME
+    ``contract_reduced``/``contract_general`` primitives and the SAME
+    per-tau ``sgn`` / equal-time endpoint-mean correction / spatial
+    ``fftn`` / ``tau_to_boson`` / final ``x(-1/beta)`` transport as
+    :func:`_assemble_plain`'s dense arm -- the only differences are that
+    the two factors are read from DIFFERENT block indices
+    (``fwd_block``/``rev_block``) rather than the same one, and the
+    block axis is consumed by the crossing rather than carried through
+    to the output. Transcribed from the legacy ``RPA._calc_chi0q_transverse``
+    body (deleted at the end of the migration series; see git history)
+    verbatim.
+
+    The endpoint-mean correction threads ``fwd_block``/``rev_block``
+    through EACH of its four independently-indexable terms
+    (``fwd0_p[fwd_block]``, ``rev0_p[rev_block]``, ``jump_f[fwd_block]``,
+    ``jump_r_rev[rev_block]``) -- the forward branch and its jump always
+    read ``fwd_block``, the reversed branch and its jump always read
+    ``rev_block``, never the same index on both sides and never a mixed
+    pair beyond this pattern (spec: "The kernel entry")::
+
+        chi0_endpoint = 0.5 * ( contract(fwd0_p[fwd], rev0_p[rev] + jump_r_rev[rev])
+                              + contract(fwd0_p[fwd] + jump_f[fwd], rev0_p[rev]) )
+
+    ``prepped`` is a :class:`_DensePrepared` instance (from
+    :func:`_prepare_dense` on a two-block Green function); this function
+    performs no validation of its own -- callers (:func:`transverse_bubble`)
+    validate ``nblock == 2`` before building ``prepped``."""
+    nx, ny, nz = spatial_shape
+    _, nmat, nvol, nd, _ = prepped.green_rt.shape
+
+    contract = contract_reduced if scheme == "reduced" else contract_general
+    nd_shape = (nd, nd) if scheme == "reduced" else (nd, nd, nd, nd)
+    nds = nd * nd if scheme == "reduced" else nd ** 4
+
+    g_fwd = prepped.green_rt[fwd_block]
+    g_rev = prepped.green_rev[rev_block]
+
+    chi0_rt = contract(g_fwd, g_rev)
+    sgn_bc = prepped.sgn.reshape((nmat,) + (1,) * (chi0_rt.ndim - 1))
+    chi0_rt = chi0_rt * sgn_bc
+
+    if prepped.tail_on:
+        # mean of the two equal-time branches (sgn[0] = +1)
+        chi0_rt[0] = 0.5 * (
+            contract(prepped.fwd0_p[fwd_block],
+                     prepped.rev0_p[rev_block] + prepped.jump_r_rev[rev_block])
+            + contract(prepped.fwd0_p[fwd_block] + prepped.jump_f[fwd_block],
+                       prepped.rev0_p[rev_block]))
+
+    chi0_qt = _bk.spatial_fftn(
+        chi0_rt.reshape(nmat, nx, ny, nz, nds),
+        axes=(1, 2, 3), workers=workers)
+
+    chi0_qt_flat = chi0_qt.reshape(nmat, nvol * nds)
+    chi0_qw = _ms.tau_to_boson(chi0_qt_flat, axis=0).reshape(
+        nmat, nvol, *nd_shape) * (-1.0 / beta)
+
+    return chi0_qw
+
+
+def transverse_bubble(green_kw, green0_tail, beta, *, spatial_shape,
+                      scheme, workers=None):
+    """Cross-block particle-hole bubble chi0_+-: contract block 0
+    (forward) with block 1 (reversed).
+
+    ``green_kw``/``green0_tail``: canonical ``(2, nmat, nvol, p, p)`` --
+    ``nblock == 2`` REQUIRED (``ValueError`` otherwise, naming both the
+    actual ``nblock`` and this contract). Green/tail semantics identical
+    to :func:`dense_bubble` (deflated pair; ``None`` => full G, tail
+    machinery off; conditional validation). ``scheme`` in
+    ``{"reduced", "general"}``.
+
+    This docstring states the SPIN-DIAG two-block contract only -- block
+    0 is G_up, block 1 is G_down, and this entry point computes their
+    cross term chi0_+-. The full spinful (spin-mixing) transverse bubble
+    generalizes this -- that is a SEPARATE later spec/campaign (Step 3b),
+    not a task within this series; it is not what this function computes.
+
+    Returns
+    -------
+    ndarray, complex128
+        ``(nmat, nvol, p, p)`` reduced / ``(nmat, nvol, p, p, p, p)``
+        general -- NO block axis (the block dimension is consumed by the
+        up/down crossing), bosonic uniform frequency axis 0 with the
+        same ``l <-> 2l - nmat`` mapping as :func:`dense_bubble`. Sign
+        and normalization identical to the legacy transverse body:
+        per-tau ``sgn``, endpoint-mean correction, final ``x(-1/beta)``.
+
+    Raises
+    ------
+    ValueError
+        If ``green_kw``'s block axis is not exactly 2, or on any other
+        shape/dtype/scheme mismatch (see :func:`_validate_dense_inputs`);
+        these checks use ``ValueError`` rather than a bare ``assert`` so
+        they survive ``python -O``.
+    """
+    if green_kw.ndim != 5:
+        raise ValueError(
+            "bubble kernel: green_kw must have ndim 5 "
+            "(nblock, nmat, nvol, p, p), got ndim={} shape={}".format(
+                green_kw.ndim, green_kw.shape))
+    nblock = green_kw.shape[0]
+    if nblock != 2:
+        # Checked FIRST, before _validate_dense_inputs's own (looser,
+        # nblock in {1, 2}) guard -- transverse_bubble's up/down crossing
+        # requires exactly 2 blocks, a stricter contract than the generic
+        # dense entry point's, so both nblock=1 and nblock=3 must surface
+        # THIS message (naming the actual nblock and the required value)
+        # rather than the generic one.
+        raise ValueError(
+            "bubble kernel: transverse_bubble requires green_kw's block "
+            "axis to be exactly 2 (a spin-diag Green's function with "
+            "G_up as block 0 and G_down as block 1 -- the up/down "
+            "cross-block contraction this entry point computes has no "
+            "meaning for any other block count), got nblock={} "
+            "(required: 2)".format(nblock))
+
+    (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
+     ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
+                                scheme)
+
+    prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
+                             workers)
+    return _assemble_cross_block(prepped, 0, 1, scheme, beta,
+                                 spatial_shape, workers)
 
 
 def dense_bubble(green_kw, green0_tail, beta, *, spatial_shape, scheme,

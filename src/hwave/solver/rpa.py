@@ -3035,10 +3035,25 @@ class RPA:
         ndarray
             Transverse chi0_+- with block dimension removed (shape depends
             on enable_reduced).
+
+        Notes
+        -----
+        Validates the input shapes (see the inline guards below), then
+        delegates the cross-block bubble calculation to
+        ``bubble.transverse_bubble`` -- mirroring ``_calc_chi0q``'s
+        wrapper (spec: "Module layout"), the guards here duplicate the
+        kernel's own validation deliberately, keeping this solver's
+        user-facing diagnostics even though the kernel would also catch
+        the malformed input. Two of them are worth calling out
+        specifically: the ``nblock == 2`` check keeps its own
+        transverse-specific message (distinct from the kernel's own,
+        looser ``nblock in {1, 2}`` guard), and the ``green0_tail`` shape
+        guard stays UNCONDITIONAL -- this wrapper's contract still
+        requires a real tail array; the kernel's ``green0_tail=None``
+        convenience is NOT exposed through it.
         """
         logger.debug(">>> RPA._calc_chi0q_transverse")
 
-        xp = _bk.array_module_of(green_kw)
         workers = getattr(self, "fft_workers", 1)
 
         nx, ny, nz = self.lattice.shape
@@ -3072,103 +3087,12 @@ class RPA:
                 "array from the same _calc_green call".format(
                     green0_tail.shape, green_kw.shape))
 
-        # Fourier transform from Matsubara freq to imaginary time
-        omg = xp.exp(-1j * np.pi * (1.0/nmat - 1.0) * xp.arange(nmat))
-
-        green_kt = (xp.fft.fft(green_kw.reshape(nblock, nmat, nvol*nd*nd), axis=1)
-                    * omg[np.newaxis, :, np.newaxis]
-                    ).reshape(nblock, nmat, nx, ny, nz, nd, nd)
-        green_kt -= green0_tail.reshape(nblock, nmat, nx, ny, nz, nd, nd)
-
-        # Fourier transform from k-space to real space
-        green_rt = _bk.spatial_ifftn(
-            green_kt.reshape(nblock, nmat, nx, ny, nz, nd*nd),
-            axes=(2, 3, 4), workers=workers)
-
-        # G_↓(-r,-τ): reverse τ and EACH spatial axis separately, exactly as
-        # the longitudinal _calc_chi0q does (the shared FFT-grid reversal is
-        # negation indexing, i -> (-i) mod n, per axis). Reversing after
-        # flattening to nvol was wrong twice over: modular negation of the
-        # flat C-order index is not coordinate-wise negation on a
-        # multidimensional lattice, and the two orbital axes were being
-        # reversed as well -- invisible for nd <= 2, where the map is the
-        # identity, which is why the one- and two-orbital fixtures never
-        # saw it.
-        green_dn_rev = reverse_fft_axes(
-            green_rt[1], (0, 1, 2, 3)).reshape(nmat, nvol, nd, nd)
-
-        # G_↑(r,τ)
-        green_up_rt = green_rt[0].reshape(nmat, nvol, nd, nd)
-
-        # Equal-time endpoint correction (issue #134), transverse form.
-        # chi_+-(tau) = -G_up(tau) G_dn(-tau) is DISCONTINUOUS at tau = 0
-        # whenever up and down differ (any spin splitting): the discrete
-        # bosonic transform of a jump converges O(1/Nmat) unless the
-        # tau = 0 sample is the MEAN of the two branches
-        # (G_up(0^+), G_dn(0^-)) and (G_up(0^-), G_dn(0^+)); the branch
-        # difference is the tail piece's jump aa * VV^dag per spin
-        # block (see the longitudinal kernel).
-        # slice-0 predicate for the same reasons as the longitudinal
-        # kernel: it is the only slice the correction reads, and the full
-        # reduction costs a GPU sync over the whole repeated tensor
-        _tail_on = bool(xp.any(
-            green0_tail.reshape(nblock, nmat, -1)[:, 0] != 0))
-        if _tail_on:
-            tail_kt0 = green0_tail.reshape(
-                nblock, nmat, nx, ny, nz, nd * nd)[:, 0:1]
-            jump = _bk.spatial_ifftn(2.0 * tail_kt0, axes=(2, 3, 4),
-                                     workers=workers)
-            jump_up = jump[0].reshape(nvol, nd, nd)
-            # the reversed down factor lives at -r. Index the spin block
-            # OUT (jump[1], not jump[1:2]) so the reversal axes (1, 2, 3)
-            # are (x, y, z): with the spin axis retained they would be
-            # (singleton tau, x, y), silently leaving z unreversed --
-            # invisible on every nz = 1 fixture (round-2 review, caught
-            # on a (1, 1, 3) lattice).
-            jump_dn_rev = reverse_fft_axes(
-                jump[1], (1, 2, 3)).reshape(nvol, nd, nd)
-            up0_p = green_up_rt[0].copy()
-            dn0_p = green_dn_rev[0].copy()
-
-        sgn = xp.full(nmat, -1)
-        sgn[0] = 1
-
-        if self.enable_reduced:
-            # chi0_+-[l,r,a,b] = G_↑[l,r,a,b] * G_↓_rev[l,r,b,a] * sgn[l]
-            # (same contraction as longitudinal but crossing spin blocks)
-            chi0_rt = (green_up_rt
-                       * green_dn_rev.swapaxes(-2, -1)
-                       * sgn[:, np.newaxis, np.newaxis, np.newaxis])
-            if _tail_on:
-                chi0_rt[0] = 0.5 * (
-                    up0_p * (dn0_p + jump_dn_rev).swapaxes(-2, -1)
-                    + (up0_p + jump_up) * dn0_p.swapaxes(-2, -1))
-            nd_shape = (nd, nd)
-            nds = nd**2
-        else:
-            # chi0_+-[l,r,a,c,b,d] = G_↑[l,r,a,b] * G_↓_rev[l,r,d,c] * sgn[l]
-            chi0_rt = xp.einsum('lrab,lrdc,l->lracbd',
-                                green_up_rt, green_dn_rev, sgn)
-            if _tail_on:
-                chi0_rt[0] = 0.5 * (
-                    xp.einsum('rab,rdc->racbd', up0_p,
-                              dn0_p + jump_dn_rev)
-                    + xp.einsum('rab,rdc->racbd', up0_p + jump_up,
-                                dn0_p))
-            nd_shape = (nd, nd, nd, nd)
-            nds = nd**4
-
-        # Fourier transform to k-space
-        chi0_qt = _bk.spatial_fftn(chi0_rt.reshape(nmat, nx, ny, nz, nds),
-                                   axes=(1, 2, 3), workers=workers)
-
-        # Fourier transform to Matsubara frequency
-        omg = xp.exp(1j * np.pi * (-1) * xp.arange(nmat))
-        chi0_qw = xp.fft.ifft(
-            chi0_qt.reshape(nmat, nvol*nds) * omg[:, np.newaxis],
-            axis=0).reshape(nmat, nvol, *nd_shape) * (-1.0/beta)
-
-        return chi0_qw
+        # Delegate to the shared bubble kernel (spec: "Module layout").
+        return bubble.transverse_bubble(
+            green_kw, green0_tail, beta,
+            spatial_shape=(nx, ny, nz),
+            scheme="reduced" if self.enable_reduced else "general",
+            workers=workers)
 
     def _assemble_transverse_vertex(self, ham_orig):
         """Build the transverse vertex ham_pm from the interaction tensor.

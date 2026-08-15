@@ -589,7 +589,21 @@ class TestZeroTailBitwise(unittest.TestCase):
                 np.testing.assert_array_equal(got, want)
 
     def test_transverse_forms(self):
+        """Since the wrapper switch (Task 2 of the
+        2026-08-15-transverse-bubble-on-kernel series), ``RPA
+        ._calc_chi0q_transverse`` delegates to
+        ``bubble.transverse_bubble``, so the reference below now mirrors
+        ``bubble._prepare_dense`` / ``_assemble_cross_block``'s op
+        sequence -- the shared ``matsubara.fermion_to_tau`` /
+        ``backend.spatial_ifftn`` / ``kgrid.reverse_fft_axes`` /
+        ``backend.spatial_fftn`` / ``matsubara.tau_to_boson`` primitives
+        applied to the WHOLE two-block tensor (forward = block 0 read
+        un-reversed, reversed = block 1 read off the SAME whole-tensor
+        reversal), rather than the pre-switch hand-written FFT/omg body
+        that reversed only the down block in isolation -- instead of the
+        production op sequence verbatim as before."""
         import hwave.solver.rpa as R
+        import hwave.solver.matsubara as _ms
         import hwave.solver.backend as _bk
         from hwave.solver.kgrid import reverse_fft_axes
         NX, NMAT, ND, BETA = self.NX, self.NMAT, self.ND, self.BETA
@@ -599,35 +613,36 @@ class TestZeroTailBitwise(unittest.TestCase):
             with self.subTest(reduced=reduced):
                 got = np.asarray(R.RPA._calc_chi0q_transverse(
                     self._lat_stub(reduced), green, zeros, BETA))
-                omg = np.exp(-1j * np.pi * (1.0 / NMAT - 1.0)
-                             * np.arange(NMAT))
-                gkt = (np.fft.fft(green.reshape(2, NMAT, -1), axis=1)
-                       * omg[np.newaxis, :, np.newaxis]).reshape(
+                gkt = _ms.fermion_to_tau(
+                    green.reshape(2, NMAT, -1), axis=1).reshape(
                     2, NMAT, 1, 1, NX, ND, ND)
-                gkt -= zeros.reshape(2, NMAT, 1, 1, NX, ND, ND)
+                gkt = gkt - zeros.reshape(2, NMAT, 1, 1, NX, ND, ND)
                 grt = _bk.spatial_ifftn(
                     gkt.reshape(2, NMAT, 1, 1, NX, ND * ND),
                     axes=(2, 3, 4), workers=1)
-                dn_rev = reverse_fft_axes(grt[1], (0, 1, 2, 3)).reshape(
-                    NMAT, NX, ND, ND)
-                up = grt[0].reshape(NMAT, NX, ND, ND)
+                grev = reverse_fft_axes(grt, (1, 2, 3, 4)).reshape(
+                    2, NMAT, NX, ND, ND)
+                g_fwd = grt.reshape(2, NMAT, NX, ND, ND)[0]
+                g_rev = grev[1]
                 sgn = np.full(NMAT, -1)
                 sgn[0] = 1
                 if reduced:
-                    chi = (up * dn_rev.swapaxes(-2, -1)
+                    chi = (g_fwd * g_rev.swapaxes(-2, -1)
                            * sgn[:, np.newaxis, np.newaxis, np.newaxis])
                     nd_shape, nds = (ND, ND), ND ** 2
                 else:
-                    chi = np.einsum('lrab,lrdc,l->lracbd', up, dn_rev,
-                                    sgn)
+                    sgn_bc = sgn[:, np.newaxis, np.newaxis, np.newaxis]
+                    chi = ((g_fwd * sgn_bc)[:, :, :, np.newaxis, :,
+                                            np.newaxis]
+                           * g_rev[:, :, np.newaxis, :, np.newaxis, :])
+                    chi = chi.transpose(0, 1, 2, 5, 4, 3)
                     nd_shape, nds = (ND, ND, ND, ND), ND ** 4
                 cqt = _bk.spatial_fftn(
                     chi.reshape(NMAT, 1, 1, NX, nds),
                     axes=(1, 2, 3), workers=1)
-                omg2 = np.exp(1j * np.pi * (-1) * np.arange(NMAT))
-                want = np.fft.ifft(
-                    cqt.reshape(NMAT, NX * nds) * omg2[:, np.newaxis],
-                    axis=0).reshape(NMAT, NX, *nd_shape) * (-1.0 / BETA)
+                want = _ms.tau_to_boson(
+                    cqt.reshape(NMAT, NX * nds), axis=0).reshape(
+                    NMAT, NX, *nd_shape) * (-1.0 / BETA)
                 np.testing.assert_array_equal(got, want)
 
 

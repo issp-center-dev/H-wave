@@ -12,6 +12,7 @@ in Task 2).
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -499,6 +500,262 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
             bubble_mod.dense_bubble(green, tail, beta,
                                      spatial_shape=spatial_shape,
                                      scheme="bogus")
+
+
+class TestTransverseBubbleKernel(unittest.TestCase):
+    """Gates for ``bubble.transverse_bubble`` (Step 3a spec:
+    ``2026-08-15-transverse-bubble-on-kernel``). Task 1 added this class
+    with ``rpa.py`` untouched (``RPA._calc_chi0q_transverse`` still the
+    legacy production body). Task 2 switched the dispatch:
+    ``RPA._calc_chi0q_transverse`` now delegates to
+    ``bubble.transverse_bubble``. Task 3 deleted the renamed former
+    production body (kept through Task 2 only as a side-by-side pin)
+    along with the old-vs-new comparison test that referenced it; the
+    Lindhard analytic pins, the ED first-order pin, the
+    degenerate-limit oracle, the synthetic-tail wrapper and direct
+    tests, the bitwise zero-tail mirror, the None==zeros pin, and the
+    delegation spy below now carry that coverage on their own."""
+
+    def _asym_solver(self):
+        # G_up != G_dn via nonzero Zeeman; complex hopping; tail on.
+        return _make_rpa_solver(coeff_tail=0.5, hz=0.4, norb=2,
+                                complex_hop=True, Lx=4, Ly=4, Nmat=8)
+
+    def _asym_fixture(self):
+        solver = self._asym_solver()
+        solver._calc_epsilon_k({})
+        beta = 1.0 / solver.T
+        mu = solver.mu_value
+        green, tail = solver._calc_green(beta, mu)
+        spatial_shape = tuple(solver.lattice.shape)
+        return solver, green, tail, beta, spatial_shape
+
+    def test_none_tail_equals_zeros_tail(self):
+        """``green0_tail=None`` (tail machinery off) must match an
+        explicit all-zero tail array of the same shape, both schemes --
+        the two are different code paths through ``_prepare_dense``
+        (skip the subtraction entirely vs. subtract an all-zero array)
+        that must produce identical numerics (spec: Green/tail
+        contracts, same invariant as ``TestBubbleOldVsNewDense
+        .test_none_tail_matches_zero_tail_array``)."""
+        solver, green, tail, beta, spatial_shape = self._asym_fixture()
+        zero_tail = np.zeros_like(tail)
+
+        for scheme in ("reduced", "general"):
+            with self.subTest(scheme=scheme):
+                with_none = bubble_mod.transverse_bubble(
+                    green, None, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                with_zeros = bubble_mod.transverse_bubble(
+                    green, zero_tail, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                assert_approx_array(with_none, with_zeros, rel=0, abs=1e-15)
+
+    # -- distinct-per-block-tail direct kernel coverage -------------------
+    #
+    # The Zeeman fixture's tail projectors are effectively identical
+    # between the two spin blocks (a single scalar Extern field splits
+    # H0 +/- H1 symmetrically), so an endpoint-ONLY indexing mistake --
+    # e.g. jump_f[1] used where jump_f[0] belongs -- could survive the
+    # other asymmetric-fixture gates above undetected (R1 should_fix 1).
+    # This synthetic fixture gives the two blocks DISTINCT
+    # momentum-dependent tails so such a mistake is visible, and
+    # computes its expected values independently (mirrors
+    # tests/test_coeff_tail_endpoint.py
+    # ::TestTransverseSyntheticTail's own reference recipe: the shared
+    # ``matsubara``/``backend`` transform primitives, but never
+    # ``_prepare_dense``, ``contract_reduced``/``contract_general``, or
+    # any bubble-kernel wrapper).
+
+    NX, NMAT, ND = 3, 4, 2
+
+    def _direct_fixture(self):
+        rng = np.random.RandomState(2135)
+        NX, NMAT, ND = self.NX, self.NMAT, self.ND
+        green = (rng.randn(2, NMAT, NX, ND, ND)
+                 + 1j * rng.randn(2, NMAT, NX, ND, ND))
+        tailk = (rng.randn(2, 1, NX, ND, ND)
+                 + 1j * rng.randn(2, 1, NX, ND, ND))
+        tail = np.tile(tailk, (1, NMAT, 1, 1, 1))
+        return green, tailk, tail
+
+    def _direct_reference(self, green, tailk, reduced):
+        """Independent reference: replicates the legacy transverse op
+        sequence with plain ``matsubara``/``backend`` transform calls
+        (mirrors ``TestTransverseSyntheticTail._reference``). Block 0 is
+        the forward (up) factor, block 1 the reversed (down) factor.
+        Deliberately kept independent of ``_assemble_cross_block`` --
+        it never calls into the kernel or shares its helpers. The
+        mutation-check evidence cited by the tests below (e.g.
+        ``test_distinct_block_tails_direct``) was gathered by temporarily
+        mutating the PRODUCTION code (``_assemble_cross_block``) and
+        re-running the gate against this reference, not by parameterizing
+        this reference itself -- see those tests' own docstrings for the
+        measured deviations."""
+        import hwave.solver.matsubara as _ms
+        import hwave.solver.backend as _bk
+        NX, NMAT, ND = self.NX, self.NMAT, self.ND
+        rev = [(-r) % NX for r in range(NX)]
+        gkt = _ms.fermion_to_tau(green.reshape(2, NMAT, -1), axis=1
+                                 ).reshape(2, NMAT, NX, ND, ND) \
+            - np.tile(tailk, (1, NMAT, 1, 1, 1))
+        grt = _bk.spatial_ifftn(
+            gkt.reshape(2, NMAT, 1, 1, NX, ND * ND),
+            axes=(2, 3, 4), workers=1).reshape(2, NMAT, NX, ND, ND)
+        up = grt[0]
+        dn_rev = np.stack([grt[1][(-l) % NMAT][rev] for l in range(NMAT)])
+        jr = _bk.spatial_ifftn(
+            (2.0 * tailk).reshape(2, 1, 1, 1, NX, ND * ND),
+            axes=(2, 3, 4), workers=1).reshape(2, NX, ND, ND)
+        jump_up, jump_dn_rev = jr[0], jr[1][rev]
+        if reduced:
+            chi = np.stack([(1.0 if l == 0 else -1.0)
+                            * up[l] * dn_rev[l].swapaxes(-2, -1)
+                            for l in range(NMAT)])
+            chi[0] = 0.5 * (
+                up[0] * (dn_rev[0] + jump_dn_rev).swapaxes(-2, -1)
+                + (up[0] + jump_up) * dn_rev[0].swapaxes(-2, -1))
+            nds = ND * ND
+            tshape = (NMAT, NX, ND, ND)
+        else:
+            chi = np.stack([(1.0 if l == 0 else -1.0)
+                            * np.einsum('rab,rdc->racbd', up[l], dn_rev[l])
+                            for l in range(NMAT)])
+            chi[0] = 0.5 * (
+                np.einsum('rab,rdc->racbd', up[0], dn_rev[0] + jump_dn_rev)
+                + np.einsum('rab,rdc->racbd', up[0] + jump_up, dn_rev[0]))
+            nds = ND ** 4
+            tshape = (NMAT, NX, ND, ND, ND, ND)
+        cqt = _bk.spatial_fftn(chi.reshape(NMAT, 1, 1, NX, nds),
+                               axes=(1, 2, 3), workers=1)
+        return _ms.tau_to_boson(
+            cqt.reshape(1, NMAT, -1), axis=1).reshape(*tshape) * (-1.0)
+
+    def test_distinct_block_tails_direct(self):
+        """Kernel-level analogue of ``TestTransverseSyntheticTail``:
+        synthetic momentum-dependent per-block tails, DISTINCT between
+        blocks, calling ``bubble.transverse_bubble`` directly (not
+        through any solver wrapper) against the independent reference
+        above.
+
+        Mutation checks (b)/(c): feeding ``jump_f[fwd_block]`` /
+        ``jump_r_rev[rev_block]`` from the WRONG block into
+        ``_assemble_cross_block``'s endpoint formula each makes this
+        fail (both schemes) -- measured max relative deviation for (b)
+        (``jump_f[fwd] -> jump_f[rev]``): 1.53 (reduced), 3.66
+        (general); for (c) (``jump_r_rev[rev] -> jump_r_rev[fwd]``):
+        1.23 (reduced), 2.40 (general) -- O(1) in both cases, since the
+        two blocks' synthetic tails are unrelated random arrays here,
+        not a small numeric drift."""
+        green, tailk, tail = self._direct_fixture()
+        spatial_shape = (1, 1, self.NX)
+        beta = 1.0
+        for reduced in (True, False):
+            scheme = "reduced" if reduced else "general"
+            with self.subTest(scheme=scheme):
+                want = self._direct_reference(green, tailk, reduced)
+                got = bubble_mod.transverse_bubble(
+                    green, tail, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                assert_approx_array(got, want, rel=1e-12, abs=1e-13)
+
+    def test_rejects_wrong_nblock(self):
+        """``nblock`` 1 and 3 both raise ``ValueError`` naming the actual
+        ``nblock`` and the required value (2) -- the transverse-specific
+        guard runs BEFORE ``_validate_dense_inputs``'s own (looser)
+        ``nblock in {1, 2}`` check, so both bad values surface the same
+        transverse-specific message rather than the generic one."""
+        solver, green, tail, beta, spatial_shape = self._asym_fixture()
+        cases = {
+            1: (green[:1], tail[:1]),
+            3: (np.concatenate([green, green[:1]], axis=0),
+                np.concatenate([tail, tail[:1]], axis=0)),
+        }
+        for nblock, (bad_green, bad_tail) in cases.items():
+            with self.subTest(nblock=nblock):
+                with self.assertRaises(ValueError) as cm:
+                    bubble_mod.transverse_bubble(
+                        bad_green, bad_tail, beta,
+                        spatial_shape=spatial_shape, scheme="reduced")
+                msg = str(cm.exception)
+                self.assertIn("nblock={}".format(nblock), msg)
+                self.assertIn("required: 2", msg)
+
+    def test_rejects_bad_scheme(self):
+        """Scheme-enum validation on the transverse entry point mirrors
+        ``TestBubbleOldVsNewDense.test_rejects_bad_scheme`` for
+        ``dense_bubble`` -- an invalid ``scheme`` string must raise
+        ``ValueError`` here too, not silently fall through to one of the
+        two known contraction primitives. Reuses the lightweight
+        synthetic ``_direct_fixture`` (no solver/lattice construction
+        needed for a pure input-validation gate)."""
+        green, tailk, tail = self._direct_fixture()
+        spatial_shape = (1, 1, self.NX)
+        beta = 1.0
+        with self.assertRaises(ValueError):
+            bubble_mod.transverse_bubble(
+                green, None, beta, spatial_shape=spatial_shape,
+                scheme="bogus")
+
+    def test_wrapper_delegates_to_kernel(self):
+        """Delegation spy (Task 2 of the series: the wrapper switch).
+        ``RPA._calc_chi0q_transverse`` must forward to
+        ``bubble.transverse_bubble`` with ``spatial_shape`` resolved from
+        ``self.lattice.shape``, ``scheme`` from ``self.enable_reduced``,
+        and ``workers`` from ``self.fft_workers`` -- exercised on a
+        minimal stub solver (mirrors ``TestZeroTailBitwise._lat_stub``,
+        ``tests/test_coeff_tail_endpoint.py``) rather than a full RPA
+        solver, since only the attribute forwarding is under test here,
+        not the numerics (that is
+        ``test_distinct_block_tails_direct``'s job, alongside the
+        Lindhard/ED/degenerate-limit oracles elsewhere in this
+        module)."""
+        import hwave.solver.rpa as R
+
+        NX, NMAT, ND = 3, 4, 2
+
+        class _Lat:
+            shape = (1, 1, NX)
+            nvol = NX
+
+        class _Stub:
+            lattice = _Lat()
+            nmat = NMAT
+            fft_workers = 7
+
+        green = np.zeros((2, NMAT, NX, ND, ND), dtype=complex)
+        tail = np.zeros_like(green)
+        beta = 1.0
+        sentinel_reduced = np.full((NMAT, NX, ND, ND), 1 + 2j,
+                                   dtype=complex)
+        sentinel_general = np.full((NMAT, NX, ND, ND, ND, ND), 3 - 4j,
+                                   dtype=complex)
+
+        calls = []
+
+        def _spy(green_kw, green0_tail, beta_arg, *, spatial_shape,
+                 scheme, workers=None):
+            calls.append(dict(spatial_shape=spatial_shape, scheme=scheme,
+                              workers=workers))
+            return (sentinel_reduced if scheme == "reduced"
+                    else sentinel_general)
+
+        for reduced, expect_scheme in ((True, "reduced"),
+                                       (False, "general")):
+            with self.subTest(reduced=reduced):
+                calls.clear()
+                stub = _Stub()
+                stub.enable_reduced = reduced
+                with mock.patch.object(bubble_mod, "transverse_bubble",
+                                       _spy):
+                    got = R.RPA._calc_chi0q_transverse(
+                        stub, green, tail, beta)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0]["spatial_shape"], (1, 1, NX))
+                self.assertEqual(calls[0]["scheme"], expect_scheme)
+                self.assertEqual(calls[0]["workers"], 7)
+                want = (sentinel_reduced if reduced else sentinel_general)
+                np.testing.assert_array_equal(np.asarray(got), want)
 
 
 class TestBubbleOldVsNewIr(unittest.TestCase):
@@ -2130,6 +2387,7 @@ class TestOneshotIrVsDense(unittest.TestCase):
 GATE_CLASSES = [
     "test_bubble_kernel.TestBuildGreen",
     "test_bubble_kernel.TestBubbleOldVsNewDense",
+    "test_bubble_kernel.TestTransverseBubbleKernel",
     "test_bubble_kernel.TestBubbleOldVsNewIr",
     "test_bubble_kernel.TestBubbleOldVsNewBondStatic",
     "test_bubble_kernel.TestBondDynamicOracle",
@@ -2207,7 +2465,8 @@ class TestBubbleGpuParity(unittest.TestCase):
     entry points, mirroring ``tests/test_rpa_gpu.py``'s skip pattern
     (skip cleanly without CuPy / a usable CUDA device). Scope (spec "GPU
     scope"): the BUBBLE CELLS ONLY -- ``dense_bubble`` (both schemes),
-    ``ir_bubble`` (reduced), ``bond_bubble_static``. ``pair_weight``,
+    ``transverse_bubble`` (both schemes), ``ir_bubble`` (reduced),
+    ``bond_bubble_static``. ``pair_weight``,
     ``_g2_from_green``, and the rest of the bond-kernel/Eliashberg
     assembly keep their existing NumPy coercions and are OUT of this
     class's scope; nothing here claims device-residency past the bubble
@@ -2259,6 +2518,38 @@ class TestBubbleGpuParity(unittest.TestCase):
                     green, tail, beta, spatial_shape=spatial_shape,
                     scheme=scheme)
                 gpu_out = bubble_mod.dense_bubble(
+                    green_gpu, tail_gpu, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                self.assertIs(bk.array_module_of(gpu_out), self.cupy)
+                assert_approx_array(bk.to_host(gpu_out), cpu_out,
+                                    rel=1e-10, abs=1e-12)
+
+    def test_transverse_bubble(self):
+        """Per-cell CPU/GPU parity for ``bubble.transverse_bubble``,
+        added alongside the Step-2 bubble cells (spec: "GPU parity for
+        the new entry IS in scope, same pattern as
+        TestBubbleGpuParity"). Uses the asymmetric (``hz != 0``,
+        ``nblock=2``) fixture -- ``transverse_bubble`` requires exactly
+        2 blocks, unlike the other cells in this class."""
+        from hwave.solver import backend as bk
+
+        solver = _make_rpa_solver(coeff_tail=0.5, hz=0.4, norb=2,
+                                  complex_hop=True, Lx=4, Ly=4, Nmat=8)
+        solver._calc_epsilon_k({})
+        beta = 1.0 / solver.T
+        mu = solver.mu_value
+        green, tail = solver._calc_green(beta, mu)
+        spatial_shape = tuple(solver.lattice.shape)
+
+        green_gpu = self._to_device(green)
+        tail_gpu = self._to_device(tail)
+
+        for scheme in ("reduced", "general"):
+            with self.subTest(scheme=scheme):
+                cpu_out = bubble_mod.transverse_bubble(
+                    green, tail, beta, spatial_shape=spatial_shape,
+                    scheme=scheme)
+                gpu_out = bubble_mod.transverse_bubble(
                     green_gpu, tail_gpu, beta, spatial_shape=spatial_shape,
                     scheme=scheme)
                 self.assertIs(bk.array_module_of(gpu_out), self.cupy)
