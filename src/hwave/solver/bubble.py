@@ -12,6 +12,8 @@ The binding contract is
 (sections "Module layout", "Green/tail contracts", "Scheme x bond", "The
 bond assembly", and "Output contracts"). This module transcribes the
 numerics of ``RPA._calc_chi0q`` (rpa.py, around line 2936 at series start),
+``RPA._calc_chi0q_transverse`` (rpa.py, around line 3016 at the start of
+the 2026-08-15-transverse-bubble-on-kernel series),
 ``FLEX._calc_chi0q_ir`` / ``FLEX._calc_chi0q_general_ir`` (flex.py, around
 lines 818-917 at series start), and ``bond_channels.bond_bubble``
 (bond_channels.py, around lines 1171-1315 at series start) without

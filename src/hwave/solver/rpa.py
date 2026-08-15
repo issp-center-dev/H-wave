@@ -3013,8 +3013,10 @@ class RPA:
             scheme="reduced" if self.enable_reduced else "general",
             workers=workers)
 
-    def _calc_chi0q_transverse(self, green_kw, green0_tail, beta):
+    def _legacy_calc_chi0q_transverse(self, green_kw, green0_tail, beta):
         """Calculate the transverse bare susceptibility chi0_+-(q,iω).
+
+        Legacy body kept for side-by-side comparison; removed at series end.
 
         chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
 
@@ -3169,6 +3171,87 @@ class RPA:
             axis=0).reshape(nmat, nvol, *nd_shape) * (-1.0/beta)
 
         return chi0_qw
+
+    def _calc_chi0q_transverse(self, green_kw, green0_tail, beta):
+        """Calculate the transverse bare susceptibility chi0_+-(q,iω).
+
+        chi0_+-[a,c,b,d](r,τ) = -G_↑[a,b](r,τ) * G_↓[d,c](-r,-τ)
+
+        This crosses spin-up and spin-down Green's functions, unlike the
+        longitudinal chi0 which uses same-spin products.
+
+        Parameters
+        ----------
+        green_kw : ndarray, shape (2, nmat, nvol, norb, norb)
+            Green's function with block 0=↑, block 1=↓.
+        green0_tail : ndarray
+            High-frequency tail correction.
+        beta : float
+            Inverse temperature.
+
+        Returns
+        -------
+        ndarray
+            Transverse chi0_+- with block dimension removed (shape depends
+            on enable_reduced).
+
+        Notes
+        -----
+        Validates the input shapes (see the inline guards below), then
+        delegates the cross-block bubble calculation to
+        ``bubble.transverse_bubble`` -- mirroring ``_calc_chi0q``'s
+        wrapper (spec: "Module layout"), the guards here duplicate the
+        kernel's own validation deliberately, keeping this solver's
+        user-facing diagnostics even though the kernel would also catch
+        the malformed input. Two of them are worth calling out
+        specifically: the ``nblock == 2`` check keeps its own
+        transverse-specific message (distinct from the kernel's own,
+        looser ``nblock in {1, 2}`` guard), and the ``green0_tail`` shape
+        guard stays UNCONDITIONAL -- this wrapper's contract still
+        requires a real tail array; the kernel's ``green0_tail=None``
+        convenience is NOT exposed through it.
+        """
+        logger.debug(">>> RPA._calc_chi0q_transverse")
+
+        workers = getattr(self, "fft_workers", 1)
+
+        nx, ny, nz = self.lattice.shape
+        nblock, nmat, nvol, nd, nd2 = green_kw.shape
+        if nblock != 2:
+            # ValueError, not assert: an assert disappears under python -O,
+            # and a wrong block count here would silently ignore the extra
+            # blocks (measured: nblock=3 was accepted with the third block
+            # dropped) -- plausible-looking wrong output.
+            raise ValueError(
+                "transverse chi0 requires a spin-diag Green's function with "
+                "exactly 2 spin blocks (G_up, G_down), got nblock={}".format(
+                    nblock))
+        if nvol != self.lattice.nvol:
+            raise ValueError(
+                "transverse chi0: Green's function volume axis ({}) does "
+                "not match the lattice ({})".format(nvol, self.lattice.nvol))
+        if nmat != self.nmat:
+            raise ValueError(
+                "transverse chi0: Green's function frequency axis ({}) "
+                "does not match Nmat ({})".format(nmat, self.nmat))
+        if nd != nd2 or nd < 1:
+            raise ValueError(
+                "transverse chi0: orbital axes must be square and "
+                "nonempty, got ({}, {})".format(nd, nd2))
+        if green0_tail.shape != green_kw.shape:
+            # same paired-tail invariant as the longitudinal kernel
+            raise ValueError(
+                "transverse chi0: green0_tail shape {} does not match the "
+                "Green's function {} -- the tail must be the paired "
+                "array from the same _calc_green call".format(
+                    green0_tail.shape, green_kw.shape))
+
+        # Delegate to the shared bubble kernel (spec: "Module layout").
+        return bubble.transverse_bubble(
+            green_kw, green0_tail, beta,
+            spatial_shape=(nx, ny, nz),
+            scheme="reduced" if self.enable_reduced else "general",
+            workers=workers)
 
     def _assemble_transverse_vertex(self, ham_orig):
         """Build the transverse vertex ham_pm from the interaction tensor.

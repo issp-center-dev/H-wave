@@ -12,6 +12,7 @@ in Task 2).
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -503,10 +504,15 @@ class TestBubbleOldVsNewDense(unittest.TestCase):
 
 class TestTransverseBubbleKernel(unittest.TestCase):
     """Gates for ``bubble.transverse_bubble`` (Step 3a spec:
-    ``2026-08-15-transverse-bubble-on-kernel``, Task 1). ``rpa.py`` is
-    UNTOUCHED in this task -- ``RPA._calc_chi0q_transverse`` is still the
-    legacy production body and stays the comparison oracle below (the
-    wrapper switch is Task 2 of the series)."""
+    ``2026-08-15-transverse-bubble-on-kernel``). Task 1 added this class
+    with ``rpa.py`` untouched (``RPA._calc_chi0q_transverse`` still the
+    legacy production body). Task 2 switched the dispatch:
+    ``RPA._calc_chi0q_transverse`` now delegates to
+    ``bubble.transverse_bubble``, and the former production body was
+    renamed ``RPA._legacy_calc_chi0q_transverse`` -- the comparison
+    oracle below was repointed to that renamed method (still the same
+    numerics, now purely a side-by-side pin rather than the live
+    production path)."""
 
     def _asym_solver(self):
         # G_up != G_dn via nonzero Zeeman; complex hopping; tail on.
@@ -523,9 +529,13 @@ class TestTransverseBubbleKernel(unittest.TestCase):
         return solver, green, tail, beta, spatial_shape
 
     def test_old_vs_new_asymmetric(self):
-        """Legacy ``RPA._calc_chi0q_transverse`` (bound method, still the
-        production body in this task) vs ``bubble.transverse_bubble`` on
-        an asymmetric (``G_up != G_dn``) fixture, both schemes, tail on
+        """Legacy ``RPA._legacy_calc_chi0q_transverse`` (bound method,
+        the renamed former production body -- since Task 2's wrapper
+        switch, ``RPA._calc_chi0q_transverse`` itself delegates to
+        ``bubble.transverse_bubble``, so this comparison is now a
+        side-by-side pin rather than old-vs-new-production) vs
+        ``bubble.transverse_bubble`` on an asymmetric (``G_up != G_dn``)
+        fixture, both schemes, tail on
         (``coeff_tail=0.5``) AND off (an explicit all-zero tail array --
         the legacy body always requires a real array, it has no ``None``
         convention): measured margin max|new-legacy| == 0.0 (bitwise
@@ -554,8 +564,9 @@ class TestTransverseBubbleKernel(unittest.TestCase):
             for tail_arr, label in ((tail, "tail_on"),
                                     (zero_tail, "tail_off")):
                 with self.subTest(scheme=scheme, tail=label):
-                    legacy = np.asarray(solver._calc_chi0q_transverse(
-                        green, tail_arr, beta))
+                    legacy = np.asarray(
+                        solver._legacy_calc_chi0q_transverse(
+                            green, tail_arr, beta))
                     new = bubble_mod.transverse_bubble(
                         green, tail_arr, beta, spatial_shape=spatial_shape,
                         scheme=scheme)
@@ -710,6 +721,64 @@ class TestTransverseBubbleKernel(unittest.TestCase):
                 msg = str(cm.exception)
                 self.assertIn("nblock={}".format(nblock), msg)
                 self.assertIn("required: 2", msg)
+
+    def test_wrapper_delegates_to_kernel(self):
+        """Delegation spy (Task 2 of the series: the wrapper switch).
+        ``RPA._calc_chi0q_transverse`` must forward to
+        ``bubble.transverse_bubble`` with ``spatial_shape`` resolved from
+        ``self.lattice.shape``, ``scheme`` from ``self.enable_reduced``,
+        and ``workers`` from ``self.fft_workers`` -- exercised on a
+        minimal stub solver (mirrors ``TestZeroTailBitwise._lat_stub``,
+        ``tests/test_coeff_tail_endpoint.py``) rather than a full RPA
+        solver, since only the attribute forwarding is under test here,
+        not the numerics (those are ``test_old_vs_new_asymmetric``'s and
+        ``test_distinct_block_tails_direct``'s job)."""
+        import hwave.solver.rpa as R
+
+        NX, NMAT, ND = 3, 4, 2
+
+        class _Lat:
+            shape = (1, 1, NX)
+            nvol = NX
+
+        class _Stub:
+            lattice = _Lat()
+            nmat = NMAT
+            fft_workers = 7
+
+        green = np.zeros((2, NMAT, NX, ND, ND), dtype=complex)
+        tail = np.zeros_like(green)
+        beta = 1.0
+        sentinel_reduced = np.full((NMAT, NX, ND, ND), 1 + 2j,
+                                   dtype=complex)
+        sentinel_general = np.full((NMAT, NX, ND, ND, ND, ND), 3 - 4j,
+                                   dtype=complex)
+
+        calls = []
+
+        def _spy(green_kw, green0_tail, beta_arg, *, spatial_shape,
+                 scheme, workers=None):
+            calls.append(dict(spatial_shape=spatial_shape, scheme=scheme,
+                              workers=workers))
+            return (sentinel_reduced if scheme == "reduced"
+                    else sentinel_general)
+
+        for reduced, expect_scheme in ((True, "reduced"),
+                                       (False, "general")):
+            with self.subTest(reduced=reduced):
+                calls.clear()
+                stub = _Stub()
+                stub.enable_reduced = reduced
+                with mock.patch.object(bubble_mod, "transverse_bubble",
+                                       _spy):
+                    got = R.RPA._calc_chi0q_transverse(
+                        stub, green, tail, beta)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0]["spatial_shape"], (1, 1, NX))
+                self.assertEqual(calls[0]["scheme"], expect_scheme)
+                self.assertEqual(calls[0]["workers"], 7)
+                want = (sentinel_reduced if reduced else sentinel_general)
+                np.testing.assert_array_equal(np.asarray(got), want)
 
 
 class TestBubbleOldVsNewIr(unittest.TestCase):
@@ -2419,7 +2488,8 @@ class TestBubbleGpuParity(unittest.TestCase):
     entry points, mirroring ``tests/test_rpa_gpu.py``'s skip pattern
     (skip cleanly without CuPy / a usable CUDA device). Scope (spec "GPU
     scope"): the BUBBLE CELLS ONLY -- ``dense_bubble`` (both schemes),
-    ``ir_bubble`` (reduced), ``bond_bubble_static``. ``pair_weight``,
+    ``transverse_bubble`` (both schemes), ``ir_bubble`` (reduced),
+    ``bond_bubble_static``. ``pair_weight``,
     ``_g2_from_green``, and the rest of the bond-kernel/Eliashberg
     assembly keep their existing NumPy coercions and are OUT of this
     class's scope; nothing here claims device-residency past the bubble
