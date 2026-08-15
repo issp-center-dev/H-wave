@@ -8,32 +8,32 @@ FAQ
 
 **Q. 超伝導解析において、電荷とスピンの影響を切り分けて評価できますか？**
 
-可能です。動的 Eliashberg ソルバ（``[eliashberg] frequency = "dynamic"``、
+可能です。動的 Eliashberg ソルバ（``[eliashberg] frequency = "dynamic"``\ 、
 FLEX の感受率を読み込むモード）では、ペアリング頂点はスピン
-（:math:`\chi_{\mathrm s}`）・電荷（:math:`\chi_{\mathrm c}`）感受率から構成され、
-両チャネルについて\ **線形**\ です。したがって ``[eliashberg]`` セクションで
+（:math:`\chi_{\mathrm s}`\ ）・電荷（:math:`\chi_{\mathrm c}`\ ）感受率から構成され、
+両チャネルについて\ **線形**\ です。したがって ``[eliashberg]``\ セクションで
 一方のチャネルを 0 にすることで、各チャネルがペアリング固有値 :math:`\lambda`
 に与える効果を比較できます。
 
-- ``zero_chi_c = true`` とすると、スピンゆらぎ項＋裸の項が残ります。
-- ``zero_chi_s = true`` とすると、電荷ゆらぎ項＋裸の項が残ります。
+- ``zero_chi_c = true``\ とすると、スピンゆらぎ項＋裸の項が残ります。
+- ``zero_chi_s = true``\ とすると、電荷ゆらぎ項＋裸の項が残ります。
 
 全チャネルを含む計算（full）と、一方のチャネルをゼロにした2通りの計算を行い、
-得られた :math:`\lambda` を比較すれば、
+得られた :math:`\lambda`\ を比較すれば、
 どちらのゆらぎチャネルの効果が相対的に強いかを診断する目安になります。
-いずれのフラグも既定は ``false`` なので通常の計算には影響せず、
-``pairing_type`` が ``"singlet"`` でも ``"triplet"`` でも使えます。
+いずれのフラグも既定は ``false``\ なので通常の計算には影響せず、
+``pairing_type`` が ``"singlet"``\ でも ``"triplet"``\ でも使えます。
 
 .. note::
 
    瞬間的な（裸の）相互作用項は常に保持され、主要固有値はペアリング頂点に対して
    線形ではないため、固有値は加算されません（一般に
    :math:`\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq
-   \lambda_{\mathrm{full}}`\ ）。ここで :math:`\lambda_{\mathrm s}` と
-   :math:`\lambda_{\mathrm c}` は、それぞれ ``zero_chi_c = true``
+   \lambda_{\mathrm{full}}`\ ）。ここで :math:`\lambda_{\mathrm s}`\ と
+   :math:`\lambda_{\mathrm c}`\ は、それぞれ ``zero_chi_c = true``
    （スピンゆらぎ項＋裸の項）と ``zero_chi_s = true``
    （電荷ゆらぎ項＋裸の項）による計算の固有値です。裸の項は両方に含まれるため、
    単純に加算すると二重に数えることにもなります。この分解は2つのチャネルの
    相対的な強さの比較に用い、厳密な加法的分割としては扱わないでください。
 
-頂点の式や詳細は :ref:`sc_channel_decomposition` を参照してください。
+頂点の式や詳細は :ref:`sc_channel_decomposition`\ を参照してください。

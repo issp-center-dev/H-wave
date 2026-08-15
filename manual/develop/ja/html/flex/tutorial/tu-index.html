@@ -42,28 +42,28 @@
 説明します。FLEXはRPAを拡張し、裸のグリーン関数の代わりに
 ドレスド（自己無撞着な）グリーン関数を用いることで、
 相関電子系のより正確な記述を提供します。</p>
-<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample</span></code> ディレクトリにあります。</p>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample</span></code>ディレクトリにあります。</p>
 <section id="id1">
 <h2><span class="section-number">6.1.1. </span>概要<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
 <p>FLEX近似 <a class="footnote-reference brackets" href="#id13" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> は遍歴電子系のための自己無撞着ダイアグラム法です。
-裸のグリーン関数 <span class="math notranslate nohighlight">\(G_0\)</span> を用いるRPAと異なり、
+裸のグリーン関数 <span class="math notranslate nohighlight">\(G_0\)</span>を用いるRPAと異なり、
 FLEXは以下の自己無撞着ループを収束まで繰り返します:</p>
 <ol class="arabic simple">
-<li><p>Dyson方程式からドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span> を計算</p></li>
-<li><p>ドレスド <span class="math notranslate nohighlight">\(G\)</span> から裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span> を計算</p></li>
+<li><p>Dyson方程式からドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>を計算</p></li>
+<li><p>ドレスド <span class="math notranslate nohighlight">\(G\)</span>から裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span>を計算</p></li>
 <li><p>相互作用をスピンチャネルと電荷チャネルに分解</p></li>
-<li><p>スピン/電荷感受率 <span class="math notranslate nohighlight">\(\chi_s\)</span>, <span class="math notranslate nohighlight">\(\chi_c\)</span> のRPA方程式を解く</p></li>
-<li><p>有効相互作用 <span class="math notranslate nohighlight">\(V_{\mathrm{eff}}\)</span> を構成</p></li>
-<li><p>FFT畳み込みにより自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span> を計算</p></li>
+<li><p>スピン/電荷感受率 <span class="math notranslate nohighlight">\(\chi_s\)</span>, <span class="math notranslate nohighlight">\(\chi_c\)</span>のRPA方程式を解く</p></li>
+<li><p>有効相互作用 <span class="math notranslate nohighlight">\(V_{\mathrm{eff}}\)</span>を構成</p></li>
+<li><p>FFT畳み込みにより自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>を計算</p></li>
 <li><p>収束判定; 未収束なら1に戻る</p></li>
 </ol>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>電子数を <code class="docutils literal notranslate"><span class="pre">filling</span></code> / <code class="docutils literal notranslate"><span class="pre">Ncond</span></code> で固定する場合（<code class="docutils literal notranslate"><span class="pre">mu</span></code> を固定しない場合）、FLEX
-は各SCF反復で化学ポテンシャル <span class="math notranslate nohighlight">\(\mu\)</span> を*ドレスされた*Green関数から解き直し、
+<p>電子数を <code class="docutils literal notranslate"><span class="pre">filling</span></code> / <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>で固定する場合（<code class="docutils literal notranslate"><span class="pre">mu</span></code>を固定しない場合）、FLEX
+は各SCF反復で化学ポテンシャル <span class="math notranslate nohighlight">\(\mu\)</span>を<em>ドレスされた</em>Green関数から解き直し、
 自己エネルギーが成長しても目標フィリングが自己無撞着に保たれるようにします。この
-ため各反復で <code class="docutils literal notranslate"><span class="pre">FLEX._find_mu_dressed:</span> <span class="pre">mu</span> <span class="pre">=</span> <span class="pre">...</span></code> の行が出力され、収束した
-<span class="math notranslate nohighlight">\(\mu`（および正確な反復回数）は :math:\)</span>mu` を非相互作用値に固定した計算とは
+ため各反復で <code class="docutils literal notranslate"><span class="pre">FLEX._find_mu_dressed:</span> <span class="pre">mu</span> <span class="pre">=</span> <span class="pre">...</span></code>の行が出力され、収束した
+<span class="math notranslate nohighlight">\(\mu\)</span>（および正確な反復回数）は <span class="math notranslate nohighlight">\(\mu\)</span>を非相互作用値に固定した計算とは
 異なります。本チュートリアルに示す反復回数・収束値はすべて例示であり、バージョンや
 環境によって多少変わり得ます。</p>
 </div>
@@ -90,9 +90,9 @@ G(\mathbf{k}+\mathbf{q}, i\omega_n + i\nu_m)\, G(\mathbf{k}, i\omega_n)\]</div>
 <span class="eqno">(6.3)<a class="headerlink" href="#equation-flex-tutorial-tu-index-2" title="Link to this equation">¶</a></span>\[\chi_s = \left[ I - \chi_0 \, U_s \right]^{-1} \chi_0\]</div>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-3">
 <span class="eqno">(6.4)<a class="headerlink" href="#equation-flex-tutorial-tu-index-3" title="Link to this equation">¶</a></span>\[\chi_c = \left[ I + \chi_0 \, U_c \right]^{-1} \chi_0\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(U_s\)</span>, <span class="math notranslate nohighlight">\(U_c\)</span> は全相互作用ハミルトニアンから
+<p>ここで <span class="math notranslate nohighlight">\(U_s\)</span>, <span class="math notranslate nohighlight">\(U_c\)</span>は全相互作用ハミルトニアンから
 分解されたスピンおよび電荷相互作用頂点です。
-単一バンドHubbardモデルでは <span class="math notranslate nohighlight">\(U_s = U_c = U\)</span> となります。</p>
+単一バンドHubbardモデルでは <span class="math notranslate nohighlight">\(U_s = U_c = U\)</span>となります。</p>
 </section>
 <section id="id6">
 <h3>有効相互作用<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
@@ -101,11 +101,11 @@ G(\mathbf{k}+\mathbf{q}, i\omega_n + i\nu_m)\, G(\mathbf{k}, i\omega_n)\]</div>
 <span class="eqno">(6.5)<a class="headerlink" href="#equation-flex-tutorial-tu-index-4" title="Link to this equation">¶</a></span>\[V_{\mathrm{eff}}(\mathbf{q}, i\nu_m)
 = W \left[ \frac{3}{2}\chi_s
          + \frac{1}{2}\chi_c - \chi_0 \right] W\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(W\)</span> は裸の相互作用頂点です。
+<p>ここで <span class="math notranslate nohighlight">\(W\)</span>は裸の相互作用頂点です。
 <span class="math notranslate nohighlight">\(\chi_0\)</span> は <strong>1回だけ</strong> 減算します。最低次では <span class="math notranslate nohighlight">\(\chi_s = \chi_c = \chi_0\)</span>
-となるため括弧内は <span class="math notranslate nohighlight">\(\chi_0\)</span> に帰着し、<span class="math notranslate nohighlight">\(V_{\mathrm{eff}} = W \chi_0 W\)</span>
-（2次の <span class="math notranslate nohighlight">\(U^2\)</span> バブル）を与えます。この1回の減算により、<span class="math notranslate nohighlight">\(\chi_s\)</span> と
-<span class="math notranslate nohighlight">\(\chi_c\)</span> に含まれる二重計上された2次ダイアグラムが除去されます。</p>
+となるため括弧内は <span class="math notranslate nohighlight">\(\chi_0\)</span>に帰着し、<span class="math notranslate nohighlight">\(V_{\mathrm{eff}} = W \chi_0 W\)</span>
+（2次の <span class="math notranslate nohighlight">\(U^2\)</span>バブル）を与えます。この1回の減算により、<span class="math notranslate nohighlight">\(\chi_s\)</span>と
+<span class="math notranslate nohighlight">\(\chi_c\)</span>に含まれる二重計上された2次ダイアグラムが除去されます。</p>
 </section>
 <section id="id8">
 <h3>自己エネルギー<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
@@ -123,31 +123,31 @@ Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
 （モード間結合）は <strong>含みません</strong>。これらの高次補正はFLEXの枠組みの外であり、
 ここでは評価されません。2つのスピンゆらぎから生成される電荷・軌道ゆらぎが
 重要となる場合（例：Onari--Kontaniの軌道ゆらぎ機構 <a class="footnote-reference brackets" href="#id14" id="id10" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>）には効くことがあります。</p>
-<p>またデフォルトの <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> スキームでは、
+<p>またデフォルトの <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>スキームでは、
 スピン/電荷バーテックスを相互作用の密度--密度成分で構成します。
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度--密度成分の頂点を <strong>一切持たない</strong> ため、
-このスキームでは近似すらできません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code> でこれらを
-与えると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> となり、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> への切り替えが
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は密度--密度成分の頂点を <strong>一切持たない</strong> ため、
+このスキームでは近似すらできません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>でこれらを
+与えると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>となり、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>への切り替えが
 案内されます（以前の開発版では警告付きで受理され、相互作用は無音で効果
 ゼロになっていました）。<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> は <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
-がある場合、自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code> を選択します。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> はどのスキーム
+がある場合、自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code>を選択します。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>はどのスキーム
 でも受理されます：その粒子-正孔頂点は厳密にゼロであり、感受率チャネルから
 落とすことは近似ではなく厳密です。
 したがってこのスキームでの「FLEX」は <em>厳密ではなく</em>、密度--密度かつ
 AL/MTを含まないゆらぎ交換近似のレベルである点に注意してください。</p>
-<p>一方、 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> スキームでは、off-diagonalな完全な
+<p>一方、 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>スキームでは、off-diagonalな完全な
 Kanamori頂点を <strong>保持</strong> します。これはMochizuki--Yanase--Ogata (MYO) <a class="footnote-reference brackets" href="#id15" id="id11" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
 （およびTakimoto--Hotta--Ueda (THU) <a class="footnote-reference brackets" href="#id16" id="id12" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられた）に従う
 常磁性の完全頂点（full-vertex）の定式化です。MYO規約のもとで
-行列形式のスピン相互作用行列 <span class="math notranslate nohighlight">\(\hat{U}^s\)</span> と
-電荷相互作用行列 <span class="math notranslate nohighlight">\(\hat{U}^c\)</span> を構成し、行列形式のRPA方程式を解いて
-<span class="math notranslate nohighlight">\(\chi_s\)</span>/<span class="math notranslate nohighlight">\(\chi_c\)</span> を求め、ゆらぎ相互作用を
+行列形式のスピン相互作用行列 <span class="math notranslate nohighlight">\(\hat{U}^s\)</span>と
+電荷相互作用行列 <span class="math notranslate nohighlight">\(\hat{U}^c\)</span>を構成し、行列形式のRPA方程式を解いて
+<span class="math notranslate nohighlight">\(\chi_s\)</span>/<span class="math notranslate nohighlight">\(\chi_c\)</span>を求め、ゆらぎ相互作用を
 <span class="math notranslate nohighlight">\(V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
 + \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
 - \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)\)</span>
-として組み立てます。したがって <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> ではoff-diagonalの頂点は
+として組み立てます。したがって <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>ではoff-diagonalの頂点は
 <strong>無視されず</strong>、密度--密度縮約の警告も抑制されます。なお上記のAL/MT型の
-頂点補正は、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> スキームにおいてもFLEXの枠組みの外にあります。</p>
+頂点補正は、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>スキームにおいてもFLEXの枠組みの外にあります。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id13" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
@@ -188,13 +188,13 @@ Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 <p>最近接ホッピング <span class="math notranslate nohighlight">\(t = 1.0\)</span>、
 次近接ホッピング <span class="math notranslate nohighlight">\(t' = 0.5\)</span>、
 オンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 4.0\)</span>、
-温度 <span class="math notranslate nohighlight">\(T = 0.5\)</span> を使用します。</p>
-<p>このモデルは <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> にピークを持つ
+温度 <span class="math notranslate nohighlight">\(T = 0.5\)</span>を使用します。</p>
+<p>このモデルは <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>にピークを持つ
 強い反強磁性 (AF) スピンゆらぎを示すことが知られています。</p>
 </section>
 <section id="id18">
 <h3>入力ファイルの準備<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
-<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/1orb/</span></code> にあります。</p>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/1orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
   print_level = 1
@@ -239,12 +239,12 @@ Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>: 松原周波数の数</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">=</span> <span class="pre">0.5</span></code>: 1サイトあたりの目標電子数（ハーフフィリング）。<code class="docutils literal notranslate"><span class="pre">filling</span></code>
 （または <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>）を指定すると、FLEX は各SCF反復でドレスドGreen関数から化学
-ポテンシャル <span class="math notranslate nohighlight">\(\mu\)</span> を解き直し、自己エネルギーが成長してもフィリングを保存
-します。代わりに <code class="docutils literal notranslate"><span class="pre">mu</span></code> を指定した場合は固定されます。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0``（省略可）:</span> <span class="pre">松原和の高振動数テール加速係数。``coeff_tail</span> <span class="pre">=</span> <span class="pre">1</span></code>
-は <span class="math notranslate nohighlight">\(G\)</span> の厳密な <span class="math notranslate nohighlight">\(1/(i\omega_n)\)</span> 係数（ユニタリ性）に一致するため、
-結果を歪めずに <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> に対する収束を加速します。RPAソルバーでもサポートされて
-います。<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> の場合は不要のため無視されます。</p></li>
+ポテンシャル <span class="math notranslate nohighlight">\(\mu\)</span>を解き直し、自己エネルギーが成長してもフィリングを保存
+します。代わりに <code class="docutils literal notranslate"><span class="pre">mu</span></code>を指定した場合は固定されます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code>（省略可）: 松原和の高振動数テール加速係数。<code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1</span></code>
+は <span class="math notranslate nohighlight">\(G\)</span>の厳密な <span class="math notranslate nohighlight">\(1/(i\omega_n)\)</span>係数（ユニタリ性）に一致するため、
+結果を歪めずに <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>に対する収束を加速します。RPAソルバーでもサポートされて
+います。<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>の場合は不要のため無視されます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">100</span></code>: SCF反復の最大回数</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0.2</span></code>: 自己エネルギー更新の混合パラメータ
 (<span class="math notranslate nohighlight">\(\Sigma_{\mathrm{new}} = (1 - \alpha)\Sigma_{\mathrm{old}} + \alpha\Sigma_{\mathrm{calc}}\)</span>)</p></li>
@@ -306,7 +306,7 @@ FLEX converged after 64 iterations
 </section>
 <section id="id20">
 <h3>計算結果<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h3>
-<p>収束後、ソルバーは <code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに以下の出力ファイルを生成します:</p>
+<p>収束後、ソルバーは <code class="docutils literal notranslate"><span class="pre">output</span></code>ディレクトリに以下の出力ファイルを生成します:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>: 裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>: スピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_m)\)</span></p></li>
@@ -315,51 +315,51 @@ FLEX converged after 64 iterations
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: 自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: ドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>: 粒子数 <code class="docutils literal notranslate"><span class="pre">NCond</span></code>、スピン <code class="docutils literal notranslate"><span class="pre">Sz</span></code>、収束した化学ポテンシャル
-<code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> <span class="math notranslate nohighlight">\(\mu\)</span> を記載したテキストファイル。</p></li>
+<code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> <span class="math notranslate nohighlight">\(\mu\)</span>を記載したテキストファイル。</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> 出力（<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> の <code class="docutils literal notranslate"><span class="pre">energy</span></code> キーで有効化）は最終的な
-ドレスドグリーン関数から書き出されます。<span class="math notranslate nohighlight">\(\mu\)</span> 固定モード（<code class="docutils literal notranslate"><span class="pre">filling</span></code> /
-<code class="docutils literal notranslate"><span class="pre">Ncond</span></code> の代わりに <code class="docutils literal notranslate"><span class="pre">mu</span></code> を指定）では <code class="docutils literal notranslate"><span class="pre">NCond</span></code> 行がその <span class="math notranslate nohighlight">\(\mu\)</span> における
-粒子数を与えるので、複数の固定 <span class="math notranslate nohighlight">\(\mu\)</span> で計算を実行すれば
-<span class="math notranslate nohighlight">\(\mu\)</span>-<span class="math notranslate nohighlight">\(N\)</span> 関係が得られます。<code class="docutils literal notranslate"><span class="pre">Sz</span></code> は常磁性（spin-free）計算では 0
+<p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>出力（<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> の <code class="docutils literal notranslate"><span class="pre">energy</span></code>キーで有効化）は最終的な
+ドレスドグリーン関数から書き出されます。<span class="math notranslate nohighlight">\(\mu\)</span>固定モード（<code class="docutils literal notranslate"><span class="pre">filling</span></code> /
+<code class="docutils literal notranslate"><span class="pre">Ncond</span></code>の代わりに <code class="docutils literal notranslate"><span class="pre">mu</span></code>を指定）では <code class="docutils literal notranslate"><span class="pre">NCond</span></code>行がその <span class="math notranslate nohighlight">\(\mu\)</span>における
+粒子数を与えるので、複数の固定 <span class="math notranslate nohighlight">\(\mu\)</span>で計算を実行すれば
+<span class="math notranslate nohighlight">\(\mu\)</span>-<span class="math notranslate nohighlight">\(N\)</span>関係が得られます。<code class="docutils literal notranslate"><span class="pre">Sz</span></code>は常磁性（spin-free）計算では 0
 となり、スピン依存（spin-diagonal / spinful）計算でのみ非ゼロになります。</p>
 </div>
 </section>
 <section id="scf-sigma-init">
 <h3>SCFループのウォームスタート（<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>）<a class="headerlink" href="#scf-sigma-init" title="Link to this heading">¶</a></h3>
-<p>FLEX はデフォルトで自己無撞着ループを <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> から始めます。
-<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> の <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> に、以前の FLEX 計算が出力した <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
+<p>FLEX はデフォルトで自己無撞着ループを <span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から始めます。
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> の <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>に、以前の FLEX 計算が出力した <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
 を指定すると、その自己エネルギーからループを開始します:</p>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
-<p>軌道ペア転置の修正以前に <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> で作成された多軌道の
-<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は軌道非対角成分が誤っています。修正後のソルバーは種によらず
+<p>軌道ペア転置の修正以前に <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>で作成された多軌道の
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は軌道非対角成分が誤っています。修正後のソルバーは種によらず
 正しい不動点に収束するため結果が汚染されることはありませんが、ウォーム
 スタートとしては不適で、収束を遅らせたり別の解の分枝へ誘導したりする
 （＝種を与える意義を損なう）可能性があります。再生成を推奨します。なお
 その計算の他の出力はいずれにせよ再生成が必要です
-（<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a> を参照）。</p>
+（<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a>を参照）。</p>
 </div>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
 </pre></div>
 </div>
 <p>これは磁気不安定点の近傍（低温・強いスピン揺らぎ）で特に有効です。そこでは
-<span class="math notranslate nohighlight">\(\Sigma = 0\)</span> からの過渡により SCF が*振動*し（残差 <code class="docutils literal notranslate"><span class="pre">|dSigma|/|Sigma|</span></code>
-が減少せず 1 付近で停滞）、<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> に達しても収束しません。収束済みの
+<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>からの過渡により SCF が<em>振動</em>し（残差 <code class="docutils literal notranslate"><span class="pre">|dSigma|/|Sigma|</span></code>
+が減少せず 1 付近で停滞）、<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>に達しても収束しません。収束済みの
 近傍解 ― 例えば温度を段階的に下げ、各計算に直前（高 <span class="math notranslate nohighlight">\(T\)</span>）の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
 を与える ― から始めれば、固定点の近くから反復が始まり振動を回避できます。種は
-現在の計算と同じ <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> と <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> でなければなりません（どちらも即エラー
-になります。<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> を記録するため、体積が同じでも
-<code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> と <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code> のようなアスペクト比違いも検出されます）。
-continuation スイープでは <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> と <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> を固定してください。</p>
+現在の計算と同じ <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> と <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>でなければなりません（どちらも即エラー
+になります。<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を記録するため、体積が同じでも
+<code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> と <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code>のようなアスペクト比違いも検出されます）。
+continuation スイープでは <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> と <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を固定してください。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> のパスは <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_input</span></code> からの相対で解決され
-ます。一方、前の計算の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code> に
-書き出されています。スイープでは、前の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> を入力ディレクトリに
+<p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>のパスは <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_input</span></code>からの相対で解決され
+ます。一方、前の計算の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> は <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>に
+書き出されています。スイープでは、前の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>を入力ディレクトリに
 コピーするか、相対パスで前の出力ディレクトリを直接指してください。例:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[file.input]
   path_to_input = &quot;.&quot;
@@ -374,7 +374,7 @@ continuation スイープでは <code class="docutils literal notranslate"><span
 <figcaption>
 <p><span class="caption-number">図 6.1 </span><span class="caption-text">ハーフフィリングにおける1軌道Hubbardモデルの静的スピン感受率
 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span>。
-<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> のピークはフェルミ面の
+<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>のピークはフェルミ面の
 ネスティングに起因する強い反強磁性スピンゆらぎを示しています。</span><a class="headerlink" href="#id42" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
@@ -394,9 +394,9 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.3 </span><span class="caption-text">選択されたk点での自己エネルギーの周波数依存性。
-虚部 <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span> は
+虚部 <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span>は
 準粒子のダンピングを示し、高周波数での
-<span class="math notranslate nohighlight">\(1/\omega_n\)</span> テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id44" title="Link to this image">¶</a></p>
+<span class="math notranslate nohighlight">\(1/\omega_n\)</span>テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id44" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
@@ -416,11 +416,11 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
   - 2J \sum_{i,\alpha\neq\beta}
     \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}\]</div>
 <p><span class="math notranslate nohighlight">\(U = 4.0\)</span>, <span class="math notranslate nohighlight">\(V = 1.0\)</span>, <span class="math notranslate nohighlight">\(J = 0.5\)</span>,
-温度 <span class="math notranslate nohighlight">\(T = 1.0\)</span> を使用します。</p>
+温度 <span class="math notranslate nohighlight">\(T = 1.0\)</span>を使用します。</p>
 </section>
 <section id="id23">
 <h3>入力ファイルの準備<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h3>
-<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/2orb/</span></code> にあります。</p>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/2orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
   print_level = 1
@@ -541,7 +541,7 @@ FLEX._find_mu_dressed: mu = 0.000000
 FLEX converged after 59 iterations
 </pre></div>
 </div>
-<p>（粒子ホール対称なハーフフィリング模型のため <span class="math notranslate nohighlight">\(\mu = 0\)</span> となります。）</p>
+<p>（粒子ホール対称なハーフフィリング模型のため <span class="math notranslate nohighlight">\(\mu = 0\)</span>となります。）</p>
 </section>
 <section id="id25">
 <h3>計算結果<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
@@ -551,7 +551,7 @@ FLEX converged after 59 iterations
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.4 </span><span class="caption-text">2軌道モデルの静的スピン感受率。
-<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> のピークはフント結合により増強されており、
+<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>のピークはフント結合により増強されており、
 各サイト内での強磁性的な配列を促進しつつ、
 サイト間の反強磁性相関を許容しています。</span><a class="headerlink" href="#id45" title="Link to this image">¶</a></p>
 </figcaption>
@@ -592,7 +592,7 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 </section>
 <section id="id27">
 <h2><span class="section-number">6.1.6. </span>出力ファイル形式<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
-<p>FLEXソルバーは以下の内容を持つNumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code> ファイルを生成します:</p>
+<p>FLEXソルバーは以下の内容を持つNumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code>ファイルを生成します:</p>
 <section id="chi0q-npz">
 <h3><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code><a class="headerlink" href="#chi0q-npz" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -607,10 +607,10 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <h3><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code><a class="headerlink" href="#chiq-s-npz-chiq-c-npz" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>: スピン / 電荷感受率、
-<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> と同じ形状</p></li>
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>と同じ形状</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>: 感受率をどのスピン/電荷頂点と組み合わせるべきか、および
 形状の系統を示すタグ。reduced スキームは <code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>（スピン軌道
-形状、<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>）、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair 形状 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>。かつて <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code> 電荷頂点にあった
+形状、<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">*</span> <span class="pre">ns</span></code>）、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>（orbital-pair 形状 <code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb^2</span></code>。かつて <code class="docutils literal notranslate"><span class="pre">C(ab,ab)</span></code>電荷頂点にあった
 MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定で解消され、現在は
 両ビルダーは一致します）。Eliashberg ローダー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）はこのタグで軌道
 インデックスを解釈します。2軌道系ではスピン軌道次元と orbital-pair 次元が
@@ -618,10 +618,10 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <li><p><code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>: <strong>general</strong> スキームのみが書き出します。値は
 <code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>で、4本の軌道脚を <code class="docutils literal notranslate"><span class="pre">(a,c)</span></code>（行）と <code class="docutils literal notranslate"><span class="pre">(b,d)</span></code>（列）の
 ペアとしてこの順序で格納していることを表します。reduced スキームの
-ファイルには付きません。これらの軸はスピン軌道 <code class="docutils literal notranslate"><span class="pre">s*norb</span> <span class="pre">+</span> <span class="pre">a</span></code> であり4本の
+ファイルには付きません。これらの軸はスピン軌道 <code class="docutils literal notranslate"><span class="pre">s*norb</span> <span class="pre">+</span> <span class="pre">a</span></code>であり4本の
 軌道脚ではないため、loader はスピンブロックを抽出して初めて軌道ペアの
 オブジェクトになるからです。このマーカーは、修正前のgeneralパスが
-同じ <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> タグのまま軌道ペアを転置して保存していた（タグだけでは区別
+同じ <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>タグのまま軌道ペアを転置して保存していた（タグだけでは区別
 できない）ファイルを、転置されたペアリング頂点を黙って構成する代わりに
 再生成を促して読み込み拒否するため、また将来レイアウトが変わった場合に
 誤読せず即座に失敗させるために存在します。</p></li>
@@ -632,31 +632,31 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma</span></code>: 自己エネルギー <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>,
 形状 <code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
-(<code class="docutils literal notranslate"><span class="pre">nblock</span></code> はスピンブロック数、spin-freeモードでは1)</p></li>
+(<code class="docutils literal notranslate"><span class="pre">nblock</span></code>はスピンブロック数、spin-freeモードでは1)</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>軌道ペア転置の修正 <em>以前</em> に <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> で書き出された
-多軌道の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> および <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> は軌道非対角成分が誤っており、
-再生成が必要です。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> の種として、あるいは <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> 経由で
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> に渡しているファイルも対象です。同じ計算の
-<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は影響を受けません。
-<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a> を参照してください。</p>
+<p>軌道ペア転置の修正 <em>以前</em> に <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>で書き出された
+多軌道の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>および <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は軌道非対角成分が誤っており、
+再生成が必要です。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>の種として、あるいは <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>経由で
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>に渡しているファイルも対象です。同じ計算の
+<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>は影響を受けません。
+<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a>を参照してください。</p>
 </div>
 </section>
 <section id="green-npz">
 <h3><code class="docutils literal notranslate"><span class="pre">green.npz</span></code><a class="headerlink" href="#green-npz" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">green</span></code>: ドレスドグリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>,
-<code class="docutils literal notranslate"><span class="pre">sigma</span></code> と同じ形状</p></li>
+<code class="docutils literal notranslate"><span class="pre">sigma</span></code>と同じ形状</p></li>
 </ul>
 <p>これらの出力ファイルはEliashberg方程式ソルバー (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) の
-入力としても使用できます。詳細は <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a> を参照してください。</p>
+入力としても使用できます。詳細は <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>を参照してください。</p>
 </section>
 </section>
 <section id="id28">
 <h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h2>
-<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> セクションで以下のパラメータを受け付けます:</p>
+<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>セクションで以下のパラメータを受け付けます:</p>
 <table class="docutils align-default">
 <colgroup>
 <col style="width: 20.0%" />
@@ -686,38 +686,38 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">EPS</span></code></p></td>
 <td><p>int/float</p></td>
 <td><p>6</p></td>
-<td><p>収束判定基準。整数 <span class="math notranslate nohighlight">\(n\)</span> の場合、閾値は <span class="math notranslate nohighlight">\(10^{-n}\)</span>。
+<td><p>収束判定基準。整数 <span class="math notranslate nohighlight">\(n\)</span>の場合、閾値は <span class="math notranslate nohighlight">\(10^{-n}\)</span>。
 1未満の浮動小数点数の場合、直接閾値として使用。</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code></p></td>
 <td><p>str</p></td>
 <td><p>&quot;linear&quot;</p></td>
-<td><p>自己エネルギーの更新方法。<code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code> は従来の線形混合
+<td><p>自己エネルギーの更新方法。<code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code>は従来の線形混合
 <span class="math notranslate nohighlight">\(\Sigma \leftarrow (1-\alpha)\Sigma + \alpha\Sigma_{\mathrm{new}}\)</span>。
-<code class="docutils literal notranslate"><span class="pre">&quot;anderson&quot;</span></code> は直近の反復・残差履歴に基づく Anderson 加速
+<code class="docutils literal notranslate"><span class="pre">&quot;anderson&quot;</span></code>は直近の反復・残差履歴に基づく Anderson 加速
 （Pulay/DIIS型の外挿）で、同じ固定点により少ない反復数で到達します
-（例: <span class="math notranslate nohighlight">\(U=3.5\)</span>, <code class="docutils literal notranslate"><span class="pre">Mix=0.2</span></code> の8×8 Hubbardで78→13反復）。
+（例: <span class="math notranslate nohighlight">\(U=3.5\)</span>, <code class="docutils literal notranslate"><span class="pre">Mix=0.2</span></code>の8×8 Hubbardで78→13反復）。
 履歴が退化した場合は自動的に線形ステップへフォールバックします。</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code></p></td>
 <td><p>int</p></td>
 <td><p>5</p></td>
-<td><p>Anderson 加速の履歴の深さ <span class="math notranslate nohighlight">\(m\)</span>。メモリは <span class="math notranslate nohighlight">\(\Sigma\)</span> サイズの
-配列 <span class="math notranslate nohighlight">\(2m\)</span> 本分増加します（GPU実行時はデバイス上に保持）。</p></td>
+<td><p>Anderson 加速の履歴の深さ <span class="math notranslate nohighlight">\(m\)</span>。メモリは <span class="math notranslate nohighlight">\(\Sigma\)</span>サイズの
+配列 <span class="math notranslate nohighlight">\(2m\)</span>本分増加します（GPU実行時はデバイス上に保持）。</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code></p></td>
 <td><p>str</p></td>
 <td><p>&quot;uniform&quot;</p></td>
-<td><p>松原軸の表現。<code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;``（デフォルト、従来どおり）または</span> <span class="pre">``&quot;ir&quot;</span></code>
+<td><p>松原軸の表現。<code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code>（デフォルト、従来どおり）または <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>
 （sparse-ir の中間表現基底。χ₀ と Σ をスパースノード上でネイティブに
 計算するため、一様FFT由来の <span class="math notranslate nohighlight">\(O(\beta/N_{\mathrm{mat}})\)</span>
-離散化アーティファクトが原理的に生じません）。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> は出力グリッド
+離散化アーティファクトが原理的に生じません）。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は出力グリッド
 として従来どおり必要で、出力ファイルは一様グリッドへ密評価されます。
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>
 のいずれとも併用できます。オプションの
 <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> が必要です。μ探索は
-<span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span> の基底評価に置き換わり、
-<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> は不要（無視）になります。</p></td>
+<span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span>の基底評価に置き換わり、
+<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code>は不要（無視）になります。</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code></p></td>
 <td><p>float</p></td>
@@ -734,20 +734,20 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
 <td><p>str</p></td>
 <td><p>&quot;warn&quot;</p></td>
-<td><p>IR実行で一様グリッドの <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> のフィット残差が <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>
-の100倍を超えた場合の挙動: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> は使用して警告、<code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>
-はエラー停止、<code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code> はゼロ初期化に退避します。</p></td>
+<td><p>IR実行で一様グリッドの <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>のフィット残差が <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>
+の100倍を超えた場合の挙動: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code>は使用して警告、<code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>
+はエラー停止、<code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code>はゼロ初期化に退避します。</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">write_densified</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>true</p></td>
-<td><p>IR実行専用。<code class="docutils literal notranslate"><span class="pre">true``（デフォルト）では全出力ファイルを一様</span> <span class="pre">``Nmat</span></code>
+<td><p>IR実行専用。<code class="docutils literal notranslate"><span class="pre">true</span></code>（デフォルト）では全出力ファイルを一様 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
 グリッドへ密評価して書き出します（従来形式、全ツールで可読）。
-<code class="docutils literal notranslate"><span class="pre">false</span></code> では出力がスパースIRノードのまま保存され、IR実行の残りの
+<code class="docutils literal notranslate"><span class="pre">false</span></code>では出力がスパースIRノードのまま保存され、IR実行の残りの
 支配的コストである密評価・書き出しの固定費が消え、ファイルサイズも
 約 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/L 分の1になります。IR対応の下流（動的 Eliashberg の
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>、および次のIR FLEX実行への
-<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> 連鎖）は直接読めます。一様グリッド前提のリーダー
+<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>連鎖）は直接読めます。一様グリッド前提のリーダー
 （静的 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>、<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>、旧解析スクリプト）は明示エラーで
 停止します。下の注意も参照してください。</p></td>
 </tr>
@@ -764,20 +764,20 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
 <td><p>1</p></td>
-<td><p>空間 FFT のワーカースレッド数（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code> による並列化）。デフォルト
-<code class="docutils literal notranslate"><span class="pre">1</span></code> は従来どおりの直列 numpy（並列化はオプトイン）。<code class="docutils literal notranslate"><span class="pre">-1</span></code> で全コアを
+<td><p>空間 FFT のワーカースレッド数（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>による並列化）。デフォルト
+<code class="docutils literal notranslate"><span class="pre">1</span></code>は従来どおりの直列 numpy（並列化はオプトイン）。<code class="docutils literal notranslate"><span class="pre">-1</span></code>で全コアを
 使用。GPU 実行時は無視されます。複数の計算を同時に走らせる場合は
 小さめの値に設定してください。</p></td>
 </tr>
 </tbody>
 </table>
-<p>その他のパラメータ (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code> 等)
-はRPAソルバーと共通です。詳細は <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a> を参照してください。</p>
+<p>その他のパラメータ (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>等)
+はRPAソルバーと共通です。詳細は <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a>を参照してください。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><strong>IR基底でFLEXを実行するには。</strong> オプションの依存パッケージを一度
 インストールし（<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>）、既存のFLEX入力の
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> に1行追加するだけです。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を含め他の行は
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>に1行追加するだけです。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を含め他の行は
 そのままで動作します:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
@@ -791,71 +791,71 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 <span class="c1"># ir_wmax = 30.0            # 省略可: バンド幅（自動推定あり）</span>
 </pre></div>
 </div>
-<p>SCF は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 個の振動数の代わりに数十個のスパースノード上で走り
+<p>SCF は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>個の振動数の代わりに数十個のスパースノード上で走り
 （例: <span class="math notranslate nohighlight">\(T=0.05\)</span> で 4096 → 42）、出力ファイルはすべて <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
 グリッドへ密評価して書き出されるため、下流のツール（動的 Eliashberg
-ソルバーを含む）は無変更で動作します。<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> はこのパスでは
-無視されます（IR基底が <span class="math notranslate nohighlight">\(1/(i\omega)\)</span> テールを厳密に保持するため）。</p>
-<p><strong>IRネイティブ出力。</strong> さらに <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> を指定すると
+ソルバーを含む）は無変更で動作します。<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code>はこのパスでは
+無視されます（IR基底が <span class="math notranslate nohighlight">\(1/(i\omega)\)</span>テールを厳密に保持するため）。</p>
+<p><strong>IRネイティブ出力。</strong> さらに <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code>を指定すると
 出力はスパースノードのまま保存されます。IRで完結するチェーン — IR FLEX
 → 動的 Eliashberg（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>）、あるいは
-温度スイープで次のIR FLEX実行へ <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> で継ぐ場合（異なる温度
+温度スイープで次のIR FLEX実行へ <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>で継ぐ場合（異なる温度
 間のseedにも対応）— で使うと、密評価とファイル書き出しの固定費が完全に
-消えます。ネイティブファイルは <code class="docutils literal notranslate"><span class="pre">.npz</span></code> 内の
-<code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code> キーで識別できます。</p>
+消えます。ネイティブファイルは <code class="docutils literal notranslate"><span class="pre">.npz</span></code>内の
+<code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code>キーで識別できます。</p>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
-<p>振動数軸を位置で参照する旧解析スクリプト（例: <code class="docutils literal notranslate"><span class="pre">Nmat/2</span></code> の静的
-スライス）に <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code> の出力を渡さないでください。
+<p>振動数軸を位置で参照する旧解析スクリプト（例: <code class="docutils literal notranslate"><span class="pre">Nmat/2</span></code>の静的
+スライス）に <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code>の出力を渡さないでください。
 振動数軸は一様グリッドではなくスパースノードです。H-wave内の
 リーダーはすべて検出して明示エラーで停止しますが、外部スクリプトは
 検出できません。一様グリッドのファイルが必要になった場合は、
-<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code> でFLEXを再実行するか（ネイティブ出力の
-<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> でseedすれば安価です）、ドキュメント記載のスニペットで
+<code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code>でFLEXを再実行するか（ネイティブ出力の
+<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>でseedすれば安価です）、ドキュメント記載のスニペットで
 オフライン密評価してください（英語版チュートリアル参照）。</p>
 </div>
 </div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> として <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> または
-<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> を受け付けます。<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code> スキームは
+<p>FLEXソルバーは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>として <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>または
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>を受け付けます。<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>スキームは
 縮約形の感受率を利用し、相互作用の密度-密度成分で解きます。
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度-密度頂点を持たないため <strong>拒否</strong> されます
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は密度-密度頂点を持たないため <strong>拒否</strong> されます
 （受理すると無音で効果ゼロになるため）。
-<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> スキームは常磁性の完全頂点（full-vertex）パスであり、
-完全なKanamori頂点（MYOの式。<a class="reference internal" href="#flex-scope"><span class="std std-ref">上記</span></a> を参照）を保持
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>スキームは常磁性の完全頂点（full-vertex）パスであり、
+完全なKanamori頂点（MYOの式。<a class="reference internal" href="#flex-scope"><span class="std std-ref">上記</span></a>を参照）を保持
 します。ただし <strong>spin-freeモード専用</strong> であり、
-<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> や <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> に対しては <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を
-送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> にも対応していません。オフサイト項は
-同一軌道（a == b）の <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> かつ副格子折り畳みなしの場合のみ
+<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> や <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>に対しては <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>を
+送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>にも対応していません。オフサイト項は
+同一軌道（a == b）の <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>かつ副格子折り畳みなしの場合のみ
 受理されます（RPA ring と要素完全一致が実測されたクラス）。それ以外の
-オフサイト項は <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> となります。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
-と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> の非対角頂点は <strong>保持されます**（本スキームの目的）が、
-``PairLift`` は粒子-正孔頂点に ``S=C=0`` で寄与せず **無効（inert）</strong> で、
-厳密にゼロである旨の表示とともに受理されます。general パスは <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> をMYO規約で
-保存し（<code class="docutils literal notranslate"><span class="pre">chi_convention=&quot;myo&quot;</span></code> タグ付き）、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> が自動的に読み取り
+オフサイト項は <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>となります。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の非対角頂点は <strong>保持されます</strong>（本スキームの目的）が、
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は粒子-正孔頂点に <code class="docutils literal notranslate"><span class="pre">S=C=0</span></code>で寄与せず <strong>無効（inert）</strong> で、
+厳密にゼロである旨の表示とともに受理されます。general パスは <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>をMYO規約で
+保存し（<code class="docutils literal notranslate"><span class="pre">chi_convention=&quot;myo&quot;</span></code>タグ付き）、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が自動的に読み取り
 ます。いずれのスキームでも
-<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> には対応していません（ソルバーは
-<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出します）。</p>
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>には対応していません（ソルバーは
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>を送出します）。</p>
 <div class="admonition warning" id="flex-general-transpose-fix-ja">
 <p class="admonition-title">警告</p>
-<p><strong>``calc_scheme = &quot;general&quot;`` の結果が変わります。</strong> 本修正まで
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code><strong>の結果が変わります。</strong> 本修正まで
 general パスは、有効相互作用を構築する際に軌道ペア添字の余分な転置を
 行っていました。このため自己エネルギーが転置されたバブルから構成され、
-<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> および そこから導かれる量（占有数、エネルギー、
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>および そこから導かれる量（占有数、エネルギー、
 Eliashberg固有値）は軌道対角成分は正しく、<strong>軌道非対角成分が誤って
 いました</strong>。本スキームは開発版にしか存在したことがないため、影響を
-受けるのは <code class="docutils literal notranslate"><span class="pre">develop</span></code> 上での作業であり、リリース版ではありません。
+受けるのは <code class="docutils literal notranslate"><span class="pre">develop</span></code>上での作業であり、リリース版ではありません。
 1軌道の計算は影響を受けません（転置が恒等写像になるため）。多軌道の
-計算は、Green関数が軌道非対角の重みを持つ場合に影響を受けます。密度成分のみの相互作用（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみ）では、general と
+計算は、Green関数が軌道非対角の重みを持つ場合に影響を受けます。密度成分のみの相互作用（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみ）では、general と
 reduced スキームの自己エネルギーが本来あるべき通り機械精度で一致する
 ようになりました。</p>
-<p>保存される感受率は <strong>変わりません</strong>。<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> は出力時点で既に
-転置し戻されており、<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> も別途修正済みです
-（<code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code> マーカーと <code class="docutils literal notranslate"><span class="pre">[a,c,b,d]</span></code> 順での書き出し）。
+<p>保存される感受率は <strong>変わりません</strong>。<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>は出力時点で既に
+転置し戻されており、<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>も別途修正済みです
+（<code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>マーカーと <code class="docutils literal notranslate"><span class="pre">[a,c,b,d]</span></code>順での書き出し）。
 転置を発生源で取り除くことは、それら出力側の補正の結果を変えるのでは
 なく、補正自体を不要にします。2軌道Kanamori模型で実測すると、保存
-される <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> はビット単位で一致し、<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は相対
+される <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>はビット単位で一致し、<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>は相対
 10⁻¹⁴ で一致します（残差は行列積とチャネル線形解の浮動小数点誤差）。
 この等価性が厳密な代数として成り立つのは、スピン/電荷相互作用行列が
 軌道ペア転置について対称である間に限られます。これはオンサイト相互
@@ -863,19 +863,19 @@ reduced スキームの自己エネルギーが本来あるべき通り機械精
 これに当たります。なおH-waveは現在この対称性を検査していません。</p>
 <p><strong>再生成が必要なもの。</strong> 本修正以前の多軌道 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
 計算の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>、およびそこから導かれた量です。
-<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> は本件を理由とする再生成は不要です。
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>は本件を理由とする再生成は不要です。
 1軌道の計算は影響を受けず、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>
 も影響を受けません。</p>
 </div>
-<p><strong>``&quot;general&quot;`` + IR のメモリ使用量。</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;``（上記）</span>
-<span class="pre">は</span> <span class="pre">``calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> でも利用できますが、IRが圧縮するのは
+<p><code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code><strong>+ IR のメモリ使用量。</strong> <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>（上記）
+は <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>でも利用できますが、IRが圧縮するのは
 <em>振動数</em> 軸のみで（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/L 倍、目安20〜40倍）、<span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span>
-に対するスケーリングは変わりません。<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> は完全なrank-4軌道頂点を
+に対するスケーリングは変わりません。<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>は完全なrank-4軌道頂点を
 保持するため、chi0q/chiq/sigma のストレージはもともと
-<span class="math notranslate nohighlight">\(O(N_{\mathrm{orb}}^4)\)</span> でスケールし（軌道方向の縮約はさらに悪化
-します）、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> + IR は到達可能な <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<span class="math notranslate nohighlight">\(\beta\)</span> を拡張
-しますが、到達可能な <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span> は拡張しません。多軌道系の
-<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> 実行ではメモリに注意してください（FLEXのGPU経路のVRAM
+<span class="math notranslate nohighlight">\(O(N_{\mathrm{orb}}^4)\)</span>でスケールし（軌道方向の縮約はさらに悪化
+します）、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> + IR は到達可能な <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<span class="math notranslate nohighlight">\(\beta\)</span>を拡張
+しますが、到達可能な <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}\)</span>は拡張しません。多軌道系の
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>実行ではメモリに注意してください（FLEXのGPU経路のVRAM
 プリフライトは、実行のメモリ余裕が乏しい場合すでに警告を出します）。</p>
 </div>
 </section>
@@ -885,8 +885,8 @@ reduced スキームの自己エネルギーが本来あるべき通り機械精
 <h3>モデル<a class="headerlink" href="#id30" title="Link to this heading">¶</a></h3>
 <p>3番目のサンプルは、Raghu et al. <a class="footnote-reference brackets" href="#id32" id="id31" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a> が提案した
 <strong>鉄系超伝導体の2軌道最小モデル</strong> です。
-Fe-As面を正方格子（1-Fe単位胞）上の <span class="math notranslate nohighlight">\(d_{xz}\)</span> と
-<span class="math notranslate nohighlight">\(d_{yz}\)</span> 軌道で記述します。</p>
+Fe-As面を正方格子（1-Fe単位胞）上の <span class="math notranslate nohighlight">\(d_{xz}\)</span>と
+<span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道で記述します。</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
 <span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
 \varepsilon_x(\mathbf{k}) &amp; \varepsilon_{xy}(\mathbf{k}) \\
@@ -908,10 +908,10 @@ Fe-As面を正方格子（1-Fe単位胞）上の <span class="math notranslate n
   c_{i\beta\downarrow} c_{i\beta\uparrow}\]</div>
 <p><span class="math notranslate nohighlight">\(U = 1.5\)</span>, <span class="math notranslate nohighlight">\(J = J' = 0.25\)</span>, <span class="math notranslate nohighlight">\(U' = U - 2J = 1.0\)</span>,
 温度 <span class="math notranslate nohighlight">\(T = 0.1\)</span>、ハーフフィリング (<span class="math notranslate nohighlight">\(n = 2\)</span>)。</p>
-<p>フェルミ面は <span class="math notranslate nohighlight">\(\Gamma\)</span> 点のホールポケットと
-<span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span> / <span class="math notranslate nohighlight">\((0, \pi)\)</span> の電子ポケットから成ります。
+<p>フェルミ面は <span class="math notranslate nohighlight">\(\Gamma\)</span>点のホールポケットと
+<span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span> / <span class="math notranslate nohighlight">\((0, \pi)\)</span>の電子ポケットから成ります。
 これらのポケット間のネスティングが
-<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span> における強いスピンゆらぎを駆動します。
+<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>における強いスピンゆらぎを駆動します。
 これが鉄系超伝導体の特徴的な物理です。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id32" role="doc-footnote">
@@ -923,7 +923,7 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </section>
 <section id="id33">
 <h3>入力ファイルの準備<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h3>
-<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb/</span></code> にあります。</p>
+<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
   print_level = 1
@@ -1066,11 +1066,11 @@ FLEX converged after 62 iterations
 <a class="reference internal image-reference" href="../../_images/chi_spin_charge.png"><img alt="../../_images/chi_spin_charge.png" src="../../_images/chi_spin_charge.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-number">図 6.7 </span><span class="caption-text">静的スピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})`（左）と電荷感受率
-:math:\)</span>chi_c(mathbf{q})`（右）。
-スピン感受率は <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span> および <span class="math notranslate nohighlight">\((0, \pi)\)</span> に
+<p><span class="caption-number">図 6.7 </span><span class="caption-text">静的スピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span>（左）と電荷感受率
+<span class="math notranslate nohighlight">\(\chi_c(\mathbf{q})\)</span>（右）。
+スピン感受率は <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>および <span class="math notranslate nohighlight">\((0, \pi)\)</span>に
 ピークを持ち、ホールポケットと電子ポケット間のネスティングを反映しています。
-これは単一バンドHubbardモデル（ <span class="math notranslate nohighlight">\((\pi, \pi)\)</span> にピーク）とは
+これは単一バンドHubbardモデル（ <span class="math notranslate nohighlight">\((\pi, \pi)\)</span>にピーク）とは
 定性的に異なります。</span><a class="headerlink" href="#id48" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
@@ -1080,8 +1080,8 @@ FLEX converged after 62 iterations
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.8 </span><span class="caption-text">最低松原周波数での軌道分解自己エネルギー虚部。
-<span class="math notranslate nohighlight">\(d_{xz}\)</span> 軌道は <span class="math notranslate nohighlight">\(k_y\)</span> 方向でより強い散乱を示し、
-<span class="math notranslate nohighlight">\(d_{yz}\)</span> 軌道は <span class="math notranslate nohighlight">\(k_x\)</span> 方向で強い散乱を示します。
+<span class="math notranslate nohighlight">\(d_{xz}\)</span>軌道は <span class="math notranslate nohighlight">\(k_y\)</span>方向でより強い散乱を示し、
+<span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道は <span class="math notranslate nohighlight">\(k_x\)</span>方向で強い散乱を示します。
 この軌道異方性はフェルミ面の軌道構造に起因します。</span><a class="headerlink" href="#id49" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
@@ -1091,8 +1091,8 @@ FLEX converged after 62 iterations
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.9 </span><span class="caption-text">高対称k点での軌道分解自己エネルギーの周波数依存性。
-<span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span> において <span class="math notranslate nohighlight">\(d_{yz}\)</span> 軌道は
-<span class="math notranslate nohighlight">\(d_{xz}\)</span> よりも強くダンピングされ、
+<span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span>において <span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道は
+<span class="math notranslate nohighlight">\(d_{xz}\)</span>よりも強くダンピングされ、
 軌道選択的な相関を反映しています。</span><a class="headerlink" href="#id50" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
@@ -1104,9 +1104,9 @@ FLEX converged after 62 iterations
 </section>
 <section id="b-general">
 <h2><span class="section-number">6.1.9. </span>サンプル 3b: 完全頂点（general）版<a class="headerlink" href="#b-general" title="Link to this heading">¶</a></h2>
-<p>上記の鉄系超伝導体モデルは、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> を明示的に選択した
+<p>上記の鉄系超伝導体モデルは、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>を明示的に選択した
 完全頂点（full-vertex）版としても提供されています。相互作用に <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
-が含まれるため、サンプル 3 の <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> も現在は自動的に
+が含まれるため、サンプル 3 の <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>も現在は自動的に
 <strong>同じ</strong> general スキームに解決されます — 両サンプルは同一の完全頂点
 パスを実行し、この版は選択を明示している点だけが異なります。<strong>同一</strong> の
 モデルと相互作用ファイル（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
@@ -1116,12 +1116,12 @@ FLEX converged after 62 iterations
 （THU <a class="footnote-reference brackets" href="#id16" id="id37" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）です。</p>
 <p>この版は、Hund／交換／ペアホッピングのoff-diagonal頂点が重要となる
 多軌道モデル（ここでの鉄系超伝導体モデルなど）で、かつ常磁性のFLEXで
-十分な場合に適しています。なお <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> スキームは
+十分な場合に適しています。なお <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>スキームは
 <strong>spin-freeモード専用</strong> であり（<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>
-に対しては <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> には対応しません）、
-<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> にも対応していません。</p>
+に対しては <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>を送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>には対応しません）、
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>にも対応していません。</p>
 <p>サンプルファイルは
-<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb_general/</span></code> にあります。</p>
+<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb_general/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
   print_level = 1
@@ -1162,19 +1162,19 @@ FLEX converged after 62 iterations
   energy = &quot;energy.dat&quot;
 </pre></div>
 </div>
-<p>サンプル 3 との違いは <code class="docutils literal notranslate"><span class="pre">[mode]</span></code> セクションで <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
-を明示している点のみです（サンプル 3 の <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> は同じスキームに解決
+<p>サンプル 3 との違いは <code class="docutils literal notranslate"><span class="pre">[mode]</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
+を明示している点のみです（サンプル 3 の <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>は同じスキームに解決
 されます）。格子情報・トランスファー・相互作用ファイルは同一で、結果も
 一致します。</p>
 </section>
 <section id="tips">
 <h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul>
-<li><p><strong>収束しない場合</strong>: SCFループが収束しない場合は、<code class="docutils literal notranslate"><span class="pre">Mix</span></code> を小さくする
+<li><p><strong>収束しない場合</strong>: SCFループが収束しない場合は、<code class="docutils literal notranslate"><span class="pre">Mix</span></code>を小さくする
 (例: 0.1 や 0.05)か、温度を上げてみてください。磁気不安定性に近い
 強相関領域では収束が困難になることがあります。</p></li>
 <li><p><strong>松原周波数</strong>: 正確な結果を得るには十分な数の松原周波数 (<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>)
-が必要です。目安として <span class="math notranslate nohighlight">\(N_{\mathrm{mat}} \geq 10 / T\)</span> で
+が必要です。目安として <span class="math notranslate nohighlight">\(N_{\mathrm{mat}} \geq 10 / T\)</span>で
 低周波構造を捉えられます。</p></li>
 <li><p><strong>k点メッシュ</strong>: メッシュサイズ (<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>) は感受率と自己エネルギーの
 運動量構造を分解するのに十分大きくする必要があります。2D系では
@@ -1184,22 +1184,22 @@ FLEX converged after 62 iterations
 (ここで <span class="math notranslate nohighlight">\(N_d = N_{\mathrm{orb}} \times N_{\mathrm{spin}}\)</span>)
 でスケールします。</p></li>
 <li><p><strong>Eliashberg方程式との連携</strong>: FLEX出力ファイル (<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>,
-<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>) は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> の <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで
-<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> と設定することで使用できます。
+<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>) は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> の <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションで
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>と設定することで使用できます。
 これによりFLEXレベルのスピン・電荷ゆらぎを用いた超伝導不安定性の
 解析が可能になります。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><code class="docutils literal notranslate"><span class="pre">reduced</span></code> 経路では密度‐密度感受率
-<span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span> しか保存されないため、pairing vertex が
-完全に FLEX で dress されるのは <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> のみのモデル
+<p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>経路では密度‐密度感受率
+<span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>しか保存されないため、pairing vertex が
+完全に FLEX で dress されるのは <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみのモデル
 （または <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）に<strong>限られます</strong>。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
-<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code> がある場合は非密度チャネルが
-裸のまま入り、ソルバーが警告を出します。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>がある場合は非密度チャネルが
+裸のまま入り、ソルバーが警告を出します。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は
 密度対角の頂点内容を一切持たないため、reduced な感受率とは組み合わせ
 られず<strong>拒否されます</strong>（FLEX/RPA 段のスキームポリシーとも整合）。
 完全な頂点を得るには
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> を使用してください。
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>を使用してください。
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-supported-inter"><span class="std std-ref">Eliashberg の対応する相互作用に関する注意</span></a>
 も参照してください。</p>
 </div>
@@ -1207,11 +1207,11 @@ FLEX converged after 62 iterations
 <p class="admonition-title">注釈</p>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> は <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 と併用すると <strong>エラーになります</strong>。ボンド分解パスは Green 関数から
-直接自前の <span class="math notranslate nohighlight">\(\bar\chi\)</span> バブルを構成するため、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>
+直接自前の <span class="math notranslate nohighlight">\(\bar\chi\)</span>バブルを構成するため、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>
 ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
-渡す場合は、FLEX を収束まで実行し、その <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> 出力を
-<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> に指定してください。詳細は
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a> の <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> の説明を参照してください。</p>
+渡す場合は、FLEX を収束まで実行し、その <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>出力を
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>に指定してください。詳細は
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a> の <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>の説明を参照してください。</p>
 </div>
 </li>
 </ul>
@@ -1248,8 +1248,8 @@ FLEX converged after 62 iterations
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code></p></td>
 <td><p>general のみ</p></td>
-<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span> （密度-密度頂点を持たないため
-<code class="docutils literal notranslate"><span class="pre">reduced</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
+<td><p>交換相互作用 <span class="math notranslate nohighlight">\(J'\)</span>（密度-密度頂点を持たないため
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
 を選択）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code></p></td>
@@ -1264,7 +1264,7 @@ FLEX converged after 62 iterations
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
 <td><p>general のみ</p></td>
 <td><p>ペアホッピング相互作用 （密度-密度頂点を持たないため
-<code class="docutils literal notranslate"><span class="pre">reduced</span></code> では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>では拒否。<code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">general</span></code>
 を選択）</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code></p></td>
@@ -1275,30 +1275,30 @@ FLEX converged after 62 iterations
 </table>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code> 形式はk空間ソルバー (RPA/FLEX) では利用できません。
-<code class="docutils literal notranslate"><span class="pre">InterAll</span></code> で記述される相互作用は、上記の個別の相互作用型に
+<p><code class="docutils literal notranslate"><span class="pre">InterAll</span></code>形式はk空間ソルバー (RPA/FLEX) では利用できません。
+<code class="docutils literal notranslate"><span class="pre">InterAll</span></code>で記述される相互作用は、上記の個別の相互作用型に
 分解して指定してください。</p>
 </div>
 </section>
 <section id="id40">
 <h3>相互作用の運動量依存性（長距離相互作用）<a class="headerlink" href="#id40" title="Link to this heading">¶</a></h3>
 <p>相互作用はWannier90形式の入力ファイルで指定します。
-各行の形式は <code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">ry</span> <span class="pre">rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">Re</span> <span class="pre">Im</span></code> であり、
-<code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code> は実空間の格子ベクトルです。</p>
-<p><strong>オンサイト相互作用</strong> (<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code> のみ):</p>
+各行の形式は <code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">ry</span> <span class="pre">rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">Re</span> <span class="pre">Im</span></code>であり、
+<code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>は実空間の格子ベクトルです。</p>
+<p><strong>オンサイト相互作用</strong> (<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code>のみ):</p>
 <p>FFT変換後、すべてのq点で同一の値を持つ
-q非依存な相互作用 <span class="math notranslate nohighlight">\(W(\mathbf{q}) = W_0\)</span> となります。
+q非依存な相互作用 <span class="math notranslate nohighlight">\(W(\mathbf{q}) = W_0\)</span>となります。
 現在のサンプルはすべてこのケースです。</p>
-<p><strong>長距離相互作用</strong> (非零の <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code> を含む場合):</p>
+<p><strong>長距離相互作用</strong> (非零の <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>を含む場合):</p>
 <p>FFT変換により自動的にq依存の相互作用となります:</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
 <span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
 <p>例えば、最近接サイト間のクーロン相互作用を含める場合は、
-相互作用ファイルに <code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code> や <code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code> 等の格子ベクトルを持つ
+相互作用ファイルに <code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code> や <code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code>等の格子ベクトルを持つ
 エントリを追加します。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>連続的な <span class="math notranslate nohighlight">\(1/r\)</span> クーロンポテンシャルを自動的に離散化する機能は
+<p>連続的な <span class="math notranslate nohighlight">\(1/r\)</span>クーロンポテンシャルを自動的に離散化する機能は
 ありません。各格子点での相互作用の値をユーザーが明示的に
 入力ファイルに指定する必要があります。</p>
 </div>
@@ -1309,20 +1309,20 @@ q非依存な相互作用 <span class="math notranslate nohighlight">\(W(\mathbf
 スピンチャネルとチャネルに分解します。
 この分解では、4体相互作用テンソル
 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}\)</span>
-を2体の縮約形式 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span> に変換します。</p>
+を2体の縮約形式 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span>に変換します。</p>
 <p>具体的には、同一スピン成分と異スピン成分に分離されます:</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
 <span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
 U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span> は同一スピン間、
-<span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span> は異スピン間の相互作用です。</p>
+<p>ここで <span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span>は同一スピン間、
+<span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span>は異スピン間の相互作用です。</p>
 <p>この縮約は <strong>密度-密度型相互作用</strong> に対して正確です。
 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
 はすべて密度-密度型であり正しく扱われます。
-一方、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> は密度-密度頂点を <strong>一切持たない</strong> ため、
-この縮約では全く表現できません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code> でこれらを与えると
-ソルバーは <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> を送出し、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> への切り替えを
-案内します（<code class="docutils literal notranslate"><span class="pre">auto</span></code> は自動的に general を選択します）。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> の
+一方、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は密度-密度頂点を <strong>一切持たない</strong> ため、
+この縮約では全く表現できません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>でこれらを与えると
+ソルバーは <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>を送出し、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>への切り替えを
+案内します（<code class="docutils literal notranslate"><span class="pre">auto</span></code>は自動的に general を選択します）。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の
 粒子-正孔頂点は厳密にゼロなので、どのスキームでも受理され、チャネルに
 現れないことは厳密です。</p>
 </section>
@@ -1339,7 +1339,7 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 (<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">norb</span> <span class="pre">×</span> <span class="pre">ns</span></code>) に膨張されて計算されます</p></li>
 <li><p>自己エネルギーの計算後、SU(2)対称性により保証される
 <span class="math notranslate nohighlight">\(\Sigma_{\uparrow\uparrow} = \Sigma_{\downarrow\downarrow}\)</span>,
-<span class="math notranslate nohighlight">\(\Sigma_{\uparrow\downarrow} = 0\)</span> の性質を利用して
+<span class="math notranslate nohighlight">\(\Sigma_{\uparrow\downarrow} = 0\)</span>の性質を利用して
 軌道空間に縮約されます</p></li>
 </ul>
 <div class="admonition note">

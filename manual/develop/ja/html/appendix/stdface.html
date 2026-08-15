@@ -51,11 +51,11 @@ $<span class="w"> </span>cmake<span class="w"> </span>-DHWAVE<span class="o">=</
 $<span class="w"> </span>make
 </pre></div>
 </div>
-<p>コンパイルに成功すると、 <code class="docutils literal notranslate"><span class="pre">src</span></code> ディレクトリに実行ファイル <code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code> ができます。</p>
+<p>コンパイルに成功すると、 <code class="docutils literal notranslate"><span class="pre">src</span></code>ディレクトリに実行ファイル <code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code>ができます。</p>
 </section>
 <section id="id2">
 <h2><span class="section-number">10.1.2. </span>StdFaceライブラリの使用<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code> の入力ファイルはサンプルディレクトリ内の <code class="docutils literal notranslate"><span class="pre">stan.in</span></code> ファイルにそれぞれ置いてあります。
+<p><code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code>の入力ファイルはサンプルディレクトリ内の <code class="docutils literal notranslate"><span class="pre">stan.in</span></code>ファイルにそれぞれ置いてあります。
 ファイルの内容は以下のとおりです。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>model = &quot;Hubbard&quot;
 lattice = &quot;square&quot;
@@ -72,23 +72,23 @@ exportall = 0
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">model</span></code> は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 <code class="docutils literal notranslate"><span class="pre">Hubbard</span></code> のみに対応しています。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">lattice</span></code> は結晶構造を指定するキーワードです。 ここでは正方格子 <code class="docutils literal notranslate"><span class="pre">square</span></code> を選択しています。 <code class="docutils literal notranslate"><span class="pre">W</span></code>, <code class="docutils literal notranslate"><span class="pre">L</span></code> は格子のサイズです。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">t</span></code> はホッピング、 <code class="docutils literal notranslate"><span class="pre">V</span></code> は隣接サイトクーロン相互作用のパラメータです。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">calcmode</span></code> は出力形式を指定します。
-<code class="docutils literal notranslate"><span class="pre">&quot;uhfk&quot;</span></code> または <code class="docutils literal notranslate"><span class="pre">&quot;rpa&quot;</span></code> を指定した場合はWannier90(-like)形式の入力ファイルを生成します。
-<code class="docutils literal notranslate"><span class="pre">&quot;uhfr&quot;</span></code> を指定した場合はH-waveの実空間UHFプログラムUHFr向けの入力ファイルを出力します。
-デフォルトは <code class="docutils literal notranslate"><span class="pre">calcmode</span> <span class="pre">=</span> <span class="pre">&quot;uhfk&quot;</span></code> です。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">exportall</span> <span class="pre">=</span> <span class="pre">0</span></code> はWannier90(-like)形式の出力をコンパクトにするオプションです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">model</span></code>は対象となる模型を指定するキーワードです。現状では電子数を固定したHubbard模型 <code class="docutils literal notranslate"><span class="pre">Hubbard</span></code>のみに対応しています。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">lattice</span></code>は結晶構造を指定するキーワードです。 ここでは正方格子 <code class="docutils literal notranslate"><span class="pre">square</span></code>を選択しています。 <code class="docutils literal notranslate"><span class="pre">W</span></code>, <code class="docutils literal notranslate"><span class="pre">L</span></code>は格子のサイズです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">t</span></code>はホッピング、 <code class="docutils literal notranslate"><span class="pre">V</span></code>は隣接サイトクーロン相互作用のパラメータです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calcmode</span></code>は出力形式を指定します。
+<code class="docutils literal notranslate"><span class="pre">&quot;uhfk&quot;</span></code>または <code class="docutils literal notranslate"><span class="pre">&quot;rpa&quot;</span></code>を指定した場合はWannier90(-like)形式の入力ファイルを生成します。
+<code class="docutils literal notranslate"><span class="pre">&quot;uhfr&quot;</span></code>を指定した場合はH-waveの実空間UHFプログラムUHFr向けの入力ファイルを出力します。
+デフォルトは <code class="docutils literal notranslate"><span class="pre">calcmode</span> <span class="pre">=</span> <span class="pre">&quot;uhfk&quot;</span></code>です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">exportall</span> <span class="pre">=</span> <span class="pre">0</span></code>はWannier90(-like)形式の出力をコンパクトにするオプションです。</p></li>
 </ul>
-<p>入力ファイルの詳細については、<a class="reference internal" href="../uhfr/filespecification/inputfiles/index_inputfiles.html#ch-howtoexpert"><span class="std std-ref">UHFr用入力ファイル</span></a> , <a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/index_inputfiles_uhfk.html#ch-howtowannier90"><span class="std std-ref">UHFk用入力ファイル</span></a> , <a class="reference internal" href="../rpa/filespecification/inputfiles/index_inputfiles.html#ch-howtowannier90-rpa"><span class="std std-ref">RPA用入力ファイル</span></a> のセクションを参照してください。</p>
-<p>上記のファイルを入力ファイルとして、 <code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code> を以下のコマンドで実行します。</p>
+<p>入力ファイルの詳細については、<a class="reference internal" href="../uhfr/filespecification/inputfiles/index_inputfiles.html#ch-howtoexpert"><span class="std std-ref">UHFr用入力ファイル</span></a> , <a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/index_inputfiles_uhfk.html#ch-howtowannier90"><span class="std std-ref">UHFk用入力ファイル</span></a> , <a class="reference internal" href="../rpa/filespecification/inputfiles/index_inputfiles.html#ch-howtowannier90-rpa"><span class="std std-ref">RPA用入力ファイル</span></a>のセクションを参照してください。</p>
+<p>上記のファイルを入力ファイルとして、 <code class="docutils literal notranslate"><span class="pre">hwave_dry.out</span></code>を以下のコマンドで実行します。</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>path_to_Hwave/docs/tutorial/Hubbard/RPA
 $<span class="w"> </span>ln<span class="w"> </span>-s<span class="w"> </span>path_to_Stdface/build/src/hwave_dry.out<span class="w"> </span>.
 $<span class="w"> </span>./hwave_dry.out<span class="w"> </span>stan.in
 </pre></div>
 </div>
-<p>実行終了後、実行ディレクトリに幾何情報ファイル <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> 、相互作用定義ファイル <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code> が生成されます。
+<p>実行終了後、実行ディレクトリに幾何情報ファイル <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>、相互作用定義ファイル <code class="docutils literal notranslate"><span class="pre">transfer.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>が生成されます。
 StdFaceライブラリで指定できる格子や相互作用の種類については、 HΦもしくはmVMCのマニュアルにあるスタンダードモードの入力ファイル形式を参照してください。</p>
 </section>
 </section>

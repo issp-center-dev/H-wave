@@ -43,12 +43,12 @@
 <li><p>Hamiltonian作成用ファイル</p></li>
 <li><p>出力結果指定用ファイル</p></li>
 </ol>
-<p>を用意した後、計算を行います。以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。
-なお、相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a> の章をご覧ください。</p>
+<p>を用意した後、計算を行います。以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code>ディレクトリにあるサンプルを例にチュートリアルを実施します。
+なお、相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a>の章をご覧ください。</p>
 <section id="id2">
 <h2><span class="section-number">3.1.1. </span>環境設定入力ファイルの作成<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
 <p>環境設定入力ファイルでは、入出力を制御する情報を記載します。
-<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code> ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> というファイルがありますが、これが環境設定入力ファイルになります。
+<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/UHFr</span></code>ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code>というファイルがありますが、これが環境設定入力ファイルになります。
 以下、ファイルの中身を記載します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
 print_level = 1
@@ -78,21 +78,21 @@ green = &quot;green.dat&quot;
 </pre></div>
 </div>
 <p>このファイルはtoml形式で記述します。</p>
-<p><code class="docutils literal notranslate"><span class="pre">log</span></code> セクションに <code class="docutils literal notranslate"><span class="pre">print_level</span></code> で標準出力のレベル、 <code class="docutils literal notranslate"><span class="pre">print_step</span></code> でログファイルに出力するステップ間隔を指定します。</p>
-<p><code class="docutils literal notranslate"><span class="pre">mode</span></code> セクションに実行モードおよび基本パラメータを指定します。</p>
-<p><code class="docutils literal notranslate"><span class="pre">file.input</span></code> セクションに入力ファイルが格納されているディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> 、出力したい一体グリーン関数が定義されたファイル  <code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code>  及び初期配置 <code class="docutils literal notranslate"><span class="pre">Initial</span></code> を指定します。
-<code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code> を指定しない場合にはグリーン関数の出力がされません。また、<code class="docutils literal notranslate"><span class="pre">Initial</span></code> を指定しない場合には初期配置はランダムな配置が設定されます。</p>
-<p><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code> セクションにHamiltonianを作成するための入力ファイルを指定します。</p>
-<p><code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションには出力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_output</span></code> を指定します。
-また、エネルギーの値を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">energy</span></code> 、ハミルトニアンの固有値を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">eigen</span></code> 、一体グリーン関数の出力ファイル名 <code class="docutils literal notranslate"><span class="pre">green</span></code> を指定します。これらのキーワードがない場合には情報は出力されません。</p>
-<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-uhfr"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+<p><code class="docutils literal notranslate"><span class="pre">log</span></code>セクションに <code class="docutils literal notranslate"><span class="pre">print_level</span></code>で標準出力のレベル、 <code class="docutils literal notranslate"><span class="pre">print_step</span></code>でログファイルに出力するステップ間隔を指定します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">mode</span></code>セクションに実行モードおよび基本パラメータを指定します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">file.input</span></code>セクションに入力ファイルが格納されているディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>、出力したい一体グリーン関数が定義されたファイル  <code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code>  及び初期配置 <code class="docutils literal notranslate"><span class="pre">Initial</span></code>を指定します。
+<code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code>を指定しない場合にはグリーン関数の出力がされません。また、<code class="docutils literal notranslate"><span class="pre">Initial</span></code>を指定しない場合には初期配置はランダムな配置が設定されます。</p>
+<p><code class="docutils literal notranslate"><span class="pre">file.input.interaction</span></code>セクションにHamiltonianを作成するための入力ファイルを指定します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクションには出力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>を指定します。
+また、エネルギーの値を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">energy</span></code>、ハミルトニアンの固有値を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">eigen</span></code>、一体グリーン関数の出力ファイル名 <code class="docutils literal notranslate"><span class="pre">green</span></code>を指定します。これらのキーワードがない場合には情報は出力されません。</p>
+<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-uhfr"><span class="std std-ref">ファイルフォーマット</span></a>の章をご覧ください。</p>
 </section>
 <section id="hamiltonian">
 <h2><span class="section-number">3.1.2. </span>Hamiltonianの指定<a class="headerlink" href="#hamiltonian" title="Link to this heading">¶</a></h2>
 <p>基本パラメータを設定した後は、Hamiltonianを構築するためのファイルを作成します。</p>
 <section id="transfer">
 <h3><strong>Transfer部の指定</strong><a class="headerlink" href="#transfer" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">Trans</span></code> でひも付けられるファイル(ここではtrans.def)で電子系のTransferに相当するHamiltonian</p>
+<p><code class="docutils literal notranslate"><span class="pre">Trans</span></code>でひも付けられるファイル(ここではtrans.def)で電子系のTransferに相当するHamiltonian</p>
 <div class="math notranslate nohighlight" id="equation-uhfr-tutorial-tu-index-0">
 <span class="eqno">(3.1)<a class="headerlink" href="#equation-uhfr-tutorial-tu-index-0" title="Link to this equation">¶</a></span>\[\mathcal{H} = -\sum_{ij\sigma_1\sigma_2}
 t_{ij\sigma_1\sigma_2}c_{i\sigma_1}^{\dagger}c_{j\sigma_2}^{\phantom\dagger}.\]</div>
@@ -113,11 +113,11 @@ NTransfer      64
 ...
 </pre></div>
 </div>
-<p>Transファイルの詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/Trans_file.html#subsec-trans"><span class="std std-ref">Trans指定ファイル</span></a> をご覧ください。</p>
+<p>Transファイルの詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/Trans_file.html#subsec-trans"><span class="std std-ref">Trans指定ファイル</span></a>をご覧ください。</p>
 </section>
 <section id="id3">
 <h3><strong>二体相互作用部の指定</strong><a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
-<p>このチュートリアルの例では <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> でひも付けられるファイル(ここではcoulombintra.def)で電子系の二体相互作用部に相当するHamiltonian</p>
+<p>このチュートリアルの例では <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>でひも付けられるファイル(ここではcoulombintra.def)で電子系の二体相互作用部に相当するHamiltonian</p>
 <div class="math notranslate nohighlight" id="equation-uhfr-tutorial-tu-index-1">
 <span class="eqno">(3.2)<a class="headerlink" href="#equation-uhfr-tutorial-tu-index-1" title="Link to this equation">¶</a></span>\[\mathcal{H} = \sum_{i} U_i n_{i\uparrow}n_{i\downarrow}.\]</div>
 <p>を指定します。ファイルの中身は下記の通りです。</p>
@@ -134,16 +134,16 @@ NCoulombIntra          8
  ...
 </pre></div>
 </div>
-<p>なお、 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> 以外にも、Hamiltonianを簡易的に記載するための各種ファイル形式に対応しています。
-詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/InterAll_file.html#subsec-interall"><span class="std std-ref">InterAll指定ファイル</span></a> - <a class="reference internal" href="../filespecification/inputfiles/PairLift_file.html#subsec-pairlift"><span class="std std-ref">PairLift指定ファイル</span></a> をご覧ください。</p>
+<p>なお、 <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>以外にも、Hamiltonianを簡易的に記載するための各種ファイル形式に対応しています。
+詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/InterAll_file.html#subsec-interall"><span class="std std-ref">InterAll指定ファイル</span></a> - <a class="reference internal" href="../filespecification/inputfiles/PairLift_file.html#subsec-pairlift"><span class="std std-ref">PairLift指定ファイル</span></a>をご覧ください。</p>
 </section>
 </section>
 <section id="id4">
 <h2><span class="section-number">3.1.3. </span>出力ファイルの指定<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
-<p>一体Green関数の計算する成分を、<code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code> でひも付けられるファイルで指定します。</p>
+<p>一体Green関数の計算する成分を、<code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code>でひも付けられるファイルで指定します。</p>
 <section id="green">
 <h3><strong>一体Green関数の計算対象の指定</strong><a class="headerlink" href="#green" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code> でひも付けられるファイル(ここではgreenone.def)で計算する一体Green関数  <span class="math notranslate nohighlight">\(\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2} \rangle\)</span> の成分を指定します。ファイルの中身は下記の通りです</p>
+<p><code class="docutils literal notranslate"><span class="pre">OneBodyG</span></code>でひも付けられるファイル(ここではgreenone.def)で計算する一体Green関数  <span class="math notranslate nohighlight">\(\langle c_{i\sigma_1}^{\dagger}c_{j\sigma_2} \rangle\)</span>の成分を指定します。ファイルの中身は下記の通りです</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>===============================
 NCisAjs         16
 ===============================
@@ -157,7 +157,7 @@ NCisAjs         16
  ...
 </pre></div>
 </div>
-<p>一体Green関数計算対象成分の指定に関するファイル入力形式の詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/OneBodyG_file.html#subsec-onebodyg"><span class="std std-ref">OneBodyG指定ファイル</span></a> をご覧ください。</p>
+<p>一体Green関数計算対象成分の指定に関するファイル入力形式の詳細はセクション <a class="reference internal" href="../filespecification/inputfiles/OneBodyG_file.html#subsec-onebodyg"><span class="std std-ref">OneBodyG指定ファイル</span></a>をご覧ください。</p>
 </section>
 </section>
 <section id="id5">
@@ -211,11 +211,11 @@ Statistics
 </pre></div>
 </div>
 <p>入力ファイル読み込みに関するログが出力されたあと、UHF計算の計算過程に関する情報が出力されます。
-出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">file.output</span></code> セクションでの設定にしたがい、
-<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに 固有値が記載された <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> ,
+出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクションでの設定にしたがい、
+<code class="docutils literal notranslate"><span class="pre">output</span></code>ディレクトリに 固有値が記載された <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> ,
 固有ベクトルが記載された <code class="docutils literal notranslate"><span class="pre">spin-down_eigen.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">spin-up_eigen.npz</span></code>,
-一体グリーン関数の値が記載された <code class="docutils literal notranslate"><span class="pre">green.dat</span></code> ファイルが出力されます。
-出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles/index_outputfiles.html#sec-outputfile"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+一体グリーン関数の値が記載された <code class="docutils literal notranslate"><span class="pre">green.dat</span></code>ファイルが出力されます。
+出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles/index_outputfiles.html#sec-outputfile"><span class="std std-ref">ファイルフォーマット</span></a>の章をご覧ください。</p>
 </section>
 </section>
 

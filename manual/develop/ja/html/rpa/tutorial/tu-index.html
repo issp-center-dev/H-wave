@@ -43,12 +43,12 @@
 <li><p>相互作用定義ファイル</p></li>
 </ol>
 <p>を用意した後、プログラムを実行します。
-以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code> ディレクトリにあるサンプルを例にチュートリアルを実施します。
-相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a> の章をご覧ください。</p>
+以下では、 <code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code>ディレクトリにあるサンプルを例にチュートリアルを実施します。
+相互作用定義ファイルは StdFace ライブラリを用いて生成することもできます。詳細は <a class="reference internal" href="../../appendix/stdface.html#ch-stdface"><span class="std std-ref">StdFaceを用いた相互作用ファイルの作成</span></a>の章をご覧ください。</p>
 <section id="id2">
 <h2><span class="section-number">5.1.1. </span>環境設定入力ファイルの作成<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
 <p>環境設定入力ファイルには、基本パラメータの指定と入出力を制御する情報を記述します。
-<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code> ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> というファイルがありますが、これが入力パラメータファイルになります。
+<code class="docutils literal notranslate"><span class="pre">docs/tutorial/Hubbard/RPA</span></code>ディレクトリ内に <code class="docutils literal notranslate"><span class="pre">input.toml</span></code>というファイルがありますが、これが入力パラメータファイルになります。
 以下、ファイルの内容を記載します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
   print_level = 1
@@ -88,32 +88,32 @@
 </div>
 <p>このファイルはTOML形式で記述され、内容ごとにセクションに分類されています。</p>
 <section id="log">
-<h3><code class="docutils literal notranslate"><span class="pre">[log]</span></code> セクション<a class="headerlink" href="#log" title="Link to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">[log]</span></code>セクション<a class="headerlink" href="#log" title="Link to this heading">¶</a></h3>
 <p>ログ出力に関する設定を行います。
-<code class="docutils literal notranslate"><span class="pre">print_level</span></code> で標準出力のレベルを指定します。</p>
+<code class="docutils literal notranslate"><span class="pre">print_level</span></code>で標準出力のレベルを指定します。</p>
 </section>
 <section id="mode">
-<h3><code class="docutils literal notranslate"><span class="pre">[mode]</span></code> セクション<a class="headerlink" href="#mode" title="Link to this heading">¶</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">[mode]</span></code>セクション<a class="headerlink" href="#mode" title="Link to this heading">¶</a></h3>
 <p>実行モードに関する設定および基本パラメータの指定を行います。
-<code class="docutils literal notranslate"><span class="pre">mode</span></code> で乱雑位相近似(<code class="docutils literal notranslate"><span class="pre">RPA</span></code>)を選択します。
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> サブセクションには計算実行時のパラメータを指定します。</p>
+<code class="docutils literal notranslate"><span class="pre">mode</span></code>で乱雑位相近似(<code class="docutils literal notranslate"><span class="pre">RPA</span></code>)を選択します。
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>サブセクションには計算実行時のパラメータを指定します。</p>
 </section>
 <section id="file">
-<h3><code class="docutils literal notranslate"><span class="pre">[file]</span></code> セクション<a class="headerlink" href="#file" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> サブセクションでは、入力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> を指定します。
-以前に計算した既約感受率 <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span> のデータを <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> に指定したファイルから読み込んで感受率の計算を行うことができます。
-<code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> サブセクションには、幾何情報および相互作用定義を格納するファイルのファイル名を相互作用のタイプごとに列挙します。</p>
-<p><code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> サブセクションには、
-既約感受率 <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span> を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> 、
-感受率 <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span> を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> を指定します。
+<h3><code class="docutils literal notranslate"><span class="pre">[file]</span></code>セクション<a class="headerlink" href="#file" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>サブセクションでは、入力ファイルを格納するディレクトリ <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>を指定します。
+以前に計算した既約感受率 <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span>のデータを <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>に指定したファイルから読み込んで感受率の計算を行うことができます。
+<code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code>サブセクションには、幾何情報および相互作用定義を格納するファイルのファイル名を相互作用のタイプごとに列挙します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>サブセクションには、
+既約感受率 <span class="math notranslate nohighlight">\(\chi_0(\vec{q})\)</span>を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>、
+感受率 <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span>を出力するファイル名 <code class="docutils literal notranslate"><span class="pre">chiq</span></code>を指定します。
 これらのキーワードがない場合にはその項目は出力されません。</p>
-<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
+<p>詳細については <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">ファイルフォーマット</span></a>の章をご覧ください。</p>
 </section>
 </section>
 <section id="id3">
 <h2><span class="section-number">5.1.2. </span>相互作用定義ファイルの作成<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
 <p>Hamiltonianを構築するための格子の幾何情報および相互作用係数を格納したデータファイルを作成します。
-項目とファイル名の対応付けは、入力パラメータファイルの <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> セクションで行います。</p>
+項目とファイル名の対応付けは、入力パラメータファイルの <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code>セクションで行います。</p>
 <section id="geometry">
 <h3><code class="docutils literal notranslate"><span class="pre">Geometry</span></code><a class="headerlink" href="#geometry" title="Link to this heading">¶</a></h3>
 <p>格子の幾何情報を記述します。ファイル例を以下に示します。</p>
@@ -144,9 +144,9 @@
    1    1    0    1    1  0.500000000000   0.000000000000
 </pre></div>
 </div>
-<p>コメント行(1行目)、軌道の数(2行目)、 <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> (3行目)、縮重度 ( <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> 個を1行あたり15個ずつ)、係数行列の要素を記載します。
-<code class="docutils literal notranslate"><span class="pre">nrpts</span></code> は、相互作用定義の並進ベクトルのx,y,z軸に沿った上限と下限から作られる直方体について、それに含まれるセルの総数です。</p>
-<p>行列要素の各行は、並進ベクトル <span class="math notranslate nohighlight">\(r_x, r_y, r_z\)</span> 、軌道のインデックス <span class="math notranslate nohighlight">\(\alpha, \beta\)</span> 、係数の値の実部・虚部です。</p>
+<p>コメント行(1行目)、軌道の数(2行目)、 <code class="docutils literal notranslate"><span class="pre">nrpts</span></code> (3行目)、縮重度 ( <code class="docutils literal notranslate"><span class="pre">nrpts</span></code>個を1行あたり15個ずつ)、係数行列の要素を記載します。
+<code class="docutils literal notranslate"><span class="pre">nrpts</span></code>は、相互作用定義の並進ベクトルのx,y,z軸に沿った上限と下限から作られる直方体について、それに含まれるセルの総数です。</p>
+<p>行列要素の各行は、並進ベクトル <span class="math notranslate nohighlight">\(r_x, r_y, r_z\)</span>、軌道のインデックス <span class="math notranslate nohighlight">\(\alpha, \beta\)</span>、係数の値の実部・虚部です。</p>
 </section>
 </section>
 <section id="id4">
@@ -204,16 +204,16 @@ Statistics
 </pre></div>
 </div>
 <p>入力ファイル読み込みに関するログが出力されたあと、乱雑位相近似計算の計算過程に関する情報が出力されます。
-出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> セクションの指定に従い、
-<code class="docutils literal notranslate"><span class="pre">output</span></code> ディレクトリに <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> , <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> ファイルが出力されます。</p>
-<p>出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles/index_outputfiles.html#sec-outputfile-rpa"><span class="std std-ref">ファイルフォーマット</span></a> の章をご覧ください。</p>
-<p>計算のポスト処理として、計算結果を可視化するためのツールが <code class="docutils literal notranslate"><span class="pre">sample/RPA/view.py</span></code> に用意されています。
+出力ファイルは <code class="docutils literal notranslate"><span class="pre">input.toml</span></code> の <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>セクションの指定に従い、
+<code class="docutils literal notranslate"><span class="pre">output</span></code>ディレクトリに <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> , <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>ファイルが出力されます。</p>
+<p>出力ファイルの詳細については <a class="reference internal" href="../filespecification/outputfiles/index_outputfiles.html#sec-outputfile-rpa"><span class="std std-ref">ファイルフォーマット</span></a>の章をご覧ください。</p>
+<p>計算のポスト処理として、計算結果を可視化するためのツールが <code class="docutils literal notranslate"><span class="pre">sample/RPA/view.py</span></code>に用意されています。
 このスクリプトファイルを現在のディレクトリにコピーし、ターミナルから以下を実行します。
-このツールを実行するには <code class="docutils literal notranslate"><span class="pre">matplotlib</span></code> パッケージが必要です。</p>
+このツールを実行するには <code class="docutils literal notranslate"><span class="pre">matplotlib</span></code>パッケージが必要です。</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python3<span class="w"> </span>view.py
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code> を読み込み、松原振動数 <span class="math notranslate nohighlight">\({\rm i}\omega_m=0\)</span> での電荷感受率 <span class="math notranslate nohighlight">\(\chi_c(\vec{q})\)</span> およびスピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\vec{q})\)</span> の値を各 <span class="math notranslate nohighlight">\(\vec{q}\)</span> ごとに標準出力に書き出します。あわせて、これらの値を3Dプロットした以下の図を PNG 形式で出力します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code>を読み込み、松原振動数 <span class="math notranslate nohighlight">\({\rm i}\omega_m=0\)</span>での電荷感受率 <span class="math notranslate nohighlight">\(\chi_c(\vec{q})\)</span>およびスピン感受率 <span class="math notranslate nohighlight">\(\chi_s(\vec{q})\)</span>の値を各 <span class="math notranslate nohighlight">\(\vec{q}\)</span>ごとに標準出力に書き出します。あわせて、これらの値を3Dプロットした以下の図を PNG 形式で出力します。</p>
 <table class="docutils align-default">
 <tbody>
 <tr class="row-odd"><td><figure class="align-default" id="id5">

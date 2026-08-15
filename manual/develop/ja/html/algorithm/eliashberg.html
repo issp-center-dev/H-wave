@@ -39,16 +39,16 @@
 <span id="algorithm-eliashberg"></span><h1><span class="section-number">7.3. </span>線形化Eliashberg方程式<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h1>
 <section id="id1">
 <h2><span class="section-number">7.3.1. </span>概要<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
-<p>線形化Eliashberg方程式ソルバー（ <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> ）は、
+<p>線形化Eliashberg方程式ソルバー（ <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は、
 RPA の枠組みで線形化ギャップ方程式の固有値問題を解くことにより、
 超伝導不安定性を解析します。
-超伝導転移温度 <span class="math notranslate nohighlight">\(T_c\)</span> は、
-最大固有値が <span class="math notranslate nohighlight">\(\lambda = 1\)</span> に達する条件から決定されます。</p>
+超伝導転移温度 <span class="math notranslate nohighlight">\(T_c\)</span>は、
+最大固有値が <span class="math notranslate nohighlight">\(\lambda = 1\)</span>に達する条件から決定されます。</p>
 <p>アルゴリズムは以下のステップで構成されます:</p>
 <ol class="arabic simple">
-<li><p>裸感受率 <span class="math notranslate nohighlight">\(\hat{X}^{(0)}(\mathbf{q})\)</span> を計算または読み込む。</p></li>
-<li><p>非相互作用グリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span> を構成する。</p></li>
-<li><p>RPAペアリング頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> を構築する。</p></li>
+<li><p>裸感受率 <span class="math notranslate nohighlight">\(\hat{X}^{(0)}(\mathbf{q})\)</span>を計算または読み込む。</p></li>
+<li><p>非相互作用グリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>を構成する。</p></li>
+<li><p>RPAペアリング頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span>を構築する。</p></li>
 <li><p>線形化Eliashberg方程式を解いて最大固有値を求める。</p></li>
 </ol>
 </section>
@@ -69,19 +69,19 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 <span class="eqno">(7.34)<a class="headerlink" href="#equation-algorithm-eliashberg-2" title="Link to this equation">¶</a></span>\[G_{\alpha\beta}(\mathbf{k}, i\omega_n)
 = \sum_{m} \frac{u_{\alpha m}(\mathbf{k})\, u^*_{\beta m}(\mathbf{k})}
                  {i\omega_n - (\xi_m(\mathbf{k}) - \mu)}\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(\omega_n = \pi(2n+1)/\beta\)</span> はフェルミオン松原振動数、
-<span class="math notranslate nohighlight">\(\mu\)</span> はフィリング条件から決定される化学ポテンシャル、
-<span class="math notranslate nohighlight">\(\beta = 1/T\)</span> は逆温度です。</p>
+<p>ここで <span class="math notranslate nohighlight">\(\omega_n = \pi(2n+1)/\beta\)</span>はフェルミオン松原振動数、
+<span class="math notranslate nohighlight">\(\mu\)</span>はフィリング条件から決定される化学ポテンシャル、
+<span class="math notranslate nohighlight">\(\beta = 1/T\)</span>は逆温度です。</p>
 </section>
 <section id="id3">
 <h2><span class="section-number">7.3.3. </span>ペアリング頂点<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
 <section id="id4">
 <h3>簡易モード<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> （ <span class="math notranslate nohighlight">\(U\)</span> ）と <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> （ <span class="math notranslate nohighlight">\(V\)</span> ）のみが
-存在する場合、ペアリング頂点はスピンチャネル（ <span class="math notranslate nohighlight">\(W_s\)</span> ）と
-電荷チャネル（ <span class="math notranslate nohighlight">\(W_c\)</span> ）を用いて計算されます。 <span class="math notranslate nohighlight">\(U\)</span> と
-<span class="math notranslate nohighlight">\(V\)</span> は宣言ファイルの対称化された読み（逆向きボンドの相手
-<span class="math notranslate nohighlight">\((R, a, b) \leftrightarrow (-R, b, a)\)</span> との平均）として入り、
+<p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> （ <span class="math notranslate nohighlight">\(U\)</span>）と <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> （ <span class="math notranslate nohighlight">\(V\)</span>）のみが
+存在する場合、ペアリング頂点はスピンチャネル（ <span class="math notranslate nohighlight">\(W_s\)</span>）と
+電荷チャネル（ <span class="math notranslate nohighlight">\(W_c\)</span>）を用いて計算されます。 <span class="math notranslate nohighlight">\(U\)</span>と
+<span class="math notranslate nohighlight">\(V\)</span>は宣言ファイルの対称化された読み（逆向きボンドの相手
+<span class="math notranslate nohighlight">\((R, a, b) \leftrightarrow (-R, b, a)\)</span>との平均）として入り、
 パッケージ内の他の全経路と一致します。両方向を含む実数の宣言はビット単位で不変に読まれます（エルミート共役
 で閉じた複素対は、不活性な虚部が実係数に折り畳まれます）
 （バージョン 2.0 以降、エルミート共役の相手を欠く片側宣言は読み込み時に拒否
@@ -109,14 +109,14 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 </section>
 <section id="s-c">
 <h3>一般モード（S/C行列定式化）<a class="headerlink" href="#s-c" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> （ <span class="math notranslate nohighlight">\(J\)</span> ）、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> （ <span class="math notranslate nohighlight">\(J'\)</span> ）、
-<code class="docutils literal notranslate"><span class="pre">Ising</span></code> （ <span class="math notranslate nohighlight">\(I\)</span> ）、または <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> （ <span class="math notranslate nohighlight">\(P\)</span> ）相互作用が
-存在する場合、ソルバーは一般化 <span class="math notranslate nohighlight">\(S\)</span> / <span class="math notranslate nohighlight">\(C\)</span> 行列
+<p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> （ <span class="math notranslate nohighlight">\(J\)</span>）、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> （ <span class="math notranslate nohighlight">\(J'\)</span>）、
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code> （ <span class="math notranslate nohighlight">\(I\)</span>）、または <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> （ <span class="math notranslate nohighlight">\(P\)</span>）相互作用が
+存在する場合、ソルバーは一般化 <span class="math notranslate nohighlight">\(S\)</span> / <span class="math notranslate nohighlight">\(C\)</span>行列
 定式化 <a class="footnote-reference brackets" href="#id12" id="id5" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を使用します。</p>
-<p><span class="math notranslate nohighlight">\(S\)</span> 行列と <span class="math notranslate nohighlight">\(C\)</span> 行列は、軌道インデックス <span class="math notranslate nohighlight">\(l_1, l_2\)</span> の
+<p><span class="math notranslate nohighlight">\(S\)</span>行列と <span class="math notranslate nohighlight">\(C\)</span>行列は、軌道インデックス <span class="math notranslate nohighlight">\(l_1, l_2\)</span>の
 複合インデックス空間で定義されます。
-<span class="math notranslate nohighlight">\(n_{\rm orb}\)</span> 軌道の系では、行列の次元は
-<span class="math notranslate nohighlight">\(n_{\rm orb}^2 \times n_{\rm orb}^2\)</span> です。
+<span class="math notranslate nohighlight">\(n_{\rm orb}\)</span>軌道の系では、行列の次元は
+<span class="math notranslate nohighlight">\(n_{\rm orb}^2 \times n_{\rm orb}^2\)</span>です。
 行列要素は以下の通りです:</p>
 <table class="docutils align-default">
 <colgroup>
@@ -128,8 +128,8 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 <thead>
 <tr class="row-odd"><th class="head"><p>インデックス条件</p></th>
 <th class="head"><p>種類</p></th>
-<th class="head"><p><span class="math notranslate nohighlight">\(S\)</span> の値</p></th>
-<th class="head"><p><span class="math notranslate nohighlight">\(C\)</span> の値</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(S\)</span>の値</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(C\)</span>の値</p></th>
 </tr>
 </thead>
 <tbody>
@@ -157,18 +157,18 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 </table>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>クロス行の <span class="math notranslate nohighlight">\(J\)</span> 、 <span class="math notranslate nohighlight">\(J'\)</span> 、 <span class="math notranslate nohighlight">\(I\)</span> の各項、および <span class="math notranslate nohighlight">\(J'\)</span>
+<p>クロス行の <span class="math notranslate nohighlight">\(J\)</span> 、 <span class="math notranslate nohighlight">\(J'\)</span> 、 <span class="math notranslate nohighlight">\(I\)</span>の各項、および <span class="math notranslate nohighlight">\(J'\)</span>
 が最終行ではなくクロス行に現れる配置は、相互作用頂点の厳密対角化による
-裁定に従っています。Hund 項は <span class="math notranslate nohighlight">\(S\)</span> に <span class="math notranslate nohighlight">\(-J\)</span> ・ <span class="math notranslate nohighlight">\(C\)</span> に
-<span class="math notranslate nohighlight">\(+J\)</span> を、Exchange 項は両行列に <span class="math notranslate nohighlight">\(+J'\)</span> を、Ising 項は <span class="math notranslate nohighlight">\(S\)</span>
-に <span class="math notranslate nohighlight">\(+I\)</span> を与えます。SU(2) 対称な Kanamori の組（ <span class="math notranslate nohighlight">\(J' = J\)</span> ）
-ではこれらが標準的な文献の行列（クロス <span class="math notranslate nohighlight">\(S\)</span> に <span class="math notranslate nohighlight">\(J\)</span> なし、
-クロス <span class="math notranslate nohighlight">\(C\)</span> に <span class="math notranslate nohighlight">\(-U' + 2J\)</span> ）を再現します。この修正より前に
-生成された感受率ファイルは <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code> フィールドを持たず、
+裁定に従っています。Hund 項は <span class="math notranslate nohighlight">\(S\)</span> に <span class="math notranslate nohighlight">\(-J\)</span> ・ <span class="math notranslate nohighlight">\(C\)</span>に
+<span class="math notranslate nohighlight">\(+J\)</span>を、Exchange 項は両行列に <span class="math notranslate nohighlight">\(+J'\)</span>を、Ising 項は <span class="math notranslate nohighlight">\(S\)</span>
+に <span class="math notranslate nohighlight">\(+I\)</span>を与えます。SU(2) 対称な Kanamori の組（ <span class="math notranslate nohighlight">\(J' = J\)</span>）
+ではこれらが標準的な文献の行列（クロス <span class="math notranslate nohighlight">\(S\)</span> に <span class="math notranslate nohighlight">\(J\)</span>なし、
+クロス <span class="math notranslate nohighlight">\(C\)</span> に <span class="math notranslate nohighlight">\(-U' + 2J\)</span>）を再現します。この修正より前に
+生成された感受率ファイルは <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>フィールドを持たず、
 相互作用に Hund・Exchange・Ising が含まれる場合は読み込み時に拒否され
 ます。また general スキーム（<code class="docutils literal notranslate"><span class="pre">myo</span></code>）のファイルでは、CoulombInter・
 Hund・Ising・Exchange のいずれかに非対称なオンサイト軌道間結合
-（ <span class="math notranslate nohighlight">\(X_{ab} \neq X_{ba}\)</span> ）が宣言されている場合も、バージョン無
+（ <span class="math notranslate nohighlight">\(X_{ab} \neq X_{ba}\)</span>）が宣言されている場合も、バージョン無
 しファイルは拒否されます。相互作用が頂点に入る軌道の向きと、そのよう
 な宣言の対称化された読み方は、過去のビルドと現在とで異なっており、バ
 ージョン無しファイルはどのセマンティクスで生成されたかを記録していな
@@ -179,8 +179,8 @@ Hund・Ising・Exchange のいずれかに非対称なオンサイト軌道間�
 拒否されます）。PairLift は対象外です（粒子・正孔頂点への寄与が厳密に
 ゼロであり、向きも対称化された読み方も影響し得ません）。影響を受けない条件を規則ごとに述べると、
 転置検査される 4 種の相互作用については転置対称な宣言
-（ <span class="math notranslate nohighlight">\(X_{ab} = X_{ba}\)</span> 、物理的に通常の入力すべて）、PairHop に
-ついてはエルミート共役で閉じた宣言（ <span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span> 、
+（ <span class="math notranslate nohighlight">\(X_{ab} = X_{ba}\)</span>、物理的に通常の入力すべて）、PairHop に
+ついてはエルミート共役で閉じた宣言（ <span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span>、
 物理的に妥当な形であり、転置対称である必要はありません）です。
 reduced スキームのファイルはこの向きに依存しません。</p>
 </div>
@@ -213,13 +213,13 @@ reduced スキームのファイルはこの向きに依存しません。</p>
   \, G_{\alpha\alpha'}(\mathbf{k}', i\omega_{n'})
   \, G_{\beta\beta'}(-\mathbf{k}', -i\omega_{n'})
   \, \Sigma_{\alpha'\beta'}(\mathbf{k}')\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span> は異常自己エネルギー
-（ギャップ関数）であり、右辺はEliashbergカーネル <span class="math notranslate nohighlight">\(K[\Sigma]\)</span> を定義します。</p>
-<p>超伝導不安定性は <span class="math notranslate nohighlight">\(\lambda = 1\)</span> で生じます。
+<p>ここで <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>は異常自己エネルギー
+（ギャップ関数）であり、右辺はEliashbergカーネル <span class="math notranslate nohighlight">\(K[\Sigma]\)</span>を定義します。</p>
+<p>超伝導不安定性は <span class="math notranslate nohighlight">\(\lambda = 1\)</span>で生じます。
 SC転移には正の固有値のみが物理的に関連します。</p>
 <section id="id7">
 <h3>二粒子グリーン関数<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
-<p>松原振動数の和を <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 点の有限グリッド上で実行することで、
+<p>松原振動数の和を <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>点の有限グリッド上で実行することで、
 二粒子グリーン関数が得られます:</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-13">
 <span class="eqno">(7.45)<a class="headerlink" href="#equation-algorithm-eliashberg-13" title="Link to this equation">¶</a></span>\[G^{(2)}_{\alpha\beta;\gamma\delta}(\mathbf{q})
@@ -234,42 +234,42 @@ SC転移には正の固有値のみが物理的に関連します。</p>
 関数の主要な正の単位行列 tail を取りこぼします（ <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>
 の誤差）。被和関数の厳密な
 高周波 tail は
-<span class="math notranslate nohighlight">\(\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2\)</span> です
-（<span class="math notranslate nohighlight">\(G\)</span> の <span class="math notranslate nohighlight">\(1/i\omega_n\)</span> 係数は固有基底の完全性により単位
+<span class="math notranslate nohighlight">\(\delta_{\alpha\gamma}\delta_{\beta\delta}/\omega_n^2\)</span>です
+（<span class="math notranslate nohighlight">\(G\)</span> の <span class="math notranslate nohighlight">\(1/i\omega_n\)</span>係数は固有基底の完全性により単位
 行列で、これは FLEX のドレストグリーン関数でも同じです）。デフォルト
 ではソルバーがこのモデルを周波数窓内で差し引き、その厳密な全和
-<span class="math notranslate nohighlight">\(T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4\)</span> を解析的に
+<span class="math notranslate nohighlight">\(T \sum_{n \in \mathbb{Z}} 1/\omega_n^2 = \beta/4\)</span>を解析的に
 加えます。これはギャップ空間上の単位行列の正の倍数を加えることに相当
-し、カーネルのスペクトルを実にする <span class="math notranslate nohighlight">\(G^{(2)}\)</span> の半正定値性を実用上
+し、カーネルのスペクトルを実にする <span class="math notranslate nohighlight">\(G^{(2)}\)</span>の半正定値性を実用上
 回復します（高次の打ち切り残差により微小な負固有値が残る場合があり、
-その場合ソルバーが警告します）。補正なしでは、小さい <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> の多軌道
+その場合ソルバーが警告します）。補正なしでは、小さい <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の多軌道
 計算が偽の複素固有値を報告することがあり、対称性の破れと誤読される
 おそれがあります。補正導入前の結果を
-再現するには <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで <code class="docutils literal notranslate"><span class="pre">g2_tail</span> <span class="pre">=</span> <span class="pre">false</span></code> を設定
-してください。主要な <span class="math notranslate nohighlight">\(1/\omega_n^2\)</span> 項を除去し、対称グリッド上で
+再現するには <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">g2_tail</span> <span class="pre">=</span> <span class="pre">false</span></code>を設定
+してください。主要な <span class="math notranslate nohighlight">\(1/\omega_n^2\)</span>項を除去し、対称グリッド上で
 奇数次逆べきが相殺するため、除外和の誤差は <span class="math notranslate nohighlight">\(O(N_{\rm mat}^{-3})\)</span>
 でスケールします（通常の整数べき高周波展開を仮定）。この補正は漸近的で、
 保持される最大周波数が関連するエネルギー・自己エネルギースケールを超え
 ない場合は過補正になり得ます。窓端でグリーン関数が
-<span class="math notranslate nohighlight">\(I/(i\omega_n)\)</span> から要素毎の最大偏差で 0.5 を超えて外れている
-場合、ソルバーは警告を出します。また、計算された <span class="math notranslate nohighlight">\(G^{(2)}\)</span> が有意に負の固有値を持つ場合も
-<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> を指す警告を出します（これはカーネルの実スペクトル性に関する
+<span class="math notranslate nohighlight">\(I/(i\omega_n)\)</span>から要素毎の最大偏差で 0.5 を超えて外れている
+場合、ソルバーは警告を出します。また、計算された <span class="math notranslate nohighlight">\(G^{(2)}\)</span>が有意に負の固有値を持つ場合も
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を指す警告を出します（これはカーネルの実スペクトル性に関する
 構造的診断であり、誤差の推定ではありません）。動的（周波数分解）
 ソルバーはこの周波数和を取らないため影響を受けません。</p>
 </div>
 </section>
 <section id="fft">
 <h3>FFTによるカーネル評価<a class="headerlink" href="#fft" title="Link to this heading">¶</a></h3>
-<p>カーネル演算 <span class="math notranslate nohighlight">\(\Sigma_{\rm new} = K[\Sigma_{\rm old}]\)</span> は、
-ペアリング頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> と
-<span class="math notranslate nohighlight">\(G^{(2)}\)</span> ・ギャップ関数の積との畳み込みを含みます。
+<p>カーネル演算 <span class="math notranslate nohighlight">\(\Sigma_{\rm new} = K[\Sigma_{\rm old}]\)</span>は、
+ペアリング頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span>と
+<span class="math notranslate nohighlight">\(G^{(2)}\)</span>・ギャップ関数の積との畳み込みを含みます。
 この畳み込みは以下のように効率的に計算されます:</p>
 <ol class="arabic simple">
-<li><p><span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> と <span class="math notranslate nohighlight">\(G^{(2)}(\mathbf{q}) \cdot \Sigma(\mathbf{q})\)</span> の逆FFTにより実空間に変換。</p></li>
+<li><p><span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> と <span class="math notranslate nohighlight">\(G^{(2)}(\mathbf{q}) \cdot \Sigma(\mathbf{q})\)</span>の逆FFTにより実空間に変換。</p></li>
 <li><p>実空間での要素ごとの積。</p></li>
 <li><p>FFTによりk空間に戻す。</p></li>
 </ol>
-<p>これにより計算量が <span class="math notranslate nohighlight">\(O(N_k^2)\)</span> から <span class="math notranslate nohighlight">\(O(N_k \log N_k)\)</span> に削減されます。</p>
+<p>これにより計算量が <span class="math notranslate nohighlight">\(O(N_k^2)\)</span>から <span class="math notranslate nohighlight">\(O(N_k \log N_k)\)</span>に削減されます。</p>
 </section>
 </section>
 <section id="id8">
@@ -285,11 +285,11 @@ SC転移には正の固有値のみが物理的に関連します。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-15">
 <span class="eqno">(7.47)<a class="headerlink" href="#equation-algorithm-eliashberg-15" title="Link to this equation">¶</a></span>\[\Sigma^{(i+1)} \leftarrow (1-\alpha)\, \Sigma^{(i+1)}_{\rm norm}
 + \alpha\, \Sigma^{(i)}\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(\alpha\)</span> は混合パラメータです。
+<p>ここで <span class="math notranslate nohighlight">\(\alpha\)</span>は混合パラメータです。
 <span class="math notranslate nohighlight">\(\|\Sigma^{(i+1)} - \Sigma^{(i)}\| &lt; \epsilon\)</span>
 のとき収束したと判定します。</p>
 <p>初期ギャップ関数は様々な対称性
-（s波、 <span class="math notranslate nohighlight">\(d_{x^2-y^2}\)</span> 、 <span class="math notranslate nohighlight">\(\cos k_x + \cos k_y\)</span> 、ランダムなど）
+（s波、 <span class="math notranslate nohighlight">\(d_{x^2-y^2}\)</span> 、 <span class="math notranslate nohighlight">\(\cos k_x + \cos k_y\)</span>、ランダムなど）
 を設定でき、特定のペアリングチャネルを狙うことができます。</p>
 </section>
 <section id="arnoldi">
@@ -306,7 +306,7 @@ Eliashbergカーネルを線形演算子として、
 <ol class="arabic simple">
 <li><p>全ベクトルにカーネルを適用: <span class="math notranslate nohighlight">\(W = K \cdot V\)</span></p></li>
 <li><p>レイリー商を計算: <span class="math notranslate nohighlight">\(H = V^T K V\)</span></p></li>
-<li><p>小行列 <span class="math notranslate nohighlight">\(H\)</span> を固有値分解</p></li>
+<li><p>小行列 <span class="math notranslate nohighlight">\(H\)</span>を固有値分解</p></li>
 <li><p>リッツベクトルで部分空間を更新</p></li>
 <li><p>QR分解による再直交化</p></li>
 </ol>
@@ -315,7 +315,7 @@ Eliashbergカーネルを線形演算子として、
 <section id="id11">
 <h3>シフト逆反復法<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
 <p>シフト逆反復変換 <span class="math notranslate nohighlight">\((K - \sigma I)^{-1}\)</span>
-を用いて、目標値 <span class="math notranslate nohighlight">\(\sigma\)</span> 近傍の固有値を求めます。
+を用いて、目標値 <span class="math notranslate nohighlight">\(\sigma\)</span>近傍の固有値を求めます。
 線形方程式系はBiCGSTAB、GMRES、またはLGMRESにより
 反復的に解かれます。</p>
 <aside class="footnote-list brackets">

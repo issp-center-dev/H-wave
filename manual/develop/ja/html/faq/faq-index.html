@@ -43,31 +43,31 @@
 <p>可能です。動的 Eliashberg ソルバ（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、
 FLEX の感受率を読み込むモード）では、ペアリング頂点はスピン
 （<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>）・電荷（<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>）感受率から構成され、
-両チャネルについて<strong>線形</strong>です。したがって <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> セクションで
+両チャネルについて<strong>線形</strong>です。したがって <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションで
 一方のチャネルを 0 にすることで、各チャネルがペアリング固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>
 に与える効果を比較できます。</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span> <span class="pre">=</span> <span class="pre">true</span></code> とすると、スピンゆらぎ項＋裸の項が残ります。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span> <span class="pre">=</span> <span class="pre">true</span></code> とすると、電荷ゆらぎ項＋裸の項が残ります。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span> <span class="pre">=</span> <span class="pre">true</span></code>とすると、スピンゆらぎ項＋裸の項が残ります。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span> <span class="pre">=</span> <span class="pre">true</span></code>とすると、電荷ゆらぎ項＋裸の項が残ります。</p></li>
 </ul>
 <p>全チャネルを含む計算（full）と、一方のチャネルをゼロにした2通りの計算を行い、
-得られた <span class="math notranslate nohighlight">\(\lambda\)</span> を比較すれば、
+得られた <span class="math notranslate nohighlight">\(\lambda\)</span>を比較すれば、
 どちらのゆらぎチャネルの効果が相対的に強いかを診断する目安になります。
-いずれのフラグも既定は <code class="docutils literal notranslate"><span class="pre">false</span></code> なので通常の計算には影響せず、
-<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> が <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> でも <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code> でも使えます。</p>
+いずれのフラグも既定は <code class="docutils literal notranslate"><span class="pre">false</span></code>なので通常の計算には影響せず、
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> が <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>でも <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>でも使えます。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p>瞬間的な（裸の）相互作用項は常に保持され、主要固有値はペアリング頂点に対して
 線形ではないため、固有値は加算されません（一般に
 <span class="math notranslate nohighlight">\(\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq
-\lambda_{\mathrm{full}}\)</span>）。ここで <span class="math notranslate nohighlight">\(\lambda_{\mathrm s}\)</span> と
-<span class="math notranslate nohighlight">\(\lambda_{\mathrm c}\)</span> は、それぞれ <code class="docutils literal notranslate"><span class="pre">zero_chi_c</span> <span class="pre">=</span> <span class="pre">true</span></code>
+\lambda_{\mathrm{full}}\)</span>）。ここで <span class="math notranslate nohighlight">\(\lambda_{\mathrm s}\)</span>と
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm c}\)</span>は、それぞれ <code class="docutils literal notranslate"><span class="pre">zero_chi_c</span> <span class="pre">=</span> <span class="pre">true</span></code>
 （スピンゆらぎ項＋裸の項）と <code class="docutils literal notranslate"><span class="pre">zero_chi_s</span> <span class="pre">=</span> <span class="pre">true</span></code>
 （電荷ゆらぎ項＋裸の項）による計算の固有値です。裸の項は両方に含まれるため、
 単純に加算すると二重に数えることにもなります。この分解は2つのチャネルの
 相対的な強さの比較に用い、厳密な加法的分割としては扱わないでください。</p>
 </div>
-<p>頂点の式や詳細は <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-channel-decomposition"><span class="std std-ref">チャネル分解（診断用）</span></a> を参照してください。</p>
+<p>頂点の式や詳細は <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-channel-decomposition"><span class="std std-ref">チャネル分解（診断用）</span></a>を参照してください。</p>
 </section>
 </section>
 
