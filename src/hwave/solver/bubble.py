@@ -23,9 +23,20 @@ deliberately imports neither ``sparse_ir`` nor ``flex.py`` -- the IR entry
 points receive already-constructed ``IRAxis`` objects and duck-type their
 attributes/methods (``statistics``, ``beta``, ``wmax``, ``eps``, ``tau``,
 ``n_tau``, ``n_freq``, ``freq_to_tau_points``, ``tau_to_freq``) -- so the
-plain dense path stays usable without the optional IR dependency; the bond
-entry point takes a ``bond_set`` (duck-typed ``delta_r``/``n_channels``)
-and never imports ``bond_channels`` either.
+plain dense path stays usable without the optional IR dependency; the
+LONGITUDINAL bond entry points (``bond_bubble_static``, ``_iter_bond_dynamic``)
+take a ``bond_set`` (duck-typed ``delta_r``/``n_channels``) and never import
+``bond_channels`` either.
+
+The one exception is ``transverse_bond_bubble_static`` (Phase W Task 4,
+``docs/superpowers/specs/2026-08-15-bond-transverse-design.md``): its
+``topo`` argument is a ``bond_channels.TransverseTopology``, and the
+spec requires ``validate_topology_against_mesh`` -- defined in
+``bond_channels.py`` -- to run at entry. Since ``bond_channels.py``
+imports THIS module at its own top level (``from . import bubble as
+_bubble``), a module-level ``from . import bond_channels`` here would
+cycle; ``transverse_bond_bubble_static`` therefore imports
+``bond_channels`` LOCALLY, inside the function, instead.
 """
 
 import numpy as np
@@ -1305,5 +1316,263 @@ def _ir_bond_static(green_kw, ax_fermi, ax_bose, bond_set, *,
             chi_bar[:, m * npair:(m + 1) * npair,
                     mp * npair:(mp + 1) * npair] = block[..., 0]
             del block
+
+    return chi_bar
+
+
+# ===========================================================================
+# bond-enlarged bubble  --  static cross-block (transverse) assembly
+# ===========================================================================
+#
+# transverse_bond_bubble_static computes the STATIC (Omega=0) bond-enlarged
+# transverse particle-hole bubble chi0_+-(q; Delta r_m, Delta r_m'), the
+# cross-block analogue of bond_bubble_static: instead of contracting one
+# propagator block against itself channel-pair by channel-pair (the
+# longitudinal bond path above), it contracts block 1 (DOWN, forward) against
+# block 0 (UP, reversed) -- the SAME per-pair roll-by-(Delta r_m - Delta r_m')
+# / contract_general / endpoint-mean / spatial-fftn / tau_to_boson pipeline
+# (_bond_pair_full_block, unmodified) driven by ONE new block-aware generator
+# (_iter_transverse_bond_channel_pairs) that plays the role
+# _iter_bond_channel_pairs plays for the nblock=1 longitudinal path.
+#
+# fwd = block 1 (DOWN), rev = block 0 (UP): the AMENDED 2026-08-15 Phase-H
+# H3 adjudication (spec, "The bond bubble (static)") -- the Wick contraction
+# of the campaign's observable <S+;S+dagger> factorizes as
+# -G_down(r,tau)*G_up(-r,-tau), so the forward propagator is the DOWN Green
+# function. This is NOT the same role assignment as 3a's
+# ``transverse_bubble(fwd=0, rev=1)`` (block 0 = up = forward there): that
+# earlier entry point computes the CONJUGATE object <S-;S-dagger>, which
+# coincides with <S+;S+dagger> only when G_up == G_down (spec's NOTE under
+# "The bond bubble (static)"). The role swap is not absorbable in the frame
+# map (a pure index permutation cannot express a spin-role swap): a naive
+# fwd=up/rev=down assignment here was measured (Phase-H H3, an Nmat-independent
+# effect) to leave an O(1) residual, not a finite-Nmat discretization error --
+# see ``transverse_bond_bubble_static``'s docstring for the recorded
+# mutation-check magnitude on THIS entry point.
+
+
+def _iter_transverse_bond_channel_pairs(prepped, delta_r, beta,
+                                        spatial_shape, workers):
+    """Shared per-pair generator for the transverse (cross-block) bond
+    bubble: yields ``((m, mp), block)`` in row-major channel order (``m``
+    outer, ``mp`` inner), ``block`` the FULL-frequency ``(nmat, nvol,
+    npair, npair)`` complex128 bond bubble for that channel pair, built by
+    :func:`_bond_pair_full_block` -- the SAME per-pair pipeline the
+    longitudinal path's :func:`_iter_bond_channel_pairs` uses, differing
+    only in WHICH block of ``prepped`` supplies the forward/reversed
+    factors: forward = block 1 (DOWN), reversed = block 0 (UP) (see the
+    module comment above and ``transverse_bond_bubble_static``'s
+    docstring). ``prepped`` is assumed built from a two-block
+    (``nblock == 2``) Green function; this function performs no
+    validation of its own -- callers (``transverse_bond_bubble_static``)
+    validate ``nblock == 2`` before building ``prepped``.
+
+    ``delta_r``: ``(B, 3)`` integer array (``topo.delta_r``, already
+    validated by the caller).
+
+    Mirrors :func:`_iter_bond_channel_pairs`'s del discipline: the
+    unused halves of ``prepped.green_rt``/``prepped.green_rev`` (block 0
+    of ``green_rt`` -- UP, never read as the forward factor here -- and
+    block 1 of ``green_rev`` -- DOWN, never read as the reversed factor
+    here) are released as soon as the needed block is extracted, rather
+    than staying bound in ``prepped`` for the whole ``(m, mp)`` loop; and
+    the generator clears its own ``block`` reference immediately after
+    each ``yield`` (see :func:`_iter_bond_channel_pairs`'s comment on why
+    a generator's suspended-frame locals need an explicit ``del`` beyond
+    whatever the consumer does with its own reference)."""
+    _, nmat, nvol, nd, _ = prepped.green_rt.shape
+    B = delta_r.shape[0]
+
+    sgn = prepped.sgn.reshape((nmat, 1, 1, 1))
+    # Forward = block 1 (DOWN). `* sgn` is an elementwise product -> a
+    # fresh array, decoupled from the two-block buffer underneath, so
+    # dropping prepped.green_rt right after this line is safe.
+    green_rt_full = prepped.green_rt
+    green_fwd_sgn = green_rt_full[1] * sgn
+    del green_rt_full
+    prepped.green_rt = None
+
+    # Reversed = block 0 (UP). Plain indexing is a VIEW into the two-block
+    # buffer, so this is copied explicitly before the full buffer (with
+    # its unused block 1) is released.
+    green_rev_full = prepped.green_rev
+    green_rev = green_rev_full[0].copy()
+    del green_rev_full
+    prepped.green_rev = None
+
+    tail_pack = None
+    if prepped.tail_on:
+        # Endpoint threading (spec: "The bond bubble (static)" / mirrors
+        # _assemble_cross_block's own threading): forward branch and its
+        # jump always read block 1 (down), reversed branch and its jump
+        # always read block 0 (up).
+        tail_pack = (prepped.fwd0_p[1], prepped.rev0_p[0],
+                     prepped.jump_f[1], prepped.jump_r_rev[0])
+
+    for m in range(B):
+        dm = delta_r[m]
+        for mp in range(B):
+            dmp = delta_r[mp]
+            shift = (int(dm[0]) - int(dmp[0]),
+                     int(dm[1]) - int(dmp[1]),
+                     int(dm[2]) - int(dmp[2]))
+
+            block = _bond_pair_full_block(
+                green_fwd_sgn, green_rev, tail_pack, beta, spatial_shape,
+                workers, shift)
+            yield (m, mp), block
+            # See _iter_bond_channel_pairs's identical comment: releases
+            # the previous pair's block from this generator's own
+            # suspended frame, keeping the per-pair working set bounded.
+            del block
+
+
+def transverse_bond_bubble_static(green_kw, green0_tail, beta, topo, *,
+                                  spatial_shape, workers=None):
+    """Bond-enlarged static (``Omega=0``) TRANSVERSE particle-hole bubble
+    ``chi0_+-(q; Delta r_m, Delta r_m')``, the cross-block analogue of
+    :func:`bond_bubble_static`.
+
+    **Block roles (AMENDED 2026-08-15, Phase-H H3 adjudication -- spec
+    "The bond bubble (static)"): fwd = block 1 (DOWN), rev = block 0
+    (UP).** The Wick contraction of the observable ``<S+;S+dagger>``
+    factorizes as ``-G_down(r,tau)*G_up(-r,-tau)``, i.e. the forward
+    propagator is the DOWN Green function -- independently derived by the
+    H3 reviewer and pinned by the V=0 gate (an un-swapped ``fwd=up,
+    rev=down`` choice leaves an Nmat-INDEPENDENT residual, not a
+    finite-Nmat discretization error; see the mutation-check note below).
+    This is NOT the same convention as :func:`transverse_bubble`'s own
+    ``fwd=block 0 (up), rev=block 1 (down)``: that entry point computes
+    the CONJUGATE object ``<S-;S-dagger>``, which coincides with
+    ``<S+;S+dagger>`` only when ``G_up == G_down`` (an open question this
+    spec explicitly leaves to a later granule, not settled by this
+    function). The role swap is NOT absorbable into the roll/frame-map
+    machinery (a pure index permutation cannot express a spin-role swap).
+
+    Parameters
+    ----------
+    green_kw : ndarray, complex, shape (2, nmat, nvol, p, p)
+        Canonical two-block Green's function, ``nblock == 2`` REQUIRED
+        (block 0 = G_up, block 1 = G_down -- ``ValueError`` naming both
+        the actual ``nblock`` and the required value otherwise). Same
+        deflated/full Green/tail semantics as :func:`dense_bubble`
+        (module docstring's "Green/tail contracts"; deflated pair when
+        ``green0_tail`` is given, ``None`` => full G and the tail
+        machinery off).
+    green0_tail : ndarray or None, same shape/dtype family as ``green_kw``
+        The paired tau-space tail add-back, or ``None`` to disable the
+        tail correction.
+    beta : float
+        Inverse temperature; must be > 0.
+    topo : bond_channels.TransverseTopology
+        The master transverse bond topology (``delta_r``/``reverse``/
+        ``coeffs`` -- only ``delta_r`` is read here; ``coeffs`` belongs to
+        the VERTEX, ``W_pm_bond``, not the bubble). Validated at entry via
+        ``bond_channels.validate_topology_against_mesh`` (the ONE
+        mesh-dependent lifecycle point shared with ``W_pm_bond`` -- spec,
+        "The master transverse topology").
+    spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
+        The lattice shape; ``prod(spatial_shape)`` must equal
+        ``green_kw.shape[2]`` (``nvol``), and ``topo.delta_r`` must be
+        INJECTIVE modulo this mesh (``validate_topology_against_mesh``).
+    workers : int or None, optional
+        Forwarded to ``backend.spatial_ifftn``/``spatial_fftn``.
+
+    Returns
+    -------
+    ndarray, complex128, shape (nvol, ND, ND)
+        ``ND = npair * B`` with ``npair = p**2``, ``B = len(topo.delta_r)``;
+        the static (``Omega=0``) bond-enlarged transverse bubble,
+        bond-major/orbital-minor index ``I = m * npair + (a * p + c)`` --
+        the SAME index convention :func:`bond_bubble_static` uses. The
+        ``Omega=0`` element is bosonic Matsubara index ``nmat // 2`` (even
+        ``nmat`` REQUIRED, same as :func:`bond_bubble_static` -- see
+        :func:`_validate_even_nmat_for_bond`).
+
+    Raises
+    ------
+    ValueError
+        If ``green_kw``'s block axis is not exactly 2 (naming the actual
+        ``nblock`` and the required value 2); on any other shape/dtype
+        mismatch (see :func:`_validate_dense_inputs`); if ``nmat`` is odd
+        (see :func:`_validate_even_nmat_for_bond`); or if ``topo``/
+        ``spatial_shape`` fail mesh-injectivity or ``topo``'s own
+        constructor invariants (propagated from
+        ``bond_channels.validate_topology_against_mesh``). All failures
+        are ``ValueError`` (survives ``python -O``).
+
+    Notes
+    -----
+    Mutation check (fwd/rev swapped to block 0 (up) forward / block 1
+    (down) reversed, run manually during development against
+    ``tests/test_bond_transverse_w.py``'s V=0 near-machine pin, then
+    reverted -- ``git diff`` on this file carries no trace, per the
+    established mutation-check discipline in
+    ``tests/test_bubble_kernel.py``/``tests/test_bond_transverse_ed.py``'s
+    H3): with the roles swapped, the pin's max-abs distance jumps from
+    round-off (~1e-13) to a MEASURED 2.465e-2 (norb=1, L=5 fixture) /
+    2.959e-2 (norb=2, L=3 fixture) -- an O(1) margin (the same ~2.5e-2
+    class H3's own mutation check measures), confirming the role
+    assignment above is load-bearing and not absorbable elsewhere.
+    """
+    if green_kw.ndim != 5:
+        raise ValueError(
+            "bubble kernel: green_kw must have ndim 5 "
+            "(nblock, nmat, nvol, p, p), got ndim={} shape={}".format(
+                green_kw.ndim, green_kw.shape))
+    nblock = green_kw.shape[0]
+    if nblock != 2:
+        # Checked FIRST, before _validate_dense_inputs's own (looser,
+        # nblock in {1, 2}) guard -- mirrors transverse_bubble's identical
+        # early check: the cross-block down/up contraction requires
+        # exactly 2 blocks, so both nblock=1 and nblock=3+ must surface
+        # THIS message (naming the actual nblock and the required value)
+        # rather than the generic one.
+        raise ValueError(
+            "bubble kernel: transverse_bond_bubble_static requires "
+            "green_kw's block axis to be exactly 2 (a spin-diag Green's "
+            "function with G_up as block 0 and G_down as block 1 -- the "
+            "down/up cross-block contraction this entry point computes "
+            "has no meaning for any other block count), got nblock={} "
+            "(required: 2)".format(nblock))
+
+    (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
+     ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
+                                "general")
+    _validate_even_nmat_for_bond(nmat)
+
+    # The ONE mesh-dependent validation lifecycle point (spec, "The master
+    # transverse topology"), shared with W_pm_bond -- LOCAL import (see the
+    # module docstring's import-graph note: bond_channels imports this
+    # module at its own top level, so a module-level import here would
+    # cycle).
+    from . import bond_channels as _bc
+    _bc.validate_topology_against_mesh(topo, spatial_shape)
+    # Re-fetch a freshly-validated, alias-safe topology for local use (the
+    # same defensive re-construction validate_topology_against_mesh applies
+    # internally -- topo.coeffs is a plain dict a caller could have
+    # re-keyed between that call returning and this line; delta_r/reverse
+    # are read-only arrays, but re-running the constructor costs little and
+    # keeps this entry point's own invariants independent of that detail).
+    topo = _bc.TransverseTopology(topo.delta_r, topo.reverse, topo.coeffs)
+
+    delta_r = np.asarray(topo.delta_r)
+    B = delta_r.shape[0]
+
+    prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
+                             workers)
+
+    xp = _bk.array_module_of(green_kw)
+    npair = nd * nd
+    ND = npair * B
+    static_index = nmat // 2
+
+    chi_bar = xp.zeros((nvol, ND, ND), dtype=xp.complex128)
+
+    for (m, mp), block in _iter_transverse_bond_channel_pairs(
+            prepped, delta_r, beta, spatial_shape, workers):
+        chi_bar[:, m * npair:(m + 1) * npair,
+                mp * npair:(mp + 1) * npair] = block[static_index]
+        del block
 
     return chi_bar

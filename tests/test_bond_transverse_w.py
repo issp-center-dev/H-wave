@@ -42,6 +42,7 @@ import unittest
 import numpy as np
 
 from hwave import sc as _sc
+from hwave.solver import bubble as bubble_mod
 from hwave.solver.bond_channels import (
     TransverseTopology,
     resolve_transverse_topology,
@@ -1211,6 +1212,155 @@ class TestWPmBondValidation(ApproxTestCase):
         bad = np.zeros((6, 2, 2, 2, 3), dtype=complex)
         with self.assertRaises(ValueError):
             W_pm_bond(topo, bad, spatial_shape=(3, 2, 1))
+
+
+# =============================================================================
+# transverse_bond_bubble_static (Phase W, Task 4)
+# =============================================================================
+#
+# Production tests for hwave.solver.bubble.transverse_bond_bubble_static:
+# the static (Omega=0) cross-block bond bubble with the amended
+# fwd=block1(down)/rev=block0(up) role contract. The load-bearing pin is
+# the V=0 near-machine comparison against tests/test_bond_transverse_ed.py's
+# H3 test-local free transverse bond bubble (_transverse_bond_bubble_free,
+# imported module-qualified as `_ted`): both sides compose the SAME
+# production primitives (bubble._prepare_dense / bubble._bond_pair_full_block)
+# with the SAME committed block roles, so agreement is expected at
+# near-machine precision (not merely Richardson-extrapolated ED precision,
+# which is what H3 itself measures against the ED oracle).
+
+
+def _transverse_topo_1d(delta_r_1d, reverse, norb):
+    """Build a TransverseTopology whose delta_r is the 1-D ring list
+    ``delta_r_1d`` (y=z=0 for every channel), for feeding
+    ``transverse_bond_bubble_static`` -- only ``delta_r``/``reverse``
+    matter to the bubble (``coeffs`` belongs to the VERTEX, W_pm_bond,
+    not the bubble); zero-filled coeffs trivially satisfy
+    TransverseTopology's Hermitian-closure invariant."""
+    B = len(delta_r_1d)
+    delta_r = np.zeros((B, 3), dtype=int)
+    delta_r[:, 0] = delta_r_1d
+    coeffs = {"CoulombInter": np.zeros((B, norb, norb), dtype=complex)}
+    return TransverseTopology(
+        delta_r=delta_r, reverse=np.array(reverse, dtype=int),
+        coeffs=coeffs)
+
+
+class TestTransverseBondBubbleStaticVZeroPin(ApproxTestCase):
+    """The V=0 near-machine pin (spec: "The bond bubble (static)"; plan
+    Task 4): ``transverse_bond_bubble_static`` must reproduce
+    ``tests/test_bond_transverse_ed.py``'s ``_transverse_bond_bubble_free``
+    -- the Phase-H test-local free transverse bond bubble that committed
+    the SAME fwd=down/rev=up roles -- at
+    ``assert_approx_array(rel=1e-12, abs=1e-13)``, INCLUDING off-diagonal
+    ``(m, m')`` cells (both fixtures use the full channel grid, not just
+    the diagonal) and the Zeeman-split case (``G_up != G_dn`` -- both
+    fixtures below carry a nonzero ``hz``, the same requirement H3's own
+    docstring states: a spin-symmetric fixture cannot distinguish the two
+    role conventions)."""
+
+    def _check(self, fx, hz, delta_r_1d, reverse, norb, nmat=32):
+        green_kw = _ted._h3_free_two_block_green(fx, hz, nmat)
+        spatial_shape = (fx.L, 1, 1)
+        want = _ted._transverse_bond_bubble_free(
+            green_kw, fx.beta, delta_r_1d, norb, spatial_shape)
+        topo = _transverse_topo_1d(delta_r_1d, reverse, norb)
+        got = bubble_mod.transverse_bond_bubble_static(
+            green_kw, None, fx.beta, topo, spatial_shape=spatial_shape)
+        assert_approx_array(got, want, rel=1e-12, abs=1e-13)
+        return got, want
+
+    def test_norb1_odd_ring_full_channel_grid(self):
+        """L=5 ring (odd), norb=1, complex hopping, Zeeman split;
+        channels R in {0, +-1, +-2} -- the full 5x5 channel grid,
+        exercising every off-diagonal (m, m') cell on an odd ring where R
+        and -R are genuinely distinct wrapped channels (mirrors H3's own
+        norb=1 fixture)."""
+        t = 0.7 * np.exp(0.3j)
+        fx = ed_oracle_util.EDFixture(
+            L=5, norb=1, t={(0, 0): t}, eps=(0.0,), T=0.5, mu=0.2)
+        Rs = [0, 1, -1, 2, -2]
+        reverse = [0, 2, 1, 4, 3]
+        self._check(fx, 0.15, Rs, reverse, 1)
+
+    def test_norb2_orbital_swap(self):
+        """L=3 ring (odd; see H3's scope note on ED tractability), norb=2,
+        genuine inter-orbital complex hop, Zeeman split; channels R in
+        {0, +-1} -- the multi-orbital off-diagonal (m, m') variant
+        (mirrors H3's own norb=2 fixture)."""
+        t = {(0, 0): 0.6 + 0.2j, (1, 1): 0.4 - 0.1j,
+             (0, 1): 0.15 + 0.05j, (1, 0): 0.15 + 0.05j}
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=2, t=t, eps=(0.05, -0.03), T=0.4, mu=0.1)
+        Rs = [0, 1, -1]
+        reverse = [0, 2, 1]
+        self._check(fx, 0.12, Rs, reverse, 2)
+
+
+class TestTransverseBondBubbleStaticTailEquivalence(ApproxTestCase):
+    """``green0_tail=None`` must be numerically equivalent to an explicit
+    all-zeros tail array of the same shape/dtype (mirrors
+    ``TestBubbleOldVsNewBondStatic``'s/the longitudinal path's own
+    None-vs-zeros pin in ``tests/test_bubble_kernel.py``) --
+    ``assert_approx_array(rel=0, abs=1e-15)``."""
+
+    def test_none_tail_matches_zero_tail_array(self):
+        fx = ed_oracle_util.EDFixture(
+            L=4, norb=1, t={(0, 0): 0.5 + 0.1j}, eps=(0.0,), T=0.6, mu=0.1)
+        nmat = 16
+        green_kw = _ted._h3_free_two_block_green(fx, 0.2, nmat)
+        spatial_shape = (fx.L, 1, 1)
+        topo = _transverse_topo_1d([0, 1, -1], [0, 2, 1], 1)
+
+        zero_tail = np.zeros_like(green_kw)
+        got_none = bubble_mod.transverse_bond_bubble_static(
+            green_kw, None, fx.beta, topo, spatial_shape=spatial_shape)
+        got_zero = bubble_mod.transverse_bond_bubble_static(
+            green_kw, zero_tail, fx.beta, topo, spatial_shape=spatial_shape)
+        assert_approx_array(got_zero, got_none, rel=0, abs=1e-15)
+
+
+class TestTransverseBondBubbleStaticValidation(ApproxTestCase):
+    """Entry-point validation: ``nblock != 2``, odd ``nmat``, and a
+    mesh-colliding topology are all rejected with ``ValueError`` before
+    any FFT work runs."""
+
+    def _small_green(self, nblock, nmat, L=4):
+        rng = np.random.default_rng(3)
+        shape = (nblock, nmat, L, 1, 1)
+        return (rng.normal(size=shape) + 1j * rng.normal(size=shape))
+
+    def test_rejects_nblock_1(self):
+        green_kw = self._small_green(1, 8)
+        topo = _transverse_topo_1d([0, 1, -1], [0, 2, 1], 1)
+        with self.assertRaises(ValueError):
+            bubble_mod.transverse_bond_bubble_static(
+                green_kw, None, 1.0, topo, spatial_shape=(4, 1, 1))
+
+    def test_rejects_nblock_3(self):
+        green_kw = self._small_green(3, 8)
+        topo = _transverse_topo_1d([0, 1, -1], [0, 2, 1], 1)
+        with self.assertRaises(ValueError):
+            bubble_mod.transverse_bond_bubble_static(
+                green_kw, None, 1.0, topo, spatial_shape=(4, 1, 1))
+
+    def test_rejects_odd_nmat(self):
+        green_kw = self._small_green(2, 7)
+        topo = _transverse_topo_1d([0, 1, -1], [0, 2, 1], 1)
+        with self.assertRaises(ValueError):
+            bubble_mod.transverse_bond_bubble_static(
+                green_kw, None, 1.0, topo, spatial_shape=(4, 1, 1))
+
+    def test_mesh_collision_raises(self):
+        # +2 == -2 mod 4 -- the canonical even-mesh self-reversal alias.
+        green_kw = self._small_green(2, 8, L=4)
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0], [2, 0, 0], [-2, 0, 0]]),
+            reverse=np.array([0, 2, 1]),
+            coeffs={"CoulombInter": np.zeros((3, 1, 1), dtype=complex)})
+        with self.assertRaises(ValueError):
+            bubble_mod.transverse_bond_bubble_static(
+                green_kw, None, 1.0, topo, spatial_shape=(4, 1, 1))
 
 
 if __name__ == "__main__":
