@@ -268,11 +268,14 @@ class TestResolveTransverseTopology(ApproxTestCase):
         self.assertEqual(drs, [(0, 0, 0), (-1, 0, 0), (1, 0, 0),
                                 (-2, 0, 0), (2, 0, 0)])
 
-    def test_max_shells_truncates_whole_shells(self):
+    def test_max_shells_truncates_whole_shells_when_dropped_shell_is_zero(self):
+        # The kept shell (|R|=1) is nonzero; the DROPPED shell (|R|=2) is
+        # declared but with an exactly-zero coefficient -- dropping only
+        # zero-coefficient content is fine, never an error.
         interactions = {
             "CoulombInter": {
                 ((1, 0, 0), (0, 0)): 0.2, ((-1, 0, 0), (0, 0)): 0.2,
-                ((2, 0, 0), (0, 0)): 0.1, ((-2, 0, 0), (0, 0)): 0.1,
+                ((2, 0, 0), (0, 0)): 0.0, ((-2, 0, 0), (0, 0)): 0.0,
             },
         }
         topo = resolve_transverse_topology(
@@ -281,12 +284,78 @@ class TestResolveTransverseTopology(ApproxTestCase):
         drs = {tuple(int(x) for x in r) for r in topo.delta_r}
         self.assertEqual(drs, {(0, 0, 0), (1, 0, 0), (-1, 0, 0)})
 
-    def test_max_shells_zero_keeps_only_channel_zero(self):
+    def test_max_shells_dropping_a_declared_nonzero_shell_raises(self):
+        # max_shells=1 dropping a declared |R|=2 shell -> ValueError (the
+        # ambiguity guard, generalizing resolve_interactions's
+        # bond_max_shells=0 case to every truncation depth: dropping
+        # declared content is never silent).
+        interactions = {
+            "CoulombInter": {
+                ((1, 0, 0), (0, 0)): 0.2, ((-1, 0, 0), (0, 0)): 0.2,
+                ((2, 0, 0), (0, 0)): 0.1, ((-2, 0, 0), (0, 0)): 0.1,
+            },
+        }
+        with self.assertRaises(ValueError) as cm:
+            resolve_transverse_topology(
+                interactions, np.eye(3), norb=1, max_shells=1)
+        msg = str(cm.exception)
+        self.assertIn("max_shells", msg)
+        self.assertIn("(2, 0, 0)", msg)
+
+    def test_max_shells_zero_with_declared_offsite_raises(self):
+        # max_shells=0 + declared off-site -> ValueError (the n_keep=0
+        # instance of the same guard).
         interactions = {"CoulombInter": {((1, 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(
+                interactions, np.eye(3), norb=1, max_shells=0)
+
+    def test_max_shells_zero_with_only_zero_declared_offsite_is_ok(self):
+        # max_shells=0 with a declared-but-exactly-zero off-site value
+        # drops nothing of substance -- not ambiguous, no error.
+        interactions = {"CoulombInter": {((1, 0, 0), (0, 0)): 0.0}}
         topo = resolve_transverse_topology(
             interactions, np.eye(3), norb=1, max_shells=0)
         self.assertEqual(topo.delta_r.shape, (1, 3))
         self.assertFalse(transverse_effective_activity(topo))
+
+    def test_max_shells_zero_with_no_offsite_declared_is_ok(self):
+        topo = resolve_transverse_topology(
+            {}, np.eye(3), norb=1, max_shells=0)
+        self.assertEqual(topo.delta_r.shape, (1, 3))
+
+    def test_max_shells_keeping_all_declared_content_is_ok(self):
+        # max_shells=1 keeping ALL declared content (only one shell
+        # exists) -> OK, nothing dropped.
+        interactions = {
+            "CoulombInter": {
+                ((1, 0, 0), (0, 0)): 0.2, ((-1, 0, 0), (0, 0)): 0.2,
+            },
+        }
+        topo = resolve_transverse_topology(
+            interactions, np.eye(3), norb=1, max_shells=1)
+        self.assertEqual(topo.delta_r.shape, (3, 3))
+        drs = {tuple(int(x) for x in r) for r in topo.delta_r}
+        self.assertEqual(drs, {(0, 0, 0), (1, 0, 0), (-1, 0, 0)})
+        self.assertApprox(
+            topo.coeffs["CoulombInter"][
+                [i for i, r in enumerate(topo.delta_r)
+                 if tuple(int(x) for x in r) == (1, 0, 0)][0], 0, 0],
+            0.2, rel=0, abs=1e-13)
+
+    def test_max_shells_drop_check_covers_every_active_type(self):
+        # The guard must fire for Ising/Exchange too, not just
+        # CoulombInter.
+        for type_name, value in (("Ising", 0.4), ("Exchange", 0.3 + 0.1j)):
+            interactions = {
+                type_name: {
+                    ((1, 0, 0), (0, 0)): 0.2, ((-1, 0, 0), (0, 0)): 0.2,
+                    ((2, 0, 0), (0, 0)): value, ((-2, 0, 0), (0, 0)): value,
+                },
+            }
+            with self.assertRaises(ValueError):
+                resolve_transverse_topology(
+                    interactions, np.eye(3), norb=1, max_shells=1)
 
     def test_max_shells_negative_rejected(self):
         with self.assertRaises(ValueError):

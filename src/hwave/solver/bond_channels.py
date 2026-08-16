@@ -2711,7 +2711,18 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         semantics ``resolve_interactions`` documents) by WHOLE ``|R|``-
         shells; ``None`` (the default) keeps every declared off-site
         shell. A negative, non-integral or non-finite value raises
-        ``ValueError`` (never clamped/truncated).
+        ``ValueError`` (never clamped/truncated). Dropping declared
+        content is ALWAYS an error, never silent: if the truncation would
+        remove a shell that carries any exactly-nonzero DECLARED
+        coefficient (from ``CoulombInter``, ``Ising`` or ``Exchange``),
+        this raises ``ValueError`` -- the same ambiguity guard
+        ``resolve_interactions``'s ``bond_max_shells=0`` case applies
+        (bond_channels.py's "Step 4" above), generalized here to any
+        truncation depth: ``max_shells=0`` with declared off-site content
+        is simply the ``n_keep=0`` instance of the same rule. A
+        truncation that only drops shells with no declared nonzero
+        coefficient (e.g. purely synthesized-negligible partners, or
+        shells nothing ever declared) remains fine.
 
     Returns
     -------
@@ -2726,7 +2737,8 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
     ------
     ValueError
         If a mirrored declared pair disagrees beyond tolerance, if
-        ``max_shells`` is invalid, or (propagated from
+        ``max_shells`` is invalid, if ``max_shells`` would drop a shell
+        carrying declared nonzero content, or (propagated from
         :class:`TransverseTopology`'s constructor) if the resolved
         topology somehow fails its own invariants.
     """
@@ -2744,6 +2756,7 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
 
     reverse_atol, reverse_rtol = 1e-10, 1e-8
 
+    per_type_by_irvec = {}
     per_type_completed = {}
     union_irvecs = set()
     for type_name in _TRANSVERSE_ACTIVE_TYPES:
@@ -2755,6 +2768,7 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
                 continue
             a, b = int(orbvec[0]), int(orbvec[1])
             by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
+        per_type_by_irvec[type_name] = by_irvec
         completed = _close_offsite_hermitian(
             by_irvec, norb, reverse_atol, reverse_rtol, type_name)
         per_type_completed[type_name] = completed
@@ -2791,6 +2805,42 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
                 "max_shells counts OFF-SITE shells beyond it) or None, "
                 "got {!r}".format(max_shells))
         n_keep = int(shells_f)
+        dropped_shells = shells[n_keep:]
+
+        # Ambiguity guard (review fix, generalizing resolve_interactions's
+        # "Step 4" bond_max_shells=0 guard, bond_channels.py above, to
+        # every truncation depth): dropping a shell that carries any
+        # exactly-nonzero DECLARED coefficient (from CoulombInter, Ising
+        # or Exchange) is ALWAYS an error, never silent -- the docstring's
+        # "max_shells truncates the UNION of off-site shells" promise
+        # would otherwise silently discard content the caller explicitly
+        # asked for. Checked against per_type_by_irvec (the RAW declared
+        # entries, pre-closure), matching resolve_interactions's own
+        # has_nonzero_inter_site_v -- a synthesized-but-negligible
+        # reverse partner never triggers this on its own (it is not
+        # itself a declared entry), but its declared mirror at the SAME
+        # shell (same |R|, since |R| == |-R| always) does.
+        dropped_irvecs = {irvec for _, irvecs in dropped_shells
+                           for irvec in irvecs}
+        if dropped_irvecs:
+            offending = []
+            for type_name in _TRANSVERSE_ACTIVE_TYPES:
+                by_irvec = per_type_by_irvec[type_name]
+                for irvec in dropped_irvecs:
+                    entries = by_irvec.get(irvec)
+                    if entries and any(v != 0 for v in entries.values()):
+                        offending.append((type_name, irvec))
+            if offending:
+                offending.sort(key=lambda x: (x[0], x[1]))
+                raise ValueError(
+                    "resolve_transverse_topology: max_shells={} requested "
+                    "but this would drop shell(s) carrying declared "
+                    "nonzero off-site content: {}; this is ambiguous "
+                    "(asks to truncate away declared coefficients rather "
+                    "than merely unresolved/zero-valued shells). Use a "
+                    "larger max_shells, or omit the offending "
+                    "declarations, for the genuinely truncated model "
+                    "instead.".format(max_shells, offending))
         shells = shells[:n_keep]
 
     ordered_irvecs = [irvec for _, irvecs in shells for irvec in irvecs]
