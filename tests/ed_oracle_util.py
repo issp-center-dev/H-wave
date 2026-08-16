@@ -764,6 +764,104 @@ class SectorED:
                     out[qi, i, j] = self._lehmann_dagger(opA, deltaA, opB, deltaB)
         return out / fx.L
 
+    def bond_correlator_transverse(self, channels):
+        """Xpm[q, I, J], connected, of the TRANSVERSE (spin-flip) bond
+        bilinear S^+_{R,a,b}(q) = sum_j e^{+iqj} c^dag_{j+R,a,up}
+        c_{j,b,dn} against the conjugate leg S^+_{R',a',b'}(q)^dagger
+        (SAME q on both legs -- the physical <S^+; S^+dagger>
+        susceptibility, the transverse analogue of ``bond_correlator``'s
+        <B; B^dagger>, spelled out here in full rather than by reference
+        because every convention below is independently load-bearing for
+        Phase H/W of the bond-transverse campaign (docs/superpowers/
+        specs/2026-08-15-bond-transverse-design.md, "Phase H"):
+
+        - ``channels``: an explicit ordered list of ``(R, a, b)`` integer
+          tuples (``(R,)`` at norb == 1, via ``_channel_orbitals`` exactly
+          as ``bond_correlator``/``pair_correlator`` use it). ``R`` is
+          wrapped mod ``fx.L`` BEFORE the duplicate check below (matching
+          the ``(j + R) % fx.L`` site-offset ``bond_correlator`` applies
+          at use site); two channels that wrap to the same ``(R, a, b)``
+          triple are rejected with ``ValueError`` rather than silently
+          double-counting a slot in the output.
+        - The creation leg is always spin UP (mode parity 0) and the
+          annihilation leg always spin DOWN (mode parity 1) -- this is
+          what makes the bilinear transverse (spin-raising) rather than
+          the density-diagonal object ``bond_correlator`` builds per
+          fixed sigma. Via ``_build_operator``'s mode-parity delta rule
+          (``d = ((p%2==0)-(q%2==0), (p%2==1)-(q%2==1))``), this mixed-
+          spin pairing gives the SAME sector displacement delta = (+1,
+          -1) for every channel, automatically -- so
+          ``_lehmann_dagger``'s ``deltaA == deltaB`` gate always holds
+          across every (I, J) pair (both legs are S^+-type) and no
+          special-casing is needed, exactly as with same-spin
+          ``bond_correlator`` channels.
+        - Legs are combined with ``_lehmann_dagger`` UNCHANGED (same
+          helper, same contraction ``sum_{m,n} K[m,n] A[m,n] conj(B[m,n])``
+          that ``bond_correlator`` and ``pair_correlator`` both use).
+        - Connected subtraction ``val -= fx.beta * avgA * conj(avgB)`` is
+          applied identically to ``bond_correlator``'s per-cell
+          subtraction; ``avgA``/``avgB`` come from ``_thermal_avg``, which
+          returns exactly ``0.0`` whenever ``delta != (0, 0)`` -- since
+          this operator's delta is always ``(+1, -1)``, the subtraction is
+          structurally a no-op here (the transverse average vanishes by
+          number-conservation in any (N_up, N_dn)-diagonal ensemble), but
+          the same code shape is kept so the method mirrors
+          ``bond_correlator`` exactly rather than special-casing the
+          "always zero" fact away.
+        - Same ``1/fx.L`` normalization (the whole tensor divided once at
+          the end, not per operator) as ``bond_correlator``/
+          ``pair_correlator``.
+        - Output: complex128 array of shape ``(fx.L, NI, NJ)`` with
+          ``NI == NJ == len(channels)``, axis order ``(q, I, J)`` -- ``I``,
+          ``J`` index the EXPLICIT ordered ``channels`` list, matching
+          ``pair_correlator``'s (no spin axis) layout rather than
+          ``bond_correlator``'s extra ``(sigma, sigma')`` axes, since a
+          transverse channel's spin assignment (up creation / down
+          annihilation) is already fixed by construction and does not
+          vary per cell.
+
+        R != 0 site-offset orientation and the frame map from this
+        Lehmann tensor to the solver's spin-flip slot convention are NOT
+        pinned here -- H1 (this task) only exercises R == 0 against the
+        bespoke ``_chi_pm_ed`` reference in
+        ``tests/test_rpa_vs_ed_oracle.py::TestTransverseComplexPairHop``;
+        the R != 0 orientation and frame map are Task 3's load-bearing
+        checks (H3), not redundant re-derivations of this method."""
+        fx = self.fx
+        seen = set()
+        wrapped = []
+        for chan in channels:
+            R, a, b = self._channel_orbitals(chan)
+            Rw = R % fx.L
+            key = (Rw, a, b)
+            if key in seen:
+                raise ValueError(
+                    "bond_correlator_transverse: duplicate channel {!r} "
+                    "after wrapping R mod L (wrapped key {!r})".format(
+                        chan, key))
+            seen.add(key)
+            wrapped.append((Rw, a, b))
+        n_i = len(wrapped)
+        out = np.zeros((fx.L, n_i, n_i), dtype=complex)
+        for qi in range(fx.L):
+            built = []   # built[I] = (delta, op, avg)
+            for (R, a, b) in wrapped:
+                mode_terms = [
+                    (fx.mode((j + R) % fx.L, a, 0),
+                     fx.mode(j, b, 1),
+                     np.exp(2j * np.pi * qi * j / fx.L))
+                    for j in range(fx.L)]
+                delta, op = self._build_operator(mode_terms)
+                built.append((delta, op, self._thermal_avg(op, delta)))
+            for i in range(n_i):
+                deltaA, opA, avgA = built[i]
+                for j in range(n_i):
+                    deltaB, opB, avgB = built[j]
+                    val = self._lehmann_dagger(opA, deltaA, opB, deltaB)
+                    val -= fx.beta * avgA * np.conj(avgB)
+                    out[qi, i, j] = val
+        return out / fx.L
+
 
 # ---------------------------------------------------------------------------
 # Adjudication machinery (#151, Task 6): the shared verdict rule and the
