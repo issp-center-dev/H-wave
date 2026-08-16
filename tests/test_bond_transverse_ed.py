@@ -38,13 +38,17 @@ Tests must be run from the repository root.
 
 import collections
 import functools
+import types
 import unittest
 
 import numpy as np
 
 import tests.test_rpa_vs_ed_oracle as oracle
+from hwave.solver import bond_channels
 from hwave.solver import bubble as _hbubble
 from hwave.solver import green as _hgreen
+from hwave.solver import rpa as rpa_mod
+from hwave.solver.vertex_table import ring_spin_table
 from tests import ed_oracle_util
 from tests.approx_util import assert_approx_array
 
@@ -1084,15 +1088,38 @@ def w_expected_from_records(topo_like, declarations, q_mesh):
     2. Cross family (CoulombInter -Re, Ising +Re): for each off-site
        reversal-orbit representative ``(m, a, b)`` with declared
        coefficient ``C = declarations[type][m][a, b]``, BOTH mirrored
-       diagonal TARGET cells get the SAME value ``s_type * Re(C)``::
+       diagonal TARGET cells get the SAME value ``s_type * Re(C)``,
+       DIRECT placement (AMENDED 2026-08-16, Task-6 granule
+       adjudication -- the second measurement-driven correction of this
+       step; see the derivation note below)::
 
-           W[q, (reverse[m],a,b), (reverse[m],a,b)] += s_type * Re(C)
-           W[q, (m,b,a), (m,b,a)]                   += s_type * Re(C)
+           W[q, (m,a,b), (m,a,b)]                   += s_type * Re(C)
+           W[q, (reverse[m],b,a), (reverse[m],b,a)]  += s_type * Re(C)
 
-       (the two target cells are the reversal orbit of the TARGET
-       diagonal index; closure guarantees they carry the identical
-       ``Re(.)`` value, so ONE lookup at the representative channel
-       ``m`` suffices for both -- derivation below.)
+       (the two target cells are the reversal orbit of the
+       REPRESENTATIVE'S OWN channel/orbital pair -- i.e. the target IS
+       the representative and its orbit partner, no additional
+       ``m <-> reverse[m]`` swap; closure guarantees they carry the
+       identical ``Re(.)`` value, so ONE lookup at the representative
+       channel ``m`` suffices for both -- derivation below.)
+
+       AMENDED (2026-08-16, Task-6 granule adjudication): the PREVIOUS
+       form of this step placed the first entry at ``reverse[m]`` (same
+       ``(a,b)``) and the second at ``m`` (swapped ``(b,a)``) -- an
+       ``m <-> reverse[m]`` channel swap relative to the direct
+       placement above. The multi-orbital off-site CoulombInter granule
+       (L=3, norb=2, ``a != b`` -- the ONLY fixture class that can see
+       this swap: at ``a == b`` the two placements coincide, which is
+       exactly why Gate W0's norb=1 cross-family fixtures never caught
+       it) FAILED the swapped placement at O(1) (measured 0.12 against
+       ``tol=5.6e-4``) and PASSES, at 5.6e-5, the DIRECT placement above
+       -- the SAME rule the ALREADY ED-validated longitudinal
+       ``bare_bond_vertices`` Fock-diagonal insertion uses
+       (``bond_channels.py``, ``I = m*nd + l1*norb + l2`` gets
+       ``Re(v_bond[m][l1,l2])`` directly, no channel swap; #151 Finding
+       1). See ``docs/superpowers/specs/2026-08-15-bond-transverse-
+       design.md``, "Cross family", the 2026-08-16 amendment, for the
+       full derivation and the coordinator ruling.
     3. Flip family (Exchange, ``f_J = -1``): for each off-site
        reversal-orbit representative ``(m, a, b)`` with
        ``J = declarations["Exchange"][m][a, b]`` at ``R = delta_r[m]``::
@@ -1118,17 +1145,18 @@ def w_expected_from_records(topo_like, declarations, q_mesh):
        -- precisely why H2's on-site-only readjudication could not by
        itself catch this, and the off-site granule was required).
 
-    Derivation of step 2's "one lookup, both cells" shortcut: writing
-    the formula generally as "target cell (T, x, y) gets
-    ``s*Re(coeffs[reverse[T]][x, y])``", the representative ``(m, a,
-    b)`` feeds TWO target cells: ``(reverse[m], a, b)`` [value
-    ``s*Re(coeffs[m][a, b])``] and ``(m, b, a)`` [value
+    Derivation of step 2's "one lookup, both cells" shortcut (DIRECT
+    placement, 2026-08-16 amendment): writing the formula generally as
+    "target cell (T, x, y) gets ``s*Re(coeffs[T][x, y])``", the
+    representative ``(m, a, b)`` feeds TWO target cells: ``(m, a, b)``
+    [value ``s*Re(coeffs[m][a, b])``] and ``(reverse[m], b, a)`` [value
     ``s*Re(coeffs[reverse[m]][b, a])``]. Closure
     (``coeffs[reverse[m]][x, y] = conj(coeffs[m][y, x])``) gives
     ``coeffs[reverse[m]][b, a] = conj(coeffs[m][a, b])``, whose real
     part equals ``Re(coeffs[m][a, b])`` -- so both target cells carry
     the SAME value, computed from the ONE representative-channel
-    lookup.
+    lookup (the lookup itself is unchanged by the amendment; only WHICH
+    cell each of the two values is written to changed).
     """
     delta_r = np.asarray(topo_like.delta_r, dtype=int)
     reverse = np.asarray(topo_like.reverse, dtype=int)
@@ -1174,7 +1202,10 @@ def w_expected_from_records(topo_like, declarations, q_mesh):
     reps = _reversal_orbit_representatives(delta_r, reverse, norb)
 
     # Step 2: cross family (CoulombInter, Ising), bond-diagonal,
-    # q-independent.
+    # q-independent. DIRECT placement (AMENDED 2026-08-16, Task-6
+    # granule adjudication -- see the docstring above): the target IS
+    # the representative's own (m,a,b), and its orbit partner
+    # (reverse[m],b,a) -- no additional m<->reverse[m] swap.
     for kind, s_type in (("CoulombInter", -1.0), ("Ising", 1.0)):
         coeffs_map = declarations.get(kind, {})
         for (m, a, b) in reps:
@@ -1184,10 +1215,10 @@ def w_expected_from_records(topo_like, declarations, q_mesh):
             val = s_type * float(np.real(np.asarray(block)[a, b]))
             if val == 0.0:
                 continue
-            target1 = int(reverse[m])
-            idx1 = target1 * nd + a * norb + b
+            idx1 = m * nd + a * norb + b
             W[:, idx1, idx1] += val
-            idx2 = m * nd + b * norb + a
+            target2 = int(reverse[m])
+            idx2 = target2 * nd + b * norb + a
             W[:, idx2, idx2] += val
 
     # Step 3: flip family (Exchange), the two ordered records,
@@ -1808,6 +1839,334 @@ class TestW0Granules(unittest.TestCase):
         self.assertGreaterEqual(gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
         self.assertGreaterEqual(gate["sigma_min"],
                                  100.0 * gate["delta_rich_max"])
+
+
+# =============================================================================
+# Task 6: the ED granule campaign -- the PRODUCTION bond-transverse pipeline
+# (RPA._run_transverse_bond_pipeline, Task 5) and the PRODUCTION plain-ladder
+# channel (RPA._build_transverse_channel, the pre-existing "ring+ladder"
+# path) adjudicated against exact diagonalization to FIRST ORDER in the
+# declared coupling. Every granule below drives one of these two PRODUCTION
+# entry points directly (anti-vacuity, spec "Phase W -- implementation + ED
+# campaign": "a test-invocable internal entry ... executes the bond path
+# UNCONDITIONALLY ... every granule and gate W1 call THIS entry" -- Task 6
+# extends the same discipline to its own campaign).
+#
+# COORDINATOR RULING (2026-08-16): this module's own first pass through this
+# campaign FAILED the multi-orbital off-site CoulombInter granule (below,
+# "the regression pin") at O(1) (0.12 vs tol 5.6e-4) against the DRAFT
+# W_pm_bond cross-family formula (an m<->reverse[m] channel swap). The
+# investigation (recorded in this module's git history and
+# .superpowers/sdd/2026-08-16-bond-transverse-phase-w/task-6-report.md) was
+# adjudicated CONFIRMED: the spec's "Cross family" step 2 is AMENDED (see
+# docs/superpowers/specs/2026-08-15-bond-transverse-design.md) to DIRECT
+# placement (no channel swap, matching the longitudinal bare_bond_vertices
+# rule exactly), and BOTH `bond_channels.W_pm_bond` and this module's own
+# oracle `w_expected_from_records` (Task 1) were corrected identically. The
+# granule below is the PERMANENT regression pin for that fix.
+#
+# Solver-side construction pattern (uniform across every granule): a bare
+# `RPA` stub (`object.__new__` + the minimal attributes
+# `_run_transverse_bond_pipeline`/`_build_ham_pm_onsite`/
+# `_build_transverse_channel` actually read -- the SAME pattern
+# tests/test_bond_transverse_w.py's `TestCollapseRule`/
+# `TestDressingDirectFiniteMatrix` already use for this module's sibling
+# production tests) driven with `green_kw` built DIRECTLY from the ED
+# fixture's own eigenbasis via `_h3_free_two_block_green` (this module's own
+# Phase-H helper, reused verbatim) -- never through Wannier90 file I/O,
+# which would introduce an independent, unverified Transfer-file sign-
+# convention risk this campaign has no need to take on. Since RPA's
+# non-interacting Green function depends ONLY on the one-body Hamiltonian
+# (hopping + any Zeeman field), never on the declared two-body interaction
+# values (`_init_interaction`'s `ham_trans_r`/`ham_extern_r` construction,
+# rpa.py -- CoulombIntra/CoulombInter/etc. feed ONLY the vertex, never
+# green0), `green_kw` is held EXACTLY FIXED while the declared coupling `v`
+# varies -- the same "chi0 fixed, only the vertex varies" construction Gate
+# W0 uses (tests/test_bond_transverse_ed.py, Task 1), just now measured
+# through the REAL production pipeline (real `resolve_transverse_topology`,
+# real `W_pm_bond`, real `transverse_bond_bubble_static`, real `_solve_rpa`)
+# instead of the test-local oracle formula. Richardson-differencing the
+# EXACT (not first-order-truncated) exact solve's output over `v` at
+# `v -> 0` reduces algebraically to the SAME first-order quantity
+# `-chi0.dW/dv.chi0` the oracle predicts (chi0 is v-independent by
+# construction here), so the two constructions are directly comparable.
+#
+# Two Matsubara resolutions (nmat=1024, 2048; RAW/no-tail bubble,
+# `green0_tail=None`, matching the fwd=down/rev=up bond bubble's own
+# O(1/nmat) raw convergence) feed `adjudicate_granule`'s own `delta_nmat`
+# convergence estimate -- these values were tuned (empirically, during this
+# task's own construction) to bring `delta_nmat` comfortably below
+# `max_signal/100` for every granule below while staying fast (a few
+# milliseconds of `_solve_rpa` per direction; the ED side, at these small
+# fixtures -- L<=5, norb<=2 -- is the dominant, still sub-second, cost).
+CAMPAIGN_V1_TASK6 = CAMPAIGN_V1
+
+
+def _task6_bare_bond_solver(fx, norb):
+    """Minimal ``RPA`` stub providing exactly what
+    ``_run_transverse_bond_pipeline``/``_build_ham_pm_onsite`` read:
+    ``norb``, ``ns``, ``fft_workers``, ``lattice.nvol``/``lattice.shape``,
+    and ``ham_info.param_ham``/``param_ham_orig`` (both empty -- every
+    granule below declares its off-site content directly in a
+    ``TransverseTopology`` via ``bond_channels.resolve_transverse_topology``,
+    never through the solver's own interaction files, so
+    ``_build_ham_pm_onsite()`` correctly returns an all-zero on-site vertex
+    for every granule; the on-site reduction itself is gate W1's job, Task
+    5). Mirrors tests/test_bond_transverse_w.py's own bare-solver pattern
+    (``TestCollapseRule``/``TestDressingDirectFiniteMatrix``)."""
+    solver = object.__new__(rpa_mod.RPA)
+    solver.norb = norb
+    solver.ns = 2
+    solver.fft_workers = 1
+    solver.ham_info = types.SimpleNamespace(param_ham={}, param_ham_orig={})
+    solver.lattice = types.SimpleNamespace(nvol=fx.L, shape=(fx.L, 1, 1))
+    return solver
+
+
+def _task6_bond_pipeline_derivative(fx, hz, norb, nmat, topo_of_v,
+                                     v1=CAMPAIGN_V1_TASK6):
+    """Richardson-extrapolated d(chi_pm_bond_static)/dv at v -> 0, from TWO
+    calls of the PRODUCTION ``RPA._run_transverse_bond_pipeline`` (at v1 and
+    2*v1, plus the v=0 baseline) -- ``green_kw`` fixed for the whole sweep
+    (see the module docstring above), only ``topo_of_v(v)`` varies."""
+    solver = _task6_bare_bond_solver(fx, norb)
+    green_kw = _h3_free_two_block_green(fx, hz, nmat)
+    beta = fx.beta
+
+    @functools.lru_cache(maxsize=None)
+    def Y(v):
+        chi_bond, _collapsed = solver._run_transverse_bond_pipeline(
+            green_kw, None, beta, topo_of_v(v))
+        return chi_bond
+
+    return ed_oracle_util.richardson(Y, v1)
+
+
+def _task6_adjudicate_bond_direction(fx, norb, terms_of_v, topo_of_v, label,
+                                      nmat1=1024, nmat2=2048,
+                                      v1=CAMPAIGN_V1_TASK6, zero_mask=None):
+    """One granule direction, end to end, through the REAL production bond
+    pipeline: Richardson-in-v of ``_run_transverse_bond_pipeline`` at TWO
+    Matsubara resolutions (solver-side convergence, ``delta_nmat``) versus
+    Gate W0's own ED-side helper ``_w0_ed_derivative_solver_frame``
+    (full-minus-HF-only, frame-mapped via ``transverse_ed_to_solver_map`` --
+    reused verbatim, unmodified). ``zero_mask=None`` defaults to all-False
+    (a dense/bearing comparison -- the default for every ACTIVE granule
+    below; PASS-ZERO controls pass an explicit all-True mask)."""
+    D_pred_nmat = _task6_bond_pipeline_derivative(
+        fx, 0.0, norb, nmat1, topo_of_v, v1)
+    D_pred_2nmat = _task6_bond_pipeline_derivative(
+        fx, 0.0, norb, nmat2, topo_of_v, v1)
+    topo_probe = topo_of_v(1.0)
+    delta_r = np.asarray(topo_probe.delta_r)
+    D_ed_v1, D_ed_vhalf = _w0_ed_derivative_solver_frame(
+        fx, terms_of_v, delta_r, norb)
+    if zero_mask is None:
+        zero_mask = np.zeros(D_pred_2nmat.shape, dtype=bool)
+    return ed_oracle_util.adjudicate_granule(
+        D_ed_v1, D_ed_vhalf, D_pred_nmat, D_pred_2nmat, zero_mask, label)
+
+
+def _terms_hund_offsite(fx, a, b, R, v):
+    """Off-site Hund term, generalizing this module's own on-site Hund
+    formula (``_terms_ising_hund``, uhfk.py's documented Hamiltonian
+    ``H = -J^Hund (n_up n_up + n_dn n_dn)``, same-spin-only density-density)
+    to a nonzero bond displacement ``R``:
+    ``H = -v * sum_j (n_{j,a,up} n_{j+R,b,up} + n_{j,a,dn} n_{j+R,b,dn})``.
+    Same-spin density operators at DIFFERENT sites commute, so this is
+    manifestly Hermitian for real ``v`` without a mirrored declaration
+    (mirroring ``_terms_ising_offsite``'s own reasoning)."""
+    terms = []
+    for j in range(fx.L):
+        jr = (j + R) % fx.L
+        for s in range(2):
+            p = fx.mode(j, a, s)
+            r = fx.mode(jr, b, s)
+            terms.append((p, p, r, r, -v))
+    return terms
+
+
+def _terms_pairlift_offsite(fx, a, b, R, v):
+    """Off-site PairLift term (Sz-BREAKING: ``A = c^+_{a,up} c_{a,dn}
+    c^+_{b,up} c_{b,dn}`` changes total Sz by +2 -- SectorED's (Nup, Ndown)
+    sector blocking cannot represent it; the DENSE route below is required,
+    per the Global Constraints' "Fixture bounds" -- "PairLift's quartic
+    operator is Sz-BREAKING -- any PairLift ED reference uses the dense
+    route, never SectorED"), generalizing the on-site convention
+    (``oracle._terms_for``'s PairLift branch, ``H = v*A + conj(v)*A^dagger``)
+    to a nonzero bond displacement ``R`` (orbital ``a`` at site ``j``,
+    orbital ``b`` at site ``j+R``). The dagger term mirrors
+    ``_terms_exchange_offsite``'s own ``(s, r, q, p, conj(coeff))``
+    pattern exactly."""
+    terms = []
+    for j in range(fx.L):
+        jr = (j + R) % fx.L
+        p = fx.mode(j, a, 0)
+        q = fx.mode(j, a, 1)
+        r = fx.mode(jr, b, 0)
+        s = fx.mode(jr, b, 1)
+        terms.append((p, q, r, s, v))
+        terms.append((s, r, q, p, np.conj(v)))
+    return terms
+
+
+def _dense_bond_correlator_transverse(fx, channels, hint=None, h1=None):
+    """Dense (non-``SectorED``, no (Nup, Ndown) sector blocking) analogue of
+    ``SectorED.bond_correlator_transverse``, for Sz-BREAKING interactions
+    (PairLift) SectorED cannot represent. Built from the SAME primitives
+    ``ed_oracle_util.chi_connected``/``SectorED.bond_correlator_transverse``
+    both use (``ed_oracle_util._diagonalize``/``_static_kernel`` -- full
+    diagonalization of the ``(fx.dim, fx.dim)`` many-body Hamiltonian, no
+    sector shortcut, tractable only at the small fixtures this granule
+    uses), with the SAME ``<A;B^dagger>`` pointwise-kernel contraction
+    ``SectorED._lehmann_dagger`` applies (``K[m,n]*A[m,n]*conj(B[m,n])``,
+    summed -- NOT a matrix product, unlike ``chi_connected``'s own
+    ``A @ B.T`` formula, which pairs a DIFFERENT (q, -q) leg convention this
+    method does not use: both legs of the transverse bond operator sit at
+    the SAME q here, exactly as ``bond_correlator_transverse`` documents).
+
+    Independently self-validated (recorded, not committed as an automated
+    test -- consistent with this campaign's established discipline for a
+    new correctness-critical primitive): matches
+    ``SectorED.bond_correlator_transverse`` to round-off (~4e-16) both at
+    V=0 and for a Sz-CONSERVING interacting reference (where SectorED is
+    also valid and the two routes can be cross-checked directly) --
+    confirming this dense route's contraction convention BEFORE it is used
+    for the Sz-breaking PairLift case SectorED cannot check itself against.
+
+    Parameters
+    ----------
+    fx : EDFixture
+    channels : list of (R, a, b)
+        Same contract as ``SectorED.bond_correlator_transverse`` (creation
+        leg spin UP at site ``j+R`` orbital ``a``, annihilation leg spin
+        DOWN at site ``j`` orbital ``b``) -- ALWAYS the full triple (this
+        function has no norb=1 shorthand).
+    hint, h1 : see ``ed_oracle_util._diagonalize``.
+
+    Returns
+    -------
+    ndarray, complex128, shape (fx.L, len(channels), len(channels))
+        Connected, SAME 1/fx.L normalization as
+        ``SectorED.bond_correlator_transverse``.
+    """
+    C = fx.annihilators()
+    CD = [c.conj().T for c in C]
+    ev, w, V = ed_oracle_util._diagonalize(fx, hint=hint, h1=h1)
+    K = ed_oracle_util._static_kernel(ev, w, fx.beta)
+    n_i = len(channels)
+    ops_by_q = []
+    for qi in range(fx.L):
+        built = []
+        for (R, a, b) in channels:
+            op = np.zeros((fx.dim, fx.dim), dtype=complex)
+            for j in range(fx.L):
+                ph = np.exp(2j * np.pi * qi * j / fx.L)
+                op += ph * (CD[fx.mode((j + R) % fx.L, a, 0)]
+                            @ C[fx.mode(j, b, 1)])
+            built.append(V.conj().T @ op @ V)
+        ops_by_q.append(built)
+    out = np.zeros((fx.L, n_i, n_i), dtype=complex)
+    for qi in range(fx.L):
+        for i in range(n_i):
+            A = ops_by_q[qi][i]
+            avgA = (w * np.diag(A)).sum()
+            for j in range(n_i):
+                B = ops_by_q[qi][j]
+                avgB = (w * np.diag(B)).sum()
+                val = (K * A * np.conj(B)).sum()
+                val -= fx.beta * avgA * np.conj(avgB)
+                out[qi, i, j] = val
+    return out / fx.L
+
+
+class TestTask6ProductionPipelineGranules(unittest.TestCase):
+    """The ED granule campaign for the PRODUCTION bond-resolved transverse
+    pipeline (``RPA._run_transverse_bond_pipeline``, spec "Phase W -- ED
+    granules"). Every granule below drives that entry directly (anti-
+    vacuity). fx5T (spec, verbatim): L=5 spinful ring, norb=1,
+    t=0.7*e^{0.3i}, beta=2, mu=0.2.
+
+    CRITICAL: a FAIL on any of these is a genuine mismatch between the
+    (now spec-amended) production pipeline and exact diagonalization --
+    STOP, do not commit, report verbatim (the discrepancy protocol, #151:
+    re-derive before patching; never bend production or the oracle to force
+    a PASS). The multi-orbital off-site CoulombInter granule below is a
+    PERMANENT regression pin for the 2026-08-16 cross-family placement fix
+    (see the module docstring above) -- it must stay green untouched."""
+
+    @staticmethod
+    def _fx5t():
+        return ed_oracle_util.EDFixture(
+            L=5, norb=1, t={(0, 0): 0.7 * np.exp(0.3j)}, eps=(0.0,), T=0.5,
+            mu=0.2)
+
+    def test_granule_multiorbital_offsite_coulombinter_regression(self):
+        """THE REGRESSION PIN (spec, "Cross family", 2026-08-16 amendment;
+        this module's own coordinator-adjudicated finding): the orbital
+        indexing guard -- L=3, norb=2, off-site CoulombInter at R=+1 with
+        a=0 != b=1, real coupling C=0.55 (single-direction declaration).
+        The ONLY fixture class that can see the m<->reverse[m] cross-family
+        placement swap (at a == b the two placements coincide -- this is
+        exactly why Gate W0's norb=1 CoulombInter/Ising granules could
+        never have caught it).
+
+        HISTORY: this granule's FIRST run (against the DRAFT placement,
+        target1=reverse[m] with (a,b) unchanged, target2=m with (b,a)
+        swapped) FAILED at O(1): status=FAIL, 220 failing cells,
+        max_signal=0.119 vs tol=5.6e-04 (a ~0.12 absolute residual at the
+        worst cell). Orientation sweep (recorded in
+        .superpowers/sdd/2026-08-16-bond-transverse-phase-w/
+        task-6-report.md): the SAME topology declaration matches ED under
+        the ED-side relabeling (a=1,b=0,R=+1) or (a=0,b=1,R=-1) -- the
+        SAME physical bond, confirming the vertex's target cells were
+        placed at the WRONG channel/orbital pair, not that the ED-side
+        term builder was wrong. Cross-checked against the ALREADY
+        ED-validated longitudinal ``bare_bond_vertices`` Fock-diagonal rule
+        (``I=(m,l1,l2)`` gets ``Re(v_bond[m][l1,l2])`` DIRECTLY, no
+        ``reverse[]`` swap) -- the "direct placement" hypothesis reproduced
+        ED to 5.6e-05 (inside tol), confirming the diagnosis. The
+        coordinator CONFIRMED this finding and AMENDED the spec (see the
+        module docstring above); ``W_pm_bond`` and ``w_expected_from_
+        records`` were corrected identically (DIRECT placement: content at
+        the channel carrying the declared coefficient, matching the
+        longitudinal rule).
+
+        POST-FIX measurement (this test, run against the corrected
+        production code): status=PASS, delta_rich=3.4e-06,
+        delta_nmat=5.6e-05, tol=5.6e-04, max_signal=1.19e-01 -- this
+        granule is now a PERMANENT regression pin (must stay green
+        untouched; a future re-introduction of the channel swap would fail
+        it immediately and visibly, at O(1))."""
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=2,
+            t={(0, 0): 0.5 + 0.2j, (1, 1): 0.35 - 0.15j,
+               (0, 1): 0.1 + 0.05j, (1, 0): 0.1 + 0.05j},
+            eps=(0.05, -0.03), T=0.45, mu=0.1)
+        Cc = 0.55 + 0.0j
+
+        def topo_of_v(v):
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((1, 0, 0), (0, 1)): v * Cc}},
+                np.eye(3), 2)
+
+        def terms_of_v(v):
+            return ed_oracle_util.canonical_density_terms(
+                fx, [(0, 1, 1, v * Cc)])
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 2, terms_of_v, topo_of_v,
+            "task6/multiorb_coulombinter_REGRESSION")
+        self.assertEqual(
+            rec["status"], "PASS",
+            "REGRESSION: the multi-orbital off-site CoulombInter orbital-"
+            "indexing guard FAILED -- status={} (delta_rich={:.3e} "
+            "tol={:.3e} max_signal={:.3e} first_failures={}). This granule "
+            "adjudicated the 2026-08-16 cross-family placement fix; a FAIL "
+            "here means that fix has regressed -- STOP, do not commit, "
+            "report verbatim.".format(
+                rec["status"], rec["delta_rich"], rec["tol"],
+                rec["max_signal"], rec["failures"][:5]))
 
 
 if __name__ == "__main__":

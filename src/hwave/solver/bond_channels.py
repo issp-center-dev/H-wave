@@ -2926,14 +2926,21 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
        to every CALLER per the spec's "Construction domain"). Each
        representative ``(m, a, b)`` with coefficient
        ``C = topo.coeffs[type][m][a, b]`` emits the SAME real value into
-       BOTH mirrored diagonal target cells:
-       ``W[q, (reverse[m], a, b), (reverse[m], a, b)] += s_type * Re(C)``
-       and ``W[q, (m, b, a), (m, b, a)] += s_type * Re(C)`` -- bond-
-       diagonal, q-INDEPENDENT. The per-slot ``Re(.)`` placement (never
-       the raw complex value) is deliberate: a Hermitian-closed ``+-i*eps``
-       null-direction pair must leave the diagonal exactly real (the
-       structural Hermiticity test with a complex ``CoulombInter``
-       coefficient pins this).
+       BOTH mirrored diagonal target cells, DIRECT placement (AMENDED
+       2026-08-16, Task-6 granule adjudication -- the channel carrying
+       the declared coefficient is the target, matching the longitudinal
+       ``bare_bond_vertices`` Fock-diagonal rule exactly; the PREVIOUS
+       ``m <-> reverse[m]`` swap FAILED the multi-orbital off-site
+       CoulombInter granule at O(1), invisible at ``a == b`` which is why
+       Gate W0's norb=1 fixtures never caught it -- see the spec's "Cross
+       family" section for the full derivation):
+       ``W[q, (m, a, b), (m, a, b)] += s_type * Re(C)``
+       and ``W[q, (reverse[m], b, a), (reverse[m], b, a)] += s_type * Re(C)``
+       -- bond-diagonal, q-INDEPENDENT. The per-slot ``Re(.)`` placement
+       (never the raw complex value) is deliberate: a Hermitian-closed
+       ``+-i*eps`` null-direction pair must leave the diagonal exactly
+       real (the structural Hermiticity test with a complex
+       ``CoulombInter`` coefficient pins this).
     3. **Flip family** (``Exchange``, ``f_J = -1``), the SAME off-site
        representatives. Each representative ``(m, a, b)`` with
        ``J = topo.coeffs["Exchange"][m][a, b]`` at ``R = topo.delta_r[m]``
@@ -3057,6 +3064,18 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
 
     # Step 2: cross family (CoulombInter, Ising) -- bond-diagonal,
     # q-independent, both mirrored diagonal target cells per representative.
+    # AMENDED (2026-08-16, Task-6 granule adjudication): DIRECT placement
+    # -- content lands at I=(m,a,b), the channel m carrying the declared
+    # coefficient (delta_r[m] = +R_declared), matching the longitudinal
+    # bare_bond_vertices Fock-diagonal rule exactly (#151-validated
+    # precedent). The mirrored partner emits the same Re value at
+    # (reverse[m], b, a). The PREVIOUS m<->reverse[m] swap (target at
+    # reverse[m] with (a,b) unchanged, target at m with (b,a) swapped)
+    # FAILED the multi-orbital off-site CoulombInter granule (L=3, norb=2,
+    # a != b) at O(1) (0.12 vs tol 5.6e-4) -- invisible at a=b, which is
+    # why Gate W0's norb=1 cross-family fixtures could not catch it; see
+    # docs/superpowers/specs/2026-08-15-bond-transverse-design.md, "Cross
+    # family", the 2026-08-16 amendment.
     for type_name, s_type in (("CoulombInter", -1.0), ("Ising", 1.0)):
         block_arr = coeffs.get(type_name)
         if block_arr is None:
@@ -3065,10 +3084,10 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
             val = s_type * float(np.real(block_arr[m, a, b]))
             if val == 0.0:
                 continue
-            target1 = int(reverse[m])
-            idx1 = target1 * nd + a * norb + b
+            idx1 = m * nd + a * norb + b
             W[:, idx1, idx1] += val
-            idx2 = m * nd + b * norb + a
+            target2 = int(reverse[m])
+            idx2 = target2 * nd + b * norb + a
             W[:, idx2, idx2] += val
 
     # Step 3: flip family (Exchange) -- the two AMENDED ordered records,
