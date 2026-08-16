@@ -2683,13 +2683,16 @@ def _require_transverse_integral(value, label):
     # arrays, None, complex, non-integral or non-finite floats -- is
     # rejected; numeric strings deliberately do NOT coerce.
     if isinstance(value, (float, np.floating)):
-        value_f = float(value)
-        if (not np.isfinite(value_f) or value_f != np.floor(value_f)
-                or abs(value_f) > 2.0**53):
+        # Validate at the value's NATIVE precision (no float() narrowing:
+        # a fractional np.longdouble could round to an integral float64,
+        # and a longdouble just above 2**53 could narrow onto the
+        # accepted boundary).
+        if (not np.isfinite(value) or value != np.floor(value)
+                or abs(value) > 2.0**53):
             raise ValueError(
                 "resolve_transverse_topology: {} must be an integral "
                 "value, got {!r}".format(label, value))
-        return int(value_f)
+        return int(value)
     raise ValueError(
         "resolve_transverse_topology: {} must be an integer, got "
         "{!r}".format(label, value))

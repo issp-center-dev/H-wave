@@ -537,6 +537,32 @@ class TestResolveTransverseTopology(ApproxTestCase):
         with self.assertRaises(ValueError):
             resolve_transverse_topology(interactions, np.eye(3), norb=1)
 
+    @unittest.skipIf(np.finfo(np.longdouble).nmant
+                     <= np.finfo(np.float64).nmant,
+                     "longdouble is float64 on this platform")
+    def test_longdouble_fractional_rejected_at_native_precision(self):
+        # A fractional longdouble whose value would round to an INTEGRAL
+        # float64 must still be rejected: the check runs at native
+        # precision, never through a float() narrowing.
+        frac = np.longdouble(1) + np.finfo(np.longdouble).eps
+        self.assertEqual(float(frac), 1.0)  # narrows to integral float64
+        interactions = {"CoulombInter": {((frac, 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    @unittest.skipIf(np.finfo(np.longdouble).nmant
+                     <= np.finfo(np.float64).nmant,
+                     "longdouble is float64 on this platform")
+    def test_longdouble_just_above_2p53_rejected(self):
+        # 2**53 + 1 is exactly representable in extended precision but
+        # narrows onto the accepted 2**53 boundary in float64 -- it must
+        # be rejected at native precision.
+        val = np.longdouble(2) ** 53 + np.longdouble(1)
+        self.assertNotEqual(val, np.longdouble(2) ** 53)
+        interactions = {"CoulombInter": {((val, 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
 
 # =============================================================================
 # iter_reversal_orbits
