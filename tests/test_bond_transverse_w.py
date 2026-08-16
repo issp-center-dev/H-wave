@@ -11,11 +11,18 @@ against the invariants of
 master transverse topology", "Canonical orbit rule", "Construction domain
 (binding for steps 2-3)").
 
-This module covers TOPOLOGY-ONLY ground: no ``W_pm_bond`` vertex and no
-bond bubble exist yet (Phase W Tasks 3/4) -- the ordered-record vertex
-equations themselves were already numerically validated against ED by gate
-W0 in ``tests/test_bond_transverse_ed.py`` (Task 1) and are NOT
-re-adjudicated here.
+Also (Phase W, Task 3, appended below the Task-2 topology classes):
+production tests for ``hwave.solver.bond_channels.W_pm_bond``, the
+bond-resolved transverse vertex built from ``TransverseTopology`` per the
+spec's "The vertex -- element equations" (steps 1-3, the AMENDED
+2026-08-16 flip-family assignment). The ordered-record equations
+themselves were already numerically validated against ED by Gate W0 in
+``tests/test_bond_transverse_ed.py`` (Task 1) -- NOT re-adjudicated here;
+this module instead CROSS-PINS the production ``W_pm_bond`` against Gate
+W0's test-local oracle reference, ``w_expected_from_records`` (imported
+module-qualified from that module), on the same three W0 ED granule
+fixtures, plus structural (Hermiticity, per-entry, B=1 reduction, q-phase
+convention) and validation tests.
 
 Includes the carried Task-1-review finding's Hamiltonian-level normalization
 pin (``TestHamiltonianLevelNormalizationPin``): the topology's FILE ->
@@ -34,15 +41,19 @@ import unittest
 
 import numpy as np
 
+from hwave import sc as _sc
 from hwave.solver.bond_channels import (
     TransverseTopology,
     resolve_transverse_topology,
+    resolve_interactions,
     iter_reversal_orbits,
     validate_topology_against_mesh,
     transverse_effective_activity,
+    W_pm_bond,
 )
 from tests import ed_oracle_util
-from tests.approx_util import ApproxTestCase
+from tests import test_bond_transverse_ed as _ted
+from tests.approx_util import ApproxTestCase, assert_approx_array
 
 
 def _topo(delta_r, reverse, coeffs=None, norb=1):
@@ -817,6 +828,323 @@ class TestHamiltonianLevelNormalizationPin(ApproxTestCase):
             H_topo = _h_from_topology(fx, topo, "Ising")
             H_raw = _h_from_raw(fx, raw, [((1, 0, 0), 0, 0)])
         self.assertApproxArray(H_topo, H_raw, rel=0, abs=1e-13)
+
+
+# =============================================================================
+# W_pm_bond (Phase W, Task 3)
+# =============================================================================
+#
+# Production tests for hwave.solver.bond_channels.W_pm_bond -- the
+# bond-resolved transverse vertex built from a TransverseTopology per the
+# spec's "The vertex -- element equations" (steps 1-3, the AMENDED
+# 2026-08-16 flip-family assignment). The ordered-record equations
+# themselves were already numerically validated against ED by Gate W0
+# (tests/test_bond_transverse_ed.py, Task 1, imported module-qualified
+# below as ``_ted``); this section cross-pins the PRODUCTION function
+# against that gate's oracle, plus structural/validation coverage.
+
+def _closed_coeffs(B, norb, reverse, declared):
+    """Build a Hermitian-closed ``(B, norb, norb)`` complex coeffs array
+    from a SINGLE-DIRECTION declaration dict ``{m: (norb, norb) array}``
+    -- exactly the shape gate W0's granule fixtures declare (tests/
+    test_bond_transverse_ed.py's ``TestW0Granules``/
+    ``w_expected_from_records``): every declared channel's mirror partner
+    ``reverse[m]`` is synthesized as ``conj(block).T``, the same
+    single-direction synthesis ``resolve_transverse_topology`` performs
+    (``_close_offsite_hermitian``) -- reproduced directly here (not via
+    that resolver) so a ``TransverseTopology`` can be hand-built on the
+    EXACT ``_TopoLike`` channel layout gate W0 used, with ``coeffs``
+    satisfying the closure invariant :class:`TransverseTopology`'s own
+    constructor enforces. Missing channels stay exactly zero (the
+    ``TransverseTopology`` on-site-channel-0-is-zero invariant is
+    automatic here since gate W0's declarations dicts never key on
+    ``m == 0`` -- "coeffs carry OFF-SITE channels only", spec)."""
+    arr = np.zeros((B, norb, norb), dtype=complex)
+    for m, block in declared.items():
+        block = np.asarray(block, dtype=complex)
+        arr[m] = block
+        mr = int(reverse[m])
+        if mr != m:
+            arr[mr] = np.conj(block).T
+    return arr
+
+
+def _topo_from_topolike(topo_like, norb, declarations):
+    """Build a production :class:`TransverseTopology` on the EXACT channel
+    layout of a gate-W0 ``_TopoLike`` (tests/test_bond_transverse_ed.py),
+    with ``coeffs`` closed from the SAME single-direction declarations
+    dict a W0 granule used (``declarations["CoulombInter"]``/``["Ising"]``/
+    ``["Exchange"]``, each ``{m: (norb, norb) array}``; a missing type key
+    is treated as "declares nothing off-site", matching
+    ``w_expected_from_records``'s own ``declarations.get(kind, {})``
+    contract)."""
+    delta_r = np.asarray(topo_like.delta_r)
+    reverse = np.asarray(topo_like.reverse)
+    B = delta_r.shape[0]
+    coeffs = {}
+    for type_name in ("CoulombInter", "Ising", "Exchange"):
+        declared = declarations.get(type_name, {})
+        coeffs[type_name] = _closed_coeffs(B, norb, reverse, declared)
+    return TransverseTopology(delta_r=delta_r, reverse=reverse, coeffs=coeffs)
+
+
+class TestWPmBondCrossPinAgainstW0Oracle(ApproxTestCase):
+    """THE TASK'S CENTERPIECE: production ``W_pm_bond`` matches Gate W0's
+    ED-validated test-local oracle, ``w_expected_from_records`` (tests/
+    test_bond_transverse_ed.py, Task 1, imported module-qualified as
+    ``_ted``), at ``rel=0, abs=1e-13``, on ALL THREE W0 ED granule
+    fixtures -- (a) multi-orbital off-site Exchange (complex J,
+    non-self-inverse q, both orientations), (b) complex off-site
+    CoulombInter (g1/g2 shells), (c) off-site Ising (g1/g2 shells).
+
+    The topology layout (``delta_r``/``reverse``), declared coefficients
+    and ``q_mesh`` are copied VERBATIM from ``_ted.TestW0Granules``'s
+    three granule bodies -- the pure numeric inputs those granules PASSED
+    Gate W0's ED adjudication with (the ED machinery itself -- ``fx``,
+    Richardson, ``SectorED`` -- is NOT re-run here; this class exercises
+    only the production ``W_pm_bond`` vs. the oracle formula, both fed the
+    identical topology/coefficients/mesh)."""
+
+    def _run_cross_pin(self, topo_like, norb, declarations, q_mesh):
+        topo = _topo_from_topolike(topo_like, norb, declarations)
+        onsite = np.asarray(declarations["onsite_ham_pm"], dtype=complex)
+        nvol = q_mesh[0] * q_mesh[1] * q_mesh[2]
+        onsite_nvol = np.broadcast_to(
+            onsite[None, ...], (nvol,) + onsite.shape).copy()
+        got = W_pm_bond(topo, onsite_nvol, spatial_shape=q_mesh)
+        expected = _ted.w_expected_from_records(
+            topo_like, declarations, q_mesh)
+        assert_approx_array(got, expected, rel=0, abs=1e-13)
+
+    def test_granule_a_multiorbital_offsite_exchange(self):
+        # Verbatim data from
+        # _ted.TestW0Granules.test_granule_a_multiorbital_offsite_exchange:
+        # L=3, norb=2, off-site Exchange at R=1 with a=0 != b=1 and a
+        # genuinely complex J; two directions ("real"/"imag" phase).
+        norb = 2
+        topo_like = _ted._TopoLike(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]]),
+            reverse=np.array([0, 2, 1]))
+        q_mesh = (3, 1, 1)
+        onsite_ham_pm = np.zeros((2, 2, 2, 2), dtype=complex)
+        a, b = 0, 1
+        for phase in (1.0 + 0.0j, 0.0 + 1.0j):
+            block = np.zeros((2, 2), dtype=complex)
+            block[a, b] = phase
+            declarations = {"onsite_ham_pm": onsite_ham_pm,
+                             "Exchange": {1: block}}
+            self._run_cross_pin(topo_like, norb, declarations, q_mesh)
+
+    def test_granule_b_complex_offsite_coulomb_inter(self):
+        # Verbatim data from
+        # _ted.TestW0Granules.test_granule_b_complex_offsite_coulomb_inter:
+        # L=5, norb=1, off-site CoulombInter, g1 (R=+1) and g2 (R=+2).
+        norb = 1
+        topo_like = _ted._TopoLike(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0],
+                               [2, 0, 0], [-2, 0, 0]]),
+            reverse=np.array([0, 2, 1, 4, 3]))
+        q_mesh = (5, 1, 1)
+        onsite_ham_pm = np.zeros((1, 1, 1, 1), dtype=complex)
+        C = 0.6 + 0.0j
+        for m_pos in (1, 3):
+            declarations = {
+                "onsite_ham_pm": onsite_ham_pm,
+                "CoulombInter": {m_pos: np.array([[C]], dtype=complex)},
+            }
+            self._run_cross_pin(topo_like, norb, declarations, q_mesh)
+
+    def test_granule_c_offsite_ising(self):
+        # Verbatim data from _ted.TestW0Granules.test_granule_c_offsite_ising:
+        # L=5, norb=1, off-site Ising, g1 (R=+1) and g2 (R=+2).
+        norb = 1
+        topo_like = _ted._TopoLike(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0],
+                               [2, 0, 0], [-2, 0, 0]]),
+            reverse=np.array([0, 2, 1, 4, 3]))
+        q_mesh = (5, 1, 1)
+        onsite_ham_pm = np.zeros((1, 1, 1, 1), dtype=complex)
+        for m_pos in (1, 3):
+            declarations = {
+                "onsite_ham_pm": onsite_ham_pm,
+                "Ising": {m_pos: np.array([[1.0 + 0j]], dtype=complex)},
+            }
+            self._run_cross_pin(topo_like, norb, declarations, q_mesh)
+
+
+class TestWPmBondStructural(ApproxTestCase):
+    """Structural pins independent of the ED cross-pin above: Hermiticity
+    at every q (including a Hermitian-closed COMPLEX CoulombInter +-i*eps
+    pair -- the W0 blind spot the Task-1 review flagged: a bug that stored
+    the raw complex coefficient instead of ``Re(.)`` on the bond-diagonal
+    would put a genuinely complex value on a MATRIX DIAGONAL, breaking
+    Hermiticity), the two Exchange records pinned individually at a
+    non-self-inverse q with a genuinely complex J, and the B=1 on-site
+    reduction (spec step 1's algebraic basis for gate W1)."""
+
+    def _offsite_topo(self, norb, coeffs):
+        delta_r = np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]])
+        reverse = np.array([0, 2, 1])
+        full = {}
+        for type_name in ("CoulombInter", "Ising", "Exchange"):
+            full[type_name] = coeffs.get(
+                type_name, np.zeros((3, norb, norb), dtype=complex))
+        return TransverseTopology(
+            delta_r=delta_r, reverse=reverse, coeffs=full)
+
+    def test_hermitian_at_every_q_including_complex_coulomb_inter(self):
+        norb = 1
+        V, eps = 0.4, 1.0e-3
+        ci = np.zeros((3, 1, 1), dtype=complex)
+        ci[1, 0, 0] = V + 1j * eps    # channel m=1, R=(1,0,0), declared
+        ci[2, 0, 0] = V - 1j * eps    # channel m=2 = reverse[1], R=(-1,0,0)
+        ex = np.zeros((3, 1, 1), dtype=complex)
+        ex[1, 0, 0] = 0.5 - 0.2j
+        ex[2, 0, 0] = np.conj(ex[1, 0, 0])
+        ising = np.zeros((3, 1, 1), dtype=complex)
+        ising[1, 0, 0] = 0.2
+        ising[2, 0, 0] = 0.2
+        topo = self._offsite_topo(
+            norb, {"CoulombInter": ci, "Exchange": ex, "Ising": ising})
+        Nx = 5
+        onsite = np.zeros((Nx, 1, 1, 1, 1), dtype=complex)
+        W = W_pm_bond(topo, onsite, spatial_shape=(Nx, 1, 1))
+        got_dagger = np.conj(np.transpose(W, (0, 2, 1)))
+        self.assertApproxArray(got_dagger, W, rel=0, abs=1e-12)
+
+    def test_exchange_entries_pinned_individually(self):
+        norb = 2
+        J = 0.6 - 0.35j
+        ex = np.zeros((3, 2, 2), dtype=complex)
+        ex[1, 0, 1] = J
+        ex[2, 1, 0] = np.conj(J)
+        topo = self._offsite_topo(norb, {"Exchange": ex})
+        Nx = 5
+        onsite = np.zeros((Nx, 2, 2, 2, 2), dtype=complex)
+        W = W_pm_bond(topo, onsite, spatial_shape=(Nx, 1, 1))
+        kx = 2.0 * np.pi * np.arange(Nx) / Nx
+        q_idx = 1                      # q = 2*pi/5, non-self-inverse (L odd)
+        q = kx[q_idx]
+        phase = np.exp(1j * q * 1.0)   # R = delta_r[1] = (1, 0, 0)
+        idx_aa, idx_bb = 0, 3           # channel 0, (0,0) and (1,1)
+        self.assertApproxArray(
+            np.array([W[q_idx, idx_aa, idx_bb]]),
+            np.array([-np.conj(J) * np.conj(phase)]), rel=0, abs=1e-13)
+        self.assertApproxArray(
+            np.array([W[q_idx, idx_bb, idx_aa]]),
+            np.array([-J * phase]), rel=0, abs=1e-13)
+
+    def test_b1_reduction_equals_broadcast_onsite_ham_pm(self):
+        norb = 2
+        nd = norb * norb
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0]]), reverse=np.array([0]),
+            coeffs={"CoulombInter": np.zeros((1, norb, norb), dtype=complex)})
+        onsite_2d = _ted._h2_ham_pm_expected("CoulombIntra", 1.3, norb=norb)
+        onsite_4d = onsite_2d.reshape(norb, norb, norb, norb)
+        nvol = 6
+        onsite_nvol = np.broadcast_to(
+            onsite_4d[None, :, :, :, :], (nvol,) + onsite_4d.shape).copy()
+        W = W_pm_bond(topo, onsite_nvol, spatial_shape=(3, 2, 1))
+        expected = np.broadcast_to(onsite_2d[None, :, :], (nvol, nd, nd))
+        self.assertApproxArray(W, expected, rel=0, abs=1e-15)
+
+
+class TestWPmBondQPhaseCrossPin(ApproxTestCase):
+    """Pins ``W_pm_bond``'s q-phase convention against
+    ``sc._build_bond_m0_blocks``'s own phase composition (spec: "the SAME
+    convention sc._build_bond_m0_blocks' phase uses") on a SHARED fixture:
+    a single-direction off-site declaration at R=(1,0,0), (a,b)=(0,1),
+    norb=2. Fed to ``_build_bond_m0_blocks`` as a real CoulombInter
+    coefficient (whose Hartree ``(00,11)`` matrix element is driven by
+    that builder's OWN ``exp(-i q.R)`` phase, extracted directly from its
+    real numeric output -- not assumed) and to ``W_pm_bond`` as an
+    Exchange coefficient at the SAME R (whose flip-family record carries
+    ``exp(-i q.R)`` on the ``(0,0,0),(0,1,1)`` element, spec step 3). Both
+    consumers see the IDENTICAL ``kx_array``/``ky_array``/``kz_array``
+    mesh (``np.linspace(0, 2*pi, N, endpoint=False)`` -- the same
+    construction ``hwave/sc.py``'s own q-grid setup uses ahead of calling
+    ``_build_bond_m0_blocks``, e.g. around its ``calc_eliashberg`` driver),
+    so this comparison genuinely exercises the SAME q.R value on both
+    sides via a REAL call to the shared builder, not two independently
+    assumed formulas."""
+
+    def test_qr_matches_build_bond_m0_blocks_phase(self):
+        norb = 2
+        Nx, Ny, Nz = 5, 1, 1
+        kx_array = np.linspace(0.0, 2.0 * np.pi, Nx, endpoint=False)
+        ky_array = np.linspace(0.0, 2.0 * np.pi, Ny, endpoint=False)
+        kz_array = np.linspace(0.0, 2.0 * np.pi, Nz, endpoint=False)
+
+        C = 0.6 + 0.0j
+        bond_set = resolve_interactions(
+            {((1, 0, 0), (0, 1)): C}, np.eye(3), norb)
+        _S0, C0 = _sc._build_bond_m0_blocks(
+            bond_set, {}, {}, norb, kx_array, ky_array, kz_array)
+        # Hartree (aa,bb) = (00,11) slot: C0[..., 0, 3] == 2*V_q[0, 1], and
+        # V_q[0, 1] is driven ONLY by the declared channel m=R=(1,0,0)'s
+        # own [0, 1] matrix entry -- the synthesized reverse partner only
+        # populates [1, 0], never [0, 1] -- so C0[q_idx,0,0,0,3] ==
+        # 2*C*exp(-i q.R) exactly (C real).
+        q_idx = 1
+        phase_from_builder = C0[q_idx, 0, 0, 0, 3] / (2.0 * C)
+
+        J = 0.35 - 0.2j
+        reverse = np.array([0, 2, 1])
+        block = np.zeros((norb, norb), dtype=complex)
+        block[0, 1] = J
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]]),
+            reverse=reverse,
+            coeffs={"Exchange": _closed_coeffs(3, norb, reverse, {1: block})})
+        onsite = np.zeros((Nx * Ny * Nz, norb, norb, norb, norb),
+                           dtype=complex)
+        W = W_pm_bond(topo, onsite, spatial_shape=(Nx, Ny, Nz))
+        idx_00, idx_11 = 0, 3
+        got = W[q_idx, idx_00, idx_11]
+        expected = -np.conj(J) * phase_from_builder
+        self.assertApprox(got, expected, rel=0, abs=1e-12)
+
+
+class TestWPmBondValidation(ApproxTestCase):
+    """Entry-point validation: mesh-injectivity is enforced (via
+    ``validate_topology_against_mesh``) and a malformed ``ham_pm_onsite``
+    shape is rejected -- both ``ValueError``, never a silent
+    misinterpretation."""
+
+    def test_mesh_collision_raises(self):
+        # +3 == -3 mod 6 -- the canonical even-mesh self-reversal alias.
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0], [3, 0, 0], [-3, 0, 0]]),
+            reverse=np.array([0, 2, 1]),
+            coeffs={"CoulombInter": np.zeros((3, 1, 1), dtype=complex)})
+        onsite = np.zeros((6 * 4 * 4, 1, 1, 1, 1), dtype=complex)
+        with self.assertRaises(ValueError):
+            W_pm_bond(topo, onsite, spatial_shape=(6, 4, 4))
+
+    def test_bad_onsite_ndim_rejected(self):
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0]]), reverse=np.array([0]),
+            coeffs={"CoulombInter": np.zeros((1, 2, 2), dtype=complex)})
+        bad = np.zeros((6, 2, 2, 2), dtype=complex)   # ndim=4, not 5
+        with self.assertRaises(ValueError):
+            W_pm_bond(topo, bad, spatial_shape=(3, 2, 1))
+
+    def test_bad_onsite_nvol_mismatch_rejected(self):
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0]]), reverse=np.array([0]),
+            coeffs={"CoulombInter": np.zeros((1, 2, 2), dtype=complex)})
+        bad = np.zeros((5, 2, 2, 2, 2), dtype=complex)  # nvol=5 != 6
+        with self.assertRaises(ValueError):
+            W_pm_bond(topo, bad, spatial_shape=(3, 2, 1))
+
+    def test_bad_onsite_non_square_orbital_axes_rejected(self):
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0]]), reverse=np.array([0]),
+            coeffs={"CoulombInter": np.zeros((1, 2, 2), dtype=complex)})
+        bad = np.zeros((6, 2, 2, 2, 3), dtype=complex)
+        with self.assertRaises(ValueError):
+            W_pm_bond(topo, bad, spatial_shape=(3, 2, 1))
 
 
 if __name__ == "__main__":

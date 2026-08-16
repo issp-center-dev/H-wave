@@ -2872,3 +2872,218 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         coeffs[type_name] = arr
 
     return TransverseTopology(delta_r=delta_r, reverse=reverse, coeffs=coeffs)
+
+
+# =============================================================================
+# Phase W, Task 3 -- the production bond-resolved transverse vertex W_pm_bond
+# =============================================================================
+#
+# APPEND-ONLY REGION (continued): nothing above this banner is touched by
+# this task -- `resolve_interactions`/`bare_bond_vertices` (templates) and
+# every Task-2 name (`TransverseTopology`, `resolve_transverse_topology`,
+# `iter_reversal_orbits`, `validate_topology_against_mesh`,
+# `transverse_effective_activity`) stay byte-for-byte identical.
+#
+# Implements docs/superpowers/specs/2026-08-15-bond-transverse-design.md,
+# "The vertex -- element equations" (steps 1-3, the AMENDED 2026-08-16 flip-
+# family assignment) -- the ORDERED-RECORD equations Gate W0
+# (tests/test_bond_transverse_ed.py, Task 1) numerically validated against
+# exact diagonalization BEFORE this function existed. This function is a
+# faithful production transcription of that gate's test-local reference,
+# `w_expected_from_records`: same representative-orbit iteration (via the
+# shared `iter_reversal_orbits`, filtered to the off-site R != 0 domain),
+# same coefficient table, same q-phase convention -- cross-pinned against
+# that reference at rel=0/abs=1e-13 on all three W0 ED granule fixtures in
+# tests/test_bond_transverse_w.py.
+
+def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
+    """The bond-resolved transverse (spin-flip) vertex ``W_{+-}(q)``, built
+    from ``topo`` (a :class:`TransverseTopology`, spec "The master
+    transverse topology") and the CALLER-ASSEMBLED on-site vertex
+    ``ham_pm_onsite`` (spec "The vertex -- element equations", steps 1-3).
+
+    Construction (spec, verbatim; also see the module-level Task 1 gate
+    ``tests/test_bond_transverse_ed.py``'s ``w_expected_from_records``,
+    which encodes the IDENTICAL equations independently and is this
+    function's ED-validated oracle):
+
+    1. **Channel-0 (on-site) block** = ``ham_pm_onsite`` verbatim, placed
+       (never re-assembled -- ``W_pm_bond`` performs NO assembly of its
+       own) into ``W[:, 0:nd, 0:nd]``. ``ham_pm_onsite`` already carries
+       the mesh's ``nvol`` leading axis (the shape
+       ``_assemble_transverse_vertex`` returns): for genuinely on-site-only
+       declarations that tensor is q-INDEPENDENT (constant along the
+       leading axis) by construction elsewhere
+       (``_check_transverse_representable``), so this step is a placement,
+       not a broadcast, despite the shared leading axis -- the B=1
+       reduction test pins this: with ``B=1`` (on-site-only topology),
+       ``W_pm_bond`` IS ``ham_pm_onsite`` reshaped, bit for bit.
+    2. **Cross family** (``CoulombInter`` -> ``-Re(.)``, ``Ising`` ->
+       ``+Re(.)``), OFF-SITE (``R != 0``) reversal-orbit representatives
+       only (``iter_reversal_orbits(topo)``, filtered to ``m != 0`` --
+       that helper's own docstring: "the mandatory local channel 0" is
+       included in its general enumeration; the off-site filter belongs
+       to every CALLER per the spec's "Construction domain"). Each
+       representative ``(m, a, b)`` with coefficient
+       ``C = topo.coeffs[type][m][a, b]`` emits the SAME real value into
+       BOTH mirrored diagonal target cells:
+       ``W[q, (reverse[m], a, b), (reverse[m], a, b)] += s_type * Re(C)``
+       and ``W[q, (m, b, a), (m, b, a)] += s_type * Re(C)`` -- bond-
+       diagonal, q-INDEPENDENT. The per-slot ``Re(.)`` placement (never
+       the raw complex value) is deliberate: a Hermitian-closed ``+-i*eps``
+       null-direction pair must leave the diagonal exactly real (the
+       structural Hermiticity test with a complex ``CoulombInter``
+       coefficient pins this).
+    3. **Flip family** (``Exchange``, ``f_J = -1``), the SAME off-site
+       representatives. Each representative ``(m, a, b)`` with
+       ``J = topo.coeffs["Exchange"][m][a, b]`` at ``R = topo.delta_r[m]``
+       emits the AMENDED (2026-08-16, Gate W0 adjudication) two ordered
+       records, q-dependent ONLY here:
+       ``W[q, (0,a,a), (0,b,b)] += f_J * conj(J) * exp(-i q.R)`` and
+       ``W[q, (0,b,b), (0,a,a)] += f_J * J * exp(+i q.R)``. The PRE-
+       amendment draft form (``f_J*J*exp(+iqR)`` at ``(aa,bb)``) failed
+       Gate W0's multi-orbital off-site Exchange granule systematically
+       (residuals 0.18-0.33); this is the swapped, ED-adjudicated
+       assignment.
+
+    The q mesh is ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z)`` (``spatial_shape
+    = (N_x, N_y, N_z)``), C-order flattened -- the SAME convention
+    ``sc._build_bond_m0_blocks``'s own phase composition uses (cross-pinned
+    by a dedicated test on a shared fixture); ``q.R = 2*pi*sum_d
+    n_d*R_d/N_d``. The ``(Nx, Ny, Nz, ...)`` frame used to build this mesh
+    is private to this function; the returned array is the canonical
+    flattened ``(nvol, ND, ND)`` shape every numerical object in the spec
+    uses.
+
+    Parameters
+    ----------
+    topo : TransverseTopology
+        The master transverse bond topology (``resolve_transverse_topology``
+        or an equivalent hand-built, invariant-satisfying instance).
+    ham_pm_onsite : array_like, shape (nvol, norb, norb, norb, norb),
+        complex
+        The ALREADY-ASSEMBLED on-site transverse vertex (e.g.
+        ``RPA._assemble_transverse_vertex`` applied to the on-site-only
+        tensor filtered from the ORIGINAL PRE-FOLD declarations at
+        ``irvec == (0, 0, 0)``) -- never re-derived here.
+    spatial_shape : sequence of 3 ints
+        ``(Nx, Ny, Nz)``; ``nvol = Nx*Ny*Nz`` must match both
+        ``ham_pm_onsite``'s leading axis and ``topo``'s own mesh-
+        injectivity requirement (``validate_topology_against_mesh``,
+        invoked here at entry).
+
+    Returns
+    -------
+    ndarray, complex128, shape (nvol, ND, ND)
+        ``ND = B * norb**2``, ``B = len(topo.delta_r)``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`validate_topology_against_mesh` (mesh-
+        injectivity violation, malformed ``spatial_shape``, a
+        ``ham_pm_onsite`` whose leading axis disagrees with ``nvol``, or a
+        stale/corrupted ``topo``), or raised directly here if
+        ``ham_pm_onsite`` has the wrong ndim/shape or its orbital count
+        disagrees with ``topo.coeffs``'s.
+    """
+    try:
+        Nx, Ny, Nz = (int(x) for x in spatial_shape)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "W_pm_bond: spatial_shape must be a length-3 sequence of "
+            "integers; got {!r}".format(spatial_shape))
+    nvol = Nx * Ny * Nz
+
+    ham_pm_onsite = np.array(ham_pm_onsite, dtype=complex, copy=False)
+    if ham_pm_onsite.ndim != 5:
+        raise ValueError(
+            "W_pm_bond: ham_pm_onsite must have ndim=5 (nvol, norb, norb, "
+            "norb, norb); got shape {}".format(ham_pm_onsite.shape))
+    norb = ham_pm_onsite.shape[1]
+    expected_onsite_shape = (nvol, norb, norb, norb, norb)
+    if ham_pm_onsite.shape != expected_onsite_shape:
+        raise ValueError(
+            "W_pm_bond: ham_pm_onsite must have shape (nvol, norb, norb, "
+            "norb, norb) = {} (nvol from spatial_shape={}, norb inferred "
+            "from ham_pm_onsite.shape[1]); got {}".format(
+                expected_onsite_shape, spatial_shape, ham_pm_onsite.shape))
+
+    # The ONE mesh-dependent validation lifecycle point (spec, "The master
+    # transverse topology"): mesh-injectivity of topo.delta_r AND that
+    # ham_pm_onsite's leading axis matches nvol.
+    validate_topology_against_mesh(
+        topo, spatial_shape, arrays={"ham_pm_onsite": ham_pm_onsite})
+    # Re-fetch a freshly-validated, alias-safe topology for local use (the
+    # same defensive re-construction validate_topology_against_mesh applies
+    # internally -- topo.coeffs is a plain dict a caller could have re-keyed
+    # between that call returning and this line).
+    topo = TransverseTopology(topo.delta_r, topo.reverse, topo.coeffs)
+
+    delta_r = np.asarray(topo.delta_r)
+    reverse = np.asarray(topo.reverse)
+    B = delta_r.shape[0]
+    coeffs = topo.coeffs
+    for type_name, arr in coeffs.items():
+        if arr.shape[1] != norb:
+            raise ValueError(
+                "W_pm_bond: topo.coeffs[{!r}] has norb={} but "
+                "ham_pm_onsite implies norb={}".format(
+                    type_name, arr.shape[1], norb))
+
+    nd = norb * norb
+    ND = B * nd
+    W = np.zeros((nvol, ND, ND), dtype=complex)
+
+    # Step 1: channel-0 block = the received on-site vertex, placed
+    # verbatim (no assembly, no broadcast beyond what ham_pm_onsite's own
+    # leading axis already carries).
+    W[:, 0:nd, 0:nd] = ham_pm_onsite.reshape(nvol, nd, nd)
+
+    # q mesh (private (Nx, Ny, Nz) frame, C-order flattened), spec's fixed
+    # convention -- the same one sc._build_bond_m0_blocks' phase uses.
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    ky = 2.0 * np.pi * np.arange(Ny) / Ny
+    kz = 2.0 * np.pi * np.arange(Nz) / Nz
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+    q_flat = np.stack([KX.ravel(), KY.ravel(), KZ.ravel()], axis=-1)
+
+    # Off-site (R != 0) reversal-orbit representatives -- the shared helper
+    # (spec, "Canonical orbit rule") ranges over EVERY channel including 0;
+    # steps 2-3 are binding to the off-site construction domain only (spec,
+    # "Construction domain (binding for steps 2-3)"), so channel 0 is
+    # filtered out here, not inside the shared helper.
+    reps = [rep for rep in iter_reversal_orbits(topo) if rep[0] != 0]
+
+    # Step 2: cross family (CoulombInter, Ising) -- bond-diagonal,
+    # q-independent, both mirrored diagonal target cells per representative.
+    for type_name, s_type in (("CoulombInter", -1.0), ("Ising", 1.0)):
+        block_arr = coeffs.get(type_name)
+        if block_arr is None:
+            continue
+        for (m, a, b) in reps:
+            val = s_type * float(np.real(block_arr[m, a, b]))
+            if val == 0.0:
+                continue
+            target1 = int(reverse[m])
+            idx1 = target1 * nd + a * norb + b
+            W[:, idx1, idx1] += val
+            idx2 = m * nd + b * norb + a
+            W[:, idx2, idx2] += val
+
+    # Step 3: flip family (Exchange) -- the two AMENDED ordered records,
+    # q-dependent ONLY through this local-channel phase.
+    exch_arr = coeffs.get("Exchange")
+    if exch_arr is not None:
+        for (m, a, b) in reps:
+            J = complex(exch_arr[m, a, b])
+            if J == 0.0:
+                continue
+            R = delta_r[m].astype(float)
+            phase = np.exp(1j * (q_flat @ R))
+            idx_aa = a * norb + a
+            idx_bb = b * norb + b
+            W[:, idx_aa, idx_bb] += -1.0 * np.conj(J) * np.conj(phase)
+            W[:, idx_bb, idx_aa] += -1.0 * J * phase
+
+    return W
