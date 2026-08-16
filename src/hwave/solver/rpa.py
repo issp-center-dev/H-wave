@@ -953,8 +953,8 @@ class Interaction:
                     "PairHop declares %d off-site term(s) (irvec != "
                     "(0,0,0)) that this solver silently discards: only "
                     "the on-site part of PairHop is represented (off-site "
-                    "PairHop physics is not implemented; tracking issue "
-                    "pending). Restrict PairHop to on-site declarations "
+                    "PairHop physics is not implemented; see issue #157). "
+                    "Restrict PairHop to on-site declarations "
                     "if this is unintended. Declarations dropped: %s%s",
                     len(offsite),
                     "; ".join(
