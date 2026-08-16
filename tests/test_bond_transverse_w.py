@@ -2311,7 +2311,9 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         Nmat = solver.nmat
         K_solve = 3
         solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
-        bubble_bytes = 16 * Nq * (2 * ND ** 2 + 2 * Nmat * P * (P + 1))
+        prep_bytes = 16 * Nq * (ND ** 2 + 4 * P * (Nmat + 2))
+        pair_bytes = 16 * Nq * (2 * ND ** 2 + 3 * Nmat * P ** 2 + 2 * Nmat * P)
+        bubble_bytes = max(prep_bytes, pair_bytes)
         want_peak = max(bubble_bytes, solve_bytes)
 
         solver.transverse_bond_memory_cap_gb = (want_peak * 0.999) / 1.0e9
@@ -2349,7 +2351,9 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         K_solve = 3
 
         def bubble_bytes_of(nmat):
-            return 16 * Nq * (2 * ND ** 2 + 2 * nmat * P * (P + 1))
+            prep = 16 * Nq * (ND ** 2 + 4 * P * (nmat + 2))
+            pair = 16 * Nq * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P)
+            return max(prep, pair)
 
         solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
         peak_small = max(bubble_bytes_of(Nmat_small), solve_bytes)
@@ -2759,17 +2763,158 @@ class TestAggregateCoulombTransverseTopology(ApproxTestCase):
                 "provenance key {!r} differs between the aggregate-Coulomb "
                 "and explicit-CoulombInter routes".format(key))
 
-        assert_approx_array(
-            data_agg["chiq_pm_bond_static"],
-            data_exp["chiq_pm_bond_static"], rel=0, abs=1.0e-12,
-            msg="chiq_pm_bond_static must be numerically identical "
-                "between the aggregate-Coulomb and explicit-CoulombInter "
-                "routes")
-        assert_approx_array(
-            data_agg["chiq_pm_static"], data_exp["chiq_pm_static"],
-            rel=0, abs=1.0e-12,
-            msg="chiq_pm_static must be numerically identical between "
-                "the aggregate-Coulomb and explicit-CoulombInter routes")
+        # Bitwise pin (review fix, should_fix): both routes run the exact
+        # same arithmetic on the exact same Hamiltonian content -- the
+        # measured distance is 0.0, not merely "close" -- so pin with
+        # np.array_equal rather than a tolerance, with a max-|diff|
+        # diagnostic on failure.
+        diff_bond = np.max(np.abs(
+            data_agg["chiq_pm_bond_static"] - data_exp["chiq_pm_bond_static"]))
+        self.assertTrue(
+            np.array_equal(data_agg["chiq_pm_bond_static"],
+                            data_exp["chiq_pm_bond_static"]),
+            "chiq_pm_bond_static must be bitwise identical between the "
+            "aggregate-Coulomb and explicit-CoulombInter routes "
+            "(max|diff|={:.3e})".format(diff_bond))
+        diff_pm = np.max(np.abs(
+            data_agg["chiq_pm_static"] - data_exp["chiq_pm_static"]))
+        self.assertTrue(
+            np.array_equal(data_agg["chiq_pm_static"],
+                            data_exp["chiq_pm_static"]),
+            "chiq_pm_static must be bitwise identical between the "
+            "aggregate-Coulomb and explicit-CoulombInter routes "
+            "(max|diff|={:.3e})".format(diff_pm))
+
+
+def _make_mixed_case_agg_coulomb_ising_fixture(*, canonical_case, Lx=4,
+                                                Ly=4, Nmat=8, T=2.0,
+                                                filling=0.5, U=2.0, V=0.4,
+                                                J=0.3):
+    """norb=1, 2D (``Lx x Ly``) fixture declaring an aggregate Coulomb
+    table (on-site ``U`` + off-site ``V`` along x, R=+-1) AND a SEPARATE
+    off-site ``Ising`` declaration along y (J, R=+-1) -- two DIFFERENT
+    transverse-active types contributing to two DISJOINT shells, so the
+    resolved topology is only complete (B=5: origin + 2 x-shells + 2
+    y-shells) if BOTH are actually read.
+
+    ``canonical_case=True`` declares the two interaction file-selection
+    keys as ``'Coulomb'``/``'Ising'``; ``canonical_case=False`` declares
+    them lowercased (``'coulomb'``/``'ising'``) -- ``read_input_k``'s
+    ``CaseInsensitiveDict``-based reader accepts either (see
+    ``QLMSkInput.__init__``: interaction files are dispatched on
+    ``k.lower()`` and stored under the caller's own case, ``self.
+    ham_param[k] = tbl``), so ``self.ham_info.param_ham`` genuinely ends
+    up holding a lowercase ``'ising'`` key in the mixed-case run -- the
+    exact condition the review fix (``CaseInsensitiveDict`` copy instead
+    of a plain ``dict`` copy in ``_validate_transverse_bond_prereqs``'s
+    aggregate-Coulomb merge) has to survive.
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    d = tempfile.mkdtemp(prefix="rpa_mixedcase_agg_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n0.0 0.0 0.0\n")
+    _write_w90_entries(
+        os.path.join(d, "transfer.dat"),
+        [(1, 0, 0, 1, 1, 0.5, 0.0), (-1, 0, 0, 1, 1, 0.5, 0.0),
+         (0, 1, 0, 1, 1, 0.5, 0.0), (0, -1, 0, 1, 1, 0.5, 0.0)])
+    _write_w90_entries(
+        os.path.join(d, "extern.dat"), [(0, 0, 0, 1, 1, 1.0, 0.0)])
+    _write_w90_entries(
+        os.path.join(d, "coulomb.dat"),
+        [(0, 0, 0, 1, 1, U, 0.0),
+         (1, 0, 0, 1, 1, V, 0.0), (-1, 0, 0, 1, 1, V, 0.0)])
+    _write_w90_entries(
+        os.path.join(d, "ising.dat"),
+        [(0, 1, 0, 1, 1, J, 0.0), (0, -1, 0, 1, 1, J, 0.0)])
+
+    coulomb_key = "Coulomb" if canonical_case else "coulomb"
+    ising_key = "Ising" if canonical_case else "ising"
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat", "Extern": "extern.dat",
+              coulomb_key: "coulomb.dat", ising_key: "ising.dat"}
+
+    param = {"T": T, "filling": filling, "CellShape": [Lx, Ly, 1],
+             "SubShape": [1, 1, 1], "Nmat": Nmat,
+             "transverse_bond_channels": True}
+    info_mode = {"mode": "RPA", "param": param,
+                 "calc_scheme": "general", "calc_type": "ring+ladder"}
+    info_input = {"path_to_input": d, "interaction": inter}
+
+    read_io = read_input_k.QLMSkInput(info_input)
+    ham_info = read_io.get_param("ham")
+    solver = rpa_mod.RPA(ham_info, {}, info_mode)
+    green_info = read_io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_mixedcase_agg_out_")
+    return solver, green_info, out_dir
+
+
+class TestAggregateCoulombCaseInsensitiveMerge(ApproxTestCase):
+    """Review fix (must_fix): ``_validate_transverse_bond_prereqs``'s
+    aggregate-``Coulomb``-split merge used to copy ``interactions`` into
+    a plain ``dict`` (``interactions = dict(interactions)``), downgrading
+    the ``CaseInsensitiveDict`` semantics ``_make_ham_inter`` relies on
+    for every OTHER key -- a lowercase ``'ising'``/``'exchange'``
+    declaration coexisting with an aggregate ``'Coulomb'`` table would
+    silently vanish from ``resolve_transverse_topology``'s canonical-cased
+    ``interactions.get('Ising', {})`` lookup, even though ``_make_ham_
+    inter`` still built it into the Hamiltonian."""
+
+    def test_lowercase_ising_survives_the_aggregate_coulomb_merge(self):
+        solver_lc, gi_lc, out_lc = _make_mixed_case_agg_coulomb_ising_fixture(
+            canonical_case=False)
+        solver_cc, gi_cc, out_cc = _make_mixed_case_agg_coulomb_ising_fixture(
+            canonical_case=True)
+
+        solver_lc.solve(gi_lc, out_lc)
+        solver_cc.solve(gi_cc, out_cc)
+
+        topo_lc = solver_lc._transverse_bond_topo
+        topo_cc = solver_cc._transverse_bond_topo
+
+        # Both the aggregate-Coulomb-derived x-shells AND the
+        # Ising-derived y-shells must be present: B=5 (origin + 2 x + 2
+        # y), not B=3 (only one of the two types read).
+        self.assertEqual(len(topo_cc.delta_r), 5,
+                          "canonical-case fixture sanity: both types "
+                          "must contribute distinct shells")
+        self.assertEqual(
+            len(topo_lc.delta_r), 5,
+            "lowercase 'ising' must survive the aggregate-Coulomb "
+            "CaseInsensitiveDict merge and still contribute its "
+            "off-site shells to the topology (got B={}, expected 5 -- "
+            "a plain dict() copy would silently drop it, leaving only "
+            "the 3 Coulomb-derived shells)".format(len(topo_lc.delta_r)))
+        self.assertTrue(np.array_equal(topo_lc.delta_r, topo_cc.delta_r))
+        self.assertTrue(np.array_equal(topo_lc.reverse, topo_cc.reverse))
+
+        solver_lc.save_results(
+            {'path_to_output': out_lc, 'chiq': 'chiq.npz'}, gi_lc)
+        solver_cc.save_results(
+            {'path_to_output': out_cc, 'chiq': 'chiq.npz'}, gi_cc)
+        data_lc = np.load(os.path.join(out_lc, 'chiq.npz'),
+                           allow_pickle=True)
+        data_cc = np.load(os.path.join(out_cc, 'chiq.npz'),
+                           allow_pickle=True)
+
+        diff_bond = np.max(np.abs(
+            data_lc["chiq_pm_bond_static"] - data_cc["chiq_pm_bond_static"]))
+        self.assertTrue(
+            np.array_equal(data_lc["chiq_pm_bond_static"],
+                            data_cc["chiq_pm_bond_static"]),
+            "chiq_pm_bond_static must be bitwise identical between the "
+            "lowercase-key and canonical-case-key routes "
+            "(max|diff|={:.3e})".format(diff_bond))
+        diff_pm = np.max(np.abs(
+            data_lc["chiq_pm_static"] - data_cc["chiq_pm_static"]))
+        self.assertTrue(
+            np.array_equal(data_lc["chiq_pm_static"],
+                            data_cc["chiq_pm_static"]),
+            "chiq_pm_static must be bitwise identical between the "
+            "lowercase-key and canonical-case-key routes "
+            "(max|diff|={:.3e})".format(diff_pm))
 
 
 if __name__ == "__main__":

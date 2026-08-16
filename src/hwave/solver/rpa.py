@@ -4177,11 +4177,24 @@ class RPA:
         # present; the merge below is still written generally (update,
         # not overwrite) so it stays correct even if that guard's scope
         # ever changes.
+        #
+        # ``interactions`` (``self.ham_info.param_ham``/``param_ham_orig``)
+        # is a ``CaseInsensitiveDict`` (see ``Interaction._init_interaction``'s
+        # own comment on this exact defect class): callers may declare
+        # 'ising'/'exchange'/'coulomb' in any case and ``_make_ham_inter``
+        # still honors it. A plain ``dict(interactions)`` copy would
+        # DOWNGRADE that -- it preserves each key's stored case as an
+        # ordinary (case-SENSITIVE) dict key, so a lowercase 'ising' would
+        # silently stop matching ``resolve_transverse_topology``'s
+        # canonical-cased ``interactions.get('Ising', {})`` lookup and
+        # vanish from the topology. Copy into a fresh
+        # ``CaseInsensitiveDict`` instead, which preserves case-insensitive
+        # lookup for every key untouched by this merge.
         if 'Coulomb' in interactions:
             _coulomb_intra, coulomb_inter_agg = wan90.split_coulomb(
                 interactions['Coulomb'])
-            interactions = dict(interactions)
-            merged_inter = dict(interactions.get('CoulombInter', {}))
+            interactions = CaseInsensitiveDict(interactions)
+            merged_inter = dict(interactions.get('CoulombInter', {}) or {})
             merged_inter.update(coulomb_inter_agg)
             interactions['CoulombInter'] = merged_inter
 
@@ -4247,47 +4260,100 @@ class RPA:
           This term has NO ``Nmat`` dependence: the solve only ever sees
           the static (``Omega=0``) slice.
 
-        - **Bubble phase** (previously OMITTED -- this is the fix):
-          ``_run_transverse_bond_pipeline`` builds ``W`` (via
-          ``bond_channels.W_pm_bond``, shape ``(Nq, ND, ND)``) BEFORE
-          calling ``bubble.transverse_bond_bubble_static``, and that call
-          holds ``W`` resident throughout (it is consumed only afterwards,
-          by the dressing phase). Inside the bubble call:
+        - **Bubble phase** (previously OMITTED entirely -- this is the
+          fix; a first round undercounted its pair-processing sub-phase
+          and never bounded its preparation sub-phase -- this is the
+          correction). ``_run_transverse_bond_pipeline`` builds ``W``
+          (via ``bond_channels.W_pm_bond``, shape ``(Nq, ND, ND)``)
+          BEFORE calling ``bubble.transverse_bond_bubble_static``, and
+          that call holds ``W`` resident throughout (it is consumed only
+          afterwards, by the dressing phase). The bubble call itself has
+          two sub-phases with DIFFERENT resident sets -- ``W`` is the
+          only ``ND``-scale tensor alive during preparation (``chi_bar``
+          below does not exist yet), so the two sub-phases' peaks are
+          bounded SEPARATELY and combined with ``max(...)`` (never
+          summed, for the same non-overlap reason as the two top-level
+          phases):
 
-            * ``chi_bar`` (the ``(Nq, ND, ND)`` static accumulator,
-              returned as ``chi0``) is allocated up front and stays live
-              for the whole channel-pair loop -- together with the
-              already-resident ``W`` this contributes
-              ``2 * Nq * ND**2 * itemsize``.
-            * ``_iter_transverse_bond_channel_pairs`` extracts and holds,
-              for the ENTIRE ``B x B`` pair loop, two full-frequency
-              Green carriers ``green_fwd_sgn`` and ``green_rev``, each
-              shape ``(Nmat, Nq, norb, norb)`` (one block out of the
-              ``nblock=2`` up/down pair, the other half released
-              immediately per the Task-4 per-block ``del`` discipline) --
-              contributing ``2 * Nmat * Nq * norb**2 * itemsize``.
-            * Per pair, ``_bond_pair_full_block`` materializes the
-              FULL-frequency block ``(Nmat, Nq, norb, norb, norb, norb)``
-              == ``(Nmat, Nq, P, P)`` (``contract_general``'s outer-product
-              buffer, immediately reinterpreted as the ``(npair, npair)``
-              pair block). Because that buffer is a non-contiguous
-              ``swapaxes`` view, the subsequent ``.reshape`` forces a
-              fresh contiguous copy, and each of the following steps
-              (``spatial_fftn``, ``tau_to_boson``, the final ``*
-              (-1/beta)`` scale) again allocates a fresh
-              ``(Nmat, Nq, P, P)``-sized buffer that briefly coexists with
-              its predecessor until the explicit ``del`` -- so the
-              per-pair transient working set peaks at TWO such buffers,
-              ``2 * Nmat * Nq * P**2 * itemsize`` (``P**2 = norb**4``).
-              Successive pairs reuse this same transient budget (each
-              generator step ``del``s its own ``block`` right after
-              ``yield``), so it does not accumulate across the ``B x B``
-              loop -- only ONE pair's transient set is ever live at once.
+          *Preparation sub-phase* (``_prepare_dense``, called once on
+          the full ``nblock=2`` up/down Green tensor, BEFORE the
+          per-block split): let ``U = 2 * Nmat * Nq * P * itemsize`` be
+          the byte size of one full two-block ``(2, Nmat, Nq, norb,
+          norb)`` tensor. Every internal step that is not a pure
+          ``reshape`` (view) allocates a NEW ``U``-sized buffer while its
+          predecessor is still referenced -- ``matsubara.fermion_to_tau``
+          internally computes ``xp.fft.fft(arr, axis=1) *
+          _bcast(omg, ...)``, an ``fft`` output buffer times a
+          RESHAPED (not tiled) phase, so exactly one extra ``U``-buffer
+          coexists with the fft output during that multiply;
+          ``backend.spatial_ifftn`` (new buffer) runs while its input is
+          still bound; ``kgrid.reverse_fft_axes`` (its own docstring:
+          "New array") runs while ``green_rt`` is still bound because it
+          is returned alongside ``green_rev`` in ``prepped``. Each of
+          these is a 2-buffer transient, so the tail-OFF peak is
+          ``2*U = 4*Nmat*Nq*P*itemsize``. Tail-ON additionally builds
+          ``jump_f``/``jump_r_rev``/``fwd0_p``/``rev0_p``, four buffers
+          of size ``S = 2*Nq*P*itemsize`` each (a single-frequency slice
+          of the two-block tensor -- no ``Nmat`` factor) that all persist
+          to the return, on top of the still-resident ``green_rt``/
+          ``green_rev`` (``2*U``): tail-ON peak = ``2*U + 4*S =
+          4*Nmat*Nq*P*itemsize + 8*Nq*P*itemsize``. Tail-ON is the
+          uniformly larger (and therefore used) bound -- whether the
+          tail is actually active depends on runtime Green-function
+          content, not on anything known at preflight time:
+          ``prep_bytes = itemsize * Nq * (ND**2 + 4*P*(Nmat + 2))``
+          (the ``ND**2`` term is ``W`` alone).
 
-          Summing (and using ``P*(P+1) = P**2 + P``, i.e. ``norb**4 +
-          norb**2``, to fold the last two bullets together):
-          ``bubble_bytes = itemsize * Nq * (2*ND**2 +
-          2*Nmat*norb**2*(norb**2 + 1))``.
+          *Pair-processing sub-phase* (the ``B x B`` channel-pair loop):
+          ``_iter_transverse_bond_channel_pairs`` extracts and holds, for
+          the ENTIRE loop, two full-frequency Green carriers
+          ``green_fwd_sgn`` and ``green_rev``, each shape ``(Nmat, Nq,
+          norb, norb)`` (one block out of the ``nblock=2`` pair, the
+          other half released immediately per the Task-4 per-block
+          ``del`` discipline) -- contributing ``2 * Nmat * Nq * P *
+          itemsize`` (``P = norb**2``) alongside the already-resident
+          ``W`` AND, from this point on, ``chi_bar`` (the ``(Nq, ND,
+          ND)`` static accumulator, allocated right before the loop
+          starts): ``2 * Nq * ND**2 * itemsize``. Per pair,
+          ``_bond_pair_full_block`` materializes the FULL-frequency block
+          ``(Nmat, Nq, norb, norb, norb, norb)`` == ``(Nmat, Nq, P, P)``
+          (``contract_general``'s outer-product buffer, immediately
+          reinterpreted as the ``(npair, npair)`` pair block, ``npair =
+          P``). Because that buffer is a non-contiguous ``swapaxes``
+          view, the subsequent ``.reshape`` forces a fresh contiguous
+          copy, then ``spatial_fftn`` allocates its own output -- each of
+          these is an ordinary 2-buffer (old + new) transient. The THIRD
+          step, ``matsubara.tau_to_boson``, is NOT: it computes
+          ``xp.fft.ifft(arr * _bcast(omg_inv, ...), axis=0)`` where
+          ``arr`` is the caller's ``chi0_qt`` (still bound in
+          ``_bond_pair_full_block`` -- not ``del``'d until AFTER
+          ``tau_to_boson`` returns). ``arr * _bcast(...)`` allocates ONE
+          new buffer (``_bcast`` reshapes the phase vector, it does not
+          tile it, so the multiply is an ordinary broadcast producing a
+          single output), and ``xp.fft.ifft`` on THAT allocates a SECOND
+          new buffer while the first is still on the evaluation stack --
+          so at the peak, THREE full ``(Nmat, Nq, P, P)`` buffers coexist
+          simultaneously: ``arr`` (== ``chi0_qt``, the caller's still-live
+          reference), the multiply's output, and the ``ifft`` output (a
+          first review round only counted two, missing that ``chi0_qt``
+          itself remains alive across the call). The tail-correction
+          block (``chi0_rt[0] = ...``, when active) runs BEFORE this
+          chain, while only ONE full ``(Nmat, Nq, P, P)`` buffer
+          (``chi0_rt`` itself) is resident, and adds a bounded ``O(P**2)``
+          (no ``Nmat`` factor -- its own operands are single-frequency
+          slices): its own peak, ``(Nmat + 3) * P**2``, is algebraically
+          ``<= 3 * Nmat * P**2`` for every valid (even, positive)
+          ``Nmat >= 2``, so it never exceeds the THREE-buffer peak that
+          dominates regardless of the tail: ``pair_bytes = itemsize * Nq
+          * (2*ND**2 + 3*Nmat*P**2 + 2*Nmat*P)``.
+
+          ``bubble_bytes = max(prep_bytes, pair_bytes)`` -- ``pair_bytes``
+          dominates for realistic (multi-shell / larger-``Nmat``) runs,
+          but ``prep_bytes`` can exceed it at the smallest valid corner
+          (e.g. ``norb=1``, ``B=1``, ``Nmat=2``: ``prep_bytes`` works out
+          to ``17 * itemsize * Nq`` against ``pair_bytes``'s ``12 *
+          itemsize * Nq``), so the ``max`` is computed explicitly rather
+          than assumed away.
 
         ``peak_bytes = max(bubble_bytes, solve_bytes)``. For small ``B``
         (few bond channels, so ``ND`` and therefore ``solve_bytes`` stay
@@ -4311,8 +4377,10 @@ class RPA:
         itemsize = 16  # complex128
 
         solve_bytes = (3 + K_solve) * Nq * (ND ** 2) * itemsize
-        bubble_bytes = itemsize * Nq * (
-            2 * (ND ** 2) + 2 * Nmat * P * (P + 1))
+        prep_bytes = itemsize * Nq * ((ND ** 2) + 4 * P * (Nmat + 2))
+        pair_bytes = itemsize * Nq * (
+            2 * (ND ** 2) + 3 * Nmat * (P ** 2) + 2 * Nmat * P)
+        bubble_bytes = max(prep_bytes, pair_bytes)
         peak_bytes = max(bubble_bytes, solve_bytes)
         op_count = Nq * (ND ** 3)
 
@@ -4320,31 +4388,35 @@ class RPA:
             "Transverse bond-channel preflight (ESTIMATE): B = %d "
             "channels, ND = B*norb**2 = %d, N_q = %d, Nmat = %d, "
             "K_solve = %d (numpy-backend conservative allowance), "
-            "estimated bubble-phase peak = %.3f GB, estimated "
-            "solve-phase peak = %.3f GB, estimated overall peak memory "
-            "= %.3f GB (cap %.3f GB), estimated solve op-count "
-            "Nq*ND**3 = %.3e",
-            B, ND, Nq, Nmat, K_solve, bubble_bytes / 1.0e9,
-            solve_bytes / 1.0e9, peak_bytes / 1.0e9,
+            "estimated bubble-prep-phase peak = %.3f GB, estimated "
+            "bubble-pair-phase peak = %.3f GB, estimated solve-phase "
+            "peak = %.3f GB, estimated overall peak memory = %.3f GB "
+            "(cap %.3f GB), estimated solve op-count Nq*ND**3 = %.3e",
+            B, ND, Nq, Nmat, K_solve, prep_bytes / 1.0e9,
+            pair_bytes / 1.0e9, solve_bytes / 1.0e9, peak_bytes / 1.0e9,
             self.transverse_bond_memory_cap_gb, op_count)
 
         if peak_bytes > self.transverse_bond_memory_cap_gb * 1.0e9:
             raise ValueError(
                 "[mode.param] transverse_bond_channels: ESTIMATED peak "
                 "memory {:.3f} GB exceeds transverse_bond_memory_cap_gb = "
-                "{:.3f} GB (bubble-phase estimate {:.3f} GB, solve-phase "
-                "estimate {:.3f} GB; peak = max of the two, they do not "
+                "{:.3f} GB (bubble-phase estimate {:.3f} GB [prep {:.3f} "
+                "GB, pair-loop {:.3f} GB, peak = max of the two "
+                "sub-phases], solve-phase estimate {:.3f} GB; overall "
+                "peak = max of the bubble and solve phases, they do not "
                 "overlap in time). The solve-phase estimate is "
                 "(3 + K_solve) * Nq * ND**2 * 16 bytes with ND = "
-                "B*norb**2 = {}, Nq = {}, K_solve = {}. The bubble-phase "
-                "estimate is 16 * Nq * (2*ND**2 + 2*Nmat*norb**2*"
-                "(norb**2+1)) bytes with Nmat = {} (both are numpy-backend "
-                "conservative allowances, not guaranteed LAPACK/BLAS "
+                "B*norb**2 = {}, Nq = {}, K_solve = {}. The bubble "
+                "prep-phase estimate is 16 * Nq * (ND**2 + 4*P*(Nmat+2)) "
+                "bytes and the pair-loop estimate is 16 * Nq * (2*ND**2 "
+                "+ 3*Nmat*P**2 + 2*Nmat*P) bytes, both with P = "
+                "norb**2 and Nmat = {} (all are numpy-backend "
+                "conservative allowances, not guaranteed LAPACK/BLAS/FFT "
                 "bounds). Restrict or remove some off-site "
                 "CoulombInter/Ising/Exchange declarations to shrink the "
                 "channel set B, use a coarser k-mesh, reduce Nmat (a "
-                "lever for the bubble-phase estimate specifically, since "
-                "the solve-phase estimate does not depend on it), or "
+                "lever for BOTH bubble sub-phase estimates, since the "
+                "solve-phase estimate does not depend on it), or "
                 "raise transverse_bond_memory_cap_gb. "
                 "transverse_bond_max_shells only helps if the outer "
                 "shells you would drop are declared-zero -- "
@@ -4352,7 +4424,8 @@ class RPA:
                 "would discard a declared nonzero off-site "
                 "coefficient.".format(
                     peak_bytes / 1.0e9, self.transverse_bond_memory_cap_gb,
-                    bubble_bytes / 1.0e9, solve_bytes / 1.0e9,
+                    bubble_bytes / 1.0e9, prep_bytes / 1.0e9,
+                    pair_bytes / 1.0e9, solve_bytes / 1.0e9,
                     ND, Nq, K_solve, Nmat))
 
         if op_count > 1.0e12:
