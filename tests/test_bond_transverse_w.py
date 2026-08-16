@@ -1106,6 +1106,72 @@ class TestWPmBondQPhaseCrossPin(ApproxTestCase):
         self.assertApprox(got, expected, rel=0, abs=1e-12)
 
 
+class TestWPmBondChannelZeroEmbeddingPin(ApproxTestCase):
+    """Fix round 1 review finding (Task 3): the channel-0 embedding
+    (``W[:, 0:nd, 0:nd] = ham_pm_onsite.reshape(nvol, nd, nd)``) had NO
+    discriminating numeric pin -- every existing cross-pin fixture uses an
+    all-zero on-site block, and ``TestWPmBondStructural``'s B=1 reduction
+    test's only nonzero entry sits at the fully-degenerate ``(0,0,0,0)``
+    index. At that degenerate index the CORRECT ``(a,b)/(c,d)``
+    pair-flattening (row = ``a*norb+b``, col = ``c*norb+d``, exactly what
+    a bare ``.reshape(nvol, nd, nd)`` does to a contiguous
+    ``(nvol,a,b,c,d)`` tensor -- matching ``_solve_rpa``'s own
+    ``ham.reshape(nvol, ndx, ndx)`` consumer convention) is numerically
+    IDENTICAL to a WRONG ``(a,c)/(b,d)`` grouping (row = ``a*norb+c``, col
+    = ``b*norb+d`` -- what ``onsite.transpose(0,1,3,2,4)`` before reshape
+    would produce), so a reviewer-supplied mutant passed every committed
+    test.
+
+    This test uses a NON-DIAGONAL-DEGENERATE Hermitian on-site tensor
+    (nonzero ONLY at ``(a,b,c,d) = (0,0,1,1)`` and its Hermitian partner
+    ``(1,1,0,0)``) where the two groupings land the value at DIFFERENT
+    cells (``(0,3)`` vs. ``(1,1)`` -- verified by direct calculation, see
+    the module-level mutation-check note below) and compares
+    ``W_pm_bond``'s channel-0 block ELEMENTWISE against an expected matrix
+    built BY HAND via a plain per-index loop (never via ``.reshape`` --
+    validating production against itself would prove nothing)."""
+
+    def test_channel_zero_embedding_pairs_ab_cd_not_ac_bd(self):
+        norb = 2
+        nd = norb * norb
+        Nx, Ny, Nz = 3, 1, 1
+        nvol = Nx * Ny * Nz
+        V = 0.3 + 0.4j
+
+        onsite = np.zeros((nvol, norb, norb, norb, norb), dtype=complex)
+        onsite[:, 0, 0, 1, 1] = V
+        onsite[:, 1, 1, 0, 0] = np.conj(V)   # Hermitian partner:
+        # W[q,(a,b),(c,d)] must equal conj(W[q,(c,d),(a,b)]), i.e.
+        # onsite[a,b,c,d] == conj(onsite[c,d,a,b]).
+
+        # Expected: built by hand, one (a, b, c, d) cell at a time -- the
+        # definition of the (a,b)/(c,d) pair-flattening rule, independent
+        # of any reshape/transpose call.
+        expected = np.zeros((nvol, nd, nd), dtype=complex)
+        for a in range(norb):
+            for b in range(norb):
+                for c in range(norb):
+                    for d in range(norb):
+                        expected[:, a * norb + b, c * norb + d] = \
+                            onsite[:, a, b, c, d]
+
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0]]), reverse=np.array([0]),
+            coeffs={"CoulombInter": np.zeros((1, norb, norb), dtype=complex)})
+        W = W_pm_bond(topo, onsite, spatial_shape=(Nx, Ny, Nz))
+
+        assert_approx_array(W, expected, rel=0, abs=1e-15)
+
+        # Self-check that this fixture genuinely discriminates the two
+        # groupings (documents the mutant's actual behavior rather than
+        # merely asserting it): under (a,c)/(b,d) the SAME (0,0,1,1) entry
+        # would land at row=a*norb+c=0*2+1=1, col=b*norb+d=0*2+1=1 -- cell
+        # (1, 1) -- not (0, 3), so the correct/wrong mappings disagree at
+        # cell (0, 3) (V vs. 0) and at cell (1, 1) (0 vs. V).
+        self.assertApprox(expected[0, 0, 3], V, rel=0, abs=0)
+        self.assertApprox(expected[0, 1, 1], 0.0, rel=0, abs=0)
+
+
 class TestWPmBondValidation(ApproxTestCase):
     """Entry-point validation: mesh-injectivity is enforced (via
     ``validate_topology_against_mesh``) and a malformed ``ham_pm_onsite``
