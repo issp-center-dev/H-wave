@@ -1803,6 +1803,58 @@ def _make_spinful_bond_gate_fixture(T=0.5, mu=0.2, Lx=4, Nmat=32, U=0.3,
     return solver, green_info, out_dir
 
 
+def _make_max_shells_fixture(*, transverse_bond_channels=True,
+                              max_shells=None, Lx=6, Nmat=8, T=2.0,
+                              filling=0.5):
+    """norb=1 ring+ladder fixture with off-site CoulombInter declared at
+    TWO distinct shells on a Lx=6 chain (``delta_r mod 6`` is injective
+    for ``{0, +-1, +-2}``, so no mesh collision): R=+-1 carries a
+    NONZERO coefficient (V1=0.4), R=+-2 is DECLARED but exactly zero
+    (V2=0.0) -- a truncation that drops only the zero shell is not
+    ambiguous (``resolve_transverse_topology`` only refuses a truncation
+    that would drop declared NONZERO content), so
+    ``transverse_bond_max_shells=1`` has an OBSERVABLE, non-rejected
+    effect: it keeps the R=+-1 shell (B=3) and drops the (identically
+    zero) R=+-2 shell that the default ``max_shells=None`` keeps (B=5).
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    d = tempfile.mkdtemp(prefix="rpa_bond_gate_maxshells_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n1\n2\n1 1\n"
+                 " 1 0 0 1 1 0.5 0.0\n-1 0 0 1 1 0.5 0.0\n")
+    with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+        f.write("hdr\n1\n1\n1\n 0 0 0 1 1 2.0 0.0\n")
+    with open(os.path.join(d, "coulombinter.dat"), "w") as f:
+        f.write("hdr\n1\n4\n1 1 1 1\n"
+                 " 1 0 0 1 1 0.4 0.0\n-1 0 0 1 1 0.4 0.0\n"
+                 " 2 0 0 1 1 0.0 0.0\n-2 0 0 1 1 0.0 0.0\n")
+    with open(os.path.join(d, "extern.dat"), "w") as f:
+        f.write("hdr\n1\n1\n1\n 0 0 0 1 1 1.0 0.0\n")
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+             "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat",
+             "CoulombInter": "coulombinter.dat", "Extern": "extern.dat"}
+    param = {"T": T, "filling": filling, "CellShape": [Lx, 1, 1],
+             "SubShape": [1, 1, 1], "Nmat": Nmat}
+    if transverse_bond_channels is not None:
+        param["transverse_bond_channels"] = transverse_bond_channels
+    if max_shells is not None:
+        param["transverse_bond_max_shells"] = max_shells
+
+    info_mode = {"mode": "RPA", "param": param, "calc_scheme": "general",
+                 "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_bond_gate_maxshells_out_")
+    return solver, green_info, out_dir
+
+
 class TestTransverseBondGateConfig(ApproxTestCase):
     """``[mode.param] transverse_bond_channels`` config parsing (spec
     "Production surface"): default false, parsed ONLY under
@@ -1879,6 +1931,62 @@ class TestTransverseBondGateConfig(ApproxTestCase):
                 param_overrides={'transverse_bond_memory_cap_gb': 0.0},
                 interactions=self.ONSITE_ONLY)
 
+    # -----------------------------------------------------------------
+    # Case-insensitivity (CLAUDE.md rule; PR #128 had 6 silent-divergence
+    # sites in exactly this defect class): every new config key lookup
+    # must be case-robust, driven through the PUBLIC entry -- never by
+    # inspecting self.param_mod directly, since self.param_mod being a
+    # CaseInsensitiveDict is the implementation detail under test, not
+    # something the test may lean on as its own proof.
+    # -----------------------------------------------------------------
+
+    ACTIVE = {'CoulombIntra': 'coulombintra.dat',
+              'CoulombInter': 'coulombinter.dat', 'Extern': 'extern.dat'}
+
+    def test_mixed_case_gate_key_activates_through_public_entry(self):
+        solver_lower, gi_lower, out_lower = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE)
+        solver_lower.solve(gi_lower, out_lower)
+
+        solver_mixed, gi_mixed, out_mixed = _make_bond_gate_fixture(
+            transverse_bond_channels=None,
+            param_overrides={'Transverse_Bond_Channels': True},
+            interactions=self.ACTIVE)
+        self.assertIs(solver_mixed.transverse_bond_channels, True)
+        solver_mixed.solve(gi_mixed, out_mixed)
+
+        self.assertIn("chiq_pm_bond_static", gi_mixed)
+        self.assertNotIn("chiq_pm", gi_mixed)
+        self.assertTrue(np.array_equal(gi_lower["chiq"], gi_mixed["chiq"]))
+        self.assertTrue(np.array_equal(
+            gi_lower["chiq_pm_bond_static"], gi_mixed["chiq_pm_bond_static"]))
+        self.assertTrue(np.array_equal(
+            gi_lower["chiq_pm_static"], gi_mixed["chiq_pm_static"]))
+
+    def test_mixed_case_flag_absent_lowercase_present_does_not_confuse(self):
+        # An UPPER-cased false-y flag must behave exactly like the
+        # lowercase false-y flag (the documented default) -- guards
+        # against a defect where only the TRUE branch was made
+        # case-robust.
+        solver, _gi, _out = _make_bond_gate_fixture(
+            transverse_bond_channels=None,
+            param_overrides={'TRANSVERSE_BOND_CHANNELS': False},
+            interactions=self.ONSITE_ONLY)
+        self.assertIs(solver.transverse_bond_channels, False)
+
+    def test_mixed_case_max_shells_and_memory_cap_keys_thread_through(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=None,
+            param_overrides={'TRANSVERSE_bond_channels': True,
+                              'Transverse_Bond_Max_Shells': 1,
+                              'transverse_bond_MEMORY_cap_gb': 2.5},
+            interactions=self.ACTIVE)
+        self.assertIs(solver.transverse_bond_channels, True)
+        self.assertEqual(solver.transverse_bond_max_shells, 1)
+        self.assertEqual(solver.transverse_bond_memory_cap_gb, 2.5)
+        solver.solve(gi, out)  # must not raise
+        self.assertIn("chiq_pm_bond_static", gi)
+
 
 class TestTransverseBondGatePrereqs(ApproxTestCase):
     """``_validate_transverse_bond_prereqs``'s REJECT list (spec
@@ -1953,6 +2061,61 @@ class TestTransverseBondGatePrereqs(ApproxTestCase):
         with self.assertRaises(ValueError) as cm:
             solver.solve(gi, out)
         self.assertIn("externally supplied chi0q", str(cm.exception))
+
+
+class TestTransverseBondMaxShellsThreading(ApproxTestCase):
+    """A positive ``transverse_bond_max_shells`` must thread end to end:
+    ``_init_transverse_bond_config`` -> ``self.transverse_bond_max_shells``
+    -> ``_validate_transverse_bond_prereqs``'s ``resolve_transverse_
+    topology(..., max_shells=...)`` call -- with an OBSERVABLE effect on
+    the resulting topology/B (not just the rejection paths and the
+    default-None case, which is all the earlier config tests covered)."""
+
+    def test_positive_max_shells_truncates_the_resolved_topology(self):
+        solver_trunc, gi_trunc, out_trunc = _make_max_shells_fixture(
+            max_shells=1)
+        solver_trunc.solve(gi_trunc, out_trunc)
+        self.assertEqual(solver_trunc.transverse_bond_max_shells, 1)
+        topo_trunc = solver_trunc._transverse_bond_topo
+        self.assertEqual(len(topo_trunc.delta_r), 3)  # onsite + R=+-1
+
+        # Matches a DIRECT resolve_transverse_topology call with the SAME
+        # max_shells on the solver's own (pre-fold) declarations.
+        has_sub = getattr(solver_trunc.lattice, "has_sublattice", False)
+        interactions = (solver_trunc.ham_info.param_ham_orig if has_sub
+                        else solver_trunc.ham_info.param_ham)
+        topo_direct = resolve_transverse_topology(
+            interactions, np.eye(3), solver_trunc.norb, max_shells=1)
+        self.assertTrue(np.array_equal(topo_trunc.delta_r,
+                                       topo_direct.delta_r))
+        self.assertTrue(np.array_equal(topo_trunc.reverse,
+                                       topo_direct.reverse))
+        for t in topo_trunc.coeffs:
+            self.assertTrue(np.array_equal(topo_trunc.coeffs[t],
+                                           topo_direct.coeffs[t]))
+
+        # DIFFERS from the default (max_shells=None, keep every shell):
+        # a value silently failing to thread through would produce the
+        # SAME (untruncated) B here as above.
+        solver_full, gi_full, out_full = _make_max_shells_fixture(
+            max_shells=None)
+        solver_full.solve(gi_full, out_full)
+        self.assertIsNone(solver_full.transverse_bond_max_shells)
+        topo_full = solver_full._transverse_bond_topo
+        self.assertEqual(len(topo_full.delta_r), 5)  # onsite + R=+-1,+-2
+        self.assertGreater(len(topo_full.delta_r), len(topo_trunc.delta_r))
+
+        # And through the npz output: the channel table + provenance key
+        # both reflect the truncated (not the default) topology.
+        solver_trunc.save_results(
+            {'path_to_output': out_trunc, 'chiq': 'chiq.npz'}, gi_trunc)
+        data = np.load(os.path.join(out_trunc, 'chiq.npz'),
+                       allow_pickle=True)
+        self.assertEqual(int(data["transverse_bond_max_shells"]), 1)
+        self.assertEqual(tuple(data["transverse_bond_delta_r"].shape),
+                          (3, 3))
+        self.assertTrue(np.array_equal(
+            data["transverse_bond_delta_r"], topo_trunc.delta_r))
 
 
 class TestTransverseBondResourcePreflight(ApproxTestCase):
