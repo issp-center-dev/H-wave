@@ -2068,6 +2068,13 @@ class RPA:
                 if self.transverse_bond_channels:
                     self._transverse_bond_topo = \
                         self._validate_transverse_bond_prereqs()
+                    # Resource preflight immediately AFTER the (cheap)
+                    # prereq validation but BEFORE ANY expensive solve --
+                    # including the longitudinal (ring) solve just below,
+                    # not only the bond-resolved solve -- so a cap
+                    # rejection fires before either expensive step runs.
+                    self._transverse_bond_resource_preflight(
+                        self._transverse_bond_topo)
                 else:
                     self._check_transverse_representable(ham_orig)
 
@@ -2080,11 +2087,6 @@ class RPA:
             # Solve transverse (ladder) RPA if requested
             if self.calc_type == "ring+ladder":
                 if self.transverse_bond_channels:
-                    # Resource preflight AFTER the (cheap) prereq
-                    # validation but BEFORE the bond-resolved solve
-                    # itself, which is the expensive step.
-                    self._transverse_bond_resource_preflight(
-                        self._transverse_bond_topo)
                     chi_pm_bond_static, chiq_pm_static = \
                         self._run_transverse_bond_pipeline(
                             self.green0, self.green0_tail, beta,
@@ -4143,6 +4145,15 @@ class RPA:
                 "Recompute chi0q internally (omit chi0q_init) or set "
                 "transverse_bond_channels=false.")
 
+        if getattr(self.lattice, "has_sublattice", False):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true is not "
+                "supported with a sublattice (SubShape < CellShape): the "
+                "bond-resolved transverse channel does not yet implement "
+                "the sublattice folding map for its off-site channels. "
+                "Run without a sublattice (SubShape == CellShape) or set "
+                "transverse_bond_channels=false.")
+
         has_sub = getattr(self.lattice, "has_sublattice", False)
         interactions = (self.ham_info.param_ham_orig if has_sub
                         else self.ham_info.param_ham)
@@ -4219,9 +4230,14 @@ class RPA:
                 "{:.3f} GB. The estimate is (3 + K_solve) * Nq * ND**2 * "
                 "16 bytes with ND = B*norb**2 = {}, Nq = {}, K_solve = {} "
                 "(a numpy-backend conservative allowance, not a "
-                "guaranteed LAPACK bound). Reduce "
-                "transverse_bond_max_shells (fewer channels), reduce the "
-                "k-grid, or raise transverse_bond_memory_cap_gb.".format(
+                "guaranteed LAPACK bound). Restrict or remove some "
+                "off-site CoulombInter/Ising/Exchange declarations to "
+                "shrink the channel set B, use a coarser k-mesh, or raise "
+                "transverse_bond_memory_cap_gb. transverse_bond_max_shells "
+                "only helps if the outer shells you would drop are "
+                "declared-zero -- resolve_transverse_topology refuses any "
+                "truncation that would discard a declared nonzero "
+                "off-site coefficient.".format(
                     peak_bytes / 1.0e9, self.transverse_bond_memory_cap_gb,
                     ND, Nq, K_solve))
 

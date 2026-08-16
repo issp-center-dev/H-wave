@@ -2660,6 +2660,31 @@ def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
     return completed
 
 
+def _require_transverse_integral(value, label):
+    """Coerce ``value`` to ``int`` iff it is an exact integral scalar;
+    otherwise raise a ``resolve_transverse_topology``-prefixed
+    ``ValueError`` naming ``label``. ``bool`` is rejected even though
+    ``isinstance(True, int)`` in Python, since a stray boolean (e.g. an
+    ``irvec``/``orbvec`` component that is accidentally a truthiness
+    flag) is never a legitimate integral coordinate here.
+    """
+    if isinstance(value, bool):
+        raise ValueError(
+            "resolve_transverse_topology: {} must be an integer, not a "
+            "bool, got {!r}".format(label, value))
+    try:
+        value_f = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "resolve_transverse_topology: {} must be an integer, got "
+            "{!r}".format(label, value))
+    if not np.isfinite(value_f) or value_f != np.floor(value_f):
+        raise ValueError(
+            "resolve_transverse_topology: {} must be an integral value, "
+            "got {!r}".format(label, value))
+    return int(value_f)
+
+
 def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
     """Resolve the master transverse bond topology (spec, "The master
     transverse topology") from the SAME raw, PRE-FOLD interaction
@@ -2742,8 +2767,8 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         :class:`TransverseTopology`'s constructor) if the resolved
         topology somehow fails its own invariants.
     """
-    norb = int(norb)
-    if norb <= 0:
+    norb = _require_transverse_integral(norb, "norb")
+    if norb < 1:
         raise ValueError(
             "resolve_transverse_topology: norb must be a positive integer, "
             "got {!r}".format(norb))
@@ -2763,10 +2788,48 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         tbl = interactions.get(type_name, {}) or {}
         by_irvec = {}
         for (irvec, orbvec), value in tbl.items():
-            irvec = tuple(int(x) for x in irvec)
+            try:
+                irvec_len = len(irvec)
+            except TypeError:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an irvec "
+                    "key that is not a 3-component vector, got "
+                    "{!r}".format(type_name, irvec))
+            if irvec_len != 3:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an irvec "
+                    "key with {} component(s), expected exactly 3, got "
+                    "{!r}".format(type_name, irvec_len, irvec))
+            irvec = tuple(
+                _require_transverse_integral(
+                    x, "{} irvec component".format(type_name))
+                for x in irvec)
+
+            try:
+                orbvec_len = len(orbvec)
+            except TypeError:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an orbvec "
+                    "key that is not a 2-component (a, b) pair, got "
+                    "{!r}".format(type_name, orbvec))
+            if orbvec_len != 2:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an orbvec "
+                    "key with {} component(s), expected exactly 2 (a, "
+                    "b), got {!r}".format(type_name, orbvec_len, orbvec))
+            a = _require_transverse_integral(
+                orbvec[0], "{} orbvec[0]".format(type_name))
+            b = _require_transverse_integral(
+                orbvec[1], "{} orbvec[1]".format(type_name))
+            if not (0 <= a < norb and 0 <= b < norb):
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares orbital "
+                    "index (a={}, b={}) at irvec={} out of range for "
+                    "norb={}; orbital indices must satisfy 0 <= a,b < "
+                    "norb".format(type_name, a, b, irvec, norb))
+
             if irvec == (0, 0, 0):
                 continue
-            a, b = int(orbvec[0]), int(orbvec[1])
             by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
         per_type_by_irvec[type_name] = by_irvec
         completed = _close_offsite_hermitian(

@@ -445,6 +445,59 @@ class TestResolveTransverseTopology(ApproxTestCase):
         with self.assertRaises(ValueError):
             resolve_transverse_topology({}, np.eye(3), norb=0)
 
+    # -----------------------------------------------------------------
+    # Strict input validation (review fix): norb, irvec components and
+    # orbital indices used to pass silently through int(), so norb=1.5
+    # became 1 and a fractional irvec became the wrong channel; an
+    # out-of-range orbital index used to leak a bare IndexError instead
+    # of an actionable ValueError.
+    # -----------------------------------------------------------------
+
+    def test_norb_non_integral_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology({}, np.eye(3), norb=1.5)
+
+    def test_norb_bool_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology({}, np.eye(3), norb=True)
+
+    def test_norb_nan_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology({}, np.eye(3), norb=float("nan"))
+
+    def test_irvec_non_integral_component_rejected(self):
+        interactions = {"CoulombInter": {((1.5, 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_irvec_wrong_length_rejected(self):
+        interactions = {"CoulombInter": {((1, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_orbvec_non_integral_component_rejected(self):
+        interactions = {"CoulombInter": {((1, 0, 0), (0.5, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_orbvec_wrong_length_rejected(self):
+        interactions = {"CoulombInter": {((1, 0, 0), (0, 0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_orbital_index_out_of_range_rejected(self):
+        # norb=1 -> only orbital index 0 is valid; index 1 used to leak
+        # a bare IndexError from the (norb, norb) array assignment
+        # instead of an actionable ValueError.
+        interactions = {"CoulombInter": {((1, 0, 0), (1, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_orbital_index_negative_rejected(self):
+        interactions = {"CoulombInter": {((1, 0, 0), (-1, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
 
 # =============================================================================
 # iter_reversal_orbits
@@ -2036,6 +2089,23 @@ class TestTransverseBondGatePrereqs(ApproxTestCase):
             solver.solve(gi, out)
         self.assertIn("spin_mode='spinful'", str(cm.exception))
 
+    def test_sublattice_rejected(self):
+        """A sublattice run (SubShape < CellShape, has_sublattice=True)
+        must be rejected at the gate: ``_validate_transverse_bond_prereqs``
+        resolves the topology from the PRE-FOLD ``param_ham_orig``
+        declarations but passes the FOLDED ``self.norb`` and the pipeline
+        then runs on the supercell mesh -- the original-cell (R, a, b)
+        records are never mapped to supercell coordinates, so a
+        sublattice run would silently compute the wrong vertices without
+        this guard (review fix)."""
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE,
+            param_overrides={'SubShape': [2, 1, 1]})
+        self.assertTrue(solver.lattice.has_sublattice)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("sublattice", str(cm.exception))
+
     def test_external_chi0q_init_rejected(self):
         # Build a spin-free chi0q with a plain ring solve, then feed it
         # back in as chi0q_init to a gate-on ring+ladder solver. The
@@ -2117,6 +2187,26 @@ class TestTransverseBondMaxShellsThreading(ApproxTestCase):
         self.assertTrue(np.array_equal(
             data["transverse_bond_delta_r"], topo_trunc.delta_r))
 
+    def test_max_shells_dropping_declared_nonzero_content_raises_via_solve(
+            self):
+        """Public-entry pin (review fix) of the guard
+        ``resolve_transverse_topology``'s own truncation logic already
+        enforces (directly exercised by
+        ``TestResolveTransverseTopology.
+        test_max_shells_dropping_a_declared_nonzero_shell_raises``): the
+        SAME fixture family as
+        ``test_positive_max_shells_truncates_the_resolved_topology``, but
+        with ``max_shells=0`` -- which would drop the R=+-1 shell that
+        carries a genuinely NONZERO declared CoulombInter coefficient
+        (V1=0.4) -- must raise through the full ``solve()`` public entry
+        point, not merely when ``resolve_transverse_topology`` is called
+        directly."""
+        solver, gi, out = _make_max_shells_fixture(max_shells=0)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("max_shells=0", str(cm.exception))
+        self.assertIn("declared nonzero", str(cm.exception))
+
 
 class TestTransverseBondResourcePreflight(ApproxTestCase):
     """``_transverse_bond_resource_preflight`` (spec "Phase W -- Budget
@@ -2176,6 +2266,23 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         finally:
             solver.lattice.nvol = orig_nvol
         self.assertTrue(any("op-count" in m for m in cm.output))
+
+    def test_preflight_rejection_precedes_any_solve_call(self):
+        """Call-order pin (review fix): the resource preflight must run
+        BEFORE the (expensive) longitudinal solve, so a cap rejection
+        fires before ``_solve_rpa`` is ever invoked -- not merely before
+        the bond-resolved solve, but before the plain ring solve too."""
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': 1e-12},
+            interactions=self.ACTIVE)
+        with mock.patch.object(
+                rpa_mod.RPA, "_solve_rpa",
+                wraps=rpa_mod.RPA._solve_rpa) as spy:
+            with self.assertRaises(ValueError) as cm:
+                solver.solve(gi, out)
+        self.assertIn("memory_cap_gb", str(cm.exception))
+        spy.assert_not_called()
 
 
 class TestTransverseBondGateOutput(ApproxTestCase):
@@ -2295,6 +2402,68 @@ class TestPairHopOffsiteWarning(ApproxTestCase):
         self.assertIn("(1, 0, 0)", msgs)
         self.assertIn("(-1, 0, 0)", msgs)
         self.assertIn("0.15", msgs)
+
+    def _build_variant(self, d, *, include_offsite):
+        """SAME fixture as ``_build`` (transfer/geometry unchanged), but
+        with the off-site PairHop pair present or absent, so the two
+        variants can be solved and diffed numerically."""
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
+                     "0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n1\n2\n1 1\n"
+                     " 1 0 0 1 1 0.5 0.0\n-1 0 0 1 1 0.5 0.0\n")
+        with open(os.path.join(d, "pairhop.dat"), "w") as f:
+            if include_offsite:
+                f.write("hdr\n1\n3\n1 1 1\n"
+                         " 0 0 0 1 1 0.2 0.0\n"
+                         " 1 0 0 1 1 0.15 0.0\n"
+                         "-1 0 0 1 1 0.15 0.0\n")
+            else:
+                f.write("hdr\n1\n1\n1\n 0 0 0 1 1 0.2 0.0\n")
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "PairHop": "pairhop.dat"}
+        param = {"T": 1.0, "mu": 0.0, "CellShape": [4, 1, 1],
+                 "SubShape": [1, 1, 1], "Nmat": 8}
+        info_mode = {"mode": "RPA", "param": param,
+                     "calc_scheme": "general", "calc_type": "ring"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+        green_info = io.get_param("green")
+        return solver, green_info
+
+    def test_default_path_offsite_pairhop_warns_but_output_is_unchanged(
+            self):
+        """Default-path regression pin (spec adjudication: the base
+        solver ALREADY silently discarded off-site PairHop before this
+        branch; the new warning is a log-only improvement that fires
+        unconditionally, on every path -- including with the
+        ``transverse_bond_channels`` gate entirely ABSENT). Proves both
+        halves at once: the warning fires, AND ``solve()`` succeeds with
+        numeric output BITWISE IDENTICAL to the same run with the
+        off-site PairHop declaration removed entirely -- i.e. the
+        discard semantics are exactly what they were before this branch,
+        only the logging changed."""
+        with tempfile.TemporaryDirectory() as d_off, \
+                tempfile.TemporaryDirectory() as d_on:
+            with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+                solver_off, gi_off = self._build_variant(
+                    d_off, include_offsite=True)
+            self.assertTrue(any(
+                "PairHop" in m and "off-site" in m for m in cm.output))
+            # gate absent (never set) == gate false
+            self.assertIs(solver_off.transverse_bond_channels, False)
+
+            solver_on, gi_on = self._build_variant(
+                d_on, include_offsite=False)
+
+            out_off = tempfile.mkdtemp(prefix="rpa_pairhop_off_")
+            out_on = tempfile.mkdtemp(prefix="rpa_pairhop_on_")
+            solver_off.solve(gi_off, out_off)
+            solver_on.solve(gi_on, out_on)
+
+            self.assertTrue(np.array_equal(gi_off["chiq"], gi_on["chiq"]))
 
     def test_onsite_only_pairhop_does_not_warn(self):
         with tempfile.TemporaryDirectory() as d:
