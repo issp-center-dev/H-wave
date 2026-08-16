@@ -150,11 +150,43 @@ class TestSpinConservingLimits(unittest.TestCase):
     density slots of the spinful chiq must converge to the spin-free
     (non-spin-orbital ring) result, and the spin-flip slots to the
     adjudicated ring+ladder transverse series. PairLift is the
-    documented exception on the transverse side: ring+ladder drops its
-    transverse content ('outside both used blocks'), while the
-    antisymmetrized spinful vertex keeps it -- exact diagonalization
-    sides with the spinful result (TestFirstOrderAgainstED), so only a
-    loose bound records the known ring+ladder gap here."""
+    documented exception on the transverse side: the spin-free
+    ring+ladder path's ham_pm table has -- correctly, and permanently --
+    a zero PairLift entry ('outside both used blocks',
+    RPA._assemble_transverse_vertex), while the antisymmetrized general
+    solve's own chiq keeps PairLift's content, mediated by the spin-flip
+    (t_so-like) hop -- exact diagonalization sides with the spinful
+    result (TestFirstOrderAgainstED).
+
+    AGREEMENT PIN (flipped from a loose bound, #110 campaign Phase S
+    Task 4): pre-Phase-S, ``RPA._build_transverse_channel``'s spinful
+    branch sliced chi0 BEFORE solving (issue #110), so there was no
+    reliable PRODUCTION ``chiq_pm`` for a genuinely spinful (so=True)
+    ring+ladder PairLift run to compare against directly -- this test
+    used to fall back to a loose bound (``1e-4 < dev < 2e-2``) on the gap
+    between the KNOWN-CORRECT general-chiq slice (unaffected by #110,
+    since it never used ``calc_type="ring+ladder"``) and the spin-free
+    ring+ladder ``chiq_pm`` (which structurally, and still correctly,
+    excludes PairLift's content entirely). Now that
+    ``RPA._extract_transverse_from_dressed`` (Phase S) computes the
+    spinful ring+ladder ``chiq_pm`` correctly, that same general-chiq
+    slice and PRODUCTION's own spinful ``chiq_pm`` are the IDENTICAL
+    quantity (both are ``chi_dressed[..., :norb, norb:, :norb, norb:]``
+    on the SAME antisymmetrized general solve -- ``calc_type="ring+
+    ladder"`` adds the ladder/``chiq_pm`` output on top of the
+    longitudinal solve, without altering it), so they must now agree
+    EXACTLY rather than merely within a bound.
+    DERIVATION-RECORDED EXPECTED-VALUE CHANGE (measured, this campaign):
+    at eps=1e-4, ``max|pm1 - production_chiq_pm| == 0.0`` (bit-for-bit),
+    replacing the old loose-bound comparison entirely (the spin-free
+    ``chiq_pm`` reference the old bound used remains PairLift-blind by
+    construction -- an unrelated, permanent structural fact about
+    ring+ladder's ham_pm table, not a #110 symptom, and is not reused for
+    the new assertion so the two are not conflated -- see the
+    ``tests/test_spinful_transverse_ed.py::TestTask4GranuleCampaign``
+    docstring for the independent TotalNED confirmation that PairLift's
+    transverse content is genuinely nonzero once a Sz-breaking one-body
+    term is present, matching the finding here)."""
 
     LX = 4
     NORB = 2
@@ -264,15 +296,23 @@ class TestSpinConservingLimits(unittest.TestCase):
                 # diagonalization; a conjugation here would only hold
                 # for real declarations)
                 pm1 = r1[:, up, dn, up, dn]
-                dev = np.abs(pm1 - pm_ref).max()
                 if tname == "PairLift":
-                    # ring+ladder drops PairLift's transverse vertex
-                    # ('outside both used blocks'); the exact-
-                    # diagonalization oracle sides with the spinful
-                    # result, so only the known gap is bounded here
-                    self.assertLess(dev, 2e-2)
-                    self.assertGreater(dev, 1e-4)
+                    # AGREEMENT PIN (see class docstring for the flip's
+                    # derivation): production's OWN spinful ring+ladder
+                    # chiq_pm must now equal pm1 exactly, not merely
+                    # within the old loose bound against the (still
+                    # correctly PairLift-blind) spin-free reference.
+                    s2, g2 = self._run(True, self.EPS, tname,
+                                       calc_type="ring+ladder")
+                    self.assertEqual(s2.spin_mode, "spinful")
+                    pm_prod = np.asarray(g2["chiq_pm"])
+                    nfp2 = pm_prod.shape[0]
+                    pm_prod = pm_prod.reshape(
+                        nfp2, LX, NORB, NORB, NORB, NORB)[nfp2 // 2]
+                    dev_prod = np.abs(pm1 - pm_prod).max()
+                    self.assertLess(dev_prod, 1e-10, dev_prod)
                 else:
+                    dev = np.abs(pm1 - pm_ref).max()
                     self.assertLess(dev, 1e-7)
 
 

@@ -48,7 +48,11 @@ import hwave.solver.rpa as rpa_mod
 from tests import ed_oracle_util
 from tests.approx_util import assert_approx_array
 from tests.test_bond_transverse_ed import (CAMPAIGN_V1, _hf_h1_from_terms_at,
-                                            _dense_bond_correlator_transverse)
+                                            _dense_bond_correlator_transverse,
+                                            _terms_exchange_offsite,
+                                            _terms_ising_hund,
+                                            _terms_pairlift_offsite,
+                                            _w0_direction_set_sv_gate)
 
 
 def _h1_with_spin_orbit(fx, t_so):
@@ -1220,6 +1224,658 @@ class TestGateS2ProductionRouting(unittest.TestCase):
             "must be BIT FOR BIT identical on the shared S0 fixture -- "
             "max|diff|={:.3e}".format(
                 float(np.abs(chiq_pm_prod - chiq_pm_ref).max())))
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (Phase S): the granule campaign -- first-order adjudication of
+# PRODUCTION solve()'s chiq_pm (the anti-vacuity rule -- every granule below
+# drives the public solve() entry point exactly as Gate S2's production leg
+# does, never a hand-assembled chi_dressed) against TotalNED, on the t_so
+# fixture FAMILY (a norb=1 variant, reusing Task 1's own Sz-breaking
+# construction contract fixture verbatim, and a norb=2 variant, reusing
+# Gate S0's own (L, HOP, EPS, LSO, T, MU) verbatim), for EACH on-site
+# interaction type with transverse content (spec: "The verified on-site
+# algebra", H2's own 7-type table), plus PASS-ZERO controls where a type's
+# transverse content genuinely vanishes on this fixture class -- DERIVED
+# empirically here, never assumed (PairLift in particular: Sz-breaking, so
+# H2's Sz-conserving PASS-ZERO finding is NOT automatically valid once t_so
+# lifts the selection rule that produced it -- see
+# TestTask4GranuleCampaign's class docstring for the measured verdict).
+# ---------------------------------------------------------------------------
+
+
+def _s4_write_onsite_interaction(d, fname, norb, entries):
+    """Write a generic on-site (R=0) two-body interaction declaration file
+    in the k-space Wannier90-like format ``QLMSkInput`` reads -- the SAME
+    layout ``_s0_make_solver``/``_s1_make_solver`` already write for
+    CoulombIntra/PairHop (header line, norb, "1", one nr-flag, then
+    "Rx Ry Rz o1 o2 val_re val_im" rows), generalized to an arbitrary list
+    of ``(o1_1based, o2_1based, complex_value)`` entries so ONE writer
+    serves every on-site interaction TYPE -- confirmed this is the shared
+    format across types by direct inspection of
+    ``tests/rpa/input_2orb/{onsite_inter.dat,onsite_cplx_hermitian.dat,
+    coulombintra.dat}`` (CoulombInter/Exchange/CoulombIntra all use it) and
+    ``tests/test_rpa_ladder.py``'s own reuse of one generic
+    ``coulombinter.dat`` file under both the ``'Hund'`` and ``'PairLift'``
+    interaction-dict keys."""
+    with open(os.path.join(d, fname), "w") as f:
+        f.write("hdr\n%d\n1\n1\n" % norb)
+        for (o1, o2, val) in entries:
+            f.write(" 0 0 0 %d %d %.12f %.12f\n"
+                     % (o1, o2, val.real, val.imag))
+
+
+def _s4_make_solver(L, norb, hop, eps, lso, T, mu, kind, v, nmat, phase=1.0):
+    """Build a spinful RPA solver fixture (``enable_spin_orbital=True``,
+    ``calc_scheme="general"``, ``calc_type="ring+ladder"``, transverse bond
+    gate absent/OFF -- the plain ladder path) declaring EXACTLY ONE on-site
+    interaction type (``kind``) at coupling ``v`` (times ``phase`` for
+    PairHop, the one complex-capable type here), on a FIXED on-site
+    spin-orbit hop ``lso`` present on every orbital (the t_so fixture
+    family's own defining feature) plus the given complex hopping/on-site
+    energies -- generalizing ``_s0_make_solver``/``_s1_make_solver``'s
+    construction pattern to an arbitrary ``(L, norb)`` and a SINGLE
+    declared type (rather than S0's fixed CoulombIntra+PairHop pair).
+
+    The interaction file is ALWAYS written (even at ``v == 0.0``, with
+    every entry valued exactly ``0.0``) -- matching ``_s0_make_solver``'s
+    own pattern, and REQUIRED: ``RPA.calc_chiq`` is
+    ``self.ham_info.has_interaction()``, a presence check on the declared
+    interaction KEYS, not a check on their VALUES, so omitting the file
+    entirely at v=0 leaves ``calc_chiq`` False and ``solve()`` never
+    populates ``chiq``/``chiq_pm`` at all (measured directly while
+    constructing this fixture: ``green_info`` held only
+    ``{"chi0q", "chi0q_freq_meta"}`` with the file omitted). Since the
+    ASSEMBLED vertex is all-zero regardless of which interaction TYPE key
+    happens to hold the zero-valued declaration, the v=0 solve is still
+    fully INDEPENDENT of ``kind`` -- ``_s4_free_chiq_pm`` below exploits
+    this to compute it once and share it across every type (the
+    runtime-budget optimization this module's docstring's "keep the
+    module under ~10 min total" constraint needs).
+
+    Does not call ``solve()``; the caller does."""
+    d = tempfile.mkdtemp(prefix="s4_gate_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n%d\n" % (2 * norb))
+        for _ in range(2 * norb):
+            f.write("0.0 0.0 0.0\n")
+
+    def sidx(o, s):
+        return 2 * o + s + 1
+
+    lines = []
+    for (a, b), t in hop.items():
+        for s in range(2):
+            lines.append((1, 0, 0, sidx(a, s), sidx(b, s), t))
+            lines.append((-1, 0, 0, sidx(a, s), sidx(b, s),
+                          np.conj(hop[(b, a)])))
+    for o, e in enumerate(eps):
+        for s in range(2):
+            lines.append((0, 0, 0, sidx(o, s), sidx(o, s), complex(e)))
+    for o in range(norb):
+        lines.append((0, 0, 0, sidx(o, 0), sidx(o, 1), lso))
+        lines.append((0, 0, 0, sidx(o, 1), sidx(o, 0), np.conj(lso)))
+
+    nr = len(set((rx, ry, rz) for (rx, ry, rz, i, j, val) in lines))
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n%d\n%d\n%s\n" % (2 * norb, nr, " ".join("1" * nr)))
+        for (rx, ry, rz, i, j, val) in lines:
+            f.write(" %d %d %d %d %d %.12f %.12f\n"
+                     % (rx, ry, rz, i, j, val.real, val.imag))
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat"}
+
+    if kind == "CoulombIntra":
+        entries = [(1, 1, complex(v))]
+    elif kind in ("CoulombInter", "Exchange", "Hund", "PairLift"):
+        entries = [(1, 2, complex(v)), (2, 1, complex(v))]
+    elif kind == "PairHop":
+        cv = v * phase
+        entries = [(1, 2, cv), (2, 1, np.conj(cv))]
+    else:
+        raise ValueError(kind)
+    _s4_write_onsite_interaction(d, "onsite.dat", norb, entries)
+    inter[kind] = "onsite.dat"
+
+    param = {"T": T, "mu": mu, "CellShape": [L, 1, 1], "SubShape": [1, 1, 1],
+              "Nmat": nmat, "coeff_tail": 1.0}
+    info_mode = {"mode": "RPA", "param": param, "enable_spin_orbital": True,
+                  "calc_scheme": "general", "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    return solver, green_info
+
+
+def _s4_terms_of_v(fx, kind, v, phase=1.0):
+    """(p, q, r, s, coeff) quartic terms for ONE on-site type at coupling
+    ``v``, matching ``_s4_make_solver``'s file-declared convention exactly:
+
+    - CoulombIntra/CoulombInter: ``canonical_density_terms`` (the SAME
+      builder Task 1's own calibration gate uses), on orbital 0 alone
+      (CoulombIntra) or the (0, 1) pair (CoulombInter, all four spin
+      pairings, matching ``oracle._terms_for``'s on-site CoulombInter
+      branch and the shared ``onsite_inter.dat``-style file).
+    - Exchange: ``_terms_exchange_offsite(fx, 0, 1, R=0, v)`` (real ``v``)
+      -- cross-checked algebraically against ``oracle._terms_for``'s
+      on-site Exchange branch: for REAL ``v`` the two are the IDENTICAL
+      operator (the two orderings of the (a,b) declaration commute
+      because they act on disjoint mode sets, so ``conj(v) == v``
+      collapses the only difference between the two builders).
+    - Hund: ``_terms_ising_hund`` (H2's own on-site Hund builder, already
+      ED-validated at the Hamiltonian level by
+      ``test_ising_hund_term_builders_match_dense_hamiltonian``).
+    - PairLift: ``_terms_pairlift_offsite(fx, 0, 1, R=0, v)`` (real ``v``,
+      same disjoint-mode-set argument as Exchange above collapses its
+      ``conj(v)`` partner term to ``oracle._terms_for``'s on-site PairLift
+      convention).
+    - PairHop: ``_s0_pairhop_terms`` (already defined above for Gate S0,
+      genuinely complex-capable via ``phase``).
+    """
+    if kind == "CoulombIntra":
+        return ed_oracle_util.canonical_density_terms(fx, [(0, 0, 0, v)])
+    if kind == "CoulombInter":
+        return ed_oracle_util.canonical_density_terms(fx, [(0, 1, 0, v)])
+    if kind == "Exchange":
+        return _terms_exchange_offsite(fx, 0, 1, 0, v)
+    if kind == "Hund":
+        return _terms_ising_hund(fx, "Hund", v)
+    if kind == "PairLift":
+        return _terms_pairlift_offsite(fx, 0, 1, 0, v)
+    if kind == "PairHop":
+        return _s0_pairhop_terms(fx, v, phase)
+    raise ValueError(kind)
+
+
+# --- norb=1 variant: reuses Task 1's OWN Sz-breaking construction-contract
+# fixture verbatim (L=2, norb=1, t=0.4-0.1j, eps=0.05, T=0.5, mu=0.1,
+# t_so=0.3+0.05j -- already proven to carry a measurably nonzero mixed-spin
+# signal by TestTotalNEDSzBreakingDiscrimination). The only on-site type
+# that needs just ONE orbital is CoulombIntra (the rest all name an orbital
+# PAIR (0, 1) by construction).
+_S4_1_L, _S4_1_NORB = 2, 1
+_S4_1_T, _S4_1_MU = 0.5, 0.1
+_S4_1_HOP = {(0, 0): 0.4 - 0.1j}
+_S4_1_EPS = (0.05,)
+_S4_1_LSO = 0.3 + 0.05j
+
+# --- norb=2 variant: reuses Gate S0's OWN (L, HOP, EPS, LSO, T, MU)
+# verbatim (already proven, by Gate S0's own PASS, to carry a genuinely
+# nonzero, correctly-extracted mixed-spin transverse signal under
+# production's post-Phase-S routing) for CoulombInter (inter-orbital),
+# Exchange, PairHop (complex, reusing Gate S0's own PairHop phase), and the
+# Hund/PairLift controls.
+_S4_2_L, _S4_2_NORB = _S0_L, _S0_NORB
+_S4_2_T, _S4_2_MU = _S0_T, _S0_MU
+_S4_2_HOP, _S4_2_EPS, _S4_2_LSO = _S0_HOP, _S0_EPS, _S0_LSO
+_S4_2_PAIRHOP_PHASE = _S0_PAIRHOP_PHASE
+
+# A deliberate runtime-budget reduction from Gate S0's Nmat=(1024, 2048):
+# the granule campaign runs SIX independent type-isolated fixtures (Gate S0
+# ran ONE), so each granule's own Nmat pair is lowered to (512, 1024).
+# Measured margins (recorded per-granule in TestTask4GranuleCampaign's
+# docstring) confirm this still clears the 100x-signal-over-tol power floor
+# by a wide margin for every PASS granule -- the reduction costs precision
+# headroom, not adjudication validity.
+_S4_NMAT1, _S4_NMAT2 = 512, 1024
+
+# The coupling SCALE multiplying the Richardson finite-difference variable
+# ``v`` (which itself ranges over {0, CAMPAIGN_V1/2, CAMPAIGN_V1,
+# 2*CAMPAIGN_V1}, the campaign-wide small-step convention) -- an O(1)
+# prefactor so the declared file/ED coupling sits at a physically
+# reasonable scale (matching Gate S0's own ``_S0_U_UNIT``-style
+# construction), kept UNIFORM across every type in this campaign for a
+# single, auditable scale.
+_S4_UNIT = 0.3
+
+
+def _s4_scaled(v):
+    return v * _S4_UNIT
+
+
+@functools.lru_cache(maxsize=None)
+def _s4_free_chiq_pm(variant, nmat):
+    """The v=0 (no interaction declared AT ALL) production ``chiq_pm``,
+    SHARED across every on-site TYPE granule on the given fixture variant
+    (``"norb1"``/``"norb2"``) -- the free background depends only on
+    ``(L, hop, eps, t_so)``, never on which interaction type is being
+    probed (``_s4_make_solver`` writes no interaction file at v=0
+    regardless of ``kind``), so this is computed ONCE per (variant, nmat)
+    rather than once per type, the runtime-budget optimization this
+    module's docstring names."""
+    if variant == "norb1":
+        solver, green_info = _s4_make_solver(
+            _S4_1_L, _S4_1_NORB, _S4_1_HOP, _S4_1_EPS, _S4_1_LSO,
+            _S4_1_T, _S4_1_MU, "CoulombIntra", 0.0, nmat)
+    else:
+        solver, green_info = _s4_make_solver(
+            _S4_2_L, _S4_2_NORB, _S4_2_HOP, _S4_2_EPS, _S4_2_LSO,
+            _S4_2_T, _S4_2_MU, "CoulombInter", 0.0, nmat)
+    solver.solve(green_info, tempfile.mkdtemp(prefix="s4_gate_out_"))
+    chiq_pm = np.asarray(green_info["chiq_pm"])
+    return chiq_pm[chiq_pm.shape[0] // 2]
+
+
+@functools.lru_cache(maxsize=None)
+def _s4_type_chiq_pm(variant, kind, v, nmat, phase):
+    """Runs the PRODUCTION ``solve()`` entry point (post-Phase-S) for one
+    (variant, kind, coupling, Nmat) combination and returns the static
+    (Omega=0) slice of ``green_info["chiq_pm"]`` -- the anti-vacuity rule:
+    every granule below drives this, never a hand-assembled chi_dressed."""
+    if variant == "norb1":
+        solver, green_info = _s4_make_solver(
+            _S4_1_L, _S4_1_NORB, _S4_1_HOP, _S4_1_EPS, _S4_1_LSO,
+            _S4_1_T, _S4_1_MU, kind, v, nmat, phase)
+    else:
+        solver, green_info = _s4_make_solver(
+            _S4_2_L, _S4_2_NORB, _S4_2_HOP, _S4_2_EPS, _S4_2_LSO,
+            _S4_2_T, _S4_2_MU, kind, v, nmat, phase)
+    solver.solve(green_info, tempfile.mkdtemp(prefix="s4_gate_out_"))
+    chiq_pm = np.asarray(green_info["chiq_pm"])
+    return chiq_pm[chiq_pm.shape[0] // 2]
+
+
+def _s4_pred_at_nmat(variant, kind, v1, nmat, phase=1.0):
+    """Richardson-extrapolated d(chiq_pm)/dv at v -> 0 through PRODUCTION
+    solve() (the solver-side prediction is NOT linear in the declared
+    coupling -- the RPA equation resums it -- exactly Gate S0's own
+    ``_s0_pred_at_nmat`` reasoning), sharing the v=0 point across every
+    type via ``_s4_free_chiq_pm`` (the runtime-budget optimization)."""
+    f0 = _s4_free_chiq_pm(variant, nmat)
+    f1 = _s4_type_chiq_pm(variant, kind, _s4_scaled(v1), nmat, phase)
+    f2 = _s4_type_chiq_pm(variant, kind, _s4_scaled(2 * v1), nmat, phase)
+    return 2 * (f1 - f0) / v1 - (f2 - f0) / (2 * v1)
+
+
+@functools.lru_cache(maxsize=1)
+def _s4_norb1_fixture():
+    fx = ed_oracle_util.EDFixture(L=_S4_1_L, norb=_S4_1_NORB, t=_S4_1_HOP,
+                                    eps=_S4_1_EPS, T=_S4_1_T, mu=_S4_1_MU)
+    return fx, _h1_with_spin_orbit(fx, _S4_1_LSO)
+
+
+@functools.lru_cache(maxsize=1)
+def _s4_norb2_fixture():
+    fx = ed_oracle_util.EDFixture(L=_S4_2_L, norb=_S4_2_NORB, t=_S4_2_HOP,
+                                    eps=_S4_2_EPS, T=_S4_2_T, mu=_S4_2_MU)
+    return fx, _h1_with_spin_orbit(fx, _S4_2_LSO)
+
+
+def _s4_ed_derivative(variant, kind, v1, phase=1.0):
+    """(D_v1, D_vhalf): the Richardson pair of TotalNED's full-minus-HF-
+    only ``bond_correlator_transverse`` derivative for ONE on-site type,
+    on the given fixture variant, frame-mapped via ``_s0_frame_map`` --
+    REUSED VERBATIM (interfaces: "REUSE it verbatim"; the map is pure
+    index/axis algebra -- q-reversal and the Kubo pair-slot swap -- with
+    no dependence on the particular (L, norb) it is applied to)."""
+    fx, h1_so = (_s4_norb1_fixture() if variant == "norb1"
+                 else _s4_norb2_fixture())
+    norb = _S4_1_NORB if variant == "norb1" else _S4_2_NORB
+    # bond_correlator_transverse's norb==1 shorthand takes bare (R,) --
+    # TotalNED._channel_orbitals rejects the (R, a, b) triple there (it
+    # unpacks assuming exactly one element).
+    channels = ([(0,)] if norb == 1
+                else [(0, a, b) for a in range(norb) for b in range(norb)])
+
+    @functools.lru_cache(maxsize=None)
+    def X_of_v(v):
+        terms = _s4_terms_of_v(fx, kind, _s4_scaled(v), phase)
+        full = ed_oracle_util.TotalNED(
+            fx, terms=terms, h1=h1_so).bond_correlator_transverse(channels)
+        hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_so)
+        hf_only = ed_oracle_util.TotalNED(
+            fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
+        return (full - hf_only).reshape(fx.L, norb, norb, norb, norb)
+
+    D_v1 = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1))
+    D_vhalf = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1 / 2))
+    return D_v1, D_vhalf
+
+
+def _s4_adjudicate(variant, kind, label, phase=1.0, v1=CAMPAIGN_V1,
+                    zero_mask_all=False):
+    """One granule: production ``chiq_pm`` (Richardson, two Nmat) vs
+    ``TotalNED`` (Richardson, two FD steps), via ``adjudicate_granule``.
+    ``zero_mask_all=True`` marks the ENTIRE grid as a zero cell (the H2/
+    Task6 PASS-ZERO-control pattern -- used only once a type's content has
+    been independently MEASURED as zero, never assumed a priori)."""
+    D_ed_v1, D_ed_vhalf = _s4_ed_derivative(variant, kind, v1, phase)
+    D_pred_1 = _s4_pred_at_nmat(variant, kind, v1, _S4_NMAT1, phase)
+    D_pred_2 = _s4_pred_at_nmat(variant, kind, v1, _S4_NMAT2, phase)
+    zero_mask = np.full(D_pred_2.shape, zero_mask_all, dtype=bool)
+    return ed_oracle_util.adjudicate_granule(
+        D_ed_v1, D_ed_vhalf, D_pred_1, D_pred_2, zero_mask, label)
+
+
+class TestTask4GranuleCampaign(unittest.TestCase):
+    """Task 4, Step 1: the spin-orbit granule campaign. On the t_so
+    fixture FAMILY (a norb=1 variant, Task 1's own Sz-breaking
+    construction-contract fixture verbatim; a norb=2 variant, Gate S0's
+    own (L, HOP, EPS, LSO, T, MU) verbatim), first-order adjudication of
+    PRODUCTION ``solve()``'s ``chiq_pm`` against ``TotalNED``, per on-site
+    interaction type, via ``adjudicate_granule`` (``_s4_adjudicate``,
+    which drives the anti-vacuity rule: every granule below runs the
+    public ``solve()`` entry point, never a hand-assembled dressed
+    tensor -- mirroring Gate S2's own production leg).
+
+    **MEASURED VERDICT, all SIX types PASS** (delta_rich/delta_nmat/tol/
+    max_signal, this module's own measurements):
+
+        norb1/CoulombIntra  delta_rich=1.81e-08 delta_nmat=1.28e-07
+            tol=1.28e-06 max_signal=4.87e-02  (margin ~3.8e4 x tol)
+        norb2/CoulombInter  delta_rich=1.16e-07 delta_nmat=1.47e-07
+            tol=1.47e-06 max_signal=3.95e-02  (margin ~2.7e4 x tol)
+        norb2/Exchange      delta_rich=8.80e-09 delta_nmat=1.38e-07
+            tol=1.38e-06 max_signal=3.35e-02  (margin ~2.4e4 x tol)
+        norb2/PairHop       delta_rich=9.10e-09 delta_nmat=1.36e-07
+            tol=1.36e-06 max_signal=3.33e-02  (margin ~2.4e4 x tol)
+        norb2/Hund          delta_rich=1.62e-08 delta_nmat=5.56e-10
+            tol=1.62e-07 max_signal=1.44e-04  (margin ~8.9e2 x tol)
+        norb2/PairLift      delta_rich=1.08e-09 delta_nmat=2.82e-09
+            tol=2.82e-08 max_signal=1.32e-03  (margin ~4.7e4 x tol)
+
+    **FINDING (spec amendment request -- the brief's central "derive
+    first" question, PLUS one the brief did not anticipate)**: the brief
+    named PairLift as needing derivation ("an Sz-breaking quartic that
+    TotalNED CAN represent, unlike SectorED... derive first whether its
+    transverse first-order content is genuinely zero... or nonzero") and
+    named Hund as an ordinary PASS-ZERO control alongside it. MEASURED:
+    BOTH types are genuinely, measurably NONZERO on this Sz-breaking
+    fixture -- production correctly reproduces both (clean PASS, not
+    PASS-ZERO, for either). Hund is NOT a PASS-ZERO control here.
+
+    This is not a production bug -- see the on-site table's own home,
+    ``RPA._assemble_transverse_vertex`` (src/hwave/solver/rpa.py), whose
+    docstring proves ``ham_pm`` (the SEPARATE, narrower vertex the
+    Sz-conserving/reduced ladder path -- ``_build_transverse_channel``'s
+    spin-free/spin-diag branches -- actually uses) has Hund's and
+    PairLift's entries STRUCTURALLY zero regardless of any one-body
+    field: Hund's declared coefficient lives entirely in the "uuuu,
+    dddd" blocks of the raw interaction tensor and PairLift's in "uddu,
+    duud", NEITHER of which ``_assemble_transverse_vertex`` ever reads
+    (it draws only on "uudd, dduu" and "udud, dudu" -- see that method's
+    own "Measured block occupancy" table). That argument is about
+    ``ham_pm`` alone and says nothing about
+    ``_extract_transverse_from_dressed``'s DIFFERENT slice of the FULL
+    RPA-DRESSED general tensor: once ``chi0`` itself carries genuine
+    cross-spin content (t_so's own doing, already the basis of Gate
+    S1/S2), the RPA matrix inversion mixes ALL vertex blocks into the
+    sliced output, including Hund's/PairLift's -- there is no remaining
+    structural reason for either to stay zero once Sz is broken, and the
+    measurement above confirms it is not.
+
+    **THE ISOLATION CONTROL** (``TestTask4TsoZeroControl`` below): re-running
+    BOTH Hund and PairLift on the IDENTICAL norb=2 fixture with ``t_so``
+    set to EXACTLY ``0.0`` reproduces H2's/production's own established
+    on-site table value of PRECISELY zero (production ``chiq_pm``
+    BIT-IDENTICAL 0.0 across both Nmat resolutions, ED-side Richardson
+    derivative at the noise floor, ~5-6e-09 -- matching H2's own PairLift
+    PASS-ZERO magnitude, ~1.3e-09, to within an order of magnitude) --
+    isolating ``t_so`` as the SOLE responsible mechanism, not a
+    construction defect in this campaign's own fixture/term builders.
+
+    **SPEC AMENDMENT REQUESTED** (recorded here, adjudicated by a human
+    coordinator, not self-applied): the spec's on-site table (H2,
+    ``docs/superpowers/specs/2026-08-15-bond-transverse-design.md``,
+    "The verified on-site algebra") and ``_assemble_transverse_vertex``'s
+    own docstring table should note explicitly that "Hund/PairLift: 0" is
+    an Sz-CONSERVING-only statement about ``ham_pm`` (the narrow ladder
+    vertex), not a statement about the spinful ``_extract_transverse_
+    from_dressed`` path once a genuine Sz-breaking one-body term (t_so)
+    is present -- where BOTH types carry real, production-correctly-
+    reproduced transverse content instead.
+
+    Fixture provenance: norb=1 -- ``TestTotalNEDSzBreakingDiscrimination``'s
+    own fixture (L=2, t=0.4-0.1j, eps=0.05, T=0.5, mu=0.1,
+    t_so=0.3+0.05j). norb=2 -- Gate S0's own fixture (L=3, complex HOP,
+    EPS=(0.10,-0.05), T=0.5, mu=0.2, t_so=0.3+0.05j). Coupling: the
+    Richardson finite-difference variable v in {0, CAMPAIGN_V1/2,
+    CAMPAIGN_V1, 2*CAMPAIGN_V1} scaled by ``_S4_UNIT=0.3`` before being
+    declared (``_s4_scaled``). Nmat=(512, 1024) -- a deliberate reduction
+    from Gate S0's (1024, 2048) for the runtime budget (six independent
+    fixtures here vs Gate S0's one); every PASS margin above (all >= 887x
+    tol) confirms this reduction did not cost adjudication validity.
+    PairHop uses Gate S0's own genuinely complex phase
+    (``_S4_2_PAIRHOP_PHASE = exp(0.4j)``); every other type uses a real
+    coupling (Exchange/PairLift real-``v`` collapse to
+    ``oracle._terms_for``'s on-site convention exactly, per
+    ``_s4_terms_of_v``'s own docstring).
+    """
+
+    def test_norb1_coulombintra(self):
+        rec = _s4_adjudicate("norb1", "CoulombIntra",
+                              "task4/norb1/CoulombIntra")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_norb2_coulombinter(self):
+        rec = _s4_adjudicate("norb2", "CoulombInter",
+                              "task4/norb2/CoulombInter")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_norb2_exchange(self):
+        rec = _s4_adjudicate("norb2", "Exchange", "task4/norb2/Exchange")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_norb2_pairhop_complex(self):
+        rec = _s4_adjudicate("norb2", "PairHop", "task4/norb2/PairHop",
+                              phase=_S4_2_PAIRHOP_PHASE)
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_norb2_hund(self):
+        rec = _s4_adjudicate("norb2", "Hund", "task4/norb2/Hund")
+        self.assertEqual(
+            rec["status"], "PASS", "measured status={} -- see class "
+            "docstring's FINDING: Hund is NOT a PASS-ZERO control on the "
+            "Sz-breaking t_so fixture (record={})".format(
+                rec["status"], rec))
+
+    def test_norb2_pairlift(self):
+        rec = _s4_adjudicate("norb2", "PairLift", "task4/norb2/PairLift")
+        self.assertEqual(
+            rec["status"], "PASS", "measured status={} -- see class "
+            "docstring's FINDING (the brief's own 'derive first' "
+            "question): PairLift is NOT a PASS-ZERO control on the "
+            "Sz-breaking t_so fixture (record={})".format(
+                rec["status"], rec))
+
+
+# ---------------------------------------------------------------------------
+# The isolation control: re-run Hund/PairLift on the IDENTICAL norb=2
+# fixture with t_so forced to EXACTLY 0.0, confirming their PASS-ZERO
+# behaviour reproduces the H2/production-established on-site table value
+# there -- pinning t_so as the mechanism responsible for
+# TestTask4GranuleCampaign's nonzero measurement, not a defect in this
+# campaign's own term/file-writing construction. A standalone (non-cached-
+# shared) construction, deliberately NOT threading through
+# _s4_norb2_fixture/_s4_free_chiq_pm/_s4_type_chiq_pm (which hardcode the
+# module's own t_so): _s4_make_solver already accepts lso as an explicit
+# argument, so this reuses it directly with lso=0.0 rather than mutating
+# any shared module state.
+# ---------------------------------------------------------------------------
+
+
+def _s4_tso0_ed_derivative(kind, v1):
+    fx = ed_oracle_util.EDFixture(L=_S4_2_L, norb=_S4_2_NORB, t=_S4_2_HOP,
+                                    eps=_S4_2_EPS, T=_S4_2_T, mu=_S4_2_MU)
+    channels = [(0, a, b) for a in range(_S4_2_NORB)
+                for b in range(_S4_2_NORB)]
+
+    @functools.lru_cache(maxsize=None)
+    def X_of_v(v):
+        terms = _s4_terms_of_v(fx, kind, _s4_scaled(v))
+        full = ed_oracle_util.TotalNED(
+            fx, terms=terms).bond_correlator_transverse(channels)
+        hf_h1 = _hf_h1_from_terms_at(fx, terms, fx.build_h1())
+        hf_only = ed_oracle_util.TotalNED(
+            fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
+        return (full - hf_only).reshape(fx.L, _S4_2_NORB, _S4_2_NORB,
+                                         _S4_2_NORB, _S4_2_NORB)
+
+    D_v1 = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1))
+    D_vhalf = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1 / 2))
+    return D_v1, D_vhalf
+
+
+@functools.lru_cache(maxsize=None)
+def _s4_tso0_chiq_pm(kind, v, nmat):
+    solver, green_info = _s4_make_solver(
+        _S4_2_L, _S4_2_NORB, _S4_2_HOP, _S4_2_EPS, 0.0 + 0.0j,
+        _S4_2_T, _S4_2_MU, kind, v, nmat)
+    solver.solve(green_info, tempfile.mkdtemp(prefix="s4_gate_out_"))
+    chiq_pm = np.asarray(green_info["chiq_pm"])
+    return chiq_pm[chiq_pm.shape[0] // 2]
+
+
+def _s4_tso0_pred_at_nmat(kind, v1, nmat):
+    f0 = _s4_tso0_chiq_pm(kind, 0.0, nmat)
+    f1 = _s4_tso0_chiq_pm(kind, _s4_scaled(v1), nmat)
+    f2 = _s4_tso0_chiq_pm(kind, _s4_scaled(2 * v1), nmat)
+    return 2 * (f1 - f0) / v1 - (f2 - f0) / (2 * v1)
+
+
+def _s4_tso0_adjudicate(kind, label, v1=CAMPAIGN_V1):
+    D_ed_v1, D_ed_vhalf = _s4_tso0_ed_derivative(kind, v1)
+    D_pred_1 = _s4_tso0_pred_at_nmat(kind, v1, _S4_NMAT1)
+    D_pred_2 = _s4_tso0_pred_at_nmat(kind, v1, _S4_NMAT2)
+    zero_mask = np.ones(D_pred_2.shape, dtype=bool)
+    return ed_oracle_util.adjudicate_granule(
+        D_ed_v1, D_ed_vhalf, D_pred_1, D_pred_2, zero_mask, label)
+
+
+class TestTask4TsoZeroControl(unittest.TestCase):
+    """The isolation control for ``TestTask4GranuleCampaign``'s Hund/
+    PairLift finding: on the IDENTICAL norb=2 fixture with ``t_so`` set to
+    EXACTLY ``0.0`` (every other parameter unchanged), BOTH types return
+    to PASS-ZERO -- production ``chiq_pm`` measured BIT-IDENTICAL ``0.0``
+    at both Nmat resolutions (``delta_nmat=0.0`` exactly), ED-side
+    Richardson derivative at the noise floor:
+
+        Hund      delta_rich=1.64e-08  ED max|D_vhalf|=5.48e-09
+        PairLift  delta_rich=6.44e-09  ED max|D_vhalf|=5.67e-09
+
+    matching H2's own PairLift PASS-ZERO measurement (``ED derivative
+    magnitude ~1.3e-09``, ``test_bond_transverse_ed.py``) to within an
+    order of magnitude, and reproducing ``_assemble_transverse_vertex``'s
+    own documented table entries ("Hund J: 0", "PairLift J: 0") exactly.
+    This isolates ``t_so`` as the SOLE mechanism responsible for
+    ``TestTask4GranuleCampaign``'s nonzero measurement -- not a defect in
+    this campaign's own fixture/term-builder construction."""
+
+    def test_hund_returns_to_pass_zero_at_tso_zero(self):
+        rec = _s4_tso0_adjudicate("Hund", "task4/control/tso0/Hund")
+        self.assertEqual(rec["status"], "PASS-ZERO", rec)
+
+    def test_pairlift_returns_to_pass_zero_at_tso_zero(self):
+        rec = _s4_tso0_adjudicate("PairLift", "task4/control/tso0/PairLift")
+        self.assertEqual(rec["status"], "PASS-ZERO", rec)
+
+
+class TestTask4SVDSensitivityGate(unittest.TestCase):
+    """Task 4, Step 2: the SVD sensitivity gate across each fixture's
+    direction set (the #151 replica pattern, ``_w0_direction_set_sv_gate``
+    -- imported from ``test_bond_transverse_ed.py`` rather than
+    duplicated, since it is a plain, campaign-label-free utility).
+
+    **norb=2 fixture -- SPLIT into two direction-set gates, a recorded
+    rank argument (the "exclude/group" decision Step 2 asks for)**: a
+    first construction combined all FIVE norb=2 types (CoulombInter,
+    Exchange, PairHop, Hund, PairLift) into ONE 5-column gate and measured
+    ``sv_ratio=1.96e-03`` -- technically clearing ``SENS_SV_FLOOR=1e-03``,
+    but only by a factor of ~2, an uncomfortably thin margin. The cause is
+    NOT a near-degenerate (linearly dependent) direction pair -- the five
+    types occupy almost disjoint (a,c,b,d) table cells by construction, so
+    they are NOT collinear -- but a raw SCALE mismatch of ~2-3 orders of
+    magnitude between the three "directly active" on-site types
+    (CoulombInter/Exchange/PairHop, max_signal ~0.03-0.04) and the two
+    "t_so-MEDIATED" types this task's own finding surfaced (Hund/
+    PairLift, max_signal ~1e-4 to 1e-3): ``sensitivity_rank``/
+    ``_w0_direction_set_sv_gate`` never normalize columns, so a scale
+    imbalance this large squeezes the smallest singular value even when
+    every column is genuinely independent (the SAME failure mode the
+    module docstring's "why a naive 4-type combined gate is DEGENERATE"
+    note warns about for mixing unrelated topologies in one gate).
+    SPLITTING by physical origin -- {CoulombInter, Exchange, PairHop}
+    (the established, directly-active on-site types) vs {Hund, PairLift}
+    (the newly-surfaced t_so-mediated types) -- gives two well-conditioned
+    gates instead of one thin one:
+
+        active3       sv_ratio=8.69e-01  sigma_min=7.22e-02
+                       100*delta_rich_max=1.16e-05  (margin ~6200x)
+        tso_mediated2 sv_ratio=9.75e-02  sigma_min=2.57e-04
+                       100*delta_rich_max=1.62e-06  (margin ~159x)
+
+    Both clear BOTH gates (``sv_ratio >= SENS_SV_FLOOR`` and
+    ``sigma_min >= 100*delta_rich_max``) with comfortable margins. No
+    direction pair was excluded as exactly degenerate -- none was found;
+    the split is a grouping-by-scale choice, not an exclusion.
+
+    **norb=1 fixture**: only ONE on-site type applies (CoulombIntra --
+    every other type names an orbital PAIR by construction). A
+    single-column "direction set" has no rank to discriminate (SVD of a
+    single nonzero column trivially returns ``sv_ratio=1.0``) -- run here
+    for completeness/uniformity with the norb=2 gates, but recorded
+    explicitly as a DEGENERATE-BY-CONSTRUCTION case, not a genuine
+    multi-direction rank test.
+    """
+
+    def test_norb2_active_types_direction_set(self):
+        records = {
+            "CoulombInter": _s4_adjudicate(
+                "norb2", "CoulombInter", "task4/sv/norb2/CoulombInter"),
+            "Exchange": _s4_adjudicate(
+                "norb2", "Exchange", "task4/sv/norb2/Exchange"),
+            "PairHop": _s4_adjudicate(
+                "norb2", "PairHop", "task4/sv/norb2/PairHop",
+                phase=_S4_2_PAIRHOP_PHASE),
+        }
+        for name, rec in records.items():
+            self.assertEqual(rec["status"], "PASS", (name, rec))
+        gate = _w0_direction_set_sv_gate(records, "task4/norb2_active3")
+        self.assertGreaterEqual(
+            gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR,
+            "task4/norb2_active3 direction-set SVD gate: sv_ratio={:.3e} "
+            "below floor {:.3e}".format(gate["sv_ratio"],
+                                         ed_oracle_util.SENS_SV_FLOOR))
+        self.assertGreaterEqual(
+            gate["sigma_min"], 100.0 * gate["delta_rich_max"],
+            "task4/norb2_active3 direction-set SVD gate: sigma_min={:.3e} "
+            "below 100*delta_rich_max={:.3e}".format(
+                gate["sigma_min"], 100.0 * gate["delta_rich_max"]))
+
+    def test_norb2_tso_mediated_direction_set(self):
+        records = {
+            "Hund": _s4_adjudicate("norb2", "Hund", "task4/sv/norb2/Hund"),
+            "PairLift": _s4_adjudicate(
+                "norb2", "PairLift", "task4/sv/norb2/PairLift"),
+        }
+        for name, rec in records.items():
+            self.assertEqual(rec["status"], "PASS", (name, rec))
+        gate = _w0_direction_set_sv_gate(records, "task4/norb2_tso_mediated2")
+        self.assertGreaterEqual(
+            gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR,
+            "task4/norb2_tso_mediated2 direction-set SVD gate: "
+            "sv_ratio={:.3e} below floor {:.3e}".format(
+                gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR))
+        self.assertGreaterEqual(
+            gate["sigma_min"], 100.0 * gate["delta_rich_max"],
+            "task4/norb2_tso_mediated2 direction-set SVD gate: "
+            "sigma_min={:.3e} below 100*delta_rich_max={:.3e}".format(
+                gate["sigma_min"], 100.0 * gate["delta_rich_max"]))
+
+    def test_norb1_single_direction_degenerate_by_construction(self):
+        records = {
+            "CoulombIntra": _s4_adjudicate(
+                "norb1", "CoulombIntra", "task4/sv/norb1/CoulombIntra"),
+        }
+        self.assertEqual(records["CoulombIntra"]["status"], "PASS")
+        gate = _w0_direction_set_sv_gate(records, "task4/norb1_single")
+        # A single active column: sv_ratio is trivially 1.0 by
+        # construction (one singular value, ratio of itself to itself) --
+        # asserted here as a documented, EXPECTED degenerate-rank result,
+        # not a genuine rank/conditioning finding.
+        self.assertEqual(gate["sv_ratio"], 1.0, gate)
+        self.assertEqual(len(gate["singular_values"]), 1, gate)
 
 
 if __name__ == "__main__":
