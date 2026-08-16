@@ -498,6 +498,45 @@ class TestResolveTransverseTopology(ApproxTestCase):
         with self.assertRaises(ValueError):
             resolve_transverse_topology(interactions, np.eye(3), norb=1)
 
+    def test_numpy_bool_component_rejected(self):
+        # np.bool_ is not a Python bool subclass; the guard must reject
+        # it explicitly rather than let it pass as the integer 1.
+        interactions = {"CoulombInter": {((np.bool_(True), 0, 0),
+                                          (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_numeric_string_component_rejected(self):
+        # "1" must not coerce (no float()/int() round-trip on strings).
+        interactions = {"CoulombInter": {(("1", 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_non_scalar_component_rejected(self):
+        # A hashable non-scalar (a nested tuple) must be rejected with
+        # the guard's ValueError, not fall through to int() semantics.
+        interactions = {"CoulombInter": {(((1, 2), 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
+    def test_large_exact_int_preserved_not_float_rounded(self):
+        # 2**53 + 1 is not representable in float64; an int()-via-float
+        # conversion would silently round it to 2**53. The exact-int
+        # path must preserve it bit for bit (it then fails no validation
+        # here: it is a legitimate -- if absurd -- displacement).
+        big = 2**53 + 1
+        interactions = {"CoulombInter": {((big, 0, 0), (0, 0)): 0.2},
+                        }
+        topo = resolve_transverse_topology(interactions, np.eye(3), norb=1)
+        self.assertIn(big, set(int(r[0]) for r in topo.delta_r))
+
+    def test_huge_float_component_rejected(self):
+        # A float above the 2**53 contiguous-integer bound is ambiguous
+        # as an integer and must be rejected, not silently converted.
+        interactions = {"CoulombInter": {((2.0**60, 0, 0), (0, 0)): 0.2}}
+        with self.assertRaises(ValueError):
+            resolve_transverse_topology(interactions, np.eye(3), norb=1)
+
 
 # =============================================================================
 # iter_reversal_orbits
@@ -2458,10 +2497,12 @@ class TestPairHopOffsiteWarning(ApproxTestCase):
             solver_on, gi_on = self._build_variant(
                 d_on, include_offsite=False)
 
-            out_off = tempfile.mkdtemp(prefix="rpa_pairhop_off_")
-            out_on = tempfile.mkdtemp(prefix="rpa_pairhop_on_")
-            solver_off.solve(gi_off, out_off)
-            solver_on.solve(gi_on, out_on)
+            with tempfile.TemporaryDirectory(
+                    prefix="rpa_pairhop_off_") as out_off, \
+                    tempfile.TemporaryDirectory(
+                        prefix="rpa_pairhop_on_") as out_on:
+                solver_off.solve(gi_off, out_off)
+                solver_on.solve(gi_on, out_on)
 
             self.assertTrue(np.array_equal(gi_off["chiq"], gi_on["chiq"]))
 

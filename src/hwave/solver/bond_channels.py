@@ -2668,21 +2668,31 @@ def _require_transverse_integral(value, label):
     ``irvec``/``orbvec`` component that is accidentally a truthiness
     flag) is never a legitimate integral coordinate here.
     """
-    if isinstance(value, bool):
+    if isinstance(value, (bool, np.bool_)):
         raise ValueError(
             "resolve_transverse_topology: {} must be an integer, not a "
             "bool, got {!r}".format(label, value))
-    try:
+    # Exact-integer types pass through unchanged (arbitrary precision:
+    # no float round-trip, which would silently round values above
+    # 2**53 and overflow on huge ints).
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    # Float types are accepted iff they carry an exact integral value
+    # small enough that the value is unambiguous (|v| <= 2**53, the
+    # float64 contiguous-integer bound). Everything else -- strings,
+    # arrays, None, complex, non-integral or non-finite floats -- is
+    # rejected; numeric strings deliberately do NOT coerce.
+    if isinstance(value, (float, np.floating)):
         value_f = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(
-            "resolve_transverse_topology: {} must be an integer, got "
-            "{!r}".format(label, value))
-    if not np.isfinite(value_f) or value_f != np.floor(value_f):
-        raise ValueError(
-            "resolve_transverse_topology: {} must be an integral value, "
-            "got {!r}".format(label, value))
-    return int(value_f)
+        if (not np.isfinite(value_f) or value_f != np.floor(value_f)
+                or abs(value_f) > 2.0**53):
+            raise ValueError(
+                "resolve_transverse_topology: {} must be an integral "
+                "value, got {!r}".format(label, value))
+        return int(value_f)
+    raise ValueError(
+        "resolve_transverse_topology: {} must be an integer, got "
+        "{!r}".format(label, value))
 
 
 def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
