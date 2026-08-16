@@ -4129,8 +4129,7 @@ class RPA:
                 "spin-orbit-coupled H0): the bond-resolved dressing is "
                 "implemented for the spin-diagonal transverse channel "
                 "only. Composing it with the full spinful space is a "
-                "deferred follow-up (spec 'Phase S -- the full spinful "
-                "transverse'). Use a spin-diagonal system (no spin-mixing "
+                "planned extension. Use a spin-diagonal system (no spin-mixing "
                 "transfer/enable_spin_orbital term) or set "
                 "transverse_bond_channels=false.")
 
