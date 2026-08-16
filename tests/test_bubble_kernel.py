@@ -2556,6 +2556,44 @@ class TestBubbleGpuParity(unittest.TestCase):
                 assert_approx_array(bk.to_host(gpu_out), cpu_out,
                                     rel=1e-10, abs=1e-12)
 
+    def test_transverse_bond_bubble_static(self):
+        """Per-cell CPU/GPU parity for
+        ``bubble.transverse_bond_bubble_static`` (Phase W Task 4, spec
+        "The bond bubble (static)"). Uses the SAME asymmetric (``hz !=
+        0``, ``nblock=2``) fixture as ``test_transverse_bubble`` above --
+        this entry point requires exactly 2 blocks (fwd=block1(down),
+        rev=block0(up)) for the identical reason. The topology's
+        ``coeffs`` are irrelevant to the bubble (only ``delta_r`` is
+        read; ``coeffs`` belongs to the vertex, ``W_pm_bond``), so a
+        small zero-filled, mesh-injective topology is enough for a pure
+        numeric-parity check."""
+        from hwave.solver import backend as bk
+        from hwave.solver.bond_channels import TransverseTopology
+
+        solver = _make_rpa_solver(coeff_tail=0.5, hz=0.4, norb=2,
+                                  complex_hop=True, Lx=4, Ly=4, Nmat=8)
+        solver._calc_epsilon_k({})
+        beta = 1.0 / solver.T
+        mu = solver.mu_value
+        green, tail = solver._calc_green(beta, mu)
+        spatial_shape = tuple(solver.lattice.shape)
+
+        topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]]),
+            reverse=np.array([0, 2, 1]),
+            coeffs={"CoulombInter": np.zeros((3, 2, 2), dtype=complex)})
+
+        green_gpu = self._to_device(green)
+        tail_gpu = self._to_device(tail)
+
+        cpu_out = bubble_mod.transverse_bond_bubble_static(
+            green, tail, beta, topo, spatial_shape=spatial_shape)
+        gpu_out = bubble_mod.transverse_bond_bubble_static(
+            green_gpu, tail_gpu, beta, topo, spatial_shape=spatial_shape)
+        self.assertIs(bk.array_module_of(gpu_out), self.cupy)
+        assert_approx_array(bk.to_host(gpu_out), cpu_out,
+                            rel=1e-10, abs=1e-12)
+
     def test_ir_bubble_reduced(self):
         from hwave.solver import backend as bk
         from tests.test_flex_ir import _make_solver

@@ -29,6 +29,7 @@ from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import project_density_pairs
 from . import backend as _bk
+from . import bond_channels
 from . import bubble
 from . import fold
 from . import green as green_mod
@@ -78,6 +79,13 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
         )
 
 MOMENTUM_CONVENTION = "e_plus_ikR"
+
+# Default [mode.param] transverse_bond_memory_cap_gb (Phase W experimental
+# gate, spec 2026-08-15-bond-transverse-design.md "Production surface"):
+# same default sc.py's [eliashberg] bond_memory_cap_gb uses for its
+# longitudinal sibling (_BOND_MEMORY_CAP_GB), so the two bond-channel
+# gates share one documented default rather than drifting apart.
+TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT = 8.0
 
 
 def check_momentum_marker(data, file_name):
@@ -920,6 +928,42 @@ class Interaction:
         #        + (up <-> down)
         def _append_pairhop(type):
             spins = spin_table[type]
+
+            # Off-site PairHop physics is not implemented (spec
+            # "Deferred (recorded)": "Off-site PairHop physics (warning +
+            # tracking issue only)."). Only the on-site (irvec=(0,0,0))
+            # part is read below; warn LOUDLY instead of silently
+            # discarding the rest, naming the ORIGINAL (pre-fold) user
+            # declarations. Locality is judged on the PRE-fold table
+            # (self.param_ham_orig when the lattice has a sublattice,
+            # else self.param_ham) -- the same pre-fold locality rule
+            # _append_onsite_direct/_append_inter_cross above apply, for
+            # the same reason: reading it off the FOLDED self.param_ham
+            # table could let an off-site bond folded onto r=(0,0,0)
+            # between supercell orbitals escape detection here.
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            orig_tbl = (self.param_ham_orig.get(type, {}) if has_sub
+                        else self.param_ham.get(type, {}))
+            offsite = [(irvec, orbvec, v)
+                       for (irvec, orbvec), v in orig_tbl.items()
+                       if tuple(int(x) for x in irvec) != (0, 0, 0)]
+            if offsite:
+                shown = offsite[:8]
+                logger.warning(
+                    "PairHop declares %d off-site term(s) (irvec != "
+                    "(0,0,0)) that this solver silently discards: only "
+                    "the on-site part of PairHop is represented (off-site "
+                    "PairHop physics is not implemented; see issue #157). "
+                    "Restrict PairHop to on-site declarations "
+                    "if this is unintended. Declarations dropped: %s%s",
+                    len(offsite),
+                    "; ".join(
+                        "irvec={} orb=({},{}) v={}".format(
+                            tuple(int(x) for x in irv), ov[0], ov[1], v)
+                        for irv, ov, v in shown),
+                    " ... ({} more)".format(len(offsite) - 8)
+                    if len(offsite) > 8 else "")
+
             tbl = _symmetrised(type, self.param_ham[type])
             for (irvec,orbvec), v in tbl.items():
                 # take account of same-site interaction only
@@ -1417,7 +1461,98 @@ class RPA:
         if err > 0:
             sys.exit(1)
 
+        self._init_transverse_bond_config()
+
         pass
+
+    def _init_transverse_bond_config(self):
+        """Parse ``[mode.param] transverse_bond_channels`` and its
+        companion options (Phase W experimental gate, spec
+        2026-08-15-bond-transverse-design.md "Production surface").
+
+        Mirrors sc.py's ``_read_bond_config`` for the (eliashberg)
+        longitudinal bond gate: the switch defaults to ``False``, is
+        parsed ONLY under ``calc_type='ring+ladder'`` (the transverse
+        ladder channel itself is unreachable otherwise), and every
+        companion option set while the switch is stale (calc_type='ring',
+        or transverse_bond_channels=false) is IGNORED WITH A WARNING
+        rather than silently doing nothing or failing an otherwise valid
+        run. ``self.param_mod`` is a ``CaseInsensitiveDict``, so every
+        lookup here is case-robust by construction.
+        """
+        import numbers
+
+        _tbc_keys = ("transverse_bond_channels",
+                     "transverse_bond_max_shells",
+                     "transverse_bond_memory_cap_gb")
+        present = [k for k in _tbc_keys if k in self.param_mod]
+
+        if self.calc_type != "ring+ladder":
+            if present:
+                logger.warning(
+                    "[mode.param] %s set but calc_type='%s'; the "
+                    "bond-resolved transverse gate only applies to "
+                    "calc_type='ring+ladder' and %s ignored here.",
+                    ", ".join(present), self.calc_type,
+                    "is" if len(present) == 1 else "are")
+            self.transverse_bond_channels = False
+            self.transverse_bond_max_shells = None
+            self.transverse_bond_memory_cap_gb = \
+                TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        _flag = self.param_mod.get("transverse_bond_channels", False)
+        if not isinstance(_flag, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels must be a boolean, "
+                "got {!r}".format(_flag))
+        self.transverse_bond_channels = bool(_flag)
+
+        if not self.transverse_bond_channels:
+            stale = [k for k in _tbc_keys
+                     if k != "transverse_bond_channels" and k in self.param_mod]
+            if stale:
+                logger.warning(
+                    "[mode.param] %s set but transverse_bond_channels="
+                    "false; these options only apply to "
+                    "transverse_bond_channels=true and are ignored here.",
+                    ", ".join(stale))
+            self.transverse_bond_max_shells = None
+            self.transverse_bond_memory_cap_gb = \
+                TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        # transverse_bond_max_shells: int >= 0, or absent/None (keep every
+        # declared off-site shell) -- same semantics
+        # resolve_transverse_topology documents for its own max_shells.
+        _max_shells = self.param_mod.get("transverse_bond_max_shells", None)
+        if _max_shells is not None:
+            if (isinstance(_max_shells, (bool, np.bool_))
+                    or not isinstance(_max_shells, numbers.Integral)):
+                raise ValueError(
+                    "[mode.param] transverse_bond_max_shells must be a "
+                    "non-negative integer, got {!r}".format(_max_shells))
+            _max_shells = int(_max_shells)
+            if _max_shells < 0:
+                raise ValueError(
+                    "[mode.param] transverse_bond_max_shells must be >= 0 "
+                    "(shell 0 = the on-site Delta r = 0 point), got "
+                    "{}".format(_max_shells))
+        self.transverse_bond_max_shells = _max_shells
+
+        _cap_gb = self.param_mod.get("transverse_bond_memory_cap_gb",
+                                      TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT)
+        if (isinstance(_cap_gb, (bool, np.bool_))
+                or not isinstance(_cap_gb, numbers.Real)):
+            raise ValueError(
+                "[mode.param] transverse_bond_memory_cap_gb must be a "
+                "real number, got {!r}".format(_cap_gb))
+        _cap_gb = float(_cap_gb)
+        if not np.isfinite(_cap_gb) or _cap_gb <= 0.0:
+            raise ValueError(
+                "[mode.param] transverse_bond_memory_cap_gb must be a "
+                "positive finite number, got {}".format(_cap_gb))
+        self.transverse_bond_memory_cap_gb = _cap_gb
 
     def _round_to_int(self, val, mode):
         import math
@@ -1477,6 +1612,8 @@ class RPA:
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
         logger.info("    calc_scheme     = {}".format(self.calc_scheme))
         logger.info("    calc_type       = {}".format(self.calc_type))
+        logger.info("    transverse_bond_channels = {}".format(
+            self.transverse_bond_channels))
         pass
 
     @do_profile
@@ -1531,6 +1668,8 @@ class RPA:
         # review, round 3).
         green_info.pop("chiq", None)
         green_info.pop("chiq_pm", None)
+        green_info.pop("chiq_pm_bond_static", None)
+        green_info.pop("chiq_pm_static", None)
 
         beta = 1.0/self.T
 
@@ -1919,8 +2058,25 @@ class RPA:
             # For ring+ladder, validate the transverse channel BEFORE the
             # longitudinal solve: an unrepresentable input should fail here,
             # not after the expensive solve has already populated chiq.
+            # transverse_bond_channels=true (Phase W experimental gate)
+            # represents off-site cross-spin/spin-flip content that
+            # _check_transverse_representable would otherwise reject, so
+            # the representability check is bypassed ONLY on that path --
+            # with the gate off this branch is unchanged, so the bypass is
+            # unreachable there.
             if self.calc_type == "ring+ladder":
-                self._check_transverse_representable(ham_orig)
+                if self.transverse_bond_channels:
+                    self._transverse_bond_topo = \
+                        self._validate_transverse_bond_prereqs()
+                    # Resource preflight immediately AFTER the (cheap)
+                    # prereq validation but BEFORE ANY expensive solve --
+                    # including the longitudinal (ring) solve just below,
+                    # not only the bond-resolved solve -- so a cap
+                    # rejection fires before either expensive step runs.
+                    self._transverse_bond_resource_preflight(
+                        self._transverse_bond_topo)
+                else:
+                    self._check_transverse_representable(ham_orig)
 
             # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
@@ -1930,10 +2086,23 @@ class RPA:
 
             # Solve transverse (ladder) RPA if requested
             if self.calc_type == "ring+ladder":
-                chi0q_pm, ham_pm = self._build_transverse_channel(
-                    chi0q_orig, ham_orig)
-                sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
-                green_info["chiq_pm"] = _bk.to_host(sol_pm)
+                if self.transverse_bond_channels:
+                    chi_pm_bond_static, chiq_pm_static = \
+                        self._run_transverse_bond_pipeline(
+                            self.green0, self.green0_tail, beta,
+                            self._transverse_bond_topo)
+                    green_info["chiq_pm_bond_static"] = \
+                        _bk.to_host(chi_pm_bond_static)
+                    green_info["chiq_pm_static"] = \
+                        _bk.to_host(chiq_pm_static)
+                    # Gated-run output ownership (spec): the plain ladder
+                    # is NOT additionally executed, so green_info["chiq_pm"]
+                    # (the legacy key) is intentionally never populated here.
+                else:
+                    chi0q_pm, ham_pm = self._build_transverse_channel(
+                        chi0q_orig, ham_orig)
+                    sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
+                    green_info["chiq_pm"] = _bk.to_host(sol_pm)
 
         # Restore the solver's public attributes to host arrays so the
         # post-solve object state is backend-independent for downstream
@@ -2039,6 +2208,35 @@ class RPA:
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
                     save_kwargs["chiq_pm"] = green_info["chiq_pm"]
+                # Bond-resolved transverse channel (Phase W experimental
+                # gate, transverse_bond_channels=true): gate-owned output,
+                # mutually exclusive with the legacy chiq_pm key above --
+                # solve() only ever populates one of the two. Schema keys
+                # verbatim per spec ("Production surface").
+                if green_info.get("chiq_pm_bond_static") is not None:
+                    topo = self._transverse_bond_topo
+                    save_kwargs["chiq_pm_bond_static"] = \
+                        green_info["chiq_pm_bond_static"]
+                    save_kwargs["chiq_pm_static"] = \
+                        green_info["chiq_pm_static"]
+                    save_kwargs["transverse_bond_schema_version"] = 1
+                    save_kwargs["transverse_output_kind"] = "bond_static"
+                    save_kwargs["transverse_bond_delta_r"] = \
+                        np.asarray(topo.delta_r)
+                    save_kwargs["transverse_bond_reverse"] = \
+                        np.asarray(topo.reverse)
+                    save_kwargs["transverse_bond_index_order"] = \
+                        "m*norb**2 + a*norb + b"
+                    save_kwargs["transverse_bond_max_shells"] = (
+                        -1 if self.transverse_bond_max_shells is None
+                        else int(self.transverse_bond_max_shells))
+                    save_kwargs["transverse_spatial_shape"] = \
+                        np.array(self.lattice.shape, dtype=np.int64)
+                    save_kwargs["transverse_q_convention"] = \
+                        "q_d = 2*pi*n_d/N_d, C-order flattening"
+                    save_kwargs["transverse_spin_mode"] = self.spin_mode
+                    save_kwargs["transverse_normalization"] = \
+                        "per-site, 1/sqrt(Nvol) bilinears"
                 np.savez(file_name, **save_kwargs)
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
@@ -3231,8 +3429,10 @@ class RPA:
         vertex also means an internal TABLE whose off-site parts cancel in the
         symmetrised sum is accepted, which is correct: what the channel uses
         is then well-defined. (File input never reaches here unclosed: since
-        #93 the readers reject declarations that are not Hermitian-closed.) (`_append_pairhop` silently discards off-site
-        PairHop before this point; see the documentation warning.)
+        #93 the readers reject declarations that are not Hermitian-closed.)
+        (`_append_pairhop` discards off-site PairHop before this point,
+        with a ``logger.warning`` naming the dropped declarations; see
+        also the documentation warning.)
         """
         nvol = self.lattice.nvol
         if nvol <= 1:
@@ -3650,6 +3850,646 @@ class RPA:
             return None
 
         return list(components.values())
+
+    # -------------------------------------------------------------------
+    # Phase W (bond-resolved transverse channel): the internal pipeline
+    # entry (spec 2026-08-15-bond-transverse-design.md, "Phase W --
+    # implementation + ED campaign"; plan Task 5). Appended for this task
+    # only -- the methods above are unmodified.
+    # -------------------------------------------------------------------
+
+    def _build_ham_pm_onsite(self):
+        """Build the on-site-only transverse vertex that feeds channel 0
+        of ``W_pm_bond`` (spec "The dressing (static)", step 1).
+
+        Locality is judged on the ORIGINAL PRE-FOLD declarations
+        (``self.ham_info.param_ham_orig`` when the lattice has a
+        sublattice, else ``self.ham_info.param_ham``), filtered to
+        ``irvec == (0, 0, 0)`` -- the SAME pattern ``_make_ham_inter``'s
+        ``onsite_r``/``_append_onsite_direct`` closures use for the
+        spinful Fierz-exchange correction (issue #137), generalized here
+        across every interaction type and independent of
+        ``enable_spin_orbital``. Reading locality off the FOLDED table
+        (``self.ham_info.param_ham`` under sublattice folding) would fold
+        an off-site bond onto ``r=(0,0,0)`` between supercell orbitals
+        and silently smuggle off-site content into the on-site channel --
+        the pre-fold locality trap ``_append_inter_cross``/
+        ``_append_onsite_direct`` document and PR history has hit
+        repeatedly.
+
+        Each filtered table is symmetrised with the SAME per-slot-family
+        rule ``_make_ham_inter``'s ``_symmetrised`` closure applies
+        (plain mean for the density/flip types, Hermitian mean for
+        PairHop): restricted to a single (on-site) cell, the two
+        closures are algebraically identical, because
+        ``reverse_fft_axes`` "leaves index 0 in place" for any mesh
+        shape -- the reversal partner of an ``r=(0,0,0)`` entry is always
+        the SAME cell with orbitals swapped.
+
+        The resulting on-site tensor is q-INDEPENDENT (an on-site
+        interaction cannot produce a q-dependent vertex --
+        ``_assemble_transverse_vertex``'s own docstring measurement), so
+        it is broadcast identically across ``nvol`` before assembly.
+
+        Returns
+        -------
+        ndarray, complex128, shape (nvol, norb, norb, norb, norb)
+            ``_assemble_transverse_vertex`` applied to the on-site-only
+            interaction tensor.
+        """
+        ham_info = self.ham_info
+        lattice = self.lattice
+        nvol = lattice.nvol
+        norb = self.norb
+        ns = self.ns
+        nd = norb * ns
+        has_sub = getattr(lattice, "has_sublattice", False)
+        source = ham_info.param_ham_orig if has_sub else ham_info.param_ham
+
+        spin_table_cache = {
+            t: ring_spin_table(t)
+            for t in ('CoulombIntra', 'CoulombInter', 'Hund', 'Ising',
+                      'PairLift', 'Exchange', 'PairHop')
+        }
+
+        def _onsite_table(tbl):
+            # Filter a PRE-FOLD table to irvec == (0, 0, 0), fold
+            # orbital indices under sublattice (never spatial content --
+            # an on-site declaration stays on-site under folding, but the
+            # re-filter below stays defensive, mirroring
+            # _append_onsite_direct exactly).
+            filtered = {}
+            for (irvec, orbvec), v in (tbl or {}).items():
+                if tuple(int(x) for x in irvec) == (0, 0, 0):
+                    filtered[((0, 0, 0),
+                              (int(orbvec[0]), int(orbvec[1])))] = v
+            if not filtered:
+                return {}
+            if has_sub:
+                filtered = ham_info._reshape_interaction(filtered, False)
+                filtered = {
+                    (irvec, orbvec): v
+                    for (irvec, orbvec), v in filtered.items()
+                    if tuple(irvec) == (0, 0, 0)
+                }
+            return filtered
+
+        def _symmetrised_onsite(type_name, tbl):
+            # Algebraic equivalent of _make_ham_inter's _symmetrised
+            # closure, restricted to the on-site cell (see docstring).
+            arr = np.zeros((norb, norb), dtype=np.complex128)
+            for (_irvec, orbvec), v in tbl.items():
+                arr[orbvec] += v
+            if type_name == "PairHop":
+                sym = 0.5 * (arr + np.conjugate(arr.T))
+            else:
+                sym = 0.5 * (arr + arr.T)
+            out = {}
+            for a, b in zip(*np.nonzero(sym)):
+                out[((0, 0, 0), (int(a), int(b)))] = sym[a, b]
+            return out
+
+        ham_r8 = np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
+
+        def _append_density_like(type_name, tbl=None):
+            src_tbl = tbl if tbl is not None else source.get(type_name)
+            sym = _symmetrised_onsite(type_name, _onsite_table(src_tbl))
+            for (_irvec, orbvec), v in sym.items():
+                a, b = orbvec
+                for spinvec, w in spin_table_cache[type_name].items():
+                    s1, s2, s3, s4 = spinvec
+                    # beta beta' alpha alpha' -- same slot layout as
+                    # _make_ham_inter's _append_inter.
+                    orb = (s4, b, s3, b, s1, a, s2, a)
+                    ham_r8[orb] += v * w
+
+        def _append_pairhop_like(type_name, tbl=None):
+            src_tbl = tbl if tbl is not None else source.get(type_name)
+            sym = _symmetrised_onsite(type_name, _onsite_table(src_tbl))
+            for (_irvec, orbvec), v in sym.items():
+                a, b = orbvec
+                for spinvec, w in spin_table_cache[type_name].items():
+                    s1, s2, s3, s4 = spinvec
+                    # same slot layout as _make_ham_inter's
+                    # _append_pairhop.
+                    orb = (s4, b, s3, a, s1, a, s2, b)
+                    ham_r8[orb] += v * w
+
+        if 'Coulomb' in source:
+            # Aggregate 'Coulomb' input splits into intra/inter parts on
+            # the PRE-FOLD table, mirroring _make_ham_inter's own
+            # _append_onsite_direct call sites for the 'Coulomb' key.
+            coulomb_intra_pre, coulomb_inter_pre = wan90.split_coulomb(
+                source['Coulomb'])
+            _append_density_like('CoulombIntra', tbl=coulomb_intra_pre)
+            _append_density_like('CoulombInter', tbl=coulomb_inter_pre)
+        if 'CoulombIntra' in source:
+            _append_density_like('CoulombIntra')
+        if 'CoulombInter' in source:
+            _append_density_like('CoulombInter')
+        if 'Hund' in source:
+            _append_density_like('Hund')
+        if 'Ising' in source:
+            _append_density_like('Ising')
+        if 'PairLift' in source:
+            _append_density_like('PairLift')
+        if 'Exchange' in source:
+            _append_density_like('Exchange')
+        if 'PairHop' in source:
+            _append_pairhop_like('PairHop')
+
+        ham_r4 = ham_r8.reshape(nd, nd, nd, nd)
+        ham_onsite_nvol = np.broadcast_to(
+            ham_r4[None, :, :, :, :], (nvol, nd, nd, nd, nd)).copy()
+        return self._assemble_transverse_vertex(ham_onsite_nvol)
+
+    def _run_transverse_bond_pipeline(self, green_kw, green0_tail, beta,
+                                       topo):
+        """The bond-resolved transverse (Phase W) internal pipeline
+        entry: on-site vertex assembly -> ``W_pm_bond`` ->
+        ``transverse_bond_bubble_static`` -> dressing (the EXISTING
+        ``_solve_rpa``'s ``I + chi0.ham`` convention) -> collapse to the
+        plain ``(nvol, norb, norb, norb, norb)`` shape (spec "The
+        dressing (static)" / "Collapse rule (exact)").
+
+        Test-invocable, NO prereq fallback (anti-vacuity, spec "Phase W
+        -- implementation + ED campaign"): every granule and gate W1 call
+        this entry directly; the production gate's own fallback behavior
+        (Task 7) is validated separately by its own config matrix.
+
+        Parameters
+        ----------
+        green_kw : ndarray, complex, shape (2, nmat, nvol, norb, norb)
+            Canonical two-block Green's function (block 0 = up, block 1
+            = down) -- same contract as ``_calc_chi0q_transverse``.
+        green0_tail : ndarray or None
+            Paired tau-space tail add-back, forwarded to
+            ``bubble.transverse_bond_bubble_static`` (``None`` disables
+            the tail correction).
+        beta : float
+            Inverse temperature.
+        topo : bond_channels.TransverseTopology
+            The master transverse bond topology (e.g.
+            ``bond_channels.resolve_transverse_topology`` or an
+            equivalent hand-built, invariant-satisfying instance); its
+            off-site channels feed ``W_pm_bond``'s cross/flip families
+            and ``chi0``'s bond-pair structure. On-site (channel 0)
+            content is NOT read from ``topo`` -- it is built
+            independently by ``_build_ham_pm_onsite`` from the solver's
+            OWN pre-fold declarations (spec step 1); ``W_pm_bond`` places
+            it verbatim into channel 0.
+
+        Returns
+        -------
+        chi_pm_bond_static : ndarray, complex128, shape (nvol, ND, ND)
+            The dressed bond-transverse static susceptibility, ``ND =
+            B * norb**2``.
+        chiq_pm_static : ndarray, complex128, shape
+            (nvol, norb, norb, norb, norb)
+            The collapsed (m=0, m'=0) sub-block (spec "Collapse rule
+            (exact)": ``chiq_pm_static[q, a, c, b, d] =
+            chi_pm_bond[q, (0, a, c), (0, b, d)]``) -- the same object
+            gate W1 compares against today's plain ``chiq_pm``.
+        """
+        spatial_shape = tuple(int(x) for x in self.lattice.shape)
+        nvol = self.lattice.nvol
+        workers = getattr(self, "fft_workers", 1)
+        norb = self.norb
+
+        ham_pm_onsite = self._build_ham_pm_onsite()
+
+        W = bond_channels.W_pm_bond(
+            topo, ham_pm_onsite, spatial_shape=spatial_shape)
+        chi0 = bubble.transverse_bond_bubble_static(
+            green_kw, green0_tail, beta, topo,
+            spatial_shape=spatial_shape, workers=workers)
+
+        ND = W.shape[-1]
+        # W_pm_bond assembles on the host (numpy) by design; under GPU
+        # execution chi0 lives on the device, and _solve_rpa dispatches on
+        # chi0's backend -- move W there first (numpy.asarray is a no-op
+        # on the CPU path).
+        W = _bk.array_module_of(chi0).asarray(W)
+        # The dressing (spec "The dressing (static)"): the EXISTING
+        # _solve_rpa's I + chi0 @ ham convention, with the leading
+        # length-1 axis satisfying its frequency-axis interface. No sign
+        # flip anywhere -- W's channel-0 block IS ham_pm_onsite verbatim.
+        sol = self._solve_rpa(chi0.reshape(1, nvol, ND, ND), W)
+        chi_pm_bond_static = sol[0]
+
+        # Collapse (spec "Collapse rule (exact)"): the elementwise
+        # (m=0, m'=0) sub-block. Channel 0 occupies indices [0, nd) on
+        # both axes (W_pm_bond step 1), and the local orbital-pair index
+        # within that block is (a, c) -> a*norb+c (the SAME bond-major/
+        # orbital-minor convention transverse_bond_bubble_static and
+        # W_pm_bond's channel-zero embedding use) -- so a bare slice +
+        # C-order reshape recovers (q, a, c, b, d) directly, with no
+        # further transpose.
+        nd = norb * norb
+        chiq_pm_static = chi_pm_bond_static[:, :nd, :nd].reshape(
+            nvol, norb, norb, norb, norb)
+
+        return chi_pm_bond_static, chiq_pm_static
+
+    # -------------------------------------------------------------------
+    # Phase W Task 7: the experimental gate's own prereq validation and
+    # resource preflight. Both are called from solve() ONLY when
+    # transverse_bond_channels=true (calc_type='ring+ladder' already
+    # required to reach either), mirroring where sc.py's
+    # _validate_bond_prereqs / _bond_resource_preflight run for the
+    # (eliashberg) longitudinal bond gate: after the prerequisite runtime
+    # state (here, self.spin_mode) is known, and BEFORE the expensive
+    # solve, so an invalid/oversized request fails fast.
+    # -------------------------------------------------------------------
+
+    def _validate_transverse_bond_prereqs(self):
+        """Top-level guards for ``transverse_bond_channels=true`` (spec
+        "Production surface"): no active off-site transverse-resolved
+        declaration, ``spin_mode='spinful'``, and an externally supplied
+        ``chi0q_init`` are each a REJECT, naming the gate as inapplicable
+        rather than silently falling back to the plain path -- every
+        gate-on run that starts is bond-owned (spec: "the rev-3
+        warn-and-fall-back is RETRACTED").
+
+        Must be called AFTER ``self.spin_mode`` is known (i.e. from
+        inside ``solve()``, at the same point ``_check_transverse_
+        representable`` would otherwise run) and BEFORE the expensive
+        solve.
+
+        Returns
+        -------
+        bond_channels.TransverseTopology
+            The resolved master transverse topology, computed once here
+            so the activity predicate and the actual pipeline call see
+            the identical object (never re-resolved, and therefore never
+            able to silently disagree with what was just validated).
+        """
+        if self.spin_mode == "spinful":
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true is not "
+                "supported with spin_mode='spinful' (a genuinely "
+                "spin-orbit-coupled H0): the bond-resolved dressing is "
+                "implemented for the spin-diagonal transverse channel "
+                "only. Composing it with the full spinful space is a "
+                "planned extension. Use a spin-diagonal system (no spin-mixing "
+                "transfer/enable_spin_orbital term) or set "
+                "transverse_bond_channels=false.")
+
+        if getattr(self, "_chi0q_external", False):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true cannot be "
+                "combined with an externally supplied chi0q (chi0q_init): "
+                "the bond path needs the Green's functions that produced "
+                "the bubble (chi0_pm_bond is built from G_up/G_down "
+                "directly), which a file-based chi0q does not carry. "
+                "Recompute chi0q internally (omit chi0q_init) or set "
+                "transverse_bond_channels=false.")
+
+        if getattr(self.lattice, "has_sublattice", False):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true is not "
+                "supported with a sublattice (SubShape < CellShape): the "
+                "bond-resolved transverse channel does not yet implement "
+                "the sublattice folding map for its off-site channels. "
+                "Run without a sublattice (SubShape == CellShape) or set "
+                "transverse_bond_channels=false.")
+
+        has_sub = getattr(self.lattice, "has_sublattice", False)
+        interactions = (self.ham_info.param_ham_orig if has_sub
+                        else self.ham_info.param_ham)
+
+        # The aggregate 'Coulomb' table (wan90.split_coulomb's shared
+        # decomposition -- the SAME split _make_ham_inter and
+        # _build_ham_pm_onsite each apply to feed the Hamiltonian and the
+        # on-site vertex) is invisible to resolve_transverse_topology,
+        # which only ever reads the 'CoulombInter'/'Ising'/'Exchange'
+        # keys: without this, an off-site inter-orbital term declared
+        # ONLY via aggregate 'Coulomb' would be seen everywhere else in
+        # the pipeline but not by this gate's topology (wrongly reporting
+        # "no active declaration", or silently computing without that
+        # channel). Merge its inter-orbital off-site part into the
+        # 'CoulombInter' table fed to the resolver. The ambiguity guard
+        # ('Coulomb' cannot coexist with an explicit 'CoulombIntra'/
+        # 'CoulombInter' declaration) already ran at construction time
+        # (Interaction.__init__ -> _make_ham_inter, long before solve()
+        # -- and therefore this method -- is ever reached), so
+        # 'CoulombInter' is always empty here whenever 'Coulomb' is
+        # present; the merge below is still written generally (update,
+        # not overwrite) so it stays correct even if that guard's scope
+        # ever changes.
+        #
+        # ``interactions`` (``self.ham_info.param_ham``/``param_ham_orig``)
+        # is a ``CaseInsensitiveDict`` (see ``Interaction._init_interaction``'s
+        # own comment on this exact defect class): callers may declare
+        # 'ising'/'exchange'/'coulomb' in any case and ``_make_ham_inter``
+        # still honors it. A plain ``dict(interactions)`` copy would
+        # DOWNGRADE that -- it preserves each key's stored case as an
+        # ordinary (case-SENSITIVE) dict key, so a lowercase 'ising' would
+        # silently stop matching ``resolve_transverse_topology``'s
+        # canonical-cased ``interactions.get('Ising', {})`` lookup and
+        # vanish from the topology. Copy into a fresh
+        # ``CaseInsensitiveDict`` instead, which preserves case-insensitive
+        # lookup for every key untouched by this merge.
+        if 'Coulomb' in interactions:
+            _coulomb_intra, coulomb_inter_agg = wan90.split_coulomb(
+                interactions['Coulomb'])
+            interactions = CaseInsensitiveDict(interactions)
+            merged_inter = dict(interactions.get('CoulombInter', {}) or {})
+            merged_inter.update(coulomb_inter_agg)
+            interactions['CoulombInter'] = merged_inter
+
+        topo = bond_channels.resolve_transverse_topology(
+            interactions, np.eye(3), self.norb,
+            max_shells=self.transverse_bond_max_shells)
+
+        # "Active" is defined ONCE, operationally, by the shared
+        # predicate (spec): the same function the topology resolver's
+        # own truncation guard implicitly relies on. A topology that
+        # resolves to nothing off-site (nothing declared, or everything
+        # truncated away -- resolve_transverse_topology itself already
+        # refuses a truncation that would drop declared nonzero content,
+        # so "truncated to nothing" here only ever means "nothing was
+        # declared to begin with") has no transverse bond physics to
+        # represent.
+        if not bond_channels.transverse_effective_activity(topo):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true requires an "
+                "active off-site transverse-resolved declaration "
+                "(CoulombInter, Ising or Exchange -- or the off-site part "
+                "of an aggregate Coulomb declaration -- with a nonzero "
+                "off-site coefficient after duplicate summation, Hermitian "
+                "projection and transverse_bond_max_shells truncation); "
+                "none is present, so the bond-resolved gate has nothing "
+                "to represent. Declare an off-site term, relax "
+                "transverse_bond_max_shells, or set "
+                "transverse_bond_channels=false.")
+
+        return topo
+
+    def _transverse_bond_resource_preflight(self, topo):
+        """Estimate the peak memory/compute cost of the bond-resolved
+        transverse gate and refuse to exceed
+        ``transverse_bond_memory_cap_gb`` (spec "Phase W -- Budget
+        (stated, not deferred)").
+
+        The pipeline (``_run_transverse_bond_pipeline``, rpa.py) has two
+        phases that do NOT overlap in time -- the bubble phase
+        (``bubble.transverse_bond_bubble_static``, called first) returns
+        its result before the dressing phase (``_solve_rpa``, called
+        second) allocates anything, so the two phases' peaks are taken as
+        a ``max(...)``, not summed: whichever phase is more expensive for
+        the given shapes bounds the run.
+
+        Byte estimate, phase by phase (``itemsize = 16`` for complex128,
+        ``P = norb**2`` the single-channel orbital-pair count, ``ND = B *
+        P`` the bond-enlarged dimension, ``Nq = self.lattice.nvol``,
+        ``Nmat = self.nmat`` -- available here because ``_init_param``
+        (which sets ``self.nmat``, see ``__init__``'s ordered
+        ``_init_mode -> _init_param -> ... -> _init_interaction``
+        sequence) has already run by the time ``solve()`` reaches this
+        preflight call, well before the (still-unrun) longitudinal
+        solve):
+
+        - **Dressing (solve) phase**: persistent storage for
+          ``chi0_pm_bond`` + ``W_pm_bond`` + the dressed output + the
+          ``_solve_rpa`` solve workspace, ``solve_bytes = (3 + K_solve) *
+          Nq * ND**2 * itemsize`` with ``K_solve = 3`` -- a documented
+          CONSERVATIVE POLICY ALLOWANCE for the numpy backend (LU factor
+          copy + pivots + solve output; the ``_solve_rpa`` block-detection
+          temporary is counted inside it), NOT a guaranteed LAPACK bound.
+          This term has NO ``Nmat`` dependence: the solve only ever sees
+          the static (``Omega=0``) slice.
+
+        - **Bubble phase** (previously OMITTED entirely -- this is the
+          fix; a first round undercounted its pair-processing sub-phase
+          and never bounded its preparation sub-phase -- this is the
+          correction). ``_run_transverse_bond_pipeline`` builds ``W``
+          (via ``bond_channels.W_pm_bond``, shape ``(Nq, ND, ND)``)
+          BEFORE calling ``bubble.transverse_bond_bubble_static``, and
+          that call holds ``W`` resident throughout (it is consumed only
+          afterwards, by the dressing phase). The bubble call itself has
+          two sub-phases with DIFFERENT resident sets -- ``W`` is the
+          only ``ND``-scale tensor alive during preparation (``chi_bar``
+          below does not exist yet), so the two sub-phases' peaks are
+          bounded SEPARATELY and combined with ``max(...)`` (never
+          summed, for the same non-overlap reason as the two top-level
+          phases):
+
+          *Preparation sub-phase* (``_prepare_dense``, called once on
+          the full ``nblock=2`` up/down Green tensor, BEFORE the
+          per-block split): let ``U = 2 * Nmat * Nq * P * itemsize`` be
+          the byte size of one full two-block ``(2, Nmat, Nq, norb,
+          norb)`` tensor. Every internal step that is not a pure
+          ``reshape`` (view) allocates a NEW ``U``-sized buffer while its
+          predecessor is still referenced -- ``matsubara.fermion_to_tau``
+          internally computes ``xp.fft.fft(arr, axis=1) *
+          _bcast(omg, ...)``, an ``fft`` output buffer times a
+          RESHAPED (not tiled) phase, so exactly one extra ``U``-buffer
+          coexists with the fft output during that multiply;
+          ``backend.spatial_ifftn`` (new buffer) runs while its input is
+          still bound; ``kgrid.reverse_fft_axes`` (its own docstring:
+          "New array") runs while ``green_rt`` is still bound because it
+          is returned alongside ``green_rev`` in ``prepped``. Each of
+          these is a 2-buffer transient, so the tail-OFF peak is
+          ``2*U = 4*Nmat*Nq*P*itemsize``. Tail-ON additionally builds
+          ``jump_f``/``jump_r_rev``/``fwd0_p``/``rev0_p``, four buffers
+          of size ``S = 2*Nq*P*itemsize`` each (a single-frequency slice
+          of the two-block tensor -- no ``Nmat`` factor) that all persist
+          to the return, on top of the still-resident ``green_rt``/
+          ``green_rev`` (``2*U``): tail-ON peak = ``2*U + 4*S =
+          4*Nmat*Nq*P*itemsize + 8*Nq*P*itemsize``. Tail-ON is the
+          uniformly larger (and therefore used) bound -- whether the
+          tail is actually active depends on runtime Green-function
+          content, not on anything known at preflight time:
+          ``prep_bytes = itemsize * Nq * (ND**2 + 4*P*(Nmat + 2))``
+          (the ``ND**2`` term is ``W`` alone).
+
+          *Pair-processing sub-phase* (the ``B x B`` channel-pair loop):
+          ``_iter_transverse_bond_channel_pairs`` extracts and holds, for
+          the ENTIRE loop, two full-frequency Green carriers
+          ``green_fwd_sgn`` and ``green_rev``, each shape ``(Nmat, Nq,
+          norb, norb)`` (one block out of the ``nblock=2`` pair, the
+          other half released immediately per the Task-4 per-block
+          ``del`` discipline) -- contributing ``2 * Nmat * Nq * P *
+          itemsize`` (``P = norb**2``) alongside the already-resident
+          ``W`` AND, from this point on, ``chi_bar`` (the ``(Nq, ND,
+          ND)`` static accumulator, allocated right before the loop
+          starts): ``2 * Nq * ND**2 * itemsize``. Per pair,
+          ``_bond_pair_full_block`` materializes the FULL-frequency block
+          ``(Nmat, Nq, norb, norb, norb, norb)`` == ``(Nmat, Nq, P, P)``
+          (``contract_general``'s outer-product buffer, immediately
+          reinterpreted as the ``(npair, npair)`` pair block, ``npair =
+          P``). Because that buffer is a non-contiguous ``swapaxes``
+          view, the subsequent ``.reshape`` forces a fresh contiguous
+          copy, then ``spatial_fftn`` allocates its own output -- each of
+          these is an ordinary 2-buffer (old + new) transient. The THIRD
+          step, ``matsubara.tau_to_boson``, is NOT: it computes
+          ``xp.fft.ifft(arr * _bcast(omg_inv, ...), axis=0)`` where
+          ``arr`` is the caller's ``chi0_qt`` (still bound in
+          ``_bond_pair_full_block`` -- not ``del``'d until AFTER
+          ``tau_to_boson`` returns). ``arr * _bcast(...)`` allocates ONE
+          new buffer (``_bcast`` reshapes the phase vector, it does not
+          tile it, so the multiply is an ordinary broadcast producing a
+          single output), and ``xp.fft.ifft`` on THAT allocates a SECOND
+          new buffer while the first is still on the evaluation stack --
+          so at the peak, THREE full ``(Nmat, Nq, P, P)`` buffers coexist
+          simultaneously: ``arr`` (== ``chi0_qt``, the caller's still-live
+          reference), the multiply's output, and the ``ifft`` output (a
+          first review round only counted two, missing that ``chi0_qt``
+          itself remains alive across the call). The tail-correction
+          block (``chi0_rt[0] = ...``, when active) runs BEFORE this
+          chain, while only ONE full ``(Nmat, Nq, P, P)`` buffer
+          (``chi0_rt`` itself) is resident, and adds a bounded ``O(P**2)``
+          (no ``Nmat`` factor -- its own operands are single-frequency
+          slices): its own peak, ``(Nmat + 3) * P**2``, is algebraically
+          ``<= 3 * Nmat * P**2`` for every valid (even, positive)
+          ``Nmat >= 2``, so it never exceeds the THREE-buffer peak.
+
+          RETAINED TAIL CARRIERS (a second review round's fix -- these
+          were bounded inside ``prep_bytes`` but omitted from
+          ``pair_bytes``): ``prepped`` (the ``_DensePrepared`` instance
+          ``_prepare_dense`` returns) is held alive by
+          ``transverse_bond_bubble_static``'s own local variable for the
+          ENTIRE function, including the whole pair-processing loop --
+          not just during preparation. ``_iter_transverse_bond_channel_
+          pairs`` only clears ``prepped.green_rt``/``prepped.green_rev``
+          (setting them ``None`` right after extracting the single-block
+          carriers above); it never touches ``prepped.fwd0_p``/
+          ``rev0_p``/``jump_f``/``jump_r_rev``. When tail-on, those are
+          the SAME four full two-block ``S = 2*Nq*P*itemsize`` buffers
+          ``prep_bytes`` already counts -- ``tail_pack`` (built once,
+          also for the whole loop) holds only single-block VIEWS into
+          them, so the underlying two-block buffers are what actually
+          stay resident, not merely their views. This is genuinely
+          additional storage throughout the pair loop, on top of the
+          THREE-buffer per-pair transient: ``+ 4*S = 8*Nq*P*itemsize``.
+          Whether these four arrays exist at all is decided by
+          ``_prepare_dense``'s own ``tail_on = bool(xp.any(green0_tail
+          ...[:, 0] != 0))`` check on actual Green-function content --
+          ``self.green0_tail`` is available at preflight time (set by
+          ``solve()`` before this method runs), but RPA's own
+          ``_calc_green`` NEVER returns ``None`` for it (its docstring:
+          "materializes a shape-matched all-zero tail" when
+          ``coeff_tail == 0``), so an ``is not None`` presence check
+          would always be ``True`` here and provide no tightening --
+          replicating ``xp.any(...)`` itself would duplicate a
+          host/device-synchronizing reduction ``_prepare_dense`` already
+          performs once, which is not "cheap" to redo speculatively at
+          preflight time. So, like ``prep_bytes``, this term is counted
+          UNCONDITIONALLY (the conservative bound, per this function's
+          existing policy):
+          ``pair_bytes = itemsize * Nq * (2*ND**2 + 3*Nmat*P**2 +
+          2*Nmat*P + 8*P)``.
+
+          CARRIER-EXTRACTION TRANSITION (verified, not merely assumed):
+          at the instant ``_iter_transverse_bond_channel_pairs`` begins
+          -- ``prepped.green_rt`` (2-block, ``2*Nmat*P``) and
+          ``prepped.green_rev`` (2-block, ``2*Nmat*P``) both still whole,
+          plus the newly-forming single-block ``green_fwd_sgn``
+          (``Nmat*P``), plus the same retained tail carriers (``8*P``),
+          plus ``W``+``chi_bar`` (``2*ND**2``) -- the total is
+          ``2*ND**2 + 5*Nmat*P + 8*P``. Comparing to the steady-state
+          ``pair_bytes`` above (``2*ND**2 + 3*Nmat*P**2 + 2*Nmat*P +
+          8*P``), the difference is ``3*Nmat*P**2 - 3*Nmat*P =
+          3*Nmat*P*(P - 1)``, which is exactly ``0`` at ``norb=1``
+          (``P=1``) and strictly positive for ``norb>1``: the
+          steady-state ``pair_bytes`` formula bounds the extraction
+          transition too, with equality (not slack) at the ``norb=1``
+          corner -- so no separate term is needed, but the bound is
+          tight there, not merely "large enough by coincidence".
+
+          ``bubble_bytes = max(prep_bytes, pair_bytes)``. With the
+          retained-tail-carrier term now in BOTH, ``pair_bytes -
+          prep_bytes = ND**2 + Nmat*P*(3*P - 2)``, which is strictly
+          positive for every valid ``P >= 1``, ``Nmat >= 2``, ``ND >= 1``
+          -- so ``pair_bytes`` now provably dominates ``prep_bytes``
+          everywhere (unlike before this fix, where ``prep_bytes`` won
+          at the smallest corner, ``norb=1``/``B=1``/``Nmat=2``: ``17``
+          vs the OLD ``pair_bytes``'s ``12``, in units of ``itemsize *
+          Nq`` -- with the fix, the same corner gives ``17`` vs the NEW
+          ``pair_bytes``'s ``20``). The ``max`` is still computed
+          explicitly in code rather than simplified away, for robustness
+          against future changes to either sub-phase.
+
+        ``peak_bytes = max(bubble_bytes, solve_bytes)``. For small ``B``
+        (few bond channels, so ``ND`` and therefore ``solve_bytes`` stay
+        small) and large ``Nmat``, ``bubble_bytes`` -- which has no
+        counterpart bounding it in the old solve-only estimate -- can
+        exceed ``solve_bytes`` arbitrarily; this is exactly the case the
+        old estimate missed and could OOM on after passing the cap. Named
+        an ESTIMATE in every user-facing message, per spec.
+
+        Also emits a WARNING (never a refusal) when the estimated solve
+        op-count ``Nq * ND**3`` exceeds ``1e12``: a memory-fitting run can
+        still be compute-prohibitive.
+        """
+        B = int(len(topo.delta_r))
+        norb = self.norb
+        P = norb ** 2
+        ND = B * P
+        Nq = int(self.lattice.nvol)
+        Nmat = int(self.nmat)
+        K_solve = 3
+        itemsize = 16  # complex128
+
+        solve_bytes = (3 + K_solve) * Nq * (ND ** 2) * itemsize
+        prep_bytes = itemsize * Nq * ((ND ** 2) + 4 * P * (Nmat + 2))
+        pair_bytes = itemsize * Nq * (
+            2 * (ND ** 2) + 3 * Nmat * (P ** 2) + 2 * Nmat * P + 8 * P)
+        bubble_bytes = max(prep_bytes, pair_bytes)
+        peak_bytes = max(bubble_bytes, solve_bytes)
+        op_count = Nq * (ND ** 3)
+
+        logger.info(
+            "Transverse bond-channel preflight (ESTIMATE): B = %d "
+            "channels, ND = B*norb**2 = %d, N_q = %d, Nmat = %d, "
+            "K_solve = %d (numpy-backend conservative allowance), "
+            "estimated bubble-prep-phase peak = %.3f GB, estimated "
+            "bubble-pair-phase peak = %.3f GB, estimated solve-phase "
+            "peak = %.3f GB, estimated overall peak memory = %.3f GB "
+            "(cap %.3f GB), estimated solve op-count Nq*ND**3 = %.3e",
+            B, ND, Nq, Nmat, K_solve, prep_bytes / 1.0e9,
+            pair_bytes / 1.0e9, solve_bytes / 1.0e9, peak_bytes / 1.0e9,
+            self.transverse_bond_memory_cap_gb, op_count)
+
+        if peak_bytes > self.transverse_bond_memory_cap_gb * 1.0e9:
+            raise ValueError(
+                "[mode.param] transverse_bond_channels: ESTIMATED peak "
+                "memory {:.3f} GB exceeds transverse_bond_memory_cap_gb = "
+                "{:.3f} GB (bubble-phase estimate {:.3f} GB [prep {:.3f} "
+                "GB, pair-loop {:.3f} GB, peak = max of the two "
+                "sub-phases], solve-phase estimate {:.3f} GB; overall "
+                "peak = max of the bubble and solve phases, they do not "
+                "overlap in time). The solve-phase estimate is "
+                "(3 + K_solve) * Nq * ND**2 * 16 bytes with ND = "
+                "B*norb**2 = {}, Nq = {}, K_solve = {}. The bubble "
+                "prep-phase estimate is 16 * Nq * (ND**2 + 4*P*(Nmat+2)) "
+                "bytes and the pair-loop estimate is 16 * Nq * (2*ND**2 "
+                "+ 3*Nmat*P**2 + 2*Nmat*P + 8*P) bytes, both with P = "
+                "norb**2 and Nmat = {} (all are numpy-backend "
+                "conservative allowances, not guaranteed LAPACK/BLAS/FFT "
+                "bounds). Restrict or remove some off-site "
+                "CoulombInter/Ising/Exchange declarations to shrink the "
+                "channel set B, use a coarser k-mesh, reduce Nmat (a "
+                "lever for BOTH bubble sub-phase estimates, since the "
+                "solve-phase estimate does not depend on it), or "
+                "raise transverse_bond_memory_cap_gb. "
+                "transverse_bond_max_shells only helps if the outer "
+                "shells you would drop are declared-zero -- "
+                "resolve_transverse_topology refuses any truncation that "
+                "would discard a declared nonzero off-site "
+                "coefficient.".format(
+                    peak_bytes / 1.0e9, self.transverse_bond_memory_cap_gb,
+                    bubble_bytes / 1.0e9, prep_bytes / 1.0e9,
+                    pair_bytes / 1.0e9, solve_bytes / 1.0e9,
+                    ND, Nq, K_solve, Nmat))
+
+        if op_count > 1.0e12:
+            logger.warning(
+                "[mode.param] transverse_bond_channels: estimated solve "
+                "op-count Nq*ND**3 = %.3e exceeds 1e12 (ND = %d, Nq = "
+                "%d); this run fits the memory cap but may be "
+                "compute-prohibitive.", op_count, ND, Nq)
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):

@@ -2095,3 +2095,1090 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
         prev_basis = Q if Q.shape[0] > 0 else sub
 
     return records
+
+
+# =============================================================================
+# Phase W, Task 2 -- the master transverse bond topology
+# =============================================================================
+#
+# APPEND-ONLY REGION. Nothing above this banner is touched by this task (or
+# any later Phase W task): `resolve_interactions` and every pre-existing
+# function/class in this module stay byte-for-byte identical (the
+# append-only contract of
+# docs/superpowers/plans/2026-08-16-bond-transverse-phase-w.md, "Global
+# Constraints" -- `bare_bond_vertices`/`resolve_interactions` are templates,
+# never edited).
+#
+# Implements the "master transverse topology" of
+# docs/superpowers/specs/2026-08-15-bond-transverse-design.md ("The
+# enlarged transverse objects (contracts)" -> "The master transverse
+# topology", "Canonical orbit rule", "Construction domain (binding for
+# steps 2-3)"): `TransverseTopology`, `resolve_transverse_topology`,
+# `iter_reversal_orbits`, `validate_topology_against_mesh`,
+# `transverse_effective_activity`. This section stays general (topology and
+# coefficient bookkeeping only) -- vertex construction (`W_pm_bond`, Phase W
+# Task 3) and the bubble (`transverse_bond_bubble_static`, Task 4) are NOT
+# built here; they consume this section's objects.
+
+import collections as _collections  # local: keeps the append-only region
+                                     # self-contained without touching the
+                                     # module's top-of-file import block.
+
+_TRANSVERSE_ACTIVE_TYPES = ("CoulombInter", "Ising", "Exchange")
+
+
+def _as_readonly_int_array(value, name, *, ndim, last_dim=None):
+    """Validate/convert ``value`` into a read-only ``int64`` array for
+    :class:`TransverseTopology`'s ``delta_r``/``reverse`` fields.
+
+    Rejects (``ValueError``, never silently clamps/truncates -- the same
+    philosophy ``resolve_interactions``'s ``bond_max_shells`` validation
+    uses): wrong ``ndim``, a wrong trailing axis length (when ``last_dim``
+    is given), a complex dtype, a non-finite value, or a genuinely
+    fractional value. A float array whose entries are all exact integers
+    (e.g. ``np.array([[0, 0, 0]], dtype=float)``) is accepted and cast.
+    """
+    arr = np.asarray(value)
+    if arr.ndim != ndim:
+        raise ValueError(
+            "TransverseTopology: {} must have ndim={}; got shape {}".format(
+                name, ndim, arr.shape))
+    if last_dim is not None and arr.shape[-1] != last_dim:
+        raise ValueError(
+            "TransverseTopology: {} must have last axis of length {}; got "
+            "shape {}".format(name, last_dim, arr.shape))
+    if np.iscomplexobj(arr):
+        raise ValueError(
+            "TransverseTopology: {} must be real/integer-valued; got a "
+            "complex dtype ({})".format(name, arr.dtype))
+    if arr.size and not np.all(np.isfinite(arr)):
+        raise ValueError(
+            "TransverseTopology: {} must be finite; got {}".format(name, arr))
+    if not np.issubdtype(arr.dtype, np.integer):
+        if arr.size and not np.all(arr == np.round(arr)):
+            raise ValueError(
+                "TransverseTopology: {} must be integer-valued (no "
+                "fractional part); got {}".format(name, arr))
+    out = np.array(arr, dtype=np.int64, copy=True)
+    out.flags.writeable = False
+    return out
+
+
+_TransverseTopologyBase = _collections.namedtuple(
+    "_TransverseTopologyBase", ["delta_r", "reverse", "coeffs"])
+
+
+class TransverseTopology(_TransverseTopologyBase):
+    """Alias-safe, closure-validated bond-channel topology for the
+    transverse (spin-flip) channel (spec, "The master transverse
+    topology").
+
+    Fields
+    ------
+    delta_r : np.ndarray, shape (B, 3), int64, read-only
+        Bravais-cell displacement per channel. ``delta_r[0] == (0, 0, 0)``
+        ALWAYS -- the mandatory local channel every topology contains,
+        never removed by shell truncation.
+    reverse : np.ndarray, shape (B,), int64, read-only
+        ``reverse[m]`` is the channel index of ``-delta_r[m]``;
+        ``reverse[reverse[m]] == m`` for every ``m`` (an involution) and
+        ``reverse[0] == 0``.
+    coeffs : dict[str, np.ndarray]
+        Per-interaction-type ``(B, norb, norb)`` complex arrays (a plain,
+        NEW dict -- mutating the dict passed into the constructor does not
+        affect the stored one), all sharing the same ``B``/``norb``. Every
+        array's own arrays are read-only, ``coeffs[t][0]`` is EXACTLY zero
+        (on-site content is represented exclusively by the caller's
+        ``ham_pm_onsite``, never here), and the closure invariant
+        ``coeffs[t][reverse[m]] == conj(coeffs[t][m]).T`` holds EXACTLY
+        (to the last bit) for every ``m``.
+
+    ``B = len(delta_r)`` (channel count, including channel 0); the enlarged
+    dimension a consumer builds from this topology is ``ND = B * norb**2``.
+
+    "Alias-safe", not "immutable": array VALUES cannot be mutated in place
+    (``flags.writeable = False``), but ``coeffs`` is an ordinary dict a
+    caller could re-key or replace wholesale on an aliased reference --
+    every consumer boundary (:func:`validate_topology_against_mesh`)
+    therefore re-validates rather than trusting a previously-constructed
+    instance is still well-formed.
+
+    Raises
+    ------
+    ValueError
+        On any invariant violation, at construction time (never
+        assert -- this is a public constructor, not an internal
+        precondition).
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, delta_r, reverse, coeffs):
+        delta_r = _as_readonly_int_array(delta_r, "delta_r", ndim=2, last_dim=3)
+        B = delta_r.shape[0]
+        if B < 1:
+            raise ValueError(
+                "TransverseTopology: delta_r must carry at least channel 0 "
+                "(the mandatory local R=(0,0,0) channel); got shape {}"
+                .format(delta_r.shape))
+        if not np.array_equal(delta_r[0], np.zeros(3, dtype=np.int64)):
+            raise ValueError(
+                "TransverseTopology: channel 0 must be R=(0,0,0) (the "
+                "mandatory local channel every topology contains); got "
+                "delta_r[0]={}".format(tuple(int(x) for x in delta_r[0])))
+
+        reverse = _as_readonly_int_array(reverse, "reverse", ndim=1)
+        if reverse.shape != (B,):
+            raise ValueError(
+                "TransverseTopology: reverse must have shape ({},), "
+                "matching delta_r's channel count B={}; got {}".format(
+                    B, B, reverse.shape))
+        if reverse.size and (np.any(reverse < 0) or np.any(reverse >= B)):
+            raise ValueError(
+                "TransverseTopology: reverse entries must all be valid "
+                "channel indices in [0, {}); got {}".format(
+                    B, reverse.tolist()))
+        if not np.array_equal(reverse[reverse], np.arange(B, dtype=np.int64)):
+            raise ValueError(
+                "TransverseTopology: reverse must be an involution "
+                "(reverse[reverse[m]] == m for every channel m); got "
+                "reverse={}".format(reverse.tolist()))
+        if int(reverse[0]) != 0:
+            raise ValueError(
+                "TransverseTopology: reverse[0] must be 0 -- channel 0 "
+                "(R=(0,0,0)) is its own reversal partner; got reverse[0]={}"
+                .format(int(reverse[0])))
+        # Geometric consistency: reverse[m] must genuinely be the channel of
+        # -delta_r[m]. This is not separately listed among the spec's
+        # constructor-time checks, but reverse's whole MEANING depends on
+        # it, and every downstream consumer (the closure check right below,
+        # iter_reversal_orbits, W_pm_bond's orbit iteration) silently
+        # produces wrong results if it is violated -- the same
+        # internal-interface guard bare_bond_vertices applies to
+        # ResolvedInteractionSet.reverse (see its "bond_set is not
+        # reversal-closed" ValueError above).
+        neg = -delta_r
+        if not np.array_equal(delta_r[reverse], neg):
+            mism = np.any(delta_r[reverse] != neg, axis=1)
+            bad = int(np.argmax(mism))
+            raise ValueError(
+                "TransverseTopology: reverse is not geometrically "
+                "consistent with delta_r -- delta_r[reverse[{0}]]={1} != "
+                "-delta_r[{0}]={2}".format(
+                    bad, tuple(int(x) for x in delta_r[reverse[bad]]),
+                    tuple(int(x) for x in neg[bad])))
+
+        new_coeffs = {}
+        common_norb = None
+        for type_name, raw_arr in dict(coeffs).items():
+            arr = np.array(raw_arr, dtype=complex, copy=True)
+            if arr.ndim != 3 or arr.shape[0] != B or arr.shape[1] != arr.shape[2]:
+                raise ValueError(
+                    "TransverseTopology: coeffs[{!r}] must have shape "
+                    "(B, norb, norb) with B={} (matching delta_r); got {}"
+                    .format(type_name, B, arr.shape))
+            if common_norb is None:
+                common_norb = arr.shape[1]
+            elif arr.shape[1] != common_norb:
+                raise ValueError(
+                    "TransverseTopology: coeffs arrays disagree on norb -- "
+                    "coeffs[{!r}] has norb={} but an earlier type has "
+                    "norb={}".format(type_name, arr.shape[1], common_norb))
+            if np.any(arr[0] != 0):
+                raise ValueError(
+                    "TransverseTopology: coeffs[{!r}][0] (channel 0, the "
+                    "on-site R=(0,0,0) channel) must be EXACTLY zero -- "
+                    "on-site content is represented exclusively by the "
+                    "caller's ham_pm_onsite, never by a topology coeffs "
+                    "array; got coeffs[{!r}][0]={}".format(
+                        type_name, type_name, arr[0]))
+            mism = arr[reverse] - np.conj(np.swapaxes(arr, 1, 2))
+            if np.any(mism != 0):
+                m_bad = int(np.argmax(np.any(mism != 0, axis=(1, 2))))
+                raise ValueError(
+                    "TransverseTopology: coeffs[{!r}] fails the Hermitian "
+                    "closure invariant coeffs[reverse[m]] == "
+                    "conj(coeffs[m]).T at channel m={} (reverse[m]={}): "
+                    "coeffs[{!r}][{}]={} but conj(coeffs[{!r}][{}]).T={}"
+                    .format(type_name, m_bad, int(reverse[m_bad]),
+                            type_name, m_bad, arr[reverse[m_bad]],
+                            type_name, m_bad, np.conj(arr[m_bad]).T))
+            arr.flags.writeable = False
+            new_coeffs[type_name] = arr
+
+        return super(TransverseTopology, cls).__new__(
+            cls, delta_r, reverse, new_coeffs)
+
+
+def iter_reversal_orbits(topo):
+    """Yield ONE representative ``(m, a, b)`` per reversal orbit
+    ``{(m, a, b), (reverse[m], b, a)}`` of ``topo`` (spec, "Canonical orbit
+    rule"): the representative is the LEXICOGRAPHIC TUPLE-MINIMUM of the
+    orbit's (at most two) elements.
+
+    This is the ONE shared helper both the topology layer (this module)
+    and the vertex construction (``W_pm_bond``, Phase W Task 3) use to
+    enumerate reversal orbits -- unit-tested standalone here, independent
+    of either caller, per the spec's "Canonical orbit rule".
+
+    Ranges over EVERY channel ``topo`` carries (``m`` in ``[0, B)``,
+    INCLUDING the mandatory on-site channel 0) and every orbital pair
+    ``(a, b)`` in ``[0, norb) x [0, norb)``; ``norb`` is read from
+    ``topo.coeffs`` (every array there shares one ``(B, norb, norb)``
+    shape by :class:`TransverseTopology`'s own constructor validation).
+    Callers that only want the OFF-SITE domain (spec, "Construction domain
+    (binding for steps 2-3)": steps 2-3 of ``W_pm_bond`` iterate ``R != 0``
+    content exclusively) filter this function's output to ``m != 0``
+    themselves -- this helper stays domain-agnostic, matching the general
+    "Canonical orbit rule" statement.
+
+    At ``m == reverse[m]`` (only possible at ``m == 0``, since a genuine
+    ``m != 0`` channel wrapping onto its own reversal on a finite mesh is
+    rejected by :func:`validate_topology_against_mesh`, never silently
+    produced here) and ``a == b``, the orbit is a SINGLETON (its own
+    partner); every other orbit has exactly two elements.
+
+    Parameters
+    ----------
+    topo : TransverseTopology
+
+    Returns
+    -------
+    list of (int, int, int)
+        One ``(m, a, b)`` representative per orbit, in the deterministic
+        order the ``(m, a, b)`` triple-loop first encounters each orbit
+        (which is already ascending in the representative itself, since
+        the representative is always whichever element of the pair is
+        visited first).
+
+    Raises
+    ------
+    ValueError
+        If ``topo.coeffs`` is empty (``norb`` cannot be inferred -- every
+        topology :func:`resolve_transverse_topology` returns carries the
+        ``CoulombInter``/``Ising``/``Exchange`` keys always, even when
+        zero-filled, so this is only reachable from a hand-built
+        ``TransverseTopology`` with an empty ``coeffs`` dict).
+    """
+    if not topo.coeffs:
+        raise ValueError(
+            "iter_reversal_orbits: topo.coeffs is empty, so norb cannot be "
+            "inferred (every TransverseTopology resolve_transverse_topology "
+            "returns carries at least the CoulombInter/Ising/Exchange "
+            "zero-filled arrays)")
+    norb = None
+    for type_name, arr in topo.coeffs.items():
+        if norb is None:
+            norb = arr.shape[1]
+        elif arr.shape[1] != norb:
+            raise ValueError(
+                "iter_reversal_orbits: topo.coeffs arrays disagree on norb "
+                "({} vs coeffs[{!r}]'s {})".format(norb, type_name, arr.shape[1]))
+
+    reverse = topo.reverse
+    B = len(reverse)
+    seen = set()
+    reps = []
+    for m in range(B):
+        mr = int(reverse[m])
+        for a in range(norb):
+            for b in range(norb):
+                key = (m, a, b)
+                if key in seen:
+                    continue
+                partner = (mr, b, a)
+                seen.add(key)
+                seen.add(partner)
+                reps.append(min(key, partner))
+    return reps
+
+
+def validate_topology_against_mesh(topo, spatial_shape, *, arrays=None):
+    """The ONE mesh-dependent validation lifecycle point for a
+    :class:`TransverseTopology` (spec, "The master transverse topology"):
+    invoked by BOTH ``transverse_bond_bubble_static`` (Phase W Task 4) and
+    ``W_pm_bond`` (Task 3) at entry, so the injectivity rule below is
+    enforced exactly once per call site.
+
+    Validates, in order:
+
+    1. ``spatial_shape``: a length-3 sequence of strictly positive
+       integers (``Nx, Ny, Nz``).
+    2. (optional) every array in ``arrays`` (a ``{label: ndarray}``
+       mapping) has a leading axis equal to ``nvol = prod(spatial_shape)``
+       -- the "any independently shaped numerical input's nvol must equal
+       prod(spatial_shape)" check the spec's "master transverse topology"
+       section requires this function to apply (e.g. a caller's Green
+       function or ``ham_pm_onsite`` tensor built on the wrong mesh).
+    3. ``topo``'s own invariants, by round-tripping it back through
+       :class:`TransverseTopology`'s validating constructor (alias-safe,
+       not immutable: ``coeffs`` -- though its ARRAYS are read-only -- is
+       itself a plain, mutable dict a caller could have re-keyed since
+       ``topo`` was built).
+    4. INJECTIVITY of ``delta_r mod spatial_shape`` over ALL channels: any
+       two DISTINCT channels whose displacement coincides after periodic
+       wrapping (``R`` vs ``R + k*L`` on any axis, e.g. ``R=1`` vs ``R=6``
+       on ``L=5``, INCLUDING the even-mesh self-reversal alias
+       ``+L/2 == -L/2``) are REJECTED, naming both channels (index and raw
+       ``delta_r``) and the mesh. A topology that passes this check can
+       never produce duplicate ED operators under
+       ``SectorED.bond_correlator_transverse``'s own post-wrap duplicate
+       detection (spec).
+
+    Parameters
+    ----------
+    topo : TransverseTopology
+    spatial_shape : sequence of 3 ints
+        ``(Nx, Ny, Nz)``.
+    arrays : dict[str, array_like], optional
+        Additional numerical inputs whose leading axis must equal
+        ``nvol = Nx*Ny*Nz``.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        On any of the above.
+    """
+    try:
+        shape_seq = tuple(spatial_shape)
+    except TypeError:
+        raise ValueError(
+            "validate_topology_against_mesh: spatial_shape must be a "
+            "length-3 sequence of strictly positive integers; got {!r}"
+            .format(spatial_shape))
+    if len(shape_seq) != 3:
+        raise ValueError(
+            "validate_topology_against_mesh: spatial_shape must have "
+            "length 3 (Nx, Ny, Nz); got {!r}".format(spatial_shape))
+    shape_i = []
+    for x in shape_seq:
+        try:
+            xf = float(x)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "validate_topology_against_mesh: spatial_shape entries "
+                "must be integers; got {!r}".format(spatial_shape))
+        if not np.isfinite(xf) or xf != np.floor(xf) or xf <= 0:
+            raise ValueError(
+                "validate_topology_against_mesh: spatial_shape entries "
+                "must be strictly positive integers; got {!r}".format(
+                    spatial_shape))
+        shape_i.append(int(xf))
+    Nx, Ny, Nz = shape_i
+    nvol = Nx * Ny * Nz
+
+    if arrays:
+        for label, value in dict(arrays).items():
+            value = np.asarray(value)
+            got = value.shape[0] if value.ndim else None
+            if value.ndim < 1 or got != nvol:
+                raise ValueError(
+                    "validate_topology_against_mesh: {} has leading axis "
+                    "{} but the mesh {} implies nvol={}".format(
+                        label, got, shape_i, nvol))
+
+    # Re-validate topo (alias-safe, not immutable -- see the class
+    # docstring); a hand-built or corrupted topology is caught here rather
+    # than silently producing wrong results downstream.
+    topo = TransverseTopology(topo.delta_r, topo.reverse, topo.coeffs)
+
+    shape_arr = np.array(shape_i, dtype=np.int64)
+    delta_r = np.asarray(topo.delta_r)
+    B = delta_r.shape[0]
+    wrapped = np.mod(delta_r, shape_arr)
+    seen = {}
+    for m in range(B):
+        key = tuple(int(x) for x in wrapped[m])
+        if key in seen:
+            other = seen[key]
+            raise ValueError(
+                "validate_topology_against_mesh: channels {} (delta_r={}) "
+                "and {} (delta_r={}) collide on the mesh {} -- both wrap to "
+                "the same displacement {} modulo the mesh (an alias such as "
+                "R vs R+k*L on some axis, or the even-mesh self-reversal "
+                "+L/2 == -L/2); a topology whose channels are not "
+                "INJECTIVE modulo the mesh cannot be used at this mesh "
+                "resolution.".format(
+                    other, tuple(int(v) for v in delta_r[other]),
+                    m, tuple(int(v) for v in delta_r[m]), shape_i, key))
+        seen[key] = m
+    return None
+
+
+def transverse_effective_activity(topo):
+    """The shared "is this topology doing anything transverse off-site"
+    predicate: EXACT nonzero after summation, Hermitian projection and
+    shell truncation -- i.e. after everything
+    :func:`resolve_transverse_topology` already did to ``topo.coeffs``.
+
+    A topology built entirely from PASS-ZERO declarations (only
+    Hund/PairLift, or no off-site transverse-active interaction at all)
+    has every ``coeffs`` array identically zero (channel 0 always is, by
+    :class:`TransverseTopology`'s own constructor invariant; channel 0 is
+    the ONLY channel when nothing off-site was ever declared) and this
+    returns ``False``; any genuinely nonzero off-site CoulombInter/
+    Ising/Exchange coefficient makes it ``True``.
+
+    This is the ONE shared place that answers the question -- callers
+    (``W_pm_bond``, ``transverse_bond_bubble_static``, and any future
+    gate/preflight code, Phase W Tasks 3+) use this rather than
+    re-deriving their own "is coeffs all zero" check.
+
+    Parameters
+    ----------
+    topo : TransverseTopology
+
+    Returns
+    -------
+    bool
+    """
+    for arr in topo.coeffs.values():
+        if np.any(arr != 0):
+            return True
+    return False
+
+
+def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
+                              type_name):
+    """Off-site (``R != 0``) reverse-closure / Hermitian-projection for
+    ONE interaction type, per the SAME algorithm ``resolve_interactions``
+    (its "Step 2: reverse closure / Hermiticity synthesis", above in this
+    module) applies to its ``CoulombInter``-shaped input.
+
+    Deliberately RE-IMPLEMENTED here rather than shared with
+    ``resolve_interactions`` -- this task's append-only contract forbids
+    editing that function (or extracting a common helper out of it) -- but
+    the algorithm itself is the SAME normalization
+    :func:`resolve_transverse_topology` must reproduce (carried Task-1
+    review finding): for a density-density (commuting-operator) type,
+    declaring BOTH ``C`` at ``R`` and ``conj(C)`` at ``-R`` describes the
+    SAME physical operator sum TWICE (``bare_bond_vertices``'s Finding-1
+    derivation, above, reproduces the argument in full) -- so a
+    consistent mirrored pair is Hermitian-PROJECTED onto its exact
+    conjugate average (``0.5 * (declared + conj(synthesized))``), never
+    stored as either raw declared value, and an INCONSISTENT mirrored pair
+    (beyond the scale-aware tolerance) raises rather than silently picking
+    one side. A single-direction declaration is stored as declared, with
+    its reverse partner synthesized as the exact conjugate. Duplicate
+    declarations at the identical ``(type, R, a, b)`` key cannot occur
+    here (a plain Python dict already deduplicates that -- same note
+    ``resolve_interactions``'s own "Step 1" docstring makes); a caller
+    that pre-sums two logical contributions into one dict entry gets that
+    pre-summed value carried through this same closure unchanged.
+
+    Parameters
+    ----------
+    by_irvec : dict[tuple, dict[(int, int), complex]]
+        ``{irvec: {(a, b): value}}``, OFF-SITE (``irvec != (0, 0, 0)``)
+        entries only (the caller filters out the on-site point).
+    norb : int
+    reverse_atol, reverse_rtol : float
+        Same scale-aware tolerance semantics as ``resolve_interactions``.
+    type_name : str
+        Only used to make a ``ValueError`` message actionable.
+
+    Returns
+    -------
+    dict[tuple, np.ndarray]
+        ``{irvec: (norb, norb) complex}``, closed under
+        ``irvec -> -irvec`` (every key's negation is also a key).
+    """
+    declared_irvecs = set(by_irvec.keys())
+    all_irvecs = set(declared_irvecs)
+    for irvec in declared_irvecs:
+        all_irvecs.add(tuple(-x for x in irvec))
+
+    completed = {}
+    visited = set()
+    for irvec in all_irvecs:
+        if irvec in visited:
+            continue
+        neg = tuple(-x for x in irvec)
+        visited.add(irvec)
+        visited.add(neg)
+
+        fwd = by_irvec.get(irvec, {})
+        bwd = by_irvec.get(neg, {})
+
+        fwd_mat = np.zeros((norb, norb), dtype=complex)
+        bwd_mat = np.zeros((norb, norb), dtype=complex)
+
+        synth_fwd_from_bwd = {(a, b): np.conj(v) for (b, a), v in bwd.items()}
+        synth_bwd_from_fwd = {(b, a): np.conj(v) for (a, b), v in fwd.items()}
+
+        keys_fwd = set(fwd.keys()) | set(synth_fwd_from_bwd.keys())
+        for (a, b) in keys_fwd:
+            v_declared = fwd.get((a, b))
+            v_synth = synth_fwd_from_bwd.get((a, b))
+            if v_declared is not None and v_synth is not None:
+                tol = reverse_atol + reverse_rtol * abs(v_declared)
+                if abs(v_declared - v_synth) > tol:
+                    raise ValueError(
+                        "resolve_transverse_topology: {}_{}{}({}) = {} "
+                        "disagrees with conj({}_{}{}({})) = {} beyond "
+                        "tolerance (atol={}, rtol={})".format(
+                            type_name, a, b, irvec, v_declared,
+                            type_name, b, a, neg, v_synth,
+                            reverse_atol, reverse_rtol))
+                fwd_mat[a, b] = 0.5 * (v_declared + v_synth)
+            elif v_declared is not None:
+                fwd_mat[a, b] = v_declared
+            else:
+                fwd_mat[a, b] = v_synth
+
+        keys_bwd = set(bwd.keys()) | set(synth_bwd_from_fwd.keys())
+        for (a, b) in keys_bwd:
+            v_declared = bwd.get((a, b))
+            v_synth = synth_bwd_from_fwd.get((a, b))
+            if v_declared is not None and v_synth is not None:
+                tol = reverse_atol + reverse_rtol * abs(v_declared)
+                if abs(v_declared - v_synth) > tol:
+                    raise ValueError(
+                        "resolve_transverse_topology: {}_{}{}({}) = {} "
+                        "disagrees with conj({}_{}{}({})) = {} beyond "
+                        "tolerance (atol={}, rtol={})".format(
+                            type_name, a, b, neg, v_declared,
+                            type_name, b, a, irvec, v_synth,
+                            reverse_atol, reverse_rtol))
+                bwd_mat[a, b] = 0.5 * (v_declared + v_synth)
+            elif v_declared is not None:
+                bwd_mat[a, b] = v_declared
+            else:
+                bwd_mat[a, b] = v_synth
+
+        completed[irvec] = fwd_mat
+        if neg != irvec:
+            completed[neg] = bwd_mat
+        # neg == irvec is impossible here: irvec != (0, 0, 0) always (the
+        # caller filters out the on-site point before calling), and
+        # -irvec == irvec only at irvec == (0, 0, 0).
+
+    return completed
+
+
+def _require_transverse_integral(value, label):
+    """Coerce ``value`` to ``int`` iff it is an exact integral scalar;
+    otherwise raise a ``resolve_transverse_topology``-prefixed
+    ``ValueError`` naming ``label``. ``bool`` is rejected even though
+    ``isinstance(True, int)`` in Python, since a stray boolean (e.g. an
+    ``irvec``/``orbvec`` component that is accidentally a truthiness
+    flag) is never a legitimate integral coordinate here.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(
+            "resolve_transverse_topology: {} must be an integer, not a "
+            "bool, got {!r}".format(label, value))
+    # Exact-integer types pass through unchanged (arbitrary precision:
+    # no float round-trip, which would silently round values above
+    # 2**53 and overflow on huge ints).
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    # Float types are accepted iff they carry an exact integral value
+    # small enough that the value is unambiguous (|v| <= 2**53, the
+    # float64 contiguous-integer bound). Everything else -- strings,
+    # arrays, None, complex, non-integral or non-finite floats -- is
+    # rejected; numeric strings deliberately do NOT coerce.
+    if isinstance(value, (float, np.floating)):
+        # Validate at the value's NATIVE precision (no float() narrowing:
+        # a fractional np.longdouble could round to an integral float64,
+        # and a longdouble just above 2**53 could narrow onto the
+        # accepted boundary).
+        if (not np.isfinite(value) or value != np.floor(value)
+                or abs(value) > 2.0**53):
+            raise ValueError(
+                "resolve_transverse_topology: {} must be an integral "
+                "value, got {!r}".format(label, value))
+        return int(value)
+    raise ValueError(
+        "resolve_transverse_topology: {} must be an integer, got "
+        "{!r}".format(label, value))
+
+
+def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
+    """Resolve the master transverse bond topology (spec, "The master
+    transverse topology") from the SAME raw, PRE-FOLD interaction
+    declarations ``resolve_interactions`` consumes -- the pre-fold
+    locality rule (judge locality on the ORIGINAL declarations, never a
+    folded table; ``rpa.py``'s own ``param_ham_orig``-reading builders,
+    e.g. ``_append_inter_cross``/``_append_onsite_direct`` above this
+    module in the pipeline, apply the identical rule for the same reason).
+    Callers pass ``interactions = self.param_ham_orig`` (or the equivalent
+    un-folded dict-of-dicts) -- NEVER the post-sublattice-folding
+    ``self.param_ham``.
+
+    Collects the UNION of declared off-site displacement vectors from
+    EVERY transverse-active type (``CoulombInter``, ``Ising``,
+    ``Exchange``; ``Hund``/``PairLift`` and anything else in
+    ``interactions`` contribute NO shells and are simply never read --
+    "tolerated" per the spec), closes each type's own declarations under
+    ``R -> -R`` with the SAME sum-then-Hermitian-project normalization
+    ``resolve_interactions`` uses (see :func:`_close_offsite_hermitian`),
+    orders channels the SAME way ``resolve_interactions`` does (``m=0``
+    first, then shells by ``(Euclidean length, lexicographic irvec)``),
+    and returns a :class:`TransverseTopology` whose ``coeffs`` are
+    zero-filled, per type, at every channel that type does not declare.
+
+    Parameters
+    ----------
+    interactions : dict
+        A dict-of-dicts container in the SAME shape as
+        ``self.param_ham_orig``/``self.param_ham``: keys are interaction
+        type names; each sub-dict has the SAME ``{(irvec, orbvec): value}``
+        shape ``resolve_interactions``'s own ``coulomb_inter`` parameter
+        documents (``irvec`` a length-3 int tuple, ``orbvec = (a, b)``
+        0-based orbital indices, ``value`` complex). A missing type key is
+        treated exactly like an empty sub-dict; on-site (``irvec ==
+        (0, 0, 0)``) entries of every type are ignored here -- on-site
+        content is represented exclusively through the caller's
+        ``ham_pm_onsite`` (Phase W Task 3's ``W_pm_bond``, spec step 1),
+        never through a topology ``coeffs`` channel.
+    cell : array_like, shape (3, 3)
+        Real-space lattice vectors (rows) -- the SAME quantity
+        ``resolve_interactions`` calls ``lattice_vectors``; used
+        identically, only for Euclidean shell length / ``max_shells``
+        ordering.
+    norb : int
+        Number of orbitals; every ``coeffs`` array is
+        ``(B, norb, norb)``.
+    max_shells : int or None, optional
+        Truncates the UNION of off-site shells (the ``bond_max_shells``
+        semantics ``resolve_interactions`` documents) by WHOLE ``|R|``-
+        shells; ``None`` (the default) keeps every declared off-site
+        shell. A negative, non-integral or non-finite value raises
+        ``ValueError`` (never clamped/truncated). Dropping declared
+        content is ALWAYS an error, never silent: if the truncation would
+        remove a shell that carries any exactly-nonzero DECLARED
+        coefficient (from ``CoulombInter``, ``Ising`` or ``Exchange``),
+        this raises ``ValueError`` -- the same ambiguity guard
+        ``resolve_interactions``'s ``bond_max_shells=0`` case applies
+        (bond_channels.py's "Step 4" above), generalized here to any
+        truncation depth: ``max_shells=0`` with declared off-site content
+        is simply the ``n_keep=0`` instance of the same rule. A
+        truncation that only drops shells with no declared nonzero
+        coefficient (e.g. purely synthesized-negligible partners, or
+        shells nothing ever declared) remains fine.
+
+    Returns
+    -------
+    TransverseTopology
+        Channel 0 is always ``R=(0,0,0)``; ``coeffs`` holds
+        ``"CoulombInter"``, ``"Ising"`` and ``"Exchange"`` keys ALWAYS
+        (zero-filled at every channel for a type that declares nothing at
+        all off-site), each ``(B, norb, norb)`` complex, Hermitian-closed
+        exactly like ``resolve_interactions``'s ``v_bond``.
+
+    Raises
+    ------
+    ValueError
+        If a mirrored declared pair disagrees beyond tolerance, if
+        ``max_shells`` is invalid, if ``max_shells`` would drop a shell
+        carrying declared nonzero content, or (propagated from
+        :class:`TransverseTopology`'s constructor) if the resolved
+        topology somehow fails its own invariants.
+    """
+    norb = _require_transverse_integral(norb, "norb")
+    if norb < 1:
+        raise ValueError(
+            "resolve_transverse_topology: norb must be a positive integer, "
+            "got {!r}".format(norb))
+    if not hasattr(interactions, "get"):
+        raise ValueError(
+            "resolve_transverse_topology: interactions must be a "
+            "dict-like container (mapping interaction type name -> "
+            "{(irvec, orbvec): value} sub-dict), got {!r}".format(
+                type(interactions)))
+
+    reverse_atol, reverse_rtol = 1e-10, 1e-8
+
+    per_type_by_irvec = {}
+    per_type_completed = {}
+    union_irvecs = set()
+    for type_name in _TRANSVERSE_ACTIVE_TYPES:
+        tbl = interactions.get(type_name, {}) or {}
+        by_irvec = {}
+        for (irvec, orbvec), value in tbl.items():
+            try:
+                irvec_len = len(irvec)
+            except TypeError:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an irvec "
+                    "key that is not a 3-component vector, got "
+                    "{!r}".format(type_name, irvec))
+            if irvec_len != 3:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an irvec "
+                    "key with {} component(s), expected exactly 3, got "
+                    "{!r}".format(type_name, irvec_len, irvec))
+            irvec = tuple(
+                _require_transverse_integral(
+                    x, "{} irvec component".format(type_name))
+                for x in irvec)
+
+            try:
+                orbvec_len = len(orbvec)
+            except TypeError:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an orbvec "
+                    "key that is not a 2-component (a, b) pair, got "
+                    "{!r}".format(type_name, orbvec))
+            if orbvec_len != 2:
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares an orbvec "
+                    "key with {} component(s), expected exactly 2 (a, "
+                    "b), got {!r}".format(type_name, orbvec_len, orbvec))
+            a = _require_transverse_integral(
+                orbvec[0], "{} orbvec[0]".format(type_name))
+            b = _require_transverse_integral(
+                orbvec[1], "{} orbvec[1]".format(type_name))
+            if not (0 <= a < norb and 0 <= b < norb):
+                raise ValueError(
+                    "resolve_transverse_topology: {} declares orbital "
+                    "index (a={}, b={}) at irvec={} out of range for "
+                    "norb={}; orbital indices must satisfy 0 <= a,b < "
+                    "norb".format(type_name, a, b, irvec, norb))
+
+            if irvec == (0, 0, 0):
+                continue
+            by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
+        per_type_by_irvec[type_name] = by_irvec
+        completed = _close_offsite_hermitian(
+            by_irvec, norb, reverse_atol, reverse_rtol, type_name)
+        per_type_completed[type_name] = completed
+        union_irvecs.update(completed.keys())
+
+    # --- shell sort: SAME ordering resolve_interactions uses (m=0 first,
+    # then shells by (Euclidean length, lexicographic irvec)) ---
+    def sort_key(irvec):
+        return (_shell_length(irvec, cell), irvec)
+
+    ordered_irvecs_all = sorted(union_irvecs, key=sort_key)
+    shells = []  # list of (length, [irvecs...])
+    for irvec in ordered_irvecs_all:
+        length = _shell_length(irvec, cell)
+        if shells and abs(length - shells[-1][0]) <= 1e-6 * max(
+                length, shells[-1][0], 1.0):
+            shells[-1][1].append(irvec)
+        else:
+            shells.append((length, [irvec]))
+
+    if max_shells is not None:
+        try:
+            shells_f = float(max_shells)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "resolve_transverse_topology: max_shells must be a "
+                "non-negative integer or None, got {!r}".format(max_shells))
+        if (not np.isfinite(shells_f) or shells_f < 0
+                or shells_f != np.floor(shells_f)):
+            raise ValueError(
+                "resolve_transverse_topology: max_shells must be a "
+                "non-negative integral value (shell 0 is the mandatory "
+                "on-site R=(0,0,0) channel, always kept regardless; "
+                "max_shells counts OFF-SITE shells beyond it) or None, "
+                "got {!r}".format(max_shells))
+        n_keep = int(shells_f)
+        dropped_shells = shells[n_keep:]
+
+        # Ambiguity guard (review fix, generalizing resolve_interactions's
+        # "Step 4" bond_max_shells=0 guard, bond_channels.py above, to
+        # every truncation depth): dropping a shell that carries any
+        # exactly-nonzero DECLARED coefficient (from CoulombInter, Ising
+        # or Exchange) is ALWAYS an error, never silent -- the docstring's
+        # "max_shells truncates the UNION of off-site shells" promise
+        # would otherwise silently discard content the caller explicitly
+        # asked for. Checked against per_type_by_irvec (the RAW declared
+        # entries, pre-closure), matching resolve_interactions's own
+        # has_nonzero_inter_site_v -- a synthesized-but-negligible
+        # reverse partner never triggers this on its own (it is not
+        # itself a declared entry), but its declared mirror at the SAME
+        # shell (same |R|, since |R| == |-R| always) does.
+        dropped_irvecs = {irvec for _, irvecs in dropped_shells
+                           for irvec in irvecs}
+        if dropped_irvecs:
+            offending = []
+            for type_name in _TRANSVERSE_ACTIVE_TYPES:
+                by_irvec = per_type_by_irvec[type_name]
+                for irvec in dropped_irvecs:
+                    entries = by_irvec.get(irvec)
+                    if entries and any(v != 0 for v in entries.values()):
+                        offending.append((type_name, irvec))
+            if offending:
+                offending.sort(key=lambda x: (x[0], x[1]))
+                raise ValueError(
+                    "resolve_transverse_topology: max_shells={} requested "
+                    "but this would drop shell(s) carrying declared "
+                    "nonzero off-site content: {}; this is ambiguous "
+                    "(asks to truncate away declared coefficients rather "
+                    "than merely unresolved/zero-valued shells). Use a "
+                    "larger max_shells, or omit the offending "
+                    "declarations, for the genuinely truncated model "
+                    "instead.".format(max_shells, offending))
+        shells = shells[:n_keep]
+
+    ordered_irvecs = [irvec for _, irvecs in shells for irvec in irvecs]
+
+    delta_r = [(0, 0, 0)] + ordered_irvecs
+    index_of = {dr: i for i, dr in enumerate(delta_r)}
+    B = len(delta_r)
+
+    reverse = [0]
+    for irvec in ordered_irvecs:
+        neg = tuple(-x for x in irvec)
+        if neg not in index_of:
+            raise ValueError(
+                "resolve_transverse_topology: internal error -- channel "
+                "{} has no reverse partner {} in the resolved union "
+                "(reversal closure invariant violated)".format(irvec, neg))
+        reverse.append(index_of[neg])
+
+    coeffs = {}
+    for type_name in _TRANSVERSE_ACTIVE_TYPES:
+        completed = per_type_completed[type_name]
+        arr = np.zeros((B, norb, norb), dtype=complex)
+        for m, irvec in enumerate(delta_r):
+            if m == 0:
+                continue
+            block = completed.get(irvec)
+            if block is not None:
+                arr[m] = block
+        coeffs[type_name] = arr
+
+    return TransverseTopology(delta_r=delta_r, reverse=reverse, coeffs=coeffs)
+
+
+# =============================================================================
+# Phase W, Task 3 -- the production bond-resolved transverse vertex W_pm_bond
+# =============================================================================
+#
+# APPEND-ONLY REGION (continued): nothing above this banner is touched by
+# this task -- `resolve_interactions`/`bare_bond_vertices` (templates) and
+# every Task-2 name (`TransverseTopology`, `resolve_transverse_topology`,
+# `iter_reversal_orbits`, `validate_topology_against_mesh`,
+# `transverse_effective_activity`) stay byte-for-byte identical.
+#
+# Implements docs/superpowers/specs/2026-08-15-bond-transverse-design.md,
+# "The vertex -- element equations" (steps 1-3, the AMENDED 2026-08-16 flip-
+# family assignment) -- the ORDERED-RECORD equations Gate W0
+# (tests/test_bond_transverse_ed.py, Task 1) numerically validated against
+# exact diagonalization BEFORE this function existed. This function is a
+# faithful production transcription of that gate's test-local reference,
+# `w_expected_from_records`: same representative-orbit iteration (via the
+# shared `iter_reversal_orbits`, filtered to the off-site R != 0 domain),
+# same coefficient table, same q-phase convention -- cross-pinned against
+# that reference at rel=0/abs=1e-13 on all three W0 ED granule fixtures in
+# tests/test_bond_transverse_w.py.
+
+def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
+    """The bond-resolved transverse (spin-flip) vertex ``W_{+-}(q)``, built
+    from ``topo`` (a :class:`TransverseTopology`, spec "The master
+    transverse topology") and the CALLER-ASSEMBLED on-site vertex
+    ``ham_pm_onsite`` (spec "The vertex -- element equations", steps 1-3).
+
+    Construction (spec, verbatim; also see the module-level Task 1 gate
+    ``tests/test_bond_transverse_ed.py``'s ``w_expected_from_records``,
+    which encodes the IDENTICAL equations independently and is this
+    function's ED-validated oracle):
+
+    1. **Channel-0 (on-site) block** = ``ham_pm_onsite`` verbatim, placed
+       (never re-assembled -- ``W_pm_bond`` performs NO assembly of its
+       own) into ``W[:, 0:nd, 0:nd]``. ``ham_pm_onsite`` already carries
+       the mesh's ``nvol`` leading axis (the shape
+       ``_assemble_transverse_vertex`` returns): for genuinely on-site-only
+       declarations that tensor is q-INDEPENDENT (constant along the
+       leading axis) by construction elsewhere
+       (``_check_transverse_representable``), so this step is a placement,
+       not a broadcast, despite the shared leading axis -- the B=1
+       reduction test pins this: with ``B=1`` (on-site-only topology),
+       ``W_pm_bond`` IS ``ham_pm_onsite`` reshaped, bit for bit.
+    2. **Cross family** (``CoulombInter`` -> ``-Re(.)``, ``Ising`` ->
+       ``+Re(.)``), OFF-SITE (``R != 0``) reversal-orbit representatives
+       only (``iter_reversal_orbits(topo)``, filtered to ``m != 0`` --
+       that helper's own docstring: "the mandatory local channel 0" is
+       included in its general enumeration; the off-site filter belongs
+       to every CALLER per the spec's "Construction domain"). Each
+       representative ``(m, a, b)`` with coefficient
+       ``C = topo.coeffs[type][m][a, b]`` emits the SAME real value into
+       BOTH mirrored diagonal target cells, DIRECT placement (AMENDED
+       2026-08-16, Task-6 granule adjudication -- the channel carrying
+       the declared coefficient is the target, matching the longitudinal
+       ``bare_bond_vertices`` Fock-diagonal rule exactly; the PREVIOUS
+       ``m <-> reverse[m]`` swap FAILED the multi-orbital off-site
+       CoulombInter granule at O(1), invisible at ``a == b`` which is why
+       Gate W0's norb=1 fixtures never caught it -- see the spec's "Cross
+       family" section for the full derivation):
+       ``W[q, (m, a, b), (m, a, b)] += s_type * Re(C)``
+       and ``W[q, (reverse[m], b, a), (reverse[m], b, a)] += s_type * Re(C)``
+       -- bond-diagonal, q-INDEPENDENT. The per-slot ``Re(.)`` placement
+       (never the raw complex value) is deliberate: a Hermitian-closed
+       ``+-i*eps`` null-direction pair must leave the diagonal exactly
+       real (the structural Hermiticity test with a complex
+       ``CoulombInter`` coefficient pins this).
+    3. **Flip family** (``Exchange``, ``f_J = -1``), the SAME off-site
+       representatives. Each representative ``(m, a, b)`` with
+       ``J = topo.coeffs["Exchange"][m][a, b]`` at ``R = topo.delta_r[m]``
+       emits the AMENDED (2026-08-16, Gate W0 adjudication) two ordered
+       records, q-dependent ONLY here:
+       ``W[q, (0,a,a), (0,b,b)] += f_J * conj(J) * exp(-i q.R)`` and
+       ``W[q, (0,b,b), (0,a,a)] += f_J * J * exp(+i q.R)``. The PRE-
+       amendment draft form (``f_J*J*exp(+iqR)`` at ``(aa,bb)``) failed
+       Gate W0's multi-orbital off-site Exchange granule systematically
+       (residuals 0.18-0.33); this is the swapped, ED-adjudicated
+       assignment.
+
+    The q mesh is ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z)`` (``spatial_shape
+    = (N_x, N_y, N_z)``), C-order flattened -- the SAME convention
+    ``sc._build_bond_m0_blocks``'s own phase composition uses (cross-pinned
+    by a dedicated test on a shared fixture); ``q.R = 2*pi*sum_d
+    n_d*R_d/N_d``. The ``(Nx, Ny, Nz, ...)`` frame used to build this mesh
+    is private to this function; the returned array is the canonical
+    flattened ``(nvol, ND, ND)`` shape every numerical object in the spec
+    uses.
+
+    Parameters
+    ----------
+    topo : TransverseTopology
+        The master transverse bond topology (``resolve_transverse_topology``
+        or an equivalent hand-built, invariant-satisfying instance).
+    ham_pm_onsite : array_like, shape (nvol, norb, norb, norb, norb),
+        complex
+        The ALREADY-ASSEMBLED on-site transverse vertex (e.g.
+        ``RPA._assemble_transverse_vertex`` applied to the on-site-only
+        tensor filtered from the ORIGINAL PRE-FOLD declarations at
+        ``irvec == (0, 0, 0)``) -- never re-derived here.
+    spatial_shape : sequence of 3 ints
+        ``(Nx, Ny, Nz)``; ``nvol = Nx*Ny*Nz`` must match both
+        ``ham_pm_onsite``'s leading axis and ``topo``'s own mesh-
+        injectivity requirement (``validate_topology_against_mesh``,
+        invoked here at entry).
+
+    Returns
+    -------
+    ndarray, complex128, shape (nvol, ND, ND)
+        ``ND = B * norb**2``, ``B = len(topo.delta_r)``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`validate_topology_against_mesh` (mesh-
+        injectivity violation, malformed ``spatial_shape``, a
+        ``ham_pm_onsite`` whose leading axis disagrees with ``nvol``, or a
+        stale/corrupted ``topo``), or raised directly here if
+        ``ham_pm_onsite`` has the wrong ndim/shape or its orbital count
+        disagrees with ``topo.coeffs``'s.
+    """
+    try:
+        Nx, Ny, Nz = (int(x) for x in spatial_shape)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "W_pm_bond: spatial_shape must be a length-3 sequence of "
+            "integers; got {!r}".format(spatial_shape))
+    nvol = Nx * Ny * Nz
+
+    ham_pm_onsite = np.array(ham_pm_onsite, dtype=complex, copy=False)
+    if ham_pm_onsite.ndim != 5:
+        raise ValueError(
+            "W_pm_bond: ham_pm_onsite must have ndim=5 (nvol, norb, norb, "
+            "norb, norb); got shape {}".format(ham_pm_onsite.shape))
+    norb = ham_pm_onsite.shape[1]
+    expected_onsite_shape = (nvol, norb, norb, norb, norb)
+    if ham_pm_onsite.shape != expected_onsite_shape:
+        raise ValueError(
+            "W_pm_bond: ham_pm_onsite must have shape (nvol, norb, norb, "
+            "norb, norb) = {} (nvol from spatial_shape={}, norb inferred "
+            "from ham_pm_onsite.shape[1]); got {}".format(
+                expected_onsite_shape, spatial_shape, ham_pm_onsite.shape))
+
+    # The ONE mesh-dependent validation lifecycle point (spec, "The master
+    # transverse topology"): mesh-injectivity of topo.delta_r AND that
+    # ham_pm_onsite's leading axis matches nvol.
+    validate_topology_against_mesh(
+        topo, spatial_shape, arrays={"ham_pm_onsite": ham_pm_onsite})
+    # Re-fetch a freshly-validated, alias-safe topology for local use (the
+    # same defensive re-construction validate_topology_against_mesh applies
+    # internally -- topo.coeffs is a plain dict a caller could have re-keyed
+    # between that call returning and this line).
+    topo = TransverseTopology(topo.delta_r, topo.reverse, topo.coeffs)
+
+    delta_r = np.asarray(topo.delta_r)
+    reverse = np.asarray(topo.reverse)
+    B = delta_r.shape[0]
+    coeffs = topo.coeffs
+    for type_name, arr in coeffs.items():
+        if arr.shape[1] != norb:
+            raise ValueError(
+                "W_pm_bond: topo.coeffs[{!r}] has norb={} but "
+                "ham_pm_onsite implies norb={}".format(
+                    type_name, arr.shape[1], norb))
+
+    nd = norb * norb
+    ND = B * nd
+    W = np.zeros((nvol, ND, ND), dtype=complex)
+
+    # Step 1: channel-0 block = the received on-site vertex, placed
+    # verbatim (no assembly, no broadcast beyond what ham_pm_onsite's own
+    # leading axis already carries).
+    W[:, 0:nd, 0:nd] = ham_pm_onsite.reshape(nvol, nd, nd)
+
+    # q mesh (private (Nx, Ny, Nz) frame, C-order flattened), spec's fixed
+    # convention -- the same one sc._build_bond_m0_blocks' phase uses.
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    ky = 2.0 * np.pi * np.arange(Ny) / Ny
+    kz = 2.0 * np.pi * np.arange(Nz) / Nz
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+    q_flat = np.stack([KX.ravel(), KY.ravel(), KZ.ravel()], axis=-1)
+
+    # Off-site (R != 0) reversal-orbit representatives -- the shared helper
+    # (spec, "Canonical orbit rule") ranges over EVERY channel including 0;
+    # steps 2-3 are binding to the off-site construction domain only (spec,
+    # "Construction domain (binding for steps 2-3)"), so channel 0 is
+    # filtered out here, not inside the shared helper.
+    reps = [rep for rep in iter_reversal_orbits(topo) if rep[0] != 0]
+
+    # Step 2: cross family (CoulombInter, Ising) -- bond-diagonal,
+    # q-independent, both mirrored diagonal target cells per representative.
+    # AMENDED (2026-08-16, Task-6 granule adjudication): DIRECT placement
+    # -- content lands at I=(m,a,b), the channel m carrying the declared
+    # coefficient (delta_r[m] = +R_declared), matching the longitudinal
+    # bare_bond_vertices Fock-diagonal rule exactly (#151-validated
+    # precedent). The mirrored partner emits the same Re value at
+    # (reverse[m], b, a). The PREVIOUS m<->reverse[m] swap (target at
+    # reverse[m] with (a,b) unchanged, target at m with (b,a) swapped)
+    # FAILED the multi-orbital off-site CoulombInter granule (L=3, norb=2,
+    # a != b) at O(1) (0.12 vs tol 5.6e-4) -- invisible at a=b, which is
+    # why Gate W0's norb=1 cross-family fixtures could not catch it; see
+    # docs/superpowers/specs/2026-08-15-bond-transverse-design.md, "Cross
+    # family", the 2026-08-16 amendment.
+    for type_name, s_type in (("CoulombInter", -1.0), ("Ising", 1.0)):
+        block_arr = coeffs.get(type_name)
+        if block_arr is None:
+            continue
+        for (m, a, b) in reps:
+            val = s_type * float(np.real(block_arr[m, a, b]))
+            if val == 0.0:
+                continue
+            idx1 = m * nd + a * norb + b
+            W[:, idx1, idx1] += val
+            target2 = int(reverse[m])
+            idx2 = target2 * nd + b * norb + a
+            W[:, idx2, idx2] += val
+
+    # Step 3: flip family (Exchange) -- the two AMENDED ordered records,
+    # q-dependent ONLY through this local-channel phase.
+    exch_arr = coeffs.get("Exchange")
+    if exch_arr is not None:
+        for (m, a, b) in reps:
+            J = complex(exch_arr[m, a, b])
+            if J == 0.0:
+                continue
+            R = delta_r[m].astype(float)
+            phase = np.exp(1j * (q_flat @ R))
+            idx_aa = a * norb + a
+            idx_bb = b * norb + b
+            W[:, idx_aa, idx_bb] += -1.0 * np.conj(J) * np.conj(phase)
+            W[:, idx_bb, idx_aa] += -1.0 * J * phase
+
+    return W
