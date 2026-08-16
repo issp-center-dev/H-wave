@@ -36,6 +36,7 @@ covers:
 Tests must be run from the repository root.
 """
 
+import collections
 import functools
 import unittest
 
@@ -476,17 +477,28 @@ class TestH2OnsiteTableReadjudication(unittest.TestCase):
 
         def _dense_ising(v):
             H = np.zeros((fx.dim, fx.dim), dtype=complex)
-            for j in range(fx.L):
-                sz0 = _n(j, 0, 0) - _n(j, 0, 1)
-                sz1 = _n(j, 1, 0) - _n(j, 1, 1)
-                H = H + v * (sz0 @ sz1)
+            # Phase-H deferred minor (folded into Phase W's Task 1): this
+            # dense (dim, dim) matmul is warning-noisy under some BLAS
+            # backends (spurious "invalid value encountered" on an
+            # all-zero/near-degenerate product) -- the same class of
+            # benign warning ed_oracle_util._diagonalize and
+            # SectorED._build_sectors already guard with
+            # np.errstate(all="ignore") around their own dense linear
+            # algebra; the result here is exact integer/half-integer
+            # arithmetic on a projector product, never actually NaN/Inf.
+            with np.errstate(all="ignore"):
+                for j in range(fx.L):
+                    sz0 = _n(j, 0, 0) - _n(j, 0, 1)
+                    sz1 = _n(j, 1, 0) - _n(j, 1, 1)
+                    H = H + v * (sz0 @ sz1)
             return H
 
         def _dense_hund(v):
             H = np.zeros((fx.dim, fx.dim), dtype=complex)
-            for j in range(fx.L):
-                H = H - v * (_n(j, 0, 0) @ _n(j, 1, 0)
-                             + _n(j, 0, 1) @ _n(j, 1, 1))
+            with np.errstate(all="ignore"):
+                for j in range(fx.L):
+                    H = H - v * (_n(j, 0, 0) @ _n(j, 1, 0)
+                                 + _n(j, 0, 1) @ _n(j, 1, 1))
             return H
 
         for kind, dense_fn in (("Ising", _dense_ising),
@@ -885,7 +897,24 @@ class TestH3FrameMapVZero(unittest.TestCase):
         reproduce the ALREADY-ESTABLISHED H1/H2 ``_frame_map`` (the
         Kubo pair-slot-swap, verified in H1/H2 against the bespoke
         ``_chi_pm_ed`` reference and the on-site table) to round-off, on
-        the SAME H1/H2 fixture."""
+        the SAME H1/H2 fixture.
+
+        Phase-H deferred minor (folded into Phase W's Task 1, per the
+        binding plan's Global Constraints): this ``smap == _frame_map``
+        identity is SPIN-SYMMETRY-CONDITIONAL, not a general fact about
+        ``transverse_ed_to_solver_map`` -- it holds here because the H1/H2
+        fixture (``oracle._fx2_state()``) carries no Zeeman splitting
+        (``G_up == G_dn``), the same condition ``_h3_zeeman_h1``'s own
+        docstring names as the reason H3 needs an explicit Zeeman term at
+        all ("a spin-SYMMETRIC fixture cannot distinguish fwd=up,rev=down
+        from fwd=down,rev=up"). Using the spin-symmetric ``_frame_map``
+        shortcut is correct HERE, on fx2, and nowhere else in this module
+        (H3's own granules below use ``transverse_ed_to_solver_map``
+        directly, never ``_frame_map``, precisely because they are
+        Zeeman-split). Phase W's production/ED-oracle code imports the
+        Zeeman-ROBUST ``transverse_ed_to_solver_map``, never the
+        R=0-only, spin-symmetric ``_frame_map`` shortcut this test
+        exists to calibrate."""
         fx, _C, _CD, h1 = oracle._fx2_state()
         se = ed_oracle_util.SectorED(fx, h1=h1)
         norb = oracle.NORB
@@ -942,6 +971,843 @@ class TestH3FrameMapVZero(unittest.TestCase):
         orb_pairs = [(0, 0), (1, 1), (0, 1), (1, 0)]
         channels = [(R, a, b) for R in Rs for (a, b) in orb_pairs]
         self._check(fx, 0.12, channels, Rs, 2)
+
+
+# ---------------------------------------------------------------------------
+# Phase W, Task 1: Gate W0 -- the pre-implementation numeric oracle for the
+# binding spec's derived W_{+-} element equations
+# (docs/superpowers/specs/2026-08-15-bond-transverse-design.md, "The vertex
+# -- element equations" + "Gate W0"). This section is TEST-LOCAL and
+# PRE-IMPLEMENTATION: none of TransverseTopology/W_pm_bond/
+# resolve_transverse_topology exist yet (Tasks 2-3 of the Phase-W plan build
+# those AFTER this gate passes) -- `w_expected_from_records` is a standalone
+# encoding of the spec's ordered-record equations, built from a lightweight
+# test-local topology stand-in (`_TopoLike`) rather than the production
+# `TransverseTopology` NamedTuple. A FAIL on any granule below reopens the
+# spec section (the discrepancy protocol, #151): never adjust
+# `w_expected_from_records` to force a PASS.
+# ---------------------------------------------------------------------------
+
+_TopoLike = collections.namedtuple("_TopoLike", ["delta_r", "reverse"])
+
+
+def _reversal_orbit_representatives(delta_r, reverse, norb):
+    """Test-local replica of the spec's shared `iter_reversal_orbits`
+    helper (spec, "Canonical orbit rule"): enumerates ONE representative
+    ``(m, a, b)`` per reversal orbit ``{(m, a, b), (reverse[m], b, a)}``,
+    restricted to the OFF-SITE construction domain (``m != 0`` --
+    "steps 2-3 iterate OFF-SITE (R != 0) content EXCLUSIVELY", spec
+    "Construction domain"), tuple-minimum representative (matching the
+    shared helper's stated rule). Channel 0 (on-site) never
+    participates here -- its content lives exclusively in the
+    caller-supplied ``onsite_ham_pm`` block of `w_expected_from_records`.
+    """
+    B = len(delta_r)
+    seen = set()
+    reps = []
+    for m in range(1, B):
+        for a in range(norb):
+            for b in range(norb):
+                key = (m, a, b)
+                if key in seen:
+                    continue
+                partner = (int(reverse[m]), b, a)
+                seen.add(key)
+                seen.add(partner)
+                reps.append(min(key, partner))
+    return reps
+
+
+def _w0_q_mesh_flat(q_mesh):
+    """``(nvol, 3)`` flattened q array, ``q_d = 2*pi*n_d/N_d`` with
+    C-order flattening -- the SAME convention the spec's "Gate W0"
+    section fixes ("q runs on the reciprocal mesh... the SAME
+    convention sc._build_bond_m0_blocks' phase uses") and
+    ``bond_channels.make_bond_kernel_parts``'s own bond-phase
+    construction (``PH[m] = exp(1j*(KX*dm[0]+KY*dm[1]+KZ*dm[2]))`` on
+    ``meshgrid(kx, ky, kz, indexing='ij')``, reshaped C-order)
+    already uses."""
+    Nx, Ny, Nz = q_mesh
+    kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    ky = 2.0 * np.pi * np.arange(Ny) / Ny
+    kz = 2.0 * np.pi * np.arange(Nz) / Nz
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+    return np.stack([KX.ravel(), KY.ravel(), KZ.ravel()], axis=-1)
+
+
+def w_expected_from_records(topo_like, declarations, q_mesh):
+    """Test-local oracle: the spec's ordered-record ``W_{+-}`` equations
+    (spec, "The vertex -- element equations"), encoded directly rather
+    than via the not-yet-implemented production ``W_pm_bond``. This IS
+    gate W0's reference against which this module's ED granules
+    adjudicate the spec's derivation, BEFORE any of that production
+    code exists.
+
+    Parameters
+    ----------
+    topo_like : _TopoLike(delta_r, reverse)
+        ``delta_r``: int array (B, 3), channel 0 ALWAYS (0, 0, 0).
+        ``reverse``: int array (B,), ``reverse[reverse[m]] == m``,
+        ``reverse[0] == 0``.
+    declarations : dict
+        ``declarations["onsite_ham_pm"]``: the ALREADY-ASSEMBLED
+        ``(norb, norb, norb, norb)`` on-site vertex (spec step 1: "the
+        RECEIVED ham_pm_onsite ... `W_pm_bond` performs NO assembly of
+        its own here"), broadcast verbatim into the channel-0 block.
+        ``declarations["CoulombInter"]``, ``declarations["Ising"]``,
+        ``declarations["Exchange"]``: OFF-SITE-ONLY
+        ``dict[m] -> (norb, norb) complex`` coefficient blocks,
+        Hermitian-closed exactly like ``resolve_transverse_topology``'s
+        ``coeffs`` contract (``coeffs[type][reverse[m]] ==
+        conj(coeffs[type][m]).T``) -- entries need only be supplied at
+        whichever channel ``_reversal_orbit_representatives`` picks as
+        the representative's first element (closure lets the formula
+        below recover the mirrored value without a second lookup; see
+        the derivation in the docstring body below). Missing types /
+        missing channels are treated as zero (PASS-ZERO controls, e.g.
+        Hund/PairLift, need not appear at all).
+    q_mesh : (Nx, Ny, Nz)
+        Spatial shape supplying the q mesh (spec: "q runs on the
+        reciprocal mesh q = 2*pi*(n_x/N_x, ...)").
+
+    Returns
+    -------
+    W : ndarray, complex128, shape (nvol, ND, ND)
+        ``ND = B * norb**2``, ``nvol = Nx*Ny*Nz``, C-order flattened --
+        the canonical flattened convention every numerical object in
+        the spec uses.
+
+    Construction (spec steps 1-3, verbatim):
+
+    1. Channel-0 block = the broadcast on-site ``ham_pm``
+       (q-INDEPENDENT).
+    2. Cross family (CoulombInter -Re, Ising +Re): for each off-site
+       reversal-orbit representative ``(m, a, b)`` with declared
+       coefficient ``C = declarations[type][m][a, b]``, BOTH mirrored
+       diagonal TARGET cells get the SAME value ``s_type * Re(C)``::
+
+           W[q, (reverse[m],a,b), (reverse[m],a,b)] += s_type * Re(C)
+           W[q, (m,b,a), (m,b,a)]                   += s_type * Re(C)
+
+       (the two target cells are the reversal orbit of the TARGET
+       diagonal index; closure guarantees they carry the identical
+       ``Re(.)`` value, so ONE lookup at the representative channel
+       ``m`` suffices for both -- derivation below.)
+    3. Flip family (Exchange, ``f_J = -1``): for each off-site
+       reversal-orbit representative ``(m, a, b)`` with
+       ``J = declarations["Exchange"][m][a, b]`` at ``R = delta_r[m]``::
+
+           W[q, (0,a,a), (0,b,b)] += -conj(J)  * exp(-i q.R)
+           W[q, (0,b,b), (0,a,a)] += -J        * exp(+i q.R)
+
+       AMENDED (2026-08-16, gate W0 adjudication): the design doc's
+       original draft assigned ``-J*exp(+iqR)`` to the ``(aa,bb))``
+       element; this module's own W0 granule (a) (multi-orbital
+       off-site Exchange, complex J, non-self-inverse q) FAILED that
+       assignment systematically (residuals 0.18-0.33 across every
+       tested orientation and R sign) and PASSED, at the Richardson
+       noise floor, the SWAPPED assignment above. The spec
+       (docs/superpowers/specs/2026-08-15-bond-transverse-design.md,
+       "Flip family", the "AMENDED (2026-08-16, GATE W0 ADJUDICATION)"
+       paragraph) was updated accordingly: the un-conjugated ``J`` is
+       the ``(bb)->(aa)`` scattering amplitude (row=out/col=in, the
+       col leg daggered in ``<A;B^dagger>``), landing on
+       ``W[(0,b,b),(0,a,a)]`` with phase ``exp(+iq.R)``; the Hermitian
+       partner supplies the transposed element. The R=0 (on-site) limit
+       is UNCHANGED (both forms coincide there after Hermitian closure
+       -- precisely why H2's on-site-only readjudication could not by
+       itself catch this, and the off-site granule was required).
+
+    Derivation of step 2's "one lookup, both cells" shortcut: writing
+    the formula generally as "target cell (T, x, y) gets
+    ``s*Re(coeffs[reverse[T]][x, y])``", the representative ``(m, a,
+    b)`` feeds TWO target cells: ``(reverse[m], a, b)`` [value
+    ``s*Re(coeffs[m][a, b])``] and ``(m, b, a)`` [value
+    ``s*Re(coeffs[reverse[m]][b, a])``]. Closure
+    (``coeffs[reverse[m]][x, y] = conj(coeffs[m][y, x])``) gives
+    ``coeffs[reverse[m]][b, a] = conj(coeffs[m][a, b])``, whose real
+    part equals ``Re(coeffs[m][a, b])`` -- so both target cells carry
+    the SAME value, computed from the ONE representative-channel
+    lookup.
+    """
+    delta_r = np.asarray(topo_like.delta_r, dtype=int)
+    reverse = np.asarray(topo_like.reverse, dtype=int)
+    B = delta_r.shape[0]
+    if delta_r.shape != (B, 3):
+        raise ValueError(
+            "w_expected_from_records: delta_r must have shape (B, 3), got "
+            "{}".format(delta_r.shape))
+    if reverse.shape != (B,):
+        raise ValueError(
+            "w_expected_from_records: reverse must have shape (B,), got "
+            "{}".format(reverse.shape))
+    if not np.array_equal(delta_r[0], np.zeros(3, dtype=int)):
+        raise ValueError(
+            "w_expected_from_records: channel 0 must be R=(0,0,0), got "
+            "{}".format(delta_r[0]))
+    if not np.array_equal(reverse[reverse], np.arange(B)):
+        raise ValueError(
+            "w_expected_from_records: reverse must be an involution "
+            "(reverse[reverse[m]] == m for every m)")
+    if int(reverse[0]) != 0:
+        raise ValueError(
+            "w_expected_from_records: reverse[0] must be 0 (channel 0 is "
+            "its own reversal partner)")
+
+    onsite_ham_pm = np.asarray(declarations["onsite_ham_pm"], dtype=complex)
+    norb = onsite_ham_pm.shape[0]
+    if onsite_ham_pm.shape != (norb, norb, norb, norb):
+        raise ValueError(
+            "w_expected_from_records: onsite_ham_pm must have shape "
+            "(norb, norb, norb, norb), got {}".format(onsite_ham_pm.shape))
+    nd = norb * norb
+    ND = B * nd
+
+    q_flat = _w0_q_mesh_flat(q_mesh)         # (nvol, 3)
+    nvol = q_flat.shape[0]
+
+    W = np.zeros((nvol, ND, ND), dtype=complex)
+
+    # Step 1: channel-0 block = the broadcast on-site ham_pm, q-independent.
+    W[:, 0:nd, 0:nd] = onsite_ham_pm.reshape(nd, nd)[None, :, :]
+
+    reps = _reversal_orbit_representatives(delta_r, reverse, norb)
+
+    # Step 2: cross family (CoulombInter, Ising), bond-diagonal,
+    # q-independent.
+    for kind, s_type in (("CoulombInter", -1.0), ("Ising", 1.0)):
+        coeffs_map = declarations.get(kind, {})
+        for (m, a, b) in reps:
+            block = coeffs_map.get(m)
+            if block is None:
+                continue
+            val = s_type * float(np.real(np.asarray(block)[a, b]))
+            if val == 0.0:
+                continue
+            target1 = int(reverse[m])
+            idx1 = target1 * nd + a * norb + b
+            W[:, idx1, idx1] += val
+            idx2 = m * nd + b * norb + a
+            W[:, idx2, idx2] += val
+
+    # Step 3: flip family (Exchange), the two ordered records,
+    # q-dependent ONLY through this local-channel phase (spec:
+    # "W_pm_bond is q-dependent ONLY through the flip-family
+    # local-channel entries"). AMENDED (2026-08-16, gate W0
+    # adjudication -- see the docstring above): the un-conjugated J is
+    # the (bb)->(aa) scattering amplitude with phase exp(+iq.R); the
+    # (aa,bb) element carries conj(J)*exp(-iq.R). The draft's swapped
+    # assignment FAILED W0's off-site multi-orbital Exchange granule
+    # (residuals 0.18-0.33); this assignment PASSES at the Richardson
+    # noise floor.
+    exch_map = declarations.get("Exchange", {})
+    for (m, a, b) in reps:
+        block = exch_map.get(m)
+        if block is None:
+            continue
+        J = complex(np.asarray(block)[a, b])
+        if J == 0.0:
+            continue
+        R = delta_r[m].astype(float)
+        phase = np.exp(1j * (q_flat @ R))            # exp(+i q.R), (nvol,)
+        idx_aa = a * norb + a
+        idx_bb = b * norb + b
+        W[:, idx_aa, idx_bb] += -1.0 * np.conj(J) * np.conj(phase)
+        W[:, idx_bb, idx_aa] += -1.0 * J * phase
+
+    return W
+
+
+class TestW0OrderedRecordOracle(unittest.TestCase):
+    """Structural self-tests for ``w_expected_from_records`` -- pure
+    algebra, no ED involved (the ED-comparison granules are
+    ``TestW0Granules`` below). Per Task 1 Step 1's brief: Hermiticity at
+    every q, the two Exchange records pinned individually with a
+    genuinely complex ``J`` at a non-self-inverse q, and the B=1 on-site
+    reduction."""
+
+    _TOPO_OFFSITE = _TopoLike(
+        delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]]),
+        reverse=np.array([0, 2, 1]))
+
+    def test_hermitian_at_every_q(self):
+        norb = 2
+        J = 0.6 - 0.35j
+        declarations = {
+            "onsite_ham_pm": np.zeros((norb, norb, norb, norb),
+                                       dtype=complex),
+            "Exchange": {1: np.array([[0, J], [0, 0]], dtype=complex)},
+            "CoulombInter": {1: np.array([[0.3 + 0j, 0], [0, 0]],
+                                          dtype=complex)},
+            "Ising": {1: np.array([[0.2 + 0j, 0], [0, 0]], dtype=complex)},
+        }
+        W = w_expected_from_records(self._TOPO_OFFSITE, declarations,
+                                     (5, 1, 1))
+        got_dagger = np.conj(np.transpose(W, (0, 2, 1)))
+        assert_approx_array(got_dagger, W, rel=0, abs=1e-12)
+
+    def test_exchange_entries_pinned_individually(self):
+        """A genuinely complex J at a non-self-inverse q (spec, "Gate
+        W0": "the two Exchange entries SEPARATELY equal f_J*conj(J)*
+        e^{-iqR} and f_J*J*e^{+iqR}" -- the AMENDED (2026-08-16, gate W0
+        adjudication) assignment: the un-conjugated J is the (bb)->(aa)
+        scattering amplitude, landing on W[(0,b,b),(0,a,a)] with phase
+        e^{+iqR}; see `w_expected_from_records`'s own docstring for the
+        full amendment note). L=5 (odd) -> every nonzero q is
+        non-self-inverse; q_idx=1 (q=2*pi/5) is used here."""
+        norb = 2
+        J = 0.6 - 0.35j
+        declarations = {
+            "onsite_ham_pm": np.zeros((norb, norb, norb, norb),
+                                       dtype=complex),
+            "Exchange": {1: np.array([[0, J], [0, 0]], dtype=complex)},
+        }
+        Nx = 5
+        W = w_expected_from_records(self._TOPO_OFFSITE, declarations,
+                                     (Nx, 1, 1))
+        q_flat = _w0_q_mesh_flat((Nx, 1, 1))
+        q_idx = 1
+        q = q_flat[q_idx, 0]
+        phase = np.exp(1j * q * 1.0)          # R = delta_r[1] = (1, 0, 0)
+        idx_aa, idx_bb = 0, 3                 # channel 0, (0,0) and (1,1)
+        assert_approx_array(
+            np.array([W[q_idx, idx_aa, idx_bb]]),
+            np.array([-np.conj(J) * np.conj(phase)]), rel=0, abs=1e-13)
+        assert_approx_array(
+            np.array([W[q_idx, idx_bb, idx_aa]]), np.array([-J * phase]),
+            rel=0, abs=1e-13)
+
+    def test_b1_reduction_equals_broadcast_onsite_ham_pm(self):
+        """Spec step 1: "B=1 reduction: on-site-only declarations give
+        B=1 and W_pm_bond IS the broadcast ham_pm -- gate W1's algebraic
+        basis." ``onsite_ham_pm`` here is H2's own already-ED-
+        readjudicated table (`_h2_ham_pm_expected`, "reuse H2's spied
+        builder" per the task brief) at a real CoulombIntra coupling."""
+        norb = 2
+        topo = _TopoLike(delta_r=np.array([[0, 0, 0]]),
+                          reverse=np.array([0]))
+        onsite = _h2_ham_pm_expected("CoulombIntra", 1.3, norb=norb)
+        declarations = {
+            "onsite_ham_pm": onsite.reshape(norb, norb, norb, norb)}
+        W = w_expected_from_records(topo, declarations, (3, 2, 1))
+        nvol = 6
+        broadcast = np.broadcast_to(
+            onsite[None, :, :], (nvol,) + onsite.shape)
+        assert_approx_array(W, broadcast, rel=0, abs=1e-15)
+
+
+# ---------------------------------------------------------------------------
+# Task 1, Step 2: the three W0 ED granules. New off-site term builders
+# (Exchange, Ising) not covered by any existing module -- canonical_
+# density_terms (ed_oracle_util.py) already covers off-site CoulombInter
+# (plain spin-summed density-density), and is reused directly below.
+# ---------------------------------------------------------------------------
+
+def _terms_exchange_offsite(fx, a, b, R, J):
+    """Off-site Exchange term, generalizing
+    ``tests.test_rpa_vs_ed_oracle._terms_for``'s ON-SITE Exchange
+    operator convention (``c^+_{a,up} c_{b,up} c^+_{b,dn} c_{a,dn}``,
+    already ED-validated on-site to produce ``ham_pm``'s ``-J`` entry --
+    H2's ``test_exchange`` above re-confirms it through this module's
+    own harness) to a nonzero bond displacement ``R``: the ``b``-orbital
+    legs move to site ``j+R``, the ``a``-orbital legs stay at site
+    ``j`` (a bond from site ``j``, orbital ``a``, to site ``j+R``,
+    orbital ``b``). ``coeffs["Exchange"][m][a, b] = J`` fed to
+    ``w_expected_from_records`` uses EXACTLY this same operator
+    convention, so the ``f_J = -1`` coefficient-table sign is consistent
+    between the ED side and the oracle side by construction (never
+    independently re-derived here -- consistency, not an a-priori
+    physical claim, is what gate W0 needs and what
+    ``TestW0TermBuilderHamiltonianPins`` below pins at the Hamiltonian
+    level). The Hermitian partner is the EXACT operator dagger
+    (``conj(J) * (c^+_p c_q c^+_r c_s)^dagger = conj(J) * c^+_s c_r
+    c^+_q c_p``), guaranteeing H is Hermitian by construction rather
+    than by re-deriving a second, independent physical form for the
+    reversed bond."""
+    terms = []
+    for j in range(fx.L):
+        jr = (j + R) % fx.L
+        p = fx.mode(j, a, 0)
+        q = fx.mode(jr, b, 0)
+        r = fx.mode(jr, b, 1)
+        s = fx.mode(j, a, 1)
+        terms.append((p, q, r, s, J))
+        terms.append((s, r, q, p, np.conj(J)))
+    return terms
+
+
+def _terms_ising_offsite(fx, a, b, R, v):
+    """Off-site Ising term, generalizing this module's own
+    ``_terms_ising_hund``'s ON-SITE (R=0) Ising formula (uhfk.py's
+    documented Hamiltonian ``J (n_up - n_down)(n_up - n_down)``) to a
+    nonzero bond displacement ``R``: ``H = v * sum_j (n_{j,a,up} -
+    n_{j,a,dn}) * (n_{j+R,b,up} - n_{j+R,b,dn})``. Manifestly Hermitian
+    for real ``v`` without any mirrored (-R) declaration -- density
+    operators at DIFFERENT sites commute, so
+    ``(n_{j,a,up}-n_{j,a,dn}) @ (n_{j+R,b,up}-n_{j+R,b,dn})`` is
+    Hermitian term by term, and the ``j``-sum over one period already
+    visits every bond exactly once (the same reasoning
+    ``canonical_density_terms``'s off-site branch relies on)."""
+    terms = []
+    for j in range(fx.L):
+        jr = (j + R) % fx.L
+        for su, su_sign in ((0, 1.0), (1, -1.0)):
+            for sv, sv_sign in ((0, 1.0), (1, -1.0)):
+                p = fx.mode(j, a, su)
+                r = fx.mode(jr, b, sv)
+                terms.append((p, p, r, r, v * su_sign * sv_sign))
+    return terms
+
+
+class TestW0TermBuilderHamiltonianPins(unittest.TestCase):
+    """Hamiltonian-level dense pins (the H2 fix-round pattern -- see
+    ``test_ising_hund_term_builders_match_dense_hamiltonian`` above) for
+    the two NEW off-site term builders Task 1 needs: neither
+    ``canonical_density_terms`` (CoulombInter-shaped, unsigned density-
+    density only) nor this module's own on-site ``_terms_ising_hund``
+    (R=0 only) covers off-site Exchange or off-site Ising. Each pin uses
+    a SMALL tractable fixture (dense ``fx.annihilators()`` -- NOT
+    SectorED, since this is a direct-operator-construction check)
+    distinct from (and smaller than) the granule fixtures the term
+    builders are actually exercised on in ``TestW0Granules`` below (case
+    M's dense route is intractable -- see ``ed_oracle_util.SectorED``'s
+    own docstring -- which is exactly why the granules use SectorED and
+    this pin uses a separate, smaller fixture instead)."""
+
+    def test_offsite_exchange_term_builder_matches_dense_hamiltonian(self):
+        fx = ed_oracle_util.EDFixture(
+            L=2, norb=2,
+            t={(0, 0): 0.3, (1, 1): 0.2, (0, 1): 0.1, (1, 0): 0.1},
+            eps=(0.05, -0.02), T=0.5, mu=0.1)
+        C = fx.annihilators()
+        CD = [c.conj().T for c in C]
+        J = 0.4 + 0.3j
+        R, a, b = 1, 0, 1
+
+        def _dense():
+            H = np.zeros((fx.dim, fx.dim), dtype=complex)
+            # np.errstate wrap: this dense (dim, dim) matmul is
+            # warning-noisy under some BLAS backends (spurious
+            # divide-by-zero/overflow/invalid-value warnings on a
+            # near-nilpotent operator product), the same benign-warning
+            # class the earlier Ising/Hund dense pin above already
+            # guards.
+            with np.errstate(all="ignore"):
+                for j in range(fx.L):
+                    jr = (j + R) % fx.L
+                    op = (CD[fx.mode(j, a, 0)] @ C[fx.mode(jr, b, 0)]
+                          @ CD[fx.mode(jr, b, 1)] @ C[fx.mode(j, a, 1)])
+                    H = H + J * op + np.conj(J) * op.conj().T
+            return H
+
+        terms = _terms_exchange_offsite(fx, a, b, R, J)
+        got = ed_oracle_util.h_int_from_terms(fx, terms)
+        assert_approx_array(got, _dense(), rel=0, abs=1e-13)
+
+    def test_offsite_ising_term_builder_matches_dense_hamiltonian(self):
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=1, t={(0, 0): 0.6 + 0.1j}, eps=(0.0,), T=0.4, mu=0.15)
+        C = fx.annihilators()
+        CD = [c.conj().T for c in C]
+        v = 0.37
+        R, a, b = 1, 0, 0
+
+        def _n(j, o, s):
+            m = fx.mode(j, o, s)
+            return CD[m] @ C[m]
+
+        def _dense():
+            H = np.zeros((fx.dim, fx.dim), dtype=complex)
+            with np.errstate(all="ignore"):
+                for j in range(fx.L):
+                    jr = (j + R) % fx.L
+                    sz_j = _n(j, a, 0) - _n(j, a, 1)
+                    sz_jr = _n(jr, b, 0) - _n(jr, b, 1)
+                    H = H + v * (sz_j @ sz_jr)
+            return H
+
+        terms = _terms_ising_offsite(fx, a, b, R, v)
+        got = ed_oracle_util.h_int_from_terms(fx, terms)
+        assert_approx_array(got, _dense(), rel=0, abs=1e-13)
+
+
+def _w0_delta_r_1d(delta_r):
+    """This module's granule fixtures are all 1-D rings (y, z always 0
+    in the canonical ``(B, 3)`` ``delta_r``); ``bond_correlator_
+    transverse``/``transverse_ed_to_solver_map`` (Phase H) both take the
+    scalar ring offset ``R`` (their ``(R,)``/``(R, a, b)`` channel
+    convention has no y/z component -- see
+    ``transverse_ed_to_solver_map``'s own docstring: "y/z components are
+    out of scope"), so this extracts just the x-component as a plain int
+    list."""
+    return [int(r) for r in np.asarray(delta_r)[:, 0]]
+
+
+def _w0_channels_for(delta_r_1d, norb):
+    """The full ``(R, a, b)`` channel list ``transverse_ed_to_solver_map``
+    needs (its docstring: "Must contain, for every delta_r[m] and every
+    physical orbital pair (l1, l2), the SWAPPED entry (delta_r[m], l2,
+    l1)" -- ranging a, b over every combination already contains every
+    swap)."""
+    if norb == 1:
+        return [(R,) for R in delta_r_1d]
+    return [(R, a, b) for R in delta_r_1d for a in range(norb)
+            for b in range(norb)]
+
+
+def _w0_ed_derivative_solver_frame(fx, terms_of_v, delta_r, norb):
+    """Richardson-extrapolated d(bond_correlator_transverse)/dv at
+    v -> 0, full-minus-HF-only (the #151/H2 pattern), frame-mapped into
+    the enlarged (``m*norb**2 + a*norb + b``) slot convention via
+    ``transverse_ed_to_solver_map`` -- the Zeeman-robust map (this
+    module's Phase-H deferred-minor clarification above:
+    ``_frame_map`` is a spin-symmetric, R=0-only shortcut, not usable
+    here since these granule fixtures have off-site channels, B>1).
+    Returns ``(D_v1, D_vhalf)``, the two Richardson estimates
+    ``adjudicate_granule`` needs."""
+    delta_r_1d = _w0_delta_r_1d(delta_r)
+    channels = _w0_channels_for(delta_r_1d, norb)
+    smap = transverse_ed_to_solver_map(channels, delta_r_1d, norb)
+
+    @functools.lru_cache(maxsize=None)
+    def X_of_v(v):
+        terms = terms_of_v(v)
+        full = ed_oracle_util.SectorED(
+            fx, terms=terms).bond_correlator_transverse(channels)
+        hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+        hf_only = ed_oracle_util.SectorED(
+            fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
+        diff = full - hf_only
+        return diff[:, smap][:, :, smap]
+
+    D_v1 = ed_oracle_util.richardson(X_of_v, CAMPAIGN_V1)
+    D_vhalf = ed_oracle_util.richardson(X_of_v, CAMPAIGN_V1 / 2)
+    return D_v1, D_vhalf
+
+
+def _w0_chi0_solver_frame(fx, delta_r, norb):
+    """The V=0 transverse correlator (exact ED, every declared channel),
+    frame-mapped into solver space via ``transverse_ed_to_solver_map``
+    -- gate W0's ``chi0`` ("chi0 evaluated on the FIXED noninteracting
+    Hamiltonian", spec "Gate W0")."""
+    delta_r_1d = _w0_delta_r_1d(delta_r)
+    channels = _w0_channels_for(delta_r_1d, norb)
+    smap = transverse_ed_to_solver_map(channels, delta_r_1d, norb)
+    se = ed_oracle_util.SectorED(fx)
+    raw = se.bond_correlator_transverse(channels)
+    return raw[:, smap][:, :, smap]
+
+
+def _w0_adjudicate_direction(fx, terms_of_v, topo, declarations, q_mesh,
+                              label):
+    """One granule direction, end to end: measure the ED-side
+    derivative, build gate W0's oracle prediction
+    ``-chi0 . w_expected_from_records(...) . chi0`` (chi0 EXACT ED, no
+    Matsubara truncation anywhere on the predicted side -- so, exactly
+    as H2 documents, ``D_pred`` is passed at BOTH the ``nmat`` and
+    ``2*nmat`` slots of ``adjudicate_granule``, making ``delta_nmat``
+    structurally 0, the honest statement when there is no solver-side
+    approximation to converge), and adjudicate."""
+    delta_r = np.asarray(topo.delta_r)
+    reverse = np.asarray(topo.reverse)
+    norb = np.asarray(declarations["onsite_ham_pm"]).shape[0]
+    D_ed_v1, D_ed_vhalf = _w0_ed_derivative_solver_frame(
+        fx, terms_of_v, delta_r, norb)
+    chi0 = _w0_chi0_solver_frame(fx, delta_r, norb)
+    W_expected = w_expected_from_records(topo, declarations, q_mesh)
+    D_pred = -np.einsum('qij,qjk,qkl->qil', chi0, W_expected, chi0)
+    # zero_mask: the same H2 argument -- D_pred is a MATRIX PRODUCT, so a
+    # single nonzero W_expected cell spreads dense signal across most
+    # (I, J) cells via chi0's own off-diagonal content. The only
+    # structurally-zero case is W_expected being the all-zero matrix.
+    all_zero = bool(np.all(W_expected == 0))
+    zero_mask = np.full(W_expected.shape, all_zero, dtype=bool)
+    return ed_oracle_util.adjudicate_granule(
+        D_ed_v1, D_ed_vhalf, D_pred, D_pred, zero_mask, label)
+
+
+def _w0_direction_set_sv_gate(records, label):
+    """Test-local replica of ``ed_oracle_util.sensitivity_rank``'s SVD
+    gate (``sv_ratio >= SENS_SV_FLOOR``, ``sigma_min >=
+    100*delta_rich``) -- the spec's "Gate W0" campaign-level condition
+    on top of each direction's own ``adjudicate_granule`` verdict
+    ("the direction-set SVD gate ... whose sensitivity matrix passes
+    the #151 SVD gate", spec "Gate W0"). A LOCAL replica, not
+    ``ed_oracle_util.sensitivity_rank`` itself: that function's a-priori
+    ``SENSITIVITY_EXPECTED_ACTIVE``/``SENSITIVITY_EXPECTED_NULL``
+    registry is keyed to the #151 pp/ph campaign's own (fixture,
+    channel) labels, and this task's Files list is
+    ``tests/test_bond_transverse_ed.py`` alone -- ``ed_oracle_util.py``
+    is not touched (nor does it need to be: the math below is the exact
+    same formula, just without that unrelated campaign's label
+    registry)."""
+    names = sorted(records)
+    for name in names:
+        status = records[name]["status"]
+        if status not in ("PASS", "PASS-ZERO"):
+            raise ValueError(
+                "_w0_direction_set_sv_gate[{}]: direction {!r} has status "
+                "{!r} -- only PASS/PASS-ZERO granules feed the SVD gate"
+                .format(label, name, status))
+    active = [n for n in names if records[n]["status"] != "PASS-ZERO"]
+    if not active:
+        raise ValueError(
+            "_w0_direction_set_sv_gate[{}]: every direction is PASS-ZERO "
+            "-- no active column to rank".format(label))
+
+    bearing_arrays = [np.asarray(records[n]["bearing_mask"], dtype=bool)
+                       for n in active]
+    union_mask = bearing_arrays[0].copy()
+    for barr in bearing_arrays[1:]:
+        union_mask |= barr
+    n_rows = int(np.count_nonzero(union_mask))
+
+    columns = []
+    for n in active:
+        pred = np.asarray(records[n]["pred_full"], dtype=float)
+        bearing = np.asarray(records[n]["bearing_mask"], dtype=bool)
+        columns.append(np.where(bearing, pred, 0.0)[union_mask])
+    matrix = np.stack(columns, axis=1)
+    n_cols = matrix.shape[1]
+    delta_rich_max = max(records[n]["delta_rich"] for n in active)
+
+    if n_rows < n_cols:
+        sv = np.zeros(0)
+        sigma_min, sigma_max, sv_ratio = 0.0, float("nan"), 0.0
+    else:
+        sv = np.linalg.svd(matrix, compute_uv=False)
+        sigma_max, sigma_min = float(sv[0]), float(sv[-1])
+        sv_ratio = sigma_min / sigma_max if sigma_max > 0.0 else 0.0
+
+    print("W0 direction-set SVD[{}]: active={} rows={} cols={} "
+          "singular_values={} sv_ratio={:.6e} sigma_min={:.6e} "
+          "100*delta_rich_max={:.6e}".format(
+              label, active, n_rows, n_cols,
+              np.array2string(sv, precision=6), sv_ratio, sigma_min,
+              100.0 * delta_rich_max))
+    return dict(active=active, n_rows=n_rows, n_cols=n_cols,
+                singular_values=sv, sv_ratio=sv_ratio, sigma_min=sigma_min,
+                sigma_max=sigma_max, delta_rich_max=delta_rich_max)
+
+
+class TestW0Granules(unittest.TestCase):
+    """Gate W0's three ED granules (spec: "Gate W0" + the Phase-W plan's
+    Task 1 Step 2): forward comparison of the measured
+    d(bond_correlator_transverse)/dv (full-minus-HF-only, frame-mapped)
+    against ``-chi0 . w_expected_from_records(...) . chi0``, chi0 = the
+    exact V=0 ED correlator -- NO reconstruction, per the spec's binding
+    procedure ("FORWARD comparison, no W reconstruction", spec "Gate
+    W0"). Each granule runs 2 directions sharing one topology/fixture
+    (CoulombInter/Ising: the g1 (R=+-1) and g2 (R=+-2) shells; Exchange:
+    two independent complex phases of the SAME off-site bond), so the
+    #151 direction-set SVD gate has a genuine (non-trivial-rank)
+    sensitivity matrix to rank.
+
+    CRITICAL: a FAIL on any of these is a genuine mismatch between the
+    spec's derived W_{+-} equations and exact diagonalization -- STOP,
+    do not commit, report verbatim (the discrepancy protocol, #151:
+    re-check the encoding against the spec text, the frame map, the
+    term builders via their Hamiltonian-level pins, Richardson
+    conditioning -- never adjust ``w_expected_from_records`` to force a
+    PASS).
+    """
+
+    def test_granule_a_multiorbital_offsite_exchange(self):
+        """(a) L=3, norb=2, off-site Exchange at R=1 with a != b (a=0,
+        b=1) and a genuinely complex J -- the norb=1 Exchange granule
+        would collapse the two ordered elements W[(0,aa),(0,bb)] and
+        W[(0,bb),(0,aa)] onto the same cell and could not adjudicate
+        the record placement (spec, "ED granules"); this one checks
+        BOTH independently via the full-grid adjudicate_granule
+        comparison. Two directions ("real"/"imag": J = v*1 and
+        J = v*1j) on the SAME topology give the SVD gate a rank-2
+        matrix to check.
+
+        ADJUDICATION OUTCOME (gate W0 working exactly as designed): the
+        design doc's ORIGINAL DRAFT flip-family assignment
+        (`W[(0,a,a),(0,b,b)] += -J*e^{+iqR}`,
+        `W[(0,b,b),(0,a,a)] += -conj(J)*e^{-iqR}`) FAILED this granule
+        systematically -- both directions, `status=FAIL`, residuals
+        0.18-0.33 at every nonzero q (q=0 matched exactly, isolating the
+        defect to the phase/orientation of the two records, not their
+        magnitude or the term builder -- see the investigation recorded
+        in `w_expected_from_records`'s docstring and
+        docs/superpowers/specs/2026-08-15-bond-transverse-design.md's
+        "AMENDED (2026-08-16, GATE W0 ADJUDICATION)" paragraph). The
+        finding was adjudicated (coordinator-level) and the spec AMENDED
+        to the swapped assignment now encoded in `w_expected_from_records`
+        (`W[(0,a,a),(0,b,b)] += -conj(J)*e^{-iqR}`,
+        `W[(0,b,b),(0,a,a)] += -J*e^{+iqR}`); with the amendment, this
+        granule PASSES at the Richardson noise floor (both directions;
+        see the module-level test-run output for the exact numbers)."""
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=2,
+            t={(0, 0): 0.5 + 0.2j, (1, 1): 0.35 - 0.15j,
+               (0, 1): 0.1 + 0.05j, (1, 0): 0.1 + 0.05j},
+            eps=(0.05, -0.03), T=0.45, mu=0.1)
+        topo = _TopoLike(delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]]),
+                          reverse=np.array([0, 2, 1]))
+        q_mesh = (3, 1, 1)
+        onsite_ham_pm = np.zeros((2, 2, 2, 2), dtype=complex)
+        a, b, R = 0, 1, 1
+
+        records = {}
+        for name, phase in (("real", 1.0 + 0.0j), ("imag", 0.0 + 1.0j)):
+            def terms_of_v(v, phase=phase):
+                return _terms_exchange_offsite(fx, a, b, R, v * phase)
+
+            block = np.zeros((2, 2), dtype=complex)
+            block[a, b] = phase
+            declarations = {"onsite_ham_pm": onsite_ham_pm,
+                             "Exchange": {1: block}}
+            records[name] = _w0_adjudicate_direction(
+                fx, terms_of_v, topo, declarations, q_mesh,
+                "W0/exchange/{}".format(name))
+
+        for name, rec in records.items():
+            self.assertEqual(
+                rec["status"], "PASS",
+                "W0 granule (a) direction {} status={} (delta_rich={:.3e} "
+                "tol={:.3e} max_signal={:.3e} first_failures={}) -- STOP, "
+                "do not commit; see TestW0Granules docstring's discrepancy "
+                "protocol".format(
+                    name, rec["status"], rec["delta_rich"], rec["tol"],
+                    rec["max_signal"], rec["failures"][:5]))
+
+        gate = _w0_direction_set_sv_gate(records, "W0/exchange")
+        self.assertGreaterEqual(
+            gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR,
+            "W0/exchange direction-set SVD gate: sv_ratio={:.3e} below "
+            "floor {:.3e}".format(gate["sv_ratio"],
+                                   ed_oracle_util.SENS_SV_FLOOR))
+        self.assertGreaterEqual(
+            gate["sigma_min"], 100.0 * gate["delta_rich_max"],
+            "W0/exchange direction-set SVD gate: sigma_min={:.3e} below "
+            "100*delta_rich_max={:.3e}".format(
+                gate["sigma_min"], 100.0 * gate["delta_rich_max"]))
+
+    def test_granule_b_complex_offsite_coulomb_inter(self):
+        """(b) L=5, norb=1, off-site CoulombInter, real coupling,
+        SINGLE-DIRECTION declaration (R=+1/+2 only -- see the
+        investigation note below on why NOT also declaring the -R
+        mirror as a separate many-body term is the correct construction
+        here, not a simplification). Two directions, g1 (R=+1) and g2
+        (R=+2), on the SAME topology for the SVD gate. Exact-magnitude
+        adjudication (adjudicate_granule's tol sits at the Richardson
+        noise floor, ~1e-4 here) already distinguishes the coefficient
+        table's -Re(C) from -2*Re(C) or -Re(C)/2 -- any such factor
+        error would show up as a clean, well-outside-tolerance ratio.
+
+        Investigation note (recorded per the discrepancy protocol, since
+        an earlier draft of this granule used a Hermitian-mirrored (R
+        AND -R) declaration and FAILED by a clean, uniform factor of
+        ~2.0 at every grid cell): a density-density operator commutes
+        with itself at every site pair, so X_{+R} := sum_j n_j n_{j+R}
+        and X_{-R} := sum_j n_j n_{j-R} are the SAME operator (reindex
+        j -> j-R). Explicitly declaring BOTH "C at R" and "conj(C) at
+        -R" as SEPARATE many-body terms therefore builds
+        H = C*X_{+R} + conj(C)*X_{+R} = 2*Re(C)*X_{+R} -- twice the
+        physical bond strength a single-channel declaration represents
+        -- which is exactly the measured ~2x discrepancy. The topology's
+        Hermitian CLOSURE (coeffs[reverse[m]] = conj(coeffs[m])) is
+        bookkeeping for `w_expected_from_records`'s representative-based
+        LOOKUP (Task 1 Step 1's derivation: one lookup already feeds
+        BOTH mirrored target cells), not an instruction to additionally
+        re-declare the mirror as a second physical Hamiltonian term on
+        the ED side -- exactly mirroring how off-site Ising already
+        works below (single R declaration, no explicit mirror) and
+        `resolve_interactions` (bond_channels.py) itself: when only ONE
+        direction is declared in a real file, the STORED value at that
+        channel is the RAW declared value (unaveraged), never doubled.
+        A genuinely complex C has ZERO net physical effect here in
+        EITHER construction (Im(C) always cancels once Hermiticity is
+        enforced for a commuting density-density pair), so this granule
+        uses a real coupling and lets adjudicate_granule's exact-value
+        comparison catch a magnitude or sign error directly."""
+        fx = ed_oracle_util.EDFixture(
+            L=5, norb=1, t={(0, 0): 0.7 * np.exp(0.3j)}, eps=(0.0,), T=0.5,
+            mu=0.2)
+        topo = _TopoLike(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0],
+                               [2, 0, 0], [-2, 0, 0]]),
+            reverse=np.array([0, 2, 1, 4, 3]))
+        q_mesh = (5, 1, 1)
+        onsite_ham_pm = np.zeros((1, 1, 1, 1), dtype=complex)
+        C = 0.6 + 0.0j
+
+        records = {}
+        for name, R, m_pos in (("g1", 1, 1), ("g2", 2, 3)):
+            def terms_of_v(v, R=R):
+                return ed_oracle_util.canonical_density_terms(
+                    fx, [(0, 0, R, v * C)])
+
+            declarations = {
+                "onsite_ham_pm": onsite_ham_pm,
+                "CoulombInter": {m_pos: np.array([[C]], dtype=complex)},
+            }
+            records[name] = _w0_adjudicate_direction(
+                fx, terms_of_v, topo, declarations, q_mesh,
+                "W0/coulombinter/{}".format(name))
+
+        for name, rec in records.items():
+            self.assertEqual(
+                rec["status"], "PASS",
+                "W0 granule (b) direction {} status={} (delta_rich={:.3e} "
+                "tol={:.3e} max_signal={:.3e} first_failures={}) -- STOP, "
+                "do not commit; see TestW0Granules docstring's discrepancy "
+                "protocol".format(
+                    name, rec["status"], rec["delta_rich"], rec["tol"],
+                    rec["max_signal"], rec["failures"][:5]))
+
+        gate = _w0_direction_set_sv_gate(records, "W0/coulombinter")
+        self.assertGreaterEqual(gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
+        self.assertGreaterEqual(gate["sigma_min"],
+                                 100.0 * gate["delta_rich_max"])
+
+    def test_granule_c_offsite_ising(self):
+        """(c) L=5, norb=1, off-site Ising, real coupling. Two
+        directions, g1 (R=+1) and g2 (R=+2), on the SAME topology for
+        the SVD gate (Ising's own Hamiltonian is already Hermitian
+        without a mirrored declaration, unlike CoulombInter's genuinely
+        complex granule above -- see ``_terms_ising_offsite``'s
+        docstring)."""
+        fx = ed_oracle_util.EDFixture(
+            L=5, norb=1, t={(0, 0): 0.55 * np.exp(-0.25j)}, eps=(0.0,),
+            T=0.6, mu=0.15)
+        topo = _TopoLike(
+            delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0],
+                               [2, 0, 0], [-2, 0, 0]]),
+            reverse=np.array([0, 2, 1, 4, 3]))
+        q_mesh = (5, 1, 1)
+        onsite_ham_pm = np.zeros((1, 1, 1, 1), dtype=complex)
+
+        records = {}
+        for name, R, m_pos in (("g1", 1, 1), ("g2", 2, 3)):
+            def terms_of_v(v, R=R):
+                return _terms_ising_offsite(fx, 0, 0, R, v)
+
+            declarations = {
+                "onsite_ham_pm": onsite_ham_pm,
+                "Ising": {m_pos: np.array([[1.0 + 0j]], dtype=complex)},
+            }
+            records[name] = _w0_adjudicate_direction(
+                fx, terms_of_v, topo, declarations, q_mesh,
+                "W0/ising/{}".format(name))
+
+        for name, rec in records.items():
+            self.assertEqual(
+                rec["status"], "PASS",
+                "W0 granule (c) direction {} status={} (delta_rich={:.3e} "
+                "tol={:.3e} max_signal={:.3e} first_failures={}) -- STOP, "
+                "do not commit; see TestW0Granules docstring's discrepancy "
+                "protocol".format(
+                    name, rec["status"], rec["delta_rich"], rec["tol"],
+                    rec["max_signal"], rec["failures"][:5]))
+
+        gate = _w0_direction_set_sv_gate(records, "W0/ising")
+        self.assertGreaterEqual(gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
+        self.assertGreaterEqual(gate["sigma_min"],
+                                 100.0 * gate["delta_rich_max"])
 
 
 if __name__ == "__main__":
