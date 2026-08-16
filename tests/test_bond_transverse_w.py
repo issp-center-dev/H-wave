@@ -2637,5 +2637,140 @@ class _CollectingHandler(logging.Handler):
         self.records.append(record)
 
 
+def _write_w90_entries(path, entries):
+    """Write a minimal "wannier90-like" sparse interaction file (H-wave's
+    own convention -- unit degeneracy throughout, see
+    ``wan90.read_w90``'s docstring): ``entries`` is a list of
+    ``(Rx, Ry, Rz, a1, b1, re, im)`` tuples with 1-based orbital indices
+    (matching every other on-disk fixture in this module, e.g.
+    ``_make_max_shells_fixture``)."""
+    n = len(entries)
+    with open(path, "w") as f:
+        f.write("hdr\n1\n{}\n{}\n".format(n, " ".join(["1"] * n)))
+        for (rx, ry, rz, a1, b1, re, im) in entries:
+            f.write(" {} {} {} {} {} {:.12f} {:.12f}\n".format(
+                rx, ry, rz, a1, b1, re, im))
+
+
+def _make_aggregate_coulomb_fixture(*, use_aggregate, Lx=4, Nmat=16, T=2.0,
+                                     filling=0.5, U=2.0, V=0.4):
+    """norb=1 ring+ladder fixture declaring an on-site ``U`` and an
+    off-site ``V`` at ``R = +-1`` along x, either (``use_aggregate=True``)
+    through the single aggregate ``Coulomb`` keyword or
+    (``use_aggregate=False``) through the explicit ``CoulombIntra`` +
+    ``CoulombInter`` pair -- the two on-disk routes
+    ``wan90.split_coulomb`` is supposed to make equivalent everywhere in
+    the pipeline, including the transverse-bond gate's topology (review
+    fix, should_fix: the gate's ``resolve_transverse_topology`` call
+    previously only ever read the explicit keys).
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    d = tempfile.mkdtemp(prefix="rpa_agg_coulomb_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n0.0 0.0 0.0\n")
+    _write_w90_entries(
+        os.path.join(d, "transfer.dat"),
+        [(1, 0, 0, 1, 1, 0.5, 0.0), (-1, 0, 0, 1, 1, 0.5, 0.0)])
+    _write_w90_entries(
+        os.path.join(d, "extern.dat"), [(0, 0, 0, 1, 1, 1.0, 0.0)])
+
+    onsite = [(0, 0, 0, 1, 1, U, 0.0)]
+    offsite = [(1, 0, 0, 1, 1, V, 0.0), (-1, 0, 0, 1, 1, V, 0.0)]
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat", "Extern": "extern.dat"}
+    if use_aggregate:
+        _write_w90_entries(
+            os.path.join(d, "coulomb.dat"), onsite + offsite)
+        inter["Coulomb"] = "coulomb.dat"
+    else:
+        _write_w90_entries(os.path.join(d, "coulombintra.dat"), onsite)
+        _write_w90_entries(os.path.join(d, "coulombinter.dat"), offsite)
+        inter["CoulombIntra"] = "coulombintra.dat"
+        inter["CoulombInter"] = "coulombinter.dat"
+
+    param = {"T": T, "filling": filling, "CellShape": [Lx, 1, 1],
+             "SubShape": [1, 1, 1], "Nmat": Nmat,
+             "transverse_bond_channels": True}
+    info_mode = {"mode": "RPA", "param": param,
+                 "calc_scheme": "general", "calc_type": "ring+ladder"}
+    info_input = {"path_to_input": d, "interaction": inter}
+
+    read_io = read_input_k.QLMSkInput(info_input)
+    ham_info = read_io.get_param("ham")
+    solver = rpa_mod.RPA(ham_info, {}, info_mode)
+    green_info = read_io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_agg_coulomb_out_")
+    return solver, green_info, out_dir
+
+
+class TestAggregateCoulombTransverseTopology(ApproxTestCase):
+    """Review fix (should_fix): an off-site inter-orbital-category term
+    (``CoulombInter``-type physics: R != 0) declared ONLY through the
+    aggregate ``Coulomb`` keyword must reach
+    ``_validate_transverse_bond_prereqs``'s topology resolution exactly
+    like the same physics declared through the explicit
+    ``CoulombInter`` key -- the Hamiltonian (``_make_ham_inter``) and the
+    on-site vertex (``_build_ham_pm_onsite``) already apply
+    ``wan90.split_coulomb`` themselves; the gate's topology previously
+    did not."""
+
+    def test_aggregate_and_explicit_coulomb_give_identical_topology_and_chiq(
+            self):
+        solver_agg, gi_agg, out_agg = _make_aggregate_coulomb_fixture(
+            use_aggregate=True)
+        solver_exp, gi_exp, out_exp = _make_aggregate_coulomb_fixture(
+            use_aggregate=False)
+
+        solver_agg.solve(gi_agg, out_agg)
+        solver_exp.solve(gi_exp, out_exp)
+
+        topo_agg = solver_agg._transverse_bond_topo
+        topo_exp = solver_exp._transverse_bond_topo
+        self.assertTrue(np.array_equal(topo_agg.delta_r, topo_exp.delta_r))
+        self.assertTrue(np.array_equal(topo_agg.reverse, topo_exp.reverse))
+        self.assertGreater(
+            len(topo_agg.delta_r), 1,
+            "the off-site declaration must have actually produced a "
+            "bond-enlarged (B > 1) topology, or this test would pass "
+            "vacuously")
+
+        solver_agg.save_results(
+            {'path_to_output': out_agg, 'chiq': 'chiq.npz'}, gi_agg)
+        solver_exp.save_results(
+            {'path_to_output': out_exp, 'chiq': 'chiq.npz'}, gi_exp)
+        data_agg = np.load(os.path.join(out_agg, 'chiq.npz'),
+                            allow_pickle=True)
+        data_exp = np.load(os.path.join(out_exp, 'chiq.npz'),
+                            allow_pickle=True)
+
+        # Topology provenance keys: identical B/shell structure regardless
+        # of which of the two on-disk routes declared it.
+        for key in ("transverse_bond_delta_r", "transverse_bond_reverse",
+                    "transverse_bond_index_order",
+                    "transverse_bond_max_shells",
+                    "transverse_spatial_shape", "transverse_q_convention",
+                    "transverse_spin_mode", "transverse_normalization"):
+            self.assertTrue(
+                np.array_equal(data_agg[key], data_exp[key]),
+                "provenance key {!r} differs between the aggregate-Coulomb "
+                "and explicit-CoulombInter routes".format(key))
+
+        assert_approx_array(
+            data_agg["chiq_pm_bond_static"],
+            data_exp["chiq_pm_bond_static"], rel=0, abs=1.0e-12,
+            msg="chiq_pm_bond_static must be numerically identical "
+                "between the aggregate-Coulomb and explicit-CoulombInter "
+                "routes")
+        assert_approx_array(
+            data_agg["chiq_pm_static"], data_exp["chiq_pm_static"],
+            rel=0, abs=1.0e-12,
+            msg="chiq_pm_static must be numerically identical between "
+                "the aggregate-Coulomb and explicit-CoulombInter routes")
+
+
 if __name__ == "__main__":
     unittest.main()

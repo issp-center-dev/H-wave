@@ -4157,6 +4157,34 @@ class RPA:
         has_sub = getattr(self.lattice, "has_sublattice", False)
         interactions = (self.ham_info.param_ham_orig if has_sub
                         else self.ham_info.param_ham)
+
+        # The aggregate 'Coulomb' table (wan90.split_coulomb's shared
+        # decomposition -- the SAME split _make_ham_inter and
+        # _build_ham_pm_onsite each apply to feed the Hamiltonian and the
+        # on-site vertex) is invisible to resolve_transverse_topology,
+        # which only ever reads the 'CoulombInter'/'Ising'/'Exchange'
+        # keys: without this, an off-site inter-orbital term declared
+        # ONLY via aggregate 'Coulomb' would be seen everywhere else in
+        # the pipeline but not by this gate's topology (wrongly reporting
+        # "no active declaration", or silently computing without that
+        # channel). Merge its inter-orbital off-site part into the
+        # 'CoulombInter' table fed to the resolver. The ambiguity guard
+        # ('Coulomb' cannot coexist with an explicit 'CoulombIntra'/
+        # 'CoulombInter' declaration) already ran at construction time
+        # (Interaction.__init__ -> _make_ham_inter, long before solve()
+        # -- and therefore this method -- is ever reached), so
+        # 'CoulombInter' is always empty here whenever 'Coulomb' is
+        # present; the merge below is still written generally (update,
+        # not overwrite) so it stays correct even if that guard's scope
+        # ever changes.
+        if 'Coulomb' in interactions:
+            _coulomb_intra, coulomb_inter_agg = wan90.split_coulomb(
+                interactions['Coulomb'])
+            interactions = dict(interactions)
+            merged_inter = dict(interactions.get('CoulombInter', {}))
+            merged_inter.update(coulomb_inter_agg)
+            interactions['CoulombInter'] = merged_inter
+
         topo = bond_channels.resolve_transverse_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.transverse_bond_max_shells)
@@ -4174,8 +4202,9 @@ class RPA:
             raise ValueError(
                 "[mode.param] transverse_bond_channels=true requires an "
                 "active off-site transverse-resolved declaration "
-                "(CoulombInter, Ising or Exchange with a nonzero off-site "
-                "coefficient after duplicate summation, Hermitian "
+                "(CoulombInter, Ising or Exchange -- or the off-site part "
+                "of an aggregate Coulomb declaration -- with a nonzero "
+                "off-site coefficient after duplicate summation, Hermitian "
                 "projection and transverse_bond_max_shells truncation); "
                 "none is present, so the bond-resolved gate has nothing "
                 "to represent. Declare an off-site term, relax "
