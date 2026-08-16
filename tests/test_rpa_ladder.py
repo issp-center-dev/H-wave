@@ -22,6 +22,7 @@ What is covered, and why it looks the way it does:
 4. Ring-only behaviour and the bare-bubble (Lindhard) checks are unchanged.
 """
 
+import logging
 import os
 import unittest
 
@@ -161,9 +162,23 @@ class TestRPALadder(unittest.TestCase):
         self.assertIn("density-pair", str(cm.exception).lower())
         self.assertIn("general", str(cm.exception))
 
-    def test_transverse_spinful_rejects_reduced_chi0q(self):
-        """Same guard on the spinful branch: a non-6-dim chi0q cannot
-        supply the spin-flip block and must be rejected (issue #111)."""
+    def test_transverse_spinful_branch_is_unreachable(self):
+        """UPDATED for Phase S (issue #110; supersedes the former
+        shape-conditioned guard this test used to pin under issue #111).
+
+        Before Phase S, `_build_transverse_channel`'s spinful branch
+        rejected only a MALFORMED (non-6-dim) chi0q and otherwise
+        (correctly-shaped, 6-dim) sliced the Sz-conserving block off the
+        BARE bubble and re-solved it -- silently dropping any genuine
+        cross-spin/spin-mixing vertex content (the #110 defect). Phase S
+        routes `spin_mode == 'spinful'` around this method entirely:
+        `_solve_impl` now calls `_extract_transverse_from_dressed` on
+        the already-DRESSED longitudinal solve instead. This method's
+        spinful branch is therefore unconditionally unreachable through
+        normal solver operation and raises a defensive RuntimeError
+        REGARDLESS of chi0q's shape -- pin that for both a malformed
+        (reduced) and a well-formed (6-dim) chi0q, so this guard cannot
+        be satisfied by accident only on the malformed input."""
         import types
         import hwave.solver.rpa as rpa_module
 
@@ -175,17 +190,17 @@ class TestRPALadder(unittest.TestCase):
         stub.lattice = types.SimpleNamespace(nvol=4)
         stub.spin_mode = "spinful"
 
-        chi0q_reduced = np.zeros((4, 4, 4, 4), dtype=complex)
         ham_orig = np.zeros((4, 4, 4, 4, 4), dtype=complex)
-        with self.assertRaises(ValueError) as cm:
-            stub._build_transverse_channel(chi0q_reduced, ham_orig)
-        # pin the INTENDED failure, not just any ValueError: the message
-        # must identify the channel, the requirement, and the shape
-        msg = str(cm.exception)
-        self.assertIn("spinful transverse", msg)
-        self.assertIn("requires the full", msg)
-        self.assertIn("general-scheme", msg)
-        self.assertIn(str(chi0q_reduced.shape), msg)
+        for label, chi0q in (
+                ("reduced", np.zeros((4, 4, 4, 4), dtype=complex)),
+                ("well_formed_6dim",
+                 np.zeros((4, 4, 4, 4, 4, 4), dtype=complex))):
+            with self.subTest(chi0q=label):
+                with self.assertRaises(RuntimeError) as cm:
+                    stub._build_transverse_channel(chi0q, ham_orig)
+                msg = str(cm.exception)
+                self.assertIn("spin_mode='spinful'", msg)
+                self.assertIn("_extract_transverse_from_dressed", msg)
 
     def test_transverse_bubble_rejects_wrong_block_count(self):
         """The transverse bubble kernel requires exactly the (G_up, G_down)
@@ -350,19 +365,56 @@ class TestRPALadder(unittest.TestCase):
         pairs = _spy_run(lambda: _run_and_keep("spin-diag", d))
         self.assertEqual(pairs, {("spin-diag", 7)})
 
-        # spinful: genuine on-site spin mixing -- the run is a
-        # shape/reachability check, NOT a physics check: the transverse
-        # extraction takes the Sz-conserving block and warns that the
-        # cross terms are omitted (#110). Assert that warning so the
-        # limitation is explicit here.
+        # spinful: genuine on-site spin mixing. UPDATED for Phase S
+        # (issue #110): this test used to assert `_build_transverse_channel`
+        # IS reached for spin_mode == 'spinful' and that it logs the
+        # "Sz-conserving ... cross terms are not included" warning --
+        # pinning the #110 defect itself (a shape/reachability check,
+        # explicitly NOT a physics check, per the comment this replaces).
+        # Phase S's fix routes spin_mode == 'spinful' AROUND
+        # `_build_transverse_channel` entirely (`_solve_impl` now calls
+        # `_extract_transverse_from_dressed` on the dressed longitudinal
+        # solve instead), so the correct pin is now the opposite: the
+        # method is NEVER reached for this run, and the #110 warning is
+        # NEVER logged (production correctly represents the cross-spin
+        # content now, rather than warning that it dropped it).
         d = self._write_so_ladder_inputs(spin_flip=True)
-        with self.assertLogs("hwave.solver.rpa", level="WARNING") as wcm:
-            pairs = _spy_run(lambda: _run_and_keep("spinful", d))
-        self.assertEqual(pairs, {("spinful", 6)})
-        self.assertTrue(
-            any("Sz-conserving" in m for m in wcm.output),
-            "expected the spin-mixing cross-term warning, got: {}".format(
-                wcm.output))
+        seen_spinful = []
+        original = rpa_mod.RPA._build_transverse_channel
+
+        def spy(self_, chi0q_orig, ham_orig):
+            seen_spinful.append((self_.spin_mode, chi0q_orig.ndim))
+            return original(self_, chi0q_orig, ham_orig)
+
+        class _RecordingHandler(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
+
+        collector = _RecordingHandler()
+        rpa_logger = logging.getLogger("hwave.solver.rpa")
+        rpa_mod.RPA._build_transverse_channel = spy
+        rpa_logger.addHandler(collector)
+        try:
+            _run_and_keep("spinful", d)
+        finally:
+            rpa_mod.RPA._build_transverse_channel = original
+            rpa_logger.removeHandler(collector)
+
+        self.assertEqual(
+            seen_spinful, [],
+            "_build_transverse_channel must NOT be reached for "
+            "spin_mode='spinful' any more (issue #110 fix routes around "
+            "it via _extract_transverse_from_dressed)")
+        self.assertFalse(
+            any("Sz-conserving" in r.getMessage()
+                for r in collector.records),
+            "the deleted #110 'cross terms are not included' warning "
+            "must not be logged any more: {}".format(
+                [r.getMessage() for r in collector.records]))
 
         # the ranks are not enough: the solves must also produce finite
         # chiq_pm (a rank-only pin would pass on NaN/divergent output)

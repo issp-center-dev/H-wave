@@ -2098,6 +2098,18 @@ class RPA:
                     # Gated-run output ownership (spec): the plain ladder
                     # is NOT additionally executed, so green_info["chiq_pm"]
                     # (the legacy key) is intentionally never populated here.
+                elif self.spin_mode == "spinful":
+                    # Phase S (issue #110): the spinful plain-ladder path
+                    # no longer slices chi0 and re-solves it (that dropped
+                    # every cross-spin/spin-mixing vertex contribution the
+                    # RPA equation never got to resum). Instead it slices
+                    # the ALREADY-DRESSED longitudinal `sol` (computed
+                    # just above, reused verbatim -- no second solve) --
+                    # slice-AFTER-solve, not solve-after-slice. See
+                    # `_extract_transverse_from_dressed`'s docstring for
+                    # the equation and its Gate-S0 ED adjudication.
+                    green_info["chiq_pm"] = _bk.to_host(
+                        self._extract_transverse_from_dressed(sol))
                 else:
                     chi0q_pm, ham_pm = self._build_transverse_channel(
                         chi0q_orig, ham_orig)
@@ -3568,34 +3580,29 @@ class RPA:
                     "internally.")
 
         elif self.spin_mode == "spinful":
-            # Already in spin-orbital space
-            # chi0_+- requires re-extraction with proper spin indices
-            # For now, extract from the chi0_SO structure
-            # chi0_SO[a,c,b,d] -> chi0_+-[a_orb,c_orb,b_orb,d_orb]
-            #   = chi0_SO[(↑,a),(↓,c),(↑,b),(↓,d)]  (when s1=↑=s3, s2=↓=s4)
-            #   which is just the orbital diagonal of chi0
-            if chi0q_orig.ndim == 6:
-                # Extract chi0_{(up a)(dn c)(up b)(dn d)} = -G_up*G_down, the
-                # transverse bubble. NB this assumes Sz is conserved (no genuine
-                # spin mixing): for spin-orbit-coupled systems the off-diagonal
-                # spin components contribute additional cross terms that this
-                # slice does not include.
-                logger.warning(
-                    "spinful transverse (ladder) channel extracts the "
-                    "Sz-conserving block (G_up*G_down); for genuine spin-mixing "
-                    "(spin-orbit coupling) the cross terms are not included.")
-                nfreq = chi0q_orig.shape[0]
-                chi0q_pm = chi0q_orig[:, :,
-                                      0:norb, norb:2*norb,
-                                      0:norb, norb:2*norb].copy()
-            else:
-                # ring+ladder forces the general scheme, so a spinful chi0q must
-                # be the full rank-4 (6-dim) tensor here. A reduced/2-index
-                # spinful chi0q cannot supply the spin-flip block.
-                raise ValueError(
-                    "spinful transverse (ladder) channel requires the full "
-                    "(general-scheme) chi0q tensor, got shape {}".format(
-                        chi0q_orig.shape))
+            # Phase S (issue #110): the spinful plain-ladder path no
+            # longer routes through here at all. It used to slice chi0
+            # (the BARE bubble) at the Sz-conserving block and re-solve
+            # that reduced slice -- which structurally could not include
+            # any cross-spin/spin-mixing vertex content for a genuinely
+            # spin-orbit-coupled H0 (the "cross terms are not included"
+            # warning this branch used to log). The fix is slice-AFTER-
+            # solve, not solve-after-slice: `_solve_impl`'s plain-
+            # transverse branch now calls
+            # `RPA._extract_transverse_from_dressed` on the ALREADY-
+            # DRESSED longitudinal `sol` instead of calling this method
+            # for `spin_mode == "spinful"`. Reaching this branch means
+            # that routing regressed (a caller invoking
+            # `_build_transverse_channel` directly on a spinful solver) --
+            # fail loudly rather than silently reproducing the #110 bug.
+            raise RuntimeError(
+                "_build_transverse_channel: unreachable for "
+                "spin_mode='spinful' (issue #110) -- the spinful plain "
+                "transverse channel is built by "
+                "RPA._extract_transverse_from_dressed, slicing the "
+                "DRESSED longitudinal solve, not by slicing chi0 and "
+                "re-solving it here. This method must not be called "
+                "directly for a spinful solver.")
 
         # --- Build W_+- (transverse vertex) ---
         # The transverse vertex comes from the CROSS-SPIN block alone. The
@@ -3644,6 +3651,93 @@ class RPA:
                         chi0q_pm.shape, ham_pm.shape))
 
         return chi0q_pm, ham_pm
+
+    def _extract_transverse_from_dressed(self, sol):
+        """Extract the physical spinful transverse response by slicing
+        the DRESSED (RPA-solved) general spinful tensor -- the Phase-S
+        fix for issue #110.
+
+        Background: for a genuinely spin-orbit-coupled H0
+        (``spin_mode == "spinful"``), the pre-Phase-S plain-ladder path
+        sliced the Sz-conserving block off the BARE bubble ``chi0`` and
+        then solved RPA on that reduced slice. That is backwards: the
+        RPA equation resums the vertex over whatever chi0 it is given,
+        so slicing chi0 FIRST discards every cross-spin/spin-mixing
+        vertex contribution before the resummation ever sees it (the
+        deleted "cross terms are not included" warning was this defect
+        made explicit). The fix is to solve RPA over the FULL
+        ``(2*norb)**2`` spin-orbital space first (the antisymmetrized
+        general solve `_solve_impl` already performs for the
+        longitudinal channel -- `sol = self._solve_rpa(chi0q, ham)`, a
+        few lines above this method's call site), and only THEN slice
+        out the physical transverse block -- slice-AFTER-solve, not
+        solve-after-slice. No second solve is needed: this method is
+        pure index selection on the tensor the longitudinal solve
+        already produced.
+
+        Equation (spin-block generalized-index convention
+        ``g = s*norb + o``, spin-major: ``g < norb`` is spin-up,
+        ``g >= norb`` is spin-down -- see `Interaction._make_ham_trans`'s
+        own comment, "RPA works internally in spin-block order (index =
+        spin*norb + orb)", and this convention's independent
+        confirmation in Gate S0's "Operator-phase / index-convention
+        check", tests/test_spinful_transverse_ed.py):
+
+            chiq_pm[freq, q, a, c, b, d]
+                = sol[freq, q, a, norb+c, b, norb+d]
+
+        i.e. the creation-leg orbital ``a`` reads off the spin-up block,
+        the annihilation-leg orbital ``c`` off the spin-down block, and
+        likewise ``(b, d)`` for the second (conjugate) leg pair -- the
+        SAME index selection the removed pre-Phase-S spinful branch of
+        `_build_transverse_channel` applied to chi0 (the bare bubble),
+        applied here to ``sol`` (the dressed tensor) instead.
+
+        Pre-adjudicated ahead of this production change (Gate S0, Phase
+        S Task 2,
+        tests/test_spinful_transverse_ed.py::TestGateS0ExtractionAdjudication)
+        against exact diagonalization (`TotalNED`, a total-N-sector ED
+        oracle built specifically to host Sz-breaking one-body terms) on
+        a genuinely Sz-breaking L=3/norb=2 fixture: PASS at a measured
+        ~34,000x tolerance margin (delta_rich=3.30e-07, tol=3.30e-06,
+        max_signal=1.11e-01); a deliberate g2/g4 leg-order mutation of
+        the same equation FAILs the identical granule at 98% of the
+        signal scale, confirming the PASS is not vacuous. This method's
+        slice is byte-for-byte the same equation as the test module's
+        `extract_pm_from_dressed` reference function (cross-pinned bit
+        for bit in Gate S2, Phase S Task 3,
+        tests/test_spinful_transverse_ed.py::TestGateS2ProductionRouting).
+
+        Pure index selection: works unchanged on either backend (no
+        `float()`/host-only conversion here -- the caller converts to
+        host, via `_bk.to_host`, only after this method returns).
+
+        Parameters
+        ----------
+        sol : ndarray, shape (nfreq, nvol, nd, nd, nd, nd), nd = 2*norb
+            The RPA-DRESSED general spinful tensor -- this solver's own
+            longitudinal ``sol = self._solve_rpa(chi0q, ham)`` output,
+            REUSED verbatim (never recomputed).
+
+        Returns
+        -------
+        ndarray, shape (nfreq, nvol, norb, norb, norb, norb)
+            The full-frequency (dynamic) physical transverse chiq_pm.
+        """
+        norb = self.norb
+        nd = 2 * norb
+        if sol.ndim != 6:
+            raise ValueError(
+                "_extract_transverse_from_dressed: sol must be the "
+                "6-dim (nfreq, nvol, nd, nd, nd, nd) dressed general "
+                "spinful tensor, got ndim={}".format(sol.ndim))
+        if sol.shape[2:] != (nd, nd, nd, nd):
+            raise ValueError(
+                "_extract_transverse_from_dressed: sol's trailing "
+                "orbital axes {} do not match nd=2*norb={} (norb={}, "
+                "from the solver) in every slot".format(
+                    sol.shape[2:], nd, norb))
+        return sol[..., 0:norb, norb:2 * norb, 0:norb, norb:2 * norb]
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):

@@ -867,5 +867,360 @@ class TestGateS0ExtractionAdjudication(unittest.TestCase):
             "fail is itself a STOP.".format(magnitude))
 
 
+# ---------------------------------------------------------------------------
+# Gate S1 (Phase S, Task 3, Step 3): the Sz-conserving reduction. A spinful
+# solver (spin_mode == "spinful") on a system whose one-body Hamiltonian
+# carries a genuine but TINY on-site spin-orbit hop `t_so = eps` must
+# reproduce, as eps -> 0, the IDENTICAL physical system run through the
+# established plain path (`_build_transverse_channel`'s spin-free branch,
+# which the SAME fixture reaches automatically at eps == 0.0 EXACTLY --
+# every declared hopping amplitude and on-site energy below is spin-
+# INDEPENDENT, so with no spin-mixing term at all `RPA._init_wavevec`'s own
+# auto-detector (rpa.py, "H is spin-free" / "H is spin-diagnoal" /
+# "H is spinful" branch) lands on "spin-free", never "spin-diag", for
+# t_so == 0 here specifically).
+# ---------------------------------------------------------------------------
+
+_S1_L = 3
+_S1_NORB = 2
+_S1_T, _S1_MU = 0.5, 0.2
+_S1_HOP = {(0, 0): 0.6 + 0.2j, (1, 1): 0.4 - 0.1j,
+           (0, 1): 0.2 + 0.05j, (1, 0): 0.2 + 0.05j}
+_S1_EPS_ONSITE = (0.10, -0.05)
+_S1_U = 0.25
+_S1_NMAT = 512
+
+
+def _s1_sidx(o, s):
+    """Same interleaved (2*orb+spin) file-index convention as
+    ``_s0_sidx`` -- see its docstring."""
+    return 2 * o + s + 1
+
+
+def _s1_make_solver(t_so, nmat):
+    """The Gate S1 fixture: IDENTICAL physical system for every value of
+    ``t_so`` except the presence/value of a single declared transfer
+    block (the on-site spin-flip hop). At ``t_so == 0.0`` the transfer
+    file omits that block entirely -- not merely declares it as zero --
+    so the two runs ("reference" and "spinful, eps small") differ by a
+    literal file-content difference of one declaration, nothing else
+    (same hopping, same on-site energies, same CoulombIntra U, same T,
+    mu, Nmat). Every declared hopping amplitude/on-site energy is
+    spin-INDEPENDENT (the same value written for both ``s=0`` and
+    ``s=1`` file rows), so at ``t_so == 0.0`` the auto-detector lands on
+    ``spin_mode == "spin-free"`` (not "spin-diag" -- there is no
+    up/down asymmetry at all here to trigger that branch instead); at
+    any ``t_so != 0.0`` (however tiny, as long as it clears the
+    ``np.allclose`` detection floor of ``atol=1e-8``) it lands on
+    ``spin_mode == "spinful"``, routing through the NEW
+    ``_extract_transverse_from_dressed`` this task adds.
+
+    Does not call ``solve()``; the caller does.
+    """
+    d = tempfile.mkdtemp(prefix="s1_gate_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n%d\n"
+                 % (2 * _S1_NORB))
+        for _ in range(2 * _S1_NORB):
+            f.write("0.0 0.0 0.0\n")
+
+    lines = []
+    for (a, b), t in _S1_HOP.items():
+        for s in range(2):
+            lines.append((1, 0, 0, _s1_sidx(a, s), _s1_sidx(b, s), t))
+            lines.append((-1, 0, 0, _s1_sidx(a, s), _s1_sidx(b, s),
+                          np.conj(_S1_HOP[(b, a)])))
+    for o, e in enumerate(_S1_EPS_ONSITE):
+        for s in range(2):
+            lines.append((0, 0, 0, _s1_sidx(o, s), _s1_sidx(o, s),
+                          complex(e)))
+    if t_so != 0.0:
+        for o in range(_S1_NORB):
+            lines.append((0, 0, 0, _s1_sidx(o, 0), _s1_sidx(o, 1), t_so))
+            lines.append((0, 0, 0, _s1_sidx(o, 1), _s1_sidx(o, 0),
+                          np.conj(t_so)))
+
+    nr = len(set((rx, ry, rz) for (rx, ry, rz, i, j, val) in lines))
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n%d\n%d\n%s\n"
+                 % (2 * _S1_NORB, nr, " ".join("1" * nr)))
+        for (rx, ry, rz, i, j, val) in lines:
+            f.write(" %d %d %d %d %d %.12f %.12f\n"
+                     % (rx, ry, rz, i, j, val.real, val.imag))
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat"}
+    with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+        f.write("hdr\n%d\n1\n1\n" % _S1_NORB)
+        f.write(" 0 0 0 1 1 %.12f 0.0\n" % _S1_U)
+    inter["CoulombIntra"] = "coulombintra.dat"
+
+    param = {"T": _S1_T, "mu": _S1_MU, "CellShape": [_S1_L, 1, 1],
+              "SubShape": [1, 1, 1], "Nmat": nmat, "coeff_tail": 1.0}
+    info_mode = {"mode": "RPA", "param": param, "enable_spin_orbital": True,
+                  "calc_scheme": "general", "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    return solver, green_info
+
+
+@functools.lru_cache(maxsize=None)
+def _s1_static_pm(t_so, nmat):
+    """Runs the fixture at ``t_so``, returns ``(solver.spin_mode,
+    chiq_pm[static])`` -- the static (Omega=0) slice of whichever
+    ``chiq_pm`` `solve()` populates, through WHICHEVER path production
+    routes to for the resulting ``spin_mode`` (spin-free's
+    `_build_transverse_channel` at ``t_so == 0.0``,
+    `_extract_transverse_from_dressed` at ``t_so != 0.0``)."""
+    solver, green_info = _s1_make_solver(t_so, nmat)
+    solver.solve(green_info, tempfile.mkdtemp(prefix="s1_gate_out_"))
+    chiq_pm = np.asarray(green_info["chiq_pm"])
+    nfreq = chiq_pm.shape[0]
+    return solver.spin_mode, chiq_pm[nfreq // 2]
+
+
+class TestGateS1SzConservingReduction(unittest.TestCase):
+    """**Gate S1** (Phase S, Task 3, Step 3): as the on-site spin-orbit
+    hop ``t_so -> 0``, the spinful plain-transverse ``chiq_pm`` (now
+    produced by ``_extract_transverse_from_dressed``) must reduce to the
+    IDENTICAL physical system's ``chiq_pm`` computed through the
+    established plain path (here: `_build_transverse_channel`'s
+    spin-free branch, which the fixture reaches automatically at
+    ``t_so == 0.0`` -- see ``_s1_make_solver``'s docstring).
+
+    **Measurement** (recorded here, not assumed -- this is what was
+    actually run to pick the tolerance below): at ``t_so = eps``, the
+    max-elementwise deviation from the ``t_so = 0`` reference was
+    measured over ``eps in {1e-3, 1e-4, 1e-5, 1e-6}`` and found to scale
+    as eps**2 (NOT linearly) all the way down to eps=1e-6, with no sign
+    of hitting a numerical noise floor before that point:
+
+        eps=1e-3  dev=1.321e-07   (dev/eps**2 = 0.132)
+        eps=1e-4  dev=1.321e-09   (dev/eps**2 = 0.132)
+        eps=1e-5  dev=1.321e-11   (dev/eps**2 = 0.132)
+        eps=1e-6  dev=1.325e-13   (dev/eps**2 = 0.132, matches to 4 s.f.)
+
+    (The quadratic-only scaling -- no measurable linear term -- is
+    itself consistent with a symmetry: the LEADING correction from a
+    single insertion of chi0's O(t_so) cross-block content into the RPA
+    geometric series would enter the transverse-projected output
+    linearly in general, so its measured absence here is a genuine
+    structural finding about this Hermitian, on-site, orbital-diagonal
+    ``t_so`` -- not asserted or relied upon beyond what is measured.)
+
+    At ``eps = 1e-6`` (100x above the ``np.allclose`` atol=1e-8 floor
+    the spin_mode auto-detector uses, so still unambiguously
+    ``spin_mode == "spinful"``), the RAW (non-extrapolated) deviation
+    already sits at 1.325e-13 -- inside the brief's starting tolerance
+    (rel=1e-12, abs=1e-13: tolerance = max(1e-12*|ref|, 1e-13) with
+    ``max|ref| ~ 0.40``, i.e. ~4.0e-13) with a measured margin of ~3x.
+    A 2-point Richardson extrapolation in eps (``2*Y(eps/2) - Y(eps)``,
+    removing any residual O(eps) term were one to appear) at
+    eps=1e-6/eps=5e-7 tightens this further to 6.589e-14 -- margin
+    ~6x -- confirming the RAW measurement was not a coincidental
+    near-cancellation. Both the raw and the Richardson-extrapolated
+    comparisons are asserted below at the brief's starting tolerance
+    (rel=1e-12, abs=1e-13); NEITHER needed loosening (the "STOP and
+    investigate before loosening" branch was not triggered)."""
+
+    EPS1 = 1e-6
+
+    def test_spinful_reduces_to_established_plain_path(self):
+        mode_ref, ref = _s1_static_pm(0.0, _S1_NMAT)
+        self.assertEqual(mode_ref, "spin-free",
+                          "the t_so=0 reference fixture must resolve to "
+                          "spin_mode=='spin-free' (see _s1_make_solver's "
+                          "docstring) -- got {}".format(mode_ref))
+        scale = float(np.abs(ref).max())
+        self.assertGreater(scale, 1e-2, "non-vacuous reference scale")
+
+        mode1, Y1 = _s1_static_pm(self.EPS1, _S1_NMAT)
+        mode2, Y2 = _s1_static_pm(self.EPS1 / 2, _S1_NMAT)
+        self.assertEqual(mode1, "spinful")
+        self.assertEqual(mode2, "spinful")
+
+        dev_raw = float(np.abs(Y1 - ref).max())
+        extrap = 2 * Y2 - Y1
+        dev_extrap = float(np.abs(extrap - ref).max())
+
+        msg = ("GATE S1 FAILURE: the spinful chiq_pm does not reduce to "
+               "the established spin-free plain path as t_so -> 0 -- "
+               "dev_raw={:.3e} dev_extrap={:.3e} at t_so={:.1e} "
+               "(scale={:.3e}). This is the #137-adjacent claim (\"the "
+               "spin-conserving limit reproduces ring+ladder\") applied "
+               "to the NEW extraction path; per the task brief, a "
+               "measured gap larger than the starting tolerance is a "
+               "STOP, not a cue to loosen it.").format(
+                   dev_raw, dev_extrap, self.EPS1, scale)
+        assert_approx_array(Y1, ref, rel=1e-12, abs=1e-13, msg=msg)
+        assert_approx_array(extrap, ref, rel=1e-12, abs=1e-13, msg=msg)
+
+
+# ---------------------------------------------------------------------------
+# Gate S2 (Phase S, Task 3, Step 4): the negative control -- #110 made
+# visible. Reproduces the OLD (pre-Phase-S) slice-THEN-solve computation IN
+# TEST CODE, on the SAME Sz-breaking S0 fixture Gate S0 adjudicated, and
+# shows it FAILS the identical granule the (post-change) production path
+# PASSES. Also cross-pins production `chiq_pm` against
+# `extract_pm_from_dressed` applied to the test-side dressed tensor, bit for
+# bit, on the shared fixture.
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=None)
+def _s2_production_chiq_pm(v, nmat):
+    """Runs the S0 fixture through the PRODUCTION ``solve()`` entry
+    point (post-Phase-S) and returns ``green_info["chiq_pm"])`` -- the
+    array `_extract_transverse_from_dressed` now populates for this
+    (spinful) fixture."""
+    solver, green_info, _d = _s0_make_solver(v, nmat)
+    solver.solve(green_info, tempfile.mkdtemp(prefix="s2_gate_out_"))
+    return np.asarray(green_info["chiq_pm"])
+
+
+def _s2_new_Y(v, nmat):
+    arr = _s2_production_chiq_pm(v, nmat)
+    return arr[arr.shape[0] // 2]
+
+
+def _s2_new_pred(nmat, v1):
+    return ed_oracle_util.richardson(lambda v: _s2_new_Y(v, nmat), v1)
+
+
+@functools.lru_cache(maxsize=None)
+def _s2_old_extract(v, nmat):
+    """Reproduces the OLD (pre-Phase-S, issue #110) slice-THEN-solve
+    computation, IN TEST CODE, on the S0 fixture: slice ``chi0`` (the
+    BARE bubble, ``green_info["chi0q"]``) at the Sz-conserving block
+    FIRST -- the exact index selection the deleted spinful branch of
+    ``_build_transverse_channel`` applied to ``chi0q_orig`` -- and THEN
+    solve RPA (``RPA._solve_rpa``) on that REDUCED slice, dressed by the
+    transverse vertex ``_assemble_transverse_vertex`` extracts from
+    ``ham_inter_q`` ALONE (NOT ``ham_inter_q + ham_spinful_exchange`` --
+    the deleted branch's own ``ham_orig`` argument, at its
+    ``_solve_impl`` call site, was always the bare ``ham_inter_q``; the
+    antisymmetrized ``ham_spinful_exchange`` combination is exclusive to
+    the LONGITUDINAL solve's own ``ham_long``, never passed to
+    ``_build_transverse_channel``)."""
+    solver, green_info, _d = _s0_make_solver(v, nmat)
+    solver.solve(green_info, tempfile.mkdtemp(prefix="s2_gate_out_"))
+    chi0q_orig = np.asarray(green_info["chi0q"])
+    norb = _S0_NORB
+    chi0q_pm_sliced = chi0q_orig[:, :,
+                                 0:norb, norb:2 * norb,
+                                 0:norb, norb:2 * norb].copy()
+    ham_pm = solver._assemble_transverse_vertex(solver.ham_info.ham_inter_q)
+    sol_pm_old = solver._solve_rpa(chi0q_pm_sliced, ham_pm)
+    return np.asarray(rpa_mod._bk.to_host(sol_pm_old))
+
+
+def _s2_old_Y(v, nmat):
+    arr = _s2_old_extract(v, nmat)
+    return arr[arr.shape[0] // 2]
+
+
+def _s2_old_pred(nmat, v1):
+    return ed_oracle_util.richardson(lambda v: _s2_old_Y(v, nmat), v1)
+
+
+class TestGateS2ProductionRouting(unittest.TestCase):
+    """**Gate S2** (Phase S, Task 3, Step 4): the negative control that
+    makes issue #110 directly visible in the same granule apparatus
+    Gate S0 used. On the IDENTICAL Sz-breaking S0 fixture
+    (L=3, norb=2, genuine on-site spin-orbit ``t_so``, CoulombIntra +
+    complex PairHop):
+
+    - the OLD (pre-Phase-S) slice-THEN-solve computation
+      (``_s2_old_pred``, reproduced here in test code since the
+      production branch that used to compute it was deleted in this
+      same task) must FAIL the Task-2 granule against ``TotalNED``
+      (``_s0_ed_derivative``) -- this is issue #110 itself, made
+      directly measurable instead of merely asserted;
+    - the NEW production path (``_s2_new_pred``, i.e. the actual
+      ``solve()`` output post this task's routing change) must PASS the
+      IDENTICAL granule;
+    - production ``chiq_pm`` must equal ``extract_pm_from_dressed``
+      applied to the test-side dressed tensor (``_s0_chi_dressed``, the
+      SAME pipeline Gate S0 built), BIT FOR BIT, on the shared fixture
+      (confirming the production routing change did not introduce any
+      numerical divergence from the pre-adjudicated reference path, not
+      even at the last bit).
+
+    **Measured tuples** (recorded here; both runs share the identical
+    ED reference ``D_ed_v1``/``D_ed_vhalf``, so the two ``status``
+    fields are directly comparable):
+
+        OLD (slice-then-solve):  status=FAIL, delta_rich=3.300e-07,
+            delta_nmat=1.132e-07, tol=3.300e-06, max_signal=1.110e-01,
+            n_failures=44
+        NEW (production, dressed extraction): status=PASS,
+            delta_rich=3.300e-07, delta_nmat=1.134e-07, tol=3.300e-06,
+            max_signal=1.111e-01, n_failures=0
+
+    The NEW tuple matches Gate S0's own Step-3 measurement to the
+    reported precision (Task 2's ``TestGateS0ExtractionAdjudication``:
+    delta_rich=3.30e-07, delta_nmat=1.13e-07, tol=3.30e-06,
+    max_signal=1.11e-01) -- expected, since the cross-pin below proves
+    production ``chiq_pm`` and Gate S0's own
+    ``extract_pm_from_dressed(chi_dressed)`` are the SAME array, bit for
+    bit, on this fixture: the production routing change and Gate S0's
+    pre-adjudicated pipeline compute the identical quantity.
+
+    Cross-pin (production `chiq_pm` vs `extract_pm_from_dressed`
+    applied to `chi_dressed`): ``np.array_equal`` True, max|diff| = 0.0
+    -- exact bit-for-bit agreement, not merely close, at
+    ``v=1.0, nmat=1024``."""
+
+    def test_old_slice_then_solve_fails_the_s0_granule(self):
+        D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
+        D_old_nmat = _s2_old_pred(_S0_NMAT1, CAMPAIGN_V1)
+        D_old_2nmat = _s2_old_pred(_S0_NMAT2, CAMPAIGN_V1)
+        zero_mask = np.zeros(D_old_2nmat.shape, dtype=bool)
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_old_nmat, D_old_2nmat, zero_mask,
+            "S2/old_slice_then_solve")
+        self.assertNotEqual(
+            rec["status"], "PASS",
+            "GATE S2 (negative control) FAILURE: the OLD (pre-Phase-S, "
+            "issue #110) slice-then-solve computation PASSED the S0 "
+            "granule -- the negative control is not discriminating "
+            "issue #110 at all. status={} delta_rich={:.3e} "
+            "delta_nmat={:.3e} tol={:.3e} max_signal={:.3e}".format(
+                rec["status"], rec["delta_rich"], rec["delta_nmat"],
+                rec["tol"], rec["max_signal"]))
+
+    def test_production_passes_the_s0_granule(self):
+        D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
+        D_new_nmat = _s2_new_pred(_S0_NMAT1, CAMPAIGN_V1)
+        D_new_2nmat = _s2_new_pred(_S0_NMAT2, CAMPAIGN_V1)
+        zero_mask = np.zeros(D_new_2nmat.shape, dtype=bool)
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_new_nmat, D_new_2nmat, zero_mask,
+            "S2/production_dressed_extraction")
+        self.assertEqual(
+            rec["status"], "PASS",
+            "GATE S2 FAILURE: the production (post-Phase-S) chiq_pm does "
+            "not pass the SAME granule the OLD slice-then-solve "
+            "computation fails -- the #110 fix did not land. status={} "
+            "delta_rich={:.3e} delta_nmat={:.3e} tol={:.3e} "
+            "max_signal={:.3e} first_failures={}".format(
+                rec["status"], rec["delta_rich"], rec["delta_nmat"],
+                rec["tol"], rec["max_signal"], rec["failures"][:5]))
+
+    def test_production_matches_reference_extraction_bit_for_bit(self):
+        v, nmat = 1.0, _S0_NMAT1
+        chiq_pm_prod = _s2_production_chiq_pm(v, nmat)
+        chi_dressed = _s0_chi_dressed(v, nmat)
+        chiq_pm_ref = extract_pm_from_dressed(chi_dressed, _S0_NORB)
+        self.assertEqual(chiq_pm_prod.shape, chiq_pm_ref.shape)
+        self.assertTrue(
+            np.array_equal(chiq_pm_prod, chiq_pm_ref),
+            "production chiq_pm and extract_pm_from_dressed(chi_dressed) "
+            "must be BIT FOR BIT identical on the shared S0 fixture -- "
+            "max|diff|={:.3e}".format(
+                float(np.abs(chiq_pm_prod - chiq_pm_ref).max())))
+
+
 if __name__ == "__main__":
     unittest.main()
