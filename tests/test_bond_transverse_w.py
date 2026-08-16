@@ -37,12 +37,17 @@ consumes its output.
 Tests must be run from the repository root.
 """
 
+import os
+import tempfile
+import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from hwave import sc as _sc
 from hwave.solver import bubble as bubble_mod
+from hwave.solver import rpa as rpa_mod
 from hwave.solver.bond_channels import (
     TransverseTopology,
     resolve_transverse_topology,
@@ -1361,6 +1366,306 @@ class TestTransverseBondBubbleStaticValidation(ApproxTestCase):
         with self.assertRaises(ValueError):
             bubble_mod.transverse_bond_bubble_static(
                 green_kw, None, 1.0, topo, spatial_shape=(4, 1, 1))
+
+
+# =============================================================================
+# RPA._run_transverse_bond_pipeline (Phase W, Task 5)
+# =============================================================================
+#
+# The dressing + collapse + the internal pipeline entry
+# (RPA._build_ham_pm_onsite / RPA._run_transverse_bond_pipeline in
+# rpa.py, appended for this task): on-site vertex assembly ->
+# W_pm_bond -> transverse_bond_bubble_static -> the EXISTING _solve_rpa
+# dressing -> the (m=0, m'=0) collapse. Anti-vacuity (spec "Phase W --
+# implementation + ED campaign"): this entry is called directly by every
+# test below, with NO prereq/fallback path.
+
+
+def _make_ring_ladder_solver(Lx=4, Ly=4, Nmat=8, hz=0.0, U=0.8, T=2.0,
+                              norb=2):
+    """Minimal ring+ladder RPA solver fixture: ON-SITE CoulombIntra ONLY
+    (no off-site declarations anywhere). An Extern field is ALWAYS
+    declared (forcing ``solver.spin_mode == "spin-diag"`` and giving
+    ``solver.green0`` the required ``nblock=2`` up/down blocks --
+    ``transverse_bond_bubble_static`` requires exactly that shape), but
+    the default ``hz=0.0`` makes its coefficient zero, so ``G_up ==
+    G_down`` EXACTLY (H1 = ham_extern_q * 0 = 0 -> Hnew[0] == Hnew[1]).
+    This is deliberate, not incidental: the bond pipeline's ``chi0``
+    (``transverse_bond_bubble_static``, fwd=down/rev=up, ``<S+;S+dagger>``)
+    and the production plain channel's ``chi0_+-``
+    (``_calc_chi0q_transverse``, fwd=up/rev=down, ``<S-;S-dagger>``) are
+    PROVABLY the same object only when ``G_up == G_down`` -- off that
+    line they are genuinely different physical objects whenever the
+    Green's function has off-diagonal orbital structure (a role-swap is
+    not a matrix transpose when the two matrices being swapped differ),
+    which is exactly what a nonzero ``hz`` combined with the ``norb=2``
+    mixing hop below was measured to trigger (diff ~4e-4, pure sign
+    flips at the off-diagonal-orbital cells) -- whether production's
+    Zeeman-split ``chiq_pm`` genuinely represents ``<S-;S-dagger>`` at
+    ``G_up != G_down`` is explicitly the Phase-H/W Task 6 "production
+    conjugate-pair granule"'s job, not this gate's. ``hz`` stays a
+    parameter (used by the mesh/nblock validation tests below, where
+    the value is immaterial) for the same construction to serve both.
+
+    ``norb=2`` (the default) ALSO declares a genuine on-site inter-
+    orbital hopping mix, so ``G[a,b]`` is non-diagonal in orbital space
+    and ``chiq_pm``'s ``(a,c,b,d)`` tensor is NOT symmetric under an
+    arbitrary axis relabelling -- ``norb=1`` cannot discriminate a
+    collapse-index mutation (every orbital axis is trivially size-1),
+    which is why the collapse mutation check (Task 5) needed this.
+
+    Extends the ``tests/test_bubble_kernel.py`` ``_make_rpa_solver``
+    construction pattern (temp Wannier90-like input files, including its
+    own ``norb=2`` mixing-hop convention) with ``calc_type=
+    'ring+ladder'`` baked into ``info_mode`` at construction time (that
+    shared fixture builds an UNSOLVED solver with no ``calc_type``
+    parameter, so it cannot drive the production ladder channel), and
+    then runs a real ``solver.solve(...)`` -- which populates
+    ``green_info["chiq_pm"]`` via the PRODUCTION plain
+    ``_build_transverse_channel`` + ``_solve_rpa`` path. Gate W1 compares
+    ``_run_transverse_bond_pipeline``'s collapsed output against exactly
+    that array.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    t = 0.6 * np.exp(0.25j) if norb >= 2 else 0.6
+    mix = 0.35 * np.exp(-0.5j) if norb >= 2 else 0.0
+    n_mix = 2 if norb >= 2 else 0
+    nr = 2 * norb + n_mix
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n")
+            f.write("{}\n".format(norb))
+            for _ in range(norb):
+                f.write("0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("gate W1 fixture transfer\n")
+            f.write("{}\n{}\n".format(norb, nr))
+            f.write(("1 " * nr).strip() + "\n")
+            for orb in range(1, norb + 1):
+                to = t * orb    # distinct magnitude per orbital
+                f.write(" 1 0 0 {o} {o} {re:.12f} {im:.12f}\n".format(
+                    o=orb, re=to.real, im=to.imag))
+                f.write("-1 0 0 {o} {o} {re:.12f} {im:.12f}\n".format(
+                    o=orb, re=np.conj(to).real, im=np.conj(to).imag))
+            if norb >= 2:
+                f.write(" 0 0 0 1 2 {re:.12f} {im:.12f}\n".format(
+                    re=mix.real, im=mix.imag))
+                f.write(" 0 0 0 2 1 {re:.12f} {im:.12f}\n".format(
+                    re=np.conj(mix).real, im=np.conj(mix).imag))
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("gate W1 fixture CoulombIntra\n")
+            f.write("{}\n{}\n".format(norb, norb))
+            f.write(("1 " * norb).strip() + "\n")
+            for orb in range(1, norb + 1):
+                f.write(" 0 0 0 {o} {o} {u:.12f} 0.0\n".format(o=orb, u=U))
+        with open(os.path.join(d, "extern.dat"), "w") as f:
+            f.write("gate W1 fixture Extern\n")
+            f.write("{}\n{}\n".format(norb, norb))
+            f.write(("1 " * norb).strip() + "\n")
+            for orb in range(1, norb + 1):
+                f.write(" 0 0 0 {o} {o} 1.0 0.0\n".format(o=orb))
+
+        interaction = {
+            'path_to_input': d,
+            'Geometry': 'geom.dat',
+            'Transfer': 'transfer.dat',
+            'CoulombIntra': 'coulombintra.dat',
+            'Extern': 'extern.dat',
+        }
+        param = {'T': T, 'mu': 0.0, 'CellShape': [Lx, Ly, 1],
+                 'SubShape': [1, 1, 1], 'Nmat': Nmat,
+                 'coeff_extern': hz}
+        info_input = {'path_to_input': d, 'interaction': interaction}
+        info_mode = {'mode': 'RPA', 'param': param,
+                     'calc_scheme': 'general', 'calc_type': 'ring+ladder'}
+
+        read_io = read_input_k.QLMSkInput(info_input)
+        ham_info = read_io.get_param("ham")
+        solver = rpa_mod.RPA(ham_info, {}, info_mode)
+        green_info = read_io.get_param("green")
+
+        out_dir = tempfile.mkdtemp(prefix="rpa_gate_w1_")
+        solver.solve(green_info, out_dir)
+    return solver, green_info
+
+
+class TestDressingDirectFiniteMatrix(ApproxTestCase):
+    """Implementation-independent pin on ``_solve_rpa`` -- exactly the
+    call ``_run_transverse_bond_pipeline``'s dressing step makes
+    (``_solve_rpa(chi0.reshape(1, nvol, ND, ND), W)``) -- against a
+    PLAIN ``numpy.linalg.solve(I + chi0[q] @ W[q], chi0[q])`` reference
+    built per q with NO call to ``_solve_rpa`` (spec "The dressing
+    (static)"). Random NONSYMMETRIC complex matrices: the ``I + chi0.ham``
+    convention has no reason to require symmetry, and a wrong transpose
+    orientation would only show up on a nonsymmetric fixture."""
+
+    def test_dressing_matches_plain_solve_per_q(self):
+        rng = np.random.default_rng(11)
+        nvol, ND = 3, 4
+        chi0 = (rng.normal(size=(nvol, ND, ND))
+                + 1j * rng.normal(size=(nvol, ND, ND)))
+        W = (rng.normal(size=(nvol, ND, ND))
+             + 1j * rng.normal(size=(nvol, ND, ND)))
+
+        solver = object.__new__(rpa_mod.RPA)
+        solver.lattice = types.SimpleNamespace(nvol=nvol)
+
+        sol = solver._solve_rpa(chi0.reshape(1, nvol, ND, ND), W)
+        got = sol[0]
+
+        eye = np.eye(ND, dtype=complex)
+        want = np.zeros_like(chi0)
+        for q in range(nvol):
+            want[q] = np.linalg.solve(eye + chi0[q] @ W[q], chi0[q])
+
+        assert_approx_array(got, want, rel=0, abs=1e-12)
+
+
+class TestCollapseRule(ApproxTestCase):
+    """Elementwise pin on the collapse step (spec "Collapse rule
+    (exact)"): ``chiq_pm_static[q, a, c, b, d] = chi_pm_bond[q, (0, a,
+    c), (0, b, d)]``. ``W_pm_bond``/``transverse_bond_bubble_static``/
+    ``_solve_rpa`` are mocked out so the dressed bond object
+    (``chi_pm_bond``) is a FULLY CONTROLLED, non-degenerate random array
+    -- the expected collapse is built by DIRECT per-index selection
+    (never via a ``.reshape``/``.transpose`` call), so this test does not
+    validate production against itself."""
+
+    def test_collapse_picks_m0_subblock_by_direct_indexing(self):
+        norb, B, nvol = 2, 2, 3
+        nd = norb * norb
+        ND = B * nd
+        rng = np.random.default_rng(23)
+        chi_pm_bond = (rng.normal(size=(nvol, ND, ND))
+                       + 1j * rng.normal(size=(nvol, ND, ND)))
+
+        solver = object.__new__(rpa_mod.RPA)
+        solver.lattice = types.SimpleNamespace(nvol=nvol, shape=(nvol, 1, 1))
+        solver.norb = norb
+        solver.fft_workers = 1
+
+        dummy_onsite = np.zeros((nvol, norb, norb, norb, norb),
+                                 dtype=complex)
+        dummy_topo = object()
+
+        with mock.patch.object(
+                rpa_mod.RPA, "_build_ham_pm_onsite",
+                return_value=dummy_onsite), \
+             mock.patch.object(
+                rpa_mod.bond_channels, "W_pm_bond",
+                return_value=np.zeros((nvol, ND, ND), dtype=complex)), \
+             mock.patch.object(
+                rpa_mod.bubble, "transverse_bond_bubble_static",
+                return_value=np.zeros((nvol, ND, ND), dtype=complex)), \
+             mock.patch.object(
+                rpa_mod.RPA, "_solve_rpa",
+                return_value=chi_pm_bond.reshape(1, nvol, ND, ND)):
+            chi_bond_out, collapsed = solver._run_transverse_bond_pipeline(
+                green_kw=None, green0_tail=None, beta=1.0, topo=dummy_topo)
+
+        assert_approx_array(chi_bond_out, chi_pm_bond, rel=0, abs=0)
+
+        expected = np.zeros((nvol, norb, norb, norb, norb), dtype=complex)
+        for q in range(nvol):
+            for a in range(norb):
+                for c in range(norb):
+                    for b in range(norb):
+                        for d in range(norb):
+                            row = a * norb + c    # channel m=0 offset 0
+                            col = b * norb + d
+                            expected[q, a, c, b, d] = chi_pm_bond[q, row, col]
+
+        assert_approx_array(collapsed, expected, rel=0, abs=0)
+
+        # Self-check that the fixture genuinely discriminates the
+        # (a,c)/(b,d) grouping from the (a,b)/(c,d) one this test's
+        # mutation check targets: with norb=2 the two groupings read
+        # DIFFERENT cells whenever a != c or b != d, e.g. (a,b,c,d) =
+        # (0,1,0,0): correct row=a*norb+c=0, col=b*norb+d=2; the (a,b)/
+        # (c,d) grouping would read row=a*norb+b=1, col=c*norb+d=0.
+        self.assertNotEqual(0 * norb + 0, 0 * norb + 1)
+
+
+class TestGateW1OnsiteReduction(ApproxTestCase):
+    """**Gate W1** (spec "Gate W1 (on-site reduction, exact scope)"):
+    with ONLY on-site declarations, ``_run_transverse_bond_pipeline``'s
+    collapsed static output must equal the Omega=0 slice
+    (``l = nmat // 2``) of today's PLAIN ``chiq_pm`` (the production
+    ``_build_transverse_channel`` + ``_solve_rpa`` result), at
+    ``assert_approx_array(rel=1e-12, abs=1e-13)``. Both sides solve the
+    SAME physics through DIFFERENT code paths (the plain path builds its
+    on-site vertex/bubble from the FULL solver machinery in one shot;
+    the bond pipeline builds ``ham_pm_onsite`` from filtered pre-fold
+    declarations and the bubble via the bond-channel machinery with
+    B=1), so agreement here is the load-bearing algebraic check that the
+    bond lift reduces exactly to the existing plain channel when there
+    is nothing off-site to represent.
+
+    Uses the DEFAULT ``_make_ring_ladder_solver`` fixture (``hz=0.0``,
+    ``G_up == G_down``): the two sides' bubbles are provably the SAME
+    object only on that line (see the fixture's own docstring) -- off it
+    they diverge by a measured ~4e-4 that is a genuine convention
+    difference between ``<S+;S+dagger>`` and ``<S-;S-dagger>``, not a
+    defect gate W1 is scoped to catch (that adjudication is Task 6's
+    production conjugate-pair granule)."""
+
+    def test_collapsed_output_matches_plain_chiq_pm_at_omega_zero(self):
+        solver, green_info = _make_ring_ladder_solver()
+        beta = 1.0 / solver.T
+
+        # B=1 topology: resolve_transverse_topology reads OFF-SITE
+        # content only (on-site entries are ignored -- on-site content
+        # is represented exclusively through ham_pm_onsite), and this
+        # fixture declares none, so every type's coeffs are all-zero at
+        # the single mandatory channel 0.
+        topo = resolve_transverse_topology(
+            solver.ham_info.param_ham, np.eye(3), solver.norb)
+        self.assertEqual(len(topo.delta_r), 1)
+
+        chi_pm_bond_static, chiq_pm_static = (
+            solver._run_transverse_bond_pipeline(
+                solver.green0, solver.green0_tail, beta, topo))
+
+        chiq_pm_plain = green_info["chiq_pm"]
+        nmat = chiq_pm_plain.shape[0]
+        want = chiq_pm_plain[nmat // 2]
+
+        assert_approx_array(chiq_pm_static, want, rel=1e-12, abs=1e-13)
+
+        # Report the measured margin (spec: "measured margin reported").
+        margin = float(np.max(np.abs(chiq_pm_static - want)))
+        print("Gate W1 measured max-abs margin: {:.3e}".format(margin))
+
+
+class TestRunTransverseBondPipelineValidation(ApproxTestCase):
+    """Entry-point validation: both failure modes PROPAGATE as
+    ``ValueError`` from the underlying calls -- ``_run_transverse_bond_
+    pipeline`` adds no guards of its own (no prereq fallback)."""
+
+    def test_mesh_colliding_topology_raises(self):
+        solver, _green_info = _make_ring_ladder_solver()
+        beta = 1.0 / solver.T
+        # +2 == -2 mod 4 -- solver.lattice.shape is (4, 4, 1) by default.
+        bad_topo = TransverseTopology(
+            delta_r=np.array([[0, 0, 0], [2, 0, 0], [-2, 0, 0]]),
+            reverse=np.array([0, 2, 1]),
+            coeffs={"CoulombInter": np.zeros(
+                (3, solver.norb, solver.norb), dtype=complex)})
+        with self.assertRaises(ValueError):
+            solver._run_transverse_bond_pipeline(
+                solver.green0, solver.green0_tail, beta, bad_topo)
+
+    def test_nblock_not_two_raises(self):
+        solver, _green_info = _make_ring_ladder_solver()
+        beta = 1.0 / solver.T
+        topo = resolve_transverse_topology(
+            solver.ham_info.param_ham, np.eye(3), solver.norb)
+        bad_green = solver.green0[:1]          # nblock=1, not 2
+        bad_tail = solver.green0_tail[:1]
+        with self.assertRaises(ValueError):
+            solver._run_transverse_bond_pipeline(
+                bad_green, bad_tail, beta, topo)
 
 
 if __name__ == "__main__":

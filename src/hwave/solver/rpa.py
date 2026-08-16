@@ -29,6 +29,7 @@ from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import project_density_pairs
 from . import backend as _bk
+from . import bond_channels
 from . import bubble
 from . import fold
 from . import green as green_mod
@@ -3650,6 +3651,241 @@ class RPA:
             return None
 
         return list(components.values())
+
+    # -------------------------------------------------------------------
+    # Phase W (bond-resolved transverse channel): the internal pipeline
+    # entry (spec 2026-08-15-bond-transverse-design.md, "Phase W --
+    # implementation + ED campaign"; plan Task 5). Appended for this task
+    # only -- the methods above are unmodified.
+    # -------------------------------------------------------------------
+
+    def _build_ham_pm_onsite(self):
+        """Build the on-site-only transverse vertex that feeds channel 0
+        of ``W_pm_bond`` (spec "The dressing (static)", step 1).
+
+        Locality is judged on the ORIGINAL PRE-FOLD declarations
+        (``self.ham_info.param_ham_orig`` when the lattice has a
+        sublattice, else ``self.ham_info.param_ham``), filtered to
+        ``irvec == (0, 0, 0)`` -- the SAME pattern ``_make_ham_inter``'s
+        ``onsite_r``/``_append_onsite_direct`` closures use for the
+        spinful Fierz-exchange correction (issue #137), generalized here
+        across every interaction type and independent of
+        ``enable_spin_orbital``. Reading locality off the FOLDED table
+        (``self.ham_info.param_ham`` under sublattice folding) would fold
+        an off-site bond onto ``r=(0,0,0)`` between supercell orbitals
+        and silently smuggle off-site content into the on-site channel --
+        the pre-fold locality trap ``_append_inter_cross``/
+        ``_append_onsite_direct`` document and PR history has hit
+        repeatedly.
+
+        Each filtered table is symmetrised with the SAME per-slot-family
+        rule ``_make_ham_inter``'s ``_symmetrised`` closure applies
+        (plain mean for the density/flip types, Hermitian mean for
+        PairHop): restricted to a single (on-site) cell, the two
+        closures are algebraically identical, because
+        ``reverse_fft_axes`` "leaves index 0 in place" for any mesh
+        shape -- the reversal partner of an ``r=(0,0,0)`` entry is always
+        the SAME cell with orbitals swapped.
+
+        The resulting on-site tensor is q-INDEPENDENT (an on-site
+        interaction cannot produce a q-dependent vertex --
+        ``_assemble_transverse_vertex``'s own docstring measurement), so
+        it is broadcast identically across ``nvol`` before assembly.
+
+        Returns
+        -------
+        ndarray, complex128, shape (nvol, norb, norb, norb, norb)
+            ``_assemble_transverse_vertex`` applied to the on-site-only
+            interaction tensor.
+        """
+        ham_info = self.ham_info
+        lattice = self.lattice
+        nvol = lattice.nvol
+        norb = self.norb
+        ns = self.ns
+        nd = norb * ns
+        has_sub = getattr(lattice, "has_sublattice", False)
+        source = ham_info.param_ham_orig if has_sub else ham_info.param_ham
+
+        spin_table_cache = {
+            t: ring_spin_table(t)
+            for t in ('CoulombIntra', 'CoulombInter', 'Hund', 'Ising',
+                      'PairLift', 'Exchange', 'PairHop')
+        }
+
+        def _onsite_table(tbl):
+            # Filter a PRE-FOLD table to irvec == (0, 0, 0), fold
+            # orbital indices under sublattice (never spatial content --
+            # an on-site declaration stays on-site under folding, but the
+            # re-filter below stays defensive, mirroring
+            # _append_onsite_direct exactly).
+            filtered = {}
+            for (irvec, orbvec), v in (tbl or {}).items():
+                if tuple(int(x) for x in irvec) == (0, 0, 0):
+                    filtered[((0, 0, 0),
+                              (int(orbvec[0]), int(orbvec[1])))] = v
+            if not filtered:
+                return {}
+            if has_sub:
+                filtered = ham_info._reshape_interaction(filtered, False)
+                filtered = {
+                    (irvec, orbvec): v
+                    for (irvec, orbvec), v in filtered.items()
+                    if tuple(irvec) == (0, 0, 0)
+                }
+            return filtered
+
+        def _symmetrised_onsite(type_name, tbl):
+            # Algebraic equivalent of _make_ham_inter's _symmetrised
+            # closure, restricted to the on-site cell (see docstring).
+            arr = np.zeros((norb, norb), dtype=np.complex128)
+            for (_irvec, orbvec), v in tbl.items():
+                arr[orbvec] += v
+            if type_name == "PairHop":
+                sym = 0.5 * (arr + np.conjugate(arr.T))
+            else:
+                sym = 0.5 * (arr + arr.T)
+            out = {}
+            for a, b in zip(*np.nonzero(sym)):
+                out[((0, 0, 0), (int(a), int(b)))] = sym[a, b]
+            return out
+
+        ham_r8 = np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
+
+        def _append_density_like(type_name, tbl=None):
+            src_tbl = tbl if tbl is not None else source.get(type_name)
+            sym = _symmetrised_onsite(type_name, _onsite_table(src_tbl))
+            for (_irvec, orbvec), v in sym.items():
+                a, b = orbvec
+                for spinvec, w in spin_table_cache[type_name].items():
+                    s1, s2, s3, s4 = spinvec
+                    # beta beta' alpha alpha' -- same slot layout as
+                    # _make_ham_inter's _append_inter.
+                    orb = (s4, b, s3, b, s1, a, s2, a)
+                    ham_r8[orb] += v * w
+
+        def _append_pairhop_like(type_name, tbl=None):
+            src_tbl = tbl if tbl is not None else source.get(type_name)
+            sym = _symmetrised_onsite(type_name, _onsite_table(src_tbl))
+            for (_irvec, orbvec), v in sym.items():
+                a, b = orbvec
+                for spinvec, w in spin_table_cache[type_name].items():
+                    s1, s2, s3, s4 = spinvec
+                    # same slot layout as _make_ham_inter's
+                    # _append_pairhop.
+                    orb = (s4, b, s3, a, s1, a, s2, b)
+                    ham_r8[orb] += v * w
+
+        if 'Coulomb' in source:
+            # Aggregate 'Coulomb' input splits into intra/inter parts on
+            # the PRE-FOLD table, mirroring _make_ham_inter's own
+            # _append_onsite_direct call sites for the 'Coulomb' key.
+            coulomb_intra_pre, coulomb_inter_pre = wan90.split_coulomb(
+                source['Coulomb'])
+            _append_density_like('CoulombIntra', tbl=coulomb_intra_pre)
+            _append_density_like('CoulombInter', tbl=coulomb_inter_pre)
+        if 'CoulombIntra' in source:
+            _append_density_like('CoulombIntra')
+        if 'CoulombInter' in source:
+            _append_density_like('CoulombInter')
+        if 'Hund' in source:
+            _append_density_like('Hund')
+        if 'Ising' in source:
+            _append_density_like('Ising')
+        if 'PairLift' in source:
+            _append_density_like('PairLift')
+        if 'Exchange' in source:
+            _append_density_like('Exchange')
+        if 'PairHop' in source:
+            _append_pairhop_like('PairHop')
+
+        ham_r4 = ham_r8.reshape(nd, nd, nd, nd)
+        ham_onsite_nvol = np.broadcast_to(
+            ham_r4[None, :, :, :, :], (nvol, nd, nd, nd, nd)).copy()
+        return self._assemble_transverse_vertex(ham_onsite_nvol)
+
+    def _run_transverse_bond_pipeline(self, green_kw, green0_tail, beta,
+                                       topo):
+        """The bond-resolved transverse (Phase W) internal pipeline
+        entry: on-site vertex assembly -> ``W_pm_bond`` ->
+        ``transverse_bond_bubble_static`` -> dressing (the EXISTING
+        ``_solve_rpa``'s ``I + chi0.ham`` convention) -> collapse to the
+        plain ``(nvol, norb, norb, norb, norb)`` shape (spec "The
+        dressing (static)" / "Collapse rule (exact)").
+
+        Test-invocable, NO prereq fallback (anti-vacuity, spec "Phase W
+        -- implementation + ED campaign"): every granule and gate W1 call
+        this entry directly; the production gate's own fallback behavior
+        (Task 7) is validated separately by its own config matrix.
+
+        Parameters
+        ----------
+        green_kw : ndarray, complex, shape (2, nmat, nvol, norb, norb)
+            Canonical two-block Green's function (block 0 = up, block 1
+            = down) -- same contract as ``_calc_chi0q_transverse``.
+        green0_tail : ndarray or None
+            Paired tau-space tail add-back, forwarded to
+            ``bubble.transverse_bond_bubble_static`` (``None`` disables
+            the tail correction).
+        beta : float
+            Inverse temperature.
+        topo : bond_channels.TransverseTopology
+            The master transverse bond topology (e.g.
+            ``bond_channels.resolve_transverse_topology`` or an
+            equivalent hand-built, invariant-satisfying instance); its
+            off-site channels feed ``W_pm_bond``'s cross/flip families
+            and ``chi0``'s bond-pair structure. On-site (channel 0)
+            content is NOT read from ``topo`` -- it is built
+            independently by ``_build_ham_pm_onsite`` from the solver's
+            OWN pre-fold declarations (spec step 1); ``W_pm_bond`` places
+            it verbatim into channel 0.
+
+        Returns
+        -------
+        chi_pm_bond_static : ndarray, complex128, shape (nvol, ND, ND)
+            The dressed bond-transverse static susceptibility, ``ND =
+            B * norb**2``.
+        chiq_pm_static : ndarray, complex128, shape
+            (nvol, norb, norb, norb, norb)
+            The collapsed (m=0, m'=0) sub-block (spec "Collapse rule
+            (exact)": ``chiq_pm_static[q, a, c, b, d] =
+            chi_pm_bond[q, (0, a, c), (0, b, d)]``) -- the same object
+            gate W1 compares against today's plain ``chiq_pm``.
+        """
+        spatial_shape = tuple(int(x) for x in self.lattice.shape)
+        nvol = self.lattice.nvol
+        workers = getattr(self, "fft_workers", 1)
+        norb = self.norb
+
+        ham_pm_onsite = self._build_ham_pm_onsite()
+
+        W = bond_channels.W_pm_bond(
+            topo, ham_pm_onsite, spatial_shape=spatial_shape)
+        chi0 = bubble.transverse_bond_bubble_static(
+            green_kw, green0_tail, beta, topo,
+            spatial_shape=spatial_shape, workers=workers)
+
+        ND = W.shape[-1]
+        # The dressing (spec "The dressing (static)"): the EXISTING
+        # _solve_rpa's I + chi0 @ ham convention, with the leading
+        # length-1 axis satisfying its frequency-axis interface. No sign
+        # flip anywhere -- W's channel-0 block IS ham_pm_onsite verbatim.
+        sol = self._solve_rpa(chi0.reshape(1, nvol, ND, ND), W)
+        chi_pm_bond_static = sol[0]
+
+        # Collapse (spec "Collapse rule (exact)"): the elementwise
+        # (m=0, m'=0) sub-block. Channel 0 occupies indices [0, nd) on
+        # both axes (W_pm_bond step 1), and the local orbital-pair index
+        # within that block is (a, c) -> a*norb+c (the SAME bond-major/
+        # orbital-minor convention transverse_bond_bubble_static and
+        # W_pm_bond's channel-zero embedding use) -- so a bare slice +
+        # C-order reshape recovers (q, a, c, b, d) directly, with no
+        # further transpose.
+        nd = norb * norb
+        chiq_pm_static = chi_pm_bond_static[:, :nd, :nd].reshape(
+            nvol, norb, norb, norb, norb)
+
+        return chi_pm_bond_static, chiq_pm_static
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
