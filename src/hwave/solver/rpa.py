@@ -4063,6 +4063,11 @@ class RPA:
             spatial_shape=spatial_shape, workers=workers)
 
         ND = W.shape[-1]
+        # W_pm_bond assembles on the host (numpy) by design; under GPU
+        # execution chi0 lives on the device, and _solve_rpa dispatches on
+        # chi0's backend -- move W there first (numpy.asarray is a no-op
+        # on the CPU path).
+        W = _bk.array_module_of(chi0).asarray(W)
         # The dressing (spec "The dressing (static)"): the EXISTING
         # _solve_rpa's I + chi0 @ ham convention, with the leading
         # length-1 axis satisfying its frequency-axis interface. No sign
