@@ -80,6 +80,13 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
 
 MOMENTUM_CONVENTION = "e_plus_ikR"
 
+# Default [mode.param] transverse_bond_memory_cap_gb (Phase W experimental
+# gate, spec 2026-08-15-bond-transverse-design.md "Production surface"):
+# same default sc.py's [eliashberg] bond_memory_cap_gb uses for its
+# longitudinal sibling (_BOND_MEMORY_CAP_GB), so the two bond-channel
+# gates share one documented default rather than drifting apart.
+TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT = 8.0
+
 
 def check_momentum_marker(data, file_name):
     """Strictly validate a PRESENT momentum_convention marker.
@@ -921,6 +928,42 @@ class Interaction:
         #        + (up <-> down)
         def _append_pairhop(type):
             spins = spin_table[type]
+
+            # Off-site PairHop physics is not implemented (spec
+            # "Deferred (recorded)": "Off-site PairHop physics (warning +
+            # tracking issue only)."). Only the on-site (irvec=(0,0,0))
+            # part is read below; warn LOUDLY instead of silently
+            # discarding the rest, naming the ORIGINAL (pre-fold) user
+            # declarations. Locality is judged on the PRE-fold table
+            # (self.param_ham_orig when the lattice has a sublattice,
+            # else self.param_ham) -- the same pre-fold locality rule
+            # _append_onsite_direct/_append_inter_cross above apply, for
+            # the same reason: reading it off the FOLDED self.param_ham
+            # table could let an off-site bond folded onto r=(0,0,0)
+            # between supercell orbitals escape detection here.
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            orig_tbl = (self.param_ham_orig.get(type, {}) if has_sub
+                        else self.param_ham.get(type, {}))
+            offsite = [(irvec, orbvec, v)
+                       for (irvec, orbvec), v in orig_tbl.items()
+                       if tuple(int(x) for x in irvec) != (0, 0, 0)]
+            if offsite:
+                shown = offsite[:8]
+                logger.warning(
+                    "PairHop declares %d off-site term(s) (irvec != "
+                    "(0,0,0)) that this solver silently discards: only "
+                    "the on-site part of PairHop is represented (off-site "
+                    "PairHop physics is not implemented; tracking issue "
+                    "pending). Restrict PairHop to on-site declarations "
+                    "if this is unintended. Declarations dropped: %s%s",
+                    len(offsite),
+                    "; ".join(
+                        "irvec={} orb=({},{}) v={}".format(
+                            tuple(int(x) for x in irv), ov[0], ov[1], v)
+                        for irv, ov, v in shown),
+                    " ... ({} more)".format(len(offsite) - 8)
+                    if len(offsite) > 8 else "")
+
             tbl = _symmetrised(type, self.param_ham[type])
             for (irvec,orbvec), v in tbl.items():
                 # take account of same-site interaction only
@@ -1418,7 +1461,98 @@ class RPA:
         if err > 0:
             sys.exit(1)
 
+        self._init_transverse_bond_config()
+
         pass
+
+    def _init_transverse_bond_config(self):
+        """Parse ``[mode.param] transverse_bond_channels`` and its
+        companion options (Phase W experimental gate, spec
+        2026-08-15-bond-transverse-design.md "Production surface").
+
+        Mirrors sc.py's ``_read_bond_config`` for the (eliashberg)
+        longitudinal bond gate: the switch defaults to ``False``, is
+        parsed ONLY under ``calc_type='ring+ladder'`` (the transverse
+        ladder channel itself is unreachable otherwise), and every
+        companion option set while the switch is stale (calc_type='ring',
+        or transverse_bond_channels=false) is IGNORED WITH A WARNING
+        rather than silently doing nothing or failing an otherwise valid
+        run. ``self.param_mod`` is a ``CaseInsensitiveDict``, so every
+        lookup here is case-robust by construction.
+        """
+        import numbers
+
+        _tbc_keys = ("transverse_bond_channels",
+                     "transverse_bond_max_shells",
+                     "transverse_bond_memory_cap_gb")
+        present = [k for k in _tbc_keys if k in self.param_mod]
+
+        if self.calc_type != "ring+ladder":
+            if present:
+                logger.warning(
+                    "[mode.param] %s set but calc_type='%s'; the "
+                    "bond-resolved transverse gate only applies to "
+                    "calc_type='ring+ladder' and %s ignored here.",
+                    ", ".join(present), self.calc_type,
+                    "is" if len(present) == 1 else "are")
+            self.transverse_bond_channels = False
+            self.transverse_bond_max_shells = None
+            self.transverse_bond_memory_cap_gb = \
+                TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        _flag = self.param_mod.get("transverse_bond_channels", False)
+        if not isinstance(_flag, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels must be a boolean, "
+                "got {!r}".format(_flag))
+        self.transverse_bond_channels = bool(_flag)
+
+        if not self.transverse_bond_channels:
+            stale = [k for k in _tbc_keys
+                     if k != "transverse_bond_channels" and k in self.param_mod]
+            if stale:
+                logger.warning(
+                    "[mode.param] %s set but transverse_bond_channels="
+                    "false; these options only apply to "
+                    "transverse_bond_channels=true and are ignored here.",
+                    ", ".join(stale))
+            self.transverse_bond_max_shells = None
+            self.transverse_bond_memory_cap_gb = \
+                TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        # transverse_bond_max_shells: int >= 0, or absent/None (keep every
+        # declared off-site shell) -- same semantics
+        # resolve_transverse_topology documents for its own max_shells.
+        _max_shells = self.param_mod.get("transverse_bond_max_shells", None)
+        if _max_shells is not None:
+            if (isinstance(_max_shells, (bool, np.bool_))
+                    or not isinstance(_max_shells, numbers.Integral)):
+                raise ValueError(
+                    "[mode.param] transverse_bond_max_shells must be a "
+                    "non-negative integer, got {!r}".format(_max_shells))
+            _max_shells = int(_max_shells)
+            if _max_shells < 0:
+                raise ValueError(
+                    "[mode.param] transverse_bond_max_shells must be >= 0 "
+                    "(shell 0 = the on-site Delta r = 0 point), got "
+                    "{}".format(_max_shells))
+        self.transverse_bond_max_shells = _max_shells
+
+        _cap_gb = self.param_mod.get("transverse_bond_memory_cap_gb",
+                                      TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT)
+        if (isinstance(_cap_gb, (bool, np.bool_))
+                or not isinstance(_cap_gb, numbers.Real)):
+            raise ValueError(
+                "[mode.param] transverse_bond_memory_cap_gb must be a "
+                "real number, got {!r}".format(_cap_gb))
+        _cap_gb = float(_cap_gb)
+        if not np.isfinite(_cap_gb) or _cap_gb <= 0.0:
+            raise ValueError(
+                "[mode.param] transverse_bond_memory_cap_gb must be a "
+                "positive finite number, got {}".format(_cap_gb))
+        self.transverse_bond_memory_cap_gb = _cap_gb
 
     def _round_to_int(self, val, mode):
         import math
@@ -1478,6 +1612,8 @@ class RPA:
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
         logger.info("    calc_scheme     = {}".format(self.calc_scheme))
         logger.info("    calc_type       = {}".format(self.calc_type))
+        logger.info("    transverse_bond_channels = {}".format(
+            self.transverse_bond_channels))
         pass
 
     @do_profile
@@ -1532,6 +1668,8 @@ class RPA:
         # review, round 3).
         green_info.pop("chiq", None)
         green_info.pop("chiq_pm", None)
+        green_info.pop("chiq_pm_bond_static", None)
+        green_info.pop("chiq_pm_static", None)
 
         beta = 1.0/self.T
 
@@ -1920,8 +2058,18 @@ class RPA:
             # For ring+ladder, validate the transverse channel BEFORE the
             # longitudinal solve: an unrepresentable input should fail here,
             # not after the expensive solve has already populated chiq.
+            # transverse_bond_channels=true (Phase W experimental gate)
+            # represents off-site cross-spin/spin-flip content that
+            # _check_transverse_representable would otherwise reject, so
+            # the representability check is bypassed ONLY on that path --
+            # with the gate off this branch is unchanged, so the bypass is
+            # unreachable there.
             if self.calc_type == "ring+ladder":
-                self._check_transverse_representable(ham_orig)
+                if self.transverse_bond_channels:
+                    self._transverse_bond_topo = \
+                        self._validate_transverse_bond_prereqs()
+                else:
+                    self._check_transverse_representable(ham_orig)
 
             # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
@@ -1931,10 +2079,28 @@ class RPA:
 
             # Solve transverse (ladder) RPA if requested
             if self.calc_type == "ring+ladder":
-                chi0q_pm, ham_pm = self._build_transverse_channel(
-                    chi0q_orig, ham_orig)
-                sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
-                green_info["chiq_pm"] = _bk.to_host(sol_pm)
+                if self.transverse_bond_channels:
+                    # Resource preflight AFTER the (cheap) prereq
+                    # validation but BEFORE the bond-resolved solve
+                    # itself, which is the expensive step.
+                    self._transverse_bond_resource_preflight(
+                        self._transverse_bond_topo)
+                    chi_pm_bond_static, chiq_pm_static = \
+                        self._run_transverse_bond_pipeline(
+                            self.green0, self.green0_tail, beta,
+                            self._transverse_bond_topo)
+                    green_info["chiq_pm_bond_static"] = \
+                        _bk.to_host(chi_pm_bond_static)
+                    green_info["chiq_pm_static"] = \
+                        _bk.to_host(chiq_pm_static)
+                    # Gated-run output ownership (spec): the plain ladder
+                    # is NOT additionally executed, so green_info["chiq_pm"]
+                    # (the legacy key) is intentionally never populated here.
+                else:
+                    chi0q_pm, ham_pm = self._build_transverse_channel(
+                        chi0q_orig, ham_orig)
+                    sol_pm = self._solve_rpa(chi0q_pm, ham_pm)
+                    green_info["chiq_pm"] = _bk.to_host(sol_pm)
 
         # Restore the solver's public attributes to host arrays so the
         # post-solve object state is backend-independent for downstream
@@ -2040,6 +2206,35 @@ class RPA:
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
                     save_kwargs["chiq_pm"] = green_info["chiq_pm"]
+                # Bond-resolved transverse channel (Phase W experimental
+                # gate, transverse_bond_channels=true): gate-owned output,
+                # mutually exclusive with the legacy chiq_pm key above --
+                # solve() only ever populates one of the two. Schema keys
+                # verbatim per spec ("Production surface").
+                if green_info.get("chiq_pm_bond_static") is not None:
+                    topo = self._transverse_bond_topo
+                    save_kwargs["chiq_pm_bond_static"] = \
+                        green_info["chiq_pm_bond_static"]
+                    save_kwargs["chiq_pm_static"] = \
+                        green_info["chiq_pm_static"]
+                    save_kwargs["transverse_bond_schema_version"] = 1
+                    save_kwargs["transverse_output_kind"] = "bond_static"
+                    save_kwargs["transverse_bond_delta_r"] = \
+                        np.asarray(topo.delta_r)
+                    save_kwargs["transverse_bond_reverse"] = \
+                        np.asarray(topo.reverse)
+                    save_kwargs["transverse_bond_index_order"] = \
+                        "m*norb**2 + a*norb + b"
+                    save_kwargs["transverse_bond_max_shells"] = (
+                        -1 if self.transverse_bond_max_shells is None
+                        else int(self.transverse_bond_max_shells))
+                    save_kwargs["transverse_spatial_shape"] = \
+                        np.array(self.lattice.shape, dtype=np.int64)
+                    save_kwargs["transverse_q_convention"] = \
+                        "q_d = 2*pi*n_d/N_d, C-order flattening"
+                    save_kwargs["transverse_spin_mode"] = self.spin_mode
+                    save_kwargs["transverse_normalization"] = \
+                        "per-site, 1/sqrt(Nvol) bilinears"
                 np.savez(file_name, **save_kwargs)
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
@@ -3232,8 +3427,10 @@ class RPA:
         vertex also means an internal TABLE whose off-site parts cancel in the
         symmetrised sum is accepted, which is correct: what the channel uses
         is then well-defined. (File input never reaches here unclosed: since
-        #93 the readers reject declarations that are not Hermitian-closed.) (`_append_pairhop` silently discards off-site
-        PairHop before this point; see the documentation warning.)
+        #93 the readers reject declarations that are not Hermitian-closed.)
+        (`_append_pairhop` discards off-site PairHop before this point,
+        with a ``logger.warning`` naming the dropped declarations; see
+        also the documentation warning.)
         """
         nvol = self.lattice.nvol
         if nvol <= 1:
@@ -3886,6 +4083,150 @@ class RPA:
             nvol, norb, norb, norb, norb)
 
         return chi_pm_bond_static, chiq_pm_static
+
+    # -------------------------------------------------------------------
+    # Phase W Task 7: the experimental gate's own prereq validation and
+    # resource preflight. Both are called from solve() ONLY when
+    # transverse_bond_channels=true (calc_type='ring+ladder' already
+    # required to reach either), mirroring where sc.py's
+    # _validate_bond_prereqs / _bond_resource_preflight run for the
+    # (eliashberg) longitudinal bond gate: after the prerequisite runtime
+    # state (here, self.spin_mode) is known, and BEFORE the expensive
+    # solve, so an invalid/oversized request fails fast.
+    # -------------------------------------------------------------------
+
+    def _validate_transverse_bond_prereqs(self):
+        """Top-level guards for ``transverse_bond_channels=true`` (spec
+        "Production surface"): no active off-site transverse-resolved
+        declaration, ``spin_mode='spinful'``, and an externally supplied
+        ``chi0q_init`` are each a REJECT, naming the gate as inapplicable
+        rather than silently falling back to the plain path -- every
+        gate-on run that starts is bond-owned (spec: "the rev-3
+        warn-and-fall-back is RETRACTED").
+
+        Must be called AFTER ``self.spin_mode`` is known (i.e. from
+        inside ``solve()``, at the same point ``_check_transverse_
+        representable`` would otherwise run) and BEFORE the expensive
+        solve.
+
+        Returns
+        -------
+        bond_channels.TransverseTopology
+            The resolved master transverse topology, computed once here
+            so the activity predicate and the actual pipeline call see
+            the identical object (never re-resolved, and therefore never
+            able to silently disagree with what was just validated).
+        """
+        if self.spin_mode == "spinful":
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true is not "
+                "supported with spin_mode='spinful' (a genuinely "
+                "spin-orbit-coupled H0): the bond-resolved dressing is "
+                "implemented for the spin-diagonal transverse channel "
+                "only. Composing it with the full spinful space is a "
+                "deferred follow-up (spec 'Phase S -- the full spinful "
+                "transverse'). Use a spin-diagonal system (no spin-mixing "
+                "transfer/enable_spin_orbital term) or set "
+                "transverse_bond_channels=false.")
+
+        if getattr(self, "_chi0q_external", False):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true cannot be "
+                "combined with an externally supplied chi0q (chi0q_init): "
+                "the bond path needs the Green's functions that produced "
+                "the bubble (chi0_pm_bond is built from G_up/G_down "
+                "directly), which a file-based chi0q does not carry. "
+                "Recompute chi0q internally (omit chi0q_init) or set "
+                "transverse_bond_channels=false.")
+
+        has_sub = getattr(self.lattice, "has_sublattice", False)
+        interactions = (self.ham_info.param_ham_orig if has_sub
+                        else self.ham_info.param_ham)
+        topo = bond_channels.resolve_transverse_topology(
+            interactions, np.eye(3), self.norb,
+            max_shells=self.transverse_bond_max_shells)
+
+        # "Active" is defined ONCE, operationally, by the shared
+        # predicate (spec): the same function the topology resolver's
+        # own truncation guard implicitly relies on. A topology that
+        # resolves to nothing off-site (nothing declared, or everything
+        # truncated away -- resolve_transverse_topology itself already
+        # refuses a truncation that would drop declared nonzero content,
+        # so "truncated to nothing" here only ever means "nothing was
+        # declared to begin with") has no transverse bond physics to
+        # represent.
+        if not bond_channels.transverse_effective_activity(topo):
+            raise ValueError(
+                "[mode.param] transverse_bond_channels=true requires an "
+                "active off-site transverse-resolved declaration "
+                "(CoulombInter, Ising or Exchange with a nonzero off-site "
+                "coefficient after duplicate summation, Hermitian "
+                "projection and transverse_bond_max_shells truncation); "
+                "none is present, so the bond-resolved gate has nothing "
+                "to represent. Declare an off-site term, relax "
+                "transverse_bond_max_shells, or set "
+                "transverse_bond_channels=false.")
+
+        return topo
+
+    def _transverse_bond_resource_preflight(self, topo):
+        """Estimate the peak memory/compute cost of the bond-resolved
+        transverse gate and refuse to exceed
+        ``transverse_bond_memory_cap_gb`` (spec "Phase W -- Budget
+        (stated, not deferred)").
+
+        Byte estimate: persistent storage for ``chi0_pm_bond`` +
+        ``W_pm_bond`` + the dressed output + the ``_solve_rpa`` solve
+        workspace, ``(3 + K_solve) * Nq * ND**2 * 16`` bytes with
+        ``ND = B * norb**2`` and ``K_solve = 3`` -- a documented
+        CONSERVATIVE POLICY ALLOWANCE for the numpy backend (LU factor
+        copy + pivots + solve output; the ``_solve_rpa`` block-detection
+        temporary is counted inside it), NOT a guaranteed LAPACK bound:
+        backend-specific workspaces may exceed it, and the cap's safety
+        margin beyond this estimate is the caller's responsibility. Named
+        an ESTIMATE in every user-facing message, per spec.
+
+        Also emits a WARNING (never a refusal) when the estimated solve
+        op-count ``Nq * ND**3`` exceeds ``1e12``: a memory-fitting run can
+        still be compute-prohibitive.
+        """
+        B = int(len(topo.delta_r))
+        ND = B * self.norb ** 2
+        Nq = int(self.lattice.nvol)
+        K_solve = 3
+        itemsize = 16  # complex128
+
+        peak_bytes = (3 + K_solve) * Nq * (ND ** 2) * itemsize
+        op_count = Nq * (ND ** 3)
+
+        logger.info(
+            "Transverse bond-channel preflight (ESTIMATE): B = %d "
+            "channels, ND = B*norb**2 = %d, N_q = %d, K_solve = %d "
+            "(numpy-backend conservative allowance), estimated peak "
+            "memory = %.3f GB (cap %.3f GB), estimated solve op-count "
+            "Nq*ND**3 = %.3e",
+            B, ND, Nq, K_solve, peak_bytes / 1.0e9,
+            self.transverse_bond_memory_cap_gb, op_count)
+
+        if peak_bytes > self.transverse_bond_memory_cap_gb * 1.0e9:
+            raise ValueError(
+                "[mode.param] transverse_bond_channels: ESTIMATED peak "
+                "memory {:.3f} GB exceeds transverse_bond_memory_cap_gb = "
+                "{:.3f} GB. The estimate is (3 + K_solve) * Nq * ND**2 * "
+                "16 bytes with ND = B*norb**2 = {}, Nq = {}, K_solve = {} "
+                "(a numpy-backend conservative allowance, not a "
+                "guaranteed LAPACK bound). Reduce "
+                "transverse_bond_max_shells (fewer channels), reduce the "
+                "k-grid, or raise transverse_bond_memory_cap_gb.".format(
+                    peak_bytes / 1.0e9, self.transverse_bond_memory_cap_gb,
+                    ND, Nq, K_solve))
+
+        if op_count > 1.0e12:
+            logger.warning(
+                "[mode.param] transverse_bond_channels: estimated solve "
+                "op-count Nq*ND**3 = %.3e exceeds 1e12 (ND = %d, Nq = "
+                "%d); this run fits the memory cap but may be "
+                "compute-prohibitive.", op_count, ND, Nq)
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):

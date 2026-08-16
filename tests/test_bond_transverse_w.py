@@ -37,6 +37,7 @@ consumes its output.
 Tests must be run from the repository root.
 """
 
+import logging
 import os
 import tempfile
 import types
@@ -45,6 +46,7 @@ from unittest import mock
 
 import numpy as np
 
+import hwave.qlmsio.read_input_k as read_input_k
 from hwave import sc as _sc
 from hwave.solver import bubble as bubble_mod
 from hwave.solver import rpa as rpa_mod
@@ -1678,6 +1680,496 @@ class TestRunTransverseBondPipelineValidation(ApproxTestCase):
         with self.assertRaises(ValueError):
             solver._run_transverse_bond_pipeline(
                 bad_green, bad_tail, beta, topo)
+
+
+
+# =============================================================================
+# Phase W, Task 7: the experimental gate (transverse_bond_channels),
+# provenance, preflight, and the PairHop off-site warning.
+#
+# Config key names, rejection wording sources, provenance keys, and the
+# config matrix are per docs/superpowers/specs/2026-08-15-bond-transverse-
+# design.md "Production surface (experimental gate)"; the wiring pattern
+# (config parsing site, prereq validator, resource preflight, npz block,
+# stale-option warnings) mirrors sc.py's [eliashberg] bond_channels gate
+# (_read_bond_config / _validate_bond_prereqs / _bond_resource_preflight)
+# for its transverse sibling. Every test below drives the PUBLIC entry
+# (the RPA(...) constructor / solve() / save_results()), never a private
+# helper directly, except where a helper IS the object under test
+# (_transverse_bond_resource_preflight's own formula).
+# =============================================================================
+
+def _make_bond_gate_fixture(*, transverse_bond_channels=None,
+                             calc_type="ring+ladder", calc_scheme="general",
+                             interactions=None, param_overrides=None,
+                             Lx=4, Ly=4, Nmat=32, T=2.0, filling=0.75,
+                             input_path='tests/rpa/input'):
+    """norb=1 RPA fixture built via the PUBLIC ``RPA(...)`` constructor
+    from ``tests/rpa/input``'s existing Wannier90-format files -- the
+    SAME fixture family ``tests/test_rpa_ladder.py``'s ``_run_rpa`` (and
+    its ``test_offsite_two_body_is_rejected``) uses: on-site CoulombIntra
+    (U=4) and, by default, off-site CoulombInter (V=1 at
+    R=(+-1,0,0)/(0,+-1,0) -- an ACTIVE transverse-resolved off-site
+    declaration the bond gate can represent but the plain ladder's
+    representability check (``_check_transverse_representable``)
+    rejects) plus Extern (forces ``solver.spin_mode == 'spin-diag'``,
+    which the bond pipeline's up/down Green blocks require).
+
+    Does NOT call ``solve()`` -- callers decide (so rejection tests can
+    ``assertRaises`` around ``solve()`` itself, the public entry point).
+
+    Returns ``(solver, green_info, out_dir)``.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    if interactions is None:
+        interactions = {'CoulombIntra': 'coulombintra.dat',
+                         'CoulombInter': 'coulombinter.dat',
+                         'Extern': 'extern.dat'}
+    interaction_dict = {
+        'path_to_input': input_path,
+        'Geometry': 'geom.dat',
+        'Transfer': 'transfer.dat',
+    }
+    interaction_dict.update(interactions)
+
+    param = {'T': T, 'filling': filling, 'CellShape': [Lx, Ly, 1],
+             'SubShape': [1, 1, 1], 'Nmat': Nmat}
+    if transverse_bond_channels is not None:
+        param['transverse_bond_channels'] = transverse_bond_channels
+    if param_overrides:
+        param.update(param_overrides)
+
+    info_mode = {'mode': 'RPA', 'param': param,
+                 'calc_scheme': calc_scheme, 'calc_type': calc_type}
+    info_input = {'path_to_input': input_path,
+                  'interaction': interaction_dict}
+
+    read_io = read_input_k.QLMSkInput(info_input)
+    ham_info = read_io.get_param("ham")
+    solver = rpa_mod.RPA(ham_info, {}, info_mode)
+    green_info = read_io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_bond_gate_out_")
+    return solver, green_info, out_dir
+
+
+def _make_spinful_bond_gate_fixture(T=0.5, mu=0.2, Lx=4, Nmat=32, U=0.3,
+                                     thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+    """norb_phys=1 ``enable_spin_orbital`` ring+ladder fixture with a
+    genuine spin-mixing transfer term (off-diagonal generalized-index
+    hopping ``lso``), reaching ``solver.spin_mode == 'spinful'`` -- the
+    combination the bond gate's prereq validator must reject (spec
+    ``spin_mode="spinful"`` -> reject until Phase S). Mirrors
+    ``tests/test_rpa_spinful_vertex_exchange.py``'s ``TestVertexExtraction``
+    / ``_run_rpa`` construction pattern, the SAME fixture family that
+    already established this combination reaches ``spin_mode ==
+    'spinful'`` (that file's ``TestSpinConservingLimits`` pins it at
+    ``calc_type='ring'``; nothing about the H0 that sets ``spin_mode``
+    depends on ``calc_type``).
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    d = tempfile.mkdtemp(prefix="rpa_bond_gate_spinful_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n")
+        f.write("0.0 0.0 0.0\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n2\n3\n1 1 1\n")
+        for i in (1, 2):
+            f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, thop.real, thop.imag))
+            f.write("-1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, np.conj(thop).real, np.conj(thop).imag))
+        f.write(" 0 0 0 1 2 %.12f %.12f\n" % (lso.real, lso.imag))
+        f.write(" 0 0 0 2 1 %.12f %.12f\n" % (lso.real, -lso.imag))
+    with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+        f.write("hdr\n1\n1\n1\n")
+        f.write(" 0 0 0 1 1 %.12f 0.0\n" % U)
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+             "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat"}
+
+    param = {"T": T, "mu": mu, "CellShape": [Lx, 1, 1],
+             "SubShape": [1, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0,
+             "transverse_bond_channels": True}
+    info_mode = {"mode": "RPA", "param": param,
+                 "enable_spin_orbital": True, "calc_scheme": "general",
+                 "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_bond_gate_spinful_out_")
+    return solver, green_info, out_dir
+
+
+class TestTransverseBondGateConfig(ApproxTestCase):
+    """``[mode.param] transverse_bond_channels`` config parsing (spec
+    "Production surface"): default false, parsed ONLY under
+    ``calc_type='ring+ladder'``, stale-option warnings, and type
+    validation -- mirroring sc.py's ``[eliashberg] bond_channels``
+    ``_read_bond_config`` pattern for the (eliashberg) longitudinal bond
+    gate."""
+
+    ONSITE_ONLY = {'CoulombIntra': 'coulombintra.dat', 'Extern': 'extern.dat'}
+
+    def test_absent_defaults_to_false(self):
+        solver, _gi, _out = _make_bond_gate_fixture(
+            transverse_bond_channels=None, interactions=self.ONSITE_ONLY)
+        self.assertIs(solver.transverse_bond_channels, False)
+
+    def test_gate_absent_equals_gate_false_bitwise(self):
+        """Config matrix (spec): "gate absent == gate false (bitwise-
+        identical run)"."""
+        solver_a, gi_a, out_a = _make_bond_gate_fixture(
+            transverse_bond_channels=None, interactions=self.ONSITE_ONLY)
+        solver_a.solve(gi_a, out_a)
+        solver_b, gi_b, out_b = _make_bond_gate_fixture(
+            transverse_bond_channels=False, interactions=self.ONSITE_ONLY)
+        solver_b.solve(gi_b, out_b)
+
+        self.assertTrue(np.array_equal(gi_a["chiq"], gi_b["chiq"]))
+        self.assertTrue(np.array_equal(gi_a["chiq_pm"], gi_b["chiq_pm"]))
+        self.assertNotIn("chiq_pm_bond_static", gi_a)
+        self.assertNotIn("chiq_pm_bond_static", gi_b)
+
+    def test_stale_under_calc_type_ring_warns(self):
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver, _gi, _out = _make_bond_gate_fixture(
+                calc_type="ring", transverse_bond_channels=True,
+                interactions=self.ONSITE_ONLY)
+        self.assertIs(solver.transverse_bond_channels, False)
+        self.assertTrue(any(
+            "transverse_bond_channels" in m and "calc_type" in m
+            for m in cm.output))
+
+    def test_stale_options_while_gate_false_warn(self):
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            _solver, _gi, _out = _make_bond_gate_fixture(
+                transverse_bond_channels=False,
+                param_overrides={'transverse_bond_max_shells': 1},
+                interactions=self.ONSITE_ONLY)
+        self.assertTrue(
+            any("transverse_bond_max_shells" in m for m in cm.output))
+
+    def test_flag_rejects_non_bool(self):
+        with self.assertRaises(ValueError):
+            _make_bond_gate_fixture(
+                param_overrides={'transverse_bond_channels': 1},
+                interactions=self.ONSITE_ONLY)
+
+    def test_max_shells_rejects_negative(self):
+        with self.assertRaises(ValueError):
+            _make_bond_gate_fixture(
+                transverse_bond_channels=True,
+                param_overrides={'transverse_bond_max_shells': -1},
+                interactions=self.ONSITE_ONLY)
+
+    def test_max_shells_rejects_non_integral(self):
+        with self.assertRaises(ValueError):
+            _make_bond_gate_fixture(
+                transverse_bond_channels=True,
+                param_overrides={'transverse_bond_max_shells': 1.5},
+                interactions=self.ONSITE_ONLY)
+
+    def test_memory_cap_rejects_non_positive(self):
+        with self.assertRaises(ValueError):
+            _make_bond_gate_fixture(
+                transverse_bond_channels=True,
+                param_overrides={'transverse_bond_memory_cap_gb': 0.0},
+                interactions=self.ONSITE_ONLY)
+
+
+class TestTransverseBondGatePrereqs(ApproxTestCase):
+    """``_validate_transverse_bond_prereqs``'s REJECT list (spec
+    "Production surface"): no active off-site declaration,
+    ``spin_mode='spinful'``, and an externally supplied ``chi0q_init``.
+    Also proves the representability-check bypass is unreachable when
+    the gate is off (spec: "a config test proves the bypass is
+    unreachable when the gate is off"), and that it DOES engage on the
+    same input with the gate on."""
+
+    ACTIVE = {'CoulombIntra': 'coulombintra.dat',
+              'CoulombInter': 'coulombinter.dat', 'Extern': 'extern.dat'}
+    ONSITE_ONLY = {'CoulombIntra': 'coulombintra.dat', 'Extern': 'extern.dat'}
+
+    def test_no_active_declaration_rejected(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ONSITE_ONLY)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("active off-site", str(cm.exception))
+
+    def test_bypass_engages_on_gate_and_solves(self):
+        """Gate on: off-site CoulombInter -- unrepresentable by the plain
+        vertex -- is REPRESENTED by the bond path instead of being
+        rejected."""
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE)
+        solver.solve(gi, out)
+        self.assertIn("chiq_pm_bond_static", gi)
+        self.assertIn("chiq_pm_static", gi)
+        self.assertNotIn("chiq_pm", gi)
+
+    def test_bypass_unreachable_with_gate_off(self):
+        """SAME off-site declaration, gate off:
+        ``_check_transverse_representable`` still runs and rejects it --
+        the bypass branch in ``solve()`` is unreachable when
+        ``transverse_bond_channels`` is false."""
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=False, interactions=self.ACTIVE)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("does not support off-site", str(cm.exception))
+
+    def test_spinful_rejected(self):
+        solver, gi, out = _make_spinful_bond_gate_fixture()
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("spin_mode='spinful'", str(cm.exception))
+
+    def test_external_chi0q_init_rejected(self):
+        # Build a spin-free chi0q with a plain ring solve, then feed it
+        # back in as chi0q_init to a gate-on ring+ladder solver. The
+        # pre-existing spin-diag/external guard (rpa.py, "a same-instance
+        # green0 may belong to an OLDER bubble") does not fire for a
+        # spin-free chi0q, so this exercises the gate's OWN
+        # external-chi0q rejection specifically.
+        prep, gi0, out0 = _make_bond_gate_fixture(
+            calc_type="ring", transverse_bond_channels=None,
+            interactions={'CoulombIntra': 'coulombintra.dat',
+                          'CoulombInter': 'coulombinter.dat'})
+        prep.solve(gi0, out0)
+        self.assertEqual(prep.spin_mode, "spin-free")
+        prep.save_results(
+            {'path_to_output': out0, 'chi0q': 'chi0q.npz'}, gi0)
+
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            interactions={'CoulombIntra': 'coulombintra.dat',
+                          'CoulombInter': 'coulombinter.dat'})
+        gi.update(solver.read_init(
+            {'path_to_input': out0, 'chi0q_init': 'chi0q.npz'}))
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("externally supplied chi0q", str(cm.exception))
+
+
+class TestTransverseBondResourcePreflight(ApproxTestCase):
+    """``_transverse_bond_resource_preflight`` (spec "Phase W -- Budget
+    (stated, not deferred)"): the ``(3+K_solve)*Nq*ND**2*16`` byte
+    estimate against ``transverse_bond_memory_cap_gb`` (REFUSE above the
+    cap), and the ``Nq*ND**3 > 1e12`` op-count WARNING (never a
+    refusal)."""
+
+    ACTIVE = {'CoulombIntra': 'coulombintra.dat',
+              'CoulombInter': 'coulombinter.dat', 'Extern': 'extern.dat'}
+
+    def test_tiny_cap_refuses(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': 1e-12},
+            interactions=self.ACTIVE)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        self.assertIn("memory_cap_gb", str(cm.exception))
+
+    def test_default_cap_passes_for_tiny_fixture(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE)
+        solver.solve(gi, out)  # must not raise
+        self.assertIn("chiq_pm_bond_static", gi)
+
+    def test_formula_matches_documented_estimate(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE)
+        solver.solve(gi, out)
+        topo = solver._transverse_bond_topo
+        B = len(topo.delta_r)
+        ND = B * solver.norb ** 2
+        Nq = solver.lattice.nvol
+        K_solve = 3
+        want_peak = (3 + K_solve) * Nq * ND ** 2 * 16
+
+        solver.transverse_bond_memory_cap_gb = (want_peak * 0.999) / 1.0e9
+        with self.assertRaises(ValueError):
+            solver._transverse_bond_resource_preflight(topo)
+
+        solver.transverse_bond_memory_cap_gb = (want_peak * 1.001) / 1.0e9
+        solver._transverse_bond_resource_preflight(topo)  # must not raise
+
+    def test_op_count_warns_not_refuses(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE)
+        solver.solve(gi, out)
+        topo = solver._transverse_bond_topo
+
+        solver.transverse_bond_memory_cap_gb = 1.0e12  # never refuses here
+        orig_nvol = solver.lattice.nvol
+        solver.lattice.nvol = 10 ** 11  # pushes Nq*ND**3 well past 1e12
+        try:
+            with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+                solver._transverse_bond_resource_preflight(topo)
+        finally:
+            solver.lattice.nvol = orig_nvol
+        self.assertTrue(any("op-count" in m for m in cm.output))
+
+
+class TestTransverseBondGateOutput(ApproxTestCase):
+    """End-to-end smoke test on a tiny fixture (anti-vacuity): config
+    dict -> ``RPA(...)`` constructor -> ``solve()`` -> ``save_results()``
+    -> npz written; keys, shapes, schema metadata, and a value PINNED
+    against a direct ``_run_transverse_bond_pipeline`` call on the same
+    fixture (spec "Output (static-only)")."""
+
+    ACTIVE = {'CoulombIntra': 'coulombintra.dat',
+              'CoulombInter': 'coulombinter.dat', 'Extern': 'extern.dat'}
+
+    def test_npz_keys_shapes_schema_and_cross_pin(self):
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True, interactions=self.ACTIVE)
+        solver.solve(gi, out)
+        solver.save_results(
+            {'path_to_output': out, 'chiq': 'chiq.npz'}, gi)
+
+        data = np.load(os.path.join(out, 'chiq.npz'), allow_pickle=True)
+
+        self.assertNotIn("chiq_pm", data.files)
+        for key in ("chiq_pm_bond_static", "chiq_pm_static",
+                    "transverse_bond_schema_version",
+                    "transverse_output_kind",
+                    "transverse_bond_delta_r", "transverse_bond_reverse",
+                    "transverse_bond_index_order",
+                    "transverse_bond_max_shells",
+                    "transverse_spatial_shape", "transverse_q_convention",
+                    "transverse_spin_mode", "transverse_normalization"):
+            self.assertIn(key, data.files)
+
+        self.assertEqual(int(data["transverse_bond_schema_version"]), 1)
+        self.assertEqual(str(data["transverse_output_kind"]), "bond_static")
+        self.assertEqual(str(data["transverse_bond_index_order"]),
+                          "m*norb**2 + a*norb + b")
+        self.assertEqual(str(data["transverse_q_convention"]),
+                          "q_d = 2*pi*n_d/N_d, C-order flattening")
+        self.assertEqual(str(data["transverse_spin_mode"]), "spin-diag")
+        self.assertEqual(str(data["transverse_normalization"]),
+                          "per-site, 1/sqrt(Nvol) bilinears")
+        self.assertEqual(int(data["transverse_bond_max_shells"]), -1)
+
+        topo = solver._transverse_bond_topo
+        B = len(topo.delta_r)
+        ND = B * solver.norb ** 2
+        Nq = solver.lattice.nvol
+        self.assertEqual(tuple(data["chiq_pm_bond_static"].shape),
+                          (Nq, ND, ND))
+        self.assertEqual(tuple(data["chiq_pm_static"].shape),
+                          (Nq, solver.norb, solver.norb,
+                           solver.norb, solver.norb))
+        self.assertEqual(tuple(data["transverse_bond_delta_r"].shape),
+                          (B, 3))
+        self.assertEqual(tuple(data["transverse_bond_reverse"].shape),
+                          (B,))
+        self.assertTrue(np.array_equal(data["transverse_bond_delta_r"],
+                                       topo.delta_r))
+        self.assertTrue(np.array_equal(data["transverse_bond_reverse"],
+                                       topo.reverse))
+        self.assertTrue(np.array_equal(
+            data["transverse_spatial_shape"], np.array(solver.lattice.shape)))
+
+        # Cross-pin (anti-vacuity): the saved value equals a DIRECT
+        # _run_transverse_bond_pipeline call on the same fixture state.
+        beta = 1.0 / solver.T
+        chi_direct, chiq_direct = solver._run_transverse_bond_pipeline(
+            solver.green0, solver.green0_tail, beta, topo)
+        self.assertTrue(np.array_equal(
+            data["chiq_pm_bond_static"], chi_direct))
+        self.assertTrue(np.array_equal(
+            data["chiq_pm_static"], chiq_direct))
+        self.assertTrue(np.array_equal(
+            data["chiq_pm_bond_static"], gi["chiq_pm_bond_static"]))
+        self.assertTrue(np.array_equal(
+            data["chiq_pm_static"], gi["chiq_pm_static"]))
+
+
+class TestPairHopOffsiteWarning(ApproxTestCase):
+    """``_append_pairhop``'s silent off-site discard now warns, naming
+    the ORIGINAL user declarations (spec "Deferred (recorded)": "Off-site
+    PairHop physics (warning + tracking issue only).")."""
+
+    def _build(self, d):
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
+                     "0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n1\n2\n1 1\n"
+                     " 1 0 0 1 1 0.5 0.0\n-1 0 0 1 1 0.5 0.0\n")
+        with open(os.path.join(d, "pairhop.dat"), "w") as f:
+            # on-site (irvec=(0,0,0)) plus a Hermitian-closed off-site
+            # pair (R=+-1 x, both directions declared -- #93 requires
+            # Hermitian closure at the reader level).
+            f.write("hdr\n1\n3\n1 1 1\n"
+                     " 0 0 0 1 1 0.2 0.0\n"
+                     " 1 0 0 1 1 0.15 0.0\n"
+                     "-1 0 0 1 1 0.15 0.0\n")
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "PairHop": "pairhop.dat"}
+        param = {"T": 1.0, "mu": 0.0, "CellShape": [4, 1, 1],
+                 "SubShape": [1, 1, 1], "Nmat": 8}
+        info_mode = {"mode": "RPA", "param": param,
+                     "calc_scheme": "general", "calc_type": "ring"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        return rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+
+    def test_offsite_pairhop_warns_naming_declarations(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+                self._build(d)
+        msgs = "\n".join(cm.output)
+        self.assertIn("PairHop", msgs)
+        self.assertIn("off-site", msgs)
+        # names the two dropped (pre-fold) declarations explicitly
+        self.assertIn("(1, 0, 0)", msgs)
+        self.assertIn("(-1, 0, 0)", msgs)
+        self.assertIn("0.15", msgs)
+
+    def test_onsite_only_pairhop_does_not_warn(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "geom.dat"), "w") as f:
+                f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
+                         "0.0 0.0 0.0\n")
+            with open(os.path.join(d, "transfer.dat"), "w") as f:
+                f.write("hdr\n1\n2\n1 1\n"
+                         " 1 0 0 1 1 0.5 0.0\n-1 0 0 1 1 0.5 0.0\n")
+            with open(os.path.join(d, "pairhop.dat"), "w") as f:
+                f.write("hdr\n1\n1\n1\n 0 0 0 1 1 0.2 0.0\n")
+            inter = {"path_to_input": d, "Geometry": "geom.dat",
+                     "Transfer": "transfer.dat", "PairHop": "pairhop.dat"}
+            param = {"T": 1.0, "mu": 0.0, "CellShape": [4, 1, 1],
+                     "SubShape": [1, 1, 1], "Nmat": 8}
+            info_mode = {"mode": "RPA", "param": param,
+                         "calc_scheme": "general", "calc_type": "ring"}
+            io = read_input_k.QLMSkInput(
+                {"path_to_input": d, "interaction": inter})
+            logger = logging.getLogger("hwave.solver.rpa")
+            handler = _CollectingHandler()
+            logger.addHandler(handler)
+            try:
+                rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+            finally:
+                logger.removeHandler(handler)
+            self.assertFalse(any(
+                "PairHop declares" in r.getMessage()
+                for r in handler.records))
+
+
+class _CollectingHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
 
 
 if __name__ == "__main__":
