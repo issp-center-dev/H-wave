@@ -2101,6 +2101,319 @@ class TestTask6ProductionPipelineGranules(unittest.TestCase):
             L=5, norb=1, t={(0, 0): 0.7 * np.exp(0.3j)}, eps=(0.0,), T=0.5,
             mu=0.2)
 
+    def test_granule_coulombinter_g1(self):
+        """CoulombInter g1 (R=+-1), real coupling C=0.6 (single-direction
+        declaration, avoiding the "declare both R and -R separately"
+        doubling trap Gate W0 granule (b) already documents). Measured:
+        status=PASS, delta_rich=1.5e-05, delta_nmat=4.4e-05, tol=4.4e-04,
+        max_signal=8.1e-02."""
+        fx = self._fx5t()
+        Cc = 0.6 + 0.0j
+
+        def topo_of_v(v):
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((1, 0, 0), (0, 0)): v * Cc}},
+                np.eye(3), 1)
+
+        def terms_of_v(v):
+            return ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 1, v * Cc)])
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 1, terms_of_v, topo_of_v, "task6/coulombinter_g1")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_granule_coulombinter_g2(self):
+        """CoulombInter g2 (R=+-2), real coupling C=0.6. Measured:
+        status=PASS, delta_rich=1.2e-05, delta_nmat=4.4e-05, tol=4.4e-04,
+        max_signal=8.1e-02."""
+        fx = self._fx5t()
+        Cc = 0.6 + 0.0j
+
+        def topo_of_v(v):
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((2, 0, 0), (0, 0)): v * Cc}},
+                np.eye(3), 1)
+
+        def terms_of_v(v):
+            return ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 2, v * Cc)])
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 1, terms_of_v, topo_of_v, "task6/coulombinter_g2")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_granule_coulombinter_g1_g2_sv_gate(self):
+        """The direction-set SVD gate over {g1, g2} (mirroring Gate W0's
+        own CoulombInter granule (b) pattern exactly: two shells of the
+        SAME type, sharing ONE topology so the sensitivity matrix has a
+        genuine common grid to rank -- see the module docstring's note on
+        why a naive 4-type combined gate is DEGENERATE below). Measured:
+        sv_ratio=0.887, sigma_min=0.204, 100*delta_rich_max=1.5e-03."""
+        fx = self._fx5t()
+        Cc = 0.6 + 0.0j
+
+        def shared_topo(v_g1=0.0, v_g2=0.0):
+            # BOTH shells declared in EVERY call (even when one is exactly
+            # 0) so every richardson sample point (v=0, v1, 2*v1) shares
+            # the IDENTICAL B=5 channel layout -- richardson differences a
+            # B=3 baseline against a B=5 perturbed point otherwise
+            # (broadcasting silently produces nonsense, measured: a
+            # spurious max_signal~117 during this task's own construction).
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((1, 0, 0), (0, 0)): v_g1,
+                                   ((2, 0, 0), (0, 0)): v_g2}},
+                np.eye(3), 1)
+
+        def topo_g1(v):
+            return shared_topo(v_g1=v * Cc)
+
+        def topo_g2(v):
+            return shared_topo(v_g2=v * Cc)
+
+        def terms_g1(v):
+            return ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 1, v * Cc)])
+
+        def terms_g2(v):
+            return ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 2, v * Cc)])
+
+        records = {
+            "coulombinter_g1": _task6_adjudicate_bond_direction(
+                fx, 1, terms_g1, topo_g1, "task6/sv/coulombinter_g1"),
+            "coulombinter_g2": _task6_adjudicate_bond_direction(
+                fx, 1, terms_g2, topo_g2, "task6/sv/coulombinter_g2"),
+        }
+        for name, rec in records.items():
+            self.assertEqual(rec["status"], "PASS", (name, rec))
+
+        gate = _w0_direction_set_sv_gate(records, "task6/coulombinter_g1_g2")
+        self.assertGreaterEqual(gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
+        self.assertGreaterEqual(gate["sigma_min"],
+                                 100.0 * gate["delta_rich_max"])
+
+    def test_granule_ising_g1(self):
+        """Ising g1 (R=+-1), real coupling V=1.0. Measured: status=PASS,
+        delta_rich=6.1e-07, delta_nmat=7.3e-05, tol=7.3e-04,
+        max_signal=1.4e-01."""
+        fx = self._fx5t()
+        Vi = 1.0 + 0.0j
+
+        def topo_of_v(v):
+            return bond_channels.resolve_transverse_topology(
+                {"Ising": {((1, 0, 0), (0, 0)): v * Vi}}, np.eye(3), 1)
+
+        def terms_of_v(v):
+            return _terms_ising_offsite(fx, 0, 0, 1, v * Vi.real)
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 1, terms_of_v, topo_of_v, "task6/ising_g1")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_granule_exchange_g1(self):
+        """Exchange g1 (R=+-1), a=b=0 (single-orbital fx5T -- the spec's
+        own note applies: "off-site Exchange with a == b is VALID input, an
+        ordinary non-singleton orbit at R != 0"), complex J=0.5-0.3i.
+        Measured: status=PASS, delta_rich=4.1e-07, delta_nmat=8.4e-05,
+        tol=8.4e-04, max_signal=1.6e-01."""
+        fx = self._fx5t()
+        J0 = 0.5 - 0.3j
+
+        def topo_of_v(v):
+            return bond_channels.resolve_transverse_topology(
+                {"Exchange": {((1, 0, 0), (0, 0)): v * J0}}, np.eye(3), 1)
+
+        def terms_of_v(v):
+            return _terms_exchange_offsite(fx, 0, 0, 1, v * J0)
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 1, terms_of_v, topo_of_v, "task6/exchange_g1")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_granule_joint_ray_superposition(self):
+        """Joint-ray superposition (spec: "two directions declared
+        together, first-order additivity"): CoulombInter g1 AND Ising g1
+        declared SIMULTANEOUSLY at R=+-1, BOTH scaled by the SAME v --
+        exercises W_pm_bond's per-type accumulation at an OVERLAPPING
+        channel/orbital cell (both types insert at the identical (m,0,0)
+        diagonal target), not just isolated single-type topologies.
+        Measured: status=PASS, delta_rich=2.1e-05, delta_nmat=2.9e-05,
+        tol=2.9e-04, max_signal=5.4e-02. Additivity independently confirmed
+        (not asserted as its own numeric pin here, since adjudicate_granule
+        already IS the additivity check by construction -- the ED side's
+        own terms are the literal sum of the two individual granules'
+        terms): D_pred(joint) vs D_pred(coulombinter_g1)+D_pred(ising_g1)
+        agree to 6.6e-07 against a 5.4e-02 scale (measured separately
+        during this task's construction)."""
+        fx = self._fx5t()
+        Cc = 0.6 + 0.0j
+        Vi = 1.0 + 0.0j
+
+        def topo_of_v(v):
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((1, 0, 0), (0, 0)): v * Cc},
+                 "Ising": {((1, 0, 0), (0, 0)): v * Vi}}, np.eye(3), 1)
+
+        def terms_of_v(v):
+            a = ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 1, v * Cc)])
+            b = _terms_ising_offsite(fx, 0, 0, 1, v * Vi.real)
+            return a + b
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 1, terms_of_v, topo_of_v, "task6/joint_ray")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_granule_hund_offsite_passzero_control(self):
+        """PASS-ZERO off-site Hund control, co-declared with the active
+        CoulombInter g1 term (spec, Global Constraints: "PASS-ZERO controls
+        ... declared ALONGSIDE one active calibrated CoulombInter term, and
+        the granule isolates the control's derivative -- the #151 pattern:
+        the zero must be measured as a derivative, not as a fallback").
+
+        INVESTIGATION NOTE (recorded per the discrepancy protocol): a first
+        construction co-declared Hund at a FIXED coupling scaled
+        INDEPENDENTLY of the varying active CoulombInter term (i.e. the
+        active term present at its full value even as Hund's coupling -> 0)
+        and FAILED -- ED showed a genuine, non-negligible (~0.09 at
+        C0=0.6, scaling roughly linearly with C0, present even at C0=0.01)
+        first-order-in-Hund-coupling signal. This is NOT a production bug:
+        it is a real beyond-RPA (beyond-ladder) many-body correlation
+        between the two DIFFERENT interaction types, visible to EXACT
+        diagonalization but structurally outside what ANY ladder/RPA
+        resummation (production's OWN approximation class) could ever
+        capture -- Hund's own single-vertex insertion into the bubble is
+        exactly zero (a Sz-conserving, same-spin-only interaction cannot
+        connect the up/down propagators of the transverse loop, the
+        on-site table's own argument, unaffected by which site pair is
+        involved), and confirmed independently at v->0 with NO active term
+        present at all (measured ~3e-6, at the Richardson noise floor).
+        The FIX: declare BOTH the active CoulombInter g1 term AND the Hund
+        control at the SAME v (this method's construction) -- their
+        cross-correlation is then second order in v (proportional to
+        v*v), invisible to a first-derivative comparison, while the
+        topology/Hamiltonian genuinely carries BOTH declarations
+        simultaneously (satisfying anti-vacuity: the ED side's Hamiltonian
+        is never Hund-alone-at-zero-coupling). Verified: the joint-v ED
+        response matches the CoulombInter-g1-alone response to 4.9e-06
+        (against a 0.045-0.08 scale) -- Hund's marginal joint-v
+        contribution is zero, confirming the production topology's
+        structural omission of Hund (it is not one of
+        resolve_transverse_topology's transverse-active types at all) is
+        physically correct. Measured (this test): status=PASS,
+        delta_rich=1.4e-07, delta_nmat=4.4e-05, tol=4.4e-04,
+        max_signal=8.1e-02 (== the CoulombInter-g1-alone signal, since
+        production's topology represents CoulombInter only -- Hund is
+        never read by resolve_transverse_topology's
+        _TRANSVERSE_ACTIVE_TYPES union at all)."""
+        fx = self._fx5t()
+        Cc = 0.6 + 0.0j
+
+        def topo_of_v(v):
+            # Production topology: CoulombInter g1 only -- Hund is
+            # structurally absent regardless of v (bit-identical topology
+            # at every richardson sample point).
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((1, 0, 0), (0, 0)): v * Cc}},
+                np.eye(3), 1)
+
+        def terms_of_v(v):
+            active = ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 1, v * Cc)])
+            control = _terms_hund_offsite(fx, 0, 0, 1, v)
+            return active + control
+
+        rec = _task6_adjudicate_bond_direction(
+            fx, 1, terms_of_v, topo_of_v, "task6/hund_control")
+        self.assertEqual(rec["status"], "PASS", rec)
+
+    def test_granule_pairlift_offsite_passzero_control_dense(self):
+        """PASS-ZERO off-site PairLift control, co-declared with an active
+        CoulombInter term at a FIXED (v-independent) coupling -- UNLIKE the
+        Hund control above, a FIXED active coupling here does NOT
+        contaminate the measurement: PairLift's operator changes total Sz
+        by +-2 (Sz-BREAKING, spec/Global Constraints: "PairLift's quartic
+        operator is Sz-BREAKING -- any PairLift ED reference uses the dense
+        route, never SectorED"), so a SINGLE PairLift insertion can never
+        contribute to the Sz-changing-by-1 transverse <S+;S+dagger>
+        response AT ANY PERTURBATIVE ORDER (an exact spin-selection-rule
+        argument, not merely an RPA-order one -- unlike Hund, which
+        conserves Sz and has no such protection). Measured directly:
+        status=PASS-ZERO, ED derivative magnitude ~1.3e-09 (Richardson
+        noise floor), delta_rich=9.2e-09, tol=9.2e-08, production side
+        EXACTLY zero (bit-identical across both Matsubara resolutions,
+        since PairLift is not a transverse-active type at all).
+
+        MESH CONSTRAINT (recorded, per the spec's Fixture bounds): the
+        bond-transverse topology's mesh-injectivity requirement
+        (validate_topology_against_mesh, Task 2) REJECTS any off-site
+        channel R with 2*R == 0 (mod L) -- at L=2 this rejects EVERY
+        off-site shell (R=1 self-collides, R=-1==R=1 mod 2), so a literal
+        2-site ring cannot carry ANY off-site declaration through the
+        production pipeline at all (a genuine, load-bearing consequence of
+        Task 2's own contract, discovered while constructing this granule
+        -- not a defect). This granule therefore uses the smallest ODD ring
+        (L=3, avoiding the even-mesh self-reversal) that both satisfies
+        mesh-injectivity for R=1 AND keeps the DENSE (full, non-sector)
+        diagonalization tractable (dim = 2**(3*1*2) = 64) -- "dense", not
+        "2-site", is the load-bearing part of the spec's constraint (Sz-
+        breaking implies SectorED is unusable; the dense route's cost is
+        what bounds the fixture size, not a literal 2-site requirement)."""
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=1, t={(0, 0): 0.55 * np.exp(-0.15j)}, eps=(0.0,),
+            T=0.55, mu=0.1)
+        C0 = 0.5 + 0.0j
+        channels_full = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+
+        def topo_of_v(v):
+            # v is unused: PairLift is not read by resolve_transverse_
+            # topology at all, so the topology (carrying only the FIXED
+            # active CoulombInter) is bit-identical at every v.
+            return bond_channels.resolve_transverse_topology(
+                {"CoulombInter": {((1, 0, 0), (0, 0)): C0}}, np.eye(3), 1)
+
+        def terms_of_v(v):
+            active = ed_oracle_util.canonical_density_terms(
+                fx, [(0, 0, 1, C0)])
+            control = _terms_pairlift_offsite(fx, 0, 0, 1, v)
+            return active + control
+
+        def dense_derivative(v1):
+            @functools.lru_cache(maxsize=None)
+            def X_of_v(v):
+                terms = terms_of_v(v)
+                full = _dense_bond_correlator_transverse(
+                    fx, channels_full,
+                    hint=ed_oracle_util.h_int_from_terms(fx, terms))
+                hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
+                hf_only = _dense_bond_correlator_transverse(
+                    fx, channels_full, h1=hf_h1)
+                return full - hf_only
+            return ed_oracle_util.richardson(X_of_v, v1)
+
+        D_ed_v1 = dense_derivative(CAMPAIGN_V1_TASK6)
+        D_ed_vhalf = dense_derivative(CAMPAIGN_V1_TASK6 / 2)
+
+        delta_r = np.asarray(topo_of_v(1.0).delta_r)
+        delta_r_1d = _w0_delta_r_1d(delta_r)
+        # transverse_ed_to_solver_map wants the norb=1 (R,) shorthand
+        # channel list; _w0_channels_for's output is built from the SAME
+        # delta_r_1d in the SAME order as channels_full (full (R,a,b)
+        # triples) above, so the returned smap indices apply unchanged.
+        smap = transverse_ed_to_solver_map(
+            _w0_channels_for(delta_r_1d, 1), delta_r_1d, 1)
+        D_ed_v1 = D_ed_v1[:, smap][:, :, smap]
+        D_ed_vhalf = D_ed_vhalf[:, smap][:, :, smap]
+
+        D_pred_1 = _task6_bond_pipeline_derivative(fx, 0.0, 1, 1024, topo_of_v)
+        D_pred_2 = _task6_bond_pipeline_derivative(fx, 0.0, 1, 2048, topo_of_v)
+        zero_mask = np.ones(D_pred_2.shape, dtype=bool)
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_pred_1, D_pred_2, zero_mask,
+            "task6/pairlift_control_dense")
+        self.assertEqual(rec["status"], "PASS-ZERO", rec)
+
     def test_granule_multiorbital_offsite_coulombinter_regression(self):
         """THE REGRESSION PIN (spec, "Cross family", 2026-08-16 amendment;
         this module's own coordinator-adjudicated finding): the orbital
@@ -2167,6 +2480,304 @@ class TestTask6ProductionPipelineGranules(unittest.TestCase):
             "report verbatim.".format(
                 rec["status"], rec["delta_rich"], rec["tol"],
                 rec["max_signal"], rec["failures"][:5]))
+
+    def test_granule_multiorbital_offsite_exchange_both_orientations(self):
+        """The multi-orbital off-site Exchange granule (spec, "ED
+        granules": "a MULTI-ORBITAL OFF-SITE EXCHANGE granule (norb=2,
+        a != b, odd ring L=5 [here L=3, matching the CoulombInter
+        regression pin's own fixture], evaluated at a non-self-inverse q)
+        that checks BOTH ordered local-channel elements ... plus a
+        complex/asymmetric-orientation null-direction variant"). L=3,
+        norb=2 (the SAME fixture as the regression pin above), off-site
+        Exchange at R=+1 with a=0 != b=1. Two directions on the SAME
+        topology: "real" (J=v*1, pins the REAL-coefficient orientation) and
+        "imag" (J=v*1i -- the complex/null-direction variant: a purely
+        imaginary coupling pins the two-record symmetrization
+        independently of the real-coefficient direction, since the two
+        ordered records W[(0,a,a),(0,b,b)]/W[(0,b,b),(0,a,a)] carry
+        conj(J)/J respectively -- a real-only check cannot distinguish
+        conj(J) from J). Since the comparison is over the FULL (nvol, ND,
+        ND) grid (not just the on-site sub-block), BOTH ordered elements
+        are independently exercised by construction -- the norb=1 fx5T
+        Exchange granule above collapses them onto one cell and could not.
+        Measured: status=PASS for both directions (real:
+        delta_rich=8.9e-07, delta_nmat=9.6e-05, tol=9.6e-04,
+        max_signal=1.90e-01; imag: delta_rich=3.1e-06, SAME delta_nmat/
+        tol/max_signal). Direction-set SVD gate: sv_ratio=1.0 (to
+        displayed precision), sigma_min=0.437, 100*delta_rich_max=3.1e-04
+        -- a clean, well-conditioned rank-2 matrix (unlike the
+        cross-family {CoulombInter, Ising} pair at a SHARED channel, which
+        is exactly degenerate -- see the SV-gate note on
+        test_granule_coulombinter_g1_g2_sv_gate)."""
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=2,
+            t={(0, 0): 0.5 + 0.2j, (1, 1): 0.35 - 0.15j,
+               (0, 1): 0.1 + 0.05j, (1, 0): 0.1 + 0.05j},
+            eps=(0.05, -0.03), T=0.45, mu=0.1)
+
+        records = {}
+        for name, phase in (("real", 1.0 + 0.0j), ("imag", 0.0 + 1.0j)):
+            def topo_of_v(v, phase=phase):
+                return bond_channels.resolve_transverse_topology(
+                    {"Exchange": {((1, 0, 0), (0, 1)): v * phase}},
+                    np.eye(3), 2)
+
+            def terms_of_v(v, phase=phase):
+                return _terms_exchange_offsite(fx, 0, 1, 1, v * phase)
+
+            records[name] = _task6_adjudicate_bond_direction(
+                fx, 2, terms_of_v, topo_of_v,
+                "task6/multiorb_exchange/{}".format(name))
+
+        for name, rec in records.items():
+            self.assertEqual(rec["status"], "PASS", (name, rec))
+
+        gate = _w0_direction_set_sv_gate(records, "task6/multiorb_exchange")
+        self.assertGreaterEqual(gate["sv_ratio"], ed_oracle_util.SENS_SV_FLOOR)
+        self.assertGreaterEqual(gate["sigma_min"],
+                                 100.0 * gate["delta_rich_max"])
+
+
+def _sector_s_minus_correlator(se, channels):
+    """The conjugate object to ``SectorED.bond_correlator_transverse``'s
+    ``<S+;S+dagger>``: ``<S-;S-dagger>``, built the SAME way but with the
+    creation/annihilation SPIN ROLES SWAPPED on the bilinear --
+    ``S-_{R,a,b}(q) = sum_j e^{+iqj} c^+_{j+R,a,dn} c_{j,b,up}`` (creation
+    DOWN, annihilation UP, the opposite of S+'s creation UP/annihilation
+    DOWN). Built directly from ``SectorED``'s own
+    ``_build_operator``/``_lehmann_dagger``/``_thermal_avg`` primitives (the
+    SAME primitives ``bond_correlator_transverse`` uses internally, already
+    called directly from this module's own contract tests, e.g.
+    ``TestBondCorrelatorTransverseContract.
+    test_mixed_spin_delta_is_plus_minus_one``) -- this is a spin-flipped
+    SIBLING of that method's construction, not a re-derivation of its
+    machinery, chosen (per the production conjugate-pair granule's brief)
+    over the "conjugate/transpose the S+ correlator" route: building S-
+    DIRECTLY needs no Kubo-relation derivation and is unambiguous by
+    construction (the SAME contraction ``bond_correlator_transverse``
+    itself already uses, applied to a differently-labeled bilinear)."""
+    fx = se.fx
+    seen = set()
+    wrapped = []
+    for chan in channels:
+        R, a, b = se._channel_orbitals(chan)
+        Rw = R % fx.L
+        key = (Rw, a, b)
+        if key in seen:
+            raise ValueError(
+                "_sector_s_minus_correlator: duplicate channel {!r} after "
+                "wrapping R mod L (wrapped key {!r})".format(chan, key))
+        seen.add(key)
+        wrapped.append((Rw, a, b))
+    n_i = len(wrapped)
+    out = np.zeros((fx.L, n_i, n_i), dtype=complex)
+    for qi in range(fx.L):
+        built = []
+        for (R, a, b) in wrapped:
+            mode_terms = [
+                (fx.mode((j + R) % fx.L, a, 1), fx.mode(j, b, 0),
+                 np.exp(2j * np.pi * qi * j / fx.L))
+                for j in range(fx.L)]
+            delta, op = se._build_operator(mode_terms)
+            built.append((delta, op, se._thermal_avg(op, delta)))
+        for i in range(n_i):
+            deltaA, opA, avgA = built[i]
+            for j in range(n_i):
+                deltaB, opB, avgB = built[j]
+                val = se._lehmann_dagger(opA, deltaA, opB, deltaB)
+                val -= fx.beta * avgA * np.conj(avgB)
+                out[qi, i, j] = val
+    return out / fx.L
+
+
+def _hf_h1_from_terms_at(fx, terms, h1_base):
+    """Zeeman-aware generalization of ``ed_oracle_util.hf_h1_from_terms``
+    (which hardcodes the density-matrix reference to ``fx.build_h1()``,
+    i.e. no Zeeman split): the SAME first-order Hartree-Fock self-energy
+    Wick-contraction formula (the ``add()`` closure, reproduced verbatim),
+    but built from an explicit ``h1_base`` (the Zeeman-split one-body
+    Hamiltonian) rather than the bare ``fx.build_h1()`` -- needed because
+    the production conjugate-pair granule's ED reference must subtract the
+    HF-only response evaluated on the SAME (Zeeman-split) free reference
+    the "full" side uses; the module-level helper cannot express this
+    (round-trip verified: at hz=0 this reduces to the SAME numbers
+    ``hf_h1_from_terms`` gives, since ``h1_base == fx.build_h1()`` there)."""
+    ev, W = np.linalg.eigh(h1_base - fx.mu * np.eye(fx.nmode))
+    f = 1.0 / (np.exp(np.clip(fx.beta * ev, -500, 500)) + 1.0)
+    rho = ((W * f) @ W.conj().T).T
+    S = np.zeros((fx.nmode, fx.nmode), dtype=complex)
+
+    def add(p, q, r, s, c_):
+        S[p, q] += c_ * rho[r, s]
+        S[r, s] += c_ * rho[p, q]
+        S[p, s] += c_ * ((1.0 if q == r else 0.0) - rho[r, q])
+        S[r, q] += -c_ * rho[p, s]
+
+    for (p, q, r, s, coeff) in terms:
+        add(p, q, r, s, coeff)
+    return h1_base + 0.5 * (S + S.conj().T)
+
+
+class TestTask6ProductionConjugatePairGranule(unittest.TestCase):
+    """**The production conjugate-pair granule** (the Phase-H ledger's
+    MEDIUM, carried into Task 6, spec "Gate W1 (on-site reduction, exact
+    scope)": "the G_up != G_down conjugate-pair identity is adjudicated by
+    the production conjugate-pair granule (Task 6)"). On a Zeeman-split
+    ON-SITE fixture (G_up != G_down), adjudicates the PRODUCTION plain-
+    ladder ``chiq_pm`` -- via ``RPA._build_transverse_channel`` +
+    ``RPA._solve_rpa``, the pre-existing "ring+ladder" production path, NOT
+    the bond pipeline -- against exact diagonalization, using the
+    ``<S-;S-dagger>`` identification (``_sector_s_minus_correlator`` above):
+    ``_calc_chi0q_transverse``'s own docstring fixes this unambiguously
+    (``chi0_+-[a,c,b,d](r,tau) = -G_up[a,b](r,tau)*G_down[d,c](-r,-tau)``,
+    i.e. fwd=UP/rev=DOWN -- the OPPOSITE role assignment from the bond
+    pipeline's fwd=DOWN/rev=UP, hence the CONJUGATE object per the spec's
+    own "Gate W1" note: "the bond pipeline's chi0 ... computes
+    <S+;S+dagger> ... the plain channel's chi0_+- ... computes
+    <S-;S-dagger>"). A FAIL here is a PRODUCTION finding (per the task
+    brief: "STOP, do not commit, report verbatim").
+
+    Solver-side construction: a bare ``RPA`` stub (the SAME
+    ``object.__new__`` pattern as the bond-pipeline granules above) with
+    ``green0``/``green0_tail`` built directly from the fixture's own
+    Zeeman-split eigenbasis (``_h3_free_two_block_green``, reused verbatim
+    -- ALREADY the correct block convention here too: block 0 = +hz = up,
+    block 1 = -hz = down, matching ``_calc_chi0q_transverse``'s own "block
+    0=up, block1=down" contract), and the on-site vertex ``ham_orig`` built
+    directly via ``ring_spin_table("CoulombIntra")`` (the SAME building
+    block ``RPA._build_ham_pm_onsite`` uses internally) -- independently
+    cross-checked against this module's own H2 table
+    (``_h2_ham_pm_expected("CoulombIntra", U, norb=1)``, already
+    ED-validated) via ``RPA._assemble_transverse_vertex`` before use
+    (exact match, confirming the hand-built ``ham_orig`` tensor is correct
+    before it feeds the granule). ``green0`` is v-independent (RPA's
+    non-interacting Green function never depends on the declared two-body
+    coupling -- see the module docstring above), so the SAME "chi0 fixed,
+    only the vertex varies" first-order construction applies here too.
+
+    INVESTIGATION NOTE (recorded per the discrepancy protocol -- two bugs
+    were found and fixed during this granule's own construction, neither a
+    production defect): (1) an early ED-side term builder reused
+    ``tests.test_rpa_vs_ed_oracle._terms_for``, which hardcodes that
+    module's OWN ``LX=2`` site count internally -- silently building an
+    interaction Hamiltonian covering only 2 of this granule's fixture's 3
+    sites. Fixed by switching to ``ed_oracle_util.canonical_density_terms``
+    (parameterized on ``fx.L`` correctly); the bare bubble (V=0) comparison
+    against production ALREADY matched to ~3e-4 (finite-nmat-only)
+    throughout, which is what made the CoulombIntra-only mismatch (a
+    genuine ~33% gap at hz=0, where the plain path should reduce to a
+    trivially self-consistent value) diagnosable as an ED-side term-count
+    bug rather than a solver-side one. (2) the HF-only reference for the
+    "full-minus-HF-only" subtraction must be built from the ZEEMAN-SPLIT
+    one-body Hamiltonian, not the bare one -- ``ed_oracle_util.
+    hf_h1_from_terms`` hardcodes the bare reference, hence
+    ``_hf_h1_from_terms_at`` above.
+
+    Measured (this test): status=PASS, delta_rich=3.6e-07,
+    delta_nmat=7.2e-05, tol=7.2e-04, max_signal=1.34e-01 -- the plain
+    bubble+vertex pair IS self-consistent as the ``<S-;S-dagger>`` conjugate
+    object at G_up != G_down, for the first time adjudicated against exact
+    diagonalization. This PASS resolves the Phase-H MEDIUM finding."""
+
+    def test_zeeman_split_onsite_conjugate_pair(self):
+        fx = ed_oracle_util.EDFixture(
+            L=3, norb=1, t={(0, 0): 0.6 * np.exp(0.2j)}, eps=(0.0,), T=0.5,
+            mu=0.15)
+        hz = 0.3
+        h1_zeeman = _h3_zeeman_h1(fx, hz)
+        norb = 1
+        nd = norb * 2
+        channels = [(0,)]
+
+        def solver_for_nmat(nmat):
+            solver = object.__new__(rpa_mod.RPA)
+            solver.norb = norb
+            solver.ns = 2
+            solver.fft_workers = 1
+            solver.lattice = types.SimpleNamespace(
+                nvol=fx.L, shape=(fx.L, 1, 1))
+            solver.spin_mode = "spin-diag"
+            solver.enable_reduced = False
+            solver.T = fx.T
+            solver.nmat = nmat
+            solver.freq_index = np.arange(nmat)
+            solver._chi0q_external = False
+            green_kw = _h3_free_two_block_green(fx, hz, nmat)
+            solver.green0 = green_kw
+            solver.green0_tail = np.zeros_like(green_kw)
+            return solver
+
+        def ham_orig_of(v):
+            ham_r8 = np.zeros((2, norb) * 4, dtype=complex)
+            for spinvec, w in ring_spin_table("CoulombIntra").items():
+                s1, s2, s3, s4 = spinvec
+                orb = (s4, 0, s3, 0, s1, 0, s2, 0)
+                ham_r8[orb] += v * w
+            return ham_r8.reshape(nd, nd, nd, nd)
+
+        # Cross-check: the hand-built ham_orig assembles to the SAME
+        # ED-validated H2 table entry for CoulombIntra (-U) before use.
+        probe_solver = object.__new__(rpa_mod.RPA)
+        probe_solver.norb = norb
+        probe_solver.ns = 2
+        probe_solver.lattice = types.SimpleNamespace(
+            nvol=1, shape=(1, 1, 1))
+        ham_pm_probe = probe_solver._assemble_transverse_vertex(
+            ham_orig_of(1.3)[None])
+        expected_probe = _h2_ham_pm_expected(
+            "CoulombIntra", 1.3, norb=norb)
+        assert_approx_array(ham_pm_probe, expected_probe, rel=0, abs=1e-13)
+
+        def pred_at_nmat(nmat, v1=CAMPAIGN_V1_TASK6):
+            solver = solver_for_nmat(nmat)
+
+            @functools.lru_cache(maxsize=None)
+            def Y(v):
+                nvol = fx.L
+                ham_orig = np.broadcast_to(
+                    ham_orig_of(v)[None], (nvol, nd, nd, nd, nd)).copy()
+                chi0q_pm, ham_pm = solver._build_transverse_channel(
+                    None, ham_orig)
+                chiq_pm = solver._solve_rpa(chi0q_pm, ham_pm)
+                return chiq_pm[nmat // 2]
+
+            return ed_oracle_util.richardson(Y, v1)
+
+        D_pred_1 = pred_at_nmat(1024)
+        D_pred_2 = pred_at_nmat(2048)
+
+        def terms_of_v(v):
+            return ed_oracle_util.canonical_density_terms(fx, [(0, 0, 0, v)])
+
+        def X_of_v(v):
+            terms = terms_of_v(v)
+            full = _sector_s_minus_correlator(
+                ed_oracle_util.SectorED(fx, terms=terms, h1=h1_zeeman),
+                channels)
+            hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_zeeman)
+            hf_only = _sector_s_minus_correlator(
+                ed_oracle_util.SectorED(fx, terms=(), h1=hf_h1), channels)
+            return full - hf_only
+
+        v1 = CAMPAIGN_V1_TASK6
+        D_ed_v1 = ed_oracle_util.richardson(X_of_v, v1).reshape(
+            fx.L, norb, norb, norb, norb)
+        D_ed_vhalf = ed_oracle_util.richardson(X_of_v, v1 / 2).reshape(
+            fx.L, norb, norb, norb, norb)
+
+        zero_mask = np.zeros(D_pred_2.shape, dtype=bool)
+        rec = ed_oracle_util.adjudicate_granule(
+            D_ed_v1, D_ed_vhalf, D_pred_1, D_pred_2, zero_mask,
+            "task6/production_conjugate_pair")
+        self.assertEqual(
+            rec["status"], "PASS",
+            "PRODUCTION FINDING: the plain-ladder chiq_pm (via "
+            "_build_transverse_channel) is NOT self-consistent as the "
+            "<S-;S-dagger> conjugate object at G_up != G_down -- status={} "
+            "(delta_rich={:.3e} tol={:.3e} max_signal={:.3e} "
+            "first_failures={}). STOP, do not commit, report verbatim.".
+            format(rec["status"], rec["delta_rich"], rec["tol"],
+                   rec["max_signal"], rec["failures"][:5]))
 
 
 if __name__ == "__main__":

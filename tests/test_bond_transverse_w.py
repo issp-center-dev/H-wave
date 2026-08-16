@@ -1583,8 +1583,20 @@ class TestCollapseRule(ApproxTestCase):
         # mutation check targets: with norb=2 the two groupings read
         # DIFFERENT cells whenever a != c or b != d, e.g. (a,b,c,d) =
         # (0,1,0,0): correct row=a*norb+c=0, col=b*norb+d=2; the (a,b)/
-        # (c,d) grouping would read row=a*norb+b=1, col=c*norb+d=0.
-        self.assertNotEqual(0 * norb + 0, 0 * norb + 1)
+        # (c,d) grouping would read row=a*norb+b=1, col=c*norb+d=0. A
+        # REAL runtime discrimination check (the previous version here
+        # only compared the two literal integers 0 and 1, which holds
+        # unconditionally and exercises neither the fixture nor the
+        # array -- vacuous): read BOTH candidate cells from the actual
+        # random ``chi_pm_bond`` fixture at q=0 and require them to
+        # differ, so this test would genuinely fail to discriminate a
+        # collapse-index mutation if the fixture ever degenerated (e.g.
+        # an accidentally symmetric array) rather than passing no
+        # matter what.
+        a_ex, b_ex, c_ex, d_ex = 0, 1, 0, 0
+        correct_cell = chi_pm_bond[0, a_ex * norb + c_ex, b_ex * norb + d_ex]
+        wrong_cell = chi_pm_bond[0, a_ex * norb + b_ex, c_ex * norb + d_ex]
+        self.assertNotEqual(correct_cell, wrong_cell)
 
 
 class TestGateW1OnsiteReduction(ApproxTestCase):
