@@ -2449,9 +2449,18 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         self.assertLess(peak_old, cap_gb * 1.0e9)
         self.assertGreater(peak_new, cap_gb * 1.0e9)
 
-        solver.transverse_bond_memory_cap_gb = cap_gb
+        # The rejection must fire through the PUBLIC solve() entry of a
+        # fresh, equivalent solver (the first solver above only derived
+        # the boundary): a private-method call here would not catch a
+        # wiring/call-order regression that stops solve() from applying
+        # the updated estimate.
+        solver2, gi2, out2 = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': cap_gb,
+                              'coeff_tail': 1.0},
+            interactions=self.ACTIVE)
         with self.assertRaises(ValueError) as cm:
-            solver._transverse_bond_resource_preflight(topo)
+            solver2.solve(gi2, out2)
         self.assertIn("memory_cap_gb", str(cm.exception))
 
     def test_op_count_warns_not_refuses(self):
