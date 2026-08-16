@@ -4343,17 +4343,73 @@ class RPA:
           (no ``Nmat`` factor -- its own operands are single-frequency
           slices): its own peak, ``(Nmat + 3) * P**2``, is algebraically
           ``<= 3 * Nmat * P**2`` for every valid (even, positive)
-          ``Nmat >= 2``, so it never exceeds the THREE-buffer peak that
-          dominates regardless of the tail: ``pair_bytes = itemsize * Nq
-          * (2*ND**2 + 3*Nmat*P**2 + 2*Nmat*P)``.
+          ``Nmat >= 2``, so it never exceeds the THREE-buffer peak.
 
-          ``bubble_bytes = max(prep_bytes, pair_bytes)`` -- ``pair_bytes``
-          dominates for realistic (multi-shell / larger-``Nmat``) runs,
-          but ``prep_bytes`` can exceed it at the smallest valid corner
-          (e.g. ``norb=1``, ``B=1``, ``Nmat=2``: ``prep_bytes`` works out
-          to ``17 * itemsize * Nq`` against ``pair_bytes``'s ``12 *
-          itemsize * Nq``), so the ``max`` is computed explicitly rather
-          than assumed away.
+          RETAINED TAIL CARRIERS (a second review round's fix -- these
+          were bounded inside ``prep_bytes`` but omitted from
+          ``pair_bytes``): ``prepped`` (the ``_DensePrepared`` instance
+          ``_prepare_dense`` returns) is held alive by
+          ``transverse_bond_bubble_static``'s own local variable for the
+          ENTIRE function, including the whole pair-processing loop --
+          not just during preparation. ``_iter_transverse_bond_channel_
+          pairs`` only clears ``prepped.green_rt``/``prepped.green_rev``
+          (setting them ``None`` right after extracting the single-block
+          carriers above); it never touches ``prepped.fwd0_p``/
+          ``rev0_p``/``jump_f``/``jump_r_rev``. When tail-on, those are
+          the SAME four full two-block ``S = 2*Nq*P*itemsize`` buffers
+          ``prep_bytes`` already counts -- ``tail_pack`` (built once,
+          also for the whole loop) holds only single-block VIEWS into
+          them, so the underlying two-block buffers are what actually
+          stay resident, not merely their views. This is genuinely
+          additional storage throughout the pair loop, on top of the
+          THREE-buffer per-pair transient: ``+ 4*S = 8*Nq*P*itemsize``.
+          Whether these four arrays exist at all is decided by
+          ``_prepare_dense``'s own ``tail_on = bool(xp.any(green0_tail
+          ...[:, 0] != 0))`` check on actual Green-function content --
+          ``self.green0_tail`` is available at preflight time (set by
+          ``solve()`` before this method runs), but RPA's own
+          ``_calc_green`` NEVER returns ``None`` for it (its docstring:
+          "materializes a shape-matched all-zero tail" when
+          ``coeff_tail == 0``), so an ``is not None`` presence check
+          would always be ``True`` here and provide no tightening --
+          replicating ``xp.any(...)`` itself would duplicate a
+          host/device-synchronizing reduction ``_prepare_dense`` already
+          performs once, which is not "cheap" to redo speculatively at
+          preflight time. So, like ``prep_bytes``, this term is counted
+          UNCONDITIONALLY (the conservative bound, per this function's
+          existing policy):
+          ``pair_bytes = itemsize * Nq * (2*ND**2 + 3*Nmat*P**2 +
+          2*Nmat*P + 8*P)``.
+
+          CARRIER-EXTRACTION TRANSITION (verified, not merely assumed):
+          at the instant ``_iter_transverse_bond_channel_pairs`` begins
+          -- ``prepped.green_rt`` (2-block, ``2*Nmat*P``) and
+          ``prepped.green_rev`` (2-block, ``2*Nmat*P``) both still whole,
+          plus the newly-forming single-block ``green_fwd_sgn``
+          (``Nmat*P``), plus the same retained tail carriers (``8*P``),
+          plus ``W``+``chi_bar`` (``2*ND**2``) -- the total is
+          ``2*ND**2 + 5*Nmat*P + 8*P``. Comparing to the steady-state
+          ``pair_bytes`` above (``2*ND**2 + 3*Nmat*P**2 + 2*Nmat*P +
+          8*P``), the difference is ``3*Nmat*P**2 - 3*Nmat*P =
+          3*Nmat*P*(P - 1)``, which is exactly ``0`` at ``norb=1``
+          (``P=1``) and strictly positive for ``norb>1``: the
+          steady-state ``pair_bytes`` formula bounds the extraction
+          transition too, with equality (not slack) at the ``norb=1``
+          corner -- so no separate term is needed, but the bound is
+          tight there, not merely "large enough by coincidence".
+
+          ``bubble_bytes = max(prep_bytes, pair_bytes)``. With the
+          retained-tail-carrier term now in BOTH, ``pair_bytes -
+          prep_bytes = ND**2 + Nmat*P*(3*P - 2)``, which is strictly
+          positive for every valid ``P >= 1``, ``Nmat >= 2``, ``ND >= 1``
+          -- so ``pair_bytes`` now provably dominates ``prep_bytes``
+          everywhere (unlike before this fix, where ``prep_bytes`` won
+          at the smallest corner, ``norb=1``/``B=1``/``Nmat=2``: ``17``
+          vs the OLD ``pair_bytes``'s ``12``, in units of ``itemsize *
+          Nq`` -- with the fix, the same corner gives ``17`` vs the NEW
+          ``pair_bytes``'s ``20``). The ``max`` is still computed
+          explicitly in code rather than simplified away, for robustness
+          against future changes to either sub-phase.
 
         ``peak_bytes = max(bubble_bytes, solve_bytes)``. For small ``B``
         (few bond channels, so ``ND`` and therefore ``solve_bytes`` stay
@@ -4379,7 +4435,7 @@ class RPA:
         solve_bytes = (3 + K_solve) * Nq * (ND ** 2) * itemsize
         prep_bytes = itemsize * Nq * ((ND ** 2) + 4 * P * (Nmat + 2))
         pair_bytes = itemsize * Nq * (
-            2 * (ND ** 2) + 3 * Nmat * (P ** 2) + 2 * Nmat * P)
+            2 * (ND ** 2) + 3 * Nmat * (P ** 2) + 2 * Nmat * P + 8 * P)
         bubble_bytes = max(prep_bytes, pair_bytes)
         peak_bytes = max(bubble_bytes, solve_bytes)
         op_count = Nq * (ND ** 3)
@@ -4409,7 +4465,7 @@ class RPA:
                 "B*norb**2 = {}, Nq = {}, K_solve = {}. The bubble "
                 "prep-phase estimate is 16 * Nq * (ND**2 + 4*P*(Nmat+2)) "
                 "bytes and the pair-loop estimate is 16 * Nq * (2*ND**2 "
-                "+ 3*Nmat*P**2 + 2*Nmat*P) bytes, both with P = "
+                "+ 3*Nmat*P**2 + 2*Nmat*P + 8*P) bytes, both with P = "
                 "norb**2 and Nmat = {} (all are numpy-backend "
                 "conservative allowances, not guaranteed LAPACK/BLAS/FFT "
                 "bounds). Restrict or remove some off-site "

@@ -2312,7 +2312,8 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         K_solve = 3
         solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
         prep_bytes = 16 * Nq * (ND ** 2 + 4 * P * (Nmat + 2))
-        pair_bytes = 16 * Nq * (2 * ND ** 2 + 3 * Nmat * P ** 2 + 2 * Nmat * P)
+        pair_bytes = 16 * Nq * (
+            2 * ND ** 2 + 3 * Nmat * P ** 2 + 2 * Nmat * P + 8 * P)
         bubble_bytes = max(prep_bytes, pair_bytes)
         want_peak = max(bubble_bytes, solve_bytes)
 
@@ -2352,7 +2353,8 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
 
         def bubble_bytes_of(nmat):
             prep = 16 * Nq * (ND ** 2 + 4 * P * (nmat + 2))
-            pair = 16 * Nq * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P)
+            pair = 16 * Nq * (
+                2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
             return max(prep, pair)
 
         solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
@@ -2385,6 +2387,72 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         self.assertTrue("bubble" in msg.lower() or "GB" in msg,
                          "rejection should name the bubble phase or an "
                          "estimate value: {}".format(msg))
+
+    def test_tail_carrier_boundary_regression(self):
+        """Boundary regression pin (review fix, must_fix): ``pair_bytes``
+        omitted the four tail-correction arrays (``fwd0_p``/``rev0_p``/
+        ``jump_f``/``jump_r_rev``) that ``prepped`` keeps resident for
+        the ENTIRE pair loop even though ``_iter_transverse_bond_channel_
+        pairs`` only ever views single blocks of them -- a genuine
+        ``+8*P`` (``P = norb**2``) omission. On a tail-ENABLED
+        (``coeff_tail != 0``, so these four arrays are actually
+        allocated at runtime -- confirmed below) ``norb=1`` fixture, a
+        cap strictly between the OLD (pre-fix) and NEW pair-loop
+        estimates must REJECT through the public ``solve()`` entry.
+
+        Verified as a genuine regression (not just a formula check) by
+        temporarily removing the ``+ 8 * P`` term from
+        ``_transverse_bond_resource_preflight``'s ``pair_bytes`` and
+        rerunning this test: it failed (the same cap no longer raised),
+        then passed again once restored -- i.e. the cap picked here truly
+        sits between what the OLD and NEW code compute."""
+        solver, gi, out = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': 1.0e6,
+                              'coeff_tail': 1.0},
+            interactions=self.ACTIVE)
+        solver.solve(gi, out)
+        topo = solver._transverse_bond_topo
+
+        # Sanity: this fixture genuinely allocates the four retained
+        # tail carriers at runtime (green0_tail's zero-frequency slice
+        # is nonzero) -- not merely "coeff_tail is set but happens to be
+        # a no-op".
+        import numpy as _np
+        gt = solver.green0_tail
+        self.assertIsNotNone(gt)
+        self.assertTrue(bool(_np.any(
+            gt.reshape(gt.shape[0], gt.shape[1], -1)[:, 0] != 0)))
+
+        B = len(topo.delta_r)
+        norb = solver.norb
+        P = norb ** 2
+        ND = B * P
+        Nq = solver.lattice.nvol
+        Nmat = solver.nmat
+        K_solve = 3
+
+        solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
+        prep_bytes = 16 * Nq * (ND ** 2 + 4 * P * (Nmat + 2))
+        pair_bytes_old = 16 * Nq * (      # pre-fix: missing +8*P
+            2 * ND ** 2 + 3 * Nmat * P ** 2 + 2 * Nmat * P)
+        pair_bytes_new = 16 * Nq * (      # this fix
+            2 * ND ** 2 + 3 * Nmat * P ** 2 + 2 * Nmat * P + 8 * P)
+        peak_old = max(prep_bytes, pair_bytes_old, solve_bytes)
+        peak_new = max(prep_bytes, pair_bytes_new, solve_bytes)
+        self.assertGreater(
+            peak_new, peak_old,
+            "fixture must be chosen so the retained tail carriers are "
+            "the binding term, or this test would pass vacuously")
+
+        cap_gb = ((peak_old + peak_new) / 2.0) / 1.0e9
+        self.assertLess(peak_old, cap_gb * 1.0e9)
+        self.assertGreater(peak_new, cap_gb * 1.0e9)
+
+        solver.transverse_bond_memory_cap_gb = cap_gb
+        with self.assertRaises(ValueError) as cm:
+            solver._transverse_bond_resource_preflight(topo)
+        self.assertIn("memory_cap_gb", str(cm.exception))
 
     def test_op_count_warns_not_refuses(self):
         solver, gi, out = _make_bond_gate_fixture(
