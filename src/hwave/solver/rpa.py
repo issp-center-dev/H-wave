@@ -4190,15 +4190,82 @@ class RPA:
         ``transverse_bond_memory_cap_gb`` (spec "Phase W -- Budget
         (stated, not deferred)").
 
-        Byte estimate: persistent storage for ``chi0_pm_bond`` +
-        ``W_pm_bond`` + the dressed output + the ``_solve_rpa`` solve
-        workspace, ``(3 + K_solve) * Nq * ND**2 * 16`` bytes with
-        ``ND = B * norb**2`` and ``K_solve = 3`` -- a documented
-        CONSERVATIVE POLICY ALLOWANCE for the numpy backend (LU factor
-        copy + pivots + solve output; the ``_solve_rpa`` block-detection
-        temporary is counted inside it), NOT a guaranteed LAPACK bound:
-        backend-specific workspaces may exceed it, and the cap's safety
-        margin beyond this estimate is the caller's responsibility. Named
+        The pipeline (``_run_transverse_bond_pipeline``, rpa.py) has two
+        phases that do NOT overlap in time -- the bubble phase
+        (``bubble.transverse_bond_bubble_static``, called first) returns
+        its result before the dressing phase (``_solve_rpa``, called
+        second) allocates anything, so the two phases' peaks are taken as
+        a ``max(...)``, not summed: whichever phase is more expensive for
+        the given shapes bounds the run.
+
+        Byte estimate, phase by phase (``itemsize = 16`` for complex128,
+        ``P = norb**2`` the single-channel orbital-pair count, ``ND = B *
+        P`` the bond-enlarged dimension, ``Nq = self.lattice.nvol``,
+        ``Nmat = self.nmat`` -- available here because ``_init_param``
+        (which sets ``self.nmat``, see ``__init__``'s ordered
+        ``_init_mode -> _init_param -> ... -> _init_interaction``
+        sequence) has already run by the time ``solve()`` reaches this
+        preflight call, well before the (still-unrun) longitudinal
+        solve):
+
+        - **Dressing (solve) phase**: persistent storage for
+          ``chi0_pm_bond`` + ``W_pm_bond`` + the dressed output + the
+          ``_solve_rpa`` solve workspace, ``solve_bytes = (3 + K_solve) *
+          Nq * ND**2 * itemsize`` with ``K_solve = 3`` -- a documented
+          CONSERVATIVE POLICY ALLOWANCE for the numpy backend (LU factor
+          copy + pivots + solve output; the ``_solve_rpa`` block-detection
+          temporary is counted inside it), NOT a guaranteed LAPACK bound.
+          This term has NO ``Nmat`` dependence: the solve only ever sees
+          the static (``Omega=0``) slice.
+
+        - **Bubble phase** (previously OMITTED -- this is the fix):
+          ``_run_transverse_bond_pipeline`` builds ``W`` (via
+          ``bond_channels.W_pm_bond``, shape ``(Nq, ND, ND)``) BEFORE
+          calling ``bubble.transverse_bond_bubble_static``, and that call
+          holds ``W`` resident throughout (it is consumed only afterwards,
+          by the dressing phase). Inside the bubble call:
+
+            * ``chi_bar`` (the ``(Nq, ND, ND)`` static accumulator,
+              returned as ``chi0``) is allocated up front and stays live
+              for the whole channel-pair loop -- together with the
+              already-resident ``W`` this contributes
+              ``2 * Nq * ND**2 * itemsize``.
+            * ``_iter_transverse_bond_channel_pairs`` extracts and holds,
+              for the ENTIRE ``B x B`` pair loop, two full-frequency
+              Green carriers ``green_fwd_sgn`` and ``green_rev``, each
+              shape ``(Nmat, Nq, norb, norb)`` (one block out of the
+              ``nblock=2`` up/down pair, the other half released
+              immediately per the Task-4 per-block ``del`` discipline) --
+              contributing ``2 * Nmat * Nq * norb**2 * itemsize``.
+            * Per pair, ``_bond_pair_full_block`` materializes the
+              FULL-frequency block ``(Nmat, Nq, norb, norb, norb, norb)``
+              == ``(Nmat, Nq, P, P)`` (``contract_general``'s outer-product
+              buffer, immediately reinterpreted as the ``(npair, npair)``
+              pair block). Because that buffer is a non-contiguous
+              ``swapaxes`` view, the subsequent ``.reshape`` forces a
+              fresh contiguous copy, and each of the following steps
+              (``spatial_fftn``, ``tau_to_boson``, the final ``*
+              (-1/beta)`` scale) again allocates a fresh
+              ``(Nmat, Nq, P, P)``-sized buffer that briefly coexists with
+              its predecessor until the explicit ``del`` -- so the
+              per-pair transient working set peaks at TWO such buffers,
+              ``2 * Nmat * Nq * P**2 * itemsize`` (``P**2 = norb**4``).
+              Successive pairs reuse this same transient budget (each
+              generator step ``del``s its own ``block`` right after
+              ``yield``), so it does not accumulate across the ``B x B``
+              loop -- only ONE pair's transient set is ever live at once.
+
+          Summing (and using ``P*(P+1) = P**2 + P``, i.e. ``norb**4 +
+          norb**2``, to fold the last two bullets together):
+          ``bubble_bytes = itemsize * Nq * (2*ND**2 +
+          2*Nmat*norb**2*(norb**2 + 1))``.
+
+        ``peak_bytes = max(bubble_bytes, solve_bytes)``. For small ``B``
+        (few bond channels, so ``ND`` and therefore ``solve_bytes`` stay
+        small) and large ``Nmat``, ``bubble_bytes`` -- which has no
+        counterpart bounding it in the old solve-only estimate -- can
+        exceed ``solve_bytes`` arbitrarily; this is exactly the case the
+        old estimate missed and could OOM on after passing the cap. Named
         an ESTIMATE in every user-facing message, per spec.
 
         Also emits a WARNING (never a refusal) when the estimated solve
@@ -4206,40 +4273,58 @@ class RPA:
         still be compute-prohibitive.
         """
         B = int(len(topo.delta_r))
-        ND = B * self.norb ** 2
+        norb = self.norb
+        P = norb ** 2
+        ND = B * P
         Nq = int(self.lattice.nvol)
+        Nmat = int(self.nmat)
         K_solve = 3
         itemsize = 16  # complex128
 
-        peak_bytes = (3 + K_solve) * Nq * (ND ** 2) * itemsize
+        solve_bytes = (3 + K_solve) * Nq * (ND ** 2) * itemsize
+        bubble_bytes = itemsize * Nq * (
+            2 * (ND ** 2) + 2 * Nmat * P * (P + 1))
+        peak_bytes = max(bubble_bytes, solve_bytes)
         op_count = Nq * (ND ** 3)
 
         logger.info(
             "Transverse bond-channel preflight (ESTIMATE): B = %d "
-            "channels, ND = B*norb**2 = %d, N_q = %d, K_solve = %d "
-            "(numpy-backend conservative allowance), estimated peak "
-            "memory = %.3f GB (cap %.3f GB), estimated solve op-count "
+            "channels, ND = B*norb**2 = %d, N_q = %d, Nmat = %d, "
+            "K_solve = %d (numpy-backend conservative allowance), "
+            "estimated bubble-phase peak = %.3f GB, estimated "
+            "solve-phase peak = %.3f GB, estimated overall peak memory "
+            "= %.3f GB (cap %.3f GB), estimated solve op-count "
             "Nq*ND**3 = %.3e",
-            B, ND, Nq, K_solve, peak_bytes / 1.0e9,
+            B, ND, Nq, Nmat, K_solve, bubble_bytes / 1.0e9,
+            solve_bytes / 1.0e9, peak_bytes / 1.0e9,
             self.transverse_bond_memory_cap_gb, op_count)
 
         if peak_bytes > self.transverse_bond_memory_cap_gb * 1.0e9:
             raise ValueError(
                 "[mode.param] transverse_bond_channels: ESTIMATED peak "
                 "memory {:.3f} GB exceeds transverse_bond_memory_cap_gb = "
-                "{:.3f} GB. The estimate is (3 + K_solve) * Nq * ND**2 * "
-                "16 bytes with ND = B*norb**2 = {}, Nq = {}, K_solve = {} "
-                "(a numpy-backend conservative allowance, not a "
-                "guaranteed LAPACK bound). Restrict or remove some "
-                "off-site CoulombInter/Ising/Exchange declarations to "
-                "shrink the channel set B, use a coarser k-mesh, or raise "
-                "transverse_bond_memory_cap_gb. transverse_bond_max_shells "
-                "only helps if the outer shells you would drop are "
-                "declared-zero -- resolve_transverse_topology refuses any "
-                "truncation that would discard a declared nonzero "
-                "off-site coefficient.".format(
+                "{:.3f} GB (bubble-phase estimate {:.3f} GB, solve-phase "
+                "estimate {:.3f} GB; peak = max of the two, they do not "
+                "overlap in time). The solve-phase estimate is "
+                "(3 + K_solve) * Nq * ND**2 * 16 bytes with ND = "
+                "B*norb**2 = {}, Nq = {}, K_solve = {}. The bubble-phase "
+                "estimate is 16 * Nq * (2*ND**2 + 2*Nmat*norb**2*"
+                "(norb**2+1)) bytes with Nmat = {} (both are numpy-backend "
+                "conservative allowances, not guaranteed LAPACK/BLAS "
+                "bounds). Restrict or remove some off-site "
+                "CoulombInter/Ising/Exchange declarations to shrink the "
+                "channel set B, use a coarser k-mesh, reduce Nmat (a "
+                "lever for the bubble-phase estimate specifically, since "
+                "the solve-phase estimate does not depend on it), or "
+                "raise transverse_bond_memory_cap_gb. "
+                "transverse_bond_max_shells only helps if the outer "
+                "shells you would drop are declared-zero -- "
+                "resolve_transverse_topology refuses any truncation that "
+                "would discard a declared nonzero off-site "
+                "coefficient.".format(
                     peak_bytes / 1.0e9, self.transverse_bond_memory_cap_gb,
-                    ND, Nq, K_solve))
+                    bubble_bytes / 1.0e9, solve_bytes / 1.0e9,
+                    ND, Nq, K_solve, Nmat))
 
         if op_count > 1.0e12:
             logger.warning(

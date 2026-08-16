@@ -2304,10 +2304,15 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
         solver.solve(gi, out)
         topo = solver._transverse_bond_topo
         B = len(topo.delta_r)
-        ND = B * solver.norb ** 2
+        norb = solver.norb
+        P = norb ** 2
+        ND = B * P
         Nq = solver.lattice.nvol
+        Nmat = solver.nmat
         K_solve = 3
-        want_peak = (3 + K_solve) * Nq * ND ** 2 * 16
+        solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
+        bubble_bytes = 16 * Nq * (2 * ND ** 2 + 2 * Nmat * P * (P + 1))
+        want_peak = max(bubble_bytes, solve_bytes)
 
         solver.transverse_bond_memory_cap_gb = (want_peak * 0.999) / 1.0e9
         with self.assertRaises(ValueError):
@@ -2315,6 +2320,67 @@ class TestTransverseBondResourcePreflight(ApproxTestCase):
 
         solver.transverse_bond_memory_cap_gb = (want_peak * 1.001) / 1.0e9
         solver._transverse_bond_resource_preflight(topo)  # must not raise
+
+    def test_nmat_sensitivity_bubble_phase_dominates(self):
+        """Regression pin (review fix, must_fix): the OLD preflight
+        formula was solve-phase-only and had NO ``Nmat`` dependence at
+        all, so a cap chosen between two ``Nmat`` values' true peaks would
+        never have distinguished them. With B/Nq/norb held fixed, a small
+        ``Nmat`` must pass a cap that a large ``Nmat`` exceeds, driven
+        through the PUBLIC ``solve()`` entry (not the private preflight
+        method directly), and the rejection must name the bubble-phase
+        contribution."""
+        Nmat_small, Nmat_large = 8, 4096
+
+        # Establish B/norb/Nq once (Nmat-independent: the topology and
+        # lattice do not depend on Nmat) via a throwaway solve with a
+        # cap large enough to pass regardless of Nmat.
+        ref_solver, ref_gi, ref_out = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': 1.0e6},
+            interactions=self.ACTIVE, Nmat=Nmat_small)
+        ref_solver.solve(ref_gi, ref_out)
+        topo = ref_solver._transverse_bond_topo
+        B = len(topo.delta_r)
+        norb = ref_solver.norb
+        P = norb ** 2
+        ND = B * P
+        Nq = ref_solver.lattice.nvol
+        K_solve = 3
+
+        def bubble_bytes_of(nmat):
+            return 16 * Nq * (2 * ND ** 2 + 2 * nmat * P * (P + 1))
+
+        solve_bytes = (3 + K_solve) * Nq * ND ** 2 * 16
+        peak_small = max(bubble_bytes_of(Nmat_small), solve_bytes)
+        peak_large = max(bubble_bytes_of(Nmat_large), solve_bytes)
+        self.assertGreater(
+            peak_large, peak_small,
+            "fixture must be chosen so the large-Nmat bubble estimate "
+            "actually dominates the small-Nmat one")
+
+        cap_gb = ((peak_small + peak_large) / 2.0) / 1.0e9
+        self.assertLess(peak_small, cap_gb * 1.0e9)
+        self.assertGreater(peak_large, cap_gb * 1.0e9)
+
+        solver_small, gi_small, out_small = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': cap_gb},
+            interactions=self.ACTIVE, Nmat=Nmat_small)
+        solver_small.solve(gi_small, out_small)  # must not raise
+        self.assertIn("chiq_pm_bond_static", gi_small)
+
+        solver_large, gi_large, out_large = _make_bond_gate_fixture(
+            transverse_bond_channels=True,
+            param_overrides={'transverse_bond_memory_cap_gb': cap_gb},
+            interactions=self.ACTIVE, Nmat=Nmat_large)
+        with self.assertRaises(ValueError) as cm:
+            solver_large.solve(gi_large, out_large)
+        msg = str(cm.exception)
+        self.assertIn("memory_cap_gb", msg)
+        self.assertTrue("bubble" in msg.lower() or "GB" in msg,
+                         "rejection should name the bubble phase or an "
+                         "estimate value: {}".format(msg))
 
     def test_op_count_warns_not_refuses(self):
         solver, gi, out = _make_bond_gate_fixture(
