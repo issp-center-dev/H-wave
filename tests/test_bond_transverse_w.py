@@ -3300,5 +3300,124 @@ class TestSpinfulLadderOffsiteHundPairLiftWarning(ApproxTestCase):
         self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
 
 
+def _make_spinful_sublattice_offsite_hund_fixture(
+        kind, T=0.5, mu=0.2, Nmat=16, U=0.3, J=0.15,
+        thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+    """Pre-fold-locality-trap regression fixture (coordinator re-review
+    finding: this trap has bitten 3 prior PRs). Same H0/interaction
+    family as ``_make_spinful_offsite_hund_pairlift_fixture``, but under
+    a sublattice: ``CellShape = [2, 3, 1]``, ``SubShape = [2, 1, 1]``
+    (``subvol = 2`` -> ``has_sublattice = True``; folded lattice shape
+    ``(1, 3, 1)``, since ``Bx = 2`` equals ``CellShape``'s x-extent).
+
+    The ``kind`` (``'Hund'``/``'PairLift'``) bond is declared off-site at
+    original-cell ``R = +-1`` along x. Because ``Bx`` equals the FULL
+    x-extent of ``CellShape`` (folded x-shape ``nx = 1``), every
+    supercell-boundary crossing the fold sweeps over collapses back onto
+    the SAME (single) supercell -- so the bond folds ENTIRELY onto
+    ``irvec = (0, 0, 0)`` in ``ham_info.param_ham[kind]`` (the POST-fold
+    table), between two DIFFERENT physical orbitals of the folded
+    supercell (``norb_phys`` doubles to 2 under ``subvol = 2``), with NO
+    residual off-site entry left behind. The PRE-fold table
+    (``ham_info.param_ham_orig[kind]``) still shows the bond exactly as
+    declared, at ``irvec = (+-1, 0, 0)``.
+
+    This is the discriminating property the regression test needs: a
+    reader that (incorrectly) inspected the FOLDED table instead of the
+    pre-fold one would see ZERO off-site content for this fixture and
+    never warn, while a reader of the pre-fold table (the established
+    rule; see ``_append_pairhop``'s own off-site detection in
+    ``Interaction._make_ham_inter``) sees the off-site declaration and
+    warns correctly. Verified directly by the irvec-set assertion in
+    ``TestSpinfulLadderOffsiteWarningPreFoldLocality``, not merely
+    asserted here.
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    d = tempfile.mkdtemp(prefix="rpa_hund_pairlift_fold_")
+    Lx, Ly = 2, 3
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n")
+        f.write("0.0 0.0 0.0\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n2\n3\n1 1 1\n")
+        for i in (1, 2):
+            f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, thop.real, thop.imag))
+            f.write("-1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, np.conj(thop).real, np.conj(thop).imag))
+        f.write(" 0 0 0 1 2 %.12f %.12f\n" % (lso.real, lso.imag))
+        f.write(" 0 0 0 2 1 %.12f %.12f\n" % (lso.real, -lso.imag))
+    _write_w90_entries(os.path.join(d, "coulombintra.dat"),
+                        [(0, 0, 0, 1, 1, U, 0.0)])
+    # off-site (R = +-1 along x), Hermitian-closed real coefficient --
+    # folds entirely onto the supercell origin under SubShape=[2,1,1]
+    # with CellShape x-extent also 2 (see docstring above).
+    _write_w90_entries(os.path.join(d, "kind.dat"),
+                        [(1, 0, 0, 1, 1, J, 0.0), (-1, 0, 0, 1, 1, J, 0.0)])
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat",
+              kind: "kind.dat"}
+
+    param = {"T": T, "mu": mu, "CellShape": [Lx, Ly, 1],
+              "SubShape": [2, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0}
+    info_mode = {"mode": "RPA", "param": param,
+                 "enable_spin_orbital": True, "calc_scheme": "general",
+                 "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_hund_pairlift_fold_out_")
+    return solver, green_info, out_dir
+
+
+class TestSpinfulLadderOffsiteWarningPreFoldLocality(ApproxTestCase):
+    """Coordinator-adjudicated re-review finding: this project's pre-fold
+    locality trap (judging locality on the FOLDED table instead of the
+    original pre-fold declarations) has caused silent defects across 3
+    prior PRs. ``TestSpinfulLadderOffsiteHundPairLiftWarning`` above only
+    ever exercised ``has_sublattice = False``, where
+    ``ham_info.param_ham`` and ``ham_info.param_ham_orig`` are the same
+    object -- a test that would pass identically whether
+    ``RPA._warn_offsite_hund_pairlift_spinful_ladder`` read the pre-fold
+    table or the (there, identical) folded one. This class closes that
+    gap with a fixture where the two tables genuinely differ: an off-site
+    Hund bond that folds ENTIRELY onto the supercell origin, so the
+    folded table alone carries no evidence of it -- the warning firing
+    here is proof the detection reads ``param_ham_orig``, not
+    ``param_ham``.
+    """
+
+    def test_offsite_hund_folded_onto_origin_still_warns(self):
+        solver, gi, out = _make_spinful_sublattice_offsite_hund_fixture(
+            "Hund")
+
+        self.assertTrue(solver.lattice.has_sublattice)
+        orig_irvecs = {irvec for (irvec, _ov)
+                       in solver.ham_info.param_ham_orig["Hund"].keys()}
+        folded_irvecs = {irvec for (irvec, _ov)
+                          in solver.ham_info.param_ham["Hund"].keys()}
+        self.assertTrue(
+            orig_irvecs - {(0, 0, 0)},
+            "fixture must genuinely declare Hund off-site in the "
+            "PRE-fold table: {}".format(orig_irvecs))
+        self.assertEqual(
+            folded_irvecs, {(0, 0, 0)},
+            "fixture must fold the off-site Hund bond ENTIRELY onto the "
+            "supercell origin (no residual off-site entry in the FOLDED "
+            "table), so a folded-table read would see none at all: "
+            "folded irvecs={}".format(folded_irvecs))
+
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(gi, out)
+        self.assertEqual(solver.spin_mode, "spinful")
+        msgs = "\n".join(cm.output)
+        self.assertIn("Hund", msgs)
+        self.assertIn("partially", msgs.lower())
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+
 if __name__ == "__main__":
     unittest.main()
