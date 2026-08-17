@@ -3838,15 +3838,18 @@ class RPA:
                 "orbital axes {} do not match nd=2*norb={} (norb={}, "
                 "from the solver) in every slot".format(
                     sol.shape[2:], nd, norb))
-        # Materialize an independent contiguous array: the bare slice is
-        # a VIEW into `sol`, and on the CPU backend `_bk.to_host` is an
-        # identity operation -- storing the view would make the public
-        # chiq_pm share memory with chiq (the removed slice-then-solve
-        # path returned an independent array; the CuPy path was already
-        # independent because asnumpy copies).
-        xp = _bk.array_module_of(sol)
-        return xp.ascontiguousarray(
-            sol[..., 0:norb, norb:2 * norb, 0:norb, norb:2 * norb])
+        # Materialize an INDEPENDENT array: the bare slice is a VIEW into
+        # `sol`, and on the CPU backend `_bk.to_host` is an identity
+        # operation -- storing the view would make the public chiq_pm
+        # share memory with chiq (the removed slice-then-solve path
+        # returned an independent array; the CuPy path was already
+        # independent because asnumpy copies). An unconditional .copy()
+        # (not ascontiguousarray, which returns an already-contiguous
+        # view UNCHANGED -- reachable via the public
+        # matsubara_frequency="center" single-frequency restriction with
+        # norb=1 and a 1-site cell) guarantees the allocation on both
+        # backends at the same cost on the generic non-contiguous case.
+        return sol[..., 0:norb, norb:2 * norb, 0:norb, norb:2 * norb].copy()
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):

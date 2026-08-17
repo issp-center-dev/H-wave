@@ -1976,8 +1976,6 @@ class TestSpinfulVertexExchangeOptOutRingLadderRejection(unittest.TestCase):
             "identical output")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestChiqPmMemoryIndependence(unittest.TestCase):
@@ -2004,3 +2002,60 @@ class TestChiqPmMemoryIndependence(unittest.TestCase):
             self.assertEqual(chiq[tuple(0 for _ in chiq.shape)], before)
         finally:
             chiq_pm_flat[0] = original
+
+
+class TestChiqPmDegenerateSliceIndependence(unittest.TestCase):
+    """Boundary regression for the extraction copy (final-review fix):
+    with the PUBLIC ``matsubara_frequency="center"`` single-frequency
+    restriction, ``norb=1`` and a 1-site cell, the extraction slice is a
+    one-element C-CONTIGUOUS view -- ``ascontiguousarray`` would return
+    it UNCHANGED and the public chiq_pm would alias chiq. The
+    unconditional ``.copy()`` must keep them independent even here."""
+
+    def test_single_frequency_one_site_extraction_is_independent(self):
+        d = tempfile.mkdtemp(prefix="degenerate_alias_")
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n")
+            f.write("0.0 0.0 0.0\n0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            # 1-site spinful: on-site spin-flip term only (physical
+            # norb=1 under enable_spin_orbital -> 2 spin-orbitals).
+            f.write("hdr\n2\n3\n1 1 1\n")
+            f.write(" 0 0 0 1 1 0.10 0.0\n")
+            f.write(" 0 0 0 1 2 0.35 0.15\n")
+            f.write(" 0 0 0 2 1 0.35 -0.15\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("hdr\n1\n1\n1\n 0 0 0 1 1 0.3 0.0\n")
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat",
+                 "CoulombIntra": "coulombintra.dat"}
+        param = {"T": 0.5, "mu": 0.2, "CellShape": [1, 1, 1],
+                 "SubShape": [1, 1, 1], "Nmat": 8,
+                 "matsubara_frequency": "center"}
+        info_mode = {"mode": "RPA", "param": param,
+                     "enable_spin_orbital": True,
+                     "calc_scheme": "general",
+                     "calc_type": "ring+ladder"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+        green_info = io.get_param("green")
+        solver.solve(green_info, tempfile.mkdtemp(prefix="degen_out_"))
+        self.assertEqual(solver.spin_mode, "spinful")
+        chiq = np.asarray(green_info["chiq"])
+        chiq_pm = np.asarray(green_info["chiq_pm"])
+        # the degenerate boundary this test exists for:
+        self.assertEqual(chiq_pm.size, 1)
+        self.assertFalse(np.shares_memory(chiq, chiq_pm))
+        before = chiq.reshape(-1)[0]
+        pm_flat = chiq_pm.reshape(-1)
+        original = pm_flat[0]
+        try:
+            pm_flat[0] = original + (1.0 + 1.0j)
+            self.assertEqual(chiq.reshape(-1)[0], before)
+        finally:
+            pm_flat[0] = original
+
+
+if __name__ == "__main__":
+    unittest.main()
