@@ -864,6 +864,306 @@ class SectorED:
 
 
 # ---------------------------------------------------------------------------
+# Total-N sector ED engine (Phase S, Task 1): the Sz-BREAKING oracle #110's
+# validation depends on. Appended below SectorED, never editing it.
+# ---------------------------------------------------------------------------
+
+class TotalNED:
+    """Exact diagonalization by TOTAL-N symmetry block ALONE, for a
+    Hamiltonian H1(+terms) - mu*N that need NOT conserve N_up and N_dn
+    separately -- in particular, one whose one-body part ``h1`` carries a
+    Sz-BREAKING (spin-off-diagonal) entry such as a spin-orbit hop
+    ``t_so * c^dagger_{...,up} c_{...,dn}``, which ``SectorED``'s
+    (N_up, N_dn) blocking cannot represent (``SectorED._sector_hamiltonian``
+    raises ``AssertionError`` on any such entry above ``_SECTOR_FLOOR`` --
+    by design, since SectorED's block structure assumes it away).
+
+    Sector algebra (derived, not assumed)
+    --------------------------------------
+    Every bilinear this module ever builds is of the shape
+    ``c^dagger_p c_q`` (one creation operator, one annihilation operator),
+    whatever the spin parities of ``p`` and ``q`` happen to be: the free
+    ``h1`` (however it mixes spin), the density/bond/pair-channel
+    operators, and in particular the TRANSVERSE bond bilinear
+    ``S^+_{R,a,b}(q) = sum_j e^{iqj} c^dagger_{j+R,a,up} c_{j,b,dn}`` that
+    ``bond_correlator_transverse`` builds. A single creation plus a single
+    annihilation always changes the TOTAL particle number N = N_up + N_dn
+    by exactly ``(+1) + (-1) = 0`` -- REGARDLESS of whether ``p`` and
+    ``q`` carry the same spin or opposite spin. So under TOTAL-N blocking
+    (this class), every such bilinear is BLOCK-DIAGONAL (sector shift
+    ``delta_N = 0``) -- in sharp contrast to ``SectorED``, where the
+    SAME mixed-spin transverse bilinear shifts ``(N_up, N_dn)`` by
+    ``(+1, -1)`` (a genuine off-diagonal shift in that finer grading) and
+    must be tracked through the cross-sector ``_lehmann_dagger`` machinery.
+    The two statements are consistent: ``(+1) + (-1) = 0`` is exactly
+    SectorED's per-sector shift collapsed onto the coarser TOTAL-N label.
+    This is precisely why TotalNED can host an Sz-breaking ``h1`` (h1's own
+    matrix elements are of the same c^dagger_p c_q shape, hence also
+    delta_N = 0, hence also block-diagonal here) where SectorED cannot: a
+    Sz-breaking off-diagonal entry moves probability WITHIN a total-N
+    sector's Hilbert space, never OUT of it, so the total-N Hamiltonian
+    block is exactly as valid a restriction of the full ``H1 - mu*N`` as
+    SectorED's finer (N_up, N_dn) blocks are for a Sz-conserving one.
+
+    ``_build_operator``'s ``delta`` return is therefore ALWAYS ``0`` here
+    (never a two-tuple, unlike SectorED's ``(dNup, dNdn)``) -- the
+    contract still mirrors SectorED's ``(delta, op)`` shape, just over the
+    coarser (single-int) sector label, so ``_lehmann_dagger`` and
+    ``bond_correlator_transverse`` reuse SectorED's algorithms verbatim
+    with ``(N_up, N_dn)`` tuples replaced by a bare ``int`` total N.
+
+    Only ``bond_correlator_transverse`` and the ``_build_operator``/
+    ``_lehmann_dagger`` machinery it needs are implemented here (Task 1's
+    scope) -- ``chi_connected``/``bond_correlator``/``pair_correlator``
+    analogues are not needed by this task and are left for a future task
+    to add, in the same append-only style, if Phase S needs them.
+
+    Hilbert-space cost: the largest TOTAL-N block (N = nmode/2) is
+    STRICTLY LARGER than SectorED's largest (N_up, N_dn) block of the
+    same fixture (e.g. at L=2, norb=1: dim=16 total, SectorED's largest
+    block is (N_up,N_dn)=(1,1), dim 4; TotalNED's largest block is N=2,
+    dim 6 -- C(4,2) versus C(2,1)*C(2,1)), since it sums every (N_up,
+    N_dn) split with that total over the binomial coefficient. This is
+    the exponential blow-up the brief's runtime budget warns about, so
+    fixtures for this class are kept minimal (L=2-3, norb=1-2).
+    """
+
+    _SECTOR_FLOOR = 1e-9   # same defensive role as SectorED's: any H matrix
+                            # element landing outside the TOTAL-N sector it
+                            # was built from would be a genuine bug (every
+                            # c^dagger_p c_q / quartic term this module
+                            # builds is total-N-conserving by construction,
+                            # so this should never actually fire) rather
+                            # than something to silently drop.
+
+    def __init__(self, fx, terms=(), h1=None):
+        self.fx = fx
+        self.terms = list(terms)
+        self.h1 = fx.build_h1() if h1 is None else h1
+        self._kernel_cache = {}   # (key_m, key_n) -> _pair_kernel result;
+                                   # same per-sector-pair memoization
+                                   # rationale as SectorED._kernel_cache.
+        self._build_sectors()
+
+    # -- sector bookkeeping ------------------------------------------------
+
+    def _build_sectors(self):
+        fx = self.fx
+        sector_states = {}
+        for state in range(fx.dim):
+            n = bin(state).count("1")
+            sector_states.setdefault(n, []).append(state)
+        sector_index = {
+            key: {s: i for i, s in enumerate(states)}
+            for key, states in sector_states.items()
+        }
+        self._sector_states = sector_states
+        self._sector_index = sector_index
+
+        raw_ev, V = {}, {}
+        for key, states in sector_states.items():
+            Hloc = self._sector_hamiltonian(states, sector_index[key])
+            Kloc = Hloc - fx.mu * key * np.eye(len(states))
+            with np.errstate(all="ignore"):
+                ev_k, V_k = np.linalg.eigh(Kloc)
+            raw_ev[key] = ev_k
+            V[key] = V_k
+        gmin = min(ev_k.min() for ev_k in raw_ev.values())
+        ev = {key: ev_k - gmin for key, ev_k in raw_ev.items()}
+        w_unnorm = {key: np.exp(-fx.beta * ev_k) for key, ev_k in ev.items()}
+        z = sum(w_k.sum() for w_k in w_unnorm.values())
+        w = {key: w_k / z for key, w_k in w_unnorm.items()}
+        self._ev, self._w, self._V = ev, w, V
+
+    def _sector_hamiltonian(self, states, index_map):
+        """Dense (M, M) H = H1 + terms restricted to one TOTAL-N sector,
+        via direct bit-level second quantization -- same construction as
+        ``SectorED._sector_hamiltonian``, just blocked by total N (a
+        single int) instead of (N_up, N_dn), which is what lets ``h1``
+        carry a Sz-breaking (spin-off-diagonal) entry here: such an entry
+        is still of the total-N-conserving ``c^dagger_p c_q`` shape (see
+        the class docstring), so it never needs a bra sector outside this
+        block."""
+        fx = self.fx
+        M = len(states)
+        Hloc = np.zeros((M, M), dtype=complex)
+        dropped = 0.0
+        for p in range(fx.nmode):
+            for q in range(fx.nmode):
+                coeff = self.h1[p, q]
+                if coeff == 0:
+                    continue
+                for col, state in enumerate(states):
+                    r = _apply_pq(state, p, q)
+                    if r is None:
+                        continue
+                    new_state, sign = r
+                    row = index_map.get(new_state)
+                    if row is None:
+                        dropped = max(dropped, abs(coeff))
+                        continue
+                    Hloc[row, col] += coeff * sign
+        for (p, q, r, s, coeff) in self.terms:
+            for col, state in enumerate(states):
+                res = _apply_pqrs(state, p, q, r, s)
+                if res is None:
+                    continue
+                new_state, sign = res
+                row = index_map.get(new_state)
+                if row is None:
+                    dropped = max(dropped, abs(coeff))
+                    continue
+                Hloc[row, col] += coeff * sign
+        if dropped > self._SECTOR_FLOOR:
+            raise AssertionError(
+                "TotalNED: h1/terms have a total-N-non-conserving matrix "
+                "element of magnitude {:.3e} -- every bilinear/quartic "
+                "term TotalNED accepts is of the c^dagger_p c_q shape "
+                "and must conserve TOTAL N (see the class docstring's "
+                "sector algebra); this element does not, which points at "
+                "a real bug in the caller's h1/terms".format(dropped))
+        return Hloc
+
+    # -- generic bilinear machinery -----------------------------------------
+
+    def _build_operator(self, mode_terms):
+        """mode_terms: [(p, q, weight), ...] for sum_j weight_j *
+        c^dag_p c_q. Returns (delta, op): delta is ALWAYS 0 -- see the
+        class docstring's sector algebra (a single creation plus a single
+        annihilation never changes total N, whatever the spin parities of
+        p and q are, so this holds for a same-spin OR a mixed-spin
+        mode_terms list alike, unlike SectorED's ``(dNup, dNdn)`` which
+        genuinely differs between the two cases). op maps EVERY ket
+        sector key present in the fixture to its dense block in the
+        SECTOR EIGENBASIS (the bra sector always equals the ket sector,
+        since delta == 0, so nothing is ever absent from the dict)."""
+        delta = 0
+        op = {}
+        for key_ket, states_ket in self._sector_states.items():
+            states_bra = states_ket
+            idx_bra = self._sector_index[key_ket]
+            block = np.zeros((len(states_bra), len(states_ket)), dtype=complex)
+            for col, state in enumerate(states_ket):
+                for (p, q, weight) in mode_terms:
+                    r = _apply_pq(state, p, q)
+                    if r is None:
+                        continue
+                    new_state, sign = r
+                    block[idx_bra[new_state], col] += weight * sign
+            op[key_ket] = self._V[key_ket].conj().T @ block @ self._V[key_ket]
+        return delta, op
+
+    def _thermal_avg(self, op, delta):
+        if delta != 0:
+            return 0.0
+        total = 0.0
+        for key, block in op.items():
+            total += (self._w[key] * np.diag(block)).sum()
+        return total
+
+    def _pair_kernel(self, key_m, key_n):
+        """K[m, n] across sectors key_m (rows) and key_n (cols) -- same
+        construction and memoization rationale as
+        ``SectorED._pair_kernel``, just keyed by a bare int total N
+        instead of a (N_up, N_dn) tuple."""
+        cache_key = (key_m, key_n)
+        cached = self._kernel_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        ev_m, w_m = self._ev[key_m], self._w[key_m]
+        ev_n, w_n = self._ev[key_n], self._w[key_n]
+        ev_cat = np.concatenate([ev_m, ev_n])
+        w_cat = np.concatenate([w_m, w_n])
+        M = len(ev_m)
+        K = _static_kernel(ev_cat, w_cat, self.fx.beta)[:M, M:]
+        self._kernel_cache[cache_key] = K
+        return K
+
+    def _lehmann_dagger(self, opA, deltaA, opB, deltaB):
+        """sum_{m,n} K[m,n] A[m,n] conj(B[m,n]), i.e. <A; B^dagger>; both A
+        and B map ket -> ket+delta, so a nonzero result needs
+        deltaA == deltaB -- identical contract to
+        ``SectorED._lehmann_dagger``, just over the coarser total-N sector
+        label (here deltaA == deltaB == 0 always, for every bilinear this
+        module builds, so the gate is trivially satisfied rather than a
+        genuine constraint -- kept for exact parity with SectorED's shape
+        rather than special-cased away)."""
+        if deltaA != deltaB:
+            return 0.0
+        total = 0.0
+        for key_n, blockA in opA.items():
+            key_m = key_n + deltaA
+            blockB = opB.get(key_n)
+            if blockB is None:
+                continue
+            K = self._pair_kernel(key_m, key_n)
+            total += (K * blockA * np.conj(blockB)).sum()
+        return total
+
+    def _channel_orbitals(self, chan):
+        if self.fx.norb == 1:
+            (R,) = chan
+            return R, 0, 0
+        R, a, b = chan
+        return R, a, b
+
+    # -- public correlators --------------------------------------------
+
+    def bond_correlator_transverse(self, channels):
+        """Xpm[q, I, J], connected, of the TRANSVERSE (spin-flip) bond
+        bilinear S^+_{R,a,b}(q) = sum_j e^{+iqj} c^dag_{j+R,a,up}
+        c_{j,b,dn} against the conjugate leg S^+_{R',a',b'}(q)^dagger --
+        the IDENTICAL contract as ``SectorED.bond_correlator_transverse``
+        (same channel/duplicate-rejection rule, same spin assignment, same
+        ``_lehmann_dagger`` contraction, same connected subtraction, same
+        1/fx.L normalization, same (fx.L, NI, NJ) complex128 output shape)
+        -- see that method's docstring for the full convention writeup,
+        which this method does not repeat. The ONLY difference is internal:
+        this class's ``_build_operator``/``_lehmann_dagger`` block by
+        TOTAL N rather than (N_up, N_dn) (see the class docstring's sector
+        algebra), which is what lets ``self.h1`` carry a Sz-breaking term
+        -- SectorED would reject such an h1 outright in
+        ``_sector_hamiltonian``, or (if the violation happened to be below
+        ``_SECTOR_FLOOR``) silently compute on a Sz-conserving
+        approximation of it instead of the real Hamiltonian.
+        """
+        fx = self.fx
+        seen = set()
+        wrapped = []
+        for chan in channels:
+            R, a, b = self._channel_orbitals(chan)
+            Rw = R % fx.L
+            key = (Rw, a, b)
+            if key in seen:
+                raise ValueError(
+                    "bond_correlator_transverse: duplicate channel {!r} "
+                    "after wrapping R mod L (wrapped key {!r})".format(
+                        chan, key))
+            seen.add(key)
+            wrapped.append((Rw, a, b))
+        n_i = len(wrapped)
+        out = np.zeros((fx.L, n_i, n_i), dtype=complex)
+        for qi in range(fx.L):
+            built = []   # built[I] = (delta, op, avg)
+            for (R, a, b) in wrapped:
+                mode_terms = [
+                    (fx.mode((j + R) % fx.L, a, 0),
+                     fx.mode(j, b, 1),
+                     np.exp(2j * np.pi * qi * j / fx.L))
+                    for j in range(fx.L)]
+                delta, op = self._build_operator(mode_terms)
+                built.append((delta, op, self._thermal_avg(op, delta)))
+            for i in range(n_i):
+                deltaA, opA, avgA = built[i]
+                for j in range(n_i):
+                    deltaB, opB, avgB = built[j]
+                    val = self._lehmann_dagger(opA, deltaA, opB, deltaB)
+                    val -= fx.beta * avgA * np.conj(avgB)
+                    out[qi, i, j] = val
+        return out / fx.L
+
+
+# ---------------------------------------------------------------------------
 # Adjudication machinery (#151, Task 6): the shared verdict rule and the
 # structural-zero support propagation, used by ph (Task 6/8) and pp
 # (Task 7/8) alike.

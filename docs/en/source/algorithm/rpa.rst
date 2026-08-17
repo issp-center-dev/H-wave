@@ -531,13 +531,19 @@ longitudinal (``ring``) channel is unaffected.
    longitudinal and transverse channels. Validation of such degenerate entries
    is tracked separately.
 
-The transverse RPA susceptibility is obtained as
+In every mode except a genuinely spin-mixing spin-orbital Hamiltonian
+(spin-free, spin-diag, and the Sz-conserving spin-orbital case), the
+transverse RPA susceptibility is obtained from the self-contained vertex
+:math:`W_{+-}` above as
 
 .. math::
 
    \hat{X}_{+-}(\mathbf{q})
    = \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
      \hat{X}^{(0)}_{+-}(\mathbf{q})
+
+The genuinely spin-mixing spin-orbital case is handled differently; see
+the note below.
 
 To enable the transverse channel calculation, set ``calc_type = "ring+ladder"``
 in the input TOML file. This requires the ``general`` calculation scheme
@@ -546,11 +552,27 @@ in the input TOML file. This requires the ``general`` calculation scheme
 .. note::
 
    In the spin-orbital mode, when the Hamiltonian genuinely mixes spins
-   (e.g. spin-orbit coupling), the transverse channel extracts only the
-   :math:`S_z`-conserving block :math:`G_\uparrow G_\downarrow` of the
-   bubble; the spin-mixing cross terms are not included, and a warning
-   is emitted. The transverse susceptibility of a spin-mixing system is
-   therefore an approximation in the current implementation.
+   (e.g. spin-orbit coupling), the equation above does not apply.
+   Instead the transverse channel is obtained by dressing the full
+   spin-orbital space with the same antisymmetrized vertex (the direct
+   interaction plus its on-site exchange crossing) the longitudinal
+   spinful solve uses -- see ``spinful_vertex_exchange`` in the
+   configuration reference -- and then extracting
+   :math:`\chi_{+-}(\mathbf{q})` as the spin-flip block of that dressed
+   tensor. Spin-mixing cross terms are therefore included only at the
+   level of that antisymmetrized vertex, not exactly: the exchange
+   crossing of an *off-site* interaction depends on two independent
+   fermionic momenta and cannot be written as a single vertex
+   :math:`W(\mathbf{q})`, so it is not implemented. Among the interaction
+   types, only off-site ``Hund`` and ``PairLift`` declarations reach this
+   dressing at all (every other type is either rejected or discarded when
+   declared off-site, as described above), so their transverse content is
+   only *partially* included, and a warning is logged when such a
+   declaration is present. Because the extraction reuses the
+   antisymmetrized longitudinal solve, the combination
+   ``spinful_vertex_exchange = false`` (a ring-only compatibility switch,
+   see the configuration reference) with ``calc_type = "ring+ladder"`` and
+   a genuinely spin-mixing Hamiltonian is rejected.
 
 
 Spin-orbital mode

@@ -1872,12 +1872,18 @@ def _make_bond_gate_fixture(*, transverse_bond_channels=None,
 
 
 def _make_spinful_bond_gate_fixture(T=0.5, mu=0.2, Lx=4, Nmat=32, U=0.3,
-                                     thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+                                     thop=0.7 + 0.3j, lso=0.35 + 0.15j,
+                                     transverse_bond_channels=True):
     """norb_phys=1 ``enable_spin_orbital`` ring+ladder fixture with a
     genuine spin-mixing transfer term (off-diagonal generalized-index
-    hopping ``lso``), reaching ``solver.spin_mode == 'spinful'`` -- the
-    combination the bond gate's prereq validator must reject (spec
-    ``spin_mode="spinful"`` -> reject until Phase S). Mirrors
+    hopping ``lso``), reaching ``solver.spin_mode == 'spinful'``.
+
+    ``transverse_bond_channels`` defaults True -- the combination the
+    bond gate's prereq validator must reject (spec: spinful x bond stays
+    rejected in Phase S). Passing False (post-S matrix row) instead
+    exercises the now-accepted PLAIN spinful ring+ladder path (Phase S,
+    Tasks 3-4): the bond gate is simply off, so this is the same fixture
+    family with only the gate flag flipped. Mirrors
     ``tests/test_rpa_spinful_vertex_exchange.py``'s ``TestVertexExtraction``
     / ``_run_rpa`` construction pattern, the SAME fixture family that
     already established this combination reaches ``spin_mode ==
@@ -1910,7 +1916,7 @@ def _make_spinful_bond_gate_fixture(T=0.5, mu=0.2, Lx=4, Nmat=32, U=0.3,
 
     param = {"T": T, "mu": mu, "CellShape": [Lx, 1, 1],
              "SubShape": [1, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0,
-             "transverse_bond_channels": True}
+             "transverse_bond_channels": transverse_bond_channels}
     info_mode = {"mode": "RPA", "param": param,
                  "enable_spin_orbital": True, "calc_scheme": "general",
                  "calc_type": "ring+ladder"}
@@ -2196,6 +2202,159 @@ class TestTransverseBondGatePrereqs(ApproxTestCase):
         with self.assertRaises(ValueError) as cm:
             solver.solve(gi, out)
         self.assertIn("externally supplied chi0q", str(cm.exception))
+
+
+class TestTransverseBondGateSpinfulMatrix(ApproxTestCase):
+    """Post-Phase-S production-surface matrix rows (spec "Production
+    surface"): with the #110 fix landed (Phase S, Tasks 3-4) the PLAIN
+    spinful ring+ladder transverse channel is fully supported, while the
+    spinful x bond-gate COMPOSITION remains a hard rejection. Two rows:
+
+    (a) plain ring+ladder, ``spin_mode == 'spinful'``, gate OFF:
+        accepted, ``chiq_pm`` present with the full-frequency (dynamic)
+        6-dim shape ``_extract_transverse_from_dressed`` produces, and
+        the deleted #110 "cross terms are not included" warning never
+        logged.
+    (b) spinful + ``transverse_bond_channels=true``: still rejected, and
+        the rejection message names the DEFERRED spinful x bond
+        COMPOSITION specifically -- not spinful transverse in general,
+        which row (a) here just proved is supported.
+
+    Same fixture family (``_make_spinful_bond_gate_fixture``) for both
+    rows, differing only in the gate flag -- isolating the config
+    surface, not the physics (already ED-adjudicated by Gate S0/S2 in
+    ``tests/test_spinful_transverse_ed.py``).
+    """
+
+    # The exact text of the #110 warning the pre-Phase-S branch used to
+    # log (see commit 9c1e8232's deleted lines: "spinful transverse
+    # (ladder) channel extracts the Sz-conserving block (G_up*G_down);
+    # for genuine spin-mixing (spin-orbit coupling) the cross terms are
+    # not included."); must never appear again on the plain spinful path
+    # now that the fix routes through `_extract_transverse_from_dressed`
+    # (slice-AFTER-solve) instead of slicing chi0 and re-solving it.
+    _DELETED_110_WARNING_FRAGMENT = "cross terms are not included"
+
+    def test_plain_spinful_accepted_full_freq_chiq_pm_no_110_warning(self):
+        solver, gi, out = _make_spinful_bond_gate_fixture(
+            transverse_bond_channels=False)
+        self.assertIs(solver.transverse_bond_channels, False)
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Capture(level=logging.WARNING)
+        rpa_logger = logging.getLogger("hwave.solver.rpa")
+        # Explicitly force the logger's OWN level to WARNING for the
+        # duration of the capture (logging filters at the LOGGER before
+        # ever reaching a handler): without this, a test runner or an
+        # earlier test that raised this logger's effective level above
+        # WARNING would silence the very warning this test is checking
+        # for, making the "no warning logged" assertion below pass
+        # vacuously (review fix).
+        prev_level = rpa_logger.level
+        rpa_logger.setLevel(logging.WARNING)
+        rpa_logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)  # must not raise
+        finally:
+            rpa_logger.removeHandler(handler)
+            rpa_logger.setLevel(prev_level)
+
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertIn("chiq_pm", gi)
+        self.assertIsNotNone(gi["chiq_pm"])
+        self.assertNotIn("chiq_pm_bond_static", gi)
+        self.assertNotIn("chiq_pm_static", gi)
+
+        # Full-frequency (dynamic), 6-dim, DERIVED from the dressed
+        # (nfreq, nvol, nd, nd, nd, nd) general spinful tensor by slicing
+        # nd=2*norb down to norb on all four orbital legs
+        # (_extract_transverse_from_dressed) -- same leading (nfreq,
+        # nvol) axes as chiq itself, not a static/zero-frequency-only
+        # array.
+        chiq_pm = gi["chiq_pm"]
+        chiq = gi["chiq"]
+        self.assertEqual(chiq_pm.ndim, 6)
+        self.assertEqual(chiq_pm.shape[0], chiq.shape[0])
+        self.assertGreater(chiq_pm.shape[0], 1)
+        self.assertEqual(chiq_pm.shape[1], solver.lattice.nvol)
+        self.assertEqual(chiq_pm.shape[2:], (solver.norb,) * 4)
+
+        messages = [r.getMessage() for r in records]
+        self.assertFalse(
+            any(self._DELETED_110_WARNING_FRAGMENT in m for m in messages),
+            "the deleted issue #110 'cross terms are not included' "
+            "warning must never be logged on the now-accepted plain "
+            "spinful transverse path (Phase S): {}".format(messages))
+
+    def test_plain_spinful_npz_carries_established_provenance_only(self):
+        """Step 2 (npz metadata): the plain spinful run's ``chiq.npz``
+        must carry the SAME provenance every plain (non-bond) ``chiq.npz``
+        carries (``index_convention='spin_block'``, per
+        ``validate_chi0q_index_convention`` /
+        ``tests/test_rpa_output.py``) -- there is no additional per-run
+        spin_mode string for the legacy ``chiq_pm`` key.
+        ``transverse_spin_mode`` and the rest of the
+        ``transverse_bond_*``/``transverse_*`` schema keys are written
+        ONLY on the gate-owned ``chiq_pm_bond_static`` branch (rpa.py
+        ``save_results``, guarded by
+        ``green_info.get("chiq_pm_bond_static") is not None``) -- gate
+        OFF here, so none of them apply; asserting their absence pins
+        that the plain spinful path did not spuriously pick up gate-only
+        metadata."""
+        solver, gi, out = _make_spinful_bond_gate_fixture(
+            transverse_bond_channels=False)
+        solver.solve(gi, out)
+        solver.save_results(
+            {'path_to_output': out, 'chiq': 'chiq.npz'}, gi)
+
+        data = np.load(os.path.join(out, 'chiq.npz'), allow_pickle=True)
+
+        self.assertIn("chiq_pm", data.files)
+        self.assertEqual(str(data["index_convention"]), "spin_block")
+
+        chiq_pm = data["chiq_pm"]
+        self.assertEqual(chiq_pm.ndim, 6)
+        self.assertEqual(tuple(chiq_pm.shape[2:]), (solver.norb,) * 4)
+        self.assertEqual(chiq_pm.shape[0], data["chiq"].shape[0])
+        self.assertEqual(chiq_pm.shape[1], solver.lattice.nvol)
+
+        for key in ("chiq_pm_bond_static", "chiq_pm_static",
+                    "transverse_bond_schema_version",
+                    "transverse_output_kind", "transverse_bond_delta_r",
+                    "transverse_bond_reverse", "transverse_bond_index_order",
+                    "transverse_bond_max_shells", "transverse_spatial_shape",
+                    "transverse_q_convention", "transverse_spin_mode",
+                    "transverse_normalization"):
+            self.assertNotIn(key, data.files)
+
+    def test_spinful_bond_composition_rejected_message_names_deferral(self):
+        """Row (b): spinful + ``transverse_bond_channels=true`` stays
+        rejected (spec: "spinful x bond stays rejected"), and the
+        message must name the DEFERRED spinful x bond COMPOSITION
+        specifically -- not claim spinful transverse support is missing
+        in general, which row (a) above just proved false post-S."""
+        solver, gi, out = _make_spinful_bond_gate_fixture(
+            transverse_bond_channels=True)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        msg = str(cm.exception)
+
+        self.assertIn("spin_mode='spinful'", msg)
+        self.assertIn("transverse_bond_channels", msg)
+        # Precise about WHAT is deferred (the composition), not a
+        # blanket "spinful unsupported" claim -- and self-contained (no
+        # reference to an internal doc/issue the reader would need to
+        # chase down to understand the message).
+        self.assertIn("deferred", msg.lower())
+        self.assertIn("PLAIN", msg)
+        self.assertIn("fully supported", msg)
+        self.assertNotIn("planned extension", msg)
+        self.assertNotIn("#110", msg)
 
 
 class TestTransverseBondMaxShellsThreading(ApproxTestCase):
@@ -2992,6 +3151,301 @@ class TestAggregateCoulombCaseInsensitiveMerge(ApproxTestCase):
             "chiq_pm_static must be bitwise identical between the "
             "lowercase-key and canonical-case-key routes "
             "(max|diff|={:.3e})".format(diff_pm))
+
+
+def _make_spinful_offsite_hund_pairlift_fixture(
+        kind, offsite, T=0.5, mu=0.2, Lx=4, Nmat=16, U=0.3, J=0.15,
+        thop=0.7 + 0.3j, lso=0.35 + 0.15j, offsite_J=None):
+    """norb_phys=1 spinful ring+ladder fixture (genuine spin-mixing
+    transfer term ``lso``, reaching ``solver.spin_mode == 'spinful'`` --
+    same H0 family as ``_make_spinful_bond_gate_fixture``) declaring an
+    on-site ``CoulombIntra`` plus a single ``kind`` (``'Hund'`` or
+    ``'PairLift'``) declaration that is either on-site only
+    (``offsite=False``, the negative control -- no warning expected) or
+    additionally carries a Hermitian-closed off-site pair at
+    ``R = +-1`` along x (``offsite=True`` -- the positive control for
+    ``RPA._warn_offsite_hund_pairlift_spinful_ladder``).
+
+    The bond gate (``transverse_bond_channels``) is never set here: the
+    warning under test fires on the PLAIN spinful ladder path
+    (``elif self.spin_mode == "spinful":`` in ``RPA._solve_impl``), not
+    the (mutually exclusive) bond-resolved one.
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    d = tempfile.mkdtemp(prefix="rpa_hund_pairlift_warn_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n")
+        f.write("0.0 0.0 0.0\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n2\n3\n1 1 1\n")
+        for i in (1, 2):
+            f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, thop.real, thop.imag))
+            f.write("-1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, np.conj(thop).real, np.conj(thop).imag))
+        f.write(" 0 0 0 1 2 %.12f %.12f\n" % (lso.real, lso.imag))
+        f.write(" 0 0 0 2 1 %.12f %.12f\n" % (lso.real, -lso.imag))
+    _write_w90_entries(os.path.join(d, "coulombintra.dat"),
+                        [(0, 0, 0, 1, 1, U, 0.0)])
+
+    entries = [(0, 0, 0, 1, 1, J, 0.0)]
+    if offsite:
+        # Hermitian-closed (R, a, a) / (-R, a, a) pair, real coefficient
+        # (#93 read-time closure requirement). ``offsite_J`` overrides the
+        # off-site coefficient alone (0.0 = a retained zero-valued
+        # placeholder entry, which must NOT trigger the warning).
+        Joff = J if offsite_J is None else offsite_J
+        entries += [(1, 0, 0, 1, 1, Joff, 0.0),
+                    (-1, 0, 0, 1, 1, Joff, 0.0)]
+    _write_w90_entries(os.path.join(d, "kind.dat"), entries)
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat",
+              kind: "kind.dat"}
+
+    param = {"T": T, "mu": mu, "CellShape": [Lx, 1, 1],
+              "SubShape": [1, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0}
+    info_mode = {"mode": "RPA", "param": param,
+                 "enable_spin_orbital": True, "calc_scheme": "general",
+                 "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_hund_pairlift_warn_out_")
+    return solver, green_info, out_dir
+
+
+class TestSpinfulLadderOffsiteHundPairLiftWarning(ApproxTestCase):
+    """Pre-push hardening (adjudicated: WARN, not reject): under a
+    genuinely spinful ``calc_type='ring+ladder'`` run,
+    ``ham_spinful_exchange`` (the antisymmetrized longitudinal solve's
+    on-site exchange crossing, issue #137) has no off-site counterpart --
+    the off-site crossed vertex needs two independent momenta and is not
+    representable as a single ``W(q)``. So an off-site Hund/PairLift
+    declaration reaches ``_extract_transverse_from_dressed`` only
+    partially dressed (direct blocks yes, off-site exchange crossing no).
+    ``RPA._warn_offsite_hund_pairlift_spinful_ladder`` fires a
+    ``logger.warning`` naming the affected type(s) before the extraction;
+    on-site-only declarations never warn, since their transverse content
+    is fully captured by the antisymmetrized vertex.
+    """
+
+    def test_offsite_hund_warns_and_solve_succeeds(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "Hund", offsite=True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(gi, out)
+        # spin_mode is only established during solve() (from the H0
+        # eigen-decomposition / chi0q shape), so it is checked AFTER.
+        self.assertEqual(solver.spin_mode, "spinful")
+        msgs = "\n".join(cm.output)
+        self.assertIn("Hund", msgs)
+        self.assertIn("partially", msgs.lower())
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_offsite_pairlift_warns_and_solve_succeeds(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "PairLift", offsite=True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(gi, out)
+        self.assertEqual(solver.spin_mode, "spinful")
+        msgs = "\n".join(cm.output)
+        self.assertIn("PairLift", msgs)
+        self.assertIn("partially", msgs.lower())
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_zero_valued_offsite_hund_does_not_warn(self):
+        """A RETAINED zero-valued off-site entry contributes nothing --
+        the warning predicate checks the coefficient, not just the key
+        (final-review fix): warn only for effectively nonzero off-site
+        declarations."""
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "Hund", offsite=True, offsite_J=0.0)
+        logger = logging.getLogger("hwave.solver.rpa")
+        handler = _CollectingHandler()
+        prev_level = logger.level
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertFalse(
+            any("partially" in r.getMessage().lower()
+                for r in handler.records),
+            "a zero-valued off-site Hund entry must not trigger the "
+            "warning: {}".format(
+                [r.getMessage() for r in handler.records]))
+
+    def test_onsite_only_hund_does_not_warn(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "Hund", offsite=False)
+        logger = logging.getLogger("hwave.solver.rpa")
+        handler = _CollectingHandler()
+        prev_level = logger.level
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertFalse(
+            any("partially" in r.getMessage().lower()
+                for r in handler.records),
+            "on-site-only Hund must not trigger the off-site Hund/"
+            "PairLift transverse warning: {}".format(
+                [r.getMessage() for r in handler.records]))
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_onsite_only_pairlift_does_not_warn(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "PairLift", offsite=False)
+        logger = logging.getLogger("hwave.solver.rpa")
+        handler = _CollectingHandler()
+        prev_level = logger.level
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertFalse(
+            any("partially" in r.getMessage().lower()
+                for r in handler.records),
+            "on-site-only PairLift must not trigger the off-site Hund/"
+            "PairLift transverse warning: {}".format(
+                [r.getMessage() for r in handler.records]))
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+
+def _make_spinful_sublattice_offsite_hund_fixture(
+        kind, T=0.5, mu=0.2, Nmat=16, U=0.3, J=0.15,
+        thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+    """Pre-fold-locality-trap regression fixture (coordinator re-review
+    finding: this trap has bitten 3 prior PRs). Same H0/interaction
+    family as ``_make_spinful_offsite_hund_pairlift_fixture``, but under
+    a sublattice: ``CellShape = [2, 3, 1]``, ``SubShape = [2, 1, 1]``
+    (``subvol = 2`` -> ``has_sublattice = True``; folded lattice shape
+    ``(1, 3, 1)``, since ``Bx = 2`` equals ``CellShape``'s x-extent).
+
+    The ``kind`` (``'Hund'``/``'PairLift'``) bond is declared off-site at
+    original-cell ``R = +-1`` along x. Because ``Bx`` equals the FULL
+    x-extent of ``CellShape`` (folded x-shape ``nx = 1``), every
+    supercell-boundary crossing the fold sweeps over collapses back onto
+    the SAME (single) supercell -- so the bond folds ENTIRELY onto
+    ``irvec = (0, 0, 0)`` in ``ham_info.param_ham[kind]`` (the POST-fold
+    table), between two DIFFERENT physical orbitals of the folded
+    supercell (``norb_phys`` doubles to 2 under ``subvol = 2``), with NO
+    residual off-site entry left behind. The PRE-fold table
+    (``ham_info.param_ham_orig[kind]``) still shows the bond exactly as
+    declared, at ``irvec = (+-1, 0, 0)``.
+
+    This is the discriminating property the regression test needs: a
+    reader that (incorrectly) inspected the FOLDED table instead of the
+    pre-fold one would see ZERO off-site content for this fixture and
+    never warn, while a reader of the pre-fold table (the established
+    rule; see ``_append_pairhop``'s own off-site detection in
+    ``Interaction._make_ham_inter``) sees the off-site declaration and
+    warns correctly. Verified directly by the irvec-set assertion in
+    ``TestSpinfulLadderOffsiteWarningPreFoldLocality``, not merely
+    asserted here.
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    d = tempfile.mkdtemp(prefix="rpa_hund_pairlift_fold_")
+    Lx, Ly = 2, 3
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n")
+        f.write("0.0 0.0 0.0\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n2\n3\n1 1 1\n")
+        for i in (1, 2):
+            f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, thop.real, thop.imag))
+            f.write("-1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, np.conj(thop).real, np.conj(thop).imag))
+        f.write(" 0 0 0 1 2 %.12f %.12f\n" % (lso.real, lso.imag))
+        f.write(" 0 0 0 2 1 %.12f %.12f\n" % (lso.real, -lso.imag))
+    _write_w90_entries(os.path.join(d, "coulombintra.dat"),
+                        [(0, 0, 0, 1, 1, U, 0.0)])
+    # off-site (R = +-1 along x), Hermitian-closed real coefficient --
+    # folds entirely onto the supercell origin under SubShape=[2,1,1]
+    # with CellShape x-extent also 2 (see docstring above).
+    _write_w90_entries(os.path.join(d, "kind.dat"),
+                        [(1, 0, 0, 1, 1, J, 0.0), (-1, 0, 0, 1, 1, J, 0.0)])
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat",
+              kind: "kind.dat"}
+
+    param = {"T": T, "mu": mu, "CellShape": [Lx, Ly, 1],
+              "SubShape": [2, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0}
+    info_mode = {"mode": "RPA", "param": param,
+                 "enable_spin_orbital": True, "calc_scheme": "general",
+                 "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_hund_pairlift_fold_out_")
+    return solver, green_info, out_dir
+
+
+class TestSpinfulLadderOffsiteWarningPreFoldLocality(ApproxTestCase):
+    """Coordinator-adjudicated re-review finding: this project's pre-fold
+    locality trap (judging locality on the FOLDED table instead of the
+    original pre-fold declarations) has caused silent defects across 3
+    prior PRs. ``TestSpinfulLadderOffsiteHundPairLiftWarning`` above only
+    ever exercised ``has_sublattice = False``, where
+    ``ham_info.param_ham`` and ``ham_info.param_ham_orig`` are the same
+    object -- a test that would pass identically whether
+    ``RPA._warn_offsite_hund_pairlift_spinful_ladder`` read the pre-fold
+    table or the (there, identical) folded one. This class closes that
+    gap with a fixture where the two tables genuinely differ: an off-site
+    Hund bond that folds ENTIRELY onto the supercell origin, so the
+    folded table alone carries no evidence of it -- the warning firing
+    here is proof the detection reads ``param_ham_orig``, not
+    ``param_ham``.
+    """
+
+    def test_offsite_hund_folded_onto_origin_still_warns(self):
+        solver, gi, out = _make_spinful_sublattice_offsite_hund_fixture(
+            "Hund")
+
+        self.assertTrue(solver.lattice.has_sublattice)
+        orig_irvecs = {irvec for (irvec, _ov)
+                       in solver.ham_info.param_ham_orig["Hund"].keys()}
+        folded_irvecs = {irvec for (irvec, _ov)
+                          in solver.ham_info.param_ham["Hund"].keys()}
+        self.assertTrue(
+            orig_irvecs - {(0, 0, 0)},
+            "fixture must genuinely declare Hund off-site in the "
+            "PRE-fold table: {}".format(orig_irvecs))
+        self.assertEqual(
+            folded_irvecs, {(0, 0, 0)},
+            "fixture must fold the off-site Hund bond ENTIRELY onto the "
+            "supercell origin (no residual off-site entry in the FOLDED "
+            "table), so a folded-table read would see none at all: "
+            "folded irvecs={}".format(folded_irvecs))
+
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(gi, out)
+        self.assertEqual(solver.spin_mode, "spinful")
+        msgs = "\n".join(cm.output)
+        self.assertIn("Hund", msgs)
+        self.assertIn("partially", msgs.lower())
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
 
 
 if __name__ == "__main__":

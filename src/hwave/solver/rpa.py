@@ -1943,6 +1943,31 @@ class RPA:
                 return _to_bubble_pair_convention(ham_inter_q + fz)
 
             if self.spin_mode == "spinful":
+                # Pre-push hardening: spinful_vertex_exchange=false is a
+                # ring-only compatibility switch (reproduces the pre-#137
+                # ring-only numbers, see the opt-out comment below). Under
+                # calc_type='ring+ladder' the transverse channel is
+                # extracted by slicing THIS SAME longitudinal solve
+                # (`_extract_transverse_from_dressed`, reused verbatim,
+                # not recomputed) -- with the opt-out that solve is not
+                # antisymmetrized, so the sliced chiq_pm would silently
+                # match neither the legacy ring-only transverse assembly
+                # (which dressed the transverse channel separately via
+                # `_assemble_transverse_vertex`) nor the advertised
+                # full-space dressing. Reject the combination here, before
+                # the (expensive) longitudinal solve runs.
+                if (self.calc_type == "ring+ladder"
+                        and not self.spinful_vertex_exchange):
+                    raise ValueError(
+                        "[mode.param] spinful_vertex_exchange = false is a "
+                        "ring-only compatibility switch that reproduces "
+                        "the pre-#137 ring-only numbers. With "
+                        "calc_type='ring+ladder' and a genuinely spinful "
+                        "transfer, the transverse channel is extracted "
+                        "from the antisymmetrized longitudinal solve, so "
+                        "this combination cannot be represented. Set "
+                        "spinful_vertex_exchange = true (the default), or "
+                        "use calc_type = 'ring'.")
                 chi0q_orig = chi0q
                 # The transverse (ladder) assembly re-pairs the tensor
                 # itself, so it must receive the HAMILTONIAN convention,
@@ -2098,6 +2123,19 @@ class RPA:
                     # Gated-run output ownership (spec): the plain ladder
                     # is NOT additionally executed, so green_info["chiq_pm"]
                     # (the legacy key) is intentionally never populated here.
+                elif self.spin_mode == "spinful":
+                    # Phase S (issue #110): the spinful plain-ladder path
+                    # no longer slices chi0 and re-solves it (that dropped
+                    # every cross-spin/spin-mixing vertex contribution the
+                    # RPA equation never got to resum). Instead it slices
+                    # the ALREADY-DRESSED longitudinal `sol` (computed
+                    # just above, reused verbatim -- no second solve) --
+                    # slice-AFTER-solve, not solve-after-slice. See
+                    # `_extract_transverse_from_dressed`'s docstring for
+                    # the equation and its Gate-S0 ED adjudication.
+                    self._warn_offsite_hund_pairlift_spinful_ladder()
+                    green_info["chiq_pm"] = _bk.to_host(
+                        self._extract_transverse_from_dressed(sol))
                 else:
                     chi0q_pm, ham_pm = self._build_transverse_channel(
                         chi0q_orig, ham_orig)
@@ -3314,6 +3352,14 @@ class RPA:
         for the cross-spin part). PairLift sits outside both used blocks, but
         harmlessly -- its transverse vertex vanishes identically.
 
+        This table describes the narrow ham_pm vertex assembled by this
+        method, which is exact only under Sz conservation. On Sz-breaking
+        (spin-orbit) systems, Hund and PairLift both contribute genuine
+        transverse content that ham_pm cannot represent; that content is
+        instead captured by dressing the full spin-orbital space and
+        extracting the spin-flip block from the dressed tensor afterward
+        (``RPA._extract_transverse_from_dressed``).
+
         Each block is averaged over the two redundant declarations of the same
         operator, with the MEAN, which is what an interaction file already
         means in this codebase (`uhfk.py` builds every two-body table as
@@ -3568,34 +3614,29 @@ class RPA:
                     "internally.")
 
         elif self.spin_mode == "spinful":
-            # Already in spin-orbital space
-            # chi0_+- requires re-extraction with proper spin indices
-            # For now, extract from the chi0_SO structure
-            # chi0_SO[a,c,b,d] -> chi0_+-[a_orb,c_orb,b_orb,d_orb]
-            #   = chi0_SO[(↑,a),(↓,c),(↑,b),(↓,d)]  (when s1=↑=s3, s2=↓=s4)
-            #   which is just the orbital diagonal of chi0
-            if chi0q_orig.ndim == 6:
-                # Extract chi0_{(up a)(dn c)(up b)(dn d)} = -G_up*G_down, the
-                # transverse bubble. NB this assumes Sz is conserved (no genuine
-                # spin mixing): for spin-orbit-coupled systems the off-diagonal
-                # spin components contribute additional cross terms that this
-                # slice does not include.
-                logger.warning(
-                    "spinful transverse (ladder) channel extracts the "
-                    "Sz-conserving block (G_up*G_down); for genuine spin-mixing "
-                    "(spin-orbit coupling) the cross terms are not included.")
-                nfreq = chi0q_orig.shape[0]
-                chi0q_pm = chi0q_orig[:, :,
-                                      0:norb, norb:2*norb,
-                                      0:norb, norb:2*norb].copy()
-            else:
-                # ring+ladder forces the general scheme, so a spinful chi0q must
-                # be the full rank-4 (6-dim) tensor here. A reduced/2-index
-                # spinful chi0q cannot supply the spin-flip block.
-                raise ValueError(
-                    "spinful transverse (ladder) channel requires the full "
-                    "(general-scheme) chi0q tensor, got shape {}".format(
-                        chi0q_orig.shape))
+            # Phase S (issue #110): the spinful plain-ladder path no
+            # longer routes through here at all. It used to slice chi0
+            # (the BARE bubble) at the Sz-conserving block and re-solve
+            # that reduced slice -- which structurally could not include
+            # any cross-spin/spin-mixing vertex content for a genuinely
+            # spin-orbit-coupled H0 (the "cross terms are not included"
+            # warning this branch used to log). The fix is slice-AFTER-
+            # solve, not solve-after-slice: `_solve_impl`'s plain-
+            # transverse branch now calls
+            # `RPA._extract_transverse_from_dressed` on the ALREADY-
+            # DRESSED longitudinal `sol` instead of calling this method
+            # for `spin_mode == "spinful"`. Reaching this branch means
+            # that routing regressed (a caller invoking
+            # `_build_transverse_channel` directly on a spinful solver) --
+            # fail loudly rather than silently reproducing the #110 bug.
+            raise RuntimeError(
+                "_build_transverse_channel: unreachable for "
+                "spin_mode='spinful' (issue #110) -- the spinful plain "
+                "transverse channel is built by "
+                "RPA._extract_transverse_from_dressed, slicing the "
+                "DRESSED longitudinal solve, not by slicing chi0 and "
+                "re-solving it here. This method must not be called "
+                "directly for a spinful solver.")
 
         # --- Build W_+- (transverse vertex) ---
         # The transverse vertex comes from the CROSS-SPIN block alone. The
@@ -3626,6 +3667,14 @@ class RPA:
         #   PairLift J     :  0                     table said 0    correct
         #   PairHop J      : -J at (a,b)x(a,b)      table had no entry
         #
+        # The Hund and PairLift rows above are statements about this narrow
+        # ham_pm vertex under Sz conservation, not about the transverse
+        # channel in general: on Sz-breaking (spin-orbit) systems both
+        # interaction types contribute genuine transverse content, recovered
+        # instead through the full-space dressing in
+        # RPA._extract_transverse_from_dressed, which the first-order ED
+        # campaign pins.
+        #
         # Every case is q-independent to better than 1e-6, which is the
         # diagnostic that the extraction is clean: an on-site interaction
         # cannot produce a q-dependent vertex. The CoulombInter row is
@@ -3644,6 +3693,163 @@ class RPA:
                         chi0q_pm.shape, ham_pm.shape))
 
         return chi0q_pm, ham_pm
+
+    def _warn_offsite_hund_pairlift_spinful_ladder(self):
+        """Warn (never reject) when off-site Hund/PairLift declarations
+        reach the spinful ring+ladder transverse extraction.
+
+        ``ham_spinful_exchange`` (the antisymmetrized longitudinal solve's
+        exchange crossing, issue #137) carries the ON-SITE exchange
+        crossing only: the off-site crossed vertex needs two independent
+        momenta and is not representable as a single ``W(q)`` -- the
+        pre-existing, documented scope of that solve (see
+        ``[mode.param] spinful_vertex_exchange`` in the config reference).
+        Under genuine spin mixing, Hund/PairLift transverse content flows
+        through `_extract_transverse_from_dressed`'s slice of the
+        full-space dressed tensor via the direct blocks AND the (missing,
+        off-site) exchange crossing, so an off-site Hund/PairLift
+        declaration yields a chiq_pm that is only PARTIALLY dressed for
+        those terms -- silently, unless flagged here.
+
+        Locality is judged on the PRE-FOLD declarations
+        (``self.ham_info.param_ham_orig`` when the lattice has a
+        sublattice, else ``self.ham_info.param_ham``) -- the same
+        pre-fold locality rule ``_append_pairhop``'s own off-site
+        detection in ``Interaction._make_ham_inter`` applies, for the
+        same reason: reading locality off the FOLDED table could let an
+        off-site bond folded onto ``r=(0,0,0)`` between supercell
+        orbitals escape detection.
+
+        On-site-only declarations (or no declaration at all) never warn:
+        their transverse content is fully captured by the antisymmetrized
+        vertex (direct + on-site exchange crossing), the same documented
+        scope as the longitudinal spinful solve.
+        """
+        ham_info = self.ham_info
+        has_sub = getattr(self.lattice, "has_sublattice", False)
+        source = ham_info.param_ham_orig if has_sub else ham_info.param_ham
+
+        offsite_types = []
+        for type_ in ("Hund", "PairLift"):
+            tbl = source.get(type_, {})
+            # Only an effectively NONZERO off-site coefficient carries
+            # (partially dressed) transverse content worth warning about;
+            # a retained zero-valued placeholder entry contributes
+            # nothing and stays quiet.
+            if any(tuple(int(x) for x in irvec) != (0, 0, 0)
+                   and complex(v) != 0
+                   for (irvec, orbvec), v in tbl.items()):
+                offsite_types.append(type_)
+
+        if offsite_types:
+            logger.warning(
+                "Off-site %s declared under a genuinely spinful "
+                "calc_type='ring+ladder' run: the transverse extraction "
+                "includes their contribution only at the level of the "
+                "antisymmetrized vertex (direct + on-site exchange "
+                "crossing), the same scope as the longitudinal spinful "
+                "solve. The off-site exchange crossing is not "
+                "implemented, so the transverse content of these "
+                "off-site declarations is only PARTIALLY included in "
+                "chiq_pm.", " and ".join(offsite_types))
+
+    def _extract_transverse_from_dressed(self, sol):
+        """Extract the physical spinful transverse response by slicing
+        the DRESSED (RPA-solved) general spinful tensor -- the Phase-S
+        fix for issue #110.
+
+        Background: for a genuinely spin-orbit-coupled H0
+        (``spin_mode == "spinful"``), the pre-Phase-S plain-ladder path
+        sliced the Sz-conserving block off the BARE bubble ``chi0`` and
+        then solved RPA on that reduced slice. That is backwards: the
+        RPA equation resums the vertex over whatever chi0 it is given,
+        so slicing chi0 FIRST discards every cross-spin/spin-mixing
+        vertex contribution before the resummation ever sees it (the
+        deleted "cross terms are not included" warning was this defect
+        made explicit). The fix is to solve RPA over the FULL
+        ``(2*norb)**2`` spin-orbital space first (the antisymmetrized
+        general solve `_solve_impl` already performs for the
+        longitudinal channel -- `sol = self._solve_rpa(chi0q, ham)`, a
+        few lines above this method's call site), and only THEN slice
+        out the physical transverse block -- slice-AFTER-solve, not
+        solve-after-slice. No second solve is needed: this method is
+        pure index selection on the tensor the longitudinal solve
+        already produced.
+
+        Equation (spin-block generalized-index convention
+        ``g = s*norb + o``, spin-major: ``g < norb`` is spin-up,
+        ``g >= norb`` is spin-down -- see `Interaction._make_ham_trans`'s
+        own comment, "RPA works internally in spin-block order (index =
+        spin*norb + orb)", and this convention's independent
+        confirmation in Gate S0's "Operator-phase / index-convention
+        check", tests/test_spinful_transverse_ed.py):
+
+            chiq_pm[freq, q, a, c, b, d]
+                = sol[freq, q, a, norb+c, b, norb+d]
+
+        i.e. the creation-leg orbital ``a`` reads off the spin-up block,
+        the annihilation-leg orbital ``c`` off the spin-down block, and
+        likewise ``(b, d)`` for the second (conjugate) leg pair -- the
+        SAME index selection the removed pre-Phase-S spinful branch of
+        `_build_transverse_channel` applied to chi0 (the bare bubble),
+        applied here to ``sol`` (the dressed tensor) instead.
+
+        Pre-adjudicated ahead of this production change (Gate S0, Phase
+        S Task 2,
+        tests/test_spinful_transverse_ed.py::TestGateS0ExtractionAdjudication)
+        against exact diagonalization (`TotalNED`, a total-N-sector ED
+        oracle built specifically to host Sz-breaking one-body terms) on
+        a genuinely Sz-breaking L=3/norb=2 fixture: PASS at a measured
+        ~34,000x tolerance margin (delta_rich=3.30e-07, tol=3.30e-06,
+        max_signal=1.11e-01); a deliberate g2/g4 leg-order mutation of
+        the same equation FAILs the identical granule at 98% of the
+        signal scale, confirming the PASS is not vacuous. This method's
+        slice is byte-for-byte the same equation as the test module's
+        `extract_pm_from_dressed` reference function (cross-pinned bit
+        for bit in Gate S2, Phase S Task 3,
+        tests/test_spinful_transverse_ed.py::TestGateS2ProductionRouting).
+
+        Pure index selection: works unchanged on either backend (no
+        `float()`/host-only conversion here -- the caller converts to
+        host, via `_bk.to_host`, only after this method returns).
+
+        Parameters
+        ----------
+        sol : ndarray, shape (nfreq, nvol, nd, nd, nd, nd), nd = 2*norb
+            The RPA-DRESSED general spinful tensor -- this solver's own
+            longitudinal ``sol = self._solve_rpa(chi0q, ham)`` output,
+            REUSED verbatim (never recomputed).
+
+        Returns
+        -------
+        ndarray, shape (nfreq, nvol, norb, norb, norb, norb)
+            The full-frequency (dynamic) physical transverse chiq_pm.
+        """
+        norb = self.norb
+        nd = 2 * norb
+        if sol.ndim != 6:
+            raise ValueError(
+                "_extract_transverse_from_dressed: sol must be the "
+                "6-dim (nfreq, nvol, nd, nd, nd, nd) dressed general "
+                "spinful tensor, got ndim={}".format(sol.ndim))
+        if sol.shape[2:] != (nd, nd, nd, nd):
+            raise ValueError(
+                "_extract_transverse_from_dressed: sol's trailing "
+                "orbital axes {} do not match nd=2*norb={} (norb={}, "
+                "from the solver) in every slot".format(
+                    sol.shape[2:], nd, norb))
+        # Materialize an INDEPENDENT array: the bare slice is a VIEW into
+        # `sol`, and on the CPU backend `_bk.to_host` is an identity
+        # operation -- storing the view would make the public chiq_pm
+        # share memory with chiq (the removed slice-then-solve path
+        # returned an independent array; the CuPy path was already
+        # independent because asnumpy copies). An unconditional .copy()
+        # (not ascontiguousarray, which returns an already-contiguous
+        # view UNCHANGED -- reachable via the public
+        # matsubara_frequency="center" single-frequency restriction with
+        # norb=1 and a 1-site cell) guarantees the allocation on both
+        # backends at the same cost on the generic non-contiguous case.
+        return sol[..., 0:norb, norb:2 * norb, 0:norb, norb:2 * norb].copy()
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):
@@ -4126,14 +4332,17 @@ class RPA:
         """
         if self.spin_mode == "spinful":
             raise ValueError(
-                "[mode.param] transverse_bond_channels=true is not "
-                "supported with spin_mode='spinful' (a genuinely "
+                "[mode.param] transverse_bond_channels=true cannot be "
+                "combined with spin_mode='spinful' (a genuinely "
                 "spin-orbit-coupled H0): the bond-resolved dressing is "
                 "implemented for the spin-diagonal transverse channel "
-                "only. Composing it with the full spinful space is a "
-                "planned extension. Use a spin-diagonal system (no spin-mixing "
-                "transfer/enable_spin_orbital term) or set "
-                "transverse_bond_channels=false.")
+                "only. The PLAIN (non-bond) spinful transverse channel "
+                "is fully supported -- set transverse_bond_channels=false "
+                "to use it. Only the composition of the bond-resolved "
+                "path with the full spinful space is deferred and not "
+                "yet implemented. Use a spin-diagonal system (no "
+                "spin-mixing transfer/enable_spin_orbital term) if "
+                "transverse_bond_channels=true is required.")
 
         if getattr(self, "_chi0q_external", False):
             raise ValueError(
