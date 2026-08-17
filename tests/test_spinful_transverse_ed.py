@@ -1978,3 +1978,29 @@ class TestSpinfulVertexExchangeOptOutRingLadderRejection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChiqPmMemoryIndependence(unittest.TestCase):
+    """CPU aliasing regression (final-review fix): the spinful
+    transverse extraction slices the dressed longitudinal ``sol``; a
+    bare view stored through the identity CPU ``to_host`` would make the
+    public ``chiq_pm`` SHARE MEMORY with ``chiq`` (the removed
+    slice-then-solve path returned an independent array).
+    ``_extract_transverse_from_dressed`` therefore materializes a
+    contiguous copy -- pinned here through the public ``solve()``."""
+
+    def test_chiq_pm_does_not_alias_chiq_and_mutation_is_independent(self):
+        solver, green_info = _s1_make_solver(0.35, 16)
+        solver.solve(green_info, tempfile.mkdtemp(prefix="alias_pin_"))
+        self.assertEqual(solver.spin_mode, "spinful")
+        chiq = np.asarray(green_info["chiq"])
+        chiq_pm = np.asarray(green_info["chiq_pm"])
+        self.assertFalse(np.shares_memory(chiq, chiq_pm))
+        before = chiq[tuple(0 for _ in chiq.shape)]
+        chiq_pm_flat = chiq_pm.reshape(-1)
+        original = chiq_pm_flat[0]
+        try:
+            chiq_pm_flat[0] = original + (1.0 + 1.0j)
+            self.assertEqual(chiq[tuple(0 for _ in chiq.shape)], before)
+        finally:
+            chiq_pm_flat[0] = original

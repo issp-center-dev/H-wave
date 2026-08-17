@@ -3155,7 +3155,7 @@ class TestAggregateCoulombCaseInsensitiveMerge(ApproxTestCase):
 
 def _make_spinful_offsite_hund_pairlift_fixture(
         kind, offsite, T=0.5, mu=0.2, Lx=4, Nmat=16, U=0.3, J=0.15,
-        thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+        thop=0.7 + 0.3j, lso=0.35 + 0.15j, offsite_J=None):
     """norb_phys=1 spinful ring+ladder fixture (genuine spin-mixing
     transfer term ``lso``, reaching ``solver.spin_mode == 'spinful'`` --
     same H0 family as ``_make_spinful_bond_gate_fixture``) declaring an
@@ -3192,8 +3192,12 @@ def _make_spinful_offsite_hund_pairlift_fixture(
     entries = [(0, 0, 0, 1, 1, J, 0.0)]
     if offsite:
         # Hermitian-closed (R, a, a) / (-R, a, a) pair, real coefficient
-        # (#93 read-time closure requirement).
-        entries += [(1, 0, 0, 1, 1, J, 0.0), (-1, 0, 0, 1, 1, J, 0.0)]
+        # (#93 read-time closure requirement). ``offsite_J`` overrides the
+        # off-site coefficient alone (0.0 = a retained zero-valued
+        # placeholder entry, which must NOT trigger the warning).
+        Joff = J if offsite_J is None else offsite_J
+        entries += [(1, 0, 0, 1, 1, Joff, 0.0),
+                    (-1, 0, 0, 1, 1, Joff, 0.0)]
     _write_w90_entries(os.path.join(d, "kind.dat"), entries)
 
     inter = {"path_to_input": d, "Geometry": "geom.dat",
@@ -3252,6 +3256,31 @@ class TestSpinfulLadderOffsiteHundPairLiftWarning(ApproxTestCase):
         self.assertIn("partially", msgs.lower())
         self.assertIn("chiq_pm", gi)
         self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_zero_valued_offsite_hund_does_not_warn(self):
+        """A RETAINED zero-valued off-site entry contributes nothing --
+        the warning predicate checks the coefficient, not just the key
+        (final-review fix): warn only for effectively nonzero off-site
+        declarations."""
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "Hund", offsite=True, offsite_J=0.0)
+        logger = logging.getLogger("hwave.solver.rpa")
+        handler = _CollectingHandler()
+        prev_level = logger.level
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertFalse(
+            any("partially" in r.getMessage().lower()
+                for r in handler.records),
+            "a zero-valued off-site Hund entry must not trigger the "
+            "warning: {}".format(
+                [r.getMessage() for r in handler.records]))
 
     def test_onsite_only_hund_does_not_warn(self):
         solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(

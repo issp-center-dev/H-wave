@@ -3732,8 +3732,13 @@ class RPA:
         offsite_types = []
         for type_ in ("Hund", "PairLift"):
             tbl = source.get(type_, {})
+            # Only an effectively NONZERO off-site coefficient carries
+            # (partially dressed) transverse content worth warning about;
+            # a retained zero-valued placeholder entry contributes
+            # nothing and stays quiet.
             if any(tuple(int(x) for x in irvec) != (0, 0, 0)
-                   for (irvec, orbvec) in tbl.keys()):
+                   and complex(v) != 0
+                   for (irvec, orbvec), v in tbl.items()):
                 offsite_types.append(type_)
 
         if offsite_types:
@@ -3833,7 +3838,15 @@ class RPA:
                 "orbital axes {} do not match nd=2*norb={} (norb={}, "
                 "from the solver) in every slot".format(
                     sol.shape[2:], nd, norb))
-        return sol[..., 0:norb, norb:2 * norb, 0:norb, norb:2 * norb]
+        # Materialize an independent contiguous array: the bare slice is
+        # a VIEW into `sol`, and on the CPU backend `_bk.to_host` is an
+        # identity operation -- storing the view would make the public
+        # chiq_pm share memory with chiq (the removed slice-then-solve
+        # path returned an independent array; the CuPy path was already
+        # independent because asnumpy copies).
+        xp = _bk.array_module_of(sol)
+        return xp.ascontiguousarray(
+            sol[..., 0:norb, norb:2 * norb, 0:norb, norb:2 * norb])
 
     @do_profile
     def _solve_rpa(self, chi0q, ham):
