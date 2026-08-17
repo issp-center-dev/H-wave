@@ -3326,6 +3326,14 @@ class RPA:
         for the cross-spin part). PairLift sits outside both used blocks, but
         harmlessly -- its transverse vertex vanishes identically.
 
+        This table describes the narrow ham_pm vertex assembled by this
+        method, which is exact only under Sz conservation. On Sz-breaking
+        (spin-orbit) systems, Hund and PairLift both contribute genuine
+        transverse content that ham_pm cannot represent; that content is
+        instead captured by dressing the full spin-orbital space and
+        extracting the spin-flip block from the dressed tensor afterward
+        (``RPA._extract_transverse_from_dressed``).
+
         Each block is averaged over the two redundant declarations of the same
         operator, with the MEAN, which is what an interaction file already
         means in this codebase (`uhfk.py` builds every two-body table as
@@ -3632,6 +3640,14 @@ class RPA:
         #   Exchange J     : -J at (a,a)x(b,b)      table said 0    WRONG
         #   PairLift J     :  0                     table said 0    correct
         #   PairHop J      : -J at (a,b)x(a,b)      table had no entry
+        #
+        # The Hund and PairLift rows above are statements about this narrow
+        # ham_pm vertex under Sz conservation, not about the transverse
+        # channel in general: on Sz-breaking (spin-orbit) systems both
+        # interaction types contribute genuine transverse content, recovered
+        # instead through the full-space dressing in
+        # RPA._extract_transverse_from_dressed, which the first-order ED
+        # campaign pins.
         #
         # Every case is q-independent to better than 1e-6, which is the
         # diagnostic that the extraction is clean: an on-site interaction

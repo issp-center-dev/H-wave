@@ -546,11 +546,11 @@ in the input TOML file. This requires the ``general`` calculation scheme
 .. note::
 
    In the spin-orbital mode, when the Hamiltonian genuinely mixes spins
-   (e.g. spin-orbit coupling), the transverse channel extracts only the
-   :math:`S_z`-conserving block :math:`G_\uparrow G_\downarrow` of the
-   bubble; the spin-mixing cross terms are not included, and a warning
-   is emitted. The transverse susceptibility of a spin-mixing system is
-   therefore an approximation in the current implementation.
+   (e.g. spin-orbit coupling), the transverse channel is dressed in the
+   full spin-orbital space -- the same ``general``-scheme solve used for
+   the longitudinal channel -- and :math:`\chi_{+-}(\mathbf{q})` is then
+   extracted as the spin-flip block of that dressed tensor. Spin-mixing
+   cross terms are therefore fully included, and no warning is emitted.
 
 
 Spin-orbital mode

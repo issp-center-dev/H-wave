@@ -1747,9 +1747,14 @@ class TestTask4TsoZeroControl(unittest.TestCase):
     """The isolation control for ``TestTask4GranuleCampaign``'s Hund/
     PairLift finding: on the IDENTICAL norb=2 fixture with ``t_so`` set to
     EXACTLY ``0.0`` (every other parameter unchanged), BOTH types return
-    to PASS-ZERO -- production ``chiq_pm`` measured BIT-IDENTICAL ``0.0``
-    at both Nmat resolutions (``delta_nmat=0.0`` exactly), ED-side
-    Richardson derivative at the noise floor:
+    to PASS-ZERO -- the production-side finite-difference derivative of
+    ``chiq_pm`` with respect to the declared coupling (the quantity
+    ``_s4_tso0_pred_at_nmat`` builds and ``delta_nmat`` compares across
+    resolutions; NOT raw ``chiq_pm`` itself, which is the nonzero v=0
+    bare-bubble baseline) is measured BIT-IDENTICAL ``0.0`` at both Nmat
+    resolutions (asserted directly, not merely inferred from
+    ``delta_nmat=0.0``), ED-side Richardson derivative at the noise
+    floor:
 
         Hund      delta_rich=1.64e-08  ED max|D_vhalf|=5.48e-09
         PairLift  delta_rich=6.44e-09  ED max|D_vhalf|=5.67e-09
@@ -1762,13 +1767,40 @@ class TestTask4TsoZeroControl(unittest.TestCase):
     ``TestTask4GranuleCampaign``'s nonzero measurement -- not a defect in
     this campaign's own fixture/term-builder construction."""
 
+    def _assert_derivative_bit_identical_zero(self, kind):
+        """Pin the docstring's bit-identity claim directly against the
+        production-side array the adjudication is built from, rather than
+        trusting ``status == "PASS-ZERO"`` alone to imply it.
+
+        Note what this is checking: production ``chiq_pm`` itself (the
+        v=0 baseline, ``f0``) is the nonzero bare-bubble value -- it is
+        the coupling-derivative ``_s4_tso0_pred_at_nmat`` builds from it
+        (the same finite-difference quantity that feeds ``delta_nmat``)
+        that the docstring's "measured BIT-IDENTICAL 0.0" refers to.
+        Checking it directly at each Nmat, rather than relying on
+        ``delta_nmat == 0.0``, matters because ``delta_nmat`` is only a
+        difference between the two resolutions: it would read 0.0 just
+        as well if both resolutions agreed on some shared NONZERO value,
+        which would not correspond to "Hund/PairLift: 0" at all.
+        """
+        for nmat in (_S4_NMAT1, _S4_NMAT2):
+            D_pred = _s4_tso0_pred_at_nmat(kind, CAMPAIGN_V1, nmat)
+            self.assertTrue(
+                np.array_equal(D_pred, np.zeros_like(D_pred)),
+                "kind={} nmat={}: production derivative is not "
+                "bit-identical to 0.0".format(kind, nmat))
+
     def test_hund_returns_to_pass_zero_at_tso_zero(self):
         rec = _s4_tso0_adjudicate("Hund", "task4/control/tso0/Hund")
         self.assertEqual(rec["status"], "PASS-ZERO", rec)
+        self.assertEqual(rec["delta_nmat"], 0.0, rec)
+        self._assert_derivative_bit_identical_zero("Hund")
 
     def test_pairlift_returns_to_pass_zero_at_tso_zero(self):
         rec = _s4_tso0_adjudicate("PairLift", "task4/control/tso0/PairLift")
         self.assertEqual(rec["status"], "PASS-ZERO", rec)
+        self.assertEqual(rec["delta_nmat"], 0.0, rec)
+        self._assert_derivative_bit_identical_zero("PairLift")
 
 
 class TestTask4SVDSensitivityGate(unittest.TestCase):
