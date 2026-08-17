@@ -4220,14 +4220,17 @@ class RPA:
         """
         if self.spin_mode == "spinful":
             raise ValueError(
-                "[mode.param] transverse_bond_channels=true is not "
-                "supported with spin_mode='spinful' (a genuinely "
+                "[mode.param] transverse_bond_channels=true cannot be "
+                "combined with spin_mode='spinful' (a genuinely "
                 "spin-orbit-coupled H0): the bond-resolved dressing is "
                 "implemented for the spin-diagonal transverse channel "
-                "only. Composing it with the full spinful space is a "
-                "planned extension. Use a spin-diagonal system (no spin-mixing "
-                "transfer/enable_spin_orbital term) or set "
-                "transverse_bond_channels=false.")
+                "only. The PLAIN (non-bond) spinful transverse channel "
+                "is fully supported -- set transverse_bond_channels=false "
+                "to use it. Only the composition of the bond-resolved "
+                "path with the full spinful space is deferred and not "
+                "yet implemented. Use a spin-diagonal system (no "
+                "spin-mixing transfer/enable_spin_orbital term) if "
+                "transverse_bond_channels=true is required.")
 
         if getattr(self, "_chi0q_external", False):
             raise ValueError(

@@ -1872,12 +1872,18 @@ def _make_bond_gate_fixture(*, transverse_bond_channels=None,
 
 
 def _make_spinful_bond_gate_fixture(T=0.5, mu=0.2, Lx=4, Nmat=32, U=0.3,
-                                     thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+                                     thop=0.7 + 0.3j, lso=0.35 + 0.15j,
+                                     transverse_bond_channels=True):
     """norb_phys=1 ``enable_spin_orbital`` ring+ladder fixture with a
     genuine spin-mixing transfer term (off-diagonal generalized-index
-    hopping ``lso``), reaching ``solver.spin_mode == 'spinful'`` -- the
-    combination the bond gate's prereq validator must reject (spec
-    ``spin_mode="spinful"`` -> reject until Phase S). Mirrors
+    hopping ``lso``), reaching ``solver.spin_mode == 'spinful'``.
+
+    ``transverse_bond_channels`` defaults True -- the combination the
+    bond gate's prereq validator must reject (spec: spinful x bond stays
+    rejected in Phase S). Passing False (post-S matrix row) instead
+    exercises the now-accepted PLAIN spinful ring+ladder path (Phase S,
+    Tasks 3-4): the bond gate is simply off, so this is the same fixture
+    family with only the gate flag flipped. Mirrors
     ``tests/test_rpa_spinful_vertex_exchange.py``'s ``TestVertexExtraction``
     / ``_run_rpa`` construction pattern, the SAME fixture family that
     already established this combination reaches ``spin_mode ==
@@ -1910,7 +1916,7 @@ def _make_spinful_bond_gate_fixture(T=0.5, mu=0.2, Lx=4, Nmat=32, U=0.3,
 
     param = {"T": T, "mu": mu, "CellShape": [Lx, 1, 1],
              "SubShape": [1, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0,
-             "transverse_bond_channels": True}
+             "transverse_bond_channels": transverse_bond_channels}
     info_mode = {"mode": "RPA", "param": param,
                  "enable_spin_orbital": True, "calc_scheme": "general",
                  "calc_type": "ring+ladder"}
@@ -2196,6 +2202,159 @@ class TestTransverseBondGatePrereqs(ApproxTestCase):
         with self.assertRaises(ValueError) as cm:
             solver.solve(gi, out)
         self.assertIn("externally supplied chi0q", str(cm.exception))
+
+
+class TestTransverseBondGateSpinfulMatrix(ApproxTestCase):
+    """Post-Phase-S production-surface matrix rows (spec "Production
+    surface"): with the #110 fix landed (Phase S, Tasks 3-4) the PLAIN
+    spinful ring+ladder transverse channel is fully supported, while the
+    spinful x bond-gate COMPOSITION remains a hard rejection. Two rows:
+
+    (a) plain ring+ladder, ``spin_mode == 'spinful'``, gate OFF:
+        accepted, ``chiq_pm`` present with the full-frequency (dynamic)
+        6-dim shape ``_extract_transverse_from_dressed`` produces, and
+        the deleted #110 "cross terms are not included" warning never
+        logged.
+    (b) spinful + ``transverse_bond_channels=true``: still rejected, and
+        the rejection message names the DEFERRED spinful x bond
+        COMPOSITION specifically -- not spinful transverse in general,
+        which row (a) here just proved is supported.
+
+    Same fixture family (``_make_spinful_bond_gate_fixture``) for both
+    rows, differing only in the gate flag -- isolating the config
+    surface, not the physics (already ED-adjudicated by Gate S0/S2 in
+    ``tests/test_spinful_transverse_ed.py``).
+    """
+
+    # The exact text of the #110 warning the pre-Phase-S branch used to
+    # log (see commit 9c1e8232's deleted lines: "spinful transverse
+    # (ladder) channel extracts the Sz-conserving block (G_up*G_down);
+    # for genuine spin-mixing (spin-orbit coupling) the cross terms are
+    # not included."); must never appear again on the plain spinful path
+    # now that the fix routes through `_extract_transverse_from_dressed`
+    # (slice-AFTER-solve) instead of slicing chi0 and re-solving it.
+    _DELETED_110_WARNING_FRAGMENT = "cross terms are not included"
+
+    def test_plain_spinful_accepted_full_freq_chiq_pm_no_110_warning(self):
+        solver, gi, out = _make_spinful_bond_gate_fixture(
+            transverse_bond_channels=False)
+        self.assertIs(solver.transverse_bond_channels, False)
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Capture(level=logging.WARNING)
+        rpa_logger = logging.getLogger("hwave.solver.rpa")
+        # Explicitly force the logger's OWN level to WARNING for the
+        # duration of the capture (logging filters at the LOGGER before
+        # ever reaching a handler): without this, a test runner or an
+        # earlier test that raised this logger's effective level above
+        # WARNING would silence the very warning this test is checking
+        # for, making the "no warning logged" assertion below pass
+        # vacuously (review fix).
+        prev_level = rpa_logger.level
+        rpa_logger.setLevel(logging.WARNING)
+        rpa_logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)  # must not raise
+        finally:
+            rpa_logger.removeHandler(handler)
+            rpa_logger.setLevel(prev_level)
+
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertIn("chiq_pm", gi)
+        self.assertIsNotNone(gi["chiq_pm"])
+        self.assertNotIn("chiq_pm_bond_static", gi)
+        self.assertNotIn("chiq_pm_static", gi)
+
+        # Full-frequency (dynamic), 6-dim, DERIVED from the dressed
+        # (nfreq, nvol, nd, nd, nd, nd) general spinful tensor by slicing
+        # nd=2*norb down to norb on all four orbital legs
+        # (_extract_transverse_from_dressed) -- same leading (nfreq,
+        # nvol) axes as chiq itself, not a static/zero-frequency-only
+        # array.
+        chiq_pm = gi["chiq_pm"]
+        chiq = gi["chiq"]
+        self.assertEqual(chiq_pm.ndim, 6)
+        self.assertEqual(chiq_pm.shape[0], chiq.shape[0])
+        self.assertGreater(chiq_pm.shape[0], 1)
+        self.assertEqual(chiq_pm.shape[1], solver.lattice.nvol)
+        self.assertEqual(chiq_pm.shape[2:], (solver.norb,) * 4)
+
+        messages = [r.getMessage() for r in records]
+        self.assertFalse(
+            any(self._DELETED_110_WARNING_FRAGMENT in m for m in messages),
+            "the deleted issue #110 'cross terms are not included' "
+            "warning must never be logged on the now-accepted plain "
+            "spinful transverse path (Phase S): {}".format(messages))
+
+    def test_plain_spinful_npz_carries_established_provenance_only(self):
+        """Step 2 (npz metadata): the plain spinful run's ``chiq.npz``
+        must carry the SAME provenance every plain (non-bond) ``chiq.npz``
+        carries (``index_convention='spin_block'``, per
+        ``validate_chi0q_index_convention`` /
+        ``tests/test_rpa_output.py``) -- there is no additional per-run
+        spin_mode string for the legacy ``chiq_pm`` key.
+        ``transverse_spin_mode`` and the rest of the
+        ``transverse_bond_*``/``transverse_*`` schema keys are written
+        ONLY on the gate-owned ``chiq_pm_bond_static`` branch (rpa.py
+        ``save_results``, guarded by
+        ``green_info.get("chiq_pm_bond_static") is not None``) -- gate
+        OFF here, so none of them apply; asserting their absence pins
+        that the plain spinful path did not spuriously pick up gate-only
+        metadata."""
+        solver, gi, out = _make_spinful_bond_gate_fixture(
+            transverse_bond_channels=False)
+        solver.solve(gi, out)
+        solver.save_results(
+            {'path_to_output': out, 'chiq': 'chiq.npz'}, gi)
+
+        data = np.load(os.path.join(out, 'chiq.npz'), allow_pickle=True)
+
+        self.assertIn("chiq_pm", data.files)
+        self.assertEqual(str(data["index_convention"]), "spin_block")
+
+        chiq_pm = data["chiq_pm"]
+        self.assertEqual(chiq_pm.ndim, 6)
+        self.assertEqual(tuple(chiq_pm.shape[2:]), (solver.norb,) * 4)
+        self.assertEqual(chiq_pm.shape[0], data["chiq"].shape[0])
+        self.assertEqual(chiq_pm.shape[1], solver.lattice.nvol)
+
+        for key in ("chiq_pm_bond_static", "chiq_pm_static",
+                    "transverse_bond_schema_version",
+                    "transverse_output_kind", "transverse_bond_delta_r",
+                    "transverse_bond_reverse", "transverse_bond_index_order",
+                    "transverse_bond_max_shells", "transverse_spatial_shape",
+                    "transverse_q_convention", "transverse_spin_mode",
+                    "transverse_normalization"):
+            self.assertNotIn(key, data.files)
+
+    def test_spinful_bond_composition_rejected_message_names_deferral(self):
+        """Row (b): spinful + ``transverse_bond_channels=true`` stays
+        rejected (spec: "spinful x bond stays rejected"), and the
+        message must name the DEFERRED spinful x bond COMPOSITION
+        specifically -- not claim spinful transverse support is missing
+        in general, which row (a) above just proved false post-S."""
+        solver, gi, out = _make_spinful_bond_gate_fixture(
+            transverse_bond_channels=True)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(gi, out)
+        msg = str(cm.exception)
+
+        self.assertIn("spin_mode='spinful'", msg)
+        self.assertIn("transverse_bond_channels", msg)
+        # Precise about WHAT is deferred (the composition), not a
+        # blanket "spinful unsupported" claim -- and self-contained (no
+        # reference to an internal doc/issue the reader would need to
+        # chase down to understand the message).
+        self.assertIn("deferred", msg.lower())
+        self.assertIn("PLAIN", msg)
+        self.assertIn("fully supported", msg)
+        self.assertNotIn("planned extension", msg)
+        self.assertNotIn("#110", msg)
 
 
 class TestTransverseBondMaxShellsThreading(ApproxTestCase):
