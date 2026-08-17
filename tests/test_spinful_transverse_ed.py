@@ -1994,14 +1994,21 @@ class TestChiqPmMemoryIndependence(unittest.TestCase):
         chiq = np.asarray(green_info["chiq"])
         chiq_pm = np.asarray(green_info["chiq_pm"])
         self.assertFalse(np.shares_memory(chiq, chiq_pm))
-        before = chiq[tuple(0 for _ in chiq.shape)]
-        chiq_pm_flat = chiq_pm.reshape(-1)
-        original = chiq_pm_flat[0]
+        # Mutation independence at the MAPPED parent element: the
+        # extraction sends chiq_pm[0,0,0,0,0,0] to
+        # chiq[0, 0, 0, norb, 0, norb] (g2 = norb + c, g4 = norb + d).
+        # Mutate through direct indexing (never reshape(-1), which may
+        # itself copy a non-contiguous aliased slice and mask the bug).
+        norb = solver.norb
+        parent_idx = (0, 0, 0, norb, 0, norb)
+        pm_idx = (0,) * chiq_pm.ndim
+        before = chiq[parent_idx]
+        original = chiq_pm[pm_idx]
         try:
-            chiq_pm_flat[0] = original + (1.0 + 1.0j)
-            self.assertEqual(chiq[tuple(0 for _ in chiq.shape)], before)
+            chiq_pm[pm_idx] = original + (1.0 + 1.0j)
+            self.assertEqual(chiq[parent_idx], before)
         finally:
-            chiq_pm_flat[0] = original
+            chiq_pm[pm_idx] = original
 
 
 class TestChiqPmDegenerateSliceIndependence(unittest.TestCase):
@@ -2047,14 +2054,20 @@ class TestChiqPmDegenerateSliceIndependence(unittest.TestCase):
         # the degenerate boundary this test exists for:
         self.assertEqual(chiq_pm.size, 1)
         self.assertFalse(np.shares_memory(chiq, chiq_pm))
-        before = chiq.reshape(-1)[0]
-        pm_flat = chiq_pm.reshape(-1)
-        original = pm_flat[0]
+        # The single transverse element maps to
+        # chiq[0, 0, 0, norb, 0, norb] (norb=1 here); mutate through
+        # direct indexing so an aliased view would provably corrupt the
+        # parent (reshape(-1) may copy and mask the bug).
+        norb = solver.norb
+        parent_idx = (0, 0, 0, norb, 0, norb)
+        pm_idx = (0,) * chiq_pm.ndim
+        before = chiq[parent_idx]
+        original = chiq_pm[pm_idx]
         try:
-            pm_flat[0] = original + (1.0 + 1.0j)
-            self.assertEqual(chiq.reshape(-1)[0], before)
+            chiq_pm[pm_idx] = original + (1.0 + 1.0j)
+            self.assertEqual(chiq[parent_idx], before)
         finally:
-            pm_flat[0] = original
+            chiq_pm[pm_idx] = original
 
 
 if __name__ == "__main__":
