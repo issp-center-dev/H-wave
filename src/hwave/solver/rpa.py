@@ -1943,6 +1943,31 @@ class RPA:
                 return _to_bubble_pair_convention(ham_inter_q + fz)
 
             if self.spin_mode == "spinful":
+                # Pre-push hardening: spinful_vertex_exchange=false is a
+                # ring-only compatibility switch (reproduces the pre-#137
+                # ring-only numbers, see the opt-out comment below). Under
+                # calc_type='ring+ladder' the transverse channel is
+                # extracted by slicing THIS SAME longitudinal solve
+                # (`_extract_transverse_from_dressed`, reused verbatim,
+                # not recomputed) -- with the opt-out that solve is not
+                # antisymmetrized, so the sliced chiq_pm would silently
+                # match neither the legacy ring-only transverse assembly
+                # (which dressed the transverse channel separately via
+                # `_assemble_transverse_vertex`) nor the advertised
+                # full-space dressing. Reject the combination here, before
+                # the (expensive) longitudinal solve runs.
+                if (self.calc_type == "ring+ladder"
+                        and not self.spinful_vertex_exchange):
+                    raise ValueError(
+                        "[mode.param] spinful_vertex_exchange = false is a "
+                        "ring-only compatibility switch that reproduces "
+                        "the pre-#137 ring-only numbers. With "
+                        "calc_type='ring+ladder' and a genuinely spinful "
+                        "transfer, the transverse channel is extracted "
+                        "from the antisymmetrized longitudinal solve, so "
+                        "this combination cannot be represented. Set "
+                        "spinful_vertex_exchange = true (the default), or "
+                        "use calc_type = 'ring'.")
                 chi0q_orig = chi0q
                 # The transverse (ladder) assembly re-pairs the tensor
                 # itself, so it must receive the HAMILTONIAN convention,
@@ -2108,6 +2133,7 @@ class RPA:
                     # slice-AFTER-solve, not solve-after-slice. See
                     # `_extract_transverse_from_dressed`'s docstring for
                     # the equation and its Gate-S0 ED adjudication.
+                    self._warn_offsite_hund_pairlift_spinful_ladder()
                     green_info["chiq_pm"] = _bk.to_host(
                         self._extract_transverse_from_dressed(sol))
                 else:
@@ -3667,6 +3693,60 @@ class RPA:
                         chi0q_pm.shape, ham_pm.shape))
 
         return chi0q_pm, ham_pm
+
+    def _warn_offsite_hund_pairlift_spinful_ladder(self):
+        """Warn (never reject) when off-site Hund/PairLift declarations
+        reach the spinful ring+ladder transverse extraction.
+
+        ``ham_spinful_exchange`` (the antisymmetrized longitudinal solve's
+        exchange crossing, issue #137) carries the ON-SITE exchange
+        crossing only: the off-site crossed vertex needs two independent
+        momenta and is not representable as a single ``W(q)`` -- the
+        pre-existing, documented scope of that solve (see
+        ``[mode.param] spinful_vertex_exchange`` in the config reference).
+        Under genuine spin mixing, Hund/PairLift transverse content flows
+        through `_extract_transverse_from_dressed`'s slice of the
+        full-space dressed tensor via the direct blocks AND the (missing,
+        off-site) exchange crossing, so an off-site Hund/PairLift
+        declaration yields a chiq_pm that is only PARTIALLY dressed for
+        those terms -- silently, unless flagged here.
+
+        Locality is judged on the PRE-FOLD declarations
+        (``self.ham_info.param_ham_orig`` when the lattice has a
+        sublattice, else ``self.ham_info.param_ham``) -- the same
+        pre-fold locality rule ``_append_pairhop``'s own off-site
+        detection in ``Interaction._make_ham_inter`` applies, for the
+        same reason: reading locality off the FOLDED table could let an
+        off-site bond folded onto ``r=(0,0,0)`` between supercell
+        orbitals escape detection.
+
+        On-site-only declarations (or no declaration at all) never warn:
+        their transverse content is fully captured by the antisymmetrized
+        vertex (direct + on-site exchange crossing), the same documented
+        scope as the longitudinal spinful solve.
+        """
+        ham_info = self.ham_info
+        has_sub = getattr(self.lattice, "has_sublattice", False)
+        source = ham_info.param_ham_orig if has_sub else ham_info.param_ham
+
+        offsite_types = []
+        for type_ in ("Hund", "PairLift"):
+            tbl = source.get(type_, {})
+            if any(tuple(int(x) for x in irvec) != (0, 0, 0)
+                   for (irvec, orbvec) in tbl.keys()):
+                offsite_types.append(type_)
+
+        if offsite_types:
+            logger.warning(
+                "Off-site %s declared under a genuinely spinful "
+                "calc_type='ring+ladder' run: the transverse extraction "
+                "includes their contribution only at the level of the "
+                "antisymmetrized vertex (direct + on-site exchange "
+                "crossing), the same scope as the longitudinal spinful "
+                "solve. The off-site exchange crossing is not "
+                "implemented, so the transverse content of these "
+                "off-site declarations is only PARTIALLY included in "
+                "chiq_pm.", " and ".join(offsite_types))
 
     def _extract_transverse_from_dressed(self, sol):
         """Extract the physical spinful transverse response by slicing

@@ -1265,12 +1265,14 @@ def _s4_write_onsite_interaction(d, fname, norb, entries):
                      % (o1, o2, val.real, val.imag))
 
 
-def _s4_make_solver(L, norb, hop, eps, lso, T, mu, kind, v, nmat, phase=1.0):
+def _s4_make_solver(L, norb, hop, eps, lso, T, mu, kind, v, nmat, phase=1.0,
+                     calc_type="ring+ladder", spinful_vertex_exchange=True):
     """Build a spinful RPA solver fixture (``enable_spin_orbital=True``,
-    ``calc_scheme="general"``, ``calc_type="ring+ladder"``, transverse bond
-    gate absent/OFF -- the plain ladder path) declaring EXACTLY ONE on-site
-    interaction type (``kind``) at coupling ``v`` (times ``phase`` for
-    PairHop, the one complex-capable type here), on a FIXED on-site
+    ``calc_scheme="general"``, ``calc_type`` defaulting to
+    ``"ring+ladder"`` (override via the ``calc_type`` keyword), transverse
+    bond gate absent/OFF -- the plain ladder path) declaring EXACTLY ONE
+    on-site interaction type (``kind``) at coupling ``v`` (times ``phase``
+    for PairHop, the one complex-capable type here), on a FIXED on-site
     spin-orbit hop ``lso`` present on every orbital (the t_so fixture
     family's own defining feature) plus the given complex hopping/on-site
     energies -- generalizing ``_s0_make_solver``/``_s1_make_solver``'s
@@ -1339,9 +1341,10 @@ def _s4_make_solver(L, norb, hop, eps, lso, T, mu, kind, v, nmat, phase=1.0):
     inter[kind] = "onsite.dat"
 
     param = {"T": T, "mu": mu, "CellShape": [L, 1, 1], "SubShape": [1, 1, 1],
-              "Nmat": nmat, "coeff_tail": 1.0}
+              "Nmat": nmat, "coeff_tail": 1.0,
+              "spinful_vertex_exchange": spinful_vertex_exchange}
     info_mode = {"mode": "RPA", "param": param, "enable_spin_orbital": True,
-                  "calc_scheme": "general", "calc_type": "ring+ladder"}
+                  "calc_scheme": "general", "calc_type": calc_type}
     io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
     solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
     green_info = io.get_param("green")
@@ -1908,6 +1911,69 @@ class TestTask4SVDSensitivityGate(unittest.TestCase):
         # not a genuine rank/conditioning finding.
         self.assertEqual(gate["sv_ratio"], 1.0, gate)
         self.assertEqual(len(gate["singular_values"]), 1, gate)
+
+
+# ---------------------------------------------------------------------------
+# Pre-push hardening round: `spinful_vertex_exchange = false` is a
+# ring-only compatibility switch (reproduces the pre-#137 ring-only
+# numbers -- the longitudinal solve is NOT antisymmetrized under it).
+# Under `calc_type='ring+ladder'` the transverse channel is extracted by
+# SLICING that same longitudinal solve (`_extract_transverse_from_dressed`,
+# reused verbatim, Gate S2 above), so the opt-out combination would
+# silently produce a `chiq_pm` matching neither the legacy ring-only
+# transverse assembly (`_assemble_transverse_vertex`) nor the advertised
+# full-space dressing. `RPA` now rejects the combination at solve time;
+# `calc_type='ring'` never reaches the extraction, so the opt-out keeps
+# doing its documented job there and remains accepted.
+# ---------------------------------------------------------------------------
+
+
+class TestSpinfulVertexExchangeOptOutRingLadderRejection(unittest.TestCase):
+    _NMAT = 16
+
+    def _solver(self, calc_type, spinful_vertex_exchange):
+        return _s4_make_solver(
+            _S4_1_L, _S4_1_NORB, _S4_1_HOP, _S4_1_EPS, _S4_1_LSO,
+            _S4_1_T, _S4_1_MU, "CoulombIntra", 0.3, self._NMAT,
+            calc_type=calc_type,
+            spinful_vertex_exchange=spinful_vertex_exchange)
+
+    def test_ring_ladder_rejects_the_opt_out_combination(self):
+        solver, green_info = self._solver("ring+ladder", False)
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(green_info,
+                         tempfile.mkdtemp(prefix="s5_reject_out_"))
+        msg = str(cm.exception)
+        self.assertIn("spinful_vertex_exchange", msg)
+        self.assertIn("ring+ladder", msg)
+        # a construction/solve-time rejection must not leave a partially
+        # populated green_info behind (chiq/chiq_pm are popped at entry
+        # and never repopulated before the raise).
+        self.assertNotIn("chiq", green_info)
+        self.assertNotIn("chiq_pm", green_info)
+
+    def test_ring_mode_still_accepts_the_opt_out_and_differs_from_default(
+            self):
+        solver_false, gi_false = self._solver("ring", False)
+        solver_false.solve(
+            gi_false, tempfile.mkdtemp(prefix="s5_ring_false_out_"))
+        chiq_false = np.asarray(gi_false["chiq"])
+        self.assertTrue(np.all(np.isfinite(chiq_false)))
+
+        solver_true, gi_true = self._solver("ring", True)
+        solver_true.solve(
+            gi_true, tempfile.mkdtemp(prefix="s5_ring_true_out_"))
+        chiq_true = np.asarray(gi_true["chiq"])
+        self.assertTrue(np.all(np.isfinite(chiq_true)))
+
+        self.assertEqual(chiq_false.shape, chiq_true.shape)
+        # the flag must still do its documented ring-only job: false and
+        # true must NOT produce the same longitudinal chiq
+        self.assertFalse(
+            np.array_equal(chiq_false, chiq_true),
+            "spinful_vertex_exchange must still change the ring-only "
+            "chiq under calc_type='ring': false and true produced "
+            "identical output")
 
 
 if __name__ == "__main__":

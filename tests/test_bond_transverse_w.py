@@ -3153,5 +3153,152 @@ class TestAggregateCoulombCaseInsensitiveMerge(ApproxTestCase):
             "(max|diff|={:.3e})".format(diff_pm))
 
 
+def _make_spinful_offsite_hund_pairlift_fixture(
+        kind, offsite, T=0.5, mu=0.2, Lx=4, Nmat=16, U=0.3, J=0.15,
+        thop=0.7 + 0.3j, lso=0.35 + 0.15j):
+    """norb_phys=1 spinful ring+ladder fixture (genuine spin-mixing
+    transfer term ``lso``, reaching ``solver.spin_mode == 'spinful'`` --
+    same H0 family as ``_make_spinful_bond_gate_fixture``) declaring an
+    on-site ``CoulombIntra`` plus a single ``kind`` (``'Hund'`` or
+    ``'PairLift'``) declaration that is either on-site only
+    (``offsite=False``, the negative control -- no warning expected) or
+    additionally carries a Hermitian-closed off-site pair at
+    ``R = +-1`` along x (``offsite=True`` -- the positive control for
+    ``RPA._warn_offsite_hund_pairlift_spinful_ladder``).
+
+    The bond gate (``transverse_bond_channels``) is never set here: the
+    warning under test fires on the PLAIN spinful ladder path
+    (``elif self.spin_mode == "spinful":`` in ``RPA._solve_impl``), not
+    the (mutually exclusive) bond-resolved one.
+
+    Does NOT call ``solve()``. Returns ``(solver, green_info, out_dir)``.
+    """
+    d = tempfile.mkdtemp(prefix="rpa_hund_pairlift_warn_")
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n")
+        f.write("0.0 0.0 0.0\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("hdr\n2\n3\n1 1 1\n")
+        for i in (1, 2):
+            f.write(" 1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, thop.real, thop.imag))
+            f.write("-1 0 0 %d %d %.12f %.12f\n"
+                     % (i, i, np.conj(thop).real, np.conj(thop).imag))
+        f.write(" 0 0 0 1 2 %.12f %.12f\n" % (lso.real, lso.imag))
+        f.write(" 0 0 0 2 1 %.12f %.12f\n" % (lso.real, -lso.imag))
+    _write_w90_entries(os.path.join(d, "coulombintra.dat"),
+                        [(0, 0, 0, 1, 1, U, 0.0)])
+
+    entries = [(0, 0, 0, 1, 1, J, 0.0)]
+    if offsite:
+        # Hermitian-closed (R, a, a) / (-R, a, a) pair, real coefficient
+        # (#93 read-time closure requirement).
+        entries += [(1, 0, 0, 1, 1, J, 0.0), (-1, 0, 0, 1, 1, J, 0.0)]
+    _write_w90_entries(os.path.join(d, "kind.dat"), entries)
+
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+              "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat",
+              kind: "kind.dat"}
+
+    param = {"T": T, "mu": mu, "CellShape": [Lx, 1, 1],
+              "SubShape": [1, 1, 1], "Nmat": Nmat, "coeff_tail": 1.0}
+    info_mode = {"mode": "RPA", "param": param,
+                 "enable_spin_orbital": True, "calc_scheme": "general",
+                 "calc_type": "ring+ladder"}
+    io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
+    solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+    green_info = io.get_param("green")
+    out_dir = tempfile.mkdtemp(prefix="rpa_hund_pairlift_warn_out_")
+    return solver, green_info, out_dir
+
+
+class TestSpinfulLadderOffsiteHundPairLiftWarning(ApproxTestCase):
+    """Pre-push hardening (adjudicated: WARN, not reject): under a
+    genuinely spinful ``calc_type='ring+ladder'`` run,
+    ``ham_spinful_exchange`` (the antisymmetrized longitudinal solve's
+    on-site exchange crossing, issue #137) has no off-site counterpart --
+    the off-site crossed vertex needs two independent momenta and is not
+    representable as a single ``W(q)``. So an off-site Hund/PairLift
+    declaration reaches ``_extract_transverse_from_dressed`` only
+    partially dressed (direct blocks yes, off-site exchange crossing no).
+    ``RPA._warn_offsite_hund_pairlift_spinful_ladder`` fires a
+    ``logger.warning`` naming the affected type(s) before the extraction;
+    on-site-only declarations never warn, since their transverse content
+    is fully captured by the antisymmetrized vertex.
+    """
+
+    def test_offsite_hund_warns_and_solve_succeeds(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "Hund", offsite=True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(gi, out)
+        # spin_mode is only established during solve() (from the H0
+        # eigen-decomposition / chi0q shape), so it is checked AFTER.
+        self.assertEqual(solver.spin_mode, "spinful")
+        msgs = "\n".join(cm.output)
+        self.assertIn("Hund", msgs)
+        self.assertIn("partially", msgs.lower())
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_offsite_pairlift_warns_and_solve_succeeds(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "PairLift", offsite=True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(gi, out)
+        self.assertEqual(solver.spin_mode, "spinful")
+        msgs = "\n".join(cm.output)
+        self.assertIn("PairLift", msgs)
+        self.assertIn("partially", msgs.lower())
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_onsite_only_hund_does_not_warn(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "Hund", offsite=False)
+        logger = logging.getLogger("hwave.solver.rpa")
+        handler = _CollectingHandler()
+        prev_level = logger.level
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertFalse(
+            any("partially" in r.getMessage().lower()
+                for r in handler.records),
+            "on-site-only Hund must not trigger the off-site Hund/"
+            "PairLift transverse warning: {}".format(
+                [r.getMessage() for r in handler.records]))
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+    def test_onsite_only_pairlift_does_not_warn(self):
+        solver, gi, out = _make_spinful_offsite_hund_pairlift_fixture(
+            "PairLift", offsite=False)
+        logger = logging.getLogger("hwave.solver.rpa")
+        handler = _CollectingHandler()
+        prev_level = logger.level
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        try:
+            solver.solve(gi, out)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertFalse(
+            any("partially" in r.getMessage().lower()
+                for r in handler.records),
+            "on-site-only PairLift must not trigger the off-site Hund/"
+            "PairLift transverse warning: {}".format(
+                [r.getMessage() for r in handler.records]))
+        self.assertIn("chiq_pm", gi)
+        self.assertTrue(np.all(np.isfinite(gi["chiq_pm"])))
+
+
 if __name__ == "__main__":
     unittest.main()

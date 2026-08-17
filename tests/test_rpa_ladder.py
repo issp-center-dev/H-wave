@@ -396,6 +396,15 @@ class TestRPALadder(unittest.TestCase):
 
         collector = _RecordingHandler()
         rpa_logger = logging.getLogger("hwave.solver.rpa")
+        # Force the logger's OWN level to WARNING for the capture window
+        # (logging filters at the LOGGER before ever reaching a handler):
+        # without this, a test runner or an earlier test that raised this
+        # logger's effective level above WARNING would silence the very
+        # warning this test checks is ABSENT, making the "not logged"
+        # assertion below pass vacuously (same pattern as
+        # TestTransverseBondGateSpinfulMatrix in test_bond_transverse_w.py).
+        prev_level = rpa_logger.level
+        rpa_logger.setLevel(logging.WARNING)
         rpa_mod.RPA._build_transverse_channel = spy
         rpa_logger.addHandler(collector)
         try:
@@ -403,6 +412,7 @@ class TestRPALadder(unittest.TestCase):
         finally:
             rpa_mod.RPA._build_transverse_channel = original
             rpa_logger.removeHandler(collector)
+            rpa_logger.setLevel(prev_level)
 
         self.assertEqual(
             seen_spinful, [],
