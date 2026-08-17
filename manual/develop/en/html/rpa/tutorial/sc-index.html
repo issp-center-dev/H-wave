@@ -135,7 +135,7 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
   print_level = 1
 
 [mode]
-  mode = &quot;RPA&quot;
+  mode = "RPA"
 
 [mode.param]
   T = 0.1
@@ -146,32 +146,32 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
 
 [eliashberg]
-  solver_mode = &quot;both&quot;
-  chi0q_mode = &quot;load&quot;
-  pairing_type = &quot;singlet&quot;
-  init_gap = &quot;cos&quot;
+  solver_mode = "both"
+  chi0q_mode = "load"
+  pairing_type = "singlet"
+  init_gap = "cos"
   max_iter = 500
   alpha = 0.5
   convergence_tol = 1.0e-5
   num_eigenvalues = 10
-  eigenvalue_method = &quot;arnoldi&quot;
-  output_gap = &quot;gap.dat&quot;
-  output_eigenvalue = &quot;eigenvalue.dat&quot;
+  eigenvalue_method = "arnoldi"
+  output_gap = "gap.dat"
+  output_eigenvalue = "eigenvalue.dat"
 </pre></div>
 </div>
 <p>The file contains the following sections:</p>
@@ -852,13 +852,13 @@ shape-compatible with the next rung.</p>
 <span class="w">  </span><span class="c1">#   T_start = 0.02</span>
 <span class="w">  </span><span class="c1">#   T_stop  = 0.006</span>
 <span class="w">  </span><span class="c1">#   num     = 5</span>
-<span class="w">  </span><span class="c1">#   spacing = &quot;linear&quot;          # &quot;linear&quot; (default) or &quot;log&quot;</span>
-<span class="w">  </span><span class="n">output_dir</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tsweep&quot;</span><span class="w">       </span><span class="c1"># default</span>
+<span class="w">  </span><span class="c1">#   spacing = "linear"          # "linear" (default) or "log"</span>
+<span class="w">  </span><span class="n">output_dir</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="s2">"tsweep"</span><span class="w">       </span><span class="c1"># default</span>
 <span class="w">  </span><span class="n">run_eliashberg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">           </span><span class="c1"># default</span>
 <span class="w">  </span><span class="n">warm_start</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">           </span><span class="c1"># default</span>
 <span class="w">  </span><span class="n">seed_gap</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">           </span><span class="c1"># default</span>
 <span class="w">  </span><span class="n">resume</span><span class="w">         </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">          </span><span class="c1"># default; or pass --resume</span>
-<span class="w">  </span><span class="n">summary_file</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;lambda_vs_T.dat&quot;</span><span class="w">  </span><span class="c1"># default</span>
+<span class="w">  </span><span class="n">summary_file</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">"lambda_vs_T.dat"</span><span class="w">  </span><span class="c1"># default</span>
 </pre></div>
 </div>
 <ul class="simple">
@@ -965,7 +965,7 @@ failed) print as <code class="docutils literal notranslate"><span class="pre">na
 <section id="example">
 <h4>Example<a class="headerlink" href="#example" title="Link to this heading">¶</a></h4>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
-<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
 
 <span class="k">[mode.param]</span>
 <span class="w">  </span><span class="n">T</span><span class="w">         </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
@@ -975,29 +975,29 @@ failed) print as <code class="docutils literal notranslate"><span class="pre">na
 
 <span class="k">[file]</span>
 <span class="k">[file.input]</span>
-<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.&quot;</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
 
 <span class="k">[file.input.interaction]</span>
-<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;.&quot;</span>
-<span class="w">  </span><span class="n">Geometry</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;geom.dat&quot;</span>
-<span class="w">  </span><span class="n">Transfer</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;transfer.dat&quot;</span>
-<span class="w">  </span><span class="n">CoulombIntra</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;coulombintra.dat&quot;</span>
-<span class="w">  </span><span class="n">CoulombInter</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;coulombinter.dat&quot;</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
 
 <span class="k">[file.output]</span>
-<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;output&quot;</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
 
 <span class="k">[eliashberg]</span>
-<span class="w">  </span><span class="n">frequency</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;dynamic&quot;</span>
-<span class="w">  </span><span class="n">chi0q_mode</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;flex&quot;</span>
-<span class="w">  </span><span class="n">pairing_type</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;singlet&quot;</span>
-<span class="w">  </span><span class="n">solver_mode</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;eigenvalue&quot;</span><span class="w">   </span><span class="c1"># required by hwave_tsweep pre-flight</span>
+<span class="w">  </span><span class="n">frequency</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="s2">"dynamic"</span>
+<span class="w">  </span><span class="n">chi0q_mode</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"flex"</span>
+<span class="w">  </span><span class="n">pairing_type</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">"singlet"</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span><span class="w">   </span><span class="c1"># required by hwave_tsweep pre-flight</span>
 
 <span class="k">[continuation]</span>
 <span class="w">  </span><span class="n">T_start</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
 <span class="w">  </span><span class="n">T_stop</span><span class="w">         </span><span class="o">=</span><span class="w"> </span><span class="mf">0.005</span>
 <span class="w">  </span><span class="n">num</span><span class="w">            </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span>
-<span class="w">  </span><span class="n">spacing</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;log&quot;</span>
+<span class="w">  </span><span class="n">spacing</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">"log"</span>
 <span class="w">  </span><span class="n">run_eliashberg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">  </span><span class="n">warm_start</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">  </span><span class="n">seed_gap</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>

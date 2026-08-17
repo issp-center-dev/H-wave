@@ -213,7 +213,7 @@ fluctuations with a peak at <span class="math notranslate nohighlight">\(\mathbf
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
+  mode = "FLEX"
 
 [mode.param]
   T = 0.5
@@ -227,21 +227,21 @@ fluctuations with a peak at <span class="math notranslate nohighlight">\(\mathbf
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p>Key parameters:</p>
@@ -363,7 +363,7 @@ it, and note that the run’s other outputs must be regenerated in any case –
 see <a class="reference internal" href="#flex-general-transpose-fix"><span class="std std-ref">the migration warning</span></a>.</p>
 </div>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
-<span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
+<span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma.npz"</span>
 </pre></div>
 </div>
 <p>This is often decisive near a magnetic instability (low temperature, strong
@@ -385,8 +385,8 @@ aspect-ratio change like <code class="docutils literal notranslate"><span class=
 <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> into the input directory, or point <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> at the
 previous output directory with a relative path, e.g.:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[file.input]
-  path_to_input = &quot;.&quot;
-  sigma_init = &quot;run_T0.50/output/sigma.npz&quot;
+  path_to_input = "."
+  sigma_init = "run_T0.50/output/sigma.npz"
 </pre></div>
 </div>
 </div>
@@ -452,7 +452,7 @@ and temperature <span class="math notranslate nohighlight">\(T = 1.0\)</span>.</
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
+  mode = "FLEX"
 
 [mode.param]
   T = 1.0
@@ -466,23 +466,23 @@ and temperature <span class="math notranslate nohighlight">\(T = 1.0\)</span>.</
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
-  Hund = &quot;hund.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p>Key differences from the 1-orbital sample:</p>
@@ -826,13 +826,13 @@ are shared with the RPA solver. See <a class="reference internal" href="../../rp
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> of any existing FLEX input — every other line, including
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, stays as it is:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
-<span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
-<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># or &quot;general&quot;</span>
+<span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"reduced"</span><span class="w">     </span><span class="c1"># or "general"</span>
 <span class="k">[mode.param]</span>
 <span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
 <span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
 <span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span><span class="w">                 </span><span class="c1"># still required: the output grid</span>
-<span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ir&quot;</span><span class="w">      </span><span class="c1"># opt in to the sparse-IR axis</span>
+<span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ir"</span><span class="w">      </span><span class="c1"># opt in to the sparse-IR axis</span>
 <span class="c1"># ir_tol = 1e-8             # optional: basis cutoff accuracy</span>
 <span class="c1"># ir_wmax = 30.0            # optional: bandwidth (auto-estimated)</span>
 </pre></div>
@@ -862,11 +862,11 @@ recover a uniform-grid file, re-run FLEX with
 the native run), or densify offline:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>import numpy as np
 from hwave.solver.ir_axis import IRAxis
-d = np.load(&quot;chiq_s.npz&quot;)
-ax = IRAxis(float(d[&quot;ir_beta&quot;]), float(d[&quot;ir_wmax&quot;]),
-            float(d[&quot;ir_tol&quot;]), str(d[&quot;ir_statistics&quot;]))
-c = ax.fit_from_freq_points(np.moveaxis(d[&quot;chiq_s&quot;], 0, -1),
-                            d[&quot;ir_freq_n&quot;])
+d = np.load("chiq_s.npz")
+ax = IRAxis(float(d["ir_beta"]), float(d["ir_wmax"]),
+            float(d["ir_tol"]), str(d["ir_statistics"]))
+c = ax.fit_from_freq_points(np.moveaxis(d["chiq_s"], 0, -1),
+                            d["ir_freq_n"])
 chi_u = np.moveaxis(ax.eval_to_uniform(c, nmat=4096), -1, 0)
 </pre></div>
 </div>
@@ -987,7 +987,7 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
+  mode = "FLEX"
 
 [mode.param]
   T = 0.1
@@ -1001,24 +1001,24 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
-  Hund = &quot;hund.dat&quot;
-  Exchange = &quot;exchange.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
+  Exchange = "exchange.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p><strong>Geometry</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
@@ -1186,8 +1186,8 @@ pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
-  calc_scheme = &quot;general&quot;
+  mode = "FLEX"
+  calc_scheme = "general"
 
 [mode.param]
   T = 0.1
@@ -1201,24 +1201,24 @@ pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
-  Hund = &quot;hund.dat&quot;
-  Exchange = &quot;exchange.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
+  Exchange = "exchange.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p>The only difference from Sample 3 is the explicit

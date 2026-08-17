@@ -41,12 +41,12 @@
 ファイル名は、環境設定ファイルの <code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクション <code class="docutils literal notranslate"><span class="pre">eigen</span></code>で指定された文字列 (以下、 <code class="docutils literal notranslate"><span class="pre">eigen_str</span></code> ) を用いて、 <code class="docutils literal notranslate"><span class="pre">eigen_str.npz</span></code>という名前で出力されます。</p>
 <p>以下、データを読み込む例となります。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;eigen_str.npz&quot;</span><span class="p">)</span>
-<span class="n">eigenvalue</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;eigenvalue&quot;</span><span class="p">]</span>
-<span class="n">eigenvector</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;eigenvector&quot;</span><span class="p">]</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"eigen_str.npz"</span><span class="p">)</span>
+<span class="n">eigenvalue</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">"eigenvalue"</span><span class="p">]</span>
+<span class="n">eigenvector</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">"eigenvector"</span><span class="p">]</span>
 
-<span class="n">wavevector_unit</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;wavevector_unit&quot;</span><span class="p">]</span>
-<span class="n">wavevector_index</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;wavevector_index&quot;</span><span class="p">]</span>
+<span class="n">wavevector_unit</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">"wavevector_unit"</span><span class="p">]</span>
+<span class="n">wavevector_index</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">"wavevector_index"</span><span class="p">]</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>には波数ごとの固有値 <span class="math notranslate nohighlight">\(\lambda_l(\vec{k})\)</span>が格納されます。

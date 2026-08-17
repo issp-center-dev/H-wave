@@ -115,7 +115,7 @@
 この設定は現在、起動時にエラーで失敗します。 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>
 を使用してください。</p>
 <p>旧形式の8軸ファイルを読み込む解析スクリプトは、以下のように変換できます:</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>chiq8 = data[&quot;chiq&quot;]           # (l, q, s1, s2, a, s3, s4, b)
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>chiq8 = data["chiq"]           # (l, q, s1, s2, a, s3, s4, b)
 l, q, _, _, norb, _, _, _ = chiq8.shape
 nd = 2 * norb
 chiq4 = np.zeros(chiq8.shape[:2] + (nd, nd), dtype=chiq8.dtype)
@@ -138,10 +138,10 @@ for s1 in (0, 1):
 <h1>データ読み込みの例<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
 <p>以下にデータの読み込み方の例を示します。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;output/chiq.npz&#39;</span><span class="p">)</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">'output/chiq.npz'</span><span class="p">)</span>
 
-<span class="n">chiq</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;chiq&#39;</span><span class="p">]</span>
-<span class="n">freq_index</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;freq_index&#39;</span><span class="p">]</span>
+<span class="n">chiq</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">'chiq'</span><span class="p">]</span>
+<span class="n">freq_index</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">'freq_index'</span><span class="p">]</span>
 </pre></div>
 </div>
 </section>

@@ -497,22 +497,43 @@ with coefficient <span class="math notranslate nohighlight">\(P\)</span> rather 
 longitudinal and transverse channels. Validation of such degenerate entries
 is tracked separately.</p>
 </div>
-<p>The transverse RPA susceptibility is obtained as</p>
+<p>In every mode except a genuinely spin-mixing spin-orbital Hamiltonian
+(spin-free, spin-diag, and the Sz-conserving spin-orbital case), the
+transverse RPA susceptibility is obtained from the self-contained vertex
+<span class="math notranslate nohighlight">\(W_{+-}\)</span> above as</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-19">
 <span class="eqno">(7.30)<a class="headerlink" href="#equation-algorithm-rpa-19" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
 = \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
   \hat{X}^{(0)}_{+-}(\mathbf{q})\]</div>
+<p>The genuinely spin-mixing spin-orbital case is handled differently; see
+the note below.</p>
 <p>To enable the transverse channel calculation, set <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>
 in the input TOML file. This requires the <code class="docutils literal notranslate"><span class="pre">general</span></code> calculation scheme
 (automatically selected).</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>In the spin-orbital mode, when the Hamiltonian genuinely mixes spins
-(e.g. spin-orbit coupling), the transverse channel extracts only the
-<span class="math notranslate nohighlight">\(S_z\)</span>-conserving block <span class="math notranslate nohighlight">\(G_\uparrow G_\downarrow\)</span> of the
-bubble; the spin-mixing cross terms are not included, and a warning
-is emitted. The transverse susceptibility of a spin-mixing system is
-therefore an approximation in the current implementation.</p>
+(e.g. spin-orbit coupling), the equation above does not apply.
+Instead the transverse channel is obtained by dressing the full
+spin-orbital space with the same antisymmetrized vertex (the direct
+interaction plus its on-site exchange crossing) the longitudinal
+spinful solve uses – see <code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code> in the
+configuration reference – and then extracting
+<span class="math notranslate nohighlight">\(\chi_{+-}(\mathbf{q})\)</span> as the spin-flip block of that dressed
+tensor. Spin-mixing cross terms are therefore included only at the
+level of that antisymmetrized vertex, not exactly: the exchange
+crossing of an <em>off-site</em> interaction depends on two independent
+fermionic momenta and cannot be written as a single vertex
+<span class="math notranslate nohighlight">\(W(\mathbf{q})\)</span>, so it is not implemented. Among the interaction
+types, only off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> declarations reach this
+dressing at all (every other type is either rejected or discarded when
+declared off-site, as described above), so their transverse content is
+only <em>partially</em> included, and a warning is logged when such a
+declaration is present. Because the extraction reuses the
+antisymmetrized longitudinal solve, the combination
+<code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code> (a ring-only compatibility switch,
+see the configuration reference) with <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> and
+a genuinely spin-mixing Hamiltonian is rejected.</p>
 </div>
 </section>
 </section>

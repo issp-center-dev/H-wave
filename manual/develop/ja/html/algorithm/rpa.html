@@ -464,21 +464,40 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 係数は <span class="math notranslate nohighlight">\(2P\)</span>ではなく <span class="math notranslate nohighlight">\(P\)</span>として（縦・横チャネルで一貫して）
 扱われます。この縮退エントリの検証は別途追跡されています。</p>
 </div>
-<p>横方向のRPA感受率は</p>
+<p>スピンを本当に混合する（genuinely spin-mixing）スピン軌道ハミルトニアンを
+除く全てのモード（スピンなし、スピン対角、および <span class="math notranslate nohighlight">\(S_z\)</span>を保存する
+スピン軌道の場合）では、横方向のRPA感受率は上記の自己完結した頂点
+<span class="math notranslate nohighlight">\(W_{+-}\)</span>から</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-20">
 <span class="eqno">(7.31)<a class="headerlink" href="#equation-algorithm-rpa-20" title="Link to this equation">¶</a></span>\[\hat{X}_{+-}(\mathbf{q})
 = \left[\hat{I} + \hat{X}^{(0)}_{+-}(\mathbf{q})\, \hat{W}_{+-}\right]^{-1}
   \hat{X}^{(0)}_{+-}(\mathbf{q})\]</div>
+<p>として得られます。本当にスピンを混合するスピン軌道の場合は扱いが異なります。
+下の注を参照してください。</p>
 <p>横チャネルの計算を有効にするには、入力TOMLファイルで
 <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>と設定します。
 これには <code class="docutils literal notranslate"><span class="pre">general</span></code>計算スキームが必要です（自動選択されます）。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p>スピン軌道モードでハミルトニアンが本当にスピンを混合する場合
-（スピン軌道相互作用など）、横チャネルはバブルの <span class="math notranslate nohighlight">\(S_z\)</span>
-保存ブロック <span class="math notranslate nohighlight">\(G_\uparrow G_\downarrow\)</span>のみを抽出します。
-スピン混合のクロス項は含まれず、警告が出力されます。したがって
-スピン混合系の横感受率は、現在の実装では近似となります。</p>
+（スピン軌道相互作用など）、上記の式は適用されません。代わりに、
+縦チャネルのスピンフル求解と同じ反対称化された頂点（direct 相互作用
+＋オンサイトの exchange クロス項。設定リファレンスの
+<code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code>を参照）で全スピン軌道空間をドレスし、
+そのうえで <span class="math notranslate nohighlight">\(\chi_{+-}(\mathbf{q})\)</span>をドレスされたテンソルの
+スピン反転ブロックとして抽出します。したがってスピン混合のクロス項が
+含まれるのは、この反対称化された頂点のレベルまでであり、厳密では
+ありません。<em>オフサイト</em> 相互作用の exchange クロス項は独立な2つの
+フェルミオン運動量に依存するため単一の頂点 <span class="math notranslate nohighlight">\(W(\mathbf{q})\)</span>では
+表現できず、実装されていません。相互作用の種類のうち、オフサイト宣言が
+このドレッシングに到達しうるのは <code class="docutils literal notranslate"><span class="pre">Hund</span></code>と <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>のみです
+（他の種類は上述の通りオフサイトでは拒否されるか破棄されます）。その
+ため、これらの横方向への寄与は部分的にしか含まれず、該当する宣言が
+ある場合には警告が出力されます。この抽出は反対称化された縦チャネルの
+求解を再利用するため、<code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code>
+（ring のみとの互換性のためのスイッチ。設定リファレンスを参照）と
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>、かつ本当にスピンを混合する
+ハミルトニアンという組み合わせは拒否されます。</p>
 </div>
 </section>
 </section>

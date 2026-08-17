@@ -200,7 +200,7 @@ Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
+  mode = "FLEX"
 
 [mode.param]
   T = 0.5
@@ -214,21 +214,21 @@ Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p>主要パラメータ:</p>
@@ -343,7 +343,7 @@ FLEX converged after 64 iterations
 （<a class="reference internal" href="#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a>を参照）。</p>
 </div>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[file.input]</span>
-<span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sigma.npz&quot;</span>
+<span class="w">  </span><span class="n">sigma_init</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma.npz"</span>
 </pre></div>
 </div>
 <p>これは磁気不安定点の近傍（低温・強いスピン揺らぎ）で特に有効です。そこでは
@@ -362,8 +362,8 @@ continuation スイープでは <code class="docutils literal notranslate"><span
 書き出されています。スイープでは、前の <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>を入力ディレクトリに
 コピーするか、相対パスで前の出力ディレクトリを直接指してください。例:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[file.input]
-  path_to_input = &quot;.&quot;
-  sigma_init = &quot;run_T0.50/output/sigma.npz&quot;
+  path_to_input = "."
+  sigma_init = "run_T0.50/output/sigma.npz"
 </pre></div>
 </div>
 </div>
@@ -426,7 +426,7 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
+  mode = "FLEX"
 
 [mode.param]
   T = 1.0
@@ -440,23 +440,23 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
-  Hund = &quot;hund.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p>1軌道サンプルとの主な違い:</p>
@@ -780,13 +780,13 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>に1行追加するだけです。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を含め他の行は
 そのままで動作します:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
-<span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;FLEX&quot;</span>
-<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reduced&quot;</span><span class="w">     </span><span class="c1"># または &quot;general&quot;</span>
+<span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"reduced"</span><span class="w">     </span><span class="c1"># または "general"</span>
 <span class="k">[mode.param]</span>
 <span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
 <span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
 <span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span><span class="w">                 </span><span class="c1"># 従来どおり必要（出力グリッド）</span>
-<span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ir&quot;</span><span class="w">      </span><span class="c1"># sparse-IR 軸へのオプトイン</span>
+<span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ir"</span><span class="w">      </span><span class="c1"># sparse-IR 軸へのオプトイン</span>
 <span class="c1"># ir_tol = 1e-8             # 省略可: 基底の打ち切り精度</span>
 <span class="c1"># ir_wmax = 30.0            # 省略可: バンド幅（自動推定あり）</span>
 </pre></div>
@@ -929,7 +929,7 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
+  mode = "FLEX"
 
 [mode.param]
   T = 0.1
@@ -943,24 +943,24 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
-  Hund = &quot;hund.dat&quot;
-  Exchange = &quot;exchange.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
+  Exchange = "exchange.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p><strong>格子情報</strong> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
@@ -1127,8 +1127,8 @@ FLEX converged after 62 iterations
   print_level = 1
 
 [mode]
-  mode = &quot;FLEX&quot;
-  calc_scheme = &quot;general&quot;
+  mode = "FLEX"
+  calc_scheme = "general"
 
 [mode.param]
   T = 0.1
@@ -1142,24 +1142,24 @@ FLEX converged after 62 iterations
 
 [file]
 [file.input]
-  path_to_input = &quot;.&quot;
+  path_to_input = "."
 
 [file.input.interaction]
-  path_to_input = &quot;.&quot;
-  Geometry = &quot;geom.dat&quot;
-  Transfer = &quot;transfer.dat&quot;
-  CoulombIntra = &quot;coulombintra.dat&quot;
-  CoulombInter = &quot;coulombinter.dat&quot;
-  Hund = &quot;hund.dat&quot;
-  Exchange = &quot;exchange.dat&quot;
+  path_to_input = "."
+  Geometry = "geom.dat"
+  Transfer = "transfer.dat"
+  CoulombIntra = "coulombintra.dat"
+  CoulombInter = "coulombinter.dat"
+  Hund = "hund.dat"
+  Exchange = "exchange.dat"
 
 [file.output]
-  path_to_output = &quot;output&quot;
-  chi0q = &quot;chi0q&quot;
-  chiq = &quot;chiq&quot;
-  sigma = &quot;sigma&quot;
-  green = &quot;green&quot;
-  energy = &quot;energy.dat&quot;
+  path_to_output = "output"
+  chi0q = "chi0q"
+  chiq = "chiq"
+  sigma = "sigma"
+  green = "green"
+  energy = "energy.dat"
 </pre></div>
 </div>
 <p>サンプル 3 との違いは <code class="docutils literal notranslate"><span class="pre">[mode]</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>
