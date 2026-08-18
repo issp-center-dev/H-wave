@@ -1,16 +1,16 @@
 # RPA/FLEX equivalence table -- benchmark
 
-Schema (`docs/superpowers/plans/2026-08-18-equivalence-table.md`, Appendix B): header (commit, protocol, runner matrix), then a table `cell_id | max_seconds_over_runs_and_runners` covering EVERY cell (`tests.equivalence_measure` times all proof shapes -- rejections, construction-only rows, and the two multirun exceptions included), then `module_total_seconds_per_runner`, `process_overhead_seconds`, the `unittest_module_process_seconds` sample(s), and the MEASURED SOURCE SHA + the authoritative run identity. **This file grows one section per calibration stage**: this Task-7 section is the LOCAL+CHITA CANDIDATE pass (2 advisory proxy runners, 3 measurement invocations each); Task 9 appends the CI section (the 4 gating runners x 3 invocations + the 4 unittest-timing samples the 120s budget actually gates, with real GitHub Actions run IDs/attempts) once the closed calibration loop produces a freezable measurement.
+Section schema: header (commit, protocol, runner matrix), then a table `cell_id | max_seconds_over_runs_and_runners` covering EVERY cell (`tests.equivalence_measure` times all proof shapes -- rejections, construction-only rows, and the two multirun exceptions included), then `module_total_seconds_per_runner`, `process_overhead_seconds`, the `unittest_module_process_seconds` sample(s), and the MEASURED SOURCE SHA + the authoritative run identity. **This file grows one section per calibration stage**: Section 1 below is the CANDIDATE pass taken on two development machines (advisory proxy runners, 3 measurement invocations each). A continuous-integration section is appended later (the 4 gating runners x 3 invocations + the 4 unittest-timing samples the 120s budget actually gates, with real GitHub Actions run IDs/attempts) once a closed calibration loop produces a freezable measurement.
 
 **Registry docstring maintenance checklist:** any future cell ADDITION or ENLARGEMENT (a new fixture, a heavier `Nmat`/`CellShape`, a new proof shape) invalidates this file's per-cell timing table for the changed/added cell(s) and REQUIRES a new benchmark section here (never an in-place edit of a PAST section -- each section is an immutable record of one calibration event, exactly like `tests/equivalence_calibration_log.md`). `tests/equivalence_cells.py`'s own module docstring cross-references this rule; `TestBenchmarkRegistryTie` (in `tests/test_rpa_flex_equivalence_table.py`) enforces that this file's MOST RECENT section's cell_id column is an EXACT multiset match (duplicates detected, not masked by set semantics) against `CELLS` -- a cell added to the registry without a matching new benchmark row fails that test.
 
 ---
 
-## Section 1 -- Task 7, local + chita candidate pass
+## Section 1 -- candidate pass on two development machines
 
-- **Commit:** b922a1c13b85b2d319bc65ee8c45183dc6ab2a47 (parent of this task's commit -- see `tests/equivalence_calibration_log.md`, Event 2, for the identical measured-source-commit convention and the full residual side of this same sweep).
-- **Protocol:** `python -m tests.equivalence_measure` run 3x per runner (`find . -name __pycache__ -exec rm -rf {} +` before each invocation); per-cell/module timings below are the MAX over each runner's 3 invocations, then the MAX across the 2 runners (per Appendix B's "MAX over 3 measurement-process invocations per gating runner" rule, applied here to the 2 advisory local/chita runners in place of the 4 CI gating runners; residuals were bitwise identical across all 3 invocations on both runners for every cell, so MAX-over-3 and any single invocation agree).
-- **Runner matrix:** local (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) + chita (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1, bundle-transferred branch, `~/miniconda3/envs/hwave_gpu/bin/python`, `PYTHONPATH=src`, `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1` -- see the calibration log's Event 2 for why the thread-count pin is required on chita).
+- **Commit:** b922a1c13b85b2d319bc65ee8c45183dc6ab2a47 (the revision the measurements were taken at -- see `tests/equivalence_calibration_log.md`, Event 2, for the identical measured-source-commit convention and the full residual side of this same sweep).
+- **Protocol:** `python -m tests.equivalence_measure` run 3x per runner (`find . -name __pycache__ -exec rm -rf {} +` before each invocation); per-cell/module timings below are the MAX over each runner's 3 invocations, then the MAX across the 2 runners (the "MAX over 3 measurement-process invocations per gating runner" rule, applied here to the 2 advisory development machines in place of the 4 CI gating runners; residuals were bitwise identical across all 3 invocations on both runners for every cell, so MAX-over-3 and any single invocation agree).
+- **Runner matrix:** macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) + Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1, `PYTHONPATH=src`, `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1` -- see the calibration log's Event 2 for why the thread-count pin is required on that machine).
 
 ### Per-cell timing (37 rows -- every cell in `CELLS`)
 
@@ -56,13 +56,13 @@ Schema (`docs/superpowers/plans/2026-08-18-equivalence-table.md`, Appendix B): h
 
 ### Module totals and process overhead
 
-| quantity | local | chita |
+| quantity | macOS arm64 | Linux x86_64 |
 |---|---|---|
 | `module_total_seconds_per_runner` (MAX of 3 invocations) | 0.557 | 0.638 |
 | `process_seconds` (MAX of 3 invocations, external wall clock via `date +%s.%N`) | 0.781 | 0.819 |
 | `process_overhead_seconds` (`process_seconds - module_total_seconds`, import/JSON-emission/interpreter startup-shutdown) | 0.224 | 0.181 |
 | `unittest_module_process_seconds` (`python -m unittest tests.test_rpa_flex_equivalence_table`, 1 sample) | 0.853 | 0.962 |
 
-**120s freeze-time budget:** both samples above are informational only here (Task 7 has 2 advisory proxies, not the 4 gating runners the budget is actually defined over) -- both are ~125x under the 120s budget regardless, so no headroom concern is expected once Task 9 measures the real 4-sample MAX.
+**120s freeze-time budget:** both samples above are informational only here (this pass has 2 advisory proxies, not the 4 gating runners the budget is actually defined over) -- both are ~125x under the 120s budget regardless, so no headroom concern is expected once the real 4-sample MAX is measured in CI.
 
-**Source SHA / run identity:** `b922a1c13b85b2d319bc65ee8c45183dc6ab2a47` on all 6 measurement invocations (3 local + 3 chita) and both unittest-timing samples, verified equal via `tests.equivalence_freeze_check`'s own source-SHA check applied to this pass's raw JSON output. No GitHub Actions run ID/attempt exists for this section -- local and chita are proxy runs, not CI jobs; Task 9's CI section records the authoritative `(run ID, attempt)` pair per the plan's Task-9 Step 1 selection rule.
+**Source SHA / run identity:** `b922a1c13b85b2d319bc65ee8c45183dc6ab2a47` on all 6 measurement invocations (3 per machine) and both unittest-timing samples, verified equal via `tests.equivalence_freeze_check`'s own source-SHA check applied to this pass's raw JSON output. No GitHub Actions run ID/attempt exists for this section -- both machines are proxy runs, not CI jobs; the CI section appended later records the authoritative `(run ID, attempt)` pair.

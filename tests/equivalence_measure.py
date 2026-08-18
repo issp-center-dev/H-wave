@@ -1,13 +1,13 @@
 """The read-only measurement entry point for the RPA/FLEX equivalence
-table (Appendix B of ``docs/superpowers/plans/2026-08-18-equivalence-
-table.md``, Task 6).
+table. It produces the calibration artifacts
+``tests/equivalence_freeze_check.py`` aggregates.
 
 ``python -m tests.equivalence_measure`` executes and TIMES every cell in
 ``tests.equivalence_cells.CELLS`` (every proof shape -- rejections,
 construction-only rows, and the two multirun exceptions all included,
 via the SAME executor (``tests.test_rpa_flex_equivalence_table._run_side``)
 ``run_cell`` itself dispatches through), then runs the mu/Green
-divergence diagnostic (``_diagnostic_residuals``, Task 6) on both its
+divergence diagnostic (``_diagnostic_residuals``) on both its
 fixtures. It prints one JSON object per line (never a JSON array -- so
 a partial/interrupted run's already-printed lines stay individually
 parseable) to stdout:
@@ -90,12 +90,11 @@ def _suppress_perf_db_exit_report() -> None:
     perf.py``) records into a module-level ``PerfDB`` singleton whose
     ``__del__`` unconditionally prints a "Statistics" table to STDOUT
     when the process tears down -- unrelated project infrastructure,
-    not something Task 6 is authorized to modify (the plan's File
-    Structure scopes solver-code changes to the SO x reduced FLEX guard
-    only). Left alone, that table's lines would land AFTER this
-    module's own final JSON line and break the "one JSON object per
-    line, nothing else, ever" stdout contract for any downstream
-    consumer that does not know to ignore trailing non-JSON text.
+    deliberately left unmodified here. Left alone, that table's lines
+    would land AFTER this module's own final JSON line and break the
+    "one JSON object per line, nothing else, ever" stdout contract for
+    any downstream consumer that does not know to ignore trailing
+    non-JSON text.
     Clearing the singleton's counters here (its own ``__del__`` returns
     immediately when they are empty) suppresses the report without
     touching ``perf.py`` itself.
@@ -195,11 +194,11 @@ def _measure_cell(cell) -> bool:
     except KeyboardInterrupt:
         raise
     except (Exception, SystemExit) as exc:
-        # Carried minor from Task 6: a bare ``except Exception`` lets a
-        # ``sys.exit(...)`` from an input-reader/solver-construction
-        # path (SystemExit derives from BaseException, not Exception)
-        # escape uncaught and kill this process -- silently dropping
-        # every cell/checkpoint measured after the broken one from the
+        # A bare ``except Exception`` would let a ``sys.exit(...)``
+        # from an input-reader/solver-construction path (SystemExit
+        # derives from BaseException, not Exception) escape uncaught
+        # and kill this process -- silently dropping every
+        # cell/checkpoint measured after the broken one from the
         # calibration artifact. Explicitly catching SystemExit
         # alongside Exception keeps the "one broken cell must not hide
         # every other cell's data" contract; the exit code is recorded

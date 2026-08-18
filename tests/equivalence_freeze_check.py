@@ -1,20 +1,20 @@
 """The read-only aggregation/validation collector for the RPA/FLEX
-equivalence-table calibration workflow (Appendix B of
-``docs/superpowers/plans/2026-08-18-equivalence-table.md``, Task 7).
+equivalence-table calibration workflow
+(``.github/workflows/equivalence-calibration.yml``).
 
 The calibration workflow (``.github/workflows/equivalence-calibration.
 yml``) uploads, per gating-runner job (``ubuntu-latest`` x Python
 3.9/3.10/3.11/3.12): three ``python -m tests.equivalence_measure``
 invocations (``calib-<py>-<n>.json``, ``n`` in 1..3) plus one
 ``python -m unittest tests.test_rpa_flex_equivalence_table`` timing
-invocation (``unittest-<py>.json``). The coordinator downloads all
-sixteen artifacts (``gh run download``) for a single successful run
-matching a source commit ``S``. This module parses those files (or,
-for testing, hand-built in-memory equivalents), VALIDATES completeness
-against the AGGREGATION rules in Appendix B, and computes every
-reducer those rules define. Its printed report (``build_report``) is
-the SOLE input to any freeze decision -- Task 9 never hand-computes a
-bound from the raw artifacts.
+invocation (``unittest-<py>.json``). Whoever runs the calibration
+downloads all sixteen artifacts (``gh run download``) for a single
+successful run matching a source commit ``S``. This module parses
+those files (or, for testing, hand-built in-memory equivalents),
+VALIDATES completeness against the aggregation rules implemented
+below, and computes every reducer those rules define. Its printed
+report (``build_report``) is the SOLE input to any freeze decision --
+a bound is never hand-computed from the raw artifacts.
 
 This module is read-only: it never asserts numerical equivalence
 itself (that already happened when ``equivalence_measure`` ran) and it
@@ -41,8 +41,8 @@ from tests.equivalence_cells import CELLS, Diverges, Equiv
 # ``Sample.runner`` label set and to size the multiplicity checks.
 GATING_RUNNERS: Tuple[str, ...] = ("3.9", "3.10", "3.11", "3.12")
 
-# Global Constraints / Appendix A G6: the diagnostic apparatus records
-# 5 checkpoints x 2 fixtures = 10 lines per measurement sample.
+# The diagnostic apparatus records 5 checkpoints x 2 fixtures = 10
+# lines per measurement sample.
 DIAGNOSTIC_CHECKPOINTS: Tuple[int, ...] = (1, 2, 3, 4, 5)
 DIAGNOSTIC_FIXTURES: Tuple[str, ...] = ("benign", "fc")
 
@@ -83,10 +83,10 @@ _FILENAME_RE = re.compile(
 def parse_sample_filename(filename: str) -> Tuple[str, int, str]:
     """Parse ``calib-<py>-<n>.json`` -> ``(py, n, "measurement")`` or
     ``unittest-<py>.json`` -> ``(py, 1, "unittest")``, matching the
-    exact naming the workflow's ``if: always()`` upload steps produce
-    (Appendix B). Raises ``ValueError`` on any other name -- a naming
-    drift between the workflow and this parser must fail loudly, not
-    silently skip an artifact.
+    exact naming the workflow's ``if: always()`` upload steps produce.
+    Raises ``ValueError`` on any other name -- a naming drift between
+    the workflow and this parser must fail loudly, not silently skip an
+    artifact.
     """
 
     base = os.path.basename(filename)
@@ -180,8 +180,8 @@ def _diagnostic_pairs() -> set:
 
 
 # ---------------------------------------------------------------------------
-# Validation: every completeness/uniqueness/consistency rule from
-# Appendix B's AGGREGATION paragraph. Returns a list of human-readable
+# Validation: every completeness/uniqueness/consistency rule the
+# artifact set must satisfy. Returns a list of human-readable
 # violation strings (empty list == valid); never raises on a bad
 # artifact set -- callers decide what "invalid" means for their flow
 # (``build_report`` refuses to compute reducers when this is non-empty).
@@ -399,11 +399,12 @@ def validate_samples(samples: Sequence[Sample], expected_source_sha: str,
 
 
 # ---------------------------------------------------------------------------
-# Reducers (Appendix B's AGGREGATION rules). Each raises ValueError if
-# the requested (cell, observable)/checkpoint has zero matching
-# records -- silently returning e.g. ``-inf`` would let a missing
-# quantity masquerade as "passed the bound", which is exactly the
-# failure mode this module exists to prevent. Callers normally run
+# Reducers -- the aggregation rules a freeze decision is computed with.
+# Each raises ValueError if the requested (cell, observable)/checkpoint
+# has zero matching records -- silently returning e.g. ``-inf`` would
+# let a missing quantity masquerade as "passed the bound", which is
+# exactly the failure mode this module exists to prevent. Callers
+# normally run
 # ``validate_samples`` first and only call these when it returned no
 # errors.
 # ---------------------------------------------------------------------------
@@ -412,9 +413,9 @@ def validate_samples(samples: Sequence[Sample], expected_source_sha: str,
 def max_residual(samples: Sequence[Sample], cell_id: str, observable: str) -> float:
     """Upper-bound reducer (atol / diagnostic-ceiling checks): per-
     runner MAX over its invocations, then cross-runner MAX. (The two-
-    stage description is definitional per Appendix B; a flat max over
-    every matching record is numerically identical to max-of-maxes and
-    is what this implementation computes.)
+    stage description is the definitional one; a flat max over every
+    matching record is numerically identical to max-of-maxes and is
+    what this implementation computes.)
     """
 
     values = [

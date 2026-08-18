@@ -1,13 +1,10 @@
 """The RPA/FLEX equivalence-table cell registry.
 
-This module is the SIDE-EFFECT-FREE typed record registry described in
-``docs/superpowers/specs/2026-08-18-equivalence-table-design.md`` (Step
-4 of the RPA/FLEX consolidation sequence) and
-``docs/superpowers/plans/2026-08-18-equivalence-table.md`` (Task 1 of
-that plan). It defines the record types every later task builds on
-(comparators, executors, the 38-cell inventory, and a rendered docs
-page) plus the schema validators that keep the registry internally
-consistent.
+This module is the SIDE-EFFECT-FREE typed record registry behind the
+RPA/FLEX support and equivalence table. It defines the record types
+everything else builds on (comparators, executors, the cell inventory,
+and the rendered docs page) plus the schema validators that keep the
+registry internally consistent.
 
 Hard constraints (binding on every future edit to this file):
 
@@ -31,22 +28,22 @@ Hard constraints (binding on every future edit to this file):
     normalizes mapping fields; it never inspects cross-field business
     rules.
 
-``CELLS`` carries the FULL Appendix A inventory: rows 1-36 (Task 5) plus
-the G6 conditioning row, cell 38 (Task 6 -- Appendix A has no row 37,
-so the registry holds 37 cells total). Cell 38 needed the
+``CELLS`` carries the full cell inventory this registry defines: rows
+1-36 plus the conditioning row, cell 38 (there is no row 37, so the
+registry holds 37 cells total). The conditioning row depends on the
 divergence-diagnostic apparatus (``TestMuGreenDivergenceDiagnostic`` in
-the test module) built alongside it, since its Equiv comparison and its
-coverage obligation both depend on that apparatus having been proven
-first. ``COVERAGE_OBLIGATIONS`` is populated with every named predicate
-from the plan's coverage-obligations list, including "the conditioning
-row exists (38)" (Task 6).
+the test module): both its Equiv comparison and its coverage obligation
+are stated in terms of that apparatus, so the two must be kept in step.
+``COVERAGE_OBLIGATIONS`` is populated with every named coverage
+predicate, including "the conditioning row exists (38)".
 
-Registry docstring maintenance checklist (Task 7): ``tests/
+Registry docstring maintenance checklist: ``tests/
 equivalence_benchmark.md`` records ONE per-cell timing row per cell in
-``CELLS``, grouped into calibration sections (local+chita, then the CI
-section Task 9 appends) -- ``TestBenchmarkRegistryTie`` (in the test
-module) asserts the benchmark file's MOST RECENT section's cell_id
-column is an EXACT multiset match against ``CELLS``. Any future edit
+``CELLS``, grouped into calibration sections (the development-machine
+pass first, then one section per continuous-integration calibration) --
+``TestBenchmarkRegistryTie`` (in the test module) asserts the benchmark
+file's MOST RECENT section's cell_id column is an EXACT multiset match
+against ``CELLS``. Any future edit
 to this module that ADDS a cell, REMOVES a cell, RENAMES a
 ``cell_id``, or ENLARGES an existing cell's fixture (a change that
 could plausibly move its measured wall time) therefore also requires
@@ -388,28 +385,27 @@ PROVENANCE: dict = {
 }
 
 # ---------------------------------------------------------------------------
-# Task 7 candidate calibration: the local + chita runner descriptors and
-# the measured source commit shared by every ``_measured_equiv`` call in
-# this module. Local = this repository's own macOS development machine;
-# chita = the coordinator's Linux x86_64 CI proxy (bundle-transferred
-# branch, checked out under ``~/hwave-bubble-gpu-check``, run with
-# ``~/miniconda3/envs/hwave_gpu/bin/python`` -- CPU only, no CUDA
-# involved). Both are ADVISORY pre-freeze proxies (Global Constraints):
-# the actual gating CI runners (ubuntu-latest x Python 3.9-3.12) are
-# Task 9's job, and Task 9's closed loop is what ultimately FREEZES these
-# bounds. See ``tests/equivalence_calibration_log.md`` (Event 2) for the
-# full per-cell residual tables this module's literals were read off of,
-# and ``tests/equivalence_benchmark.md`` for the timing side of the same
-# sweep. A chita-specific finding, recorded here since it shapes the CI
-# workflow too (``.github/workflows/equivalence-calibration.yml`` pins
+# Candidate calibration: the two development-machine runner descriptors
+# and the measured source commit shared by every ``_measured_equiv`` call
+# in this module. One machine is macOS arm64, the other Linux x86_64
+# (CPU only, no CUDA involved). Both are ADVISORY pre-freeze proxies:
+# the gating continuous-integration runners (ubuntu-latest x Python
+# 3.9-3.12) are what ultimately FREEZES these bounds, once a calibration
+# run there closes the loop. See ``tests/equivalence_calibration_
+# log.md`` (Event 2) for the full per-cell residual tables this
+# module's literals were read off of, and
+# ``tests/equivalence_benchmark.md`` for the timing side of the same
+# sweep. One finding from the Linux x86_64 machine is recorded here
+# because it also shapes the CI workflow
+# (``.github/workflows/equivalence-calibration.yml`` pins
 # ``OPENBLAS_NUM_THREADS``/``OMP_NUM_THREADS``/``MKL_NUM_THREADS``/
 # ``NUMEXPR_NUM_THREADS`` to 1 for this reason): with the BLAS backend's
-# default thread pool, chita SEGFAULTS partway through a single
+# default thread pool, that machine SEGFAULTS partway through a single
 # ``equivalence_measure`` process (repeated small-matrix solver
 # constructions across ~27 cells accumulate OpenBLAS worker threads until
 # pthread_create fails) -- pinning every BLAS/OMP thread-count env var to
 # 1 before invoking the interpreter eliminates it (verified: 3/3 clean
-# chita runs afterward, 0/3 before).
+# runs afterward, 0/3 before).
 # ---------------------------------------------------------------------------
 
 _CANDIDATE_SOURCE_SHA = "b922a1c13b85b2d319bc65ee8c45183dc6ab2a47"
@@ -438,12 +434,13 @@ def _round_up_pow10(x: float) -> float:
 
 
 def _candidate_atol(local_residual: float, chita_residual: float, ceiling: float) -> float:
-    """The Global-Constraints tolerance bound rule, Task 7's candidate
-    variant (local+chita in place of the gating-runner MIN/MAX Task 9
-    uses to FREEZE): 10x the larger of the two measured residuals,
-    floored at ``max(residual, 1e-15)`` BEFORE the 10x multiply, then
-    rounded UP to a power of ten; capped at ``ceiling`` (the validator
-    allows ``atol == ceiling``). This function only computes the number;
+    """The tolerance bound rule, in its candidate variant (the two
+    development machines in place of the MIN/MAX over the gating
+    continuous-integration runners a freeze uses): 10x the larger of the
+    two measured residuals, floored at ``max(residual, 1e-15)`` BEFORE
+    the 10x multiply, then rounded UP to a power of ten; capped at
+    ``ceiling`` (the validator allows ``atol == ceiling``). This
+    function only computes the number;
     the STOP-and-report (raw residual > ceiling) and margin-insufficient
     (rounded bound > ceiling) decisions were made by hand while reading
     ``tests/equivalence_calibration_log.md``'s Event 2 table off the
@@ -470,13 +467,14 @@ def _measured_equiv(
     """Build the common ``Equiv(chi0q, chiq)`` shape every comparison
     cell in the registry uses: ``chi0q`` always via ``identity``;
     ``chiq`` via the caller's comparator (``general_from_flex_channels``
-    or ``reduced_blocks``). Task 7's candidate-calibration pass: ``atol``
-    is the ``_candidate_atol`` bound (10x the larger of the local/chita
-    residuals, rounded up to a power of ten, capped at the mapped policy
-    ceiling); ``provenance`` records BOTH measured residuals, both
-    runner descriptors, and the measured source commit -- status stays
-    "candidate" (the module-level ``PROVENANCE`` record is untouched by
-    this task; only Task 9's closed CI loop flips it to "frozen").
+    or ``reduced_blocks``). This is the candidate-calibration pass:
+    ``atol`` is the ``_candidate_atol`` bound (10x the larger of the two
+    development-machine residuals, rounded up to a power of ten, capped
+    at the mapped policy ceiling); ``provenance`` records BOTH measured
+    residuals, both runner descriptors, and the measured source commit
+    -- status stays "candidate", and only a closed calibration loop on
+    the continuous-integration runners flips the module-level
+    ``PROVENANCE`` record to "frozen".
     """
 
     def _prov(local_residual: float, chita_residual: float, atol: float, ceiling: float) -> str:
@@ -517,11 +515,10 @@ def _measured_equiv(
     )
 
 
-# The 38-cell inventory -- populated by Task 5. Task 3 seeds it with a
-# 2-cell BOOTSTRAP (Appendix A rows 1 and 17), proving the
-# generated-test machinery (build_solver / run_cell / the class-body
-# generation loop) end to end on one Equiv comparison cell and one
-# BOTH-REJECT cell before the full inventory lands.
+# The cell inventory. It opens with a 2-cell BOOTSTRAP (rows 1 and 17),
+# which exercises the generated-test machinery (build_solver / run_cell /
+# the class-body generation loop) end to end on one Equiv comparison cell
+# and one BOTH-REJECT cell; the remaining rows follow the same shapes.
 
 _BOOTSTRAP_CELL_1 = Cell(
     cell_id="general.ring.onsite_coulombintra.fixedmu",
@@ -551,7 +548,7 @@ _BOOTSTRAP_CELL_1 = Cell(
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
     notes=(
-        "Bootstrap cell (Task 3). CoulombIntra U=4.0, orbitals (1,1) and "
+        "Bootstrap cell. CoulombIntra U=4.0, orbitals (1,1) and "
         "(2,2) -- tests/equivalence_input/orb2/coulombintra.dat, copied "
         "verbatim from tests/rpa/input_2orb/coulombintra.dat."
     ),
@@ -600,7 +597,7 @@ _BOOTSTRAP_CELL_17 = Cell(
     required_observables=(),
     interaction_class="onsite",
     notes=(
-        "Bootstrap cell (Task 3). BOTH-REJECT at the shared _set_scheme "
+        "Bootstrap cell. BOTH-REJECT at the shared _set_scheme "
         "check (src/hwave/solver/rpa.py:1302-1316): calc_scheme='reduced' "
         "solves with the density-diagonal part of the interaction, and "
         "Exchange's particle-hole vertex has no density-diagonal content. "
@@ -648,7 +645,7 @@ _CELL_35_SO_GENERAL_CONSTRUCTION_REJECT = Cell(
     required_observables=(),
     interaction_class="onsite",
     notes=(
-        "Task 4 (G5). E4 spinful fixture: tests/equivalence_input/spin/"
+        "E4 spinful fixture: tests/equivalence_input/spin/"
         "geom_so.dat (1 physical orbital) + transfer_spinful.dat "
         "(diagonal t=0.7 at R=+-1, on-site spin-mixing 0.35+0.15j / "
         "conjugate) + coulombintra_so.dat (U=4.0), enable_spin_orbital="
@@ -684,31 +681,31 @@ _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
     required_observables=(),
     interaction_class="onsite",
     notes=(
-        "Task 4 (G5). Same E4 spinful fixture as cell 35, "
+        "Same E4 spinful fixture as cell 35, "
         "calc_scheme='reduced'. RPA supports SO end to end under "
         "reduced too (verified: constructs and solves, spin_mode "
         "resolves to 'spinful'; RPA reduced's spin_mode=='spinful' "
         "branch -- src/hwave/solver/rpa.py:1945-2006 -- runs regardless "
         "of how spin_mode was determined). FLEX reduced REJECTS at "
-        "CONSTRUCTOR via the NEW guard this task adds: "
+        "CONSTRUCTOR via the guard added alongside this cell: "
         "src/hwave/solver/flex.py:227-231 "
         "(FLEX._init_flex_param, scheme=='reduced' branch, mirroring "
         "the general-scheme guard at lines 220-224), "
         "'calc_scheme=\\'reduced\\' FLEX does not support "
         "enable_spin_orbital; deferred to the generalized FLEX solver.' "
-        "-- prior to this task, calc_scheme='reduced' had NO "
+        "-- before that guard, calc_scheme='reduced' had NO "
         "enable_spin_orbital guard at all (the audit-identified silent "
-        "gap this task closes)."
+        "gap it closes)."
     ),
 )
 
 # ---------------------------------------------------------------------------
-# Task 5/7 -- the remaining Appendix-A cells (rows 2-16, 18-34; rows 1, 17,
-# 35, 36 are the Task-3/4 bootstrap above; row 38 is Task 6's). Every
+# The remaining cells: rows 2-16 and 18-34 (rows 1, 17, 35 and 36 are
+# the bootstrap above; row 38 is the conditioning cell below). Every
 # ``_measured_equiv`` call below (the helper is defined near
-# ``POLICY_CEILINGS`` above, so the Task-3/4 bootstrap cells can use it
-# too) sets a CANDIDATE atol from Task 7's local+chita calibration
-# sweep -- see ``tests/equivalence_calibration_log.md`` (Event 2) and
+# ``POLICY_CEILINGS`` above, so the bootstrap cells can use it too) sets
+# a CANDIDATE atol from the development-machine calibration sweep -- see
+# ``tests/equivalence_calibration_log.md`` (Event 2) and
 # ``tests/equivalence_benchmark.md`` for the full residual tables.
 # ---------------------------------------------------------------------------
 
@@ -962,7 +959,7 @@ _CELL_10_REDUCED_COULOMBINTRA_SPINFREE_MU = Cell(
     interaction_class="onsite",
     notes=(
         "E2 coulombintra.dat, U=4.0, reduced/spin-free; filling=0.5. "
-        "chi0q FINDING (Task 5): FLEX writes the FULL spin-block-"
+        "chi0q FINDING: FLEX writes the FULL spin-block-"
         "inflated bare bubble to green_info['chi0q'] under "
         "calc_scheme='reduced' (shape (nmat,nvol,2*norb,2*norb), "
         "matching chiq_s/chiq_c's convention), while RPA's reduced "
@@ -974,8 +971,8 @@ _CELL_10_REDUCED_COULOMBINTRA_SPINFREE_MU = Cell(
         "up-up norb x norb diagonal block before the 'identity' "
         "comparator runs, mirroring the SAME block extraction "
         "'reduced_blocks' already applies to chiq_s/chiq_c; measured "
-        "equal to round-off on every reduced fixture this task "
-        "checked (E1 norb=1, E2 norb=2 spin-free, E4 spin-diag)."
+        "equal to round-off on every reduced fixture checked here "
+        "(E1 norb=1, E2 norb=2 spin-free, E4 spin-diag)."
     ),
 )
 
@@ -1333,7 +1330,7 @@ _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
         "suite's TestReducedOneShot case (a) "
         "('tests/rpa/input', CoulombInter only, filling=0.75, norb=1), "
         "which only ever compared chiq. See cell 10's notes for the "
-        "chi0q block-extraction finding this task adds on top."
+        "chi0q block-extraction finding this cell adds on top."
     ),
 )
 
@@ -1576,7 +1573,7 @@ _CELL_26_OFFSITE_COULOMBINTRA_LITERALKEY_REJECT = Cell(
         "entry at READ time instead (declarations.py:195-211, "
         "validate_hermitian_closure, called from "
         "read_input_k.py:125-128 -- runs inside the fixture read, "
-        "i.e. before either solver constructs). VERIFIED (Task 5): "
+        "i.e. before either solver constructs). VERIFIED: "
         "reading tests/equivalence_input/orb2/offsite_coulombintra.dat "
         "under the literal 'CoulombIntra' key raises ValueError: "
         "\"CoulombIntra ... declares R=(1, 0, 0) orbitals (1, 1) = "
@@ -1622,7 +1619,7 @@ _CELL_27_OFFSITE_COULOMBINTER_SAMEORB_SUBSHAPE = Cell(
     notes=(
         "Cell 19's fixture (E1 coulombinter.dat, same-orbital off-site "
         "CoulombInter) with SubShape=(2,1,1); mu=0.0. STOP-and-amend "
-        "audit VERIFIED (Task 5): per the audit, FLEX REJECTS folded "
+        "audit VERIFIED: per the audit, FLEX REJECTS folded "
         "off-site entries even in the otherwise-accepted a==b "
         "CoulombInter class -- confirmed empirically: RPA solves "
         "(chi0q shape (32,8,2,2,2,2)); FLEX raises ValueError at "
@@ -1707,7 +1704,7 @@ _CELL_30_AUTO_DENSITY_RESOLUTION = Cell(
     interaction_class="onsite",
     notes=(
         "E2 onsite_inter.dat (CoulombInter only), calc_scheme='auto'. "
-        "VERIFIED (Task 5): rpa.py:1285-1289 -- density-diagonal-only "
+        "VERIFIED: rpa.py:1285-1289 -- density-diagonal-only "
         "content (no Exchange/PairHop, calc_type='ring') resolves to "
         "'reduced'; both RPA and FLEX (which inherits _set_scheme) "
         "resolve identically. Construction-only: no solve."
@@ -1735,7 +1732,7 @@ _CELL_31_AUTO_EXCHANGE_RESOLUTION = Cell(
     interaction_class="onsite",
     notes=(
         "E2 exchange_onsite.dat (Exchange only), calc_scheme='auto'. "
-        "VERIFIED (Task 5): rpa.py:1275-1284 -- Exchange has no "
+        "VERIFIED: rpa.py:1275-1284 -- Exchange has no "
         "density-diagonal vertex content, so auto resolves to "
         "'general' (both solvers). Construction-only: no solve."
     ),
@@ -1762,7 +1759,7 @@ _CELL_32_AUTO_PAIRHOP_RESOLUTION = Cell(
     interaction_class="onsite",
     notes=(
         "E2 pairhop_onsite.dat (PairHop only), calc_scheme='auto'. "
-        "VERIFIED (Task 5): rpa.py:1275-1284 -- PairHop has no "
+        "VERIFIED: rpa.py:1275-1284 -- PairHop has no "
         "density-diagonal vertex content either, so auto resolves to "
         "'general' (both solvers). Construction-only: no solve."
     ),
@@ -1801,12 +1798,12 @@ _CELL_33_CHI0Q_INIT_REUSE = Cell(
         "run A (no chi0q_init) captures chi0q_A/chiq_A; run B loads "
         "chi0q_A via the PUBLIC chi0q_init mechanism (run A's own "
         "save_results() writes the file, run B's read_init() loads "
-        "it) -- VERIFIED (Task 5): np.array_equal(chi0q_B, chi0q_A) "
+        "it) -- VERIFIED: np.array_equal(chi0q_B, chi0q_A) "
         "and np.array_equal(chiq_B, chiq_A) both True (chi0q passes "
         "through solve() untouched when supplied). FLEX side "
         "(PairedInvarianceRun): the SAME two-solve construction, "
         "exhaustive green_info key-set match + per-key "
-        "np.array_equal -- VERIFIED (Task 5): identical key sets "
+        "np.array_equal -- VERIFIED: identical key sets "
         "({'chi0q','chiq_c','chiq_s','green','physics','sigma'}) and "
         "every array bitwise equal between the with/without-"
         "chi0q_init runs, proving (not merely asserting) FLEX's "
@@ -1875,14 +1872,14 @@ _CELL_34_RINGLADDER_GENERAL_ONSITE_COULOMBINTRA = Cell(
         "checked BEFORE the enable_spin_orbital guard), 'FLEX does "
         "not support calc_type='ring+ladder' (the transverse ladder "
         "channel); FLEX general is ring-only....' -- VERIFIED "
-        "(Task 5) via build_solver's construction path (calc_type "
+        "via build_solver's construction path (calc_type "
         "must be threaded to FLEX's info dict too, not just RPA's -- "
         "see build_solver's docstring update)."
     ),
 )
 
 # ---------------------------------------------------------------------------
-# Group G6 -- conditioning (Task 6, owner). FC = the one-orbital fixture
+# Group G6 -- conditioning. FC = the one-orbital fixture
 # files (tests/equivalence_input/orb1) with T=0.2, Nmat=256, filling=0.5
 # overridden on top of that fixture's usual T=2.0/Nmat=32 (the param
 # override lives in FixtureSpec, not in new files).
@@ -1918,7 +1915,7 @@ _CELL_38_CONDITIONING_MU = Cell(
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
     notes=(
-        "FC (Group G6, Task 6): the one-orbital fixture files "
+        "FC (Group G6): the one-orbital fixture files "
         "(tests/equivalence_input/orb1) -- geom.dat/transfer.dat "
         "(1 orbital; NN hopping t=1.0 along +-x/+-y plus a "
         "single-diagonal-direction t'=0.5 term at R=+-(1,1)) + "
@@ -1929,8 +1926,7 @@ _CELL_38_CONDITIONING_MU = Cell(
         "and interaction_class both say so: a single orbital cannot "
         "carry an on-site inter-orbital coupling, so the off-site "
         "same-orbital file is the only CoulombInter this fixture has. "
-        "van-Hove-shoulder verification (Task 6, per the brief's "
-        "'verify the choice and record the exact filling used'): on the "
+        "van-Hove-shoulder verification of that filling: on the "
         "actual CellShape=(4,4,1) 16-k-point mesh, H0's eigenvalues are "
         "[-3, -2,-2,-2,-2, -1,-1,-1,-1, 1,1, 2,2,2,2, 5]; filling=0.5 "
         "(one-spin target 8 of 16 states) lands the Fermi level EXACTLY "
@@ -1938,8 +1934,8 @@ _CELL_38_CONDITIONING_MU = Cell(
         "analogue of a van Hove shoulder (confirmed by direct "
         "H0_eigenvalue inspection; a finer 64x64 k-mesh on the same "
         "dispersion shows the true DOS peak near eps~-0.93, consistent "
-        "with this cluster). filling=0.5 is kept as Appendix A's stated "
-        "starting value -- no re-selection was needed (see "
+        "with this cluster). filling=0.5 is kept as the stated starting "
+        "value -- no re-selection was needed (see "
         "tests/equivalence_calibration_log.md). "
         "AMPLIFICATION (owned by TestConditioningAmplification, not this "
         "row): the mu/Green divergence diagnostic run in ISOLATION "
@@ -1955,10 +1951,11 @@ _CELL_38_CONDITIONING_MU = Cell(
         "isolated Sigma=0 mu, so a close full-pipeline chi0q/chiq match "
         "here does not contradict the diagnostic's amplified seam-level "
         "residuals in isolation -- exactly the OutputBundle-documented "
-        "reason mu is never a per-cell observable. Measured (Task 6, "
-        "local): chi0q max|diff| = 0.0 (bit-identical) and chiq "
+        "reason mu is never a per-cell observable. Measured on the macOS "
+        "arm64 development machine: chi0q max|diff| = 0.0 "
+        "(bit-identical) and chiq "
         "max|diff| = 3.3066883022456364e-12, both far inside their "
-        "mu-coupled ceilings. Wall time (Task 6, local): rpa solve() "
+        "mu-coupled ceilings. Wall time on the same machine: rpa solve() "
         "~0.15s + flex solve() ~0.01s (~0.16s combined) -- negligible "
         "despite Nmat=256, because this fixture is 1-orbital/16-k-point "
         "(nd=1); no CI-budget threat from this cell."
@@ -2007,9 +2004,9 @@ CELLS: tuple = (
 
 
 # ---------------------------------------------------------------------------
-# COVERAGE_OBLIGATIONS -- named predicates over CELLS (the plan's full
-# list, including "the conditioning row exists (38)", added by Task 6
-# alongside the cell it checks for).
+# COVERAGE_OBLIGATIONS -- named predicates over CELLS: the full list of
+# properties the inventory must have, including "the conditioning row
+# exists (38)".
 # ---------------------------------------------------------------------------
 
 
@@ -2114,7 +2111,7 @@ def method_name(cell_id: str) -> str:
 
     A registry test asserts the mapped names are unique AND valid
     Python identifiers across the whole registry (a duplicate would let
-    ``setattr`` silently overwrite a generated proof method in Task 3).
+    ``setattr`` silently overwrite a generated proof method).
     """
 
     return "test_cell__" + cell_id.translate(_METHOD_NAME_TRANSLATION)
@@ -2574,8 +2571,8 @@ def validate_registry(cells) -> list:
     for cell in cells:
         errors.extend(_validate_cell(cell))
 
-    # Coverage obligations (empty this task; a no-op until Task 5
-    # populates COVERAGE_OBLIGATIONS).
+    # Coverage obligations (a no-op while COVERAGE_OBLIGATIONS is
+    # empty).
     for name, predicate in COVERAGE_OBLIGATIONS.items():
         try:
             satisfied = predicate(cells)
@@ -2592,13 +2589,13 @@ def validate_registry(cells) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Output bundles and the named comparator registry (Task 2)
+# Output bundles and the named comparator registry
 # ---------------------------------------------------------------------------
 #
-# This section is still SIDE-EFFECT-FREE: ``numpy`` is the only import it
-# adds (explicitly allowed by the plan's Task 2 interface -- "the
-# comparators live in the REGISTRY module (pure numpy ... still no
-# unittest/solver imports)"). ``extract_bundle`` -- the function that
+# This section is still SIDE-EFFECT-FREE: ``numpy`` is the only import
+# it adds. The comparators deliberately live in this REGISTRY module
+# (pure numpy, still no unittest and no solver imports), so the docs
+# renderer can import them. ``extract_bundle`` -- the function that
 # actually touches a solver object's ``green_info`` -- lives in
 # ``tests/test_rpa_flex_equivalence_table.py``, not here.
 #
@@ -2612,13 +2609,11 @@ class OutputBundle(NamedTuple):
     """One solver side's post-solve observable bundle -- the input to
     every ``Comparator.map``.
 
-    NO ``mu`` field (spec amendment, 2026-08-18, recorded in
-    ``docs/superpowers/specs/2026-08-18-equivalence-table-design.md``):
-    RPA never retains its solved chemical potential as a public
-    post-solve attribute (it is a local variable of the solve) and
-    FLEX's stored ``mu`` is the post-mix DRESSED value -- a different
-    algorithmic state. The mu/Green seam is owned exclusively by the
-    Task-6 divergence diagnostic via ``scalar_residual`` /
+    NO ``mu`` field: RPA never retains its solved chemical potential as
+    a public post-solve attribute (it is a local variable of the solve)
+    and FLEX's stored ``mu`` is the post-mix DRESSED value -- a
+    different algorithmic state. The mu/Green seam is owned exclusively
+    by the divergence diagnostic via ``scalar_residual`` /
     ``assert_scalar_within`` below, never a per-cell ``COMPARATORS``
     entry.
 
@@ -2818,10 +2813,10 @@ class Comparator:
             )
 
 
-# The CLOSED comparator registry -- exactly the three keys the plan's
-# Appendix A cell matrix references (no "scalar" key: the diagnostic's
-# scalar mu checkpoints use ``scalar_residual``/``assert_scalar_within``
-# below, never a ``COMPARATORS`` entry).
+# The CLOSED comparator registry -- exactly the three keys the cell
+# inventory references (no "scalar" key: the diagnostic's scalar mu
+# checkpoints use ``scalar_residual``/``assert_scalar_within`` below,
+# never a ``COMPARATORS`` entry).
 COMPARATORS: Dict[str, Comparator] = {
     "identity": Comparator("identity", _map_identity),
     "general_from_flex_channels": Comparator(
@@ -2872,10 +2867,10 @@ def assert_diverges_bracket(residual: float, ceiling: float, regression_bound: f
     ``residual > ceiling``, so equality with the ceiling never
     classifies as Diverges -- a residual that HEALED back to (or below)
     the ceiling means the cell no longer diverges and must be
-    recalibrated back to ``Equiv`` (the spec's truth invariant,
-    ``docs/superpowers/specs/2026-08-18-equivalence-table-design.md``);
-    the raised message says so explicitly. INCLUSIVE upper edge:
-    ``residual <= regression_bound``, a further-drift regression guard.
+    recalibrated back to ``Equiv`` -- a row must always describe what
+    the code actually does; the raised message says so explicitly.
+    INCLUSIVE upper edge: ``residual <= regression_bound``, a
+    further-drift regression guard.
     """
 
     if residual <= ceiling:

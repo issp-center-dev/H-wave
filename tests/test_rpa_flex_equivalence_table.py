@@ -1,12 +1,12 @@
 """Validation tests for the RPA/FLEX equivalence-table cell registry
-(``tests/equivalence_cells.py``, Task 1 of the equivalence-table plan).
+(``tests/equivalence_cells.py``).
 
 This module tests the REGISTRY MACHINERY -- the typed records, the
 schema validators (``validate_registry``), ``relationship()``'s total
-status-pair lookup, and ``method_name`` -- NOT any cell content
-(``CELLS``/``COVERAGE_OBLIGATIONS`` are intentionally empty until Task
-5). Every test constructs its own minimal ``Cell``/``SolverProof``
-fixtures via the small builders below.
+status-pair lookup, and ``method_name`` -- separately from the cell
+content in ``CELLS``/``COVERAGE_OBLIGATIONS``. Every machinery test
+constructs its own minimal ``Cell``/``SolverProof`` fixtures via the
+small builders below.
 """
 
 from __future__ import annotations
@@ -62,13 +62,14 @@ logger = logging.getLogger("qlms").getChild("test_equivalence_table")
 # an ``OutputBundle`` from one solver's post-solve ``green_info``. The
 # registry module (``tests/equivalence_cells.py``) never imports solver
 # code; this function is the seam where a concrete ``solver_obj``/
-# ``green_info`` pair (Task 3's ``build_solver``, or -- for these unit
-# tests -- a small stand-in) becomes the comparator-facing bundle type.
+# ``green_info`` pair (from ``build_solver`` below, or -- for the
+# machinery tests -- a small stand-in) becomes the comparator-facing
+# bundle type.
 # ---------------------------------------------------------------------------
 
 
 def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) -> np.ndarray:
-    """FLEX FINDING (Task 5): under ``calc_scheme='reduced'`` FLEX writes
+    """FLEX FINDING: under ``calc_scheme='reduced'`` FLEX writes
     the FULL spin-block-INFLATED bare bubble to ``green_info["chi0q"]``
     -- shape ``(nmat, nvol, 2*norb, 2*norb)``, matching the
     ``chiq_s``/``chiq_c`` convention -- while RPA's reduced ``chi0q``
@@ -76,16 +77,17 @@ def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) ->
     spinful ``(nmat, nvol, norb, norb)`` (4-dim), or spin-diag
     ``(2, nmat, nvol, norb, norb)`` (5-dim, one block per spin channel).
 
-    This was never caught before Task 5: the pre-existing oneshot suite
+    This had never been caught: the pre-existing oneshot suite
     (``tests/test_rpa_flex_oneshot_equivalence.py``'s
     ``TestReducedOneShot``) only ever compares ``chiq`` under
     ``calc_scheme='reduced'``, never ``chi0q`` -- and the required-
     observables freeze (Global Constraints) now mandates
     ``("chi0q", "chiq")`` for EVERY comparison cell.
 
-    Measured (Task 5, local, E1 norb=1 / E2 norb=2 spin-free / E4
-    spin-diag): FLEX's up-up (and, for spin-diag, down-down) ``norb x
-    norb`` diagonal block of its inflated ``chi0q`` equals RPA's
+    Measured on the macOS arm64 development machine (E1 norb=1 / E2
+    norb=2 spin-free / E4 spin-diag): FLEX's up-up (and, for spin-diag,
+    down-down) ``norb x norb`` diagonal block of its inflated ``chi0q``
+    equals RPA's
     reduced ``chi0q`` to round-off (~1e-16 to ~5e-15), and the
     off-diagonal (spin-mixing) blocks are exactly zero at the
     bare-bubble level -- this is a REPRESENTATION-CONVENTION
@@ -95,8 +97,8 @@ def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) ->
     needed the identical treatment. Resolving it here (at the
     bundle-extraction seam, which is test-module-owned and NOT part of
     the closed ``COMPARATORS`` registry) keeps the ``identity``
-    comparator's semantics -- and the plan's "chi0q -> identity"
-    Comparators-paragraph contract -- intact: by the time ``identity``
+    comparator's semantics -- and the registry's "chi0q -> identity"
+    contract -- intact: by the time ``identity``
     runs, both bundle arrays already denote the SAME physical quantity.
 
     Only called when ``solver_obj.calc_scheme == "reduced"``.
@@ -278,7 +280,7 @@ def _schema_errors(errors):
     """Filter out "coverage obligation ..." messages from a
     ``validate_registry`` result.
 
-    ``COVERAGE_OBLIGATIONS`` (populated by Task 5) is evaluated against
+    ``COVERAGE_OBLIGATIONS`` is evaluated against
     WHATEVER ``cells`` sequence is passed in -- including the small,
     deliberately-synthetic single/few-cell lists the ``TestRegistrySchema``
     tests below build to isolate ONE structural rule at a time. Those
@@ -396,9 +398,9 @@ class TestRegistrySchema(unittest.TestCase):
         )
 
     def test_cells_is_the_full_appendix_a_37_cell_inventory(self):
-        # CELLS carries Appendix A rows 1-36 (Task 5) plus the G6
-        # conditioning row, cell 38 (Task 6) -- Appendix A has no row
-        # 37, so the registry holds 37 cells total.
+        # CELLS carries rows 1-36 plus the G6 conditioning row, cell
+        # 38 -- there is no row 37, so the registry holds 37 cells
+        # total.
         self.assertEqual(len(CELLS), 37)
         ids = [cell.cell_id for cell in CELLS]
         self.assertEqual(len(ids), len(set(ids)), "duplicate cell_id in CELLS")
@@ -1032,8 +1034,8 @@ class TestDivergesBracket(unittest.TestCase):
 
 
 class TestComparatorRegistryShape(unittest.TestCase):
-    """``COMPARATORS`` has exactly the three keys the plan's Appendix A
-    cell matrix references -- no ``"scalar"`` key.
+    """``COMPARATORS`` has exactly the three keys the cell inventory
+    references -- no ``"scalar"`` key.
     """
 
     def test_exact_key_set(self):
@@ -1274,8 +1276,8 @@ class TestReducedBlocksComparator(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Proof executors (Task 3) -- build_solver / run_cell + the generated
-# per-cell TestCase methods.
+# Proof executors -- build_solver / run_cell + the generated per-cell
+# TestCase methods.
 #
 # ``build_solver`` mirrors ``tests/test_rpa_flex_oneshot_equivalence.py``'s
 # ``_read``/``_run`` construction verbatim (RPA's
@@ -1330,7 +1332,7 @@ def build_solver(spec: FixtureSpec, solver_kind: str, stack: ExitStack):
     identically for both solvers -- omitting the key here left FLEX's
     ``self.calc_type`` silently defaulted to ``"ring"`` regardless of
     ``spec.calc_type``, which would have made cell 34's
-    ``calc_type='ring+ladder'`` CONSTRUCTOR-time rejection (Appendix A)
+    ``calc_type='ring+ladder'`` CONSTRUCTOR-time rejection
     unreachable through this executor. Passing ``"ring"`` explicitly
     for every OTHER cell is a no-op (same default value, verified no
     behavior change). FLEX additionally sets
@@ -1409,7 +1411,7 @@ def _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory
     raise ValueError(
         "_construct_and_maybe_solve: unsupported run-class step {!r} -- "
         "PairedInvarianceRun/ExecuteChiqInitReuse are dedicated "
-        "two-solve exceptions with their own executors (Task 5, cell "
+        "two-solve exceptions with their own executors (cell "
         "33)".format(step)
     )
 
@@ -1645,10 +1647,10 @@ def run_cell(cell, solver_factory=build_solver) -> None:
         except KeyboardInterrupt:
             raise
         except SystemExit as exc:
-            # Carried minor from Task 6: several input-reader/solver
-            # construction paths (e.g. src/hwave/solver/rpa.py's
-            # Lattice._init_lattice on an incompatible CellShape/
-            # SubShape pairing) call ``sys.exit(...)`` on malformed
+            # Several input-reader/solver construction paths (e.g.
+            # src/hwave/solver/rpa.py's Lattice._init_lattice on an
+            # incompatible CellShape/SubShape pairing) call
+            # ``sys.exit(...)`` on malformed
             # input instead of raising. Left uncaught, that call
             # terminates the WHOLE unittest process silently (no
             # traceback, remaining cells/tests never run) -- a single
@@ -1845,13 +1847,13 @@ def _fake_fixture():
 
 
 class TestExecutorSolveCounts(unittest.TestCase):
-    """Task 3 pins the four proof-step shapes it implements: ExecuteRun
+    """Pins how many solves each proof-step shape performs: ExecuteRun
     (1 solve), ExecuteConstruct (0 solves), constructor-site
     ExecuteReject (0 solves), solve-site ExecuteReject (exactly 1
-    ATTEMPTED solve). Task 5 adds the remaining two, each pinned at
-    EXACTLY 2 solves: ``PairedInvarianceRun``/``ExecuteChiqInitReuse``
-    (see the "Task 5: the two multirun exception executors" tests
-    below).
+    ATTEMPTED solve). The two multirun exceptions,
+    ``PairedInvarianceRun``/``ExecuteChiqInitReuse``, are each pinned at
+    EXACTLY 2 solves (see the tests under "the two multirun exception
+    executors" below).
     """
 
     def test_execute_run_solves_exactly_once(self):
@@ -2039,7 +2041,7 @@ class TestExecutorSolveCounts(unittest.TestCase):
         )
         run_cell(cell, solver_factory=factory)  # must not raise -- both sides reject as expected
 
-    # -- Task 5: the two multirun exception executors (cell 33) -----------
+    # -- the two multirun exception executors (cell 33) -------------------
 
     def test_execute_chiq_init_reuse_solves_exactly_twice(self):
         solvers = []
@@ -2127,9 +2129,9 @@ class TestExecutorSolveCounts(unittest.TestCase):
 
 
 class TestSystemExitEscape(unittest.TestCase):
-    """Carried minor from Task 6: several input-reader/solver
-    construction paths call ``sys.exit(...)`` on malformed input
-    instead of raising (e.g. ``src/hwave/solver/rpa.py``'s
+    """Several input-reader/solver construction paths call
+    ``sys.exit(...)`` on malformed input instead of raising (e.g.
+    ``src/hwave/solver/rpa.py``'s
     ``Lattice._init_lattice``, which ``sys.exit(1)``s when ``SubShape``
     does not evenly divide ``CellShape`` -- rpa.py:571-573). Reading
     the input files themselves never reaches a ``sys.exit`` site in
@@ -2194,8 +2196,8 @@ class TestSystemExitEscape(unittest.TestCase):
         # If SystemExit escaped run_cell uncaught, this test method
         # itself would never reach this second assertion (the whole
         # process would already be gone) -- so simply completing this
-        # test after catching the first cell's escape IS the "process
-        # continues" evidence the brief asks for.
+        # test after catching the first cell's escape IS the evidence
+        # that the process continues.
         cell = Cell(
             cell_id="fake.systemexit.cell",
             fixture=self._broken_subshape_fixture(),
@@ -2232,17 +2234,17 @@ class TestSystemExitEscape(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 # The oneshot canary + both bootstrap cells against the REAL fixture
-# directories built by this task (tests/equivalence_input/orb1,
-# orb2, mini) -- a direct sanity check that the new .dat files parse
-# and solve, independent of the registry/executor plumbing above.
+# directories under tests/equivalence_input (orb1, orb2, mini) -- a
+# direct sanity check that those .dat files parse and solve,
+# independent of the registry/executor plumbing above.
 # ---------------------------------------------------------------------------
 
 
 class TestFixtureDirectoriesParse(unittest.TestCase):
-    """Every fixture file this task adds under
-    ``tests/equivalence_input/`` parses via ``QLMSkInput`` -- a
-    structural smoke test, not a numerical claim (Task 5 owns the
-    cells that actually exercise most of these files)."""
+    """Every fixture file under ``tests/equivalence_input/`` parses via
+    ``QLMSkInput`` -- a structural smoke test, not a numerical claim
+    (the registry cells are what actually exercise most of these
+    files)."""
 
     ORB1_CASES = [
         {"CoulombIntra": "coulombintra.dat"},
@@ -2306,15 +2308,14 @@ class TestFixtureDirectoriesParse(unittest.TestCase):
 
 
 class TestSpinFixtureDirectoryParses(unittest.TestCase):
-    """``tests/equivalence_input/spin/`` -- the E4 fixture family this
-    task (Task 4) adds (plan Appendix A, E4): (a) the spin-diag route
-    (E2's geom/transfer copies + ``extern_zeeman.dat``, hz=0.1, plus
-    CoulombIntra/CoulombInter copied from E2) and (b) the spinful route
+    """``tests/equivalence_input/spin/`` -- the E4 fixture family, which
+    carries two routes: (a) the spin-diag route (E2's geom/transfer
+    copies + ``extern_zeeman.dat``, hz=0.1, plus CoulombIntra/
+    CoulombInter copied from E2) and (b) the spinful route
     (``geom_so.dat``/``transfer_spinful.dat`` + ``coulombintra_so.dat``,
     ``enable_spin_orbital=True``). Structural smoke test only -- the
-    cells that exercise these numerically are cells 35-36 (this task,
-    below) and cells 15-16 (Task 5, the spin-diag Equiv comparison
-    rows)."""
+    cells that exercise these numerically are cells 35-36 (below) and
+    cells 15-16 (the spin-diag Equiv comparison rows)."""
 
     def _assert_parses(self, spec):
         reader = _read_fixture(spec)
@@ -2356,16 +2357,15 @@ class TestSpinFixtureDirectoryParses(unittest.TestCase):
 
 
 class TestReducedSpinDiagAcceptance(unittest.TestCase):
-    """Task 4 deliverable 1: "A spin-diag reduced FLEX fixture must
-    SOLVE SUCCESSFULLY" -- the E4 Extern/Zeeman route
-    (``tests/equivalence_input/spin/extern_zeeman.dat``, hz=0.1) that
-    Appendix A cells 15-16 (Task 5) will depend on via a
-    ``SupplementaryLink`` to this test module. Per the brief: if FLEX
-    rejected or ignored Extern, or reduced could not support spin-diag,
-    this task would STOP-and-report instead of adding this test --
-    verified (below) that FLEX consumes Extern exactly like RPA and
-    completes the (one-shot, ``IterationMax=1``) SCF loop without
-    raising.
+    """A spin-diag reduced FLEX fixture must SOLVE SUCCESSFULLY -- the
+    E4 Extern/Zeeman route (``tests/equivalence_input/spin/
+    extern_zeeman.dat``, hz=0.1) that cells 15-16 depend on via a
+    ``SupplementaryLink`` to this test module. The tests below verify
+    that FLEX consumes Extern exactly
+    like RPA and completes the (one-shot, ``IterationMax=1``) SCF loop
+    without raising; had FLEX rejected or ignored Extern, or had
+    reduced not supported spin-diag, those two cells could not have
+    been recorded as they are.
     """
 
     def _spin_diag_fixture(self, interactions):
@@ -2403,9 +2403,9 @@ class TestReducedSpinDiagAcceptance(unittest.TestCase):
         self.assertEqual(solver_obj.spin_mode, "spin-diag")
 
     def test_reduced_rpa_also_solves_with_extern(self):
-        # Cells 15-16 (Task 5) compare RPA against FLEX on this same
-        # fixture; confirm RPA also accepts it (the frozen "both accept"
-        # expectation Appendix A records for the spin-diag route).
+        # Cells 15-16 compare RPA against FLEX on this same fixture;
+        # confirm RPA also accepts it (the recorded expectation for the
+        # spin-diag route is that both solvers accept it).
         fixture = self._spin_diag_fixture({"CoulombIntra": "coulombintra.dat"})
         with ExitStack() as stack:
             solver_obj, green_info, out_dir = build_solver(fixture, "rpa", stack)
@@ -2415,23 +2415,23 @@ class TestReducedSpinDiagAcceptance(unittest.TestCase):
 
 
 class TestReducedSpinfulGuard(unittest.TestCase):
-    """Task 4 deliverable 2: pins the SOLVE-time
-    ``FLEX._check_reduced_rejects_spinful`` guard
-    (``src/hwave/solver/flex.py``).
+    """Pins the SOLVE-time ``FLEX._check_reduced_rejects_spinful``
+    guard (``src/hwave/solver/flex.py``).
 
     ``test_direct_semantic_state_pin*``: construct the semantic state
     directly on a bare (not-``__init__``-ed) ``FLEX`` instance --
     setting ``_flex_general``/``spin_mode`` by hand and calling the
     extracted guard method directly, bypassing every public input
-    route. This is the unit-level pin the brief asks for.
+    route. This is the unit-level pin for that guard.
 
     ``test_public_trans_mod_route_reaches_spinful_and_is_rejected``:
     an INVESTIGATION FINDING, not defense-in-depth for a state believed
-    unreachable. The plan's Appendix A (G5, the "(no cell)" note)
-    states "reaching spin_mode == 'spinful' under reduced WITHOUT
-    enable_spin_orbital is not possible through public inputs (a
+    unreachable. The G5 group was recorded on the expectation that
+    reaching ``spin_mode == 'spinful'`` under reduced WITHOUT
+    ``enable_spin_orbital`` is not possible through public inputs (a
     spin-mixing H0 requires the SO flag, which cell 36's construction
-    guard already rejects)". That claim does NOT hold: the public
+    guard already rejects), which is why that route has no cell of its
+    own. That expectation does NOT hold: the public
     ``trans_mod`` input (``[file.input] trans_mod = "..."``, read by
     ``RPA.read_init``/``FLEX.read_init`` and documented in
     ``FLEX._solve_impl``'s own docstring -- "``green_init`` and
@@ -2444,14 +2444,13 @@ class TestReducedSpinfulGuard(unittest.TestCase):
     asymmetric) on-site block therefore reaches
     ``calc_scheme='reduced'`` + ``spin_mode == 'spinful'`` with
     ``enable_spin_orbital=False`` throughout -- never touching the
-    CONSTRUCTOR-time guard cell 36 exercises. This is reported to the
-    plan owner in the Task 4 report (STOP-and-report per the brief) as
-    a correction to Appendix A's G5 note; it is NOT resolved here as a
-    new registry cell (that decision -- and characterizing RPA's own
-    reduced+spinful-via-trans_mod behaviour, which this task does not
-    scope -- belongs to the plan owner). The guard this task adds
-    closes the gap regardless of how ``spin_mode`` came to be
-    ``'spinful'``, as this test demonstrates.
+    CONSTRUCTOR-time guard cell 36 exercises. No registry cell is
+    added for this route: recording one would also require
+    characterizing RPA's own reduced+spinful-via-``trans_mod``
+    behaviour, which is outside what this table measures, so it is left
+    as an open question for a maintainer. The guard pinned here closes
+    the gap regardless of how ``spin_mode`` came to be ``'spinful'``,
+    as this test demonstrates.
     """
 
     def test_direct_semantic_state_pin_rejects_spinful(self):
@@ -2542,13 +2541,13 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestMuGreenDivergenceDiagnostic + TestConditioningAmplification (Task 6):
+# TestMuGreenDivergenceDiagnostic + TestConditioningAmplification:
 # the mu/Green implementation-seam diagnostic -- the audit's top finding
 # made permanently visible as a gating apparatus, plus cell 38's
-# amplification obligation (Appendix A G6). Step-5 tracking issue: #160
-# (any future Diverges classification arising from this diagnostic would
-# reference it; none does today -- both fixtures this task exercises stay
-# well inside their ceilings).
+# amplification obligation. Tracking issue: #160 (any future Diverges
+# classification arising from this diagnostic would reference it; none
+# does today -- both fixtures exercised here stay well inside their
+# ceilings).
 #
 # ADAPTER CONTRACT (read verbatim before touching this section): a
 # measurement apparatus using DIRECT internal-API invocation on
@@ -2762,8 +2761,8 @@ def _diagnostic_residuals(fixture, solver_factory=build_solver):
 
 
 # The benign fixture is cell 8's (general.ring.onsite_u_v_hund.mu, E2,
-# T=2.0); the FC conditioning fixture is cell 38's (this task's own
-# row) -- looked up from CELLS rather than duplicated, so both stay
+# T=2.0); the FC conditioning fixture is cell 38's -- both are looked
+# up from CELLS rather than duplicated, so they stay
 # tied to the registry's actual fixture values.
 _DIAGNOSTIC_BENIGN_FIXTURE = next(
     c for c in CELLS if c.cell_id == "general.ring.onsite_u_v_hund.mu"
@@ -2774,8 +2773,8 @@ _DIAGNOSTIC_FC_FIXTURE = next(
 
 
 class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
-    """The five ORDERED assertions of the mu/Green divergence diagnostic
-    (Task 6), run on the BENIGN fixture (cell 8's) -- proving the
+    """The five ORDERED assertions of the mu/Green divergence
+    diagnostic, run on the BENIGN fixture (cell 8's) -- proving the
     diagnostic apparatus itself stays inside its ``*_diag``/``chi0q_mu``
     ceilings under ordinary conditions. The amplified (FC) case is
     ``TestConditioningAmplification`` below; see this module's own
@@ -2830,15 +2829,15 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
 
 
 class TestConditioningAmplification(unittest.TestCase):
-    """Cell 38's amplification obligation (Appendix A G6, plan Task 6
-    Step 2): the SAME diagnostic apparatus (``_diagnostic_residuals``),
+    """Cell 38's amplification obligation: the SAME diagnostic
+    apparatus (``_diagnostic_residuals``),
     run independently on the benign fixture (cell 8's) and the FC
     conditioning fixture (cell 38's), must show >= 10x amplification on
     AT LEAST ONE of the three seam residuals -- assertion 2 (the mu
     seam), assertion 4 (the composed seam), assertion 5 (downstream
-    chi0q) -- with ``max(residual, 1e-15)`` denominators (the plan's
-    rule; an exactly-zero benign residual, as measured on assertion 2
-    here, would otherwise divide by zero).
+    chi0q) -- with ``max(residual, 1e-15)`` denominators (an
+    exactly-zero benign residual, as measured on assertion 2 here,
+    would otherwise divide by zero).
 
     MONOTONICITY DERIVATION (why halving T is the calibration lever):
     reducing T sharpens the Fermi step (``RPA._find_mu``'s
@@ -2857,14 +2856,15 @@ class TestConditioningAmplification(unittest.TestCase):
     ``_find_mu_dressed``) settle at their own numerical fixed points
     inside an increasingly narrow-but-nonzero window -- amplifying their
     disagreement as T shrinks. This predicts assertion 2's residual
-    grows monotonically as T is halved; measured (Task 6, local,
-    diagnostic-only -- not gated here) at T=0.2/0.1/0.05 on this
-    fixture: 1.070e-12 -> 1.514e-12 -> 1.687e-12, confirming the trend.
+    grows monotonically as T is halved; measured on the macOS arm64
+    development machine (diagnostic-only -- not gated here) at
+    T=0.2/0.1/0.05 on this fixture: 1.070e-12 -> 1.514e-12 ->
+    1.687e-12, confirming the trend.
 
-    T=0.2 (Appendix A's stated starting value) already clears the >=10x
-    bar on assertion 2 ALONE by roughly three orders of magnitude, so no
-    halve-T re-choice was needed for this task -- the single logged
-    attempt is in ``tests/equivalence_calibration_log.md``.
+    T=0.2, the first temperature tried, already clears the >=10x bar on
+    assertion 2 ALONE by roughly three orders of magnitude, so no
+    halve-T re-choice was needed -- the single logged attempt is in
+    ``tests/equivalence_calibration_log.md``.
     """
 
     @classmethod
@@ -2879,8 +2879,8 @@ class TestConditioningAmplification(unittest.TestCase):
         ratios = {key: fc[key] / max(benign[key], 1e-15) for key in keys}
         self.assertTrue(
             any(ratio >= 10.0 for ratio in ratios.values()),
-            "conditioning amplification criterion (cell 38, Appendix A "
-            "G6) failed: none of the seam residuals amplified >= 10x "
+            "conditioning amplification criterion (cell 38, group G6) "
+            "failed: none of the seam residuals amplified >= 10x "
             "from the benign fixture to FC -- CURRENT measured ratios "
             "{!r} (benign residuals {!r}, FC residuals {!r})".format(
                 ratios,
@@ -2891,7 +2891,7 @@ class TestConditioningAmplification(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestSupplementaryLinks (Task 5): import-based existence/discoverability
+# TestSupplementaryLinks: import-based existence/discoverability
 # of every SupplementaryLink recorded anywhere in CELLS. SupplementaryLink
 # carries ZERO proof authority (Global Constraints) -- schema-only FORMAT
 # validation (the "<dotted.module>::<TestCase>::<method>" shape, duplicate
@@ -2948,12 +2948,12 @@ class TestSupplementaryLinks(unittest.TestCase):
 
 
 class TestBenchmarkRegistryTie(unittest.TestCase):
-    """Task 7: ``tests/equivalence_benchmark.md``'s MOST RECENT section
-    must cover EXACTLY the current ``CELLS`` inventory -- an EXACT
-    multiset match on cell_id (duplicates detected, not masked by set
+    """``tests/equivalence_benchmark.md``'s MOST RECENT section must
+    cover EXACTLY the current ``CELLS`` inventory -- an EXACT multiset
+    match on cell_id (duplicates detected, not masked by set
     semantics), per the registry docstring's maintenance checklist
-    (``tests/equivalence_cells.py``'s module docstring) and Appendix
-    B's tie-test requirement. A cell added to (or removed from) the
+    (``tests/equivalence_cells.py``'s module docstring) and the
+    benchmark file's own header. A cell added to (or removed from) the
     registry without a matching new benchmark section fails this test.
     """
 
@@ -3015,7 +3015,7 @@ class TestBenchmarkRegistryTie(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestRenderedEquivalenceTableDrift (Task 8): the committed user-facing
+# TestRenderedEquivalenceTableDrift: the committed user-facing
 # page ``docs/en/source/algorithm/rpa_flex_equivalence.rst`` must be
 # EXACTLY what ``docs/tools/render_equivalence_table.py`` renders from
 # this registry. The Sphinx build never imports the registry (the RST is
@@ -3150,11 +3150,11 @@ class TestRenderedEquivalenceTableDrift(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Non-gating module wall-time timer (Global Constraints: the CI budget
-# gate is Task 9's dedicated `python -m unittest
-# tests.test_rpa_flex_equivalence_table` timing step, MAX over the four
-# gating runners; this module-level timer is a local, non-gating early
-# warning only).
+# Non-gating module wall-time timer. The CI budget gate is the
+# dedicated `python -m unittest tests.test_rpa_flex_equivalence_table`
+# timing step in the calibration workflow, taken as the MAX over the
+# four gating runners; this module-level timer is a local, non-gating
+# early warning only.
 # ---------------------------------------------------------------------------
 
 _MODULE_START_TIME = None
@@ -3173,7 +3173,7 @@ def tearDownModule():
         logger.warning(
             "*** test_rpa_flex_equivalence_table took %.3fs, over the "
             "%.0fs CI budget (NON-GATING here -- the freeze-time gate "
-            "is Task 9's dedicated `python -m unittest "
+            "is the calibration workflow's dedicated `python -m unittest "
             "tests.test_rpa_flex_equivalence_table` timing step, MAX "
             "over the four gating runners; this local timer is an "
             "early warning only) ***",

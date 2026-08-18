@@ -1,20 +1,20 @@
-# The RPA/FLEX equivalence-table calibration workflow (Appendix B of
-# docs/superpowers/plans/2026-08-18-equivalence-table.md, Task 7/9).
+# The RPA/FLEX equivalence-table calibration workflow. It produces the
+# measurement artifacts tests/equivalence_freeze_check.py aggregates.
 #
 # Runs tests/equivalence_measure.py THREE times per gating runner (the
 # "3 runs" of the calibration protocol) plus ONE dedicated timed
 # `python -m unittest tests.test_rpa_flex_equivalence_table` invocation
 # (the quantity the 120s freeze-time budget gates), uploading every
-# output as a separate artifact even when a step fails -- the
-# coordinator downloads all 16 artifacts (4 gating runners x (3
+# output as a separate artifact even when a step fails. Whoever runs
+# the calibration downloads all 16 artifacts (4 gating runners x (3
 # measurement + 1 unittest-timing)) with `gh run download` and feeds
 # them to `tests/equivalence_freeze_check.py` to decide whether an
-# iteration of Task 9's closed calibration loop is measurement-
-# affecting or ready to freeze. This workflow itself asserts nothing --
-# every step's job-level pass/fail signal is preserved (a solver
-# rejecting/erroring on a cell it should not is still a real CI
-# failure), but each step's own housekeeping (timing capture, JSON
-# emission, artifact upload) runs regardless via `if: always()`.
+# iteration of the calibration loop is measurement-affecting or ready
+# to freeze. This workflow itself asserts nothing -- every step's
+# job-level pass/fail signal is preserved (a solver rejecting/erroring
+# on a cell it should not is still a real CI failure), but each step's
+# own housekeeping (timing capture, JSON emission, artifact upload)
+# runs regardless via `if: always()`.
 #
 # The push trigger bootstraps this workflow (a workflow_dispatch-only
 # workflow cannot be dispatched until it exists on the default branch);
@@ -35,16 +35,16 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12']
       fail-fast: false
 
-    # Pinned to 1: chita (the Linux x86_64 CPU proxy used for this
-    # workflow's own pre-merge local+chita calibration pass, Task 7)
-    # SEGFAULTS partway through a single `equivalence_measure` process
-    # under its BLAS backend's default thread pool -- repeated small-
-    # matrix solver constructions across ~27 cells accumulate OpenBLAS/
-    # OMP worker threads until pthread_create fails. ubuntu-latest's
+    # Pinned to 1: the Linux x86_64 development machine used for the
+    # pre-merge candidate calibration pass SEGFAULTS partway through a
+    # single `equivalence_measure` process under its BLAS backend's
+    # default thread pool -- repeated small-matrix solver constructions
+    # across ~27 cells accumulate OpenBLAS/OMP worker threads until
+    # pthread_create fails. ubuntu-latest's
     # numpy/scipy wheels are also OpenBLAS-backed, so the same failure
     # mode is plausible here at the full 37-cell registry size; pinning
     # every BLAS/OMP thread-count env var to 1 eliminates it (verified
-    # on chita: 3/3 clean runs afterward, 0/3 before -- see
+    # on that machine: 3/3 clean runs afterward, 0/3 before -- see
     # tests/equivalence_calibration_log.md, Event 2).
     env:
       OPENBLAS_NUM_THREADS: 1
