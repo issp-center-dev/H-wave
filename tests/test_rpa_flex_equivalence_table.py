@@ -571,6 +571,16 @@ class TestRegistrySchema(unittest.TestCase):
         )
         self.assertTrue(any("duplicate method_name" in e for e in errors), errors)
 
+    def test_method_name_that_is_not_a_valid_identifier_is_rejected(self):
+        # "-" survives method_name's translate() (only "." and "+" are
+        # mapped to "_"), so a cell_id containing a hyphen yields a
+        # non-identifier method name (e.g. "test_cell__bad-cell_id").
+        cell = _equiv_cell(cell_id="bad-cell.id")
+        errors = validate_registry([cell])
+        self.assertTrue(
+            any("is not a valid Python identifier" in e for e in errors), errors
+        )
+
     # -- positive control ---------------------------------------------------
 
     def test_a_mixed_valid_registry_has_no_errors(self):
