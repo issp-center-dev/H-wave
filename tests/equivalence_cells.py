@@ -31,11 +31,14 @@ Hard constraints (binding on every future edit to this file):
     normalizes mapping fields; it never inspects cross-field business
     rules.
 
-``CELLS`` carries a 2-cell BOOTSTRAP inventory as of Task 3 (Appendix A
-rows 1 and 17 -- an Equiv comparison cell and a BOTH-REJECT cell,
-proving the generated-test machinery end to end); ``COVERAGE_OBLIGATIONS``
-stays intentionally EMPTY until Task 5 populates the full 38-cell
-inventory and its coverage predicates.
+``CELLS`` carries the FULL Task-5 inventory: Appendix A rows 1-36 (every
+row except the G6 conditioning row, cell 38, which is Task 6's -- it
+needs the divergence-diagnostic apparatus that task builds).
+``COVERAGE_OBLIGATIONS`` is populated with every named predicate from
+the plan's coverage-obligations list EXCEPT "the conditioning row
+exists (38)" (Task 6 adds that predicate alongside the cell it
+checks for, so ``validate_registry`` stays green on this task's
+36-cell registry).
 """
 
 from __future__ import annotations
@@ -571,16 +574,1357 @@ _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Task 5 -- the remaining Appendix-A cells (rows 2-16, 18-34; rows 1, 17,
+# 35, 36 are the Task-3/4 bootstrap above; row 38 is Task 6's).
+#
+# ``atol`` is kept EQUAL to the mapped POLICY_CEILINGS entry for every
+# Equiv cell in this task (provisional, per the Task-5 brief): the
+# ``provenance`` string records the ACTUAL measured local residual so
+# Task 7's candidate-calibration pass has the raw numbers without
+# re-running anything. All measurements below were taken locally against
+# the committed E1/E2/E3/E4 fixtures (Task 3/4) with the SAME one-shot
+# construction ``build_solver`` uses (IterationMax=1, Mix=1.0, EPS=1 for
+# FLEX) -- see the Task 5 report for the full per-cell margin table.
+# ---------------------------------------------------------------------------
+
+
+def _measured_equiv(
+    chi0q_ceiling_key: str,
+    chi0q_measured: float,
+    chiq_comparator: str,
+    chiq_ceiling_key: str,
+    chiq_measured: float,
+) -> "Equiv":
+    """Build the common ``Equiv(chi0q, chiq)`` shape every comparison
+    cell in this task uses: ``chi0q`` always via ``identity``; ``chiq``
+    via the caller's comparator (``general_from_flex_channels`` or
+    ``reduced_blocks``). ``atol`` is kept EQUAL to the mapped policy
+    ceiling (provisional); ``provenance`` records the measured local
+    residual.
+    """
+
+    def _prov(measured: float) -> str:
+        return (
+            "measured (Task 5, local): max|diff| {:.3e} -- atol kept "
+            "EQUAL to the policy ceiling (provisional; Task 7 sets the "
+            "candidate bound from the 10x rule).".format(measured)
+        )
+
+    return Equiv(
+        observables={
+            "chi0q": ObservableSpec(
+                comparator="identity",
+                atol=POLICY_CEILINGS[chi0q_ceiling_key],
+                provenance=_prov(chi0q_measured),
+            ),
+            "chiq": ObservableSpec(
+                comparator=chiq_comparator,
+                atol=POLICY_CEILINGS[chiq_ceiling_key],
+                provenance=_prov(chiq_measured),
+            ),
+        }
+    )
+
+
+# -- G1 shared fixture shape: E2, calc_scheme='general', fixed mu=0.0 -------
+
+_E2_GENERAL_FIXEDMU_KWARGS = dict(
+    input_dir="tests/equivalence_input/orb2",
+    T=2.0,
+    mu=0.0,
+    filling=None,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=32,
+    extra_params={},
+    calc_type="ring",
+    requested_scheme="general",
+    enable_spin_orbital=False,
+    extern=None,
+)
+
+# -- G1 shared fixture shape: E2, calc_scheme='general', mu-coupled --------
+
+_E2_GENERAL_MU_KWARGS = dict(_E2_GENERAL_FIXEDMU_KWARGS)
+_E2_GENERAL_MU_KWARGS.update(mu=None, filling=0.5)
+
+_CELL_2_ONSITE_COULOMBINTER_FIXEDMU = Cell(
+    cell_id="general.ring.onsite_coulombinter.fixedmu",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "onsite_inter.dat"},
+        **_E2_GENERAL_FIXEDMU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_fixed", 1.2490109573171623e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 onsite_inter.dat -- on-site inter-orbital CoulombInter "
+        "V=0.7, orbital pair (1,2)."
+    ),
+)
+
+_CELL_3_ONSITE_HUND_FIXEDMU = Cell(
+    cell_id="general.ring.onsite_hund.fixedmu",
+    fixture=FixtureSpec(
+        interactions={"Hund": "hund_onsite.dat"},
+        **_E2_GENERAL_FIXEDMU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_fixed", 1.1102343486699909e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes="E2 hund_onsite.dat -- on-site Hund J=1.0, orbital pair (1,2).",
+)
+
+_CELL_4_ONSITE_ISING_FIXEDMU = Cell(
+    cell_id="general.ring.onsite_ising.fixedmu",
+    fixture=FixtureSpec(
+        interactions={"Ising": "ising_onsite.dat"},
+        **_E2_GENERAL_FIXEDMU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_fixed", 1.2490106872585652e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 ising_onsite.dat -- on-site Ising J=0.15, orbital pair "
+        "(1,2)."
+    ),
+)
+
+_CELL_5_ONSITE_EXCHANGE_FIXEDMU = Cell(
+    cell_id="general.ring.onsite_exchange.fixedmu",
+    fixture=FixtureSpec(
+        interactions={"Exchange": "exchange_onsite.dat"},
+        **_E2_GENERAL_FIXEDMU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 exchange_onsite.dat -- on-site Exchange J=0.20, orbital "
+        "pair (1,2)."
+    ),
+)
+
+_CELL_6_ONSITE_PAIRHOP_FIXEDMU = Cell(
+    cell_id="general.ring.onsite_pairhop.fixedmu",
+    fixture=FixtureSpec(
+        interactions={"PairHop": "pairhop_onsite.dat"},
+        **_E2_GENERAL_FIXEDMU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 pairhop_onsite.dat -- on-site PairHop P=0.10, orbital "
+        "pair (1,2)."
+    ),
+)
+
+_CELL_7_ONSITE_PAIRLIFT_FIXEDMU = Cell(
+    cell_id="general.ring.onsite_pairlift.fixedmu",
+    fixture=FixtureSpec(
+        interactions={"PairLift": "pairlift_onsite.dat"},
+        **_E2_GENERAL_FIXEDMU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 pairlift_onsite.dat -- on-site PairLift L=0.15, orbital "
+        "pair (1,2). FLEX warns (not rejects) that PairLift's "
+        "particle-hole vertex is exactly zero (S=C=0, "
+        "flex.py:1941-1945); it is physically inert but not an error."
+    ),
+)
+
+_CELL_8_ONSITE_U_V_HUND_MU = Cell(
+    cell_id="general.ring.onsite_u_v_hund.mu",
+    fixture=FixtureSpec(
+        interactions={
+            "CoulombIntra": "coulombintra.dat",
+            "CoulombInter": "onsite_inter.dat",
+            "Hund": "hund_onsite.dat",
+        },
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_mu", 3.0531310938257943e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 CoulombIntra U=4.0 + onsite_inter.dat V=0.7 + "
+        "hund_onsite.dat J=1.0 -- the oneshot suite's own U+V+J "
+        "composite (tests/test_rpa_flex_oneshot_equivalence.py's "
+        "TestGeneralSchemeOneShot.CASES); filling=0.5."
+    ),
+)
+
+_CELL_9_ONSITE_FULL_KANAMORI_MU = Cell(
+    cell_id="general.ring.onsite_full_kanamori.mu",
+    fixture=FixtureSpec(
+        interactions={
+            "CoulombIntra": "coulombintra.dat",
+            "CoulombInter": "kanamori_interorb.dat",
+            "Hund": "kanamori_hund.dat",
+            "PairHop": "pairhop_onsite.dat",
+            "Ising": "ising_onsite.dat",
+            "Exchange": "exchange_onsite.dat",
+        },
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "general_from_flex_channels", "chiq_mu", 2.4980382961466737e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "FROZEN full-Kanamori couplings (tests/test_flex_general.py): "
+        "CoulombIntra U=4.0 (coulombintra.dat), CoulombInter V=1.0 "
+        "(kanamori_interorb.dat), Hund J=0.30 (kanamori_hund.dat), "
+        "PairHop P=0.10 (pairhop_onsite.dat), Ising J=0.15 "
+        "(ising_onsite.dat), Exchange J=0.20 (exchange_onsite.dat); "
+        "filling=0.5."
+    ),
+)
+
+# -- G2 shared fixture shape: E2, calc_scheme='reduced', mu-coupled --------
+
+_E2_REDUCED_MU_KWARGS = dict(
+    input_dir="tests/equivalence_input/orb2",
+    T=2.0,
+    mu=None,
+    filling=0.5,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=32,
+    extra_params={},
+    calc_type="ring",
+    requested_scheme="reduced",
+    enable_spin_orbital=False,
+    extern=None,
+)
+
+_CELL_10_REDUCED_COULOMBINTRA_SPINFREE_MU = Cell(
+    cell_id="reduced.ring.onsite_coulombintra.spinfree.mu",
+    fixture=FixtureSpec(
+        interactions={"CoulombIntra": "coulombintra.dat"},
+        **_E2_REDUCED_MU_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "reduced_blocks", "chiq_mu", 3.885849304444534e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 coulombintra.dat, U=4.0, reduced/spin-free; filling=0.5. "
+        "chi0q FINDING (Task 5): FLEX writes the FULL spin-block-"
+        "inflated bare bubble to green_info['chi0q'] under "
+        "calc_scheme='reduced' (shape (nmat,nvol,2*norb,2*norb), "
+        "matching chiq_s/chiq_c's convention), while RPA's reduced "
+        "chi0q stays in its already-reduced density-diagonal shape "
+        "(spin-free: (nmat,nvol,norb,norb)). Never caught before -- "
+        "the existing oneshot suite (TestReducedOneShot) only "
+        "compares chiq under calc_scheme='reduced'. extract_bundle "
+        "(test module) now slices FLEX's reduced chi0q to its "
+        "up-up norb x norb diagonal block before the 'identity' "
+        "comparator runs, mirroring the SAME block extraction "
+        "'reduced_blocks' already applies to chiq_s/chiq_c; measured "
+        "equal to round-off on every reduced fixture this task "
+        "checked (E1 norb=1, E2 norb=2 spin-free, E4 spin-diag)."
+    ),
+)
+
+_CELL_11_REDUCED_COULOMBINTER_SPINFREE_MU = Cell(
+    cell_id="reduced.ring.onsite_coulombinter.spinfree.mu",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "onsite_inter.dat"},
+        **_E2_REDUCED_MU_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "reduced_blocks", "chiq_mu", 1.2490113201110995e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 onsite_inter.dat, V=0.7, reduced/spin-free; filling=0.5. "
+        "See cell 10's notes for the chi0q block-extraction finding "
+        "(applies uniformly to every reduced cell)."
+    ),
+)
+
+_CELL_12_REDUCED_HUND_SPINFREE_MU = Cell(
+    cell_id="reduced.ring.onsite_hund.spinfree.mu",
+    fixture=FixtureSpec(
+        interactions={"Hund": "hund_onsite.dat"},
+        **_E2_REDUCED_MU_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "reduced_blocks", "chiq_mu", 1.1102343486699909e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 hund_onsite.dat, J=1.0, reduced/spin-free; filling=0.5. "
+        "See cell 10's notes for the chi0q block-extraction finding."
+    ),
+)
+
+_CELL_13_REDUCED_ISING_SPINFREE_MU = Cell(
+    cell_id="reduced.ring.onsite_ising.spinfree.mu",
+    fixture=FixtureSpec(
+        interactions={"Ising": "ising_onsite.dat"},
+        **_E2_REDUCED_MU_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "reduced_blocks", "chiq_mu", 1.2490105326199038e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 ising_onsite.dat, J=0.15, reduced/spin-free; filling=0.5. "
+        "See cell 10's notes for the chi0q block-extraction finding."
+    ),
+)
+
+_CELL_14_REDUCED_PAIRLIFT_SPINFREE_MU = Cell(
+    cell_id="reduced.ring.onsite_pairlift.spinfree.mu",
+    fixture=FixtureSpec(
+        interactions={"PairLift": "pairlift_onsite.dat"},
+        **_E2_REDUCED_MU_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110233872252785e-16,
+        "reduced_blocks", "chiq_mu", 1.110233872252785e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 pairlift_onsite.dat, L=0.15, reduced/spin-free; "
+        "filling=0.5. PairLift's acceptance under reduced is a "
+        "RECORDED FACT of the current resolver (its particle-hole "
+        "vertex is exactly zero, so 'reduced' has nothing to drop -- "
+        "unlike Exchange/PairHop, whose nonzero cross-slot vertex the "
+        "density-diagonal projection WOULD drop and cell 17/18 "
+        "reject for that reason). FLEX warns (not rejects) that "
+        "PairLift is physically inert (rpa.py:1317-1322 / "
+        "flex.py:1941-1945). See cell 10's notes for the chi0q "
+        "block-extraction finding."
+    ),
+)
+
+# -- G2 shared fixture shape: E4, calc_scheme='reduced', spin-diag ---------
+
+_E4_REDUCED_SPINDIAG_KWARGS = dict(
+    input_dir="tests/equivalence_input/spin",
+    T=2.0,
+    mu=None,
+    filling=0.5,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=32,
+    extra_params={"coeff_extern": 1.0},
+    calc_type="ring",
+    requested_scheme="reduced",
+    enable_spin_orbital=False,
+    extern="extern_zeeman.dat",
+)
+
+_CELL_15_REDUCED_COULOMBINTRA_SPINDIAG_MU = Cell(
+    cell_id="reduced.ring.onsite_coulombintra.spindiag.mu",
+    fixture=FixtureSpec(
+        interactions={"CoulombIntra": "coulombintra.dat"},
+        **_E4_REDUCED_SPINDIAG_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-diag",
+    rpa=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_rpa_flex_equivalence_table::"
+                    "TestReducedSpinDiagAcceptance::"
+                    "test_reduced_rpa_also_solves_with_extern"
+                ),
+                claim=(
+                    "RPA accepts the E4 Extern/Zeeman spin-diag route "
+                    "under calc_scheme='reduced' (Task 4)."
+                ),
+            ),
+        ),
+    ),
+    flex=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_rpa_flex_equivalence_table::"
+                    "TestReducedSpinDiagAcceptance::"
+                    "test_reduced_flex_solves_with_extern_coulombintra"
+                ),
+                claim=(
+                    "FLEX accepts the E4 Extern/Zeeman spin-diag route "
+                    "under calc_scheme='reduced' -- the frozen "
+                    "both-accept expectation Appendix A records for "
+                    "this row (Task 4 deliverable 1)."
+                ),
+            ),
+        ),
+    ),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.2490992897474145e-16,
+        "reduced_blocks", "chiq_mu", 4.163877857486877e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E4 spin-diag route: coulombintra.dat (U=4.0, copied from "
+        "E2) + extern_zeeman.dat (hz=0.1, coeff_extern=1.0); "
+        "filling=0.5. chi0q comparison: RPA's spin-diag chi0q is "
+        "5-dim ((2,nmat,nvol,norb,norb), one block per spin channel); "
+        "extract_bundle stacks FLEX's inflated chi0q's up-up and "
+        "down-down diagonal blocks into the same shape -- measured "
+        "equal to round-off, and the off-diagonal (spin-mixing) "
+        "blocks of FLEX's chi0q are exactly zero, as expected at the "
+        "bare-bubble level."
+    ),
+)
+
+_CELL_16_REDUCED_COULOMBINTER_SPINDIAG_MU = Cell(
+    cell_id="reduced.ring.onsite_coulombinter.spindiag.mu",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "onsite_inter.dat"},
+        **_E4_REDUCED_SPINDIAG_KWARGS,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-diag",
+    rpa=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_rpa_flex_equivalence_table::"
+                    "TestReducedSpinDiagAcceptance::"
+                    "test_reduced_rpa_also_solves_with_extern"
+                ),
+                claim=(
+                    "RPA accepts the E4 Extern/Zeeman spin-diag route "
+                    "under calc_scheme='reduced' (Task 4)."
+                ),
+            ),
+        ),
+    ),
+    flex=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_rpa_flex_equivalence_table::"
+                    "TestReducedSpinDiagAcceptance::"
+                    "test_reduced_flex_solves_with_extern_coulombinter"
+                ),
+                claim=(
+                    "FLEX accepts the E4 Extern/Zeeman spin-diag route "
+                    "under calc_scheme='reduced' with CoulombInter "
+                    "(Task 4 deliverable 1)."
+                ),
+            ),
+        ),
+    ),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.2490992897474145e-16,
+        "reduced_blocks", "chiq_mu", 1.5266161502687854e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E4 spin-diag route: onsite_inter.dat (V=0.7, copied from "
+        "E2) + extern_zeeman.dat; filling=0.5. See cell 15's notes "
+        "for the chi0q stacking construction."
+    ),
+)
+
+_CELL_18_REDUCED_PAIRHOP_REJECT = Cell(
+    cell_id="reduced.ring.onsite_pairhop.reject",
+    fixture=FixtureSpec(
+        interactions={"PairHop": "pairhop_onsite.dat"},
+        **dict(_E2_GENERAL_FIXEDMU_KWARGS, requested_scheme="reduced"),
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.REJECT,
+        steps=(ExecuteReject(site=Site.CONSTRUCTOR, exc_type="ValueError", fragment="reduced"),),
+    ),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(ExecuteReject(site=Site.CONSTRUCTOR, exc_type="ValueError", fragment="reduced"),),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "E2 pairhop_onsite.dat, P=0.10. BOTH-REJECT at the shared "
+        "_set_scheme check (rpa.py:1302-1316), same shape as cell "
+        "17: PairHop's particle-hole vertex has no density-diagonal "
+        "content."
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Group G3 -- off-site (E1/E2), cells 19-28.
+# ---------------------------------------------------------------------------
+
+_CELL_19_OFFSITE_COULOMBINTER_SAMEORB_MU = Cell(
+    cell_id="general.ring.offsite_coulombinter_sameorb.mu",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/orb1",
+        interactions={"CoulombInter": "coulombinter.dat"},
+        T=2.0, mu=None, filling=0.75,
+        CellShape=(4, 4, 1), SubShape=(1, 1, 1), Nmat=32,
+        extra_params={}, calc_type="ring",
+        requested_scheme="general", enable_spin_orbital=False, extern=None,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::"
+                    "test_one_orbital_offsite_v_matches_the_rpa_ring_exactly"
+                ),
+                claim=(
+                    "The same fixture (tests/rpa/input's "
+                    "coulombinter.dat, filling=0.75) element-complete "
+                    "equal between RPA and FLEX for off-site "
+                    "same-orbital CoulombInter."
+                ),
+            ),
+        ),
+    ),
+    comparison=_measured_equiv(
+        "chi0q_mu", 4.884981379996393e-15,
+        "general_from_flex_channels", "chiq_mu", 2.0206059344954128e-14,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="offsite",
+    notes=(
+        "E1 coulombinter.dat -- off-site CoulombInter, same-orbital "
+        "(a==b), R=+-x/+-y bonds, V=1.0; filling=0.75. The audit's "
+        "exact-match case: FLEX's general path is measured equal to "
+        "the RPA ring for this entry class (flex.py:1947-1970's own "
+        "documented rationale)."
+    ),
+)
+
+_CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
+    cell_id="reduced.ring.offsite_coulombinter.mu",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/orb1",
+        interactions={"CoulombInter": "coulombinter.dat"},
+        T=2.0, mu=None, filling=0.75,
+        CellShape=(4, 4, 1), SubShape=(1, 1, 1), Nmat=32,
+        extra_params={}, calc_type="ring",
+        requested_scheme="reduced", enable_spin_orbital=False, extern=None,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_rpa_flex_oneshot_equivalence::"
+                    "TestReducedOneShot::test_matrix_cells"
+                ),
+                claim=(
+                    "The oneshot suite's TestReducedOneShot case (a) -- "
+                    "this exact fixture/filling -- pins the chiq "
+                    "uu-ud/uu+ud block equivalence under "
+                    "calc_scheme='reduced'."
+                ),
+            ),
+        ),
+    ),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 4.884981379996392e-15,
+        "reduced_blocks", "chiq_mu", 3.552713730991191e-14,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="offsite",
+    notes=(
+        "E1 coulombinter.dat, reduced; filling=0.75 -- the oneshot "
+        "suite's TestReducedOneShot case (a) "
+        "('tests/rpa/input', CoulombInter only, filling=0.75, norb=1), "
+        "which only ever compared chiq. See cell 10's notes for the "
+        "chi0q block-extraction finding this task adds on top."
+    ),
+)
+
+_CELL_21_OFFSITE_COULOMBINTER_INTERORB_FLEXREJECT = Cell(
+    cell_id="general.ring.offsite_coulombinter_interorb.flexreject",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "offsite_coulombinter_interorb.dat"},
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.SOLVE, exc_type="ValueError",
+                fragment="interaction 'CoulombInter'",
+            ),
+        ),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                ),
+                claim=(
+                    "FLEX rejects off-site CoulombInter with a != b "
+                    "(inter-orbital) under calc_scheme='general'."
+                ),
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "E2 offsite_coulombinter_interorb.dat -- off-site CoulombInter, "
+        "inter-orbital (1,2), R=(1,0,0), coupling 0.2; filling=0.5. "
+        "RPA=SUPPORTED (off-site inter-orbital CoulombInter has no "
+        "known equivalence gap on the RPA side). FLEX SOLVE-time "
+        "reject: flex.py:2020-2043 (_flex_compute_veff_general -> "
+        "_inflate_chi0q_and_ham_general), the off-site guard's "
+        "a==b-only CoulombInter exemption."
+    ),
+)
+
+_CELL_22_OFFSITE_HUND_FLEXREJECT = Cell(
+    cell_id="general.ring.offsite_hund.flexreject",
+    fixture=FixtureSpec(
+        interactions={"Hund": "offsite_hund.dat"},
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.SOLVE, exc_type="ValueError",
+                fragment="interaction 'Hund'",
+            ),
+        ),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                ),
+                claim="FLEX rejects off-site Hund under calc_scheme='general'.",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "E2 offsite_hund.dat, R=(1,0,0), coupling 0.2; filling=0.5. "
+        "FLEX SOLVE-time reject: flex.py:2020-2043 -- off-site Hund "
+        "is not representable by a q-only vertex (non-local "
+        "particle-hole pair)."
+    ),
+)
+
+_CELL_23_OFFSITE_ISING_FLEXREJECT = Cell(
+    cell_id="general.ring.offsite_ising.flexreject",
+    fixture=FixtureSpec(
+        interactions={"Ising": "offsite_ising.dat"},
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.SOLVE, exc_type="ValueError",
+                fragment="interaction 'Ising'",
+            ),
+        ),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                ),
+                claim="FLEX rejects off-site Ising under calc_scheme='general'.",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "E2 offsite_ising.dat, R=(1,0,0), coupling 0.2; filling=0.5. "
+        "FLEX SOLVE-time reject: flex.py:2020-2043."
+    ),
+)
+
+_CELL_24_OFFSITE_EXCHANGE_FLEXREJECT = Cell(
+    cell_id="general.ring.offsite_exchange.flexreject",
+    fixture=FixtureSpec(
+        interactions={"Exchange": "offsite_exchange.dat"},
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.SOLVE, exc_type="ValueError",
+                fragment="interaction 'Exchange'",
+            ),
+        ),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                ),
+                claim="FLEX rejects off-site Exchange under calc_scheme='general'.",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "E2 offsite_exchange.dat, R=(1,0,0), coupling 0.2; "
+        "filling=0.5. FLEX SOLVE-time reject: flex.py:2020-2043 -- "
+        "non-local particle-hole pair off-site."
+    ),
+)
+
+_CELL_25_OFFSITE_PAIRHOP_FLEXREJECT = Cell(
+    cell_id="general.ring.offsite_pairhop.flexreject",
+    fixture=FixtureSpec(
+        interactions={"PairHop": "offsite_pairhop.dat"},
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.SOLVE, exc_type="ValueError",
+                fragment="interaction 'PairHop'",
+            ),
+        ),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                ),
+                claim=(
+                    "tests/test_flex_offsite_general.py's general "
+                    "rejection-classes coverage (this exact PairHop "
+                    "case is not one of its enumerated subTest rows -- "
+                    "the module's docstring names off-site PairHop as "
+                    "rejected for the same non-local-pair reason as "
+                    "Exchange; linked for the surrounding module "
+                    "context, not a per-type pin)."
+                ),
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "E2 offsite_pairhop.dat, R=(1,0,0), coupling 0.2; "
+        "filling=0.5. RPA reads off-site PairHop but silently drops "
+        "it (issue #157, on-site-only representation) -- SUPPORTED "
+        "still holds since RPA does not raise. FLEX SOLVE-time "
+        "reject: flex.py:2020-2043 -- non-local particle-hole pair "
+        "off-site, same as Exchange."
+    ),
+)
+
+_CELL_26_OFFSITE_COULOMBINTRA_LITERALKEY_REJECT = Cell(
+    cell_id="general.ring.offsite_coulombintra_literalkey.reject",
+    fixture=FixtureSpec(
+        interactions={"CoulombIntra": "offsite_coulombintra.dat"},
+        **_E2_GENERAL_MU_KWARGS,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR, exc_type="ValueError",
+                fragment="the documented operator is on-site and same-orbital",
+            ),
+        ),
+    ),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR, exc_type="ValueError",
+                fragment="the documented operator is on-site and same-orbital",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "AMENDED (2026-08-18, Task-3 finding, reviewer-confirmed): "
+        "originally intended as a FLEX-solve-time rejection; the "
+        "literal CoulombIntra key rejects ANY off-site/inter-orbital "
+        "entry at READ time instead (declarations.py:195-211, "
+        "validate_hermitian_closure, called from "
+        "read_input_k.py:125-128 -- runs inside the fixture read, "
+        "i.e. before either solver constructs). VERIFIED (Task 5): "
+        "reading tests/equivalence_input/orb2/offsite_coulombintra.dat "
+        "under the literal 'CoulombIntra' key raises ValueError: "
+        "\"CoulombIntra ... declares R=(1, 0, 0) orbitals (1, 1) = "
+        "(0.2+0j): the documented operator is on-site and "
+        "same-orbital (R = 0, a == b); off-site or inter-orbital "
+        "entries belong in CoulombInter\" -- both solvers share this "
+        "read, so BOTH-REJECT at the CONSTRUCTOR site (the read "
+        "happens inside run_cell's construction phase, before "
+        "RPA()/FLEX() are ever called). The aggregate 'Coulomb' route "
+        "instead classifies this file's same-orbital off-site content "
+        "as CoulombInter (cell 19's physics, FLEX-accepted) -- so the "
+        "originally intended row has no reachable public "
+        "configuration; this row now documents the input-layer "
+        "rejection shared by both solvers."
+    ),
+)
+
+_CELL_27_OFFSITE_COULOMBINTER_SAMEORB_SUBSHAPE = Cell(
+    cell_id="general.ring.offsite_coulombinter_sameorb.subshape",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/orb1",
+        interactions={"CoulombInter": "coulombinter.dat"},
+        T=2.0, mu=0.0, filling=None,
+        CellShape=(4, 4, 1), SubShape=(2, 1, 1), Nmat=32,
+        extra_params={}, calc_type="ring",
+        requested_scheme="general", enable_spin_orbital=False, extern=None,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.SOLVE, exc_type="ValueError",
+                fragment="with sublattice folding",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "Cell 19's fixture (E1 coulombinter.dat, same-orbital off-site "
+        "CoulombInter) with SubShape=(2,1,1); mu=0.0. STOP-and-amend "
+        "audit VERIFIED (Task 5): per the audit, FLEX REJECTS folded "
+        "off-site entries even in the otherwise-accepted a==b "
+        "CoulombInter class -- confirmed empirically: RPA solves "
+        "(chi0q shape (32,8,2,2,2,2)); FLEX raises ValueError at "
+        "SOLVE time (flex.py:2020-2043's has_fold branch), message "
+        "'...interaction 'CoulombInter' has an off-site entry "
+        "irvec=(1, 0, 0), orbvec=(0, 1), with sublattice folding...'. "
+        "Matches the recorded expectation exactly -- NO STOP-and-amend "
+        "triggered; FLEX-REJECT.RPA-SUPPORTED as predicted."
+    ),
+)
+
+_CELL_28_ONSITE_COULOMBINTER_SUBSHAPE_MU = Cell(
+    cell_id="general.ring.onsite_coulombinter.subshape.mu",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "onsite_inter.dat"},
+        **dict(_E2_GENERAL_MU_KWARGS, SubShape=(2, 1, 1)),
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.6653615627141076e-16,
+        "general_from_flex_channels", "chiq_mu", 1.9429144066570713e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 onsite_inter.dat, SubShape=(2,1,1), filling=0.5 -- the "
+        "audit's untested on-site folding path: sublattice folding "
+        "combined with an on-site (not off-site) interaction. Equiv "
+        "at round-off, unlike cell 27's off-site+folding combination."
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Group G4 -- options, cells 29-34.
+# ---------------------------------------------------------------------------
+
+_CELL_29_ONSITE_COULOMBINTER_COEFFTAIL_MU = Cell(
+    cell_id="general.ring.onsite_coulombinter.coefftail.mu",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "onsite_inter.dat"},
+        **dict(_E2_GENERAL_MU_KWARGS, extra_params={"coeff_tail": 1.0}),
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 1.110223918911846e-16,
+        "general_from_flex_channels", "chiq_mu", 1.3877796215672092e-16,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "E2 onsite_inter.dat, coeff_tail=1.0, filling=0.5 -- the "
+        "audit's untested combination (the high-frequency tail "
+        "correction, active) with a mu-coupled on-site cell. Equiv "
+        "at round-off."
+    ),
+)
+
+_CELL_30_AUTO_DENSITY_RESOLUTION = Cell(
+    cell_id="auto.density.resolution",
+    fixture=FixtureSpec(
+        interactions={"CoulombInter": "onsite_inter.dat"},
+        **dict(_E2_GENERAL_MU_KWARGS, requested_scheme="auto"),
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteConstruct(expected_resolved_scheme="reduced"),),
+    ),
+    flex=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteConstruct(expected_resolved_scheme="reduced"),),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "E2 onsite_inter.dat (CoulombInter only), calc_scheme='auto'. "
+        "VERIFIED (Task 5): rpa.py:1285-1289 -- density-diagonal-only "
+        "content (no Exchange/PairHop, calc_type='ring') resolves to "
+        "'reduced'; both RPA and FLEX (which inherits _set_scheme) "
+        "resolve identically. Construction-only: no solve."
+    ),
+)
+
+_CELL_31_AUTO_EXCHANGE_RESOLUTION = Cell(
+    cell_id="auto.exchange.resolution",
+    fixture=FixtureSpec(
+        interactions={"Exchange": "exchange_onsite.dat"},
+        **dict(_E2_GENERAL_MU_KWARGS, requested_scheme="auto"),
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteConstruct(expected_resolved_scheme="general"),),
+    ),
+    flex=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteConstruct(expected_resolved_scheme="general"),),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "E2 exchange_onsite.dat (Exchange only), calc_scheme='auto'. "
+        "VERIFIED (Task 5): rpa.py:1275-1284 -- Exchange has no "
+        "density-diagonal vertex content, so auto resolves to "
+        "'general' (both solvers). Construction-only: no solve."
+    ),
+)
+
+_CELL_32_AUTO_PAIRHOP_RESOLUTION = Cell(
+    cell_id="auto.pairhop.resolution",
+    fixture=FixtureSpec(
+        interactions={"PairHop": "pairhop_onsite.dat"},
+        **dict(_E2_GENERAL_MU_KWARGS, requested_scheme="auto"),
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteConstruct(expected_resolved_scheme="general"),),
+    ),
+    flex=SolverProof(
+        status=Status.SUPPORTED,
+        steps=(ExecuteConstruct(expected_resolved_scheme="general"),),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "E2 pairhop_onsite.dat (PairHop only), calc_scheme='auto'. "
+        "VERIFIED (Task 5): rpa.py:1275-1284 -- PairHop has no "
+        "density-diagonal vertex content either, so auto resolves to "
+        "'general' (both solvers). Construction-only: no solve."
+    ),
+)
+
+_CELL_33_CHI0Q_INIT_REUSE = Cell(
+    cell_id="chi0q_init.reuse",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/orb1",
+        interactions={"CoulombInter": "coulombinter.dat"},
+        T=2.0, mu=0.0, filling=None,
+        CellShape=(4, 4, 1), SubShape=(1, 1, 1), Nmat=32,
+        extra_params={}, calc_type="ring",
+        requested_scheme="general", enable_spin_orbital=False, extern=None,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteChiqInitReuse(),)),
+    flex=SolverProof(
+        status=Status.NOT_APPLICABLE,
+        steps=(PairedInvarianceRun(),),
+        reason=(
+            "accepted; no corresponding option semantics (flex.py:408) "
+            "-- FLEX starts every SCF loop from zero self-energy and "
+            "recomputes chi0q from the dressed Green's function each "
+            "iteration (flex.py:446-451's own docstring), so a "
+            "chi0q_init entry loaded by the inherited RPA read_init is "
+            "never consumed."
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="offsite",
+    notes=(
+        "E1 coulombinter.dat, mu=0.0. RPA side (ExecuteChiqInitReuse): "
+        "run A (no chi0q_init) captures chi0q_A/chiq_A; run B loads "
+        "chi0q_A via the PUBLIC chi0q_init mechanism (run A's own "
+        "save_results() writes the file, run B's read_init() loads "
+        "it) -- VERIFIED (Task 5): np.array_equal(chi0q_B, chi0q_A) "
+        "and np.array_equal(chiq_B, chiq_A) both True (chi0q passes "
+        "through solve() untouched when supplied). FLEX side "
+        "(PairedInvarianceRun): the SAME two-solve construction, "
+        "exhaustive green_info key-set match + per-key "
+        "np.array_equal -- VERIFIED (Task 5): identical key sets "
+        "({'chi0q','chiq_c','chiq_s','green','physics','sigma'}) and "
+        "every array bitwise equal between the with/without-"
+        "chi0q_init runs, proving (not merely asserting) FLEX's "
+        "output is invariant to the option's presence."
+    ),
+)
+
+_CELL_34_RINGLADDER_GENERAL_ONSITE_COULOMBINTRA = Cell(
+    cell_id="ringladder.general.onsite_coulombintra",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/mini",
+        interactions={"CoulombIntra": "coulombintra.dat"},
+        T=2.0, mu=0.0, filling=None,
+        CellShape=(2, 1, 1), SubShape=(1, 1, 1), Nmat=8,
+        extra_params={}, calc_type="ring+ladder",
+        requested_scheme="general", enable_spin_orbital=False, extern=None,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR, exc_type="ValueError",
+                fragment="ring+ladder",
+            ),
+        ),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_spinful_transverse_ed::"
+                    "TestSpinfulVertexExchangeOptOutRingLadderRejection::"
+                    "test_ring_ladder_rejects_the_opt_out_combination"
+                ),
+                claim=(
+                    "The transverse ring+ladder pipeline's own "
+                    "rejection contract (a companion instance to "
+                    "FLEX's blanket calc_type='ring+ladder' rejection)."
+                ),
+            ),
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_bond_transverse_w::"
+                    "TestGateW1OnsiteReduction::"
+                    "test_collapsed_output_matches_plain_chiq_pm_at_omega_zero"
+                ),
+                claim=(
+                    "RPA's ring+ladder transverse channel resolves "
+                    "correctly on the collapsed (non-bond) path -- the "
+                    "capability FLEX does not implement."
+                ),
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "E3 (2x1x1, 1 orbital, Nmat=8), coulombintra.dat U=2.0; "
+        "mu=0.0, calc_type='ring+ladder' (requires "
+        "calc_scheme='general' -- rpa.py:1323-1325). RPA=SUPPORTED "
+        "(VERIFIED: solves, green_info carries 'chiq_pm', the "
+        "transverse channel). FLEX=REJECT at CONSTRUCTOR: "
+        "flex.py:208-219 (_init_flex_param, scheme=='general' branch, "
+        "checked BEFORE the enable_spin_orbital guard), 'FLEX does "
+        "not support calc_type='ring+ladder' (the transverse ladder "
+        "channel); FLEX general is ring-only....' -- VERIFIED "
+        "(Task 5) via build_solver's construction path (calc_type "
+        "must be threaded to FLEX's info dict too, not just RPA's -- "
+        "see build_solver's docstring update)."
+    ),
+)
+
 CELLS: tuple = (
     _BOOTSTRAP_CELL_1,
+    _CELL_2_ONSITE_COULOMBINTER_FIXEDMU,
+    _CELL_3_ONSITE_HUND_FIXEDMU,
+    _CELL_4_ONSITE_ISING_FIXEDMU,
+    _CELL_5_ONSITE_EXCHANGE_FIXEDMU,
+    _CELL_6_ONSITE_PAIRHOP_FIXEDMU,
+    _CELL_7_ONSITE_PAIRLIFT_FIXEDMU,
+    _CELL_8_ONSITE_U_V_HUND_MU,
+    _CELL_9_ONSITE_FULL_KANAMORI_MU,
+    _CELL_10_REDUCED_COULOMBINTRA_SPINFREE_MU,
+    _CELL_11_REDUCED_COULOMBINTER_SPINFREE_MU,
+    _CELL_12_REDUCED_HUND_SPINFREE_MU,
+    _CELL_13_REDUCED_ISING_SPINFREE_MU,
+    _CELL_14_REDUCED_PAIRLIFT_SPINFREE_MU,
+    _CELL_15_REDUCED_COULOMBINTRA_SPINDIAG_MU,
+    _CELL_16_REDUCED_COULOMBINTER_SPINDIAG_MU,
     _BOOTSTRAP_CELL_17,
+    _CELL_18_REDUCED_PAIRHOP_REJECT,
+    _CELL_19_OFFSITE_COULOMBINTER_SAMEORB_MU,
+    _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU,
+    _CELL_21_OFFSITE_COULOMBINTER_INTERORB_FLEXREJECT,
+    _CELL_22_OFFSITE_HUND_FLEXREJECT,
+    _CELL_23_OFFSITE_ISING_FLEXREJECT,
+    _CELL_24_OFFSITE_EXCHANGE_FLEXREJECT,
+    _CELL_25_OFFSITE_PAIRHOP_FLEXREJECT,
+    _CELL_26_OFFSITE_COULOMBINTRA_LITERALKEY_REJECT,
+    _CELL_27_OFFSITE_COULOMBINTER_SAMEORB_SUBSHAPE,
+    _CELL_28_ONSITE_COULOMBINTER_SUBSHAPE_MU,
+    _CELL_29_ONSITE_COULOMBINTER_COEFFTAIL_MU,
+    _CELL_30_AUTO_DENSITY_RESOLUTION,
+    _CELL_31_AUTO_EXCHANGE_RESOLUTION,
+    _CELL_32_AUTO_PAIRHOP_RESOLUTION,
+    _CELL_33_CHI0Q_INIT_REUSE,
+    _CELL_34_RINGLADDER_GENERAL_ONSITE_COULOMBINTRA,
     _CELL_35_SO_GENERAL_CONSTRUCTION_REJECT,
     _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT,
 )
 
-# Named predicates over ``CELLS`` (or any cells tuple passed to
-# ``validate_registry``) -- populated by Task 5. Empty this task.
-COVERAGE_OBLIGATIONS: Dict[str, Callable[[tuple], bool]] = {}
+
+# ---------------------------------------------------------------------------
+# COVERAGE_OBLIGATIONS -- named predicates over CELLS (the plan's list,
+# minus "the conditioning row exists (38)": that predicate is Task 6's,
+# added alongside the cell it checks for -- cell 38 is out of this
+# task's scope, so including that predicate now would fail
+# validate_registry on this task's 36-cell registry).
+# ---------------------------------------------------------------------------
+
+
+def _cell_ids(cells) -> set:
+    return {c.cell_id for c in cells}
+
+
+def _obligation_g1_every_interaction_type_appears(cells) -> bool:
+    """Every interaction type the general scheme supports appears
+    somewhere in G1 (cell_ids ``general.ring.onsite_*.fixedmu`` /
+    ``.mu``)."""
+
+    required = {
+        "CoulombIntra", "CoulombInter", "Hund", "Ising", "Exchange",
+        "PairHop", "PairLift",
+    }
+    seen: set = set()
+    for cell in cells:
+        if cell.cell_id.startswith("general.ring.onsite_") and (
+            cell.cell_id.endswith(".fixedmu") or cell.cell_id.endswith(".mu")
+        ):
+            seen.update(cell.fixture.interactions.keys())
+    return required <= seen
+
+
+def _obligation_g2_both_reduced_spin_modes_appear(cells) -> bool:
+    ids = _cell_ids(cells)
+    has_spin_free = any(cid.endswith(".spinfree.mu") for cid in ids)
+    has_spin_diag = any(cid.endswith(".spindiag.mu") for cid in ids)
+    return has_spin_free and has_spin_diag
+
+
+def _obligation_every_resolver_outcome_appears(cells) -> bool:
+    ids = _cell_ids(cells)
+    return {
+        "auto.density.resolution",
+        "auto.exchange.resolution",
+        "auto.pairhop.resolution",
+    } <= ids
+
+
+def _obligation_both_so_guard_sites_appear(cells) -> bool:
+    ids = _cell_ids(cells)
+    return {
+        "so.general.construction.reject",
+        "so.reduced.construction.reject",
+    } <= ids
+
+
+def _obligation_full_kanamori_row_exists(cells) -> bool:
+    return "general.ring.onsite_full_kanamori.mu" in _cell_ids(cells)
+
+
+def _obligation_at_least_one_both_reject(cells) -> bool:
+    return any(
+        cell.rpa.status is Status.REJECT and cell.flex.status is Status.REJECT
+        for cell in cells
+    )
+
+
+def _obligation_at_least_one_flex_reject_rpa_supported(cells) -> bool:
+    return any(
+        cell.rpa.status is Status.SUPPORTED and cell.flex.status is Status.REJECT
+        for cell in cells
+    )
+
+
+def _obligation_at_least_one_rpa_only(cells) -> bool:
+    return any(
+        cell.rpa.status is Status.SUPPORTED
+        and cell.flex.status is Status.NOT_APPLICABLE
+        for cell in cells
+    )
+
+
+COVERAGE_OBLIGATIONS: Dict[str, Callable[[tuple], bool]] = {
+    "g1_every_interaction_type_appears": _obligation_g1_every_interaction_type_appears,
+    "g2_both_reduced_spin_modes_appear": _obligation_g2_both_reduced_spin_modes_appear,
+    "every_resolver_outcome_appears": _obligation_every_resolver_outcome_appears,
+    "both_so_guard_sites_appear": _obligation_both_so_guard_sites_appear,
+    "full_kanamori_row_exists": _obligation_full_kanamori_row_exists,
+    "at_least_one_both_reject": _obligation_at_least_one_both_reject,
+    "at_least_one_flex_reject_rpa_supported": _obligation_at_least_one_flex_reject_rpa_supported,
+    "at_least_one_rpa_only": _obligation_at_least_one_rpa_only,
+}
 
 
 # ---------------------------------------------------------------------------

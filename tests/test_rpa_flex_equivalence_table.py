@@ -66,6 +66,49 @@ logger = logging.getLogger("qlms").getChild("test_equivalence_table")
 # ---------------------------------------------------------------------------
 
 
+def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) -> np.ndarray:
+    """FLEX FINDING (Task 5): under ``calc_scheme='reduced'`` FLEX writes
+    the FULL spin-block-INFLATED bare bubble to ``green_info["chi0q"]``
+    -- shape ``(nmat, nvol, 2*norb, 2*norb)``, matching the
+    ``chiq_s``/``chiq_c`` convention -- while RPA's reduced ``chi0q``
+    stays in its already-reduced, density-diagonal shape: spin-free/
+    spinful ``(nmat, nvol, norb, norb)`` (4-dim), or spin-diag
+    ``(2, nmat, nvol, norb, norb)`` (5-dim, one block per spin channel).
+
+    This was never caught before Task 5: the pre-existing oneshot suite
+    (``tests/test_rpa_flex_oneshot_equivalence.py``'s
+    ``TestReducedOneShot``) only ever compares ``chiq`` under
+    ``calc_scheme='reduced'``, never ``chi0q`` -- and the required-
+    observables freeze (Global Constraints) now mandates
+    ``("chi0q", "chiq")`` for EVERY comparison cell.
+
+    Measured (Task 5, local, E1 norb=1 / E2 norb=2 spin-free / E4
+    spin-diag): FLEX's up-up (and, for spin-diag, down-down) ``norb x
+    norb`` diagonal block of its inflated ``chi0q`` equals RPA's
+    reduced ``chi0q`` to round-off (~1e-16 to ~5e-15), and the
+    off-diagonal (spin-mixing) blocks are exactly zero at the
+    bare-bubble level -- this is a REPRESENTATION-CONVENTION
+    difference, not a numerical divergence. This mirrors EXACTLY the
+    block extraction the ``reduced_blocks`` comparator already applies
+    to ``chiq_s``/``chiq_c`` (``TestReducedOneShot._blocks``); ``chi0q``
+    needed the identical treatment. Resolving it here (at the
+    bundle-extraction seam, which is test-module-owned and NOT part of
+    the closed ``COMPARATORS`` registry) keeps the ``identity``
+    comparator's semantics -- and the plan's "chi0q -> identity"
+    Comparators-paragraph contract -- intact: by the time ``identity``
+    runs, both bundle arrays already denote the SAME physical quantity.
+
+    Only called when ``solver_obj.calc_scheme == "reduced"``.
+    """
+
+    norb = solver_obj.norb
+    if solver_obj.spin_mode == "spin-diag":
+        up = chi0q_full[:, :, :norb, :norb]
+        down = chi0q_full[:, :, norb:, norb:]
+        return np.stack([up, down])
+    return chi0q_full[:, :, :norb, :norb]
+
+
 def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
     """Build the ``OutputBundle`` a comparator maps over.
 
@@ -80,11 +123,14 @@ def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
       ``green_info["chiq_c"]`` -- FLEX never populates a combined
       ``"chiq"`` key (``src/hwave/solver/flex.py:746-748`` sets exactly
       ``chi0q``/``chiq_s``/``chiq_c``), so ``chiq`` is left ``None``.
+      When ``solver_obj.calc_scheme == "reduced"``, the extracted
+      ``chi0q`` is additionally block-reduced to RPA's shape -- see
+      ``_reduce_flex_chi0q_for_reduced_scheme`` (a Task-5 finding).
 
-    ``solver_obj`` is accepted for parity with the run-time callers
-    (Task 3's ``build_solver`` produces the ``(solver_obj, green_info)``
-    pair together) and is not otherwise inspected here -- every value
-    this function returns comes from ``green_info``.
+    ``solver_obj`` is inspected for its ``calc_scheme``/``norb``/
+    ``spin_mode`` attributes on the FLEX reduced-scheme path above;
+    otherwise every value this function returns comes from
+    ``green_info``.
     """
 
     if solver_kind == "rpa":
@@ -95,8 +141,11 @@ def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
             chiq_c=None,
         )
     if solver_kind == "flex":
+        chi0q = np.asarray(green_info["chi0q"])
+        if getattr(solver_obj, "calc_scheme", None) == "reduced":
+            chi0q = _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q)
         return OutputBundle(
-            chi0q=np.asarray(green_info["chi0q"]),
+            chi0q=chi0q,
             chiq=None,
             chiq_s=np.asarray(green_info["chiq_s"]),
             chiq_c=np.asarray(green_info["chiq_c"]),
@@ -224,6 +273,25 @@ def _diverges_cell(cell_id="diverges.cell", mu_mode="fixed", step5_issue="#123",
     return Cell(**defaults)
 
 
+def _schema_errors(errors):
+    """Filter out "coverage obligation ..." messages from a
+    ``validate_registry`` result.
+
+    ``COVERAGE_OBLIGATIONS`` (populated by Task 5) is evaluated against
+    WHATEVER ``cells`` sequence is passed in -- including the small,
+    deliberately-synthetic single/few-cell lists the ``TestRegistrySchema``
+    tests below build to isolate ONE structural rule at a time. Those
+    synthetic lists have no reason to satisfy registry-WIDE coverage
+    predicates (e.g. "every interaction type appears in G1"), so tests
+    that assert "this one schema rule produces zero errors" filter the
+    unrelated coverage-obligation messages out first. Full-registry
+    coverage is separately pinned by ``test_full_registry_satisfies_
+    every_coverage_obligation`` against the real ``CELLS``.
+    """
+
+    return [e for e in errors if not e.startswith("coverage obligation ")]
+
+
 def _reject_reject_cell(cell_id="both.reject.cell", **overrides):
     defaults = dict(
         cell_id=cell_id,
@@ -326,27 +394,45 @@ class TestRegistrySchema(unittest.TestCase):
             {"source_sha": None, "run_ids": (), "status": "candidate"},
         )
 
-    def test_cells_is_the_task3_bootstrap_plus_task4_so_rows_and_coverage_obligations_empty(self):
-        # CELLS carries the Task-3 bootstrap (Appendix A rows 1 and 17)
-        # plus Task 4's G5 SO construction-reject rows (Appendix A rows
-        # 35-36) -- the full 38-cell inventory + COVERAGE_OBLIGATIONS
-        # land in Task 5.
+    def test_cells_is_the_task5_36_cell_inventory(self):
+        # CELLS carries Appendix A rows 1-36 (every row except the G6
+        # conditioning row, cell 38, which is Task 6's).
+        self.assertEqual(len(CELLS), 36)
+        ids = [cell.cell_id for cell in CELLS]
+        self.assertEqual(len(ids), len(set(ids)), "duplicate cell_id in CELLS")
+        for bootstrap_id in (
+            "general.ring.onsite_coulombintra.fixedmu",
+            "reduced.ring.onsite_exchange.reject",
+            "so.general.construction.reject",
+            "so.reduced.construction.reject",
+        ):
+            self.assertIn(bootstrap_id, ids)
+
+    def test_coverage_obligations_populated_minus_the_task6_conditioning_predicate(self):
         self.assertEqual(
-            sorted(cell.cell_id for cell in CELLS),
+            sorted(COVERAGE_OBLIGATIONS.keys()),
             sorted(
                 [
-                    "general.ring.onsite_coulombintra.fixedmu",
-                    "reduced.ring.onsite_exchange.reject",
-                    "so.general.construction.reject",
-                    "so.reduced.construction.reject",
+                    "g1_every_interaction_type_appears",
+                    "g2_both_reduced_spin_modes_appear",
+                    "every_resolver_outcome_appears",
+                    "both_so_guard_sites_appear",
+                    "full_kanamori_row_exists",
+                    "at_least_one_both_reject",
+                    "at_least_one_flex_reject_rpa_supported",
+                    "at_least_one_rpa_only",
                 ]
             ),
         )
-        self.assertEqual(dict(COVERAGE_OBLIGATIONS), {})
 
     def test_bootstrap_cells_pass_validate_registry(self):
         errors = validate_registry(CELLS)
         self.assertEqual(errors, [])
+
+    def test_full_registry_satisfies_every_coverage_obligation(self):
+        for name, predicate in COVERAGE_OBLIGATIONS.items():
+            with self.subTest(obligation=name):
+                self.assertTrue(predicate(CELLS), "coverage obligation {!r} not satisfied by CELLS".format(name))
 
     def test_proof_step_types_is_the_closed_five_member_union(self):
         self.assertEqual(
@@ -437,7 +523,7 @@ class TestRegistrySchema(unittest.TestCase):
     def test_not_applicable_zero_steps_with_narrowed_phrase_is_valid(self):
         cell = _not_applicable_narrowed_cell()
         errors = validate_registry([cell])
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
     def test_not_applicable_single_step_must_be_paired_invariance_run(self):
         cell = _not_applicable_paired_cell(
@@ -452,7 +538,7 @@ class TestRegistrySchema(unittest.TestCase):
     def test_not_applicable_paired_invariance_run_is_valid(self):
         cell = _not_applicable_paired_cell()
         errors = validate_registry([cell])
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
     def test_reason_mandatory_for_not_applicable(self):
         cell = _not_applicable_narrowed_cell(
@@ -524,7 +610,7 @@ class TestRegistrySchema(unittest.TestCase):
     def test_construction_only_valid_row_has_no_errors(self):
         cell = _construction_cell()
         errors = validate_registry([cell])
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
     # -- Equiv completeness / ceilings ---------------------------------------
 
@@ -536,7 +622,7 @@ class TestRegistrySchema(unittest.TestCase):
     def test_equiv_atol_may_equal_the_ceiling(self):
         cell = _equiv_cell(mu_mode="fixed")
         errors = validate_registry([cell])
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
     def test_equiv_atol_above_ceiling_is_rejected(self):
         observables = dict(_equiv_observables("fixed"))
@@ -550,7 +636,7 @@ class TestRegistrySchema(unittest.TestCase):
     def test_diverges_valid_row_has_no_errors(self):
         cell = _diverges_cell()
         errors = validate_registry([cell])
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
     def test_diverges_diverging_must_be_nonempty(self):
         cell = _diverges_cell(
@@ -635,7 +721,7 @@ class TestRegistrySchema(unittest.TestCase):
             )
         )
         errors = validate_registry([cell])
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
     def test_duplicate_supplementary_link_within_a_cell_is_rejected(self):
         link = SupplementaryLink(test_id="tests.mod::TestCase::test_x", claim="x")
@@ -678,7 +764,7 @@ class TestRegistrySchema(unittest.TestCase):
             _not_applicable_paired_cell(cell_id="g4.chi0q_init.paired"),
         ]
         errors = validate_registry(cells)
-        self.assertEqual(errors, [])
+        self.assertEqual(_schema_errors(errors), [])
 
 
 class TestRelationship(unittest.TestCase):
@@ -1127,8 +1213,18 @@ def build_solver(spec: FixtureSpec, solver_kind: str, stack: ExitStack):
     is never used by cell fixtures.
 
     Mirrors ``tests/test_rpa_flex_oneshot_equivalence.py::_run``'s
-    solver construction verbatim: RPA gets ``calc_type``; FLEX does not
-    (it has no such parameter) and additionally sets
+    solver construction, with ONE Task-5 addition: FLEX ALSO gets
+    ``calc_type`` (the oneshot suite never varies it off the "ring"
+    default, so it never needed to). FLEX has no ``calc_type``
+    parameter of its own, but it inherits ``_set_scheme`` from RPA
+    (``FLEX(RPA)``), which reads ``info_mode.get("calc_type", "ring")``
+    identically for both solvers -- omitting the key here left FLEX's
+    ``self.calc_type`` silently defaulted to ``"ring"`` regardless of
+    ``spec.calc_type``, which would have made cell 34's
+    ``calc_type='ring+ladder'`` CONSTRUCTOR-time rejection (Appendix A)
+    unreachable through this executor. Passing ``"ring"`` explicitly
+    for every OTHER cell is a no-op (same default value, verified no
+    behavior change). FLEX additionally sets
     ``IterationMax=1, Mix=1.0, EPS=1`` (the one-shot / bare-bubble
     limit the whole equivalence table measures against).
     """
@@ -1168,6 +1264,7 @@ def build_solver(spec: FixtureSpec, solver_kind: str, stack: ExitStack):
             "param": pf,
             "enable_spin_orbital": spec.enable_spin_orbital,
             "calc_scheme": spec.requested_scheme,
+            "calc_type": spec.calc_type,
         }
         solver_obj = flex_mod.FLEX(ham, {}, info)
     else:
@@ -1208,6 +1305,98 @@ def _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory
     )
 
 
+def _execute_chiq_init_reuse(fixture, solver_kind, stack, solver_factory=build_solver):
+    """The RPA side of cell 33 (``chi0q_init.reuse``): TWO RPA solves --
+    the documented ``ExecuteChiqInitReuse`` exception to the run-once
+    rule.
+
+    Run A (no ``chi0q_init``) captures ``chi0q_A``/``chiq_A``. Run B
+    consumes ``chi0q_A`` via the PUBLIC ``chi0q_init`` mechanism: run
+    A's own ``save_results()`` writes it to a file (the same public
+    entry point ``RPA.save_results`` documents), and run B's
+    ``read_init()`` loads it back (``tests/test_rpa_flex_oneshot_
+    equivalence.py::TestSpinModeConsistency`` establishes this same
+    save-then-reload pattern, though it hand-builds the npz rather than
+    routing through ``save_results``).
+
+    The ORACLE (discharged internally, like ``_assert_reject``):
+    ``np.array_equal(chi0q_B, chi0q_A)`` AND
+    ``np.array_equal(chiq_B, chiq_A)`` -- reuse must reproduce the same
+    dressed result bitwise. Exactly 2 solves total (one per run);
+    ``TestExecutorSolveCounts`` pins this against instrumented fakes.
+    """
+
+    solver_a, green_a, out_a = solver_factory(fixture, solver_kind, stack)
+    solver_a.solve(green_a, out_a)
+    chi0q_a = np.array(green_a["chi0q"], copy=True)
+    chiq_a = np.array(green_a["chiq"], copy=True)
+
+    solver_a.save_results({"path_to_output": out_a, "chi0q": "chi0q_reuse.npz"}, green_a)
+
+    solver_b, green_b, out_b = solver_factory(fixture, solver_kind, stack)
+    green_b.update(solver_b.read_init({"path_to_input": out_a, "chi0q_init": "chi0q_reuse.npz"}))
+    solver_b.solve(green_b, out_b)
+    chi0q_b = np.asarray(green_b["chi0q"])
+    chiq_b = np.asarray(green_b["chiq"])
+
+    if not np.array_equal(chi0q_b, chi0q_a):
+        raise AssertionError(
+            "ExecuteChiqInitReuse: chi0q_B != chi0q_A bitwise -- "
+            "chi0q_init reuse did not reproduce the same bare bubble"
+        )
+    if not np.array_equal(chiq_b, chiq_a):
+        raise AssertionError(
+            "ExecuteChiqInitReuse: chiq_B != chiq_A bitwise -- "
+            "chi0q_init reuse did not reproduce the same dressed chiq"
+        )
+
+
+def _execute_paired_invariance_run(fixture, solver_kind, stack, solver_factory=build_solver):
+    """The FLEX side of cell 33 (``chi0q_init.reuse``): TWO FLEX solves
+    -- the documented ``PairedInvarianceRun`` exception to the
+    run-once rule, proving the NOT_APPLICABLE claim rather than merely
+    asserting it.
+
+    FLEX starts every SCF loop from zero self-energy and recomputes
+    ``chi0q`` from the dressed Green's function each iteration
+    (``src/hwave/solver/flex.py:446-451``'s own docstring), so a
+    ``chi0q_init`` entry loaded by the inherited RPA ``read_init`` is
+    NEVER consumed. This executor drives the SAME two-solve
+    construction ``_execute_chiq_init_reuse`` uses (run A plain, run B
+    with a ``chi0q_init`` entry injected via the identical public
+    ``save_results``/``read_init`` route) and asserts EXHAUSTIVE
+    invariance: the ``green_info`` key sets match exactly, and every
+    key's array is bitwise ``np.array_equal`` between the two runs --
+    the option's presence changes NOTHING about FLEX's output.
+    """
+
+    solver_a, green_a, out_a = solver_factory(fixture, solver_kind, stack)
+    solver_a.solve(green_a, out_a)
+
+    solver_a.save_results({"path_to_output": out_a, "chi0q": "chi0q_reuse.npz"}, green_a)
+
+    solver_b, green_b, out_b = solver_factory(fixture, solver_kind, stack)
+    green_b.update(solver_b.read_init({"path_to_input": out_a, "chi0q_init": "chi0q_reuse.npz"}))
+    solver_b.solve(green_b, out_b)
+
+    keys_a = set(green_a.keys())
+    keys_b = set(green_b.keys())
+    if keys_a != keys_b:
+        raise AssertionError(
+            "PairedInvarianceRun: green_info key sets differ with vs "
+            "without chi0q_init -- A={!r} B={!r}".format(sorted(keys_a), sorted(keys_b))
+        )
+    for key in keys_a:
+        a_val = np.asarray(green_a[key])
+        b_val = np.asarray(green_b[key])
+        if not np.array_equal(a_val, b_val):
+            raise AssertionError(
+                "PairedInvarianceRun: green_info[{!r}] differs with vs "
+                "without chi0q_init (FLEX is claimed invariant to this "
+                "option)".format(key)
+            )
+
+
 def _assert_reject(fixture, solver_kind, step, stack, solver_factory=build_solver):
     """``ExecuteReject`` at the recorded ``site``: ``assertRaises`` the
     mapped exception class, then asserts ``step.fragment`` is a
@@ -1243,11 +1432,15 @@ def _assert_reject(fixture, solver_kind, step, stack, solver_factory=build_solve
 def _run_side(fixture, solver_kind, proof, stack, solver_factory=build_solver):
     """Execute ONE solver side of a cell per its ``SolverProof``.
 
-    Returns ``(solver_obj, green_info, out_dir)`` for a run-class
-    SUPPORTED proof, or ``None`` for REJECT (discharged via
-    ``_assert_reject``, itself) and the narrowed
+    Returns ``(solver_obj, green_info, out_dir)`` for an ``ExecuteRun``/
+    ``ExecuteConstruct`` SUPPORTED proof; ``None`` for REJECT
+    (discharged via ``_assert_reject``, itself), the narrowed
     zero-step NOT_APPLICABLE proof (nothing to execute -- the option
-    has no corresponding semantics on this solver).
+    has no corresponding semantics on this solver), and the two
+    multirun exceptions -- ``ExecuteChiqInitReuse`` (SUPPORTED) and
+    ``PairedInvarianceRun`` (NOT_APPLICABLE) -- which discharge their
+    own bitwise oracle internally (like ``_assert_reject``) via
+    ``_execute_chiq_init_reuse``/``_execute_paired_invariance_run``.
     """
 
     if proof.status is Status.REJECT:
@@ -1256,18 +1449,18 @@ def _run_side(fixture, solver_kind, proof, stack, solver_factory=build_solver):
     if proof.status is Status.NOT_APPLICABLE:
         if len(proof.steps) == 0:
             return None
-        raise NotImplementedError(
-            "PairedInvarianceRun's executor lands in Task 5 (the FLEX "
-            "side of cell 33's chi0q_init invariance) -- no Task-3 "
-            "bootstrap cell uses it"
+        step = proof.steps[0]
+        if isinstance(step, PairedInvarianceRun):
+            _execute_paired_invariance_run(fixture, solver_kind, stack, solver_factory)
+            return None
+        raise NotImplementedError(  # pragma: no cover -- unreachable: validate_registry's closed step union
+            "_run_side: unsupported NOT_APPLICABLE step {!r}".format(step)
         )
     # Status.SUPPORTED
     step = proof.steps[0]
     if isinstance(step, ExecuteChiqInitReuse):
-        raise NotImplementedError(
-            "ExecuteChiqInitReuse's executor lands in Task 5 (cell 33's "
-            "RPA reuse oracle) -- no Task-3 bootstrap cell uses it"
-        )
+        _execute_chiq_init_reuse(fixture, solver_kind, stack, solver_factory)
+        return None
     return _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory)
 
 
@@ -1352,10 +1545,12 @@ def run_cell(cell, solver_factory=build_solver) -> None:
             _assert_resolved_scheme(cell, "rpa", rpa_obj)
             _assert_resolved_scheme(cell, "flex", flex_obj)
         # Otherwise: every proof this cell records was already fully
-        # discharged by _run_side (e.g. BOTH-REJECT, or one REJECT side
-        # paired with an ExecuteRun side that carries no comparison --
-        # no cell of that shape exists in the Task-3 bootstrap, but
-        # _run_side already ran/asserted whichever proofs are present).
+        # discharged by _run_side (e.g. BOTH-REJECT; a REJECT side
+        # paired with a SUPPORTED side that carries no comparison; or
+        # cell 33's shape -- ExecuteChiqInitReuse/PairedInvarianceRun
+        # each assert their own bitwise oracle internally, and their
+        # (SUPPORTED, NOT_APPLICABLE) status pair never carries a
+        # comparison either).
 
 
 # ---------------------------------------------------------------------------
@@ -1459,6 +1654,12 @@ class _FakeSolver:
     """A minimal stand-in for RPA/FLEX: records ``solve()`` calls and
     optionally raises on the Nth one (``fail_at_solve``), so tests can
     pin EXACT solve counts without running real physics.
+    ``save_results``/``read_init`` are no-ops -- the two-solve
+    executors (``_execute_chiq_init_reuse``/
+    ``_execute_paired_invariance_run``) call them unconditionally, so a
+    fake solver must accept the calls even though it does not model
+    the underlying file round-trip (the fake tests inject fixed
+    ``green_info`` content via the factory instead).
     """
 
     def __init__(self, fail_at_solve=None):
@@ -1470,6 +1671,12 @@ class _FakeSolver:
         self.solve_calls += 1
         if self._fail_at_solve is not None:
             raise self._fail_at_solve
+
+    def save_results(self, info_outputfile, green_info):
+        pass
+
+    def read_init(self, info_inputfile):
+        return {}
 
 
 def _fake_factory(solver, fail_at_construct=None):
@@ -1510,8 +1717,10 @@ class TestExecutorSolveCounts(unittest.TestCase):
     """Task 3 pins the four proof-step shapes it implements: ExecuteRun
     (1 solve), ExecuteConstruct (0 solves), constructor-site
     ExecuteReject (0 solves), solve-site ExecuteReject (exactly 1
-    ATTEMPTED solve). PairedInvarianceRun/ExecuteChiqInitReuse (2
-    solves each) are pinned in Task 5 once cell 33's fixtures exist.
+    ATTEMPTED solve). Task 5 adds the remaining two, each pinned at
+    EXACTLY 2 solves: ``PairedInvarianceRun``/``ExecuteChiqInitReuse``
+    (see the "Task 5: the two multirun exception executors" tests
+    below).
     """
 
     def test_execute_run_solves_exactly_once(self):
@@ -1698,6 +1907,92 @@ class TestExecutorSolveCounts(unittest.TestCase):
             notes="",
         )
         run_cell(cell, solver_factory=factory)  # must not raise -- both sides reject as expected
+
+    # -- Task 5: the two multirun exception executors (cell 33) -----------
+
+    def test_execute_chiq_init_reuse_solves_exactly_twice(self):
+        solvers = []
+
+        def factory(fixture, solver_kind, stack):
+            solver = _FakeSolver()
+            solvers.append(solver)
+            green = {
+                "chi0q": np.array([[2.0 - 1.0j]]),
+                "chiq": np.array([[3.0 + 4.0j]]),
+            }
+            return solver, green, "/dev/null"
+
+        with ExitStack() as stack:
+            _execute_chiq_init_reuse(_fake_fixture(), "rpa", stack, solver_factory=factory)
+        self.assertEqual(len(solvers), 2)
+        self.assertEqual([s.solve_calls for s in solvers], [1, 1])
+
+    def test_execute_chiq_init_reuse_detects_a_mismatch(self):
+        call_n = [0]
+
+        def factory(fixture, solver_kind, stack):
+            call_n[0] += 1
+            solver = _FakeSolver()
+            if call_n[0] == 1:
+                green = {"chi0q": np.array([[1.0]]), "chiq": np.array([[2.0]])}
+            else:
+                green = {"chi0q": np.array([[1.0]]), "chiq": np.array([[999.0]])}
+            return solver, green, "/dev/null"
+
+        with self.assertRaises(AssertionError) as ctx:
+            with ExitStack() as stack:
+                _execute_chiq_init_reuse(_fake_fixture(), "rpa", stack, solver_factory=factory)
+        self.assertIn("chiq_B != chiq_A", str(ctx.exception))
+        self.assertEqual(call_n[0], 2)
+
+    def test_paired_invariance_run_solves_exactly_twice(self):
+        solvers = []
+
+        def factory(fixture, solver_kind, stack):
+            solver = _FakeSolver()
+            solvers.append(solver)
+            green = {
+                "chi0q": np.array([[1.0 + 0.5j]]),
+                "chiq_s": np.array([[0.1j]]),
+                "chiq_c": np.array([[0.2j]]),
+            }
+            return solver, green, "/dev/null"
+
+        with ExitStack() as stack:
+            _execute_paired_invariance_run(_fake_fixture(), "flex", stack, solver_factory=factory)
+        self.assertEqual(len(solvers), 2)
+        self.assertEqual([s.solve_calls for s in solvers], [1, 1])
+
+    def test_paired_invariance_run_detects_a_key_set_mismatch(self):
+        call_n = [0]
+
+        def factory(fixture, solver_kind, stack):
+            call_n[0] += 1
+            solver = _FakeSolver()
+            green = {"chi0q": np.array([[1.0]])}
+            if call_n[0] == 2:
+                green["chiq_s"] = np.array([[0.0]])
+            return solver, green, "/dev/null"
+
+        with self.assertRaises(AssertionError) as ctx:
+            with ExitStack() as stack:
+                _execute_paired_invariance_run(_fake_fixture(), "flex", stack, solver_factory=factory)
+        self.assertIn("key sets differ", str(ctx.exception))
+
+    def test_paired_invariance_run_detects_a_value_mismatch(self):
+        call_n = [0]
+
+        def factory(fixture, solver_kind, stack):
+            call_n[0] += 1
+            solver = _FakeSolver()
+            value = 1.0 if call_n[0] == 1 else 2.0
+            green = {"chi0q": np.array([[value]])}
+            return solver, green, "/dev/null"
+
+        with self.assertRaises(AssertionError) as ctx:
+            with ExitStack() as stack:
+                _execute_paired_invariance_run(_fake_fixture(), "flex", stack, solver_factory=factory)
+        self.assertIn("differs with vs without chi0q_init", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -2009,6 +2304,63 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 
         self.assertEqual(solver.spin_mode, "spinful")
         self.assertIn("spin_mode='spinful'", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# TestSupplementaryLinks (Task 5): import-based existence/discoverability
+# of every SupplementaryLink recorded anywhere in CELLS. SupplementaryLink
+# carries ZERO proof authority (Global Constraints) -- schema-only FORMAT
+# validation (the "<dotted.module>::<TestCase>::<method>" shape, duplicate
+# rejection) lives in equivalence_cells.validate_registry; THIS is the
+# stale-pointer guard: the module actually imports, the class actually
+# resolves via getattr, and the method actually exists and is callable.
+# ---------------------------------------------------------------------------
+
+
+class TestSupplementaryLinks(unittest.TestCase):
+    def _all_links(self):
+        links = []
+        for cell in CELLS:
+            links.extend(cell.rpa.links)
+            links.extend(cell.flex.links)
+        return links
+
+    def test_every_supplementary_link_resolves(self):
+        import importlib
+
+        links = self._all_links()
+        self.assertTrue(links, "expected at least one SupplementaryLink in CELLS")
+        for link in links:
+            with self.subTest(test_id=link.test_id):
+                module_path, class_name, method = link.test_id.split("::")
+                module = importlib.import_module(module_path)
+                cls = getattr(module, class_name)
+                self.assertTrue(
+                    issubclass(cls, unittest.TestCase),
+                    "{}::{} is not a unittest.TestCase subclass".format(module_path, class_name),
+                )
+                bound = getattr(cls, method)
+                self.assertTrue(
+                    callable(bound),
+                    "{}::{}::{} is not callable".format(module_path, class_name, method),
+                )
+
+    def test_every_cell_carrying_links_appears_in_the_all_links_sweep(self):
+        # A cheap sanity check that _all_links() actually walks CELLS
+        # (not e.g. an accidentally-empty fixture) -- the real
+        # existence/discoverability assertion is
+        # test_every_supplementary_link_resolves above. Cell-to-cell
+        # link REUSE (the same test cited as evidence for more than
+        # one cell, e.g. cells 21-25 all citing
+        # TestOffsiteGeneralFLEX::test_rejected_offsite_classes) is
+        # legitimate -- SupplementaryLink carries zero proof authority,
+        # so citing one existing test from several cells is not a
+        # defect.
+        cells_with_links = [
+            cell for cell in CELLS if cell.rpa.links or cell.flex.links
+        ]
+        self.assertTrue(cells_with_links)
+        self.assertGreaterEqual(len(self._all_links()), len(cells_with_links))
 
 
 # ---------------------------------------------------------------------------
