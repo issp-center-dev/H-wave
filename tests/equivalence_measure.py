@@ -192,14 +192,29 @@ def _measure_cell(cell) -> bool:
                         "observable": observable,
                         "residual": float(residual),
                     })
-    except Exception as exc:
+    except KeyboardInterrupt:
+        raise
+    except (Exception, SystemExit) as exc:
+        # Carried minor from Task 6: a bare ``except Exception`` lets a
+        # ``sys.exit(...)`` from an input-reader/solver-construction
+        # path (SystemExit derives from BaseException, not Exception)
+        # escape uncaught and kill this process -- silently dropping
+        # every cell/checkpoint measured after the broken one from the
+        # calibration artifact. Explicitly catching SystemExit
+        # alongside Exception keeps the "one broken cell must not hide
+        # every other cell's data" contract; the exit code is recorded
+        # on the emitted error line.
         elapsed = time.monotonic() - t0
-        _emit({
+        record = {
             "error": str(exc),
             "cell": cell.cell_id,
             "phase": "cell",
             "seconds": float(elapsed),
-        })
+        }
+        if isinstance(exc, SystemExit):
+            code = exc.code
+            record["exit_code"] = code if isinstance(code, (int, str)) or code is None else str(code)
+        _emit(record)
         ok = False
     return ok
 

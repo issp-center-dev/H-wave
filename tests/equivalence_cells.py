@@ -40,6 +40,25 @@ coverage obligation both depend on that apparatus having been proven
 first. ``COVERAGE_OBLIGATIONS`` is populated with every named predicate
 from the plan's coverage-obligations list, including "the conditioning
 row exists (38)" (Task 6).
+
+Registry docstring maintenance checklist (Task 7): ``tests/
+equivalence_benchmark.md`` records ONE per-cell timing row per cell in
+``CELLS``, grouped into calibration sections (local+chita, then the CI
+section Task 9 appends) -- ``TestBenchmarkRegistryTie`` (in the test
+module) asserts the benchmark file's MOST RECENT section's cell_id
+column is an EXACT multiset match against ``CELLS``. Any future edit
+to this module that ADDS a cell, REMOVES a cell, RENAMES a
+``cell_id``, or ENLARGES an existing cell's fixture (a change that
+could plausibly move its measured wall time) therefore also requires
+appending a NEW section to ``tests/equivalence_benchmark.md`` (never
+editing a past section in place -- each section is an immutable record
+of one calibration event, exactly like ``tests/equivalence_calibration_
+log.md``'s events) with a fresh measurement pass, or
+``TestBenchmarkRegistryTie`` fails. The same edits also invalidate any
+`Equiv`/`Diverges` atol/ceiling calibrated against the changed cell's
+old fixture -- re-run ``python -m tests.equivalence_measure`` and
+update the affected ``ObservableSpec``/``DivergingSpec`` provenance
+too, not just the benchmark file.
 """
 
 from __future__ import annotations
@@ -368,6 +387,135 @@ PROVENANCE: dict = {
     "status": "candidate",
 }
 
+# ---------------------------------------------------------------------------
+# Task 7 candidate calibration: the local + chita runner descriptors and
+# the measured source commit shared by every ``_measured_equiv`` call in
+# this module. Local = this repository's own macOS development machine;
+# chita = the coordinator's Linux x86_64 CI proxy (bundle-transferred
+# branch, checked out under ``~/hwave-bubble-gpu-check``, run with
+# ``~/miniconda3/envs/hwave_gpu/bin/python`` -- CPU only, no CUDA
+# involved). Both are ADVISORY pre-freeze proxies (Global Constraints):
+# the actual gating CI runners (ubuntu-latest x Python 3.9-3.12) are
+# Task 9's job, and Task 9's closed loop is what ultimately FREEZES these
+# bounds. See ``tests/equivalence_calibration_log.md`` (Event 2) for the
+# full per-cell residual tables this module's literals were read off of,
+# and ``tests/equivalence_benchmark.md`` for the timing side of the same
+# sweep. A chita-specific finding, recorded here since it shapes the CI
+# workflow too (``.github/workflows/equivalence-calibration.yml`` pins
+# ``OPENBLAS_NUM_THREADS``/``OMP_NUM_THREADS``/``MKL_NUM_THREADS``/
+# ``NUMEXPR_NUM_THREADS`` to 1 for this reason): with the BLAS backend's
+# default thread pool, chita SEGFAULTS partway through a single
+# ``equivalence_measure`` process (repeated small-matrix solver
+# constructions across ~27 cells accumulate OpenBLAS worker threads until
+# pthread_create fails) -- pinning every BLAS/OMP thread-count env var to
+# 1 before invoking the interpreter eliminates it (verified: 3/3 clean
+# chita runs afterward, 0/3 before).
+# ---------------------------------------------------------------------------
+
+_CANDIDATE_SOURCE_SHA = "b922a1c13b85b2d319bc65ee8c45183dc6ab2a47"
+_CANDIDATE_LOCAL_RUNNER = (
+    "local macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, "
+    "numpy 1.26.4, scipy 1.17.1"
+)
+_CANDIDATE_CHITA_RUNNER = (
+    "chita Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python "
+    "3.11.15, numpy 1.26.4, scipy 1.13.1"
+)
+
+
+def _round_up_pow10(x: float) -> float:
+    """Round ``x`` (``x`` > 0) UP to the nearest power of ten. Pure
+    arithmetic, no I/O -- keeps this module side-effect-free. ``round``
+    on the log guards against float noise landing an exact power of ten
+    (e.g. ``1e-14``) just above its own exponent boundary and rounding
+    up one extra decade.
+    """
+
+    if x <= 0.0:
+        return 0.0
+    exponent = math.ceil(round(math.log10(x), 12))
+    return 10.0 ** exponent
+
+
+def _candidate_atol(local_residual: float, chita_residual: float, ceiling: float) -> float:
+    """The Global-Constraints tolerance bound rule, Task 7's candidate
+    variant (local+chita in place of the gating-runner MIN/MAX Task 9
+    uses to FREEZE): 10x the larger of the two measured residuals,
+    floored at ``max(residual, 1e-15)`` BEFORE the 10x multiply, then
+    rounded UP to a power of ten; capped at ``ceiling`` (the validator
+    allows ``atol == ceiling``). This function only computes the number;
+    the STOP-and-report (raw residual > ceiling) and margin-insufficient
+    (rounded bound > ceiling) decisions were made by hand while reading
+    ``tests/equivalence_calibration_log.md``'s Event 2 table off the
+    measured JSON -- neither case arose in this calibration pass (every
+    residual measured in the 1e-17..1e-12 range, comfortably under every
+    ``POLICY_CEILINGS`` entry).
+    """
+
+    raw_max = max(local_residual, chita_residual)
+    floored = max(raw_max, 1e-15)
+    bound = _round_up_pow10(10.0 * floored)
+    return min(bound, ceiling)
+
+
+def _measured_equiv(
+    chi0q_ceiling_key: str,
+    chi0q_local: float,
+    chi0q_chita: float,
+    chiq_comparator: str,
+    chiq_ceiling_key: str,
+    chiq_local: float,
+    chiq_chita: float,
+) -> "Equiv":
+    """Build the common ``Equiv(chi0q, chiq)`` shape every comparison
+    cell in the registry uses: ``chi0q`` always via ``identity``;
+    ``chiq`` via the caller's comparator (``general_from_flex_channels``
+    or ``reduced_blocks``). Task 7's candidate-calibration pass: ``atol``
+    is the ``_candidate_atol`` bound (10x the larger of the local/chita
+    residuals, rounded up to a power of ten, capped at the mapped policy
+    ceiling); ``provenance`` records BOTH measured residuals, both
+    runner descriptors, and the measured source commit -- status stays
+    "candidate" (the module-level ``PROVENANCE`` record is untouched by
+    this task; only Task 9's closed CI loop flips it to "frozen").
+    """
+
+    def _prov(local_residual: float, chita_residual: float, atol: float, ceiling: float) -> str:
+        return (
+            "candidate (Task 7; {}; {}; commit {}): max|diff| local "
+            "{:.3e}, chita {:.3e} -- candidate atol {:.1e} (10x the "
+            "larger residual, floored at 1e-15, rounded up to a power "
+            "of ten; policy ceiling {:.1e}).".format(
+                _CANDIDATE_LOCAL_RUNNER,
+                _CANDIDATE_CHITA_RUNNER,
+                _CANDIDATE_SOURCE_SHA[:12],
+                local_residual,
+                chita_residual,
+                atol,
+                ceiling,
+            )
+        )
+
+    chi0q_ceiling = POLICY_CEILINGS[chi0q_ceiling_key]
+    chiq_ceiling = POLICY_CEILINGS[chiq_ceiling_key]
+    chi0q_atol = _candidate_atol(chi0q_local, chi0q_chita, chi0q_ceiling)
+    chiq_atol = _candidate_atol(chiq_local, chiq_chita, chiq_ceiling)
+
+    return Equiv(
+        observables={
+            "chi0q": ObservableSpec(
+                comparator="identity",
+                atol=chi0q_atol,
+                provenance=_prov(chi0q_local, chi0q_chita, chi0q_atol, chi0q_ceiling),
+            ),
+            "chiq": ObservableSpec(
+                comparator=chiq_comparator,
+                atol=chiq_atol,
+                provenance=_prov(chiq_local, chiq_chita, chiq_atol, chiq_ceiling),
+            ),
+        }
+    )
+
+
 # The 38-cell inventory -- populated by Task 5. Task 3 seeds it with a
 # 2-cell BOOTSTRAP (Appendix A rows 1 and 17), proving the
 # generated-test machinery (build_solver / run_cell / the class-body
@@ -395,31 +543,9 @@ _BOOTSTRAP_CELL_1 = Cell(
     expected_spin_mode="spin-free",
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
-    comparison=Equiv(
-        observables={
-            "chi0q": ObservableSpec(
-                comparator="identity",
-                atol=POLICY_CEILINGS["chi0q_fixed"],
-                provenance=(
-                    "measured (Task 3 bootstrap, local): max|diff| "
-                    "1.11e-16 on tests/equivalence_input/orb2/"
-                    "coulombintra.dat, mu=0.0 -- atol kept EQUAL to the "
-                    "policy ceiling (provisional; Task 7 sets the "
-                    "candidate bound from the 10x rule)."
-                ),
-            ),
-            "chiq": ObservableSpec(
-                comparator="general_from_flex_channels",
-                atol=POLICY_CEILINGS["chiq_fixed"],
-                provenance=(
-                    "measured (Task 3 bootstrap, local): max|diff| "
-                    "2.50e-16 on tests/equivalence_input/orb2/"
-                    "coulombintra.dat, mu=0.0 -- atol kept EQUAL to the "
-                    "policy ceiling (provisional; Task 7 sets the "
-                    "candidate bound from the 10x rule)."
-                ),
-            ),
-        }
+    comparison=_measured_equiv(
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 2.4980368208390374e-16, 1.942891400167647e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -576,59 +702,17 @@ _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
 )
 
 # ---------------------------------------------------------------------------
-# Task 5 -- the remaining Appendix-A cells (rows 2-16, 18-34; rows 1, 17,
-# 35, 36 are the Task-3/4 bootstrap above; row 38 is Task 6's).
-#
-# ``atol`` is kept EQUAL to the mapped POLICY_CEILINGS entry for every
-# Equiv cell in this task (provisional, per the Task-5 brief): the
-# ``provenance`` string records the ACTUAL measured local residual so
-# Task 7's candidate-calibration pass has the raw numbers without
-# re-running anything. All measurements below were taken locally against
-# the committed E1/E2/E3/E4 fixtures (Task 3/4) with the SAME one-shot
-# construction ``build_solver`` uses (IterationMax=1, Mix=1.0, EPS=1 for
-# FLEX) -- see the Task 5 report for the full per-cell margin table.
+# Task 5/7 -- the remaining Appendix-A cells (rows 2-16, 18-34; rows 1, 17,
+# 35, 36 are the Task-3/4 bootstrap above; row 38 is Task 6's). Every
+# ``_measured_equiv`` call below (the helper is defined near
+# ``POLICY_CEILINGS`` above, so the Task-3/4 bootstrap cells can use it
+# too) sets a CANDIDATE atol from Task 7's local+chita calibration
+# sweep -- see ``tests/equivalence_calibration_log.md`` (Event 2) and
+# ``tests/equivalence_benchmark.md`` for the full residual tables.
 # ---------------------------------------------------------------------------
 
 
-def _measured_equiv(
-    chi0q_ceiling_key: str,
-    chi0q_measured: float,
-    chiq_comparator: str,
-    chiq_ceiling_key: str,
-    chiq_measured: float,
-) -> "Equiv":
-    """Build the common ``Equiv(chi0q, chiq)`` shape every comparison
-    cell in this task uses: ``chi0q`` always via ``identity``; ``chiq``
-    via the caller's comparator (``general_from_flex_channels`` or
-    ``reduced_blocks``). ``atol`` is kept EQUAL to the mapped policy
-    ceiling (provisional); ``provenance`` records the measured local
-    residual.
-    """
-
-    def _prov(measured: float) -> str:
-        return (
-            "measured (Task 5, local): max|diff| {:.3e} -- atol kept "
-            "EQUAL to the policy ceiling (provisional; Task 7 sets the "
-            "candidate bound from the 10x rule).".format(measured)
-        )
-
-    return Equiv(
-        observables={
-            "chi0q": ObservableSpec(
-                comparator="identity",
-                atol=POLICY_CEILINGS[chi0q_ceiling_key],
-                provenance=_prov(chi0q_measured),
-            ),
-            "chiq": ObservableSpec(
-                comparator=chiq_comparator,
-                atol=POLICY_CEILINGS[chiq_ceiling_key],
-                provenance=_prov(chiq_measured),
-            ),
-        }
-    )
-
-
-# -- G1 shared fixture shape: E2, calc_scheme='general', fixed mu=0.0 -------
+# -- G1 shared fixture shape: E2, calc_scheme='general', fixed mu=0.0 -------# -- G1 shared fixture shape: E2, calc_scheme='general', fixed mu=0.0 -------
 
 _E2_GENERAL_FIXEDMU_KWARGS = dict(
     input_dir="tests/equivalence_input/orb2",
@@ -661,8 +745,8 @@ _CELL_2_ONSITE_COULOMBINTER_FIXEDMU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_fixed", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_fixed", 1.2490109573171623e-16,
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 1.2490109573171623e-16, 1.1102239035450868e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -683,8 +767,8 @@ _CELL_3_ONSITE_HUND_FIXEDMU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_fixed", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_fixed", 1.1102343486699909e-16,
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 1.1102343486699909e-16, 1.1102304692257097e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -702,8 +786,8 @@ _CELL_4_ONSITE_ISING_FIXEDMU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_fixed", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_fixed", 1.2490106872585652e-16,
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 1.2490106872585652e-16, 1.1102283837830983e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -724,8 +808,8 @@ _CELL_5_ONSITE_EXCHANGE_FIXEDMU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_fixed", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16,
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -746,8 +830,8 @@ _CELL_6_ONSITE_PAIRHOP_FIXEDMU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_fixed", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16,
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16, 9.714538392232159e-17,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -768,8 +852,8 @@ _CELL_7_ONSITE_PAIRLIFT_FIXEDMU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_fixed", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16,
+        "chi0q_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_fixed", 1.110233872252785e-16, 9.714456569222345e-17,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -796,8 +880,8 @@ _CELL_8_ONSITE_U_V_HUND_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_mu", 3.0531310938257943e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_mu", 3.0531310938257943e-16, 2.77555831224212e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -827,8 +911,8 @@ _CELL_9_ONSITE_FULL_KANAMORI_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "general_from_flex_channels", "chiq_mu", 2.4980382961466737e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "general_from_flex_channels", "chiq_mu", 2.4980382961466737e-16, 1.942901993007593e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -870,8 +954,8 @@ _CELL_10_REDUCED_COULOMBINTRA_SPINFREE_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "reduced_blocks", "chiq_mu", 3.885849304444534e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "reduced_blocks", "chiq_mu", 3.885849304444534e-16, 3.0531155156219455e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -905,8 +989,8 @@ _CELL_11_REDUCED_COULOMBINTER_SPINFREE_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "reduced_blocks", "chiq_mu", 1.2490113201110995e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "reduced_blocks", "chiq_mu", 1.2490113201110995e-16, 1.249002003256928e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -928,8 +1012,8 @@ _CELL_12_REDUCED_HUND_SPINFREE_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "reduced_blocks", "chiq_mu", 1.1102343486699909e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "reduced_blocks", "chiq_mu", 1.1102343486699909e-16, 1.1102304692257097e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -950,8 +1034,8 @@ _CELL_13_REDUCED_ISING_SPINFREE_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "reduced_blocks", "chiq_mu", 1.2490105326199038e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "reduced_blocks", "chiq_mu", 1.2490105326199038e-16, 1.2490057062540458e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -972,8 +1056,8 @@ _CELL_14_REDUCED_PAIRLIFT_SPINFREE_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110233872252785e-16,
-        "reduced_blocks", "chiq_mu", 1.110233872252785e-16,
+        "chi0q_mu", 1.110233872252785e-16, 9.714456569222345e-17,
+        "reduced_blocks", "chiq_mu", 1.110233872252785e-16, 9.714456569222345e-17,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -1053,8 +1137,8 @@ _CELL_15_REDUCED_COULOMBINTRA_SPINDIAG_MU = Cell(
         ),
     ),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.2490992897474145e-16,
-        "reduced_blocks", "chiq_mu", 4.163877857486877e-16,
+        "chi0q_mu", 1.2490992897474145e-16, 1.249078513798569e-16,
+        "reduced_blocks", "chiq_mu", 4.163877857486877e-16, 4.718522149908535e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -1115,8 +1199,8 @@ _CELL_16_REDUCED_COULOMBINTER_SPINDIAG_MU = Cell(
         ),
     ),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.2490992897474145e-16,
-        "reduced_blocks", "chiq_mu", 1.5266161502687854e-16,
+        "chi0q_mu", 1.2490992897474145e-16, 1.249078513798569e-16,
+        "reduced_blocks", "chiq_mu", 1.5266161502687854e-16, 1.3878173264691723e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -1191,8 +1275,8 @@ _CELL_19_OFFSITE_COULOMBINTER_SAMEORB_MU = Cell(
         ),
     ),
     comparison=_measured_equiv(
-        "chi0q_mu", 4.884981379996393e-15,
-        "general_from_flex_channels", "chiq_mu", 2.0206059344954128e-14,
+        "chi0q_mu", 4.884981379996393e-15, 4.898859387959854e-15,
+        "general_from_flex_channels", "chiq_mu", 2.0206059344954128e-14, 2.0261571408243727e-14,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
@@ -1237,8 +1321,8 @@ _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
     ),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 4.884981379996392e-15,
-        "reduced_blocks", "chiq_mu", 3.552713730991191e-14,
+        "chi0q_mu", 4.884981379996393e-15, 4.898859387959854e-15,
+        "reduced_blocks", "chiq_mu", 3.552713730991191e-14, 3.5610405641548485e-14,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
@@ -1559,8 +1643,8 @@ _CELL_28_ONSITE_COULOMBINTER_SUBSHAPE_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.6653615627141076e-16,
-        "general_from_flex_channels", "chiq_mu", 1.9429144066570713e-16,
+        "chi0q_mu", 1.6653615627141079e-16, 9.714691283011063e-17,
+        "general_from_flex_channels", "chiq_mu", 1.9429144066570713e-16, 1.1102444068327482e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -1587,8 +1671,8 @@ _CELL_29_ONSITE_COULOMBINTER_COEFFTAIL_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 1.110223918911846e-16,
-        "general_from_flex_channels", "chiq_mu", 1.3877796215672092e-16,
+        "chi0q_mu", 1.110223918911846e-16, 1.1102377660297755e-16,
+        "general_from_flex_channels", "chiq_mu", 1.3877796215672092e-16, 1.387790961379121e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="onsite",
@@ -1828,8 +1912,8 @@ _CELL_38_CONDITIONING_MU = Cell(
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     comparison=_measured_equiv(
-        "chi0q_mu", 0.0,
-        "general_from_flex_channels", "chiq_mu", 3.3066883022456364e-12,
+        "chi0q_mu", 6.431799537609854e-13, 6.432077093507842e-13,
+        "general_from_flex_channels", "chiq_mu", 3.3066883022456364e-12, 3.373345155219826e-12,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",

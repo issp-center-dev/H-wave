@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 import time
 import unittest
@@ -1638,8 +1639,30 @@ def run_cell(cell, solver_factory=build_solver) -> None:
     """
 
     with ExitStack() as stack:
-        rpa_result = _run_side(cell.fixture, "rpa", cell.rpa, stack, solver_factory)
-        flex_result = _run_side(cell.fixture, "flex", cell.flex, stack, solver_factory)
+        try:
+            rpa_result = _run_side(cell.fixture, "rpa", cell.rpa, stack, solver_factory)
+            flex_result = _run_side(cell.fixture, "flex", cell.flex, stack, solver_factory)
+        except KeyboardInterrupt:
+            raise
+        except SystemExit as exc:
+            # Carried minor from Task 6: several input-reader/solver
+            # construction paths (e.g. src/hwave/solver/rpa.py's
+            # Lattice._init_lattice on an incompatible CellShape/
+            # SubShape pairing) call ``sys.exit(...)`` on malformed
+            # input instead of raising. Left uncaught, that call
+            # terminates the WHOLE unittest process silently (no
+            # traceback, remaining cells/tests never run) -- a single
+            # corrupted fixture must surface as one normal test
+            # failure, not kill the runner. Converted to an
+            # AssertionError with the exit code recorded; both solver-
+            # execution paths above (rpa AND flex) are covered by this
+            # one try/except.
+            raise AssertionError(
+                "cell {!r}: a solver-execution path called "
+                "sys.exit({!r}) instead of raising -- this must "
+                "surface as a normal test failure, not terminate the "
+                "process".format(cell.cell_id, exc.code)
+            ) from exc
 
         if cell.comparison is not None:
             rpa_obj, rpa_green, _rpa_out = rpa_result
@@ -2101,6 +2124,110 @@ class TestExecutorSolveCounts(unittest.TestCase):
             with ExitStack() as stack:
                 _execute_paired_invariance_run(_fake_fixture(), "flex", stack, solver_factory=factory)
         self.assertIn("differs with vs without chi0q_init", str(ctx.exception))
+
+
+class TestSystemExitEscape(unittest.TestCase):
+    """Carried minor from Task 6: several input-reader/solver
+    construction paths call ``sys.exit(...)`` on malformed input
+    instead of raising (e.g. ``src/hwave/solver/rpa.py``'s
+    ``Lattice._init_lattice``, which ``sys.exit(1)``s when ``SubShape``
+    does not evenly divide ``CellShape`` -- rpa.py:571-573). Reading
+    the input files themselves never reaches a ``sys.exit`` site in
+    this codebase (``qlmsio`` raises ordinary exceptions on bad file
+    content); the reachable ``sys.exit`` sites all sit in solver
+    *construction*, validating already-parsed parameters against each
+    other. This class pins ``run_cell``'s handling of that escape route
+    using a deliberately-broken FixtureSpec ("corrupted input" at the
+    parameter layer) built on a REAL, otherwise-valid committed input
+    directory (``tests/equivalence_input/orb1``) driven through the
+    REAL ``build_solver`` -- not a mocked factory -- so the test proves
+    the actual integration, not just the try/except wrapper in
+    isolation. Before this fix, ``sys.exit(1)`` from
+    ``Lattice._init_lattice`` would kill the whole unittest process:
+    every cell/test after the broken one would silently never run,
+    with no traceback pointing at the actual cause.
+    """
+
+    def _broken_subshape_fixture(self):
+        # CellShape=(4,4,1) is not evenly divisible by SubShape=(3,1,1)
+        # -- hits rpa.py's Lattice._init_lattice sys.exit(1) site
+        # ("SubShape is not compatible with CellShape") at the very
+        # start of RPA.__init__/FLEX.__init__, before any interaction
+        # file is even touched. tests/equivalence_input/orb1 is a real,
+        # self-contained, otherwise-valid committed fixture directory.
+        return FixtureSpec(
+            input_dir="tests/equivalence_input/orb1",
+            interactions={"CoulombIntra": "coulombintra.dat"},
+            T=2.0,
+            mu=0.0,
+            filling=None,
+            CellShape=(4, 4, 1),
+            SubShape=(3, 1, 1),
+            Nmat=32,
+            extra_params={},
+            calc_type="ring",
+            requested_scheme="general",
+            enable_spin_orbital=False,
+            extern=None,
+        )
+
+    def test_run_cell_converts_system_exit_to_an_assertion_error(self):
+        cell = Cell(
+            cell_id="fake.systemexit.cell",
+            fixture=self._broken_subshape_fixture(),
+            resolved_scheme="general",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            comparison=None,
+            required_observables=(),
+            interaction_class="onsite",
+            notes="",
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            run_cell(cell)
+        message = str(ctx.exception)
+        self.assertIn("fake.systemexit.cell", message)
+        self.assertIn("sys.exit(1)", message)
+
+    def test_process_continues_after_a_system_exit_cell(self):
+        # If SystemExit escaped run_cell uncaught, this test method
+        # itself would never reach this second assertion (the whole
+        # process would already be gone) -- so simply completing this
+        # test after catching the first cell's escape IS the "process
+        # continues" evidence the brief asks for.
+        cell = Cell(
+            cell_id="fake.systemexit.cell",
+            fixture=self._broken_subshape_fixture(),
+            resolved_scheme="general",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            comparison=None,
+            required_observables=(),
+            interaction_class="onsite",
+            notes="",
+        )
+        with self.assertRaises(AssertionError):
+            run_cell(cell)
+
+        # A second, ordinary cell runs normally afterward -- the
+        # process was never killed.
+        healthy_cell = Cell(
+            cell_id="fake.systemexit.followup",
+            fixture=_fake_fixture(),
+            resolved_scheme="general",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            comparison=None,
+            required_observables=(),
+            interaction_class="onsite",
+            notes="",
+        )
+        solver = _FakeSolver()
+        run_cell(healthy_cell, solver_factory=_fake_factory(solver))
+        self.assertEqual(solver.solve_calls, 2)  # both rpa and flex sides
 
 
 # ---------------------------------------------------------------------------
@@ -2818,6 +2945,73 @@ class TestSupplementaryLinks(unittest.TestCase):
         ]
         self.assertTrue(cells_with_links)
         self.assertGreaterEqual(len(self._all_links()), len(cells_with_links))
+
+
+class TestBenchmarkRegistryTie(unittest.TestCase):
+    """Task 7: ``tests/equivalence_benchmark.md``'s MOST RECENT section
+    must cover EXACTLY the current ``CELLS`` inventory -- an EXACT
+    multiset match on cell_id (duplicates detected, not masked by set
+    semantics), per the registry docstring's maintenance checklist
+    (``tests/equivalence_cells.py``'s module docstring) and Appendix
+    B's tie-test requirement. A cell added to (or removed from) the
+    registry without a matching new benchmark section fails this test.
+    """
+
+    _CELL_ID_ROW_RE = re.compile(r'^\|\s*`([^`]+)`\s*\|\s*[-\d.eE]+\s*\|\s*$')
+
+    @classmethod
+    def _most_recent_section_cell_ids(cls):
+        """Parse ``tests/equivalence_benchmark.md``'s LAST
+        ``cell_id | max_seconds_over_runs_and_runners``-shaped table
+        (the most recently appended calibration section -- the file
+        grows one section per stage, oldest first, exactly like
+        ``tests/equivalence_calibration_log.md``) and return the list
+        of cell_ids in that table, IN ORDER, WITH duplicates preserved.
+        """
+
+        path = os.path.join(os.path.dirname(__file__), "equivalence_benchmark.md")
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        # Every "cell_id | max_seconds_over_runs_and_runners" table in
+        # the file starts with this exact header + separator pair;
+        # collect the row-blocks that follow EACH occurrence, then keep
+        # only the LAST block (the most recent section).
+        header_indices = [
+            i for i, line in enumerate(lines)
+            if line.strip() == "| cell_id | max_seconds_over_runs_and_runners |"
+        ]
+        if not header_indices:
+            raise AssertionError(
+                "tests/equivalence_benchmark.md: no "
+                "'cell_id | max_seconds_over_runs_and_runners' table found"
+            )
+        start = header_indices[-1] + 2  # skip the header line + its '|---|---|' separator
+        cell_ids = []
+        for line in lines[start:]:
+            stripped = line.rstrip("\n")
+            if not stripped.startswith("|"):
+                break  # the table block ends at the first non-row line
+            m = cls._CELL_ID_ROW_RE.match(stripped)
+            if not m:
+                break
+            cell_ids.append(m.group(1))
+        return cell_ids
+
+    def test_most_recent_section_is_an_exact_multiset_match_with_cells(self):
+        from collections import Counter
+
+        benchmark_ids = self._most_recent_section_cell_ids()
+        self.assertTrue(benchmark_ids, "parsed zero cell_id rows from the most recent benchmark section")
+
+        registry_ids = [cell.cell_id for cell in CELLS]
+        self.assertEqual(
+            Counter(benchmark_ids), Counter(registry_ids),
+            "tests/equivalence_benchmark.md's most recent section's cell_id "
+            "column is not an exact multiset match with CELLS -- a cell was "
+            "added/removed/renamed/duplicated without a matching benchmark "
+            "update",
+        )
 
 
 # ---------------------------------------------------------------------------
