@@ -52,7 +52,7 @@ Schema (`docs/superpowers/plans/2026-08-18-equivalence-table.md`, Appendix B): h
 | `ringladder.general.onsite_coulombintra` | 0.001727 |
 | `so.general.construction.reject` | 0.002737 |
 | `so.reduced.construction.reject` | 0.002049 |
-| `general.ring.onsite_coulombinter.conditioning.mu` | 0.016424 |
+| `general.ring.offsite_coulombinter.conditioning.mu` | 0.016424 |
 
 ### Module totals and process overhead
 

@@ -481,8 +481,8 @@ def _measured_equiv(
 
     def _prov(local_residual: float, chita_residual: float, atol: float, ceiling: float) -> str:
         return (
-            "candidate, measured on two development machines at commit "
-            "{}: {} max|diff| {:.3e}; {} max|diff| {:.3e}. Candidate "
+            "measured on two development machines at commit "
+            "{}: {} max|diff| {:.3e}; {} max|diff| {:.3e}. Resulting "
             "atol {:.1e} (10x the larger residual, floored at 1e-15, "
             "rounded up to a power of ten; policy ceiling "
             "{:.1e}).".format(
@@ -1882,12 +1882,10 @@ _CELL_34_RINGLADDER_GENERAL_ONSITE_COULOMBINTRA = Cell(
 )
 
 # ---------------------------------------------------------------------------
-# Group G6 -- conditioning (Task 6, owner). FC = E1's files (1 orbital)
-# with T=0.2, Nmat=256, filling=0.5 overridden on top of E1's usual
-# T=2.0/Nmat=32 (Appendix A: "the param override lives in FixtureSpec,
-# not in new files"). cell_id retains the "onsite_coulombinter" label
-# from Appendix A row 38 verbatim even though the interaction file is
-# E1's off-site coulombinter.dat -- see the cell's notes.
+# Group G6 -- conditioning (Task 6, owner). FC = the one-orbital fixture
+# files (tests/equivalence_input/orb1) with T=0.2, Nmat=256, filling=0.5
+# overridden on top of that fixture's usual T=2.0/Nmat=32 (the param
+# override lives in FixtureSpec, not in new files).
 # ---------------------------------------------------------------------------
 
 _CELL_38_CONDITIONING_FC_KWARGS = dict(
@@ -1907,7 +1905,7 @@ _CELL_38_CONDITIONING_FC_KWARGS = dict(
 )
 
 _CELL_38_CONDITIONING_MU = Cell(
-    cell_id="general.ring.onsite_coulombinter.conditioning.mu",
+    cell_id="general.ring.offsite_coulombinter.conditioning.mu",
     fixture=FixtureSpec(**_CELL_38_CONDITIONING_FC_KWARGS),
     resolved_scheme="general",
     expected_spin_mode="spin-free",
@@ -1920,19 +1918,17 @@ _CELL_38_CONDITIONING_MU = Cell(
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
     notes=(
-        "FC (Group G6, Task 6): E1's files (tests/equivalence_input/orb1) "
-        "-- geom.dat/transfer.dat (1 orbital; NN hopping t=1.0 along "
-        "+-x/+-y plus a single-diagonal-direction t'=0.5 term at "
-        "R=+-(1,1)) + coulombinter.dat (off-site, same-orbital "
-        "CoulombInter V=1.0, R=(+-1,0,0)/(0,+-1,0) -- the SAME file cell "
-        "19 uses), with T=0.2, Nmat=256, filling=0.5 overriding E1's "
-        "usual T=2.0/Nmat=32. cell_id keeps the Appendix-A-row-38 label "
-        "'onsite_coulombinter' verbatim even though the interaction file "
-        "is E1's OFF-SITE coulombinter.dat -- Appendix A's binding text "
-        "is explicit that FC is 'E1's files', which has no on-site "
-        "CoulombInter file (a single orbital cannot carry on-site "
-        "inter-orbital coupling); the off-site same-orbital file is the "
-        "only CoulombInter E1 has, so it is FC's interaction. "
+        "FC (Group G6, Task 6): the one-orbital fixture files "
+        "(tests/equivalence_input/orb1) -- geom.dat/transfer.dat "
+        "(1 orbital; NN hopping t=1.0 along +-x/+-y plus a "
+        "single-diagonal-direction t'=0.5 term at R=+-(1,1)) + "
+        "coulombinter.dat (OFF-SITE, same-orbital CoulombInter V=1.0, "
+        "R=(+-1,0,0)/(0,+-1,0) -- the SAME file cell 19 uses), with "
+        "T=0.2, Nmat=256, filling=0.5 overriding that fixture's usual "
+        "T=2.0/Nmat=32. The interaction is off-site, and the cell_id "
+        "and interaction_class both say so: a single orbital cannot "
+        "carry an on-site inter-orbital coupling, so the off-site "
+        "same-orbital file is the only CoulombInter this fixture has. "
         "van-Hove-shoulder verification (Task 6, per the brief's "
         "'verify the choice and record the exact filling used'): on the "
         "actual CellShape=(4,4,1) 16-k-point mesh, H0's eigenvalues are "
@@ -2068,7 +2064,7 @@ def _obligation_full_kanamori_row_exists(cells) -> bool:
 
 
 def _obligation_conditioning_row_exists(cells) -> bool:
-    return "general.ring.onsite_coulombinter.conditioning.mu" in _cell_ids(cells)
+    return "general.ring.offsite_coulombinter.conditioning.mu" in _cell_ids(cells)
 
 
 def _obligation_at_least_one_both_reject(cells) -> bool:

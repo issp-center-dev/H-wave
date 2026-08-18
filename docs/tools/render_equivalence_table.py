@@ -199,15 +199,18 @@ def _status_section(provenance: Mapping) -> List[str]:
             )
         run_ids = tuple(provenance["run_ids"])
         sentence = (
-            "The tolerances below are **confirmed**: every number was "
-            "measured on the project's continuous-integration runners at "
-            "source revision {}".format(_literal(str(source_sha)))
+            "The tolerances below are **confirmed**: they were reproduced "
+            "on the project's continuous-integration runners at source "
+            "revision {}".format(_literal(str(source_sha)))
         )
         if run_ids:
             sentence += " (workflow runs {})".format(
                 ", ".join(_literal(str(run_id)) for run_id in run_ids)
             )
-        sentence += ", and holds as of that revision."
+        sentence += (
+            ", and hold as of that revision. The notes below record where "
+            "each residual was originally measured."
+        )
         lines.extend([sentence, ""])
     else:
         raise ValueError(
@@ -386,7 +389,7 @@ def _tolerances_section(cells) -> List[str]:
             body.append("* {} (comparator {}): {}.".format(
                 _literal(name), _literal(comparator), bound
             ))
-            body.append("  Measured: {}".format(provenance))
+            body.append("  Provenance: {}".format(provenance))
         lines.extend(_definition(_literal(cell.cell_id), body))
     return lines
 

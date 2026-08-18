@@ -407,7 +407,7 @@ class TestRegistrySchema(unittest.TestCase):
             "reduced.ring.onsite_exchange.reject",
             "so.general.construction.reject",
             "so.reduced.construction.reject",
-            "general.ring.onsite_coulombinter.conditioning.mu",
+            "general.ring.offsite_coulombinter.conditioning.mu",
         ):
             self.assertIn(bootstrap_id, ids)
 
@@ -2769,7 +2769,7 @@ _DIAGNOSTIC_BENIGN_FIXTURE = next(
     c for c in CELLS if c.cell_id == "general.ring.onsite_u_v_hund.mu"
 ).fixture
 _DIAGNOSTIC_FC_FIXTURE = next(
-    c for c in CELLS if c.cell_id == "general.ring.onsite_coulombinter.conditioning.mu"
+    c for c in CELLS if c.cell_id == "general.ring.offsite_coulombinter.conditioning.mu"
 ).fixture
 
 
@@ -3071,10 +3071,14 @@ class TestRenderedEquivalenceTableDrift(unittest.TestCase):
                 "docs/en/source/algorithm/rpa_flex_equivalence.rst -- "
                 "generate it with `{}`".format(_REGENERATE_HINT)
             )
-        # newline="" disables universal-newline translation, so the
-        # comparison is against the file's exact bytes on every platform.
+        # newline="" disables universal-newline translation, so what is
+        # read is exactly what is on disk; the CRLF fold that follows then
+        # makes the comparison platform-INDEPENDENT, since a checkout with
+        # core.autocrlf=true (there is no .gitattributes pinning *.rst to
+        # LF) would otherwise fail this test spuriously. The write path
+        # stays LF-exact, so the committed file itself is unaffected.
         with open(_RENDERED_RST_PATH, "r", encoding="utf-8", newline="") as f:
-            return f.read()
+            return f.read().replace("\r\n", "\n")
 
     def test_committed_page_matches_the_registry_rendering(self):
         rendered = self._render()
