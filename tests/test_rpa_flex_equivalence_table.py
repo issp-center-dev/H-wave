@@ -12,6 +12,7 @@ fixtures via the small builders below.
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 import time
 import unittest
@@ -325,16 +326,19 @@ class TestRegistrySchema(unittest.TestCase):
             {"source_sha": None, "run_ids": (), "status": "candidate"},
         )
 
-    def test_cells_is_the_task3_two_cell_bootstrap_and_coverage_obligations_empty(self):
+    def test_cells_is_the_task3_bootstrap_plus_task4_so_rows_and_coverage_obligations_empty(self):
         # CELLS carries the Task-3 bootstrap (Appendix A rows 1 and 17)
-        # -- the full 38-cell inventory + COVERAGE_OBLIGATIONS land in
-        # Task 5.
+        # plus Task 4's G5 SO construction-reject rows (Appendix A rows
+        # 35-36) -- the full 38-cell inventory + COVERAGE_OBLIGATIONS
+        # land in Task 5.
         self.assertEqual(
             sorted(cell.cell_id for cell in CELLS),
             sorted(
                 [
                     "general.ring.onsite_coulombintra.fixedmu",
                     "reduced.ring.onsite_exchange.reject",
+                    "so.general.construction.reject",
+                    "so.reduced.construction.reject",
                 ]
             ),
         )
@@ -1433,6 +1437,14 @@ class TestBootstrapCellsRun(unittest.TestCase):
         cell = next(c for c in CELLS if c.cell_id == "reduced.ring.onsite_exchange.reject")
         run_cell(cell)  # must not raise (both sides assertRaises internally)
 
+    def test_so_general_construction_reject_cell_via_run_cell(self):
+        cell = next(c for c in CELLS if c.cell_id == "so.general.construction.reject")
+        run_cell(cell)  # must not raise -- RPA runs, FLEX assertRaises internally
+
+    def test_so_reduced_construction_reject_cell_via_run_cell(self):
+        cell = next(c for c in CELLS if c.cell_id == "so.reduced.construction.reject")
+        run_cell(cell)  # must not raise -- RPA runs, FLEX assertRaises internally
+
 
 # ---------------------------------------------------------------------------
 # TestExecutorSolveCounts -- the instrumented FAKE-SOLVER unit test:
@@ -1761,6 +1773,242 @@ class TestFixtureDirectoriesParse(unittest.TestCase):
         for interactions in self.MINI_CASES:
             with self.subTest(interactions=interactions):
                 self._assert_parses("tests/equivalence_input/mini", interactions)
+
+
+class TestSpinFixtureDirectoryParses(unittest.TestCase):
+    """``tests/equivalence_input/spin/`` -- the E4 fixture family this
+    task (Task 4) adds (plan Appendix A, E4): (a) the spin-diag route
+    (E2's geom/transfer copies + ``extern_zeeman.dat``, hz=0.1, plus
+    CoulombIntra/CoulombInter copied from E2) and (b) the spinful route
+    (``geom_so.dat``/``transfer_spinful.dat`` + ``coulombintra_so.dat``,
+    ``enable_spin_orbital=True``). Structural smoke test only -- the
+    cells that exercise these numerically are cells 35-36 (this task,
+    below) and cells 15-16 (Task 5, the spin-diag Equiv comparison
+    rows)."""
+
+    def _assert_parses(self, spec):
+        reader = _read_fixture(spec)
+        self.assertIsNotNone(reader.get_param("ham"))
+
+    def test_spin_diag_route_coulombintra_parses(self):
+        self._assert_parses(FixtureSpec(
+            input_dir="tests/equivalence_input/spin",
+            interactions={"CoulombIntra": "coulombintra.dat"},
+            T=2.0, mu=None, filling=0.5,
+            CellShape=(4, 4, 1), SubShape=(1, 1, 1), Nmat=32,
+            extra_params={"coeff_extern": 1.0},
+            calc_type="ring", requested_scheme="reduced",
+            enable_spin_orbital=False, extern="extern_zeeman.dat",
+        ))
+
+    def test_spin_diag_route_coulombinter_parses(self):
+        self._assert_parses(FixtureSpec(
+            input_dir="tests/equivalence_input/spin",
+            interactions={"CoulombInter": "onsite_inter.dat"},
+            T=2.0, mu=None, filling=0.5,
+            CellShape=(4, 4, 1), SubShape=(1, 1, 1), Nmat=32,
+            extra_params={"coeff_extern": 1.0},
+            calc_type="ring", requested_scheme="reduced",
+            enable_spin_orbital=False, extern="extern_zeeman.dat",
+        ))
+
+    def test_spinful_route_parses(self):
+        self._assert_parses(FixtureSpec(
+            input_dir="tests/equivalence_input/spin",
+            interactions={"CoulombIntra": "coulombintra_so.dat"},
+            T=2.0, mu=0.0, filling=None,
+            CellShape=(4, 4, 1), SubShape=(1, 1, 1), Nmat=32,
+            extra_params={},
+            calc_type="ring", requested_scheme="general",
+            enable_spin_orbital=True, extern=None,
+            geom="geom_so.dat", transfer="transfer_spinful.dat",
+        ))
+
+
+class TestReducedSpinDiagAcceptance(unittest.TestCase):
+    """Task 4 deliverable 1: "A spin-diag reduced FLEX fixture must
+    SOLVE SUCCESSFULLY" -- the E4 Extern/Zeeman route
+    (``tests/equivalence_input/spin/extern_zeeman.dat``, hz=0.1) that
+    Appendix A cells 15-16 (Task 5) will depend on via a
+    ``SupplementaryLink`` to this test module. Per the brief: if FLEX
+    rejected or ignored Extern, or reduced could not support spin-diag,
+    this task would STOP-and-report instead of adding this test --
+    verified (below) that FLEX consumes Extern exactly like RPA and
+    completes the (one-shot, ``IterationMax=1``) SCF loop without
+    raising.
+    """
+
+    def _spin_diag_fixture(self, interactions):
+        return FixtureSpec(
+            input_dir="tests/equivalence_input/spin",
+            interactions=interactions,
+            T=2.0,
+            mu=None,
+            filling=0.5,
+            CellShape=(4, 4, 1),
+            SubShape=(1, 1, 1),
+            Nmat=32,
+            extra_params={"coeff_extern": 1.0},
+            calc_type="ring",
+            requested_scheme="reduced",
+            enable_spin_orbital=False,
+            extern="extern_zeeman.dat",
+        )
+
+    def test_reduced_flex_solves_with_extern_coulombintra(self):
+        fixture = self._spin_diag_fixture({"CoulombIntra": "coulombintra.dat"})
+        with ExitStack() as stack:
+            solver_obj, green_info, out_dir = build_solver(fixture, "flex", stack)
+            solver_obj.solve(green_info, out_dir)  # must not raise
+        self.assertEqual(solver_obj.spin_mode, "spin-diag")
+        self.assertIn("chi0q", green_info)
+        self.assertIn("chiq_s", green_info)
+        self.assertIn("chiq_c", green_info)
+
+    def test_reduced_flex_solves_with_extern_coulombinter(self):
+        fixture = self._spin_diag_fixture({"CoulombInter": "onsite_inter.dat"})
+        with ExitStack() as stack:
+            solver_obj, green_info, out_dir = build_solver(fixture, "flex", stack)
+            solver_obj.solve(green_info, out_dir)  # must not raise
+        self.assertEqual(solver_obj.spin_mode, "spin-diag")
+
+    def test_reduced_rpa_also_solves_with_extern(self):
+        # Cells 15-16 (Task 5) compare RPA against FLEX on this same
+        # fixture; confirm RPA also accepts it (the frozen "both accept"
+        # expectation Appendix A records for the spin-diag route).
+        fixture = self._spin_diag_fixture({"CoulombIntra": "coulombintra.dat"})
+        with ExitStack() as stack:
+            solver_obj, green_info, out_dir = build_solver(fixture, "rpa", stack)
+            solver_obj.solve(green_info, out_dir)  # must not raise
+        self.assertEqual(solver_obj.spin_mode, "spin-diag")
+        self.assertIn("chiq", green_info)
+
+
+class TestReducedSpinfulGuard(unittest.TestCase):
+    """Task 4 deliverable 2: pins the SOLVE-time
+    ``FLEX._check_reduced_rejects_spinful`` guard
+    (``src/hwave/solver/flex.py``).
+
+    ``test_direct_semantic_state_pin*``: construct the semantic state
+    directly on a bare (not-``__init__``-ed) ``FLEX`` instance --
+    setting ``_flex_general``/``spin_mode`` by hand and calling the
+    extracted guard method directly, bypassing every public input
+    route. This is the unit-level pin the brief asks for.
+
+    ``test_public_trans_mod_route_reaches_spinful_and_is_rejected``:
+    an INVESTIGATION FINDING, not defense-in-depth for a state believed
+    unreachable. The plan's Appendix A (G5, the "(no cell)" note)
+    states "reaching spin_mode == 'spinful' under reduced WITHOUT
+    enable_spin_orbital is not possible through public inputs (a
+    spin-mixing H0 requires the SO flag, which cell 36's construction
+    guard already rejects)". That claim does NOT hold: the public
+    ``trans_mod`` input (``[file.input] trans_mod = "..."``, read by
+    ``RPA.read_init``/``FLEX.read_init`` and documented in
+    ``FLEX._solve_impl``'s own docstring -- "``green_init`` and
+    ``trans_mod``... ARE consumed") sets ``do_spin_orbital = True`` in
+    ``RPA._calc_epsilon_k`` UNCONDITIONALLY, independent of
+    ``enable_spin_orbital`` (src/hwave/solver/rpa.py:2967-2979); the
+    resulting ``spin_mode`` is then determined purely from the supplied
+    H0(k)'s block structure (rpa.py:2997-3013). A user-supplied
+    ``trans_mod.npz`` with a genuinely spin-mixing (off-diagonal,
+    asymmetric) on-site block therefore reaches
+    ``calc_scheme='reduced'`` + ``spin_mode == 'spinful'`` with
+    ``enable_spin_orbital=False`` throughout -- never touching the
+    CONSTRUCTOR-time guard cell 36 exercises. This is reported to the
+    plan owner in the Task 4 report (STOP-and-report per the brief) as
+    a correction to Appendix A's G5 note; it is NOT resolved here as a
+    new registry cell (that decision -- and characterizing RPA's own
+    reduced+spinful-via-trans_mod behaviour, which this task does not
+    scope -- belongs to the plan owner). The guard this task adds
+    closes the gap regardless of how ``spin_mode`` came to be
+    ``'spinful'``, as this test demonstrates.
+    """
+
+    def test_direct_semantic_state_pin_rejects_spinful(self):
+        import hwave.solver.flex as flex_mod
+
+        solver = flex_mod.FLEX.__new__(flex_mod.FLEX)
+        solver._flex_general = False
+        solver.spin_mode = "spinful"
+        with self.assertRaises(ValueError) as ctx:
+            solver._check_reduced_rejects_spinful()
+        self.assertIn("spin_mode='spinful'", str(ctx.exception))
+
+    def test_direct_semantic_state_pin_allows_spin_free_and_spin_diag(self):
+        import hwave.solver.flex as flex_mod
+
+        for mode in ("spin-free", "spin-diag"):
+            with self.subTest(spin_mode=mode):
+                solver = flex_mod.FLEX.__new__(flex_mod.FLEX)
+                solver._flex_general = False
+                solver.spin_mode = mode
+                solver._check_reduced_rejects_spinful()  # must not raise
+
+    def test_direct_semantic_state_pin_general_scheme_unaffected(self):
+        # This method only guards the reduced scheme; the general
+        # scheme's own (pre-existing) spin-free-only check lives
+        # separately in _solve_impl.
+        import hwave.solver.flex as flex_mod
+
+        solver = flex_mod.FLEX.__new__(flex_mod.FLEX)
+        solver._flex_general = True
+        solver.spin_mode = "spinful"
+        solver._check_reduced_rejects_spinful()  # must not raise
+
+    def test_public_trans_mod_route_reaches_spinful_and_is_rejected(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        input_dir = "tests/equivalence_input/orb1"
+        interaction = {
+            "path_to_input": input_dir,
+            "Geometry": "geom.dat",
+            "Transfer": "transfer.dat",
+        }
+        reader = read_input_k.QLMSkInput(
+            {"path_to_input": input_dir, "interaction": interaction}
+        )
+        ham = reader.get_param("ham")
+
+        with ExitStack() as stack:
+            tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
+            tm_path = os.path.join(tmp_dir, "trans_mod.npz")
+            # orb1's CellShape [4,4,1] -> cellvol=16; ns*norb_orig=2*1=2.
+            # A genuinely spin-mixing (asymmetric off-diagonal) on-site
+            # block -- NOT reachable by declaring enable_spin_orbital
+            # alone, since this fixture never sets that flag.
+            cellvol = 16
+            tab = np.zeros((cellvol, 2, 2), dtype=complex)
+            tab[:, 0, 0] = 0.3
+            tab[:, 1, 1] = -0.2
+            tab[:, 0, 1] = 0.1 + 0.05j
+            tab[:, 1, 0] = 0.1 - 0.05j
+            np.savez(tm_path, trans_mod=tab)
+
+            param = {
+                "T": 2.0, "mu": 0.0,
+                "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
+            }
+            info_mode = {
+                "mode": "FLEX",
+                "param": dict(param, IterationMax=1, Mix=1.0, EPS=1),
+                "enable_spin_orbital": False,
+                "calc_scheme": "reduced",
+            }
+            # Constructs cleanly: enable_spin_orbital=False, so the
+            # CONSTRUCTOR-time guard (cell 36) never fires.
+            solver = flex_mod.FLEX(ham, {}, info_mode)
+
+            green_info = reader.get_param("green")
+            green_info.update(
+                solver.read_init({"path_to_input": input_dir, "trans_mod": tm_path})
+            )
+            out_dir = stack.enter_context(tempfile.TemporaryDirectory())
+            with self.assertRaises(ValueError) as ctx:
+                solver.solve(green_info, out_dir)
+
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertIn("spin_mode='spinful'", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------

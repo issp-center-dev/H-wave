@@ -480,7 +480,103 @@ _BOOTSTRAP_CELL_17 = Cell(
     ),
 )
 
-CELLS: tuple = (_BOOTSTRAP_CELL_1, _BOOTSTRAP_CELL_17)
+_SO_SPINFUL_FIXTURE_KWARGS = dict(
+    input_dir="tests/equivalence_input/spin",
+    interactions={"CoulombIntra": "coulombintra_so.dat"},
+    T=2.0,
+    mu=0.0,
+    filling=None,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=32,
+    extra_params={},
+    calc_type="ring",
+    enable_spin_orbital=True,
+    extern=None,
+    geom="geom_so.dat",
+    transfer="transfer_spinful.dat",
+)
+
+_CELL_35_SO_GENERAL_CONSTRUCTION_REJECT = Cell(
+    cell_id="so.general.construction.reject",
+    fixture=FixtureSpec(requested_scheme="general", **_SO_SPINFUL_FIXTURE_KWARGS),
+    resolved_scheme="general",
+    expected_spin_mode="spinful",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR,
+                exc_type="ValueError",
+                fragment="enable_spin_orbital",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "Task 4 (G5). E4 spinful fixture: tests/equivalence_input/spin/"
+        "geom_so.dat (1 physical orbital) + transfer_spinful.dat "
+        "(diagonal t=0.7 at R=+-1, on-site spin-mixing 0.35+0.15j / "
+        "conjugate) + coulombintra_so.dat (U=4.0), enable_spin_orbital="
+        "True. RPA supports SO end to end (verified: constructs and "
+        "solves calc_scheme='general', spin_mode resolves to 'spinful'). "
+        "FLEX general REJECTS at CONSTRUCTOR -- verified site: "
+        "src/hwave/solver/flex.py:220-224 "
+        "(FLEX._init_flex_param, scheme=='general' branch), "
+        "'calc_scheme=\\'general\\' FLEX (v1) does not support "
+        "enable_spin_orbital; deferred to the generalized FLEX solver.' "
+        "-- matches the recorded expectation (CONSTRUCTOR, ValueError); "
+        "no STOP-and-amend needed."
+    ),
+)
+
+_CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
+    cell_id="so.reduced.construction.reject",
+    fixture=FixtureSpec(requested_scheme="reduced", **_SO_SPINFUL_FIXTURE_KWARGS),
+    resolved_scheme="reduced",
+    expected_spin_mode="spinful",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR,
+                exc_type="ValueError",
+                fragment="enable_spin_orbital",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "Task 4 (G5). Same E4 spinful fixture as cell 35, "
+        "calc_scheme='reduced'. RPA supports SO end to end under "
+        "reduced too (verified: constructs and solves, spin_mode "
+        "resolves to 'spinful'; RPA reduced's spin_mode=='spinful' "
+        "branch -- src/hwave/solver/rpa.py:1945-2006 -- runs regardless "
+        "of how spin_mode was determined). FLEX reduced REJECTS at "
+        "CONSTRUCTOR via the NEW guard this task adds: "
+        "src/hwave/solver/flex.py:227-231 "
+        "(FLEX._init_flex_param, scheme=='reduced' branch, mirroring "
+        "the general-scheme guard at lines 220-224), "
+        "'calc_scheme=\\'reduced\\' FLEX does not support "
+        "enable_spin_orbital; deferred to the generalized FLEX solver.' "
+        "-- prior to this task, calc_scheme='reduced' had NO "
+        "enable_spin_orbital guard at all (the audit-identified silent "
+        "gap this task closes)."
+    ),
+)
+
+CELLS: tuple = (
+    _BOOTSTRAP_CELL_1,
+    _BOOTSTRAP_CELL_17,
+    _CELL_35_SO_GENERAL_CONSTRUCTION_REJECT,
+    _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT,
+)
 
 # Named predicates over ``CELLS`` (or any cells tuple passed to
 # ``validate_registry``) -- populated by Task 5. Empty this task.
