@@ -414,12 +414,12 @@ PROVENANCE: dict = {
 
 _CANDIDATE_SOURCE_SHA = "b922a1c13b85b2d319bc65ee8c45183dc6ab2a47"
 _CANDIDATE_LOCAL_RUNNER = (
-    "local macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, "
-    "numpy 1.26.4, scipy 1.17.1"
+    "macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, "
+    "numpy 1.26.4, scipy 1.17.1)"
 )
 _CANDIDATE_CHITA_RUNNER = (
-    "chita Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python "
-    "3.11.15, numpy 1.26.4, scipy 1.13.1"
+    "Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, "
+    "Python 3.11.15, numpy 1.26.4, scipy 1.13.1)"
 )
 
 
@@ -481,14 +481,15 @@ def _measured_equiv(
 
     def _prov(local_residual: float, chita_residual: float, atol: float, ceiling: float) -> str:
         return (
-            "candidate (Task 7; {}; {}; commit {}): max|diff| local "
-            "{:.3e}, chita {:.3e} -- candidate atol {:.1e} (10x the "
-            "larger residual, floored at 1e-15, rounded up to a power "
-            "of ten; policy ceiling {:.1e}).".format(
-                _CANDIDATE_LOCAL_RUNNER,
-                _CANDIDATE_CHITA_RUNNER,
+            "candidate, measured on two development machines at commit "
+            "{}: {} max|diff| {:.3e}; {} max|diff| {:.3e}. Candidate "
+            "atol {:.1e} (10x the larger residual, floored at 1e-15, "
+            "rounded up to a power of ten; policy ceiling "
+            "{:.1e}).".format(
                 _CANDIDATE_SOURCE_SHA[:12],
+                _CANDIDATE_LOCAL_RUNNER,
                 local_residual,
+                _CANDIDATE_CHITA_RUNNER,
                 chita_residual,
                 atol,
                 ceiling,
@@ -1111,8 +1112,9 @@ _CELL_15_REDUCED_COULOMBINTRA_SPINDIAG_MU = Cell(
                     "test_reduced_rpa_also_solves_with_extern"
                 ),
                 claim=(
-                    "RPA accepts the E4 Extern/Zeeman spin-diag route "
-                    "under calc_scheme='reduced' (Task 4)."
+                    "RPA accepts the Extern/Zeeman spin-diagonal route "
+                    "(the tests/equivalence_input/spin fixture) under "
+                    "calc_scheme='reduced'."
                 ),
             ),
         ),
@@ -1128,10 +1130,10 @@ _CELL_15_REDUCED_COULOMBINTRA_SPINDIAG_MU = Cell(
                     "test_reduced_flex_solves_with_extern_coulombintra"
                 ),
                 claim=(
-                    "FLEX accepts the E4 Extern/Zeeman spin-diag route "
-                    "under calc_scheme='reduced' -- the frozen "
-                    "both-accept expectation Appendix A records for "
-                    "this row (Task 4 deliverable 1)."
+                    "FLEX accepts the Extern/Zeeman spin-diagonal route "
+                    "(the tests/equivalence_input/spin fixture) under "
+                    "calc_scheme='reduced' -- the recorded expectation "
+                    "for this row is that both solvers accept it."
                 ),
             ),
         ),
@@ -1174,8 +1176,9 @@ _CELL_16_REDUCED_COULOMBINTER_SPINDIAG_MU = Cell(
                     "test_reduced_rpa_also_solves_with_extern"
                 ),
                 claim=(
-                    "RPA accepts the E4 Extern/Zeeman spin-diag route "
-                    "under calc_scheme='reduced' (Task 4)."
+                    "RPA accepts the Extern/Zeeman spin-diagonal route "
+                    "(the tests/equivalence_input/spin fixture) under "
+                    "calc_scheme='reduced'."
                 ),
             ),
         ),
@@ -1191,9 +1194,9 @@ _CELL_16_REDUCED_COULOMBINTER_SPINDIAG_MU = Cell(
                     "test_reduced_flex_solves_with_extern_coulombinter"
                 ),
                 claim=(
-                    "FLEX accepts the E4 Extern/Zeeman spin-diag route "
-                    "under calc_scheme='reduced' with CoulombInter "
-                    "(Task 4 deliverable 1)."
+                    "FLEX accepts the Extern/Zeeman spin-diagonal route "
+                    "(the tests/equivalence_input/spin fixture) under "
+                    "calc_scheme='reduced' with CoulombInter."
                 ),
             ),
         ),
@@ -1311,10 +1314,9 @@ _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
                     "TestReducedOneShot::test_matrix_cells"
                 ),
                 claim=(
-                    "The oneshot suite's TestReducedOneShot case (a) -- "
-                    "this exact fixture/filling -- pins the chiq "
-                    "uu-ud/uu+ud block equivalence under "
-                    "calc_scheme='reduced'."
+                    "An existing one-shot comparison over this same "
+                    "fixture and filling pins the chiq uu-ud/uu+ud "
+                    "block equivalence under calc_scheme='reduced'."
                 ),
             ),
         ),
