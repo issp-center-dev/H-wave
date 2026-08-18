@@ -31,14 +31,15 @@ Hard constraints (binding on every future edit to this file):
     normalizes mapping fields; it never inspects cross-field business
     rules.
 
-``CELLS`` carries the FULL Task-5 inventory: Appendix A rows 1-36 (every
-row except the G6 conditioning row, cell 38, which is Task 6's -- it
-needs the divergence-diagnostic apparatus that task builds).
-``COVERAGE_OBLIGATIONS`` is populated with every named predicate from
-the plan's coverage-obligations list EXCEPT "the conditioning row
-exists (38)" (Task 6 adds that predicate alongside the cell it
-checks for, so ``validate_registry`` stays green on this task's
-36-cell registry).
+``CELLS`` carries the FULL Appendix A inventory: rows 1-36 (Task 5) plus
+the G6 conditioning row, cell 38 (Task 6 -- Appendix A has no row 37,
+so the registry holds 37 cells total). Cell 38 needed the
+divergence-diagnostic apparatus (``TestMuGreenDivergenceDiagnostic`` in
+the test module) built alongside it, since its Equiv comparison and its
+coverage obligation both depend on that apparatus having been proven
+first. ``COVERAGE_OBLIGATIONS`` is populated with every named predicate
+from the plan's coverage-obligations list, including "the conditioning
+row exists (38)" (Task 6).
 """
 
 from __future__ import annotations
@@ -1794,6 +1795,94 @@ _CELL_34_RINGLADDER_GENERAL_ONSITE_COULOMBINTRA = Cell(
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Group G6 -- conditioning (Task 6, owner). FC = E1's files (1 orbital)
+# with T=0.2, Nmat=256, filling=0.5 overridden on top of E1's usual
+# T=2.0/Nmat=32 (Appendix A: "the param override lives in FixtureSpec,
+# not in new files"). cell_id retains the "onsite_coulombinter" label
+# from Appendix A row 38 verbatim even though the interaction file is
+# E1's off-site coulombinter.dat -- see the cell's notes.
+# ---------------------------------------------------------------------------
+
+_CELL_38_CONDITIONING_FC_KWARGS = dict(
+    input_dir="tests/equivalence_input/orb1",
+    interactions={"CoulombInter": "coulombinter.dat"},
+    T=0.2,
+    mu=None,
+    filling=0.5,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=256,
+    extra_params={},
+    calc_type="ring",
+    requested_scheme="general",
+    enable_spin_orbital=False,
+    extern=None,
+)
+
+_CELL_38_CONDITIONING_MU = Cell(
+    cell_id="general.ring.onsite_coulombinter.conditioning.mu",
+    fixture=FixtureSpec(**_CELL_38_CONDITIONING_FC_KWARGS),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=_measured_equiv(
+        "chi0q_mu", 0.0,
+        "general_from_flex_channels", "chiq_mu", 3.3066883022456364e-12,
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="offsite",
+    notes=(
+        "FC (Group G6, Task 6): E1's files (tests/equivalence_input/orb1) "
+        "-- geom.dat/transfer.dat (1 orbital; NN hopping t=1.0 along "
+        "+-x/+-y plus a single-diagonal-direction t'=0.5 term at "
+        "R=+-(1,1)) + coulombinter.dat (off-site, same-orbital "
+        "CoulombInter V=1.0, R=(+-1,0,0)/(0,+-1,0) -- the SAME file cell "
+        "19 uses), with T=0.2, Nmat=256, filling=0.5 overriding E1's "
+        "usual T=2.0/Nmat=32. cell_id keeps the Appendix-A-row-38 label "
+        "'onsite_coulombinter' verbatim even though the interaction file "
+        "is E1's OFF-SITE coulombinter.dat -- Appendix A's binding text "
+        "is explicit that FC is 'E1's files', which has no on-site "
+        "CoulombInter file (a single orbital cannot carry on-site "
+        "inter-orbital coupling); the off-site same-orbital file is the "
+        "only CoulombInter E1 has, so it is FC's interaction. "
+        "van-Hove-shoulder verification (Task 6, per the brief's "
+        "'verify the choice and record the exact filling used'): on the "
+        "actual CellShape=(4,4,1) 16-k-point mesh, H0's eigenvalues are "
+        "[-3, -2,-2,-2,-2, -1,-1,-1,-1, 1,1, 2,2,2,2, 5]; filling=0.5 "
+        "(one-spin target 8 of 16 states) lands the Fermi level EXACTLY "
+        "inside the 4-fold-degenerate eps=-1.0 cluster -- a coarse-mesh "
+        "analogue of a van Hove shoulder (confirmed by direct "
+        "H0_eigenvalue inspection; a finer 64x64 k-mesh on the same "
+        "dispersion shows the true DOS peak near eps~-0.93, consistent "
+        "with this cluster). filling=0.5 is kept as Appendix A's stated "
+        "starting value -- no re-selection was needed (see "
+        "tests/equivalence_calibration_log.md). "
+        "AMPLIFICATION (owned by TestConditioningAmplification, not this "
+        "row): the mu/Green divergence diagnostic run in ISOLATION "
+        "(Sigma=0, no solve()) on this fixture vs the benign cell 8 "
+        "fixture shows >=10x amplification on the mu-seam residual "
+        "(assertion 2) at the very first candidate T=0.2 -- no halve-T "
+        "re-choice needed (single logged calibration attempt). "
+        "THIS ROW's own (chi0q, chiq) comparison instead uses the FULL "
+        "one-shot solve() pipeline, which is NOT the same computation "
+        "the diagnostic isolates: FLEX's post-mix stored mu (after one "
+        "SCF iteration re-solves mu against its own iteration-1 "
+        "self-energy, flex.py:741-743) differs from the diagnostic's "
+        "isolated Sigma=0 mu, so a close full-pipeline chi0q/chiq match "
+        "here does not contradict the diagnostic's amplified seam-level "
+        "residuals in isolation -- exactly the OutputBundle-documented "
+        "reason mu is never a per-cell observable. Measured (Task 6, "
+        "local): chi0q max|diff| = 0.0 (bit-identical) and chiq "
+        "max|diff| = 3.3066883022456364e-12, both far inside their "
+        "mu-coupled ceilings. Wall time (Task 6, local): rpa solve() "
+        "~0.15s + flex solve() ~0.01s (~0.16s combined) -- negligible "
+        "despite Nmat=256, because this fixture is 1-orbital/16-k-point "
+        "(nd=1); no CI-budget threat from this cell."
+    ),
+)
+
 CELLS: tuple = (
     _BOOTSTRAP_CELL_1,
     _CELL_2_ONSITE_COULOMBINTER_FIXEDMU,
@@ -1831,15 +1920,14 @@ CELLS: tuple = (
     _CELL_34_RINGLADDER_GENERAL_ONSITE_COULOMBINTRA,
     _CELL_35_SO_GENERAL_CONSTRUCTION_REJECT,
     _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT,
+    _CELL_38_CONDITIONING_MU,
 )
 
 
 # ---------------------------------------------------------------------------
-# COVERAGE_OBLIGATIONS -- named predicates over CELLS (the plan's list,
-# minus "the conditioning row exists (38)": that predicate is Task 6's,
-# added alongside the cell it checks for -- cell 38 is out of this
-# task's scope, so including that predicate now would fail
-# validate_registry on this task's 36-cell registry).
+# COVERAGE_OBLIGATIONS -- named predicates over CELLS (the plan's full
+# list, including "the conditioning row exists (38)", added by Task 6
+# alongside the cell it checks for).
 # ---------------------------------------------------------------------------
 
 
@@ -1893,6 +1981,10 @@ def _obligation_full_kanamori_row_exists(cells) -> bool:
     return "general.ring.onsite_full_kanamori.mu" in _cell_ids(cells)
 
 
+def _obligation_conditioning_row_exists(cells) -> bool:
+    return "general.ring.onsite_coulombinter.conditioning.mu" in _cell_ids(cells)
+
+
 def _obligation_at_least_one_both_reject(cells) -> bool:
     return any(
         cell.rpa.status is Status.REJECT and cell.flex.status is Status.REJECT
@@ -1921,6 +2013,7 @@ COVERAGE_OBLIGATIONS: Dict[str, Callable[[tuple], bool]] = {
     "every_resolver_outcome_appears": _obligation_every_resolver_outcome_appears,
     "both_so_guard_sites_appear": _obligation_both_so_guard_sites_appear,
     "full_kanamori_row_exists": _obligation_full_kanamori_row_exists,
+    "conditioning_row_exists": _obligation_conditioning_row_exists,
     "at_least_one_both_reject": _obligation_at_least_one_both_reject,
     "at_least_one_flex_reject_rpa_supported": _obligation_at_least_one_flex_reject_rpa_supported,
     "at_least_one_rpa_only": _obligation_at_least_one_rpa_only,

@@ -394,10 +394,11 @@ class TestRegistrySchema(unittest.TestCase):
             {"source_sha": None, "run_ids": (), "status": "candidate"},
         )
 
-    def test_cells_is_the_task5_36_cell_inventory(self):
-        # CELLS carries Appendix A rows 1-36 (every row except the G6
-        # conditioning row, cell 38, which is Task 6's).
-        self.assertEqual(len(CELLS), 36)
+    def test_cells_is_the_full_appendix_a_37_cell_inventory(self):
+        # CELLS carries Appendix A rows 1-36 (Task 5) plus the G6
+        # conditioning row, cell 38 (Task 6) -- Appendix A has no row
+        # 37, so the registry holds 37 cells total.
+        self.assertEqual(len(CELLS), 37)
         ids = [cell.cell_id for cell in CELLS]
         self.assertEqual(len(ids), len(set(ids)), "duplicate cell_id in CELLS")
         for bootstrap_id in (
@@ -405,10 +406,11 @@ class TestRegistrySchema(unittest.TestCase):
             "reduced.ring.onsite_exchange.reject",
             "so.general.construction.reject",
             "so.reduced.construction.reject",
+            "general.ring.onsite_coulombinter.conditioning.mu",
         ):
             self.assertIn(bootstrap_id, ids)
 
-    def test_coverage_obligations_populated_minus_the_task6_conditioning_predicate(self):
+    def test_coverage_obligations_populated_including_the_conditioning_predicate(self):
         self.assertEqual(
             sorted(COVERAGE_OBLIGATIONS.keys()),
             sorted(
@@ -418,6 +420,7 @@ class TestRegistrySchema(unittest.TestCase):
                     "every_resolver_outcome_appears",
                     "both_so_guard_sites_appear",
                     "full_kanamori_row_exists",
+                    "conditioning_row_exists",
                     "at_least_one_both_reject",
                     "at_least_one_flex_reject_rpa_supported",
                     "at_least_one_rpa_only",
@@ -2409,6 +2412,355 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 
         self.assertEqual(solver.spin_mode, "spinful")
         self.assertIn("spin_mode='spinful'", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# TestMuGreenDivergenceDiagnostic + TestConditioningAmplification (Task 6):
+# the mu/Green implementation-seam diagnostic -- the audit's top finding
+# made permanently visible as a gating apparatus, plus cell 38's
+# amplification obligation (Appendix A G6). Step-5 tracking issue: #160
+# (any future Diverges classification arising from this diagnostic would
+# reference it; none does today -- both fixtures this task exercises stay
+# well inside their ceilings).
+#
+# ADAPTER CONTRACT (read verbatim before touching this section): a
+# measurement apparatus using DIRECT internal-API invocation on
+# CONSTRUCTED solver objects -- public solve() cannot expose RPA's
+# solve-local mu (RPA never retains it as a public post-solve attribute;
+# see OutputBundle's docstring in equivalence_cells.py) nor isolate the
+# Sigma=0 seam FLEX's own solve() immediately moves past (FLEX re-solves
+# mu against its own post-mix, generally NONZERO self-energy at the end
+# of every SCF iteration -- flex.py:741-743). Both solvers are
+# constructed via ``build_solver`` (NO ``solve()`` call) from the SAME
+# ``FixtureSpec``, then ``_calc_epsilon_k(green_info)`` is invoked
+# directly on each -- normally solve()'s own first step (RPA.solve
+# rpa.py:1835, FLEX._solve_impl flex.py:466) -- to populate
+# ``H0_eigenvalue``/``H0_eigenvector``/``spin_mode`` before any mu/Green
+# call. Every fixture this diagnostic uses is mu-coupled
+# (``fixture.filling`` set, ``calc_mu=True`` on both solver sides).
+#
+# Exact call signatures/pre-state (read flex.py ~1448-1584 and rpa.py's
+# ``_find_mu``/``_calc_green``/``_calc_chi0q`` first; this docstring
+# records the findings):
+#
+#   RPA._find_mu(Ncond, T) -> (dist, mu)                     (rpa.py:3065)
+#     Ncond is the ONE-SPIN target: halved from ``self.Ncond`` when
+#     ``spin_mode == "spin-free"`` (rpa.py:1837-1841), used AS-IS
+#     otherwise. Pre-state: only needs ``self.H0_eigenvalue`` (set by
+#     ``_calc_epsilon_k``) and ``self.ene_cutoff``.
+#
+#   FLEX._find_mu_dressed(sigma, beta, Ncond) -> mu           (flex.py:1489)
+#     ``sigma`` shape (nblock, nmat, nvol, nd, nd), dtype complex128 --
+#     the FULL self-energy array ``_calc_dressed_green`` consumes
+#     (flex.py:1148-1149). ``Ncond`` uses the SAME one-spin-target
+#     halving convention as ``RPA._find_mu`` (flex.py:483-486, its own
+#     docstring cites ``RPA._find_mu`` explicitly). Pre-state: needs
+#     ``self.H0_eigenvalue``/``H0_eigenvector`` (``_calc_epsilon_k``) --
+#     internally calls ``_matsubara_number_operator(sigma, beta)`` once,
+#     then root-finds via safeguarded Newton (NOT the scipy
+#     bisect/Newton ``RPA._find_mu`` uses -- an independent numerical
+#     method, the point of assertion 2 below). A ZERO ``sigma`` array
+#     (Sigma=0) is FLEX's own pre-loop convention for "the first,
+#     non-interacting-Sigma mu search" (flex.py:610-615's ``sigma =
+#     xp.zeros(expected, dtype=np.complex128)`` before the SCF loop).
+#
+#   FLEX._calc_dressed_green(beta, mu, sigma) -> green         (flex.py:1139)
+#     green_inv = (iwn+mu)*I - H0(k) - sigma; green = inv(green_inv) --
+#     DIRECT matrix inversion, one nd x nd system per (block, freq, k).
+#     Same shape/dtype ``sigma`` contract as above. At sigma=0 this is
+#     algorithmically INDEPENDENT of RPA's eigenbasis builder below (no
+#     shared code path) while representing the identical physical
+#     quantity G0(k, iwn).
+#
+#   RPA._calc_green(beta, mu) -> (green, green_tail)           (rpa.py:3114)
+#     Eigenbasis construction: green_mod.build_green(ew, ev, mu, beta,
+#     nmat, coeff_tail, want_full=False) -- reconstructs G0 via the H0
+#     spectral decomposition (V diag(1/(iwn+mu-ew)) V^H), never forming
+#     G^{-1} or inverting a matrix. ``green_tail`` is an all-zero
+#     shape-matched array when ``coeff_tail == 0`` (every fixture this
+#     diagnostic uses sets ``extra_params={}``, so coeff_tail defaults to
+#     0 -- ``green_tail``/the FLEX-side zero tail below are therefore
+#     genuinely equal, not merely shape-compatible placeholders).
+#
+#   RPA._calc_chi0q(green_kw, green0_tail, beta) -> chi0q       (rpa.py:3158)
+#     The SHARED bubble kernel (flex.py never overrides it -- FLEX
+#     inherits this exact bound method). Called here on ``rpa_obj`` for
+#     BOTH assertion-3 Green arrays, making the "shared kernel" claim
+#     literal: one bound method, two Green inputs. ``green0_tail`` must
+#     shape-match ``green_kw`` (bubble.py's own pairing guard); the
+#     FLEX-side Green gets an explicit ``np.zeros_like`` tail since
+#     ``_calc_dressed_green`` never returns one.
+#
+# NORMALIZATION: every residual here is a SCALAR (mu) or a raw elementwise
+# max-|diff| (Green/chi0q) -- NOT a ``COMPARATORS`` entry (no bundle
+# mapping; ``scalar_residual``/``assert_scalar_within`` for the two mu
+# checkpoints, and ``_assert_max_diff_within`` below -- a local helper
+# mirroring ``Comparator.assert_within``'s max-|diff|+index diagnostic --
+# for the three array checkpoints).
+# ---------------------------------------------------------------------------
+
+
+def _assert_max_diff_within(a, b, atol, label):
+    """The array-checkpoint counterpart of ``assert_scalar_within``:
+    mirrors ``Comparator.assert_within``'s policy (exact shape then
+    all-finite first, elementwise complex ``abs(a-b)``, the failure
+    message reports both the max-|diff| VALUE and its INDEX) without
+    requiring an ``OutputBundle`` -- the diagnostic compares raw
+    Green/chi0q arrays straight off the solver internals, never through
+    ``extract_bundle``.
+    """
+
+    a = np.asarray(a)
+    b = np.asarray(b)
+    if a.shape != b.shape:
+        raise AssertionError(
+            "{}: shape mismatch {!r} vs {!r}".format(label, a.shape, b.shape)
+        )
+    if not np.all(np.isfinite(a)):
+        raise AssertionError("{}: the first array contains non-finite values".format(label))
+    if not np.all(np.isfinite(b)):
+        raise AssertionError("{}: the second array contains non-finite values".format(label))
+    diff = np.abs(a - b)
+    idx = tuple(int(i) for i in np.unravel_index(int(np.argmax(diff)), diff.shape))
+    max_diff = float(diff[idx])
+    if max_diff > atol:
+        raise AssertionError(
+            "{}: max |diff| = {!r} at index {!r} exceeds atol {!r} (CURRENT "
+            "measured value, not a frozen number -- see "
+            "tests/equivalence_calibration_log.md for the calibration "
+            "history)".format(label, max_diff, idx, atol)
+        )
+
+
+def _diagnostic_residuals(fixture, solver_factory=build_solver):
+    """Run the ORDERED five-assertion mu/Green divergence diagnostic on
+    ONE fixture and return every checkpoint value + residual.
+
+    Both solvers are constructed (never solved) from ``fixture``, then
+    ``_calc_epsilon_k`` is invoked directly on each (see the module
+    docstring above the call-signature contract this function
+    implements). Returns a dict with the raw checkpoint values (so
+    callers can build rich, dynamic failure messages via
+    ``assert_scalar_within``/``_assert_max_diff_within``) AND the five
+    named scalar residuals (``"assertion1"``..``"assertion5"``, all
+    ``float``) for the amplification ratio (``TestConditioningAmplification``).
+    """
+
+    with ExitStack() as stack:
+        rpa_obj, rpa_green, _rpa_out = solver_factory(fixture, "rpa", stack)
+        flex_obj, flex_green, _flex_out = solver_factory(fixture, "flex", stack)
+
+        # Normally solve()'s own first step (rpa.py:1835 / flex.py:466);
+        # invoked directly here since neither solver is ever solved.
+        rpa_obj._calc_epsilon_k(rpa_green)
+        flex_obj._calc_epsilon_k(flex_green)
+
+        beta = 1.0 / fixture.T
+
+        # Same one-spin-target halving convention both solve() paths use
+        # (rpa.py:1837-1841, flex.py:483-486).
+        ncond_rpa = rpa_obj.Ncond / 2 if rpa_obj.spin_mode == "spin-free" else rpa_obj.Ncond
+        ncond_flex = flex_obj.Ncond / 2 if flex_obj.spin_mode == "spin-free" else flex_obj.Ncond
+
+        # ---- assertion 1: shared-mu identity control ----
+        # RPA._find_mu invoked on the RPA instance vs the SAME method
+        # (inherited unchanged) invoked on the FLEX instance -- expect
+        # round-off agreement; a nonzero residual here means the two
+        # constructed solver objects/pre-state differ, not the
+        # algorithms (they run the identical code path).
+        _dist_rpa, mu_rpa = rpa_obj._find_mu(ncond_rpa, rpa_obj.T)
+        _dist_flex, mu_flex_instance = flex_obj._find_mu(ncond_flex, flex_obj.T)
+        assertion1 = scalar_residual(mu_rpa, mu_flex_instance)
+
+        # ---- assertion 2: the mu seam ----
+        # RPA._find_mu's non-interacting root vs FLEX._find_mu_dressed's
+        # Sigma=0 root -- two INDEPENDENT implementations of the same
+        # physical mu.
+        nblock, nvol, nd = flex_obj.H0_eigenvalue.shape
+        sigma_zero = np.zeros((nblock, flex_obj.nmat, nvol, nd, nd), dtype=np.complex128)
+        mu_flex_dressed_zero = flex_obj._find_mu_dressed(sigma_zero, beta, ncond_flex)
+        assertion2 = scalar_residual(mu_rpa, mu_flex_dressed_zero)
+
+        # ---- assertion 3: the Green-builder seam (bare), both at the
+        # SAME shared mu (assertion 1's mu_rpa) ----
+        green_rpa_at_shared_mu, tail_rpa_at_shared_mu = rpa_obj._calc_green(beta, mu_rpa)
+        green_flex_at_shared_mu = flex_obj._calc_dressed_green(beta, mu_rpa, sigma_zero)
+        assertion3 = float(np.max(np.abs(
+            np.asarray(green_rpa_at_shared_mu) - np.asarray(green_flex_at_shared_mu)
+        )))
+
+        # ---- assertion 4: the composed seam -- the same two builders at
+        # _find_mu_dressed's Sigma=0 mu (assertion 2's FLEX value) ----
+        green_rpa_at_dressed_zero_mu, _tail_rpa_at_dressed_zero_mu = rpa_obj._calc_green(
+            beta, mu_flex_dressed_zero
+        )
+        green_flex_at_dressed_zero_mu = flex_obj._calc_dressed_green(
+            beta, mu_flex_dressed_zero, sigma_zero
+        )
+        assertion4 = float(np.max(np.abs(
+            np.asarray(green_rpa_at_dressed_zero_mu) - np.asarray(green_flex_at_dressed_zero_mu)
+        )))
+
+        # ---- assertion 5: downstream chi0q from assertion 3's TWO
+        # Greens through the shared bubble kernel (rpa_obj._calc_chi0q,
+        # bound but identical on both instances -- see the module
+        # docstring) ----
+        chi0q_from_rpa_green = rpa_obj._calc_chi0q(
+            green_rpa_at_shared_mu, tail_rpa_at_shared_mu, beta
+        )
+        zero_tail_for_flex_green = np.zeros_like(green_flex_at_shared_mu)
+        chi0q_from_flex_green = rpa_obj._calc_chi0q(
+            green_flex_at_shared_mu, zero_tail_for_flex_green, beta
+        )
+        assertion5 = float(np.max(np.abs(
+            np.asarray(chi0q_from_rpa_green) - np.asarray(chi0q_from_flex_green)
+        )))
+
+    return {
+        "mu_rpa": mu_rpa,
+        "mu_flex_instance": mu_flex_instance,
+        "mu_flex_dressed_zero": mu_flex_dressed_zero,
+        "green_rpa_at_shared_mu": green_rpa_at_shared_mu,
+        "green_flex_at_shared_mu": green_flex_at_shared_mu,
+        "green_rpa_at_dressed_zero_mu": green_rpa_at_dressed_zero_mu,
+        "green_flex_at_dressed_zero_mu": green_flex_at_dressed_zero_mu,
+        "chi0q_from_rpa_green": chi0q_from_rpa_green,
+        "chi0q_from_flex_green": chi0q_from_flex_green,
+        "assertion1": assertion1,
+        "assertion2": assertion2,
+        "assertion3": assertion3,
+        "assertion4": assertion4,
+        "assertion5": assertion5,
+    }
+
+
+# The benign fixture is cell 8's (general.ring.onsite_u_v_hund.mu, E2,
+# T=2.0); the FC conditioning fixture is cell 38's (this task's own
+# row) -- looked up from CELLS rather than duplicated, so both stay
+# tied to the registry's actual fixture values.
+_DIAGNOSTIC_BENIGN_FIXTURE = next(
+    c for c in CELLS if c.cell_id == "general.ring.onsite_u_v_hund.mu"
+).fixture
+_DIAGNOSTIC_FC_FIXTURE = next(
+    c for c in CELLS if c.cell_id == "general.ring.onsite_coulombinter.conditioning.mu"
+).fixture
+
+
+class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
+    """The five ORDERED assertions of the mu/Green divergence diagnostic
+    (Task 6), run on the BENIGN fixture (cell 8's) -- proving the
+    diagnostic apparatus itself stays inside its ``*_diag``/``chi0q_mu``
+    ceilings under ordinary conditions. The amplified (FC) case is
+    ``TestConditioningAmplification`` below; see this module's own
+    section docstring (above ``_assert_max_diff_within``) for the full
+    adapter contract, exact call signatures, and Step-5 issue (#160).
+
+    Five SEPARATE, independently-discoverable test methods (one per
+    assertion) sharing ONE diagnostic run via ``setUpClass`` -- the
+    apparatus is deterministic and side-effect-free per call, so
+    computing it once and asserting five times is equivalent to five
+    independent runs, without repeating the (cheap but non-trivial)
+    solver construction five times.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.values = _diagnostic_residuals(_DIAGNOSTIC_BENIGN_FIXTURE)
+
+    def test_1_shared_mu_identity_control(self):
+        v = self.values
+        assert_scalar_within(v["mu_rpa"], v["mu_flex_instance"], POLICY_CEILINGS["mu_diag"])
+
+    def test_2_the_mu_seam(self):
+        v = self.values
+        assert_scalar_within(
+            v["mu_rpa"], v["mu_flex_dressed_zero"], POLICY_CEILINGS["mu_diag"]
+        )
+
+    def test_3_green_builder_seam_bare(self):
+        v = self.values
+        _assert_max_diff_within(
+            v["green_rpa_at_shared_mu"], v["green_flex_at_shared_mu"],
+            POLICY_CEILINGS["green_diag"],
+            "assertion 3 (Green-builder seam, bare, at the shared mu)",
+        )
+
+    def test_4_composed_seam_dressed_zero_sigma(self):
+        v = self.values
+        _assert_max_diff_within(
+            v["green_rpa_at_dressed_zero_mu"], v["green_flex_at_dressed_zero_mu"],
+            POLICY_CEILINGS["green_diag"],
+            "assertion 4 (composed seam, at _find_mu_dressed's Sigma=0 mu)",
+        )
+
+    def test_5_downstream_chi0q(self):
+        v = self.values
+        _assert_max_diff_within(
+            v["chi0q_from_rpa_green"], v["chi0q_from_flex_green"],
+            POLICY_CEILINGS["chi0q_mu"],
+            "assertion 5 (downstream chi0q from assertion 3's two Greens)",
+        )
+
+
+class TestConditioningAmplification(unittest.TestCase):
+    """Cell 38's amplification obligation (Appendix A G6, plan Task 6
+    Step 2): the SAME diagnostic apparatus (``_diagnostic_residuals``),
+    run independently on the benign fixture (cell 8's) and the FC
+    conditioning fixture (cell 38's), must show >= 10x amplification on
+    AT LEAST ONE of the three seam residuals -- assertion 2 (the mu
+    seam), assertion 4 (the composed seam), assertion 5 (downstream
+    chi0q) -- with ``max(residual, 1e-15)`` denominators (the plan's
+    rule; an exactly-zero benign residual, as measured on assertion 2
+    here, would otherwise divide by zero).
+
+    MONOTONICITY DERIVATION (why halving T is the calibration lever):
+    reducing T sharpens the Fermi step (``RPA._find_mu``'s
+    ``_fermi`` / ``FLEX._fermi_occupation``) against a near-degenerate
+    H0 eigenvalue cluster. On the FC fixture's actual CellShape=(4,4,1)
+    16-k-point mesh, H0's eigenvalues are
+    ``[-3,-2,-2,-2,-2,-1,-1,-1,-1,1,1,2,2,2,2,5]``; filling=0.5 (one-spin
+    target 8 of 16 states) pins the Fermi level EXACTLY inside the
+    4-fold-degenerate eps=-1.0 cluster -- a coarse-mesh analogue of a van
+    Hove shoulder (a finer 64x64 mesh on the same dispersion shows the
+    true DOS peak near eps~-0.93, consistent with this cluster; see cell
+    38's notes in equivalence_cells.py). dN/dmu grows as T shrinks near
+    a near-degenerate manifold, so the two INDEPENDENT mu-root-finders
+    (RPA's scipy bisect+Newton on the non-interacting Fermi count vs
+    FLEX's safeguarded-Newton eigenvalue root on Sigma=0,
+    ``_find_mu_dressed``) settle at their own numerical fixed points
+    inside an increasingly narrow-but-nonzero window -- amplifying their
+    disagreement as T shrinks. This predicts assertion 2's residual
+    grows monotonically as T is halved; measured (Task 6, local,
+    diagnostic-only -- not gated here) at T=0.2/0.1/0.05 on this
+    fixture: 1.070e-12 -> 1.514e-12 -> 1.687e-12, confirming the trend.
+
+    T=0.2 (Appendix A's stated starting value) already clears the >=10x
+    bar on assertion 2 ALONE by roughly three orders of magnitude, so no
+    halve-T re-choice was needed for this task -- the single logged
+    attempt is in ``tests/equivalence_calibration_log.md``.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.benign = _diagnostic_residuals(_DIAGNOSTIC_BENIGN_FIXTURE)
+        cls.fc = _diagnostic_residuals(_DIAGNOSTIC_FC_FIXTURE)
+
+    def test_at_least_one_seam_amplifies_at_least_tenfold(self):
+        benign = self.benign
+        fc = self.fc
+        keys = ("assertion2", "assertion4", "assertion5")
+        ratios = {key: fc[key] / max(benign[key], 1e-15) for key in keys}
+        self.assertTrue(
+            any(ratio >= 10.0 for ratio in ratios.values()),
+            "conditioning amplification criterion (cell 38, Appendix A "
+            "G6) failed: none of the seam residuals amplified >= 10x "
+            "from the benign fixture to FC -- CURRENT measured ratios "
+            "{!r} (benign residuals {!r}, FC residuals {!r})".format(
+                ratios,
+                {key: benign[key] for key in keys},
+                {key: fc[key] for key in keys},
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
