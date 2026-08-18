@@ -14,13 +14,17 @@ from __future__ import annotations
 import unittest
 from types import MappingProxyType
 
+import numpy as np
+
 from tests.equivalence_cells import (
     CELLS,
+    COMPARATORS,
     COVERAGE_OBLIGATIONS,
     POLICY_CEILINGS,
     PROOF_STEP_TYPES,
     PROVENANCE,
     Cell,
+    Comparator,
     DivergingSpec,
     Diverges,
     Equiv,
@@ -29,16 +33,71 @@ from tests.equivalence_cells import (
     ExecuteReject,
     FixtureSpec,
     ObservableSpec,
+    OutputBundle,
     PairedInvarianceRun,
     ExecuteRun,
     Site,
     SolverProof,
     Status,
     SupplementaryLink,
+    assert_diverges_bracket,
+    assert_scalar_within,
     method_name,
     relationship,
+    scalar_residual,
     validate_registry,
 )
+
+
+# ---------------------------------------------------------------------------
+# extract_bundle -- TEST-module side (it touches solver objects): builds
+# an ``OutputBundle`` from one solver's post-solve ``green_info``. The
+# registry module (``tests/equivalence_cells.py``) never imports solver
+# code; this function is the seam where a concrete ``solver_obj``/
+# ``green_info`` pair (Task 3's ``build_solver``, or -- for these unit
+# tests -- a small stand-in) becomes the comparator-facing bundle type.
+# ---------------------------------------------------------------------------
+
+
+def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
+    """Build the ``OutputBundle`` a comparator maps over.
+
+    ``solver_kind`` selects the extraction shape:
+
+    * ``"rpa"`` reads ``green_info["chi0q"]``/``green_info["chiq"]`` --
+      RPA never populates the channel-decomposed keys
+      (``src/hwave/solver/rpa.py:2110`` sets ``chiq``; there is no
+      ``chiq_s``/``chiq_c`` write anywhere in ``rpa.py``), so those two
+      bundle fields are left ``None``.
+    * ``"flex"`` reads ``green_info["chi0q"]``/``green_info["chiq_s"]``/
+      ``green_info["chiq_c"]`` -- FLEX never populates a combined
+      ``"chiq"`` key (``src/hwave/solver/flex.py:746-748`` sets exactly
+      ``chi0q``/``chiq_s``/``chiq_c``), so ``chiq`` is left ``None``.
+
+    ``solver_obj`` is accepted for parity with the run-time callers
+    (Task 3's ``build_solver`` produces the ``(solver_obj, green_info)``
+    pair together) and is not otherwise inspected here -- every value
+    this function returns comes from ``green_info``.
+    """
+
+    if solver_kind == "rpa":
+        return OutputBundle(
+            chi0q=np.asarray(green_info["chi0q"]),
+            chiq=np.asarray(green_info["chiq"]),
+            chiq_s=None,
+            chiq_c=None,
+        )
+    if solver_kind == "flex":
+        return OutputBundle(
+            chi0q=np.asarray(green_info["chi0q"]),
+            chiq=None,
+            chiq_s=np.asarray(green_info["chiq_s"]),
+            chiq_c=np.asarray(green_info["chiq_c"]),
+        )
+    raise ValueError(
+        "extract_bundle: solver_kind must be 'rpa' or 'flex', got "
+        "{!r}".format(solver_kind)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +722,335 @@ class TestRelationship(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             relationship(cell)
+
+
+class TestExtractBundle(unittest.TestCase):
+    """``extract_bundle`` -- fake ``green_info`` dicts, no real solver."""
+
+    def test_rpa_bundle_reads_chi0q_and_chiq_leaves_channels_none(self):
+        green_info = {"chi0q": np.array([[1.0 + 2.0j]]), "chiq": np.array([[3.0 - 4.0j]])}
+        bundle = extract_bundle(object(), green_info, "rpa")
+        np.testing.assert_array_equal(bundle.chi0q, green_info["chi0q"])
+        np.testing.assert_array_equal(bundle.chiq, green_info["chiq"])
+        self.assertIsNone(bundle.chiq_s)
+        self.assertIsNone(bundle.chiq_c)
+
+    def test_flex_bundle_reads_channels_leaves_chiq_none(self):
+        green_info = {
+            "chi0q": np.array([[1.0 + 2.0j]]),
+            "chiq_s": np.array([[5.0 + 6.0j]]),
+            "chiq_c": np.array([[7.0 - 8.0j]]),
+        }
+        bundle = extract_bundle(object(), green_info, "flex")
+        np.testing.assert_array_equal(bundle.chi0q, green_info["chi0q"])
+        np.testing.assert_array_equal(bundle.chiq_s, green_info["chiq_s"])
+        np.testing.assert_array_equal(bundle.chiq_c, green_info["chiq_c"])
+        self.assertIsNone(bundle.chiq)
+
+    def test_unknown_solver_kind_raises(self):
+        with self.assertRaises(ValueError):
+            extract_bundle(object(), {"chi0q": np.zeros((1,))}, "flux")
+
+
+class TestScalarUtilities(unittest.TestCase):
+    """``scalar_residual`` / ``assert_scalar_within`` -- the Task-6
+    diagnostic's mu checkpoints (never a COMPARATORS entry).
+    """
+
+    def test_scalar_residual_exact_match(self):
+        self.assertEqual(scalar_residual(2.0, 2.0), 0.0)
+
+    def test_scalar_residual_computes_abs_diff(self):
+        self.assertEqual(scalar_residual(2.0, 5.0), 3.0)
+        self.assertEqual(scalar_residual(5.0, 2.0), 3.0)
+
+    def test_scalar_residual_rejects_nan(self):
+        with self.assertRaises(ValueError):
+            scalar_residual(float("nan"), 1.0)
+        with self.assertRaises(ValueError):
+            scalar_residual(1.0, float("inf"))
+
+    def test_assert_scalar_within_passes_below_atol(self):
+        assert_scalar_within(1.0, 1.2, atol=0.5)  # must not raise
+
+    def test_assert_scalar_within_passes_at_exact_atol_boundary(self):
+        assert_scalar_within(1.0, 1.5, atol=0.5)  # equality passes (<=)
+
+    def test_assert_scalar_within_fails_above_atol(self):
+        with self.assertRaises(AssertionError):
+            assert_scalar_within(1.0, 1.51, atol=0.5)
+
+
+class TestDivergesBracket(unittest.TestCase):
+    """``assert_diverges_bracket`` -- the two-sided ``(ceiling,
+    regression_bound]`` semantics at the assertion-helper level.
+    """
+
+    CEILING = 1e-10
+    BOUND = 1e-9
+
+    def test_equality_at_ceiling_fails_the_strict_lower_check(self):
+        with self.assertRaises(AssertionError) as ctx:
+            assert_diverges_bracket(self.CEILING, self.CEILING, self.BOUND)
+        self.assertIn("recalibrate", str(ctx.exception))
+
+    def test_below_ceiling_also_heals_and_asks_to_recalibrate(self):
+        with self.assertRaises(AssertionError) as ctx:
+            assert_diverges_bracket(self.CEILING * 0.5, self.CEILING, self.BOUND)
+        self.assertIn("recalibrate", str(ctx.exception))
+
+    def test_strictly_above_ceiling_and_below_bound_passes(self):
+        assert_diverges_bracket(self.CEILING * 5, self.CEILING, self.BOUND)  # must not raise
+
+    def test_equality_at_regression_bound_passes(self):
+        assert_diverges_bracket(self.BOUND, self.CEILING, self.BOUND)  # must not raise
+
+    def test_above_regression_bound_fails(self):
+        with self.assertRaises(AssertionError) as ctx:
+            assert_diverges_bracket(self.BOUND * 1.0001, self.CEILING, self.BOUND)
+        self.assertIn("regression_bound", str(ctx.exception))
+
+
+class TestComparatorRegistryShape(unittest.TestCase):
+    """``COMPARATORS`` has exactly the three keys the plan's Appendix A
+    cell matrix references -- no ``"scalar"`` key.
+    """
+
+    def test_exact_key_set(self):
+        self.assertEqual(
+            set(COMPARATORS.keys()),
+            {"identity", "general_from_flex_channels", "reduced_blocks"},
+        )
+
+    def test_every_value_is_a_comparator(self):
+        for name, comparator in COMPARATORS.items():
+            with self.subTest(name=name):
+                self.assertIsInstance(comparator, Comparator)
+
+
+class TestIdentityComparator(unittest.TestCase):
+    """``identity`` on chi0q -- hand-enumerated small asymmetric arrays."""
+
+    def _bundle(self, chi0q):
+        return OutputBundle(chi0q=chi0q, chiq=None, chiq_s=None, chiq_c=None)
+
+    def test_map_returns_the_raw_chi0q_pair(self):
+        rpa_chi0q = np.array([[1.0 + 2.0j, -3.0 + 0.5j], [0.25 - 1.5j, 7.0 + 7.0j]])
+        flex_chi0q = np.array([[1.0 + 2.0j, -3.0 + 0.5j], [0.25 - 1.5j, 7.0 + 7.0j]])
+        comparator = COMPARATORS["identity"]
+        a, b = comparator.map("chi0q", self._bundle(rpa_chi0q), self._bundle(flex_chi0q))
+        np.testing.assert_array_equal(a, rpa_chi0q)
+        np.testing.assert_array_equal(b, flex_chi0q)
+        self.assertEqual(comparator.residual(a, b), 0.0)
+        comparator.assert_within(a, b, atol=0.0)  # must not raise
+
+    def test_max_diff_value_and_index_are_reported_on_failure(self):
+        rpa_chi0q = np.array([[1.0 + 2.0j, -3.0 + 0.5j], [0.25 - 1.5j, 7.0 + 7.0j]])
+        flex_chi0q = rpa_chi0q.copy()
+        flex_chi0q[1, 0] = rpa_chi0q[1, 0] + 0.75  # a single, known perturbation
+        comparator = COMPARATORS["identity"]
+        a, b = comparator.map("chi0q", self._bundle(rpa_chi0q), self._bundle(flex_chi0q))
+        self.assertAlmostEqual(comparator.residual(a, b), 0.75)
+        with self.assertRaises(AssertionError) as ctx:
+            comparator.assert_within(a, b, atol=0.5)
+        message = str(ctx.exception)
+        self.assertIn("0.75", message)
+        self.assertIn("(1, 0)", message)
+        comparator.assert_within(a, b, atol=0.75)  # equality passes (<=)
+
+    def test_shape_mismatch_is_rejected(self):
+        comparator = COMPARATORS["identity"]
+        a = np.zeros((2, 2), dtype=complex)
+        b = np.zeros((2, 3), dtype=complex)
+        with self.assertRaises(ValueError):
+            comparator.residual(a, b)
+        with self.assertRaises(ValueError):
+            comparator.assert_within(a, b, atol=1.0)
+
+    def test_nan_is_rejected(self):
+        comparator = COMPARATORS["identity"]
+        a = np.array([[1.0 + 0.0j, float("nan") + 0.0j]])
+        b = np.array([[1.0 + 0.0j, 0.0 + 0.0j]])
+        with self.assertRaises(ValueError):
+            comparator.residual(a, b)
+        with self.assertRaises(ValueError):
+            comparator.assert_within(a, b, atol=1.0)
+
+    def test_unset_bundle_field_is_rejected(self):
+        comparator = COMPARATORS["identity"]
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=None, chiq=None, chiq_s=None, chiq_c=None)
+        with self.assertRaises(ValueError):
+            comparator.map("chi0q", rpa_bundle, flex_bundle)
+
+
+class TestGeneralFromFlexChannelsComparator(unittest.TestCase):
+    """``general_from_flex_channels`` -- the 0.5*(cc+-cs) same/diff
+    reconstruction, verbatim from ``tests/test_rpa_flex_oneshot_
+    equivalence.py:88-99``, on a hand-enumerated norb=2 case.
+
+    ``cc``/``cs`` are built so that, writing ``n = p*8 + q*4 + r*2 + u``
+    for the local (norb=2)^4 index tuple (p, q, r, u):
+
+        cc[n] = 2*(n+1) + (200+2n)j        cs[n] = (100+2n) + (-2n-2)j
+
+    so the reconstruction collapses to closed forms computed BY HAND
+    (not by calling the comparator under test):
+
+        same[n] = 0.5*(cc[n]+cs[n]) = (2n+51) + 99j
+        diff[n] = 0.5*(cc[n]-cs[n]) = -49 + (2n+101)j
+    """
+
+    def _cc_cs(self):
+        cc_flat = [complex(2 * n + 2, 200 + 2 * n) for n in range(16)]
+        cs_flat = [complex(100 + 2 * n, -2 * n - 2) for n in range(16)]
+        cc = np.array(cc_flat, dtype=complex).reshape(1, 1, 2, 2, 2, 2)
+        cs = np.array(cs_flat, dtype=complex).reshape(1, 1, 2, 2, 2, 2)
+        return cc, cs
+
+    def _recon_expected(self):
+        same_flat = [complex(2 * n + 51, 99) for n in range(16)]
+        diff_flat = [complex(-49, 2 * n + 101) for n in range(16)]
+        same = np.array(same_flat, dtype=complex).reshape(2, 2, 2, 2)
+        diff = np.array(diff_flat, dtype=complex).reshape(2, 2, 2, 2)
+        recon = np.zeros((1, 1, 4, 4, 4, 4), dtype=complex)
+        recon[0, 0, 0:2, 0:2, 0:2, 0:2] = same
+        recon[0, 0, 0:2, 0:2, 2:4, 2:4] = diff
+        recon[0, 0, 2:4, 2:4, 0:2, 0:2] = diff
+        recon[0, 0, 2:4, 2:4, 2:4, 2:4] = same
+        return recon
+
+    def test_exact_match_hand_enumerated(self):
+        cc, cs = self._cc_cs()
+        recon_expected = self._recon_expected()
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=recon_expected.copy(), chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=cs, chiq_c=cc)
+
+        comparator = COMPARATORS["general_from_flex_channels"]
+        a, b = comparator.map("chiq", rpa_bundle, flex_bundle)
+        np.testing.assert_array_equal(a, recon_expected)
+        np.testing.assert_array_equal(b, recon_expected)
+        self.assertEqual(comparator.residual(a, b), 0.0)
+        comparator.assert_within(a, b, atol=0.0)  # must not raise
+
+    def test_known_perturbation_is_caught_with_value_and_index(self):
+        cc, cs = self._cc_cs()
+        recon_expected = self._recon_expected()
+        perturbed = recon_expected.copy()
+        # index (0, 0, 1, 1, 3, 3): s1=0 (local p=q=1), s2=1 (local r=u=1)
+        # -> n = 1*8+1*4+1*2+1 = 15 -> the "diff" block, value -49+131j.
+        self.assertEqual(perturbed[0, 0, 1, 1, 3, 3], complex(-49, 131))
+        perturbed[0, 0, 1, 1, 3, 3] = perturbed[0, 0, 1, 1, 3, 3] + 0.5
+
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=perturbed, chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=cs, chiq_c=cc)
+        comparator = COMPARATORS["general_from_flex_channels"]
+        a, b = comparator.map("chiq", rpa_bundle, flex_bundle)
+        self.assertAlmostEqual(comparator.residual(a, b), 0.5)
+        with self.assertRaises(AssertionError) as ctx:
+            comparator.assert_within(a, b, atol=0.49)
+        message = str(ctx.exception)
+        self.assertIn("0.5", message)
+        self.assertIn("(0, 0, 1, 1, 3, 3)", message)
+        comparator.assert_within(a, b, atol=0.5)  # equality passes (<=)
+
+    def test_rejects_an_observable_other_than_chiq(self):
+        cc, cs = self._cc_cs()
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=self._recon_expected(), chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=cs, chiq_c=cc)
+        with self.assertRaises(ValueError):
+            COMPARATORS["general_from_flex_channels"].map("chi0q", rpa_bundle, flex_bundle)
+
+    def test_rejects_unset_flex_channels(self):
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=self._recon_expected(), chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=None, chiq_c=None)
+        with self.assertRaises(ValueError):
+            COMPARATORS["general_from_flex_channels"].map("chiq", rpa_bundle, flex_bundle)
+
+
+class TestReducedBlocksComparator(unittest.TestCase):
+    """``reduced_blocks`` -- the uu +- ud mapping from
+    ``TestReducedOneShot`` (``tests/test_rpa_flex_oneshot_equivalence.
+    py:109-134``), on a hand-enumerated norb=2 case.
+
+    Writing ``n = i*2 + j`` for the local (norb=2)^2 index pair:
+
+        uu[n] = (10+n) + (200+n)j          ud[n] = (1+n) + -(n+1)j
+
+    so, computed BY HAND (not by calling the comparator under test):
+
+        cs[n] = uu[n] - ud[n] = 9 + (201+2n)j
+        cc[n] = uu[n] + ud[n] = (11+2n) + 199j
+    """
+
+    def _cq_cs_cc(self):
+        uu_flat = [complex(10 + n, 200 + n) for n in range(4)]
+        ud_flat = [complex(1 + n, -(n + 1)) for n in range(4)]
+        cs_flat = [complex(9, 201 + 2 * n) for n in range(4)]
+        cc_flat = [complex(11 + 2 * n, 199) for n in range(4)]
+
+        uu = np.array(uu_flat, dtype=complex).reshape(2, 2)
+        ud = np.array(ud_flat, dtype=complex).reshape(2, 2)
+        cs = np.array(cs_flat, dtype=complex).reshape(1, 1, 2, 2)
+        cc = np.array(cc_flat, dtype=complex).reshape(1, 1, 2, 2)
+
+        cq = np.zeros((1, 1, 4, 4), dtype=complex)
+        cq[0, 0, 0:2, 0:2] = uu
+        cq[0, 0, 0:2, 2:4] = ud
+        # rows 2:4 are never read by this mapper -- left zero deliberately.
+        return cq, cs, cc, uu, ud
+
+    def test_exact_match_hand_enumerated(self):
+        cq, cs, cc, uu, ud = self._cq_cs_cc()
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=cq, chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=cs, chiq_c=cc)
+
+        comparator = COMPARATORS["reduced_blocks"]
+        a, b = comparator.map("chiq", rpa_bundle, flex_bundle)
+
+        expected_a = np.stack([(uu - ud).reshape(1, 1, 2, 2), (uu + ud).reshape(1, 1, 2, 2)])
+        expected_b = np.stack([cs, cc])
+        np.testing.assert_array_equal(a, expected_a)
+        np.testing.assert_array_equal(b, expected_b)
+        self.assertEqual(comparator.residual(a, b), 0.0)
+        comparator.assert_within(a, b, atol=0.0)  # must not raise
+
+    def test_known_perturbation_is_caught(self):
+        cq, cs, cc, uu, ud = self._cq_cs_cc()
+        perturbed = cq.copy()
+        # 0.25 is exactly representable in binary floating point, so the
+        # resulting residual is exact (no rounding noise at the atol
+        # boundary below).
+        perturbed[0, 0, 1, 3] = perturbed[0, 0, 1, 3] + 0.25  # ud[1,1] (n=3)
+
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=perturbed, chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=cs, chiq_c=cc)
+        comparator = COMPARATORS["reduced_blocks"]
+        a, b = comparator.map("chiq", rpa_bundle, flex_bundle)
+        self.assertEqual(comparator.residual(a, b), 0.25)
+        with self.assertRaises(AssertionError):
+            comparator.assert_within(a, b, atol=0.24)
+        comparator.assert_within(a, b, atol=0.25)  # equality passes (<=)
+
+    def test_rejects_an_observable_other_than_chiq(self):
+        cq, cs, cc, _uu, _ud = self._cq_cs_cc()
+        rpa_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=cq, chiq_s=None, chiq_c=None)
+        flex_bundle = OutputBundle(chi0q=np.zeros((1, 1)), chiq=None, chiq_s=cs, chiq_c=cc)
+        with self.assertRaises(ValueError):
+            COMPARATORS["reduced_blocks"].map("chi0q", rpa_bundle, flex_bundle)
+
+    def test_odd_trailing_axis_is_rejected(self):
+        rpa_bundle = OutputBundle(
+            chi0q=np.zeros((1, 1)), chiq=np.zeros((1, 1, 3, 3), dtype=complex), chiq_s=None, chiq_c=None
+        )
+        flex_bundle = OutputBundle(
+            chi0q=np.zeros((1, 1)),
+            chiq=None,
+            chiq_s=np.zeros((1, 1, 1, 1), dtype=complex),
+            chiq_c=np.zeros((1, 1, 1, 1), dtype=complex),
+        )
+        with self.assertRaises(ValueError):
+            COMPARATORS["reduced_blocks"].map("chiq", rpa_bundle, flex_bundle)
 
 
 if __name__ == "__main__":  # pragma: no cover

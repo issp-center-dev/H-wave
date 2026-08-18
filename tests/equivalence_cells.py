@@ -38,11 +38,14 @@ task -- this module ships the machinery (types + validators), not the
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple
+
+import numpy as np
 
 
 # ---------------------------------------------------------------------------
@@ -854,3 +857,304 @@ def validate_registry(cells) -> list:
             errors.append("coverage obligation {!r} is not satisfied".format(name))
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Output bundles and the named comparator registry (Task 2)
+# ---------------------------------------------------------------------------
+#
+# This section is still SIDE-EFFECT-FREE: ``numpy`` is the only import it
+# adds (explicitly allowed by the plan's Task 2 interface -- "the
+# comparators live in the REGISTRY module (pure numpy ... still no
+# unittest/solver imports)"). ``extract_bundle`` -- the function that
+# actually touches a solver object's ``green_info`` -- lives in
+# ``tests/test_rpa_flex_equivalence_table.py``, not here.
+#
+# Comparator policy (Global Constraints, binding): elementwise
+# ``abs(a - b) <= atol`` on complex values, NO rtol; every comparator
+# checks exact shape then all-finite FIRST; on failure the diagnostic
+# reports both the max-|diff| VALUE and its INDEX.
+
+
+class OutputBundle(NamedTuple):
+    """One solver side's post-solve observable bundle -- the input to
+    every ``Comparator.map``.
+
+    NO ``mu`` field (spec amendment, 2026-08-18, recorded in
+    ``docs/superpowers/specs/2026-08-18-equivalence-table-design.md``):
+    RPA never retains its solved chemical potential as a public
+    post-solve attribute (it is a local variable of the solve) and
+    FLEX's stored ``mu`` is the post-mix DRESSED value -- a different
+    algorithmic state. The mu/Green seam is owned exclusively by the
+    Task-6 divergence diagnostic via ``scalar_residual`` /
+    ``assert_scalar_within`` below, never a per-cell ``COMPARATORS``
+    entry.
+
+    ``chiq`` is populated by RPA (both ``general`` and ``reduced``
+    schemes, ``src/hwave/solver/rpa.py:2110``) and left ``None`` by
+    FLEX, which never writes a combined ``"chiq"`` key. ``chiq_s`` /
+    ``chiq_c`` are populated by FLEX (``src/hwave/solver/flex.py:
+    746-748``) and left ``None`` by RPA.
+    """
+
+    chi0q: np.ndarray
+    chiq: Optional[np.ndarray]
+    chiq_s: Optional[np.ndarray]
+    chiq_c: Optional[np.ndarray]
+
+
+def _require_field(bundle: OutputBundle, field: str, side: str) -> np.ndarray:
+    value = getattr(bundle, field)
+    if value is None:
+        raise ValueError(
+            "comparator: {} bundle field {!r} is unset (None)".format(side, field)
+        )
+    return np.asarray(value)
+
+
+def _map_identity(observable: str, rpa: OutputBundle, flex: OutputBundle) -> Tuple[np.ndarray, np.ndarray]:
+    """chi0q from both bundles: the RPA and FLEX bare bubble is the
+    identical Lindhard object -- no dressing at zeroth order, so the two
+    solvers' ``green_info["chi0q"]`` must match under the fixed/mu
+    comparator policy verbatim.
+    """
+
+    a = _require_field(rpa, observable, "rpa")
+    b = _require_field(flex, observable, "flex")
+    return a, b
+
+
+def _map_general_from_flex_channels(
+    observable: str, rpa: OutputBundle, flex: OutputBundle
+) -> Tuple[np.ndarray, np.ndarray]:
+    """RPA's ``chiq`` vs the FLEX channel same/diff reconstruction,
+    copied VERBATIM from
+    ``tests/test_rpa_flex_oneshot_equivalence.py:88-99``
+    (``TestGeneralSchemeOneShot.test_multiorbital_onsite_cells_match_flex``)::
+
+        chiq = np.asarray(gr['chiq'])
+        cs = np.asarray(gf['chiq_s'])
+        cc = np.asarray(gf['chiq_c'])
+        recon = np.zeros_like(chiq)
+        same = 0.5 * (cc + cs)
+        diff = 0.5 * (cc - cs)
+        for s1 in (0, 1):
+            for s2 in (0, 1):
+                blk = same if s1 == s2 else diff
+                recon[:, :,
+                      s1*norb:(s1+1)*norb, s1*norb:(s1+1)*norb,
+                      s2*norb:(s2+1)*norb, s2*norb:(s2+1)*norb] = blk
+
+    ``norb`` is read from ``flex.chiq_c``'s trailing axis (the FLEX
+    channel arrays are already exactly ``norb``-sized on every axis --
+    unlike RPA's ``chiq``, which carries the full ``2*norb`` spin-orbital
+    axes this reconstruction rebuilds).
+    """
+
+    if observable != "chiq":
+        raise ValueError(
+            "general_from_flex_channels comparator only maps 'chiq', got "
+            "observable={!r}".format(observable)
+        )
+    chiq = _require_field(rpa, "chiq", "rpa")
+    cs = _require_field(flex, "chiq_s", "flex")
+    cc = _require_field(flex, "chiq_c", "flex")
+
+    norb = cc.shape[-1]
+    recon = np.zeros_like(chiq)
+    same = 0.5 * (cc + cs)
+    diff = 0.5 * (cc - cs)
+    for s1 in (0, 1):
+        for s2 in (0, 1):
+            blk = same if s1 == s2 else diff
+            recon[
+                :, :,
+                s1 * norb:(s1 + 1) * norb, s1 * norb:(s1 + 1) * norb,
+                s2 * norb:(s2 + 1) * norb, s2 * norb:(s2 + 1) * norb,
+            ] = blk
+    return chiq, recon
+
+
+def _map_reduced_blocks(
+    observable: str, rpa: OutputBundle, flex: OutputBundle
+) -> Tuple[np.ndarray, np.ndarray]:
+    """RPA's ``chiq`` uu/ud blocks vs FLEX's spin/charge channels,
+    copied VERBATIM from ``tests/test_rpa_flex_oneshot_equivalence.py``'s
+    ``TestReducedOneShot`` (``_blocks`` + ``test_matrix_cells``,
+    lines 105-134)::
+
+        def _blocks(self, cq, norb):
+            uu = cq[:, :, :norb, :norb]
+            ud = cq[:, :, :norb, norb:]
+            return uu, ud
+        ...
+        uu, ud = self._blocks(np.asarray(gr['chiq']), norb)
+        cs = np.asarray(gf['chiq_s'])[:, :, :norb, :norb]
+        cc = np.asarray(gf['chiq_c'])[:, :, :norb, :norb]
+        np.testing.assert_allclose(uu - ud, cs, rtol=0.0, atol=1e-12)
+        np.testing.assert_allclose(uu + ud, cc, rtol=0.0, atol=1e-12)
+
+    Both equations are folded into ONE elementwise comparison by
+    stacking the two block pairs along a new leading axis: index 0 is
+    the spin channel (``uu - ud`` vs ``cs``), index 1 is the charge
+    channel (``uu + ud`` vs ``cc``). ``norb`` is read from ``rpa.chiq``'s
+    trailing axis (``2 * norb`` -- the uu/ud split point), matching how
+    the oneshot suite derives it from the fixture rather than from the
+    (already ``norb``-sized) FLEX channel arrays.
+    """
+
+    if observable != "chiq":
+        raise ValueError(
+            "reduced_blocks comparator only maps 'chiq', got "
+            "observable={!r}".format(observable)
+        )
+    cq = _require_field(rpa, "chiq", "rpa")
+    cs_full = _require_field(flex, "chiq_s", "flex")
+    cc_full = _require_field(flex, "chiq_c", "flex")
+
+    if cq.shape[-1] % 2 != 0:
+        raise ValueError(
+            "reduced_blocks: rpa.chiq's trailing axis {!r} is not even "
+            "(cannot split into uu/ud norb halves)".format(cq.shape[-1])
+        )
+    norb = cq.shape[-1] // 2
+    uu = cq[:, :, :norb, :norb]
+    ud = cq[:, :, :norb, norb:]
+    cs = cs_full[:, :, :norb, :norb]
+    cc = cc_full[:, :, :norb, :norb]
+
+    a = np.stack([uu - ud, uu + ud])
+    b = np.stack([cs, cc])
+    return a, b
+
+
+def _check_comparable(a: np.ndarray, b: np.ndarray) -> None:
+    """Exact-shape then all-finite FIRST -- binding comparator policy
+    order. Raises ``ValueError`` (a structural precondition failure, not
+    a numeric-magnitude failure -- that distinction is what lets
+    ``assert_within`` reserve ``AssertionError`` for genuine tolerance
+    violations).
+    """
+
+    if a.shape != b.shape:
+        raise ValueError(
+            "comparator: shape mismatch {!r} vs {!r}".format(a.shape, b.shape)
+        )
+    if not np.all(np.isfinite(a)):
+        raise ValueError("comparator: the first array contains non-finite values (NaN/Inf)")
+    if not np.all(np.isfinite(b)):
+        raise ValueError("comparator: the second array contains non-finite values (NaN/Inf)")
+
+
+class Comparator:
+    """A named, pure-numpy elementwise comparator.
+
+    ``map`` extracts the two arrays to compare from a pair of
+    ``OutputBundle`` records for one named ``observable``. ``residual``
+    and ``assert_within`` are the SHARED comparison primitives every
+    named comparator uses -- exact shape then all-finite first (see
+    ``_check_comparable``), then the elementwise complex
+    ``abs(a - b)`` max (comparator policy: NO rtol). ``assert_within``
+    reports both the max-|diff| VALUE and its INDEX on failure.
+    """
+
+    def __init__(self, name: str, mapper: Callable[[str, OutputBundle, OutputBundle], Tuple[np.ndarray, np.ndarray]]) -> None:
+        self.name = name
+        self._mapper = mapper
+
+    def map(self, observable: str, rpa: OutputBundle, flex: OutputBundle) -> Tuple[np.ndarray, np.ndarray]:
+        return self._mapper(observable, rpa, flex)
+
+    def residual(self, a, b) -> float:
+        a = np.asarray(a)
+        b = np.asarray(b)
+        _check_comparable(a, b)
+        return float(np.max(np.abs(a - b)))
+
+    def assert_within(self, a, b, atol: float) -> None:
+        a = np.asarray(a)
+        b = np.asarray(b)
+        _check_comparable(a, b)
+        diff = np.abs(a - b)
+        raw_idx = np.unravel_index(int(np.argmax(diff)), diff.shape)
+        idx = tuple(int(i) for i in raw_idx)
+        max_diff = float(diff[idx])
+        if max_diff > atol:
+            raise AssertionError(
+                "{}: max |diff| = {!r} at index {!r} exceeds atol "
+                "{!r}".format(self.name, max_diff, idx, atol)
+            )
+
+
+# The CLOSED comparator registry -- exactly the three keys the plan's
+# Appendix A cell matrix references (no "scalar" key: the diagnostic's
+# scalar mu checkpoints use ``scalar_residual``/``assert_scalar_within``
+# below, never a ``COMPARATORS`` entry).
+COMPARATORS: Dict[str, Comparator] = {
+    "identity": Comparator("identity", _map_identity),
+    "general_from_flex_channels": Comparator(
+        "general_from_flex_channels", _map_general_from_flex_channels
+    ),
+    "reduced_blocks": Comparator("reduced_blocks", _map_reduced_blocks),
+}
+
+
+# ---------------------------------------------------------------------------
+# Registry-level scalar utilities -- the Task-6 diagnostic's mu
+# checkpoints (never a COMPARATORS entry: no per-cell mu, spec amendment).
+# ---------------------------------------------------------------------------
+
+
+def scalar_residual(a: float, b: float) -> float:
+    """The scalar analogue of ``Comparator.residual``: ``abs(a - b)``,
+    all-finite first. Used by the Task-6 divergence diagnostic's mu/
+    Green checkpoints, which are NOT per-cell ``COMPARATORS`` entries.
+    """
+
+    if not (math.isfinite(a) and math.isfinite(b)):
+        raise ValueError(
+            "scalar_residual requires finite inputs, got a={!r} b={!r}".format(a, b)
+        )
+    return abs(a - b)
+
+
+def assert_scalar_within(a: float, b: float, atol: float) -> None:
+    """The scalar analogue of ``Comparator.assert_within``: raises
+    ``AssertionError`` iff ``scalar_residual(a, b) > atol`` (equality
+    passes -- comparator policy: ``abs(a - b) <= atol``).
+    """
+
+    residual = scalar_residual(a, b)
+    if residual > atol:
+        raise AssertionError(
+            "scalar residual {!r} (a={!r}, b={!r}) exceeds atol "
+            "{!r}".format(residual, a, b, atol)
+        )
+
+
+def assert_diverges_bracket(residual: float, ceiling: float, regression_bound: float) -> None:
+    """Assert ``residual`` lies in the ``Diverges`` two-sided bracket
+    ``(ceiling, regression_bound]`` -- the assertion-helper-level
+    counterpart of the schema invariant ``DivergingSpec`` enforces
+    structurally (``ceiling < regression_bound``). STRICT lower edge:
+    ``residual > ceiling``, so equality with the ceiling never
+    classifies as Diverges -- a residual that HEALED back to (or below)
+    the ceiling means the cell no longer diverges and must be
+    recalibrated back to ``Equiv`` (the spec's truth invariant,
+    ``docs/superpowers/specs/2026-08-18-equivalence-table-design.md``);
+    the raised message says so explicitly. INCLUSIVE upper edge:
+    ``residual <= regression_bound``, a further-drift regression guard.
+    """
+
+    if residual <= ceiling:
+        raise AssertionError(
+            "residual {!r} healed to <= ceiling {!r}; recalibrate this "
+            "cell back to Equiv".format(residual, ceiling)
+        )
+    if residual > regression_bound:
+        raise AssertionError(
+            "residual {!r} exceeds the regression_bound {!r}; this cell "
+            "has regressed further than the calibrated bound".format(
+                residual, regression_bound
+            )
+        )
