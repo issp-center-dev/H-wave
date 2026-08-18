@@ -21,6 +21,13 @@ The algorithm proceeds in the following steps:
 3. Build the RPA pairing vertex :math:`V(\mathbf{q})`.
 4. Solve the linearized Eliashberg equation for the leading eigenvalue.
 
+.. seealso::
+
+   :doc:`rpa_flex_equivalence` records, for a set of small reference
+   inputs, which configurations the FLEX solver and the RPA solver each
+   accept, and how closely the susceptibilities of the two agree where
+   both run.
+
 
 Green's function
 *****************************

@@ -8,4 +8,5 @@ Algorithms
    uhf
    rpa
    eliashberg
+   rpa_flex_equivalence
  

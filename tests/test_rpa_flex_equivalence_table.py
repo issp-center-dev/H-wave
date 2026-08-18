@@ -3015,6 +3015,137 @@ class TestBenchmarkRegistryTie(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestRenderedEquivalenceTableDrift (Task 8): the committed user-facing
+# page ``docs/en/source/algorithm/rpa_flex_equivalence.rst`` must be
+# EXACTLY what ``docs/tools/render_equivalence_table.py`` renders from
+# this registry. The Sphinx build never imports the registry (the RST is
+# static); this in-memory drift test is what keeps the static page and
+# the measured records from separating. It never writes the repository.
+#
+# ``docs/tools/`` is deliberately NOT an importable package (it holds a
+# developer script, not shipped code), so the renderer is loaded BY FILE
+# PATH via ``importlib.util``. A missing renderer or a missing RST is a
+# FAILURE, never a skip -- an absent artifact is precisely the drift this
+# test exists to catch.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_RENDERER_PATH = os.path.join(
+    _REPO_ROOT, "docs", "tools", "render_equivalence_table.py"
+)
+_RENDERED_RST_PATH = os.path.join(
+    _REPO_ROOT, "docs", "en", "source", "algorithm", "rpa_flex_equivalence.rst"
+)
+_REGENERATE_HINT = "python docs/tools/render_equivalence_table.py --write"
+
+
+def _load_renderer_module():
+    """Load the generator script by file path (``docs/tools`` is not a
+    package). Raises ``AssertionError`` -- a test FAILURE -- when the
+    script is absent, so a deleted generator can never pass as a skip.
+    """
+
+    import importlib.util
+
+    if not os.path.isfile(_RENDERER_PATH):
+        raise AssertionError(
+            "the equivalence-table generator is missing: expected "
+            "docs/tools/render_equivalence_table.py"
+        )
+    spec = importlib.util.spec_from_file_location(
+        "hwave_docs_render_equivalence_table", _RENDERER_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestRenderedEquivalenceTableDrift(unittest.TestCase):
+    def _render(self) -> str:
+        return _load_renderer_module().render()
+
+    def _committed(self) -> str:
+        if not os.path.isfile(_RENDERED_RST_PATH):
+            raise AssertionError(
+                "the committed equivalence-table page is missing: expected "
+                "docs/en/source/algorithm/rpa_flex_equivalence.rst -- "
+                "generate it with `{}`".format(_REGENERATE_HINT)
+            )
+        # newline="" disables universal-newline translation, so the
+        # comparison is against the file's exact bytes on every platform.
+        with open(_RENDERED_RST_PATH, "r", encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def test_committed_page_matches_the_registry_rendering(self):
+        rendered = self._render()
+        committed = self._committed()
+        if rendered != committed:
+            rendered_lines = rendered.splitlines()
+            committed_lines = committed.splitlines()
+            first = None
+            for i, (a, b) in enumerate(zip(committed_lines, rendered_lines)):
+                if a != b:
+                    first = i
+                    break
+            if first is None:
+                first = min(len(committed_lines), len(rendered_lines))
+            detail = (
+                "first difference at line {}:\n  committed: {!r}\n  "
+                "rendered:  {!r}".format(
+                    first + 1,
+                    committed_lines[first] if first < len(committed_lines) else "<end of file>",
+                    rendered_lines[first] if first < len(rendered_lines) else "<end of file>",
+                )
+            )
+            self.maxDiff = 2000
+            self.assertEqual(
+                rendered,
+                committed,
+                "docs/en/source/algorithm/rpa_flex_equivalence.rst has drifted "
+                "from tests/equivalence_cells.py -- regenerate it with `{}` "
+                "and commit the result.\n{}".format(_REGENERATE_HINT, detail),
+            )
+
+    def test_rendering_is_deterministic(self):
+        # The generator is a pure function of the registry: no
+        # timestamps, no live measurements, no environment-dependent
+        # content, so two renderings are byte-identical.
+        module = _load_renderer_module()
+        self.assertEqual(module.render(), module.render())
+
+    _FROZEN_PROVENANCE = {
+        "source_sha": "0123456789abcdef0123456789abcdef01234567",
+        "run_ids": ("1234567890",),
+        "status": "frozen",
+    }
+
+    def test_freezing_the_provenance_only_changes_the_status_paragraph(self):
+        # PROVENANCE feeds no proof, no tolerance and no fixture, so
+        # flipping it from "candidate" to "frozen" must regenerate the
+        # page as a metadata-only change: the measured content is
+        # untouched and only the status paragraph moves.
+        module = _load_renderer_module()
+        candidate = module.render()
+        frozen = module.render(provenance=self._FROZEN_PROVENANCE)
+
+        self.assertNotEqual(candidate, frozen)
+        self.assertIn(self._FROZEN_PROVENANCE["source_sha"], frozen)
+        self.assertIn(self._FROZEN_PROVENANCE["run_ids"][0], frozen)
+
+        def _outside_the_status_section(text):
+            before, rest = text.split("Status of these records", 1)
+            _, after = rest.split("How to read the table", 1)
+            return before, after
+
+        self.assertEqual(
+            _outside_the_status_section(candidate),
+            _outside_the_status_section(frozen),
+            "flipping PROVENANCE changed page content outside the status "
+            "section -- the freeze regeneration is no longer metadata-only",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Non-gating module wall-time timer (Global Constraints: the CI budget
 # gate is Task 9's dedicated `python -m unittest
 # tests.test_rpa_flex_equivalence_table` timing step, MAX over the four
