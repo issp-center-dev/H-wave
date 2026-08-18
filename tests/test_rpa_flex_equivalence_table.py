@@ -11,7 +11,11 @@ fixtures via the small builders below.
 
 from __future__ import annotations
 
+import logging
+import tempfile
+import time
 import unittest
+from contextlib import ExitStack
 from types import MappingProxyType
 
 import numpy as np
@@ -47,6 +51,8 @@ from tests.equivalence_cells import (
     scalar_residual,
     validate_registry,
 )
+
+logger = logging.getLogger("qlms").getChild("test_equivalence_table")
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +325,24 @@ class TestRegistrySchema(unittest.TestCase):
             {"source_sha": None, "run_ids": (), "status": "candidate"},
         )
 
-    def test_cells_and_coverage_obligations_empty_this_task(self):
-        self.assertEqual(CELLS, ())
+    def test_cells_is_the_task3_two_cell_bootstrap_and_coverage_obligations_empty(self):
+        # CELLS carries the Task-3 bootstrap (Appendix A rows 1 and 17)
+        # -- the full 38-cell inventory + COVERAGE_OBLIGATIONS land in
+        # Task 5.
+        self.assertEqual(
+            sorted(cell.cell_id for cell in CELLS),
+            sorted(
+                [
+                    "general.ring.onsite_coulombintra.fixedmu",
+                    "reduced.ring.onsite_exchange.reject",
+                ]
+            ),
+        )
         self.assertEqual(dict(COVERAGE_OBLIGATIONS), {})
+
+    def test_bootstrap_cells_pass_validate_registry(self):
+        errors = validate_registry(CELLS)
+        self.assertEqual(errors, [])
 
     def test_proof_step_types_is_the_closed_five_member_union(self):
         self.assertEqual(
@@ -1051,6 +1072,728 @@ class TestReducedBlocksComparator(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             COMPARATORS["reduced_blocks"].map("chiq", rpa_bundle, flex_bundle)
+
+
+# ---------------------------------------------------------------------------
+# Proof executors (Task 3) -- build_solver / run_cell + the generated
+# per-cell TestCase methods.
+#
+# ``build_solver`` mirrors ``tests/test_rpa_flex_oneshot_equivalence.py``'s
+# ``_read``/``_run`` construction verbatim (RPA's
+# ``{'mode': 'RPA', 'param': par, 'calc_scheme': ..., 'calc_type': ...}``;
+# FLEX's ``{'mode': 'FLEX', 'param': par + {'IterationMax': 1, 'Mix': 1.0,
+# 'EPS': 1}, ...}``, no ``calc_type`` key) but with a FRESH
+# ``tempfile.TemporaryDirectory()`` owned by the caller's ``ExitStack`` --
+# ``tests/rpa/output`` is never touched by these cells.
+# ---------------------------------------------------------------------------
+
+# The ExecuteReject.exc_type CLOSED-set -> exception class mapping (fixed,
+# per the Task-1 interface contract).
+_EXC_TYPE_MAP = {"ValueError": ValueError, "RuntimeError": RuntimeError}
+
+
+def _read_fixture(spec: FixtureSpec):
+    """Read one fixture via ``QLMSkInput``, mirroring the oneshot
+    suite's ``_read`` -- ``spec.geom``/``spec.transfer`` override the
+    default ``geom.dat``/``transfer.dat`` names (the SO family);
+    ``spec.extern`` names a committed Zeeman/Extern file when set (the
+    public spin-diag route).
+    """
+
+    import hwave.qlmsio.read_input_k as read_input_k
+
+    idict = {
+        "path_to_input": spec.input_dir,
+        "Geometry": spec.geom,
+        "Transfer": spec.transfer,
+    }
+    idict.update(dict(spec.interactions))
+    if spec.extern is not None:
+        idict["Extern"] = spec.extern
+    return read_input_k.QLMSkInput(
+        {"path_to_input": spec.input_dir, "interaction": idict}
+    )
+
+
+def build_solver(spec: FixtureSpec, solver_kind: str, stack: ExitStack):
+    """Construct one solver instance for a fixture. Returns
+    ``(solver_obj, green_info, out_dir)``. ``out_dir`` is a FRESH
+    ``tempfile.TemporaryDirectory()`` registered on ``stack`` (cleaned
+    up when the caller's ``ExitStack`` closes) -- ``tests/rpa/output``
+    is never used by cell fixtures.
+
+    Mirrors ``tests/test_rpa_flex_oneshot_equivalence.py::_run``'s
+    solver construction verbatim: RPA gets ``calc_type``; FLEX does not
+    (it has no such parameter) and additionally sets
+    ``IterationMax=1, Mix=1.0, EPS=1`` (the one-shot / bare-bubble
+    limit the whole equivalence table measures against).
+    """
+
+    import hwave.solver.flex as flex_mod
+    import hwave.solver.rpa as rpa_mod
+
+    reader = _read_fixture(spec)
+    ham = reader.get_param("ham")
+
+    par = dict(spec.extra_params)
+    par["T"] = spec.T
+    if spec.mu is not None:
+        par["mu"] = spec.mu
+    if spec.filling is not None:
+        par["filling"] = spec.filling
+    par["CellShape"] = list(spec.CellShape)
+    par["SubShape"] = list(spec.SubShape)
+    par["Nmat"] = spec.Nmat
+
+    out_dir = stack.enter_context(tempfile.TemporaryDirectory())
+
+    if solver_kind == "rpa":
+        info = {
+            "mode": "RPA",
+            "param": par,
+            "enable_spin_orbital": spec.enable_spin_orbital,
+            "calc_scheme": spec.requested_scheme,
+            "calc_type": spec.calc_type,
+        }
+        solver_obj = rpa_mod.RPA(ham, {}, info)
+    elif solver_kind == "flex":
+        pf = dict(par)
+        pf.update({"IterationMax": 1, "Mix": 1.0, "EPS": 1})
+        info = {
+            "mode": "FLEX",
+            "param": pf,
+            "enable_spin_orbital": spec.enable_spin_orbital,
+            "calc_scheme": spec.requested_scheme,
+        }
+        solver_obj = flex_mod.FLEX(ham, {}, info)
+    else:
+        raise ValueError(
+            "build_solver: solver_kind must be 'rpa' or 'flex', got "
+            "{!r}".format(solver_kind)
+        )
+
+    green_info = reader.get_param("green")
+    return solver_obj, green_info, out_dir
+
+
+def _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory=build_solver):
+    """Execute ONE run-class proof step for one solver side.
+
+    ``ExecuteConstruct``: build only -- ZERO solves (construction-only
+    rows never call ``solve()``). ``ExecuteRun``: build then solve --
+    EXACTLY ONE solve (the run-once-per-cell discharge rule). Returns
+    ``(solver_obj, green_info, out_dir)`` in both cases.
+
+    ``solver_factory`` defaults to ``build_solver`` and is overridable
+    so the executor solve-count contract can be pinned against
+    instrumented fake solvers (``TestExecutorSolveCounts`` below)
+    without touching real fixtures or solver code.
+    """
+
+    if isinstance(step, ExecuteConstruct):
+        return solver_factory(fixture, solver_kind, stack)
+    if isinstance(step, ExecuteRun):
+        solver_obj, green_info, out_dir = solver_factory(fixture, solver_kind, stack)
+        solver_obj.solve(green_info, out_dir)
+        return solver_obj, green_info, out_dir
+    raise ValueError(
+        "_construct_and_maybe_solve: unsupported run-class step {!r} -- "
+        "PairedInvarianceRun/ExecuteChiqInitReuse are dedicated "
+        "two-solve exceptions with their own executors (Task 5, cell "
+        "33)".format(step)
+    )
+
+
+def _assert_reject(fixture, solver_kind, step, stack, solver_factory=build_solver):
+    """``ExecuteReject`` at the recorded ``site``: ``assertRaises`` the
+    mapped exception class, then asserts ``step.fragment`` is a
+    substring of the raised message.
+
+    CONSTRUCTOR site: the solver never comes into existence -- ZERO
+    solves. SOLVE site: construction succeeds, then ``solve()`` raises
+    -- EXACTLY ONE ATTEMPTED solve.
+    """
+
+    exc_class = _EXC_TYPE_MAP[step.exc_type]
+    tc = unittest.TestCase()
+    if step.site is Site.CONSTRUCTOR:
+        with tc.assertRaises(exc_class) as ctx:
+            solver_factory(fixture, solver_kind, stack)
+    elif step.site is Site.SOLVE:
+        solver_obj, green_info, out_dir = solver_factory(fixture, solver_kind, stack)
+        with tc.assertRaises(exc_class) as ctx:
+            solver_obj.solve(green_info, out_dir)
+    else:
+        raise ValueError("_assert_reject: unknown Site {!r}".format(step.site))
+
+    message = str(ctx.exception)
+    if step.fragment not in message:
+        raise AssertionError(
+            "{} {}: ExecuteReject.fragment {!r} not found in the raised "
+            "{} message {!r}".format(
+                solver_kind, step.site, step.fragment, step.exc_type, message
+            )
+        )
+
+
+def _run_side(fixture, solver_kind, proof, stack, solver_factory=build_solver):
+    """Execute ONE solver side of a cell per its ``SolverProof``.
+
+    Returns ``(solver_obj, green_info, out_dir)`` for a run-class
+    SUPPORTED proof, or ``None`` for REJECT (discharged via
+    ``_assert_reject``, itself) and the narrowed
+    zero-step NOT_APPLICABLE proof (nothing to execute -- the option
+    has no corresponding semantics on this solver).
+    """
+
+    if proof.status is Status.REJECT:
+        _assert_reject(fixture, solver_kind, proof.steps[0], stack, solver_factory)
+        return None
+    if proof.status is Status.NOT_APPLICABLE:
+        if len(proof.steps) == 0:
+            return None
+        raise NotImplementedError(
+            "PairedInvarianceRun's executor lands in Task 5 (the FLEX "
+            "side of cell 33's chi0q_init invariance) -- no Task-3 "
+            "bootstrap cell uses it"
+        )
+    # Status.SUPPORTED
+    step = proof.steps[0]
+    if isinstance(step, ExecuteChiqInitReuse):
+        raise NotImplementedError(
+            "ExecuteChiqInitReuse's executor lands in Task 5 (cell 33's "
+            "RPA reuse oracle) -- no Task-3 bootstrap cell uses it"
+        )
+    return _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory)
+
+
+def _is_construction_only(cell) -> bool:
+    return (
+        cell.rpa.status is Status.SUPPORTED
+        and len(cell.rpa.steps) == 1
+        and isinstance(cell.rpa.steps[0], ExecuteConstruct)
+        and cell.flex.status is Status.SUPPORTED
+        and len(cell.flex.steps) == 1
+        and isinstance(cell.flex.steps[0], ExecuteConstruct)
+    )
+
+
+def _assert_resolved_scheme(cell, solver_kind, solver_obj) -> None:
+    if solver_obj.calc_scheme != cell.resolved_scheme:
+        raise AssertionError(
+            "cell {!r} {}: constructed calc_scheme {!r} != "
+            "Cell.resolved_scheme {!r}".format(
+                cell.cell_id, solver_kind, solver_obj.calc_scheme, cell.resolved_scheme
+            )
+        )
+
+
+def _assert_comparison(cell, rpa_bundle, flex_bundle) -> None:
+    comparison = cell.comparison
+    if isinstance(comparison, Equiv):
+        for observable, spec in comparison.observables.items():
+            comparator = COMPARATORS[spec.comparator]
+            a, b = comparator.map(observable, rpa_bundle, flex_bundle)
+            comparator.assert_within(a, b, spec.atol)
+        return
+    if isinstance(comparison, Diverges):
+        for observable, spec in comparison.diverging.items():
+            comparator = COMPARATORS[spec.comparator]
+            a, b = comparator.map(observable, rpa_bundle, flex_bundle)
+            residual = comparator.residual(a, b)
+            assert_diverges_bracket(residual, spec.ceiling, spec.regression_bound)
+        for observable, spec in comparison.others.items():
+            comparator = COMPARATORS[spec.comparator]
+            a, b = comparator.map(observable, rpa_bundle, flex_bundle)
+            comparator.assert_within(a, b, spec.atol)
+        return
+    raise AssertionError(
+        "cell {!r}: comparison must be Equiv or Diverges, got "
+        "{!r}".format(cell.cell_id, comparison)
+    )
+
+
+def run_cell(cell, solver_factory=build_solver) -> None:
+    """Execute every proof a cell records, owning its own
+    ``ExitStack`` spanning construction -> solve -> comparison ->
+    cleanup (Global Constraints: a fresh temp output dir and fresh
+    ``green_info`` per cell run; ``tests/rpa/output`` untouched).
+
+    Run-once discharge: for a (SUPPORTED, SUPPORTED) comparison cell,
+    ``_run_side`` is called exactly once per solver side -- the single
+    resulting run pair feeds every observable assertion.
+    ``ExecuteReject`` is dispatched via ``assertRaises`` at the
+    recorded site inside ``_run_side``/``_assert_reject``.
+    ``ExecuteConstruct`` asserts the resolved ``calc_scheme`` on the
+    publicly constructed solver, with no solve.
+
+    ``solver_factory`` is a test-only override point (default
+    ``build_solver``) letting ``TestExecutorSolveCounts`` pin the exact
+    solve count per proof-step type against instrumented fake solvers.
+    """
+
+    with ExitStack() as stack:
+        rpa_result = _run_side(cell.fixture, "rpa", cell.rpa, stack, solver_factory)
+        flex_result = _run_side(cell.fixture, "flex", cell.flex, stack, solver_factory)
+
+        if cell.comparison is not None:
+            rpa_obj, rpa_green, _rpa_out = rpa_result
+            flex_obj, flex_green, _flex_out = flex_result
+            rpa_bundle = extract_bundle(rpa_obj, rpa_green, "rpa")
+            flex_bundle = extract_bundle(flex_obj, flex_green, "flex")
+            _assert_comparison(cell, rpa_bundle, flex_bundle)
+        elif _is_construction_only(cell):
+            rpa_obj, _rpa_green, _rpa_out = rpa_result
+            flex_obj, _flex_green, _flex_out = flex_result
+            _assert_resolved_scheme(cell, "rpa", rpa_obj)
+            _assert_resolved_scheme(cell, "flex", flex_obj)
+        # Otherwise: every proof this cell records was already fully
+        # discharged by _run_side (e.g. BOTH-REJECT, or one REJECT side
+        # paired with an ExecuteRun side that carries no comparison --
+        # no cell of that shape exists in the Task-3 bootstrap, but
+        # _run_side already ran/asserted whichever proofs are present).
+
+
+# ---------------------------------------------------------------------------
+# The generated per-cell TestCase methods -- one ``test_cell__<id>``
+# method per ``CELLS`` entry, attached via ``setattr`` (never a loop
+# variable captured by reference -- ``_make`` binds ``cell`` in its own
+# closure per call).
+# ---------------------------------------------------------------------------
+
+
+class TestEquivalenceCells(unittest.TestCase):
+    """Every generated per-cell proof for the current ``CELLS``
+    registry. Discoverable via ``unittest.TestLoader().loadTestsFromModule``
+    like any other ``TestCase`` -- see
+    ``TestGeneratedCellDiscovery`` below.
+    """
+
+
+def _make(cell):
+    def test(self):
+        run_cell(cell)
+
+    test.__doc__ = "Generated proof for cell {!r} ({} <-> {}).".format(
+        cell.cell_id, cell.rpa.status.value, cell.flex.status.value
+    )
+    return test
+
+
+for _cell in CELLS:
+    setattr(TestEquivalenceCells, method_name(_cell.cell_id), _make(_cell))
+del _cell
+
+
+class TestGeneratedCellDiscovery(unittest.TestCase):
+    """The class-body generation loop actually produces discoverable
+    unittest methods -- verified via ``unittest.TestLoader``, not by
+    reaching into ``TestEquivalenceCells.__dict__`` directly.
+    """
+
+    def test_every_cell_has_a_discoverable_generated_method(self):
+        import sys
+
+        module = sys.modules[__name__]
+        suite = unittest.TestLoader().loadTestsFromModule(module)
+        discovered = set()
+        stack = [suite]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, unittest.TestSuite):
+                stack.extend(item)
+            else:
+                discovered.add("{}.{}".format(item.__class__.__name__, item._testMethodName))
+
+        for cell in CELLS:
+            expected = "TestEquivalenceCells.{}".format(method_name(cell.cell_id))
+            self.assertIn(expected, discovered)
+
+    def test_generated_method_count_matches_cells(self):
+        generated = [
+            name
+            for name in vars(TestEquivalenceCells)
+            if name.startswith("test_cell__")
+        ]
+        self.assertEqual(len(generated), len(CELLS))
+        self.assertEqual(set(generated), {method_name(cell.cell_id) for cell in CELLS})
+
+
+class TestBootstrapCellsRun(unittest.TestCase):
+    """A direct (non-generated) run of the two bootstrap cells, so a
+    failure here points straight at ``run_cell``/``build_solver``
+    rather than requiring a trip through ``setattr`` first.
+    """
+
+    def test_bootstrap_equiv_cell_via_run_cell(self):
+        cell = next(c for c in CELLS if c.cell_id == "general.ring.onsite_coulombintra.fixedmu")
+        run_cell(cell)  # must not raise
+
+    def test_bootstrap_reject_cell_via_run_cell(self):
+        cell = next(c for c in CELLS if c.cell_id == "reduced.ring.onsite_exchange.reject")
+        run_cell(cell)  # must not raise (both sides assertRaises internally)
+
+
+# ---------------------------------------------------------------------------
+# TestExecutorSolveCounts -- the instrumented FAKE-SOLVER unit test:
+# stub solvers proving the EXACT solve count per proof-step type,
+# independent of real fixtures/solver code (Global Constraints: "an
+# executor unit test with instrumented fake solvers proves the EXACT
+# solve count per step type").
+# ---------------------------------------------------------------------------
+
+
+class _FakeSolver:
+    """A minimal stand-in for RPA/FLEX: records ``solve()`` calls and
+    optionally raises on the Nth one (``fail_at_solve``), so tests can
+    pin EXACT solve counts without running real physics.
+    """
+
+    def __init__(self, fail_at_solve=None):
+        self.solve_calls = 0
+        self.calc_scheme = "general"
+        self._fail_at_solve = fail_at_solve
+
+    def solve(self, green_info, out_dir):
+        self.solve_calls += 1
+        if self._fail_at_solve is not None:
+            raise self._fail_at_solve
+
+
+def _fake_factory(solver, fail_at_construct=None):
+    """A ``solver_factory``-shaped callable returning a pre-built fake
+    solver (or raising ``fail_at_construct`` before ever returning
+    one -- ZERO solves possible in that branch).
+    """
+
+    def factory(fixture, solver_kind, stack):
+        if fail_at_construct is not None:
+            raise fail_at_construct
+        return solver, {"chi0q": None}, "/dev/null"
+
+    return factory
+
+
+def _fake_fixture():
+    # solver_factory bypasses real construction entirely -- this
+    # FixtureSpec's field values are never read, only its shape.
+    return FixtureSpec(
+        input_dir="tests/equivalence_input/orb1",
+        interactions={"CoulombIntra": "coulombintra.dat"},
+        T=2.0,
+        mu=0.0,
+        filling=None,
+        CellShape=(4, 4, 1),
+        SubShape=(1, 1, 1),
+        Nmat=32,
+        extra_params={},
+        calc_type="ring",
+        requested_scheme="general",
+        enable_spin_orbital=False,
+        extern=None,
+    )
+
+
+class TestExecutorSolveCounts(unittest.TestCase):
+    """Task 3 pins the four proof-step shapes it implements: ExecuteRun
+    (1 solve), ExecuteConstruct (0 solves), constructor-site
+    ExecuteReject (0 solves), solve-site ExecuteReject (exactly 1
+    ATTEMPTED solve). PairedInvarianceRun/ExecuteChiqInitReuse (2
+    solves each) are pinned in Task 5 once cell 33's fixtures exist.
+    """
+
+    def test_execute_run_solves_exactly_once(self):
+        solver = _FakeSolver()
+        with ExitStack() as stack:
+            obj, _green, _out = _construct_and_maybe_solve(
+                _fake_fixture(), "rpa", ExecuteRun(), stack, solver_factory=_fake_factory(solver)
+            )
+        self.assertIs(obj, solver)
+        self.assertEqual(solver.solve_calls, 1)
+
+    def test_execute_construct_solves_zero_times(self):
+        solver = _FakeSolver()
+        with ExitStack() as stack:
+            obj, _green, _out = _construct_and_maybe_solve(
+                _fake_fixture(),
+                "flex",
+                ExecuteConstruct(expected_resolved_scheme="general"),
+                stack,
+                solver_factory=_fake_factory(solver),
+            )
+        self.assertIs(obj, solver)
+        self.assertEqual(solver.solve_calls, 0)
+
+    def test_constructor_site_reject_solves_zero_times(self):
+        solver = _FakeSolver()
+        step = ExecuteReject(site=Site.CONSTRUCTOR, exc_type="ValueError", fragment="boom")
+        with ExitStack() as stack:
+            _assert_reject(
+                _fake_fixture(),
+                "rpa",
+                step,
+                stack,
+                solver_factory=_fake_factory(solver, fail_at_construct=ValueError("boom at construction")),
+            )
+        self.assertEqual(solver.solve_calls, 0)
+
+    def test_solve_site_reject_attempts_exactly_one_solve(self):
+        solver = _FakeSolver(fail_at_solve=ValueError("boom at solve"))
+        step = ExecuteReject(site=Site.SOLVE, exc_type="ValueError", fragment="boom")
+        with ExitStack() as stack:
+            _assert_reject(
+                _fake_fixture(), "flex", step, stack, solver_factory=_fake_factory(solver)
+            )
+        self.assertEqual(solver.solve_calls, 1)
+
+    def test_reject_fragment_mismatch_is_reported(self):
+        solver = _FakeSolver(fail_at_solve=ValueError("a totally different message"))
+        step = ExecuteReject(site=Site.SOLVE, exc_type="ValueError", fragment="boom")
+        with self.assertRaises(AssertionError) as ctx:
+            with ExitStack() as stack:
+                _assert_reject(
+                    _fake_fixture(), "flex", step, stack, solver_factory=_fake_factory(solver)
+                )
+        self.assertIn("boom", str(ctx.exception))
+        self.assertEqual(solver.solve_calls, 1)
+
+    def test_run_cell_solves_each_side_exactly_once_on_equiv(self):
+        rpa_solver = _FakeSolver()
+        flex_solver = _FakeSolver()
+        chi0q = np.array([[1.0 + 0.5j]])
+
+        def factory(fixture, solver_kind, stack):
+            solver = rpa_solver if solver_kind == "rpa" else flex_solver
+            green = {"chi0q": chi0q.copy(), "chiq": chi0q.copy()} if solver_kind == "rpa" else {
+                "chi0q": chi0q.copy(),
+                "chiq_s": np.zeros((1, 1), dtype=complex),
+                "chiq_c": np.zeros((1, 1), dtype=complex),
+            }
+            return solver, green, "/dev/null"
+
+        cell = Cell(
+            cell_id="fake.equiv.cell",
+            fixture=_fake_fixture(),
+            resolved_scheme="general",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            comparison=Equiv(
+                observables={
+                    "chi0q": ObservableSpec(comparator="identity", atol=0.0, provenance="fake"),
+                }
+            ),
+            required_observables=("chi0q",),
+            interaction_class="onsite",
+            notes="",
+        )
+        run_cell(cell, solver_factory=factory)
+        self.assertEqual(rpa_solver.solve_calls, 1)
+        self.assertEqual(flex_solver.solve_calls, 1)
+
+    def test_run_cell_solves_each_side_exactly_once_on_diverges(self):
+        rpa_solver = _FakeSolver()
+        flex_solver = _FakeSolver()
+        ceiling = POLICY_CEILINGS["chi0q_fixed"]
+        rpa_chi0q = np.array([[1.0 + 0.5j]])
+        flex_chi0q = rpa_chi0q + 5.0 * ceiling  # inside (ceiling, ceiling*10]
+
+        def factory(fixture, solver_kind, stack):
+            if solver_kind == "rpa":
+                return rpa_solver, {"chi0q": rpa_chi0q.copy(), "chiq": rpa_chi0q.copy()}, "/dev/null"
+            return (
+                flex_solver,
+                {
+                    "chi0q": flex_chi0q.copy(),
+                    "chiq_s": np.zeros((1, 1), dtype=complex),
+                    "chiq_c": np.zeros((1, 1), dtype=complex),
+                },
+                "/dev/null",
+            )
+
+        cell = Cell(
+            cell_id="fake.diverges.cell",
+            fixture=_fake_fixture(),
+            resolved_scheme="general",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+            comparison=Diverges(
+                diverging={
+                    "chi0q": DivergingSpec(
+                        comparator="identity",
+                        ceiling=ceiling,
+                        regression_bound=ceiling * 10,
+                        provenance="fake",
+                    )
+                },
+                others={},
+                step5_issue="#1",
+            ),
+            required_observables=("chi0q",),
+            interaction_class="onsite",
+            notes="",
+        )
+        run_cell(cell, solver_factory=factory)
+        self.assertEqual(rpa_solver.solve_calls, 1)
+        self.assertEqual(flex_solver.solve_calls, 1)
+
+    def test_run_cell_solves_zero_times_on_construction_only(self):
+        rpa_solver = _FakeSolver()
+        flex_solver = _FakeSolver()
+
+        def factory(fixture, solver_kind, stack):
+            solver = rpa_solver if solver_kind == "rpa" else flex_solver
+            solver.calc_scheme = "reduced"
+            return solver, {}, "/dev/null"
+
+        cell = Cell(
+            cell_id="fake.construct.cell",
+            fixture=_fake_fixture(),
+            resolved_scheme="reduced",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteConstruct(expected_resolved_scheme="reduced"),)),
+            flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteConstruct(expected_resolved_scheme="reduced"),)),
+            comparison=None,
+            required_observables=(),
+            interaction_class="onsite",
+            notes="",
+        )
+        run_cell(cell, solver_factory=factory)
+        self.assertEqual(rpa_solver.solve_calls, 0)
+        self.assertEqual(flex_solver.solve_calls, 0)
+
+    def test_run_cell_solves_zero_times_on_both_reject_at_constructor(self):
+        def factory(fixture, solver_kind, stack):
+            raise ValueError("reduced: rejected at construction")
+
+        cell = Cell(
+            cell_id="fake.bothreject.cell",
+            fixture=_fake_fixture(),
+            resolved_scheme="reduced",
+            expected_spin_mode="spin-free",
+            rpa=SolverProof(
+                status=Status.REJECT,
+                steps=(ExecuteReject(site=Site.CONSTRUCTOR, exc_type="ValueError", fragment="reduced"),),
+            ),
+            flex=SolverProof(
+                status=Status.REJECT,
+                steps=(ExecuteReject(site=Site.CONSTRUCTOR, exc_type="ValueError", fragment="reduced"),),
+            ),
+            comparison=None,
+            required_observables=(),
+            interaction_class="onsite",
+            notes="",
+        )
+        run_cell(cell, solver_factory=factory)  # must not raise -- both sides reject as expected
+
+
+# ---------------------------------------------------------------------------
+# The oneshot canary + both bootstrap cells against the REAL fixture
+# directories built by this task (tests/equivalence_input/orb1,
+# orb2, mini) -- a direct sanity check that the new .dat files parse
+# and solve, independent of the registry/executor plumbing above.
+# ---------------------------------------------------------------------------
+
+
+class TestFixtureDirectoriesParse(unittest.TestCase):
+    """Every fixture file this task adds under
+    ``tests/equivalence_input/`` parses via ``QLMSkInput`` -- a
+    structural smoke test, not a numerical claim (Task 5 owns the
+    cells that actually exercise most of these files)."""
+
+    ORB1_CASES = [
+        {"CoulombIntra": "coulombintra.dat"},
+        {"CoulombInter": "coulombinter.dat"},
+    ]
+    ORB2_CASES = [
+        {"CoulombIntra": "coulombintra.dat"},
+        {"CoulombInter": "onsite_inter.dat"},
+        {"Hund": "hund_onsite.dat"},
+        {"Ising": "ising_onsite.dat"},
+        {"Exchange": "exchange_onsite.dat"},
+        {"PairHop": "pairhop_onsite.dat"},
+        {"PairLift": "pairlift_onsite.dat"},
+        {"CoulombInter": "kanamori_interorb.dat"},
+        {"Hund": "kanamori_hund.dat"},
+        {"CoulombInter": "offsite_coulombinter_interorb.dat"},
+        {"Hund": "offsite_hund.dat"},
+        {"Ising": "offsite_ising.dat"},
+        {"Exchange": "offsite_exchange.dat"},
+        {"PairHop": "offsite_pairhop.dat"},
+        {"Coulomb": "offsite_coulombintra.dat"},
+    ]
+    MINI_CASES = [
+        {"CoulombIntra": "coulombintra.dat"},
+    ]
+
+    def _assert_parses(self, input_dir, interactions):
+        spec = FixtureSpec(
+            input_dir=input_dir,
+            interactions=interactions,
+            T=2.0,
+            mu=0.0,
+            filling=None,
+            CellShape=(4, 4, 1),
+            SubShape=(1, 1, 1),
+            Nmat=32,
+            extra_params={},
+            calc_type="ring",
+            requested_scheme="general",
+            enable_spin_orbital=False,
+            extern=None,
+        )
+        reader = _read_fixture(spec)
+        ham = reader.get_param("ham")
+        self.assertIsNotNone(ham)
+
+    def test_orb1_fixtures_parse(self):
+        for interactions in self.ORB1_CASES:
+            with self.subTest(interactions=interactions):
+                self._assert_parses("tests/equivalence_input/orb1", interactions)
+
+    def test_orb2_fixtures_parse(self):
+        for interactions in self.ORB2_CASES:
+            with self.subTest(interactions=interactions):
+                self._assert_parses("tests/equivalence_input/orb2", interactions)
+
+    def test_mini_fixtures_parse(self):
+        for interactions in self.MINI_CASES:
+            with self.subTest(interactions=interactions):
+                self._assert_parses("tests/equivalence_input/mini", interactions)
+
+
+# ---------------------------------------------------------------------------
+# Non-gating module wall-time timer (Global Constraints: the CI budget
+# gate is Task 9's dedicated `python -m unittest
+# tests.test_rpa_flex_equivalence_table` timing step, MAX over the four
+# gating runners; this module-level timer is a local, non-gating early
+# warning only).
+# ---------------------------------------------------------------------------
+
+_MODULE_START_TIME = None
+_MODULE_TIME_BUDGET_SECONDS = 120.0
+
+
+def setUpModule():
+    global _MODULE_START_TIME
+    _MODULE_START_TIME = time.monotonic()
+
+
+def tearDownModule():
+    elapsed = time.monotonic() - _MODULE_START_TIME
+    logger.info("test_rpa_flex_equivalence_table wall time: %.3fs", elapsed)
+    if elapsed > _MODULE_TIME_BUDGET_SECONDS:
+        logger.warning(
+            "*** test_rpa_flex_equivalence_table took %.3fs, over the "
+            "%.0fs CI budget (NON-GATING here -- the freeze-time gate "
+            "is Task 9's dedicated `python -m unittest "
+            "tests.test_rpa_flex_equivalence_table` timing step, MAX "
+            "over the four gating runners; this local timer is an "
+            "early warning only) ***",
+            elapsed,
+            _MODULE_TIME_BUDGET_SECONDS,
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

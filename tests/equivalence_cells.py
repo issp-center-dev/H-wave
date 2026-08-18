@@ -31,9 +31,11 @@ Hard constraints (binding on every future edit to this file):
     normalizes mapping fields; it never inspects cross-field business
     rules.
 
-``CELLS`` and ``COVERAGE_OBLIGATIONS`` are intentionally EMPTY in this
-task -- this module ships the machinery (types + validators), not the
-38-cell inventory (Task 5) or its coverage predicates.
+``CELLS`` carries a 2-cell BOOTSTRAP inventory as of Task 3 (Appendix A
+rows 1 and 17 -- an Equiv comparison cell and a BOTH-REJECT cell,
+proving the generated-test machinery end to end); ``COVERAGE_OBLIGATIONS``
+stays intentionally EMPTY until Task 5 populates the full 38-cell
+inventory and its coverage predicates.
 """
 
 from __future__ import annotations
@@ -362,8 +364,123 @@ PROVENANCE: dict = {
     "status": "candidate",
 }
 
-# The 38-cell inventory -- populated by Task 5. Empty this task.
-CELLS: tuple = ()
+# The 38-cell inventory -- populated by Task 5. Task 3 seeds it with a
+# 2-cell BOOTSTRAP (Appendix A rows 1 and 17), proving the
+# generated-test machinery (build_solver / run_cell / the class-body
+# generation loop) end to end on one Equiv comparison cell and one
+# BOTH-REJECT cell before the full inventory lands.
+
+_BOOTSTRAP_CELL_1 = Cell(
+    cell_id="general.ring.onsite_coulombintra.fixedmu",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/orb2",
+        interactions={"CoulombIntra": "coulombintra.dat"},
+        T=2.0,
+        mu=0.0,
+        filling=None,
+        CellShape=(4, 4, 1),
+        SubShape=(1, 1, 1),
+        Nmat=32,
+        extra_params={},
+        calc_type="ring",
+        requested_scheme="general",
+        enable_spin_orbital=False,
+        extern=None,
+    ),
+    resolved_scheme="general",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
+    comparison=Equiv(
+        observables={
+            "chi0q": ObservableSpec(
+                comparator="identity",
+                atol=POLICY_CEILINGS["chi0q_fixed"],
+                provenance=(
+                    "measured (Task 3 bootstrap, local): max|diff| "
+                    "1.11e-16 on tests/equivalence_input/orb2/"
+                    "coulombintra.dat, mu=0.0 -- atol kept EQUAL to the "
+                    "policy ceiling (provisional; Task 7 sets the "
+                    "candidate bound from the 10x rule)."
+                ),
+            ),
+            "chiq": ObservableSpec(
+                comparator="general_from_flex_channels",
+                atol=POLICY_CEILINGS["chiq_fixed"],
+                provenance=(
+                    "measured (Task 3 bootstrap, local): max|diff| "
+                    "2.50e-16 on tests/equivalence_input/orb2/"
+                    "coulombintra.dat, mu=0.0 -- atol kept EQUAL to the "
+                    "policy ceiling (provisional; Task 7 sets the "
+                    "candidate bound from the 10x rule)."
+                ),
+            ),
+        }
+    ),
+    required_observables=("chi0q", "chiq"),
+    interaction_class="onsite",
+    notes=(
+        "Bootstrap cell (Task 3). CoulombIntra U=4.0, orbitals (1,1) and "
+        "(2,2) -- tests/equivalence_input/orb2/coulombintra.dat, copied "
+        "verbatim from tests/rpa/input_2orb/coulombintra.dat."
+    ),
+)
+
+_BOOTSTRAP_CELL_17 = Cell(
+    cell_id="reduced.ring.onsite_exchange.reject",
+    fixture=FixtureSpec(
+        input_dir="tests/equivalence_input/orb2",
+        interactions={"Exchange": "exchange_onsite.dat"},
+        T=2.0,
+        mu=0.0,
+        filling=None,
+        CellShape=(4, 4, 1),
+        SubShape=(1, 1, 1),
+        Nmat=32,
+        extra_params={},
+        calc_type="ring",
+        requested_scheme="reduced",
+        enable_spin_orbital=False,
+        extern=None,
+    ),
+    resolved_scheme="reduced",
+    expected_spin_mode="spin-free",
+    rpa=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR,
+                exc_type="ValueError",
+                fragment="reduced",
+            ),
+        ),
+    ),
+    flex=SolverProof(
+        status=Status.REJECT,
+        steps=(
+            ExecuteReject(
+                site=Site.CONSTRUCTOR,
+                exc_type="ValueError",
+                fragment="reduced",
+            ),
+        ),
+    ),
+    comparison=None,
+    required_observables=(),
+    interaction_class="onsite",
+    notes=(
+        "Bootstrap cell (Task 3). BOTH-REJECT at the shared _set_scheme "
+        "check (src/hwave/solver/rpa.py:1302-1316): calc_scheme='reduced' "
+        "solves with the density-diagonal part of the interaction, and "
+        "Exchange's particle-hole vertex has no density-diagonal content. "
+        "FLEX.__init__ calls super().__init__ (src/hwave/solver/flex.py:"
+        "193), so the same constructor-time ValueError fires on both "
+        "solvers. tests/equivalence_input/orb2/exchange_onsite.dat, "
+        "J=0.20, on-site orbital pair (1,2)."
+    ),
+)
+
+CELLS: tuple = (_BOOTSTRAP_CELL_1, _BOOTSTRAP_CELL_17)
 
 # Named predicates over ``CELLS`` (or any cells tuple passed to
 # ``validate_registry``) -- populated by Task 5. Empty this task.

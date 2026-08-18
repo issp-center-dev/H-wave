@@ -1,0 +1,6 @@
+PairHop in wannier90-like format for uhfk (equivalence-table fixture, P=0.10, on-site pair (1,2))
+2
+2
+ 1 1
+   0    0    0    1    2   0.100000000000   0.000000000000
+   0    0    0    2    1   0.100000000000   0.000000000000
