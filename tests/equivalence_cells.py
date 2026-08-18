@@ -409,11 +409,11 @@ PROVENANCE: dict = {
 # ---------------------------------------------------------------------------
 
 _CANDIDATE_SOURCE_SHA = "b922a1c13b85b2d319bc65ee8c45183dc6ab2a47"
-_CANDIDATE_LOCAL_RUNNER = (
+_CANDIDATE_MACOS_RUNNER = (
     "macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, "
     "numpy 1.26.4, scipy 1.17.1)"
 )
-_CANDIDATE_CHITA_RUNNER = (
+_CANDIDATE_LINUX_RUNNER = (
     "Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, "
     "Python 3.11.15, numpy 1.26.4, scipy 1.13.1)"
 )
@@ -433,23 +433,23 @@ def _round_up_pow10(x: float) -> float:
     return 10.0 ** exponent
 
 
-def _candidate_atol(local_residual: float, chita_residual: float, ceiling: float) -> float:
+def _candidate_atol(macos_residual: float, linux_residual: float, ceiling: float) -> float:
     """The tolerance bound rule, in its candidate variant (the two
     development machines in place of the MIN/MAX over the gating
     continuous-integration runners a freeze uses): 10x the larger of the
     two measured residuals, floored at ``max(residual, 1e-15)`` BEFORE
     the 10x multiply, then rounded UP to a power of ten; capped at
-    ``ceiling`` (the validator allows ``atol == ceiling``). This
-    function only computes the number;
-    the STOP-and-report (raw residual > ceiling) and margin-insufficient
-    (rounded bound > ceiling) decisions were made by hand while reading
+    ``ceiling`` (the validator allows ``atol == ceiling``). This function
+    only computes the number; the STOP-and-report (raw residual >
+    ceiling) and margin-insufficient (rounded bound > ceiling) decisions
+    were made by hand while reading
     ``tests/equivalence_calibration_log.md``'s Event 2 table off the
     measured JSON -- neither case arose in this calibration pass (every
     residual measured in the 1e-17..1e-12 range, comfortably under every
     ``POLICY_CEILINGS`` entry).
     """
 
-    raw_max = max(local_residual, chita_residual)
+    raw_max = max(macos_residual, linux_residual)
     floored = max(raw_max, 1e-15)
     bound = _round_up_pow10(10.0 * floored)
     return min(bound, ceiling)
@@ -457,12 +457,12 @@ def _candidate_atol(local_residual: float, chita_residual: float, ceiling: float
 
 def _measured_equiv(
     chi0q_ceiling_key: str,
-    chi0q_local: float,
-    chi0q_chita: float,
+    chi0q_macos: float,
+    chi0q_linux: float,
     chiq_comparator: str,
     chiq_ceiling_key: str,
-    chiq_local: float,
-    chiq_chita: float,
+    chiq_macos: float,
+    chiq_linux: float,
 ) -> "Equiv":
     """Build the common ``Equiv(chi0q, chiq)`` shape every comparison
     cell in the registry uses: ``chi0q`` always via ``identity``;
@@ -477,7 +477,7 @@ def _measured_equiv(
     ``PROVENANCE`` record to "frozen".
     """
 
-    def _prov(local_residual: float, chita_residual: float, atol: float, ceiling: float) -> str:
+    def _prov(macos_residual: float, linux_residual: float, atol: float, ceiling: float) -> str:
         return (
             "measured on two development machines at commit "
             "{}: {} max|diff| {:.3e}; {} max|diff| {:.3e}. Resulting "
@@ -485,10 +485,10 @@ def _measured_equiv(
             "rounded up to a power of ten; policy ceiling "
             "{:.1e}).".format(
                 _CANDIDATE_SOURCE_SHA[:12],
-                _CANDIDATE_LOCAL_RUNNER,
-                local_residual,
-                _CANDIDATE_CHITA_RUNNER,
-                chita_residual,
+                _CANDIDATE_MACOS_RUNNER,
+                macos_residual,
+                _CANDIDATE_LINUX_RUNNER,
+                linux_residual,
                 atol,
                 ceiling,
             )
@@ -496,20 +496,20 @@ def _measured_equiv(
 
     chi0q_ceiling = POLICY_CEILINGS[chi0q_ceiling_key]
     chiq_ceiling = POLICY_CEILINGS[chiq_ceiling_key]
-    chi0q_atol = _candidate_atol(chi0q_local, chi0q_chita, chi0q_ceiling)
-    chiq_atol = _candidate_atol(chiq_local, chiq_chita, chiq_ceiling)
+    chi0q_atol = _candidate_atol(chi0q_macos, chi0q_linux, chi0q_ceiling)
+    chiq_atol = _candidate_atol(chiq_macos, chiq_linux, chiq_ceiling)
 
     return Equiv(
         observables={
             "chi0q": ObservableSpec(
                 comparator="identity",
                 atol=chi0q_atol,
-                provenance=_prov(chi0q_local, chi0q_chita, chi0q_atol, chi0q_ceiling),
+                provenance=_prov(chi0q_macos, chi0q_linux, chi0q_atol, chi0q_ceiling),
             ),
             "chiq": ObservableSpec(
                 comparator=chiq_comparator,
                 atol=chiq_atol,
-                provenance=_prov(chiq_local, chiq_chita, chiq_atol, chiq_ceiling),
+                provenance=_prov(chiq_macos, chiq_linux, chiq_atol, chiq_ceiling),
             ),
         }
     )

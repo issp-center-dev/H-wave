@@ -397,7 +397,7 @@ class TestRegistrySchema(unittest.TestCase):
             {"source_sha": None, "run_ids": (), "status": "candidate"},
         )
 
-    def test_cells_is_the_full_appendix_a_37_cell_inventory(self):
+    def test_cells_holds_the_full_37_cell_inventory(self):
         # CELLS carries rows 1-36 plus the G6 conditioning row, cell
         # 38 -- there is no row 37, so the registry holds 37 cells
         # total.
