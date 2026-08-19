@@ -1,14 +1,13 @@
 """Unit tests for ``tests/equivalence_freeze_check.py`` -- the
-read-only aggregation/validation collector for the calibration
-workflow (Appendix B of ``docs/superpowers/plans/2026-08-18-
-equivalence-table.md``, Task 7).
+read-only aggregation/validation collector that turns the calibration
+workflow's measurement artifacts into a freeze decision.
 
 Every test builds its own small, HAND-BUILT sample set (2 fake cells --
 one ``Equiv``, one ``Diverges`` -- instead of the real 37-cell/21-Equiv
 registry) so each validation-failure class and each reducer can be
-pinned in isolation, fast, without depending on ``tests.equivalence_
-measure`` actually having run. Real-registry usage is exercised
-end to end whenever the calibration workflow itself runs (Task 9).
+pinned in isolation, fast, without depending on
+``tests.equivalence_measure`` actually having run. Real-registry usage
+is exercised end to end whenever the calibration workflow itself runs.
 """
 
 from __future__ import annotations

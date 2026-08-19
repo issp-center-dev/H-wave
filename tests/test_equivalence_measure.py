@@ -1,18 +1,17 @@
 """Unit tests for ``tests/equivalence_measure.py`` -- the read-only
-measurement entry point (Appendix B of ``docs/superpowers/plans/
-2026-08-18-equivalence-table.md``, Task 6/Task 7).
+measurement entry point behind the RPA/FLEX equivalence-table
+calibration.
 
-This module only pins the carried-minor fix from Task 6 (Task 7's
-brief, item 1a): ``_measure_cell`` must catch ``SystemExit`` alongside
-``Exception`` so a ``sys.exit(...)`` reached through a cell's solver-
-construction path (e.g. ``src/hwave/solver/rpa.py``'s
-``Lattice._init_lattice`` on an incompatible ``CellShape``/``SubShape``
-pairing -- rpa.py:571-573) cannot silently kill the whole measurement
-process. Every other ``equivalence_measure`` behavior (timing,
-residual emission, the diagnostic pass, ``main()``'s exit-code
-contract) is exercised end to end whenever ``python -m
-tests.equivalence_measure`` itself is run (Task 7's calibration sweep);
-this module is deliberately narrow.
+This module pins ONE behavior: ``_measure_cell`` must catch
+``SystemExit`` alongside ``Exception`` so a ``sys.exit(...)`` reached
+through a cell's solver-construction path (e.g.
+``src/hwave/solver/rpa.py``'s ``Lattice._init_lattice`` on an
+incompatible ``CellShape``/``SubShape`` pairing -- rpa.py:571-573)
+cannot silently kill the whole measurement process. Every other
+``equivalence_measure`` behavior (timing, residual emission, the
+diagnostic pass, ``main()``'s exit-code contract) is exercised end to
+end whenever ``python -m tests.equivalence_measure`` itself is run
+during a calibration sweep; this module is deliberately narrow.
 """
 
 from __future__ import annotations
