@@ -381,9 +381,9 @@ POLICY_CEILINGS: dict = {
 # Schema-validated at creation ({"source_sha": None, "run_ids": (),
 # "status": "candidate"}); the freeze commit's ONLY registry change.
 PROVENANCE: dict = {
-    "source_sha": None,
-    "run_ids": (),
-    "status": "candidate",
+    "source_sha": "8144bf3f9e9539bad4759a2fbd1b24f52f7bef33",
+    "run_ids": ("32204319966 attempt 1",),
+    "status": "frozen",
 }
 
 # ---------------------------------------------------------------------------

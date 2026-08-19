@@ -20,7 +20,9 @@ below records the conditioning-fixture (cell 38 / FC) selection, which
 has to precede any calibration against cell 38: that fixture must be
 shown to demonstrate the required amplification before it is frozen
 into the registry. Event 2 records the full candidate-atol calibration
-pass.
+pass. Event 3 records the freeze calibration on the four gating
+continuous-integration runners, whose primary/secondary residual
+columns are the MIN and MAX over those runners.
 
 ---
 
@@ -185,3 +187,96 @@ still, a few milliseconds per fixture.
 - `module_total_seconds` (3 invocations, macOS arm64): 0.557, 0.545, 0.548
 - `module_total_seconds` (3 invocations, Linux x86_64): 0.632, 0.626, 0.638
 - `python -m unittest tests.test_rpa_flex_equivalence_table` process wall time: macOS arm64 0.85s, Linux x86_64 0.96s (both far under the 120s freeze-time budget; the 4-gating-runner CI sample is measured separately).
+
+---
+
+## Event 3 -- freeze calibration on the four gating continuous-integration runners
+
+- **Date:** 2026-08-19
+- **Commit:** 8144bf3f9e9539bad4759a2fbd1b24f52f7bef33 (the measured source commit; every one of the 16 samples below was produced from a checkout of exactly this revision, and each measurement sample's own `source_sha` field was checked equal to it).
+- **Stage:** the four gating continuous-integration runners (`ubuntu-latest` x Python 3.9 / 3.10 / 3.11 / 3.12), `.github/workflows/equivalence-calibration.yml`, **workflow run 32204319966, attempt 1** -- the first and only iteration of the calibration loop. All four jobs completed successfully; there are no superseded runs and no superseded attempts.
+- **Runner (Python 3.9):** Linux-6.17.0-1022-azure-x86_64-with-glibc2.39, Python 3.9.25, numpy 1.26.4, scipy 1.13.1
+- **Runner (Python 3.10):** Linux-6.17.0-1022-azure-x86_64-with-glibc2.39, Python 3.10.21, numpy 1.26.4, scipy 1.15.3
+- **Runner (Python 3.11):** Linux-6.17.0-1022-azure-x86_64-with-glibc2.39, Python 3.11.16, numpy 1.26.4, scipy 1.17.1
+- **Runner (Python 3.12):** Linux-6.17.0-1022-azure-x86_64-with-glibc2.39, Python 3.12.13, numpy 1.26.4, scipy 1.17.1
+
+**Protocol:** `python -m tests.equivalence_measure` run 3x on each of the four runners (12 measurement samples), plus one timed `python -m unittest tests.test_rpa_flex_equivalence_table` process per runner (4 timing samples) -- 16 artifacts in total. Each job runs from a fresh checkout with `OPENBLAS_NUM_THREADS`/`OMP_NUM_THREADS`/`MKL_NUM_THREADS`/`NUMEXPR_NUM_THREADS` pinned to 1 (the pin Event 2's segfault finding motivated; no crash occurred on any of the 12 invocations here). Every measurement sample: 90 emitted JSON lines plus the workflow's appended `process_seconds` line, 0 `"error"` records, `source_sha` == `8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`. `python3 -m tests.equivalence_freeze_check <artifacts> --source-sha 8144bf3f9e9539bad4759a2fbd1b24f52f7bef33` reports **VALIDATION OK (12 measurement + 4 unittest samples)** over the set.
+
+**Bound rule applied (the gating-runner variant, replacing Event 2's two-development-machine variant):** `raw_max` = the MAX over all 12 measurement samples (4 runners x 3 invocations); `floored = max(raw_max, 1e-15)`; `bound = 10 * floored` rounded UP to a power of ten; the bound must land at or under the mapped policy ceiling. STOP condition (`raw_max > ceiling`): did not occur -- 0 of 42 pairs. Margin-insufficient condition (`bound > ceiling`): did not occur -- 0 of 42 pairs. Exactly one pair lands EXACTLY at its ceiling (`bound == ceiling`, which the rule permits): the conditioning cell's `chiq`, as in Event 2 -- expected, since that cell is deliberately chosen to amplify.
+
+**Outcome: the bounds freeze.** Recomputing all 42 bounds from the gating-runner MAX gives, in every case, exactly the atol already recorded in `tests/equivalence_cells.py` -- **no bound changed**. No cell's residual exceeds its ceiling, so there is no diverging cell and no cell straddling the boundary; no `Diverges` classification changes; the 120s freeze-time budget holds with a MAX `unittest_module_process_seconds` of **1.466 s** (see `tests/equivalence_benchmark.md`, Section 2, for the timing side). Because nothing measurement-affecting therefore had to change, iteration 1 of the calibration loop converged and the registry's `PROVENANCE` record moves to `status = "frozen"`, naming this commit and this run.
+
+### Comparison-cell frozen atols (42 rows = 21 Equiv cells x 2 observables; every Equiv cell in the registry)
+
+Residual columns are the MIN and MAX over all 12 measurement samples; the bound rule uses the MAX column.
+
+| cell_id | observable | gating-runner MIN residual | gating-runner MAX residual | frozen atol | decision | reason |
+|---|---|---|---|---|---|---|
+| `general.ring.onsite_coulombintra.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_coulombintra.fixedmu` | chiq | 1.943e-16 | 2.220e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_coulombinter.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_coulombinter.fixedmu` | chiq | 1.110e-16 | 1.110e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_hund.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_hund.fixedmu` | chiq | 1.110e-16 | 1.110e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_ising.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_ising.fixedmu` | chiq | 1.110e-16 | 1.110e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_exchange.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_exchange.fixedmu` | chiq | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_pairhop.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_pairhop.fixedmu` | chiq | 9.715e-17 | 9.715e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_pairlift.fixedmu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_pairlift.fixedmu` | chiq | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12 |
+| `general.ring.onsite_u_v_hund.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_u_v_hund.mu` | chiq | 2.776e-16 | 2.776e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_full_kanamori.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_full_kanamori.mu` | chiq | 1.943e-16 | 2.498e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombintra.spinfree.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombintra.spinfree.mu` | chiq | 3.053e-16 | 3.608e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombinter.spinfree.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombinter.spinfree.mu` | chiq | 1.249e-16 | 1.388e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_hund.spinfree.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_hund.spinfree.mu` | chiq | 1.110e-16 | 1.110e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_ising.spinfree.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_ising.spinfree.mu` | chiq | 1.110e-16 | 1.249e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_pairlift.spinfree.mu` | chi0q | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_pairlift.spinfree.mu` | chiq | 9.714e-17 | 9.714e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombintra.spindiag.mu` | chi0q | 1.249e-16 | 1.249e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombintra.spindiag.mu` | chiq | 4.719e-16 | 4.719e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombinter.spindiag.mu` | chi0q | 1.249e-16 | 1.249e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.onsite_coulombinter.spindiag.mu` | chiq | 1.388e-16 | 1.388e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.offsite_coulombinter_sameorb.mu` | chi0q | 4.899e-15 | 4.899e-15 | 1.0e-13 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.offsite_coulombinter_sameorb.mu` | chiq | 2.026e-14 | 2.026e-14 | 1.0e-12 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.offsite_coulombinter.mu` | chi0q | 4.899e-15 | 4.899e-15 | 1.0e-13 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `reduced.ring.offsite_coulombinter.mu` | chiq | 3.561e-14 | 3.561e-14 | 1.0e-12 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_coulombinter.subshape.mu` | chi0q | 9.715e-17 | 9.715e-17 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_coulombinter.subshape.mu` | chiq | 1.110e-16 | 1.110e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_coulombinter.coefftail.mu` | chi0q | 1.110e-16 | 1.110e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.onsite_coulombinter.coefftail.mu` | chiq | 1.388e-16 | 1.388e-16 | 1.0e-14 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.offsite_coulombinter.conditioning.mu` | chi0q | 6.432e-13 | 6.432e-13 | 1.0e-11 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 |
+| `general.ring.offsite_coulombinter.conditioning.mu` | chiq | 3.316e-12 | 3.373e-12 | 1.0e-10 | freeze unchanged | 10x the gating-runner MAX, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10 (== ceiling, which the rule permits) |
+
+The two largest ordinary residuals are the off-site `CoulombInter` pair -- `general.ring.offsite_coulombinter_sameorb.mu` chiq at 2.026157e-14 and `reduced.ring.offsite_coulombinter.mu` chiq at 3.561041e-14 -- which round to the same 1.0e-12 bound. The conditioning cell is larger still by design: chi0q 6.432077e-13 -> 1.0e-11, chiq 3.373345e-12 -> 1.0e-10, the one bound sitting exactly on its ceiling.
+
+### Divergence-diagnostic checkpoints (10 rows = 5 assertions x 2 fixtures; informational -- reconfirms Events 1 and 2 on the four gating runners; no registry atol is gated by this table)
+
+Residual columns are the MIN and MAX of the four runner-local MAXima.
+
+| cell_id/checkpoint | observable | gating-runner MIN residual | gating-runner MAX residual | derived value | decision | reason |
+|---|---|---|---|---|---|---|
+| diagnostic assertion 1 | benign | 0.000e+00 | 0.000e+00 | n/a | accept | within the `mu_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 1 | fc | 0.000e+00 | 0.000e+00 | n/a | accept | within the `mu_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 2 | benign | 0.000e+00 | 0.000e+00 | n/a | accept | within the `mu_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 2 | fc | 1.070e-12 | 1.070e-12 | n/a | accept | within the `mu_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 3 | benign | 1.119e-16 | 1.119e-16 | n/a | accept | within the `green_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 3 | fc | 2.289e-16 | 2.289e-16 | n/a | accept | within the `green_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 4 | benign | 1.119e-16 | 1.119e-16 | n/a | accept | within the `green_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 4 | fc | 7.850e-17 | 7.850e-17 | n/a | accept | within the `green_diag` ceiling (1e-10) on all four runners |
+| diagnostic assertion 5 | benign | 9.714e-17 | 9.714e-17 | n/a | accept | within the `chi0q_mu` ceiling (1e-10) on all four runners |
+| diagnostic assertion 5 | fc | 5.586e-17 | 1.111e-16 | n/a | accept | within the `chi0q_mu` ceiling (1e-10) on all four runners |
+
+**Cross-runner amplification cross-check (assertion 2, the conditioning cell's own seam):** FC/benign = 1.070e-12 / max(0.000e+00, 1e-15) = **1.07e+03x** on every one of the four gating runners, identical across Python 3.9, 3.10, 3.11 and 3.12 -- the >= 10x conditioning criterion Event 1 established on one development machine and Event 2 reconfirmed on a second now holds on all four gating runners as well. The only checkpoint that varies at all across the four runners is assertion 5 on the FC fixture (5.586e-17 on Python 3.9/3.10/3.12, 1.111e-16 on Python 3.11); both values sit ~1e+05x under the `chi0q_mu` ceiling, so nothing turns on the difference.
+
+### Timing (informational -- `tests/equivalence_benchmark.md`, Section 2, owns the authoritative table)
+
+- `module_total_seconds` (MAX of 3 invocations, per runner): Python 3.9 0.668, 3.10 0.840, 3.11 0.966, 3.12 0.986
+- `unittest_module_process_seconds` (1 sample per runner): Python 3.9 0.983, 3.10 1.022, 3.11 1.112, 3.12 1.466 -- MAX **1.466 s** against the 120 s freeze-time budget, roughly 82x under it.

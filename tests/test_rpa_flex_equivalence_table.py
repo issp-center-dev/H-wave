@@ -455,11 +455,52 @@ class TestRegistrySchema(unittest.TestCase):
             },
         )
 
-    def test_provenance_initial_state(self):
-        self.assertEqual(
-            dict(PROVENANCE),
-            {"source_sha": None, "run_ids": (), "status": "candidate"},
-        )
+    def test_provenance_record_is_schema_valid_and_status_consistent(self):
+        # The registry exposes no PROVENANCE validator of its own
+        # (``validate_registry`` takes ``cells`` and checks ``CELLS``
+        # only), so the record's schema is asserted directly here: the
+        # three fields, the two allowed ``status`` values, and the
+        # consistency each status demands of the other two.
+        #
+        # Deliberately NOT a pin on the current values. PROVENANCE is
+        # rewritten by every calibration freeze, so a pin would need
+        # hand-editing each time while asserting nothing beyond "the
+        # record says what the record says". The invariant below
+        # survives a freeze AND is strictly stronger: it rejects a
+        # half-filled frozen record (a status flipped to "frozen"
+        # without a measured revision, or without naming the
+        # calibration run), which a pin could never catch.
+        record = dict(PROVENANCE)
+        self.assertEqual(set(record), {"source_sha", "run_ids", "status"})
+
+        status = record["status"]
+        self.assertIn(status, ("candidate", "frozen"))
+
+        source_sha = record["source_sha"]
+        run_ids = record["run_ids"]
+        self.assertIsInstance(run_ids, tuple)
+
+        if status == "frozen":
+            # A frozen record must name the revision the measurements
+            # were taken at, and at least one calibration run that took
+            # them -- the renderer publishes both on the page.
+            self.assertIsInstance(source_sha, str)
+            self.assertRegex(
+                source_sha,
+                r"\A[0-9a-f]{40}\Z",
+                "a frozen record must name a full 40-character commit hash",
+            )
+            self.assertTrue(
+                run_ids, "a frozen record must name at least one calibration run"
+            )
+            for run_id in run_ids:
+                self.assertIsInstance(run_id, str)
+                self.assertTrue(run_id.strip(), "empty run identifier")
+        else:
+            # A candidate record claims neither: the tolerances have not
+            # been confirmed at any revision by any run yet.
+            self.assertIsNone(source_sha)
+            self.assertEqual(run_ids, ())
 
     def test_cells_holds_the_full_37_cell_inventory(self):
         # CELLS carries rows 1-36 plus the G6 conditioning row, cell
