@@ -378,8 +378,15 @@ POLICY_CEILINGS: dict = {
     "chiq_fixed": 1e-12,
 }
 
-# Schema-validated at creation ({"source_sha": None, "run_ids": (),
-# "status": "candidate"}); the freeze commit's ONLY registry change.
+# The calibration provenance record: which source revision the recorded
+# tolerances were confirmed at, and which calibration run confirmed
+# them. Created as {"source_sha": None, "run_ids": (), "status":
+# "candidate"} and rewritten to "frozen" once a calibration loop closed
+# on the continuous-integration runners -- the only part of this module
+# a freeze commit touches, since the record feeds no proof, no tolerance
+# and no fixture. Its schema and its status-dependent invariants are
+# asserted by ``TestRegistrySchema`` in
+# ``tests/test_rpa_flex_equivalence_table.py``.
 PROVENANCE: dict = {
     "source_sha": "8144bf3f9e9539bad4759a2fbd1b24f52f7bef33",
     "run_ids": ("32204319966 attempt 1",),
@@ -485,14 +492,19 @@ def _measured_equiv(
     """Build the common ``Equiv(chi0q, chiq)`` shape every comparison
     cell in the registry uses: ``chi0q`` always via ``identity``;
     ``chiq`` via the caller's comparator (``general_from_flex_channels``
-    or ``reduced_blocks``). This is the candidate-calibration pass:
-    ``atol`` is the ``_candidate_atol`` bound (10x the larger of the two
-    development-machine residuals, rounded up to a power of ten, capped
-    at the mapped policy ceiling); ``provenance`` records BOTH measured
-    residuals, both runner descriptors, and the measured source commit
-    -- status stays "candidate", and only a closed calibration loop on
-    the continuous-integration runners flips the module-level
-    ``PROVENANCE`` record to "frozen".
+    or ``reduced_blocks``). ``atol`` is the ``_candidate_atol`` bound
+    (10x the larger of the two development-machine residuals, rounded up
+    to a power of ten, capped at the mapped policy ceiling);
+    ``provenance`` records BOTH measured residuals, both runner
+    descriptors, and the source commit they were measured at.
+
+    Those notes describe where each residual was ORIGINALLY measured,
+    and they keep describing exactly that after a freeze: the
+    calibration loop on the continuous-integration runners has since
+    closed, reproducing every one of these bounds unchanged, and it is
+    the module-level ``PROVENANCE`` record -- not these per-observable
+    notes -- that carries the confirmation and names the revision and
+    the run it was confirmed at.
     """
 
     def _prov(macos_residual: float, linux_residual: float, atol: float, ceiling: float) -> str:

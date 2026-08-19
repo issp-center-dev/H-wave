@@ -87,6 +87,32 @@ def _literal(text: str) -> str:
     return "``{}``".format(text)
 
 
+def _wrap(tokens: Sequence[str], width: int = 70) -> List[str]:
+    """Greedy-wrap pre-tokenized prose near ``width`` columns, so a
+    generated paragraph matches the hand-wrapped prose elsewhere in the
+    page instead of running off as one very long line.
+
+    Tokens are ATOMIC and are never split: an inline literal is passed
+    in as a single token, so a commit hash or a run identifier (which
+    may itself contain spaces) always lands on one line and stays
+    searchable as a single string on the page.
+    """
+
+    lines: List[str] = []
+    current = ""
+    for token in tokens:
+        if not current:
+            current = token
+        elif len(current) + 1 + len(token) <= width:
+            current += " " + token
+        else:
+            lines.append(current)
+            current = token
+    if current:
+        lines.append(current)
+    return lines
+
+
 def _shape(shape) -> str:
     return "x".join(str(n) for n in shape)
 
@@ -198,20 +224,28 @@ def _status_section(provenance: Mapping) -> List[str]:
                 "revision, got source_sha={!r}".format(source_sha)
             )
         run_ids = tuple(provenance["run_ids"])
-        sentence = (
+        tokens = (
             "The tolerances below are **confirmed**: they were reproduced "
             "on the project's continuous-integration runners at source "
-            "revision {}".format(_literal(str(source_sha)))
+            "revision"
+        ).split()
+        run_literals = [_literal(str(run_id)) for run_id in run_ids]
+        if run_literals:
+            tokens.append(_literal(str(source_sha)))
+            tokens.extend(["(workflow", "runs"])
+            for index, literal in enumerate(run_literals):
+                last = index == len(run_literals) - 1
+                tokens.append(literal + ")," if last else literal + ",")
+        else:
+            tokens.append(_literal(str(source_sha)) + ",")
+        tokens.extend(
+            (
+                "and hold as of that revision. The notes below record where "
+                "each residual was originally measured."
+            ).split()
         )
-        if run_ids:
-            sentence += " (workflow runs {})".format(
-                ", ".join(_literal(str(run_id)) for run_id in run_ids)
-            )
-        sentence += (
-            ", and hold as of that revision. The notes below record where "
-            "each residual was originally measured."
-        )
-        lines.extend([sentence, ""])
+        lines.extend(_wrap(tokens))
+        lines.append("")
     else:
         raise ValueError(
             "unknown provenance status {!r}: expected 'candidate' or "
