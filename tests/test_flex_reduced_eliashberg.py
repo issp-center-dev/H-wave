@@ -1272,7 +1272,7 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
 
 
 class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
-    """A spin-orbital FLEX run reaches hwave_sc as a bare shape mismatch.
+    """A spin-orbital chi reaches hwave_sc as a bare shape mismatch.
 
     FLEX writes chi in its reduced spin-orbital space (nd = norb_phys * ns)
     while hwave_sc reads norb from geom.dat, which in spin-orbital mode holds
@@ -1280,6 +1280,16 @@ class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
     alone look like a corrupt file, and the user has no way to tell that the
     real answer is "the Eliashberg vertex is paramagnetic and cannot take this
     model at all". The message must say so.
+
+    No FLEX scheme produces such a file any more: since the reduced-scheme
+    guard landed (src/hwave/solver/flex.py:227-231, mirroring the
+    general-scheme guard above it) BOTH FLEX schemes reject
+    enable_spin_orbital at construction, so this route into hwave_sc is
+    now DEFENSIVE ONLY. The message is still worth pinning -- hwave_sc
+    reads a chi FILE and cannot know which solver wrote it, so an array
+    of these dimensions from any source must still explain itself rather
+    than look corrupt. The test below calls sc._expand_flex_chi
+    directly and never runs a solver.
     """
 
     def test_message_identifies_spin_orbital_mode(self):
