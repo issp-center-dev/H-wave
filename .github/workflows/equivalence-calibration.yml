@@ -16,15 +16,32 @@
 # own housekeeping (timing capture, JSON emission, artifact upload)
 # runs regardless via `if: always()`.
 #
-# The push trigger bootstraps this workflow (a workflow_dispatch-only
-# workflow cannot be dispatched until it exists on the default branch);
-# workflow_dispatch becomes usable once this file is merged.
+# TRIGGERS. `workflow_dispatch` alone is not enough: GitHub only offers
+# the Run-workflow button for workflows present on the repository's
+# DEFAULT branch, which is `main`, while this work targets `develop`.
+# Until the file reaches `main` the workflow is reachable only by push,
+# so the push list must name every branch a calibration can be needed
+# on:
+#   * feature/equivalence-table -- produces the FIRST calibration, before
+#     anything is merged. Harmless once the branch is deleted.
+#   * develop -- the integration target. Without it the calibration this
+#     whole change is built around becomes untriggerable the moment the
+#     feature branch goes away.
+# No `pull_request` trigger. A calibration is a MEASUREMENT of a
+# specific commit, taken deliberately and then recorded by hand in
+# tests/equivalence_calibration_log.md and tests/equivalence_benchmark.md
+# -- not a gate on a proposed change. Running it on every push to every
+# open pull request would spend 16 jobs per push producing artifacts
+# nobody reads, and would not add a signal: the equivalence tests
+# themselves already run in the ordinary test workflow on pull requests.
+# Once this file is on `main`, the Run-workflow button covers the
+# occasional one-off (e.g. calibrating a pull-request head) directly.
 
 name: Equivalence table calibration
 
 on:
   push:
-    branches: ["feature/equivalence-table"]
+    branches: ["feature/equivalence-table", "develop"]
   workflow_dispatch: {}
 
 jobs:
