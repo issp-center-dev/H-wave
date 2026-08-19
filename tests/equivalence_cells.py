@@ -130,8 +130,9 @@ class ExecuteReject:
 
     ``exc_type`` must be a member of the CLOSED set
     ``{"ValueError", "RuntimeError"}`` -- validator-enforced by
-    ``validate_registry``; the executor (a later task) maps it to the
-    concrete exception class via a fixed dict keyed on this same set.
+    ``validate_registry``; the executor maps it to the concrete
+    exception class via a fixed dict keyed on this same set
+    (``_EXC_TYPE_MAP`` in the test module).
     """
 
     site: Site
@@ -394,17 +395,26 @@ PROVENANCE: dict = {
 }
 
 # ---------------------------------------------------------------------------
-# Candidate calibration: the two development-machine runner descriptors
-# and the measured source commit shared by every ``_measured_equiv`` call
-# in this module. One machine is macOS arm64, the other Linux x86_64
-# (CPU only, no CUDA involved). Both are ADVISORY pre-freeze proxies:
-# the gating continuous-integration runners (ubuntu-latest x Python
-# 3.9-3.12) are what ultimately FREEZES these bounds, once a calibration
-# run there closes the loop. See ``tests/equivalence_calibration_log.md``
-# (Event 2) for the full per-cell residual tables this module's literals
-# were read off of, and ``tests/equivalence_benchmark.md`` for the timing
-# side of the same sweep. One finding from the Linux x86_64 machine is
-# recorded here because it also shapes the CI workflow
+# Where the measured residuals came from: the two development-machine
+# runner descriptors and the source commit shared by every
+# ``_measured_equiv`` call in this module. One machine is macOS arm64,
+# the other Linux x86_64 (CPU only, no CUDA involved). The bounds below
+# were read off THESE machines, and a calibration run on the four gating
+# continuous-integration runners (ubuntu-latest x Python 3.9-3.12)
+# subsequently CONFIRMED every one of them without change -- recomputing
+# each bound from those runners' residuals reproduced the recorded atol
+# exactly, on the first iteration, so nothing here had to be
+# re-measured. That is why the per-observable notes still name these two
+# machines: they record where each residual was ORIGINALLY measured,
+# while the module-level ``PROVENANCE`` record carries the confirmation
+# and names the revision and run it was confirmed at. (The
+# ``_CANDIDATE_*`` names below predate that confirmation and are kept
+# for continuity.) See ``tests/equivalence_calibration_log.md`` Event 2
+# for the full per-cell residual tables this module's literals were read
+# off of, and Event 3 for the confirming run; Sections 1 and 2 of
+# ``tests/equivalence_benchmark.md`` carry the timing side of each. One
+# finding from the Linux x86_64 machine is recorded here because it also
+# shapes the CI workflow
 # (``.github/workflows/equivalence-calibration.yml`` pins
 # ``OPENBLAS_NUM_THREADS``/``OMP_NUM_THREADS``/``MKL_NUM_THREADS``/
 # ``NUMEXPR_NUM_THREADS`` to 1 for this reason): with the BLAS backend's
@@ -742,9 +752,11 @@ _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
 # the bootstrap above; row 38 is the conditioning cell below). Every
 # ``_measured_equiv`` call below (the helper is defined near
 # ``POLICY_CEILINGS`` above, so the bootstrap cells can use it too) sets
-# a CANDIDATE atol from the development-machine calibration sweep -- see
-# ``tests/equivalence_calibration_log.md`` (Event 2) and
-# ``tests/equivalence_benchmark.md`` for the full residual tables.
+# its atol from the development-machine calibration sweep, since
+# confirmed unchanged on the gating runners -- see
+# ``tests/equivalence_calibration_log.md`` (Event 2 for the sweep,
+# Event 3 for the confirmation) and ``tests/equivalence_benchmark.md``
+# for the full residual tables.
 # ---------------------------------------------------------------------------
 
 
