@@ -1787,27 +1787,41 @@ _CELL_33_CHI0Q_INIT_REUSE = Cell(
             "recomputes chi0q from the dressed Green's function each "
             "iteration (flex.py:446-451's own docstring), so a "
             "chi0q_init entry loaded by the inherited RPA read_init is "
-            "never consumed."
+            "never consumed. Measured: supplying a chi0q_init "
+            "DELIBERATELY PERTURBED to twice the value FLEX itself "
+            "computes leaves every one of FLEX's output arrays "
+            "bitwise unchanged."
         ),
     ),
     comparison=None,
     required_observables=(),
     interaction_class="offsite",
     notes=(
-        "E1 coulombinter.dat, mu=0.0. RPA side (ExecuteChiqInitReuse): "
-        "run A (no chi0q_init) captures chi0q_A/chiq_A; run B loads "
-        "chi0q_A via the PUBLIC chi0q_init mechanism (run A's own "
+        "E1 coulombinter.dat, mu=0.0. BOTH sides inject a PERTURBED "
+        "chi0q_init -- twice run A's own chi0q -- rather than run A's "
+        "array unchanged: re-injecting an identical array is a fixed "
+        "point for any deterministic solver, so it cannot tell a "
+        "solver that consumes the option from one that ignores it. "
+        "The perturbation makes the two sides' claims discriminating, "
+        "and OPPOSITE. RPA side (ExecuteChiqInitReuse): run A (no "
+        "chi0q_init) captures chi0q_A/chiq_A; run B loads 2*chi0q_A "
+        "via the PUBLIC chi0q_init mechanism (run A's own "
         "save_results() writes the file, run B's read_init() loads "
-        "it) -- VERIFIED: np.array_equal(chi0q_B, chi0q_A) "
-        "and np.array_equal(chiq_B, chiq_A) both True (chi0q passes "
-        "through solve() untouched when supplied). FLEX side "
-        "(PairedInvarianceRun): the SAME two-solve construction, "
+        "it) -- MEASURED: chi0q_B is bitwise 2*chi0q_A (the supplied "
+        "bubble replaces RPA's own and passes through solve() "
+        "untouched, rpa.py:1683-1700) and the DRESSED chiq responds, "
+        "max|chiq_B - chiq_A| = 7.945e-01 against a chiq scale of "
+        "5.868e-01 -- i.e. RPA demonstrably consumes chi0q_init. "
+        "FLEX side (PairedInvarianceRun): the SAME two-solve "
+        "construction and the SAME perturbed injection, then an "
         "exhaustive green_info key-set match + per-key "
-        "np.array_equal -- VERIFIED: identical key sets "
+        "np.array_equal -- MEASURED: identical key sets "
         "({'chi0q','chiq_c','chiq_s','green','physics','sigma'}) and "
-        "every array bitwise equal between the with/without-"
-        "chi0q_init runs, proving (not merely asserting) FLEX's "
-        "output is invariant to the option's presence."
+        "every array bitwise equal (max|diff| exactly 0.0 on all of "
+        "them) between the plain run and the perturbed-injection "
+        "run, i.e. FLEX demonstrably ignores chi0q_init. Each side's "
+        "oracle now FAILS if the other solver's behaviour were "
+        "substituted for its own."
     ),
 )
 

@@ -68,6 +68,14 @@ logger = logging.getLogger("qlms").getChild("test_equivalence_table")
 # ---------------------------------------------------------------------------
 
 
+def _max_abs(array: np.ndarray) -> float:
+    """``max|array|`` as a plain float, 0.0 for an empty array."""
+
+    if array.size == 0:
+        return 0.0
+    return float(np.max(np.abs(array)))
+
+
 def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) -> np.ndarray:
     """FLEX FINDING: under ``calc_scheme='reduced'`` FLEX writes
     the FULL spin-block-INFLATED bare bubble to ``green_info["chi0q"]``
@@ -1416,25 +1424,93 @@ def _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory
     )
 
 
+# ---------------------------------------------------------------------------
+# Cell 33's two multirun executors share one construction: run A plain,
+# then run B fed a chi0q_init through the PUBLIC save_results/read_init
+# route. What they inject is DELIBERATELY PERTURBED -- twice run A's own
+# chi0q -- and that is the whole point of the pair.
+#
+# Injecting run A's array UNCHANGED proves nothing about either solver.
+# Both are deterministic, so "run B reproduces run A bitwise" is a fixed
+# point by construction: it holds whether the injected array is consumed
+# or ignored, which is why the same observation could once be cited as
+# evidence for the RPA claim ("reuse reproduces the same result") AND
+# for the opposite FLEX claim ("the option is never consumed"). A
+# perturbed injection separates them, and the two sides then assert
+# OPPOSITE things about it:
+#
+#   RPA  -- the output MUST change (rpa.py:1683-1700's reuse branch
+#           takes the supplied bubble instead of computing its own).
+#   FLEX -- the output must NOT change at all (flex.py:446-451: every
+#           SCF iteration recomputes chi0q from the dressed Green's
+#           function, so nothing ever reads the loaded entry).
+#
+# Measured on the cell 33 fixture with factor 2.0: RPA's chi0q_B is
+# bitwise 2*chi0q_A and max|chiq_B - chiq_A| = 7.945e-01 (chiq's own
+# scale is 5.868e-01); FLEX's every green_info array is bitwise
+# identical, max|diff| exactly 0.0. With an IDENTICAL injection both
+# sides read 0.0 -- no discrimination at all.
+# ---------------------------------------------------------------------------
+
+# The injected chi0q is scaled by this factor. Any value != 1 works; 2.0
+# keeps the perturbed array in the same order of magnitude as the real
+# one, so run B stays numerically well-behaved (no overflow, no loss of
+# the solve's conditioning) while the perturbation is unmistakable.
+_CHI0Q_INIT_PERTURBATION = 2.0
+
+# The RPA side requires the DRESSED chiq to move by at least this much.
+# It is a discrimination floor, not a tolerance: the measured response
+# is 7.945e-01, some 6 orders of magnitude above this bar, which in turn
+# sits ~9 orders above the ~1e-16 round-off of these arrays. Anything in
+# that whole window would do; the constant only has to be impossible to
+# reach by accumulated round-off.
+_CHI0Q_INIT_MIN_RESPONSE = 1.0e-6
+
+
+def _save_perturbed_chi0q(solver, green, out_dir, file_name):
+    """Write ``_CHI0Q_INIT_PERTURBATION * green["chi0q"]`` through the
+    solver's OWN public ``save_results``, leaving ``green`` exactly as
+    it was found.
+
+    Routing through ``save_results``/``read_init`` (rather than
+    hand-building an npz) keeps the injection on the public option path
+    a user would take -- the same pattern
+    ``tests/test_rpa_flex_oneshot_equivalence.py::TestSpinModeConsistency``
+    establishes, which hand-builds its npz instead.
+    """
+
+    original = green["chi0q"]
+    green["chi0q"] = _CHI0Q_INIT_PERTURBATION * np.asarray(original)
+    try:
+        solver.save_results({"path_to_output": out_dir, "chi0q": file_name}, green)
+    finally:
+        green["chi0q"] = original
+
+
 def _execute_chiq_init_reuse(fixture, solver_kind, stack, solver_factory=build_solver):
     """The RPA side of cell 33 (``chi0q_init.reuse``): TWO RPA solves --
     the documented ``ExecuteChiqInitReuse`` exception to the run-once
     rule.
 
     Run A (no ``chi0q_init``) captures ``chi0q_A``/``chiq_A``. Run B
-    consumes ``chi0q_A`` via the PUBLIC ``chi0q_init`` mechanism: run
-    A's own ``save_results()`` writes it to a file (the same public
-    entry point ``RPA.save_results`` documents), and run B's
-    ``read_init()`` loads it back (``tests/test_rpa_flex_oneshot_
-    equivalence.py::TestSpinModeConsistency`` establishes this same
-    save-then-reload pattern, though it hand-builds the npz rather than
-    routing through ``save_results``).
+    consumes a PERTURBED copy of ``chi0q_A`` via the PUBLIC
+    ``chi0q_init`` mechanism -- see the block comment above for why the
+    perturbation is what makes this oracle discriminating.
 
-    The ORACLE (discharged internally, like ``_assert_reject``):
-    ``np.array_equal(chi0q_B, chi0q_A)`` AND
-    ``np.array_equal(chiq_B, chiq_A)`` -- reuse must reproduce the same
-    dressed result bitwise. Exactly 2 solves total (one per run);
-    ``TestExecutorSolveCounts`` pins this against instrumented fakes.
+    The ORACLE (discharged internally, like ``_assert_reject``), both
+    halves load-bearing:
+
+    * ``chi0q_B`` is bitwise the INJECTED array -- RPA took the supplied
+      bubble instead of recomputing its own, and passed it through
+      ``solve()`` untouched. Delete ``rpa.py``'s ``if "chi0q" in
+      green_info`` reuse branch and ``chi0q_B`` reverts to ``chi0q_A``,
+      failing here.
+    * ``max|chiq_B - chiq_A| > _CHI0Q_INIT_MIN_RESPONSE`` -- the
+      injected bubble actually fed the DRESSED susceptibility, so the
+      consumption is real and not a bookkeeping copy.
+
+    Exactly 2 solves total (one per run); ``TestExecutorSolveCounts``
+    pins this against instrumented fakes.
     """
 
     solver_a, green_a, out_a = solver_factory(fixture, solver_kind, stack)
@@ -1442,7 +1518,7 @@ def _execute_chiq_init_reuse(fixture, solver_kind, stack, solver_factory=build_s
     chi0q_a = np.array(green_a["chi0q"], copy=True)
     chiq_a = np.array(green_a["chiq"], copy=True)
 
-    solver_a.save_results({"path_to_output": out_a, "chi0q": "chi0q_reuse.npz"}, green_a)
+    _save_perturbed_chi0q(solver_a, green_a, out_a, "chi0q_reuse.npz")
 
     solver_b, green_b, out_b = solver_factory(fixture, solver_kind, stack)
     green_b.update(solver_b.read_init({"path_to_input": out_a, "chi0q_init": "chi0q_reuse.npz"}))
@@ -1450,15 +1526,28 @@ def _execute_chiq_init_reuse(fixture, solver_kind, stack, solver_factory=build_s
     chi0q_b = np.asarray(green_b["chi0q"])
     chiq_b = np.asarray(green_b["chiq"])
 
-    if not np.array_equal(chi0q_b, chi0q_a):
+    injected = _CHI0Q_INIT_PERTURBATION * chi0q_a
+    if not np.array_equal(chi0q_b, injected):
         raise AssertionError(
-            "ExecuteChiqInitReuse: chi0q_B != chi0q_A bitwise -- "
-            "chi0q_init reuse did not reproduce the same bare bubble"
+            "ExecuteChiqInitReuse: chi0q_B is not the injected "
+            "(perturbed) bare bubble -- max|chi0q_B - {}*chi0q_A| {!r}, "
+            "max|chi0q_B - chi0q_A| {!r}. RPA recomputed its own chi0q "
+            "instead of consuming chi0q_init".format(
+                _CHI0Q_INIT_PERTURBATION,
+                _max_abs(chi0q_b - injected),
+                _max_abs(chi0q_b - chi0q_a),
+            )
         )
-    if not np.array_equal(chiq_b, chiq_a):
+
+    response = _max_abs(chiq_b - chiq_a)
+    if response <= _CHI0Q_INIT_MIN_RESPONSE:
         raise AssertionError(
-            "ExecuteChiqInitReuse: chiq_B != chiq_A bitwise -- "
-            "chi0q_init reuse did not reproduce the same dressed chiq"
+            "ExecuteChiqInitReuse: the dressed chiq did not respond to "
+            "the perturbed chi0q_init -- max|chiq_B - chiq_A| {!r} <= "
+            "{!r}. The injected bubble reached green_info but never "
+            "reached the dressed susceptibility".format(
+                response, _CHI0Q_INIT_MIN_RESPONSE
+            )
         )
 
 
@@ -1473,24 +1562,32 @@ def _execute_paired_invariance_run(fixture, solver_kind, stack, solver_factory=b
     (``src/hwave/solver/flex.py:446-451``'s own docstring), so a
     ``chi0q_init`` entry loaded by the inherited RPA ``read_init`` is
     NEVER consumed. This executor drives the SAME two-solve
-    construction ``_execute_chiq_init_reuse`` uses (run A plain, run B
-    with a ``chi0q_init`` entry injected via the identical public
-    ``save_results``/``read_init`` route) and asserts EXHAUSTIVE
-    invariance: the ``green_info`` key sets match exactly, and every
-    key's array is bitwise ``np.array_equal`` between the two runs --
-    the option's presence changes NOTHING about FLEX's output.
+    construction ``_execute_chiq_init_reuse`` uses, injecting the SAME
+    PERTURBED array (twice run A's own ``chi0q``) through the identical
+    public ``save_results``/``read_init`` route -- and asserts the
+    opposite outcome: EXHAUSTIVE invariance. The ``green_info`` key sets
+    match exactly, and every key's array is bitwise ``np.array_equal``
+    between the two runs.
+
+    The perturbation is what gives this its force. An unchanged
+    injection would leave the two runs identical no matter what FLEX
+    did with the option, so it could not distinguish "ignored" from
+    "consumed"; a doubled bubble that changes NOTHING downstream can
+    only mean it was never read. (RPA under the same injection moves by
+    7.945e-01 -- see ``_execute_chiq_init_reuse``.)
     """
 
     solver_a, green_a, out_a = solver_factory(fixture, solver_kind, stack)
     solver_a.solve(green_a, out_a)
+    green_a_snapshot = {key: np.array(value, copy=True) for key, value in green_a.items()}
 
-    solver_a.save_results({"path_to_output": out_a, "chi0q": "chi0q_reuse.npz"}, green_a)
+    _save_perturbed_chi0q(solver_a, green_a, out_a, "chi0q_reuse.npz")
 
     solver_b, green_b, out_b = solver_factory(fixture, solver_kind, stack)
     green_b.update(solver_b.read_init({"path_to_input": out_a, "chi0q_init": "chi0q_reuse.npz"}))
     solver_b.solve(green_b, out_b)
 
-    keys_a = set(green_a.keys())
+    keys_a = set(green_a_snapshot.keys())
     keys_b = set(green_b.keys())
     if keys_a != keys_b:
         raise AssertionError(
@@ -1498,13 +1595,13 @@ def _execute_paired_invariance_run(fixture, solver_kind, stack, solver_factory=b
             "without chi0q_init -- A={!r} B={!r}".format(sorted(keys_a), sorted(keys_b))
         )
     for key in keys_a:
-        a_val = np.asarray(green_a[key])
+        a_val = green_a_snapshot[key]
         b_val = np.asarray(green_b[key])
         if not np.array_equal(a_val, b_val):
             raise AssertionError(
                 "PairedInvarianceRun: green_info[{!r}] differs with vs "
-                "without chi0q_init (FLEX is claimed invariant to this "
-                "option)".format(key)
+                "without a perturbed chi0q_init -- FLEX is claimed "
+                "invariant to this option, so nothing may move".format(key)
             )
 
 
@@ -2043,40 +2140,62 @@ class TestExecutorSolveCounts(unittest.TestCase):
 
     # -- the two multirun exception executors (cell 33) -------------------
 
-    def test_execute_chiq_init_reuse_solves_exactly_twice(self):
+    # ``_FakeSolver.save_results``/``read_init`` are no-ops, so these
+    # factories stand in for what the injection WOULD have done: run 2's
+    # green_info is written as if the perturbed chi0q_init had (or had
+    # not) been consumed.
+
+    _CHI0Q_A = np.array([[2.0 - 1.0j]])
+    _CHIQ_A = np.array([[3.0 + 4.0j]])
+
+    def _reuse_factory(self, chi0q_b, chiq_b):
+        call_n = [0]
         solvers = []
 
         def factory(fixture, solver_kind, stack):
+            call_n[0] += 1
             solver = _FakeSolver()
             solvers.append(solver)
-            green = {
-                "chi0q": np.array([[2.0 - 1.0j]]),
-                "chiq": np.array([[3.0 + 4.0j]]),
-            }
+            if call_n[0] == 1:
+                green = {"chi0q": self._CHI0Q_A.copy(), "chiq": self._CHIQ_A.copy()}
+            else:
+                green = {"chi0q": chi0q_b.copy(), "chiq": chiq_b.copy()}
             return solver, green, "/dev/null"
 
+        return factory, solvers
+
+    def test_execute_chiq_init_reuse_solves_exactly_twice(self):
+        # A solver that consumes chi0q_init: run B carries the injected
+        # (perturbed) bubble and its dressed chiq has moved.
+        factory, solvers = self._reuse_factory(
+            _CHI0Q_INIT_PERTURBATION * self._CHI0Q_A,
+            self._CHIQ_A + 1.0,
+        )
         with ExitStack() as stack:
             _execute_chiq_init_reuse(_fake_fixture(), "rpa", stack, solver_factory=factory)
         self.assertEqual(len(solvers), 2)
         self.assertEqual([s.solve_calls for s in solvers], [1, 1])
 
-    def test_execute_chiq_init_reuse_detects_a_mismatch(self):
-        call_n = [0]
-
-        def factory(fixture, solver_kind, stack):
-            call_n[0] += 1
-            solver = _FakeSolver()
-            if call_n[0] == 1:
-                green = {"chi0q": np.array([[1.0]]), "chiq": np.array([[2.0]])}
-            else:
-                green = {"chi0q": np.array([[1.0]]), "chiq": np.array([[999.0]])}
-            return solver, green, "/dev/null"
-
+    def test_execute_chiq_init_reuse_detects_an_ignored_injection(self):
+        # THE discrimination case: a solver that IGNORES chi0q_init
+        # reproduces run A exactly -- which the old identical-injection
+        # oracle accepted as proof of "reuse works". It must fail now.
+        factory, _solvers = self._reuse_factory(self._CHI0Q_A, self._CHIQ_A)
         with self.assertRaises(AssertionError) as ctx:
             with ExitStack() as stack:
                 _execute_chiq_init_reuse(_fake_fixture(), "rpa", stack, solver_factory=factory)
-        self.assertIn("chiq_B != chiq_A", str(ctx.exception))
-        self.assertEqual(call_n[0], 2)
+        self.assertIn("not the injected", str(ctx.exception))
+
+    def test_execute_chiq_init_reuse_detects_an_unresponsive_chiq(self):
+        # The bubble was taken but never reached the dressed result.
+        factory, _solvers = self._reuse_factory(
+            _CHI0Q_INIT_PERTURBATION * self._CHI0Q_A,
+            self._CHIQ_A,
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            with ExitStack() as stack:
+                _execute_chiq_init_reuse(_fake_fixture(), "rpa", stack, solver_factory=factory)
+        self.assertIn("did not respond", str(ctx.exception))
 
     def test_paired_invariance_run_solves_exactly_twice(self):
         solvers = []
@@ -2113,19 +2232,55 @@ class TestExecutorSolveCounts(unittest.TestCase):
         self.assertIn("key sets differ", str(ctx.exception))
 
     def test_paired_invariance_run_detects_a_value_mismatch(self):
+        # THE discrimination case on the FLEX side: a solver that DID
+        # consume the perturbed injection would come back changed.
         call_n = [0]
 
         def factory(fixture, solver_kind, stack):
             call_n[0] += 1
             solver = _FakeSolver()
-            value = 1.0 if call_n[0] == 1 else 2.0
+            value = 1.0 if call_n[0] == 1 else _CHI0Q_INIT_PERTURBATION
             green = {"chi0q": np.array([[value]])}
             return solver, green, "/dev/null"
 
         with self.assertRaises(AssertionError) as ctx:
             with ExitStack() as stack:
                 _execute_paired_invariance_run(_fake_fixture(), "flex", stack, solver_factory=factory)
-        self.assertIn("differs with vs without chi0q_init", str(ctx.exception))
+        self.assertIn("differs with vs without a perturbed chi0q_init", str(ctx.exception))
+
+    def test_paired_invariance_run_injects_a_perturbed_chi0q(self):
+        """The array handed to ``save_results`` -- i.e. what run B would
+        load -- is the PERTURBED bubble, not run A's own.
+
+        Without this the executor could quietly regress to an identical
+        injection, which no invariance assertion could ever catch.
+        """
+
+        saved = {}
+
+        class _RecordingSolver(_FakeSolver):
+            def save_results(self, info_outputfile, green_info):
+                saved["chi0q"] = np.array(green_info["chi0q"], copy=True)
+
+        original = np.array([[1.0 + 0.5j]])
+        greens = []
+
+        def factory(fixture, solver_kind, stack):
+            green = {"chi0q": original.copy()}
+            greens.append(green)
+            return _RecordingSolver(), green, "/dev/null"
+
+        with ExitStack() as stack:
+            _execute_paired_invariance_run(_fake_fixture(), "flex", stack, solver_factory=factory)
+
+        self.assertTrue(
+            np.array_equal(saved["chi0q"], _CHI0Q_INIT_PERTURBATION * original),
+            "the injected chi0q must be perturbed, got {!r}".format(saved["chi0q"]),
+        )
+        # ... and run A's own green_info is left exactly as the solve
+        # produced it, so the invariance comparison is against the real
+        # output rather than the perturbed copy.
+        self.assertTrue(np.array_equal(greens[0]["chi0q"], original))
 
 
 class TestSystemExitEscape(unittest.TestCase):

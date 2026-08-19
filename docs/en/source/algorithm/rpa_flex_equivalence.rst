@@ -349,7 +349,7 @@ For these inputs the two solvers cannot be compared. The entries
 record what the unsupported side does instead.
 
 ``chi0q_init.reuse``
-   * FLEX: nothing to compare -- accepted; no corresponding option semantics (flex.py:408) -- FLEX starts every SCF loop from zero self-energy and recomputes chi0q from the dressed Green's function each iteration (flex.py:446-451's own docstring), so a chi0q_init entry loaded by the inherited RPA read_init is never consumed.
+   * FLEX: nothing to compare -- accepted; no corresponding option semantics (flex.py:408) -- FLEX starts every SCF loop from zero self-energy and recomputes chi0q from the dressed Green's function each iteration (flex.py:446-451's own docstring), so a chi0q_init entry loaded by the inherited RPA read_init is never consumed. Measured: supplying a chi0q_init DELIBERATELY PERTURBED to twice the value FLEX itself computes leaves every one of FLEX's output arrays bitwise unchanged.
 
 ``general.ring.offsite_coulombinter_interorb.flexreject``
    * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'CoulombInter'``.
