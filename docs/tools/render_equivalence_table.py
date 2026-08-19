@@ -232,7 +232,9 @@ def _status_section(provenance: Mapping) -> List[str]:
         run_literals = [_literal(str(run_id)) for run_id in run_ids]
         if run_literals:
             tokens.append(_literal(str(source_sha)))
-            tokens.extend(["(workflow", "runs"])
+            tokens.extend(
+                ["(workflow", "runs" if len(run_literals) > 1 else "run"]
+            )
             for index, literal in enumerate(run_literals):
                 last = index == len(run_literals) - 1
                 tokens.append(literal + ")," if last else literal + ",")

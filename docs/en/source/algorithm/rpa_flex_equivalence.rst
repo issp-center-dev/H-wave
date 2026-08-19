@@ -36,7 +36,7 @@ Status of these records
 
 The tolerances below are **confirmed**: they were reproduced on the
 project's continuous-integration runners at source revision
-``8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`` (workflow runs
+``8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`` (workflow run
 ``32204319966 attempt 1``), and hold as of that revision. The notes
 below record where each residual was originally measured.
 

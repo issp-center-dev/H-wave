@@ -3495,6 +3495,56 @@ class TestBenchmarkRegistryTie(unittest.TestCase):
             cell_ids.append(m.group(1))
         return cell_ids
 
+    _COMMIT_LINE_PREFIX = "- **Commit:**"
+
+    @classmethod
+    def _most_recent_section_commit(cls):
+        """Parse the LAST ``- **Commit:**`` line in
+        ``tests/equivalence_benchmark.md`` -- the measured source
+        revision of the most recently appended calibration section --
+        and return the 40-character commit hash it names.
+        """
+
+        path = os.path.join(os.path.dirname(__file__), "equivalence_benchmark.md")
+        with open(path, "r", encoding="utf-8") as f:
+            commit_lines = [
+                line for line in f if line.startswith(cls._COMMIT_LINE_PREFIX)
+            ]
+        if not commit_lines:
+            raise AssertionError(
+                "tests/equivalence_benchmark.md: no {!r} line found".format(
+                    cls._COMMIT_LINE_PREFIX)
+            )
+        match = re.search(r"\b([0-9a-f]{40})\b", commit_lines[-1])
+        if not match:
+            raise AssertionError(
+                "tests/equivalence_benchmark.md: the most recent section's "
+                "commit line names no 40-character commit hash: "
+                + commit_lines[-1].strip()
+            )
+        return match.group(1)
+
+    def test_frozen_provenance_names_the_most_recent_benchmark_commit(self):
+        # TestRegistrySchema checks that a frozen PROVENANCE is
+        # well-FORMED, but any 40-hex string satisfies that: a freeze
+        # that recorded the wrong revision would pass every test while
+        # the generated page published it. Nothing else ties the record
+        # to the artifacts, so tie it here -- a frozen record must name
+        # the same source revision the most recent benchmark section was
+        # measured at.
+        if PROVENANCE["status"] != "frozen":
+            # A candidate record names no revision yet, so there is
+            # nothing to tie it to. Not a skip: the candidate state is
+            # valid, and this assertion simply does not apply to it.
+            return
+        self.assertEqual(
+            PROVENANCE["source_sha"],
+            self._most_recent_section_commit(),
+            "PROVENANCE['source_sha'] does not match the measured source "
+            "revision recorded in tests/equivalence_benchmark.md's most "
+            "recent calibration section -- one of the two is wrong",
+        )
+
     def test_most_recent_section_is_an_exact_multiset_match_with_cells(self):
         from collections import Counter
 
@@ -3614,9 +3664,17 @@ class TestRenderedEquivalenceTableDrift(unittest.TestCase):
         module = _load_renderer_module()
         self.assertEqual(module.render(), module.render())
 
+    # The run id carries a SPACE on purpose. The renderer wraps the
+    # frozen status paragraph, and its ``_wrap`` helper promises that an
+    # inline literal -- which a run identifier may be, spaces and all --
+    # is never split across lines. ``assertIn`` below is the only place
+    # that promise is observable: a wrapper that broke at spaces would
+    # emit "``1234567890 attempt\n2``" and fail here. With a
+    # space-free id the assertion passes either way and the guarantee
+    # goes unchecked, so do not simplify this value.
     _FROZEN_PROVENANCE = {
         "source_sha": "0123456789abcdef0123456789abcdef01234567",
-        "run_ids": ("1234567890",),
+        "run_ids": ("1234567890 attempt 2",),
         "status": "frozen",
     }
 
@@ -3644,6 +3702,54 @@ class TestRenderedEquivalenceTableDrift(unittest.TestCase):
             "flipping PROVENANCE changed page content outside the status "
             "section -- the freeze regeneration is no longer metadata-only",
         )
+
+
+class TestStatusSectionWrapping(unittest.TestCase):
+    """The renderer's ``_wrap`` helper promises that an inline literal
+    is ATOMIC: a commit hash, or a run identifier that itself contains
+    spaces, always lands on one line and stays searchable as a single
+    string on the page.
+
+    That promise cannot be observed through the rendered page. Whether a
+    naive space-splitting wrapper would break a given literal depends on
+    where the line break happens to fall, which in turn depends on the
+    surrounding wording -- for the status sentence as currently worded,
+    a naive wrapper produces byte-identical output, so
+    ``test_freezing_the_provenance_only_changes_the_status_paragraph``
+    passes either way and checks nothing about atomicity. The guarantee
+    is therefore asserted here, directly on the helper and swept across
+    widths, so it cannot be silently lost to a rewording.
+    """
+
+    _LITERAL = "``32204319966 attempt 1``"
+
+    def test_wrap_never_splits_an_atomic_token(self):
+        module = _load_renderer_module()
+        tokens = (
+            "a token sequence long enough to force a break somewhere".split()
+            + [self._LITERAL]
+            + "and some trailing words after it".split()
+        )
+        for width in range(20, 80):
+            lines = module._wrap(tokens, width=width)
+            self.assertTrue(
+                any(self._LITERAL in line for line in lines),
+                "width {}: the atomic token was split across lines -- "
+                "_wrap must never break inside a token:\n{}".format(
+                    width, "\n".join(lines)),
+            )
+
+    def test_wrap_preserves_the_text_and_respects_the_width(self):
+        module = _load_renderer_module()
+        tokens = "one two three four five six seven eight nine ten".split()
+        for width in (12, 20, 40, 70):
+            lines = module._wrap(tokens, width=width)
+            self.assertEqual(" ".join(lines), " ".join(tokens))
+            for line in lines:
+                # A line may exceed the width only when it holds a
+                # single token longer than the width, which is never
+                # split.
+                self.assertTrue(len(line) <= width or " " not in line)
 
 
 # ---------------------------------------------------------------------------
