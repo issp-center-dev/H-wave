@@ -25,10 +25,10 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 
    RPAソルバーと1回反復のFLEXソルバーについて、どの設定がそれぞれで
    実行可能か、また両者が実行できる場合にどの程度一致するかを、小規模な
-   参照入力に対してまとめた対応表があります。この表は英語版マニュアルの
-   "RPA and FLEX: support and equivalence"
-   （ ``docs/en/source/algorithm/rpa_flex_equivalence.rst``\ ）に
-   収録されています。日本語版には未収録のため、英語版を参照してください。
+   参照入力に対してまとめた対応表があります。この表は日本語版には未収録
+   のため、英語版マニュアルの
+   `RPA and FLEX: support and equivalence <../../en/algorithm/rpa_flex_equivalence.html>`_
+   を参照してください。
 
 
 グリーン関数
