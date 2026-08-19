@@ -374,12 +374,12 @@ record what the unsupported side does instead.
    * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'PairHop'``.
 
 ``reduced.ring.onsite_exchange.reject``
-   * RPA refuses the input at construction and raises ``ValueError`` whose message contains ``reduced``.
-   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``reduced``.
+   * RPA refuses the input at construction and raises ``ValueError`` whose message contains ``has no density-diagonal content``.
+   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``has no density-diagonal content``.
 
 ``reduced.ring.onsite_pairhop.reject``
-   * RPA refuses the input at construction and raises ``ValueError`` whose message contains ``reduced``.
-   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``reduced``.
+   * RPA refuses the input at construction and raises ``ValueError`` whose message contains ``has no density-diagonal content``.
+   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``has no density-diagonal content``.
 
 ``ringladder.general.onsite_coulombintra``
    * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``ring+ladder``.

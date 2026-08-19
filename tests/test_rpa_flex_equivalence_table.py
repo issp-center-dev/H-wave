@@ -76,10 +76,12 @@ def _max_abs(array: np.ndarray) -> float:
     return float(np.max(np.abs(array)))
 
 
-def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) -> np.ndarray:
-    """FLEX FINDING: under ``calc_scheme='reduced'`` FLEX writes
-    the FULL spin-block-INFLATED bare bubble to ``green_info["chi0q"]``
-    -- shape ``(nmat, nvol, 2*norb, 2*norb)``, matching the
+def _reduce_flex_chi0q_for_reduced_scheme(
+    solver_obj, chi0q_full: np.ndarray, atol: float
+) -> np.ndarray:
+    """FLEX FINDING: under ``calc_scheme='reduced'`` FLEX writes the
+    FULL spin-block-INFLATED bare bubble to ``green_info["chi0q"]`` --
+    shape ``(nmat, nvol, 2*norb, 2*norb)``, matching the
     ``chiq_s``/``chiq_c`` convention -- while RPA's reduced ``chi0q``
     stays in its already-reduced, density-diagonal shape: spin-free/
     spinful ``(nmat, nvol, norb, norb)`` (4-dim), or spin-diag
@@ -92,35 +94,73 @@ def _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q_full: np.ndarray) ->
     observables freeze (Global Constraints) now mandates
     ``("chi0q", "chiq")`` for EVERY comparison cell.
 
-    Measured on the macOS arm64 development machine (E1 norb=1 / E2
-    norb=2 spin-free / E4 spin-diag): FLEX's up-up (and, for spin-diag,
-    down-down) ``norb x norb`` diagonal block of its inflated ``chi0q``
-    equals RPA's
-    reduced ``chi0q`` to round-off (~1e-16 to ~5e-15), and the
-    off-diagonal (spin-mixing) blocks are exactly zero at the
-    bare-bubble level -- this is a REPRESENTATION-CONVENTION
-    difference, not a numerical divergence. This mirrors EXACTLY the
-    block extraction the ``reduced_blocks`` comparator already applies
-    to ``chiq_s``/``chiq_c`` (``TestReducedOneShot._blocks``); ``chi0q``
-    needed the identical treatment. Resolving it here (at the
-    bundle-extraction seam, which is test-module-owned and NOT part of
-    the closed ``COMPARATORS`` registry) keeps the ``identity``
-    comparator's semantics -- and the registry's "chi0q -> identity"
-    contract -- intact: by the time ``identity``
-    runs, both bundle arrays already denote the SAME physical quantity.
+    FLEX's up-up (and, for spin-diag, down-down) ``norb x norb``
+    diagonal block of its inflated ``chi0q`` equals RPA's reduced
+    ``chi0q`` to round-off (~1e-16 to ~5e-15), and the off-diagonal
+    (spin-mixing) blocks are zero at the bare-bubble level -- this is a
+    REPRESENTATION-CONVENTION difference, not a numerical divergence.
+    This mirrors EXACTLY the block extraction the ``reduced_blocks``
+    comparator already applies to ``chiq_s``/``chiq_c``
+    (``TestReducedOneShot._blocks``); ``chi0q`` needed the identical
+    treatment. Resolving it here (at the bundle-extraction seam, which
+    is test-module-owned and NOT part of the closed ``COMPARATORS``
+    registry) keeps the ``identity`` comparator's semantics -- and the
+    registry's "chi0q -> identity" contract -- intact: by the time
+    ``identity`` runs, both bundle arrays already denote the SAME
+    physical quantity.
 
-    Only called when ``solver_obj.calc_scheme == "reduced"``.
+    THE DISCARDED BLOCKS ARE ASSERTED, NOT ASSUMED. Reducing to the
+    up-up block throws content away, and the claim that justifies
+    throwing it away -- the down-down block repeats the up-up block and
+    both spin-mixing blocks vanish -- is exactly the kind of spin
+    symmetry a FLEX regression could break in the reduced bare bubble.
+    The eight reduced comparison cells are the ONLY cells exercising
+    this path, so if the reduction stayed silent the break would be
+    invisible everywhere. Each dropped block is therefore
+    checked here against the CELL'S OWN ``chi0q`` tolerance, under the
+    same elementwise ``abs(a - b) <= atol`` policy the comparators use.
+    (Measured today on the eight reduced cells: ``max|dd - uu|`` is
+    exactly 0.0 on every spin-free cell and 1.401e-17 on the two
+    spin-diag ones -- which keep both blocks anyway -- and both
+    spin-mixing blocks are exactly 0.0 everywhere.)
+
+    ``atol`` is the cell's ``chi0q`` ``ObservableSpec.atol``, threaded
+    in by ``extract_bundle``. Only called when
+    ``solver_obj.calc_scheme == "reduced"``.
     """
 
     norb = solver_obj.norb
+    up = chi0q_full[:, :, :norb, :norb]
+    down = chi0q_full[:, :, norb:, norb:]
+    up_down = chi0q_full[:, :, :norb, norb:]
+    down_up = chi0q_full[:, :, norb:, :norb]
+
+    for name, block in (("up-down", up_down), ("down-up", down_up)):
+        residual = _max_abs(block)
+        if residual > atol:
+            raise AssertionError(
+                "reduced-scheme chi0q reduction: FLEX's {} spin-mixing "
+                "block is not negligible (max|block| {!r} > atol {!r}) "
+                "-- the reduction to RPA's density-diagonal shape would "
+                "silently discard it".format(name, residual, atol)
+            )
+
     if solver_obj.spin_mode == "spin-diag":
-        up = chi0q_full[:, :, :norb, :norb]
-        down = chi0q_full[:, :, norb:, norb:]
         return np.stack([up, down])
-    return chi0q_full[:, :, :norb, :norb]
+
+    residual = _max_abs(down - up)
+    if residual > atol:
+        raise AssertionError(
+            "reduced-scheme chi0q reduction: FLEX's down-down block "
+            "differs from its up-up block (max|dd - uu| {!r} > atol "
+            "{!r}) -- spin symmetry is broken in the reduced bare "
+            "bubble, and the reduction to the up-up block alone would "
+            "silently discard the difference".format(residual, atol)
+        )
+    return up
 
 
-def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
+def extract_bundle(solver_obj, green_info, solver_kind: str, chi0q_atol=None) -> OutputBundle:
     """Build the ``OutputBundle`` a comparator maps over.
 
     ``solver_kind`` selects the extraction shape:
@@ -136,7 +176,15 @@ def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
       ``chi0q``/``chiq_s``/``chiq_c``), so ``chiq`` is left ``None``.
       When ``solver_obj.calc_scheme == "reduced"``, the extracted
       ``chi0q`` is additionally block-reduced to RPA's shape -- see
-      ``_reduce_flex_chi0q_for_reduced_scheme`` (a Task-5 finding).
+      ``_reduce_flex_chi0q_for_reduced_scheme``.
+
+    ``chi0q_atol`` is the calling cell's ``chi0q`` tolerance. It is
+    REQUIRED on the FLEX reduced-scheme path (that reduction discards
+    three of the four spin blocks and asserts each one negligible
+    against this number); passing it is a caller obligation rather than
+    a defaulted guess, so omitting it there raises instead of silently
+    choosing a bound the registry never recorded. Every other path
+    ignores it.
 
     ``solver_obj`` is inspected for its ``calc_scheme``/``norb``/
     ``spin_mode`` attributes on the FLEX reduced-scheme path above;
@@ -154,7 +202,15 @@ def extract_bundle(solver_obj, green_info, solver_kind: str) -> OutputBundle:
     if solver_kind == "flex":
         chi0q = np.asarray(green_info["chi0q"])
         if getattr(solver_obj, "calc_scheme", None) == "reduced":
-            chi0q = _reduce_flex_chi0q_for_reduced_scheme(solver_obj, chi0q)
+            if chi0q_atol is None:
+                raise ValueError(
+                    "extract_bundle: the FLEX reduced-scheme chi0q "
+                    "reduction needs the cell's chi0q atol (it asserts "
+                    "the discarded spin blocks are negligible against "
+                    "it) -- pass chi0q_atol explicitly"
+                )
+            chi0q = _reduce_flex_chi0q_for_reduced_scheme(
+                solver_obj, chi0q, chi0q_atol)
         return OutputBundle(
             chi0q=chi0q,
             chiq=None,
@@ -288,12 +344,12 @@ def _schema_errors(errors):
     """Filter out "coverage obligation ..." messages from a
     ``validate_registry`` result.
 
-    ``COVERAGE_OBLIGATIONS`` is evaluated against
-    WHATEVER ``cells`` sequence is passed in -- including the small,
-    deliberately-synthetic single/few-cell lists the ``TestRegistrySchema``
-    tests below build to isolate ONE structural rule at a time. Those
-    synthetic lists have no reason to satisfy registry-WIDE coverage
-    predicates (e.g. "every interaction type appears in G1"), so tests
+    ``COVERAGE_OBLIGATIONS`` is evaluated against WHATEVER ``cells``
+    sequence is passed in -- including the small, deliberately-synthetic
+    single/few-cell lists the ``TestRegistrySchema`` tests below build
+    to isolate ONE structural rule at a time. Those synthetic lists
+    have no reason to satisfy registry-WIDE coverage predicates (e.g.
+    "every interaction type appears in G1"), so tests
     that assert "this one schema rule produces zero errors" filter the
     unrelated coverage-obligation messages out first. Full-registry
     coverage is separately pinned by ``test_full_registry_satisfies_
@@ -876,6 +932,23 @@ class TestExtractBundle(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_bundle(object(), {"chi0q": np.zeros((1,))}, "flux")
 
+    def test_flex_reduced_scheme_requires_the_cells_chi0q_atol(self):
+        # The reduction discards three of the four spin blocks and
+        # asserts each one negligible; it must be told against WHAT, not
+        # pick a bound the registry never recorded.
+        solver = _FakeReducedFlexSolverStub(norb=1, spin_mode="spin-free")
+        green_info = {
+            "chi0q": np.zeros((1, 1, 2, 2), dtype=complex),
+            "chiq_s": np.zeros((1, 1)),
+            "chiq_c": np.zeros((1, 1)),
+        }
+        with self.assertRaises(ValueError) as ctx:
+            extract_bundle(solver, green_info, "flex")
+        self.assertIn("chi0q_atol", str(ctx.exception))
+        # ... and with the atol supplied it reduces as usual.
+        bundle = extract_bundle(solver, green_info, "flex", 1.0e-14)
+        self.assertEqual(bundle.chi0q.shape, (1, 1, 1, 1))
+
 
 class _FakeReducedFlexSolverStub:
     """Minimal solver stand-in exposing exactly the three attributes
@@ -894,8 +967,8 @@ class _FakeReducedFlexSolverStub:
 
 class TestReduceFlexChi0qForReducedScheme(unittest.TestCase):
     """``_reduce_flex_chi0q_for_reduced_scheme`` -- ISOLATED unit
-    coverage (a Task-5 review should-fix). ``TestExtractBundle``'s FLEX
-    case passes a bare ``object()`` as ``solver_obj``, so
+    coverage. ``TestExtractBundle``'s FLEX case passes a bare
+    ``object()`` as ``solver_obj``, so
     ``getattr(solver_obj, "calc_scheme", None)`` is ``None`` there and
     this function is never reached from that test -- prior coverage of
     the reduction itself was end-to-end only, through the real E1/E2/E4
@@ -942,10 +1015,31 @@ class TestReduceFlexChi0qForReducedScheme(unittest.TestCase):
     def _expected_down_down(self):
         return np.array([[-3 + 8j, 9 - 9j], [8 + 3j, -6 + 6j]]).reshape(1, 1, 2, 2)
 
+    # The hand array above is deliberately asymmetric in every block, so
+    # the reduction's negligible-remainder assertions would (correctly)
+    # reject it. The MAPPING tests below therefore run at a tolerance
+    # wide enough to admit it -- they pin which sub-block comes out
+    # where, nothing else. The assertions themselves are pinned
+    # separately, at a tight tolerance, by the tests after them.
+    _MAPPING_ONLY_ATOL = 1.0e6
+
+    def _symmetric_array(self):
+        """The shape the assertions expect of a real reduced FLEX
+        ``chi0q``: down-down repeating up-up, both spin-mixing blocks
+        exactly zero.
+        """
+
+        up = np.array([[1 + 2j, 3 - 1j], [0 - 3j, 7 + 7j]])
+        full = np.zeros((1, 1, 4, 4), dtype=complex)
+        full[0, 0, :2, :2] = up
+        full[0, 0, 2:, 2:] = up
+        return full
+
     def test_spin_free_returns_the_up_up_block(self):
         chi0q_full = self._hand_array()
         solver = _FakeReducedFlexSolverStub(norb=2, spin_mode="spin-free")
-        result = _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full)
+        result = _reduce_flex_chi0q_for_reduced_scheme(
+            solver, chi0q_full, self._MAPPING_ONLY_ATOL)
         self.assertEqual(result.shape, (1, 1, 2, 2))
         np.testing.assert_array_equal(result, self._expected_up_up())
 
@@ -956,35 +1050,78 @@ class TestReduceFlexChi0qForReducedScheme(unittest.TestCase):
         # does not special-case it; pin the actual branch condition).
         chi0q_full = self._hand_array()
         solver = _FakeReducedFlexSolverStub(norb=2, spin_mode="spinful")
-        result = _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full)
+        result = _reduce_flex_chi0q_for_reduced_scheme(
+            solver, chi0q_full, self._MAPPING_ONLY_ATOL)
         np.testing.assert_array_equal(result, self._expected_up_up())
 
     def test_spin_diag_stacks_up_up_and_down_down(self):
         chi0q_full = self._hand_array()
         solver = _FakeReducedFlexSolverStub(norb=2, spin_mode="spin-diag")
-        result = _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full)
+        result = _reduce_flex_chi0q_for_reduced_scheme(
+            solver, chi0q_full, self._MAPPING_ONLY_ATOL)
         self.assertEqual(result.shape, (2, 1, 1, 2, 2))
         np.testing.assert_array_equal(result[0], self._expected_up_up())
         np.testing.assert_array_equal(result[1], self._expected_down_down())
 
-    def test_spin_free_ignores_the_down_down_block_content(self):
-        # Discrimination check: mutate the down-down block so it
-        # DIFFERS from up-up (and from its original value), then assert
-        # the spin-free result is still exactly the (unmutated) up-up
-        # block -- not the mutated down-down block, and not some blend
-        # of the two. A function that accidentally read the wrong
-        # sub-block, or averaged the two, would fail this.
+    def test_spin_free_reads_up_up_and_not_down_down(self):
+        # Discrimination check on the MAPPING: with up-up and down-down
+        # holding different values, the spin-free result must be exactly
+        # up-up -- not down-down, and not a blend. A function that read
+        # the wrong sub-block, or averaged the two, would fail here.
         chi0q_full = self._hand_array()
         chi0q_full[0, 0, 2:, 2:] = np.array([[123 - 45j, 67 + 8j], [-9 + 10j, 11 - 12j]])
         solver = _FakeReducedFlexSolverStub(norb=2, spin_mode="spin-free")
-        result = _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full)
+        result = _reduce_flex_chi0q_for_reduced_scheme(
+            solver, chi0q_full, self._MAPPING_ONLY_ATOL)
         np.testing.assert_array_equal(result, self._expected_up_up())
         self.assertFalse(np.array_equal(result, chi0q_full[:, :, 2:, 2:]))
 
+    # -- the discarded blocks are asserted, not assumed --------------------
+
+    def test_symmetric_input_passes_at_a_tight_tolerance(self):
+        for mode in ("spin-free", "spinful", "spin-diag"):
+            with self.subTest(spin_mode=mode):
+                solver = _FakeReducedFlexSolverStub(norb=2, spin_mode=mode)
+                _reduce_flex_chi0q_for_reduced_scheme(
+                    solver, self._symmetric_array(), 1.0e-14)  # must not raise
+
+    def test_broken_spin_symmetry_is_rejected(self):
+        # A FLEX regression that made the down-down block differ from
+        # up-up in the reduced bare bubble: invisible to every reduced
+        # comparison cell if the reduction stayed silent about it.
+        chi0q_full = self._symmetric_array()
+        chi0q_full[0, 0, 2, 2] += 1.0e-9
+        solver = _FakeReducedFlexSolverStub(norb=2, spin_mode="spin-free")
+        with self.assertRaises(AssertionError) as ctx:
+            _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full, 1.0e-14)
+        self.assertIn("down-down block", str(ctx.exception))
+
+    def test_a_nonzero_spin_mixing_block_is_rejected(self):
+        for name, index in (("up-down", (0, 0, 0, 2)), ("down-up", (0, 0, 2, 0))):
+            for mode in ("spin-free", "spin-diag"):
+                with self.subTest(block=name, spin_mode=mode):
+                    chi0q_full = self._symmetric_array()
+                    chi0q_full[index] = 1.0e-9
+                    solver = _FakeReducedFlexSolverStub(norb=2, spin_mode=mode)
+                    with self.assertRaises(AssertionError) as ctx:
+                        _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full, 1.0e-14)
+                    self.assertIn(name, str(ctx.exception))
+
+    def test_the_tolerance_is_honoured_at_its_edge(self):
+        # Comparator policy: abs(a - b) <= atol passes; strictly greater
+        # fails. Nothing here may use rtol.
+        chi0q_full = self._symmetric_array()
+        chi0q_full[0, 0, 0, 2] = 1.0e-14
+        solver = _FakeReducedFlexSolverStub(norb=2, spin_mode="spin-free")
+        _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full, 1.0e-14)  # must not raise
+        chi0q_full[0, 0, 0, 2] = 1.0000001e-14
+        with self.assertRaises(AssertionError):
+            _reduce_flex_chi0q_for_reduced_scheme(solver, chi0q_full, 1.0e-14)
+
 
 class TestScalarUtilities(unittest.TestCase):
-    """``scalar_residual`` / ``assert_scalar_within`` -- the Task-6
-    diagnostic's mu checkpoints (never a COMPARATORS entry).
+    """``scalar_residual`` / ``assert_scalar_within`` -- the mu/Green
+    divergence diagnostic's checkpoints (never a COMPARATORS entry).
     """
 
     def test_scalar_residual_exact_match(self):
@@ -1297,7 +1434,7 @@ class TestReducedBlocksComparator(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 # The ExecuteReject.exc_type CLOSED-set -> exception class mapping (fixed,
-# per the Task-1 interface contract).
+# per the registry's own interface contract).
 _EXC_TYPE_MAP = {"ValueError": ValueError, "RuntimeError": RuntimeError}
 
 
@@ -1332,7 +1469,7 @@ def build_solver(spec: FixtureSpec, solver_kind: str, stack: ExitStack):
     is never used by cell fixtures.
 
     Mirrors ``tests/test_rpa_flex_oneshot_equivalence.py::_run``'s
-    solver construction, with ONE Task-5 addition: FLEX ALSO gets
+    solver construction, with ONE addition: FLEX ALSO gets
     ``calc_type`` (the oneshot suite never varies it off the "ring"
     default, so it never needed to). FLEX has no ``calc_type``
     parameter of its own, but it inherits ``_set_scheme`` from RPA
@@ -1340,10 +1477,10 @@ def build_solver(spec: FixtureSpec, solver_kind: str, stack: ExitStack):
     identically for both solvers -- omitting the key here left FLEX's
     ``self.calc_type`` silently defaulted to ``"ring"`` regardless of
     ``spec.calc_type``, which would have made cell 34's
-    ``calc_type='ring+ladder'`` CONSTRUCTOR-time rejection
-    unreachable through this executor. Passing ``"ring"`` explicitly
-    for every OTHER cell is a no-op (same default value, verified no
-    behavior change). FLEX additionally sets
+    ``calc_type='ring+ladder'`` CONSTRUCTOR-time rejection unreachable
+    through this executor. Passing ``"ring"`` explicitly for every
+    OTHER cell is a no-op (same default value, verified no behavior
+    change). FLEX additionally sets
     ``IterationMax=1, Mix=1.0, EPS=1`` (the one-shot / bare-bubble
     limit the whole equivalence table measures against).
     """
@@ -1417,10 +1554,10 @@ def _construct_and_maybe_solve(fixture, solver_kind, step, stack, solver_factory
         solver_obj.solve(green_info, out_dir)
         return solver_obj, green_info, out_dir
     raise ValueError(
-        "_construct_and_maybe_solve: unsupported run-class step {!r} -- "
-        "PairedInvarianceRun/ExecuteChiqInitReuse are dedicated "
-        "two-solve exceptions with their own executors (cell "
-        "33)".format(step)
+        "_construct_and_maybe_solve: unsupported run-class step {!r} "
+        "-- PairedInvarianceRun/ExecuteChiqInitReuse are dedicated "
+        "two-solve exceptions with their own executors "
+        "(cell 33)".format(step)
     )
 
 
@@ -1693,6 +1830,67 @@ def _assert_resolved_scheme(cell, solver_kind, solver_obj) -> None:
         )
 
 
+def _assert_spin_mode(cell, solver_kind, solver_obj) -> None:
+    """Pin ``Cell.expected_spin_mode`` against the spin mode the solver
+    actually resolved.
+
+    That field is PUBLISHED -- it is the "Spin mode" column of the
+    support matrix on every one of the rendered page's rows -- so
+    leaving it unasserted would let the page advertise, say,
+    ``spinful`` for a fixture that had quietly stopped being spinful
+    while the row still passed for unrelated reasons.
+
+    SCOPE: neither solver has a ``spin_mode`` until it runs. Both
+    resolve it inside ``solve()``, from the block structure of H0(k)
+    (``RPA._calc_epsilon_k``, ``src/hwave/solver/rpa.py:2997-3034``;
+    FLEX inherits it), and a freshly constructed solver has no such
+    attribute at all. The assertion therefore covers exactly the sides
+    that SOLVE -- every ``SUPPORTED`` + ``ExecuteRun`` side, 51 of them
+    across 30 of the registry's 37 rows. The 7 uncovered rows are the
+    ones where nothing solves through this path: the 3
+    construction-only rows (``ExecuteConstruct``, no solve by
+    definition), the 3 rows where BOTH sides reject before a solver
+    exists, and cell 33, whose two multirun executors discharge their
+    own oracles internally and return no solver object.
+    """
+
+    actual = getattr(solver_obj, "spin_mode", None)
+    if actual != cell.expected_spin_mode:
+        raise AssertionError(
+            "cell {!r} {}: solved spin_mode {!r} != "
+            "Cell.expected_spin_mode {!r} (the value published in the "
+            "support matrix's Spin mode column)".format(
+                cell.cell_id, solver_kind, actual, cell.expected_spin_mode
+            )
+        )
+
+
+def _cell_chi0q_atol(cell):
+    """The cell's recorded ``chi0q`` tolerance, or ``None`` when the
+    cell records no ``chi0q`` observable.
+
+    ``extract_bundle`` needs it on the FLEX reduced-scheme path, where
+    the block reduction asserts the discarded spin blocks are
+    negligible against the CELL'S OWN bound rather than an invented one.
+    """
+
+    comparison = cell.comparison
+    if isinstance(comparison, Equiv):
+        spec = comparison.observables.get("chi0q")
+    elif isinstance(comparison, Diverges):
+        # A diverging observable carries a two-sided bracket rather than
+        # an ``atol``; its ``ceiling`` is the same "agreement stops
+        # here" number, so it is what the reduction checks against.
+        # (No registry cell records chi0q as diverging today.)
+        spec = comparison.others.get("chi0q") or comparison.diverging.get("chi0q")
+    else:
+        return None
+    if spec is None:
+        return None
+    atol = getattr(spec, "atol", None)
+    return getattr(spec, "ceiling", None) if atol is None else atol
+
+
 def _assert_comparison(cell, rpa_bundle, flex_bundle) -> None:
     comparison = cell.comparison
     if isinstance(comparison, Equiv):
@@ -1730,7 +1928,10 @@ def run_cell(cell, solver_factory=build_solver) -> None:
     ``ExecuteReject`` is dispatched via ``assertRaises`` at the
     recorded site inside ``_run_side``/``_assert_reject``.
     ``ExecuteConstruct`` asserts the resolved ``calc_scheme`` on the
-    publicly constructed solver, with no solve.
+    publicly constructed solver, with no solve. Every side that DOES
+    solve additionally has its resolved ``spin_mode`` pinned against
+    ``Cell.expected_spin_mode`` -- the value the rendered page
+    publishes in its Spin mode column.
 
     ``solver_factory`` is a test-only override point (default
     ``build_solver``) letting ``TestExecutorSolveCounts`` pin the exact
@@ -1747,15 +1948,14 @@ def run_cell(cell, solver_factory=build_solver) -> None:
             # Several input-reader/solver construction paths (e.g.
             # src/hwave/solver/rpa.py's Lattice._init_lattice on an
             # incompatible CellShape/SubShape pairing) call
-            # ``sys.exit(...)`` on malformed
-            # input instead of raising. Left uncaught, that call
-            # terminates the WHOLE unittest process silently (no
-            # traceback, remaining cells/tests never run) -- a single
-            # corrupted fixture must surface as one normal test
-            # failure, not kill the runner. Converted to an
-            # AssertionError with the exit code recorded; both solver-
-            # execution paths above (rpa AND flex) are covered by this
-            # one try/except.
+            # ``sys.exit(...)`` on malformed input instead of raising.
+            # Left uncaught, that call terminates the WHOLE unittest
+            # process silently (no traceback, remaining cells/tests
+            # never run) -- a single corrupted fixture must surface as
+            # one normal test failure, not kill the runner. Converted
+            # to an AssertionError with the exit code recorded; both
+            # solver-execution paths above (rpa AND flex) are covered
+            # by this one try/except.
             raise AssertionError(
                 "cell {!r}: a solver-execution path called "
                 "sys.exit({!r}) instead of raising -- this must "
@@ -1763,11 +1963,24 @@ def run_cell(cell, solver_factory=build_solver) -> None:
                 "process".format(cell.cell_id, exc.code)
             ) from exc
 
+        # The published Spin mode column, asserted on every side that
+        # actually solved (see _assert_spin_mode for why the
+        # construction-only/reject/multirun sides cannot be covered).
+        for solver_kind, proof, result in (
+            ("rpa", cell.rpa, rpa_result),
+            ("flex", cell.flex, flex_result),
+        ):
+            if result is None:
+                continue
+            if proof.status is Status.SUPPORTED and isinstance(proof.steps[0], ExecuteRun):
+                _assert_spin_mode(cell, solver_kind, result[0])
+
         if cell.comparison is not None:
             rpa_obj, rpa_green, _rpa_out = rpa_result
             flex_obj, flex_green, _flex_out = flex_result
-            rpa_bundle = extract_bundle(rpa_obj, rpa_green, "rpa")
-            flex_bundle = extract_bundle(flex_obj, flex_green, "flex")
+            chi0q_atol = _cell_chi0q_atol(cell)
+            rpa_bundle = extract_bundle(rpa_obj, rpa_green, "rpa", chi0q_atol)
+            flex_bundle = extract_bundle(flex_obj, flex_green, "flex", chi0q_atol)
             _assert_comparison(cell, rpa_bundle, flex_bundle)
         elif _is_construction_only(cell):
             rpa_obj, _rpa_green, _rpa_out = rpa_result
@@ -1895,6 +2108,10 @@ class _FakeSolver:
     def __init__(self, fail_at_solve=None):
         self.solve_calls = 0
         self.calc_scheme = "general"
+        # run_cell pins Cell.expected_spin_mode on every side that
+        # solves; the builders above default their synthetic cells to
+        # "spin-free", so the fake reports the same.
+        self.spin_mode = "spin-free"
         self._fail_at_solve = fail_at_solve
 
     def solve(self, green_info, out_dir):
@@ -2283,11 +2500,83 @@ class TestExecutorSolveCounts(unittest.TestCase):
         self.assertTrue(np.array_equal(greens[0]["chi0q"], original))
 
 
+class TestSpinModeIsAsserted(unittest.TestCase):
+    """``Cell.expected_spin_mode`` is PUBLISHED (the support matrix's
+    Spin mode column) and must therefore be proven, not merely
+    recorded.
+    """
+
+    def test_run_cell_rejects_a_wrong_expected_spin_mode(self):
+        solver = _FakeSolver()
+        solver.spin_mode = "spinful"
+        cell = _equiv_cell(cell_id="fake.spinmode.cell", expected_spin_mode="spin-free")
+        with self.assertRaises(AssertionError) as ctx:
+            run_cell(cell, solver_factory=_fake_factory(solver))
+        self.assertIn("solved spin_mode", str(ctx.exception))
+        self.assertIn("Spin mode column", str(ctx.exception))
+
+    def test_run_cell_accepts_the_recorded_spin_mode(self):
+        solver = _FakeSolver()
+        solver.spin_mode = "spin-diag"
+        cell = _equiv_cell(
+            cell_id="fake.spinmode.ok",
+            expected_spin_mode="spin-diag",
+            comparison=None,
+            required_observables=(),
+        )
+        run_cell(cell, solver_factory=_fake_factory(solver))  # must not raise
+
+    def test_every_registry_row_is_either_asserted_or_a_named_exception(self):
+        """No row may publish a spin mode that nothing checks.
+
+        A row is covered when at least one side SOLVES (``SUPPORTED`` +
+        ``ExecuteRun``), because ``spin_mode`` only exists after a
+        solve. The uncovered rows must all fall into one of the three
+        shapes named in ``_assert_spin_mode``'s docstring; a new row of
+        any OTHER shape would slip an unproven published claim onto the
+        page, and fails here.
+        """
+
+        covered, construction_only, both_reject, multirun = [], [], [], []
+        for cell in CELLS:
+            sides = (cell.rpa, cell.flex)
+            if any(
+                proof.status is Status.SUPPORTED
+                and isinstance(proof.steps[0], ExecuteRun)
+                for proof in sides
+            ):
+                covered.append(cell.cell_id)
+            elif _is_construction_only(cell):
+                construction_only.append(cell.cell_id)
+            elif all(proof.status is Status.REJECT for proof in sides):
+                both_reject.append(cell.cell_id)
+            elif any(
+                isinstance(proof.steps[0], (ExecuteChiqInitReuse, PairedInvarianceRun))
+                for proof in sides
+                if proof.steps
+            ):
+                multirun.append(cell.cell_id)
+            else:
+                self.fail(
+                    "cell {!r} publishes expected_spin_mode {!r} but "
+                    "neither solves nor matches a known uncovered "
+                    "shape".format(cell.cell_id, cell.expected_spin_mode)
+                )
+        self.assertEqual(len(covered), 30)
+        self.assertEqual(len(construction_only), 3)
+        self.assertEqual(len(both_reject), 3)
+        self.assertEqual(len(multirun), 1)
+        self.assertEqual(
+            len(covered) + len(construction_only) + len(both_reject) + len(multirun),
+            len(CELLS),
+        )
+
+
 class TestSystemExitEscape(unittest.TestCase):
     """Several input-reader/solver construction paths call
     ``sys.exit(...)`` on malformed input instead of raising (e.g.
-    ``src/hwave/solver/rpa.py``'s
-    ``Lattice._init_lattice``, which ``sys.exit(1)``s when ``SubShape``
+    ``src/hwave/solver/rpa.py``'s ``Lattice._init_lattice``, which
+    ``sys.exit(1)``s when ``SubShape``
     does not evenly divide ``CellShape`` -- rpa.py:571-573). Reading
     the input files themselves never reaches a ``sys.exit`` site in
     this codebase (``qlmsio`` raises ordinary exceptions on bad file
@@ -2602,10 +2891,12 @@ class TestReducedSpinfulGuard(unittest.TestCase):
     CONSTRUCTOR-time guard cell 36 exercises. No registry cell is
     added for this route: recording one would also require
     characterizing RPA's own reduced+spinful-via-``trans_mod``
-    behaviour, which is outside what this table measures, so it is left
-    as an open question for a maintainer. The guard pinned here closes
-    the gap regardless of how ``spin_mode`` came to be ``'spinful'``,
-    as this test demonstrates.
+    behaviour, which is outside what this table measures. It is
+    recorded here as a KNOWN LIMITATION of the table's coverage rather
+    than as a question awaiting an answer: no cell describes the
+    ``trans_mod`` route, and none is planned. The guard pinned here
+    closes the gap regardless of how ``spin_mode`` came to be
+    ``'spinful'``, as this test demonstrates.
     """
 
     def test_direct_semantic_state_pin_rejects_spinful(self):
@@ -2990,9 +3281,19 @@ class TestConditioningAmplification(unittest.TestCase):
     conditioning fixture (cell 38's), must show >= 10x amplification on
     AT LEAST ONE of the three seam residuals -- assertion 2 (the mu
     seam), assertion 4 (the composed seam), assertion 5 (downstream
-    chi0q) -- with ``max(residual, 1e-15)`` denominators (an
-    exactly-zero benign residual, as measured on assertion 2 here,
-    would otherwise divide by zero).
+    chi0q).
+
+    WHAT THE CRITERION ACTUALLY MEASURES. The ratio is taken over
+    ``max(benign, 1e-15)`` so that an exactly-zero benign residual
+    cannot divide by zero. On assertion 2 -- the seam that carries this
+    test today -- the benign residual IS exactly zero, so for that seam
+    the ">= 10x amplification" test degenerates into an ABSOLUTE
+    threshold: "the FC residual is at least 1e-14". That is the
+    statement being checked there, and it is the one to read the
+    measured numbers against; it happens to be a strictly stronger
+    demand than a ratio against any benign residual that had been
+    merely small rather than zero. The ratio form still applies as
+    written on assertions 4 and 5, whose benign residuals are nonzero.
 
     MONOTONICITY DERIVATION (why halving T is the calibration lever):
     reducing T sharpens the Fermi step (``RPA._find_mu``'s

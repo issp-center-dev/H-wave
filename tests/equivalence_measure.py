@@ -37,9 +37,11 @@ when it should not, a REJECT proof's expected exception NOT being
 raised, a multirun oracle's bitwise/exhaustive check failing), a
 comparator's own structural guard firing (shape mismatch, non-finite
 values -- ``Comparator.residual``'s ``_check_comparable`` already
-raises ``ValueError`` for both), a missing ``green_info`` key
-(``extract_bundle`` raising ``KeyError``/``ValueError``), or a
-JSON-serialization failure of an emitted record all produce an
+raises ``ValueError`` for both), a missing ``green_info`` key or a
+non-negligible discarded spin block in the FLEX reduced-scheme chi0q
+reduction (``extract_bundle`` raising ``KeyError``/``ValueError``/
+``AssertionError``), or a JSON-serialization failure of an emitted
+record all produce an
 ``{"error": <message>, ...}`` line (never silently dropped) and set the
 process's exit code to 1 -- but processing CONTINUES to the next cell/
 checkpoint first (best-effort telemetry: one broken cell must not hide
@@ -47,7 +49,7 @@ every other cell's timing/residual data from the CI artifact).
 
 Reuses ``tests.test_rpa_flex_equivalence_table``'s own builders
 (``build_solver``, ``_run_side``, ``extract_bundle``, ``COMPARATORS``)
-and the Task-6 diagnostic (``_diagnostic_residuals``,
+and the mu/Green divergence diagnostic (``_diagnostic_residuals``,
 ``_DIAGNOSTIC_BENIGN_FIXTURE``, ``_DIAGNOSTIC_FC_FIXTURE``) -- it does
 not reimplement any solver-construction or comparison logic. Every
 solver construction happens inside a fresh ``contextlib.ExitStack`` per
@@ -76,6 +78,7 @@ from tests.equivalence_cells import CELLS, COMPARATORS, Diverges, Equiv
 from tests.test_rpa_flex_equivalence_table import (
     _DIAGNOSTIC_BENIGN_FIXTURE,
     _DIAGNOSTIC_FC_FIXTURE,
+    _cell_chi0q_atol,
     _diagnostic_residuals,
     _run_side,
     build_solver,
@@ -180,8 +183,9 @@ def _measure_cell(cell) -> bool:
             if cell.comparison is not None:
                 rpa_obj, rpa_green, _rpa_out = rpa_result
                 flex_obj, flex_green, _flex_out = flex_result
-                rpa_bundle = extract_bundle(rpa_obj, rpa_green, "rpa")
-                flex_bundle = extract_bundle(flex_obj, flex_green, "flex")
+                chi0q_atol = _cell_chi0q_atol(cell)
+                rpa_bundle = extract_bundle(rpa_obj, rpa_green, "rpa", chi0q_atol)
+                flex_bundle = extract_bundle(flex_obj, flex_green, "flex", chi0q_atol)
                 for observable, spec in _observable_specs(cell.comparison).items():
                     comparator = COMPARATORS[spec.comparator]
                     a, b = comparator.map(observable, rpa_bundle, flex_bundle)
@@ -219,8 +223,8 @@ def _measure_cell(cell) -> bool:
 
 
 def _measure_diagnostics() -> bool:
-    """Run the Task-6 mu/Green divergence diagnostic on both its
-    fixtures; emit 5 checkpoint lines per fixture (10 total)."""
+    """Run the mu/Green divergence diagnostic on both its fixtures;
+    emit 5 checkpoint lines per fixture (10 total)."""
 
     ok = True
     for fixture_name, fixture in (("benign", _DIAGNOSTIC_BENIGN_FIXTURE),
