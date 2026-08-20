@@ -2932,12 +2932,13 @@ class TestReducedSpinfulGuard(unittest.TestCase):
     CONSTRUCTOR-time guard cell 36 exercises. No registry cell is
     added for this route: recording one would also require
     characterizing RPA's own reduced+spinful-via-``trans_mod``
-    behaviour, which is outside what this table measures. It is
-    recorded here as a KNOWN LIMITATION of the table's coverage rather
-    than as a question awaiting an answer: no cell describes the
-    ``trans_mod`` route, and none is planned. The guard pinned here
-    closes the gap regardless of how ``spin_mode`` came to be
-    ``'spinful'``, as this test demonstrates.
+    behaviour, which is outside what this table measures. That
+    characterization is tracked in issue #161; this docstring records
+    the corresponding KNOWN LIMITATION of the table's coverage, namely
+    that no cell describes the ``trans_mod`` route and none is
+    planned. The guard pinned here closes the gap regardless of how
+    ``spin_mode`` came to be ``'spinful'``, as this test
+    demonstrates.
     """
 
     def test_direct_semantic_state_pin_rejects_spinful(self):
