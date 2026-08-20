@@ -3546,6 +3546,89 @@ class TestBenchmarkRegistryTie(unittest.TestCase):
             "recent calibration section -- one of the two is wrong",
         )
 
+    _RUN_IDENTITY_RE = re.compile(
+        r"\*\*workflow run\s+(\d+),\s*attempt\s+(\d+)\*\*")
+
+    @classmethod
+    def _authoritative_run_identities(cls, filename):
+        """Every ``workflow run <id>, attempt <n>`` the named artifact
+        states in bold, normalised to the string form PROVENANCE's
+        ``run_ids`` uses (``"<id> attempt <n>"``).
+
+        Both artifacts name the authoritative run in bold prose rather
+        than in a field, so the identity is parsed from that prose --
+        the same source a human reader checks.
+        """
+        path = os.path.join(os.path.dirname(__file__), filename)
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        return {"{} attempt {}".format(run, attempt)
+                for run, attempt in cls._RUN_IDENTITY_RE.findall(text)}
+
+    _CAL_LOG = "equivalence_calibration_log.md"
+
+    @classmethod
+    def _calibration_log_commit(cls):
+        """The source revision the calibration log's most recent
+        ``- **Commit:**`` line names."""
+        path = os.path.join(os.path.dirname(__file__), cls._CAL_LOG)
+        with open(path, "r", encoding="utf-8") as f:
+            commit_lines = [line for line in f
+                            if line.startswith(cls._COMMIT_LINE_PREFIX)]
+        if not commit_lines:
+            raise AssertionError(
+                "tests/{}: no {!r} line found".format(
+                    cls._CAL_LOG, cls._COMMIT_LINE_PREFIX))
+        match = re.search(r"\b([0-9a-f]{40})\b", commit_lines[-1])
+        if not match:
+            raise AssertionError(
+                "tests/{}: the most recent commit line names no "
+                "40-character commit hash: {}".format(
+                    cls._CAL_LOG, commit_lines[-1].strip()))
+        return match.group(1)
+
+    def test_frozen_provenance_names_the_authoritative_run_identity(self):
+        # The sibling test above ties PROVENANCE's REVISION to the
+        # artifacts. Its run identity had no such tie: the schema check
+        # accepts any non-empty tuple, so a freeze that recorded the
+        # wrong run -- or the right run at the wrong attempt -- would
+        # pass every test and be published on the page as the evidence
+        # for the frozen bounds. Both artifacts name the authoritative
+        # run in bold; require the record to be among what they name.
+        if PROVENANCE["status"] != "frozen":
+            # A candidate record names no run yet (see the sibling
+            # test's note on why this is a return, not a skip).
+            return
+        for filename in ("equivalence_benchmark.md", self._CAL_LOG):
+            with self.subTest(artifact=filename):
+                stated = self._authoritative_run_identities(filename)
+                self.assertTrue(
+                    stated,
+                    "tests/{}: no bold 'workflow run <id>, attempt <n>' "
+                    "identity found, so the frozen record cannot be tied "
+                    "to it".format(filename))
+                for recorded in PROVENANCE["run_ids"]:
+                    self.assertIn(
+                        recorded, stated,
+                        "PROVENANCE['run_ids'] names {!r}, which tests/{} "
+                        "does not state as an authoritative run identity "
+                        "-- one of the two is wrong".format(
+                            recorded, filename))
+
+    def test_frozen_provenance_matches_the_calibration_log_commit(self):
+        # The revision tie above reads the benchmark only. The
+        # calibration log records the same revision independently, and
+        # the two artifacts are appended by separate steps, so a freeze
+        # that updated one and not the other would leave the published
+        # record half-true.
+        if PROVENANCE["status"] != "frozen":
+            return
+        self.assertEqual(
+            PROVENANCE["source_sha"], self._calibration_log_commit(),
+            "PROVENANCE['source_sha'] does not match the source revision "
+            "recorded in tests/{}'s most recent section -- one of the two "
+            "is wrong".format(self._CAL_LOG))
+
     def test_most_recent_section_is_an_exact_multiset_match_with_cells(self):
         from collections import Counter
 
